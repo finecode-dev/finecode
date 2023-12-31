@@ -1,0 +1,14 @@
+[tool.poetry]
+name = "finecode-fine-py"
+version = "0.1.0"
+description = ""
+authors = ["Vladyslav Hnatiuk <aders1234@gmail.com>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.10"
+finecode_fine_format = { path = "../finecode_fine_format" }
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"

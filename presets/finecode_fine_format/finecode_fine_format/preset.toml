@@ -1,0 +1,8 @@
+[finecode.preset]
+actions = [{ name = 'format' }]
+
+[tool.finecode.action.format]
+subactions = [
+    { name = "black", source = "finecode_black.BlackCodeAction" },
+    { name = "isort", source = "finecode_isort.IsortCodeAction" },
+]
