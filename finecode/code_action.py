@@ -1,7 +1,7 @@
 # code actions are implementations of actions
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
-from dataclasses import dataclass
 
 
 class CodeAction:

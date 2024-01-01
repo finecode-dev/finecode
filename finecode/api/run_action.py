@@ -1,4 +1,6 @@
 import os
+import site
+import re
 import importlib
 from pathlib import Path
 
@@ -18,22 +20,37 @@ def run(action: str, apply_on: Path, project_root: Path) -> None:
         )
         return
 
-    current_project_path = Path(__file__).parent.parent.parent
-    if current_project_path == project_root:
-        _project_root = None
-    else:
-        _project_root = project_root
-
-    __run_action(all_actions[action], apply_on, all_actions, project_root=_project_root)
+    __run_action(all_actions[action], apply_on, all_actions, project_root=project_root) # , project_root=_project_root
 
 
 def __run_action(
     action: domain.Action,
     apply_on: Path,
     all_actions: dict[str, domain.Action],
-    project_root: Path | None = None,
+    project_root: Path,
 ) -> None:
-    if project_root is not None:
+    current_venv_path = Path(site.getsitepackages()[0]).parent.parent.parent
+    old_current_dir = os.getcwd()
+    os.chdir(project_root)
+    exit_code, output = command_runner(
+        f"poetry env info"
+    )
+    os.chdir(old_current_dir)
+    if exit_code != 0:
+        logger.error(f"Cannot get env info in project {project_root}")
+        return
+    venv_path_match = re.search("Path:\ *(?P<venv_path>.*)\n", output)
+    if venv_path_match is None:
+        logger.error(f"Venv path not found in poetry output")
+        return
+    project_venv_path_str = venv_path_match.group('venv_path')
+    if project_venv_path_str == 'NA':
+        # it can be checked whether venv exists with `poetry env list` and then either automatically
+        # activated or suggested to user to activate
+        logger.error(f"No virtualenv found in {project_root}. Maybe it is not activated?")
+        return
+    
+    if current_venv_path != Path(project_venv_path_str):
         # TODO: check that project is managed via poetry
         old_current_dir = os.getcwd()
         os.chdir(project_root)

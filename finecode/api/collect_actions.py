@@ -1,13 +1,11 @@
-# import importlib
 import os
 from pathlib import Path
 from typing import NamedTuple
 
 from command_runner import command_runner
-from tomlkit import loads as toml_loads
-from pydantic import BaseModel
-
 from loguru import logger
+from pydantic import BaseModel
+from tomlkit import loads as toml_loads
 
 import finecode.domain as domain
 
@@ -39,14 +37,10 @@ def collect_actions_recursively(root_dir: Path) -> domain.Package:
         for part in path_parts:
             try:
                 current_package = next(
-                    package
-                    for package in current_package.subpackages
-                    if package.name == part
+                    package for package in current_package.subpackages if package.name == part
                 )
             except StopIteration:
-                new_package = domain.Package(
-                    name=part, path=current_package.path / part
-                )
+                new_package = domain.Package(name=part, path=current_package.path / part)
                 current_package.subpackages.append(new_package)
                 current_package = new_package
 
@@ -77,9 +71,7 @@ def optimize_package_tree(root_package: domain.Package) -> domain.Package:
     ...
 
 
-def collect_actions(
-    project_def_path: Path,
-) -> tuple[domain.RootActions, domain.AllActions]:
+def collect_actions(project_def_path: Path) -> tuple[domain.RootActions, domain.AllActions]:
     if project_def_path.name == "pyproject.toml":
         return collect_actions_pyproject(project_def_path)
     else:
@@ -118,9 +110,7 @@ def collect_actions_pyproject(
 ) -> tuple[domain.RootActions, domain.AllActions]:
     # use root pyproject.toml as base (TODO: differ workspace and project in future?)
     if not pyproject_path.exists():
-        raise Exception(
-            f"No pyproject.toml found in {pyproject_path.parent}"
-        )  # TODO: improve
+        raise Exception(f"No pyproject.toml found in {pyproject_path.parent}")  # TODO: improve
 
     with open(pyproject_path, "rb") as pyproject_file:
         project_def = toml_loads(pyproject_file.read())
@@ -134,13 +124,10 @@ def collect_actions_pyproject(
         return (root_actions, all_actions)
 
     root_actions, all_actions = collect_actions_from_py_presets(
-        presets=finecode_config.presets,
-        def_path=pyproject_path,
+        presets=finecode_config.presets, def_path=pyproject_path
     )
 
-    for action_name, action_def_raw in (
-        project_def["tool"]["finecode"].get("action", {}).items()
-    ):
+    for action_name, action_def_raw in project_def["tool"]["finecode"].get("action", {}).items():
         # TODO: handle validation errors
         action_def = ActionConfig(**action_def_raw)
         subactions: list[str] = []
@@ -184,34 +171,17 @@ def collect_actions_from_py_presets(
     all_actions: domain.AllActions = {}
     processed_presets: set[str] = set()
     presets_to_process: set[PresetToProcess] = set(
-        [
-            PresetToProcess(source=preset.source, package_def_path=def_path)
-            for preset in presets
-        ]
+        [PresetToProcess(source=preset.source, package_def_path=def_path) for preset in presets]
     )
     while len(presets_to_process) > 0:
         preset = presets_to_process.pop()
         processed_presets.add(preset.source)
 
-        if preset.package_def_path.name != "pyproject.toml":
-            logger.error(
-                f"Presets are currently supported only from packages with pyproject.toml"
-            )
-            continue
-
-        with open(preset.package_def_path, "rb") as pyproject_file:
-            project_def = toml_loads(pyproject_file.read())
-
-        if project_def.get("tool", {}).get("poetry", None) is None:
-            logger.error(
-                f"Presets are currently supported only from packages managed via poetry"
-            )
-            continue
-
         old_current_dir = os.getcwd()
         os.chdir(def_path.parent)  # preset.package_def_path.parent
         exit_code, output = command_runner(
-            f'poetry run python -c "import {preset.source}; import os; print(os.path.dirname({preset.source}.__file__))"'
+            f'poetry run python -c "import {preset.source}; import os;'
+            f' print(os.path.dirname({preset.source}.__file__))"'
         )
         os.chdir(old_current_dir)
         if exit_code != 0 or not isinstance(output, str):
@@ -240,15 +210,13 @@ def collect_actions_from_py_presets(
             presets_to_process.add(
                 PresetToProcess(
                     source=new_preset_source,
-                    package_def_path=preset_package_path.parent / "pyproject.toml",
+                    package_def_path=def_path,
                 )
             )
 
         for action in preset_config.actions:
             if action.source is not None:
-                all_actions[action.name] = domain.Action(
-                    name=action.name, source=action.source
-                )
+                all_actions[action.name] = domain.Action(name=action.name, source=action.source)
                 root_actions.append(action.name)
             else:
                 try:
@@ -259,14 +227,11 @@ def collect_actions_from_py_presets(
                     root_actions.append(action.name)
                     all_actions[action.name] = domain.Action(
                         name=action.name,
-                        subactions=[
-                            subaction.name for subaction in action_config.subactions
-                        ],
+                        subactions=[subaction.name for subaction in action_config.subactions],
                     )
                     for subaction in action_config.subactions:
                         all_actions[subaction.name] = domain.Action(
-                            name=subaction.name,
-                            source=subaction.source,
+                            name=subaction.name, source=subaction.source
                         )
                 except KeyError:
                     logger.error(f"Action definition not found {action}")
