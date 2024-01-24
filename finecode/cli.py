@@ -5,10 +5,12 @@ import click
 from loguru import logger
 
 import finecode.api as api
+import finecode.workspace_context as workspace_context
 
 
 @click.group()
-def cli(): ...
+def cli():
+    ...
 
 
 @cli.command()
@@ -20,11 +22,20 @@ def run(action: str, apply_on: str, project_root: Path | None = None) -> None:
         _project_root = project_root
     else:
         _project_root = Path(os.getcwd())
-    api.run(action=action, apply_on=Path(apply_on), project_root=_project_root)
+    ws_context = workspace_context.WorkspaceContext(_project_root)
+    api.run(
+        action=action,
+        apply_on=Path(apply_on),
+        project_root=_project_root,
+        ws_context=ws_context,
+    )
 
 
 def list_actions(project_root: Path) -> None:
-    root_actions, _ = api.collect_actions.collect_actions(project_root)
+    ws_context = workspace_context.WorkspaceContext(project_root)
+    root_actions, _ = api.collect_actions.collect_actions(
+        project_root, ws_context=ws_context
+    )
     logger.info(f"Available actions: {','.join(root_actions)}")
 
 

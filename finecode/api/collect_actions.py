@@ -8,6 +8,7 @@ from pydantic import BaseModel
 from tomlkit import loads as toml_loads
 
 import finecode.domain as domain
+import finecode.workspace_context as workspace_context
 
 
 def finecode_is_enabled_in_def(def_file: Path) -> bool:
@@ -22,7 +23,9 @@ def finecode_is_enabled_in_def(def_file: Path) -> bool:
     return False
 
 
-def collect_actions_recursively(root_dir: Path) -> domain.Package:
+def collect_actions_recursively(
+    root_dir: Path, ws_context: workspace_context.WorkspaceContext
+) -> domain.Package:
     root_package = domain.Package(name=root_dir.name, path=root_dir)
     def_files_generator = root_dir.rglob("*")
     for def_file in def_files_generator:
@@ -37,14 +40,18 @@ def collect_actions_recursively(root_dir: Path) -> domain.Package:
         for part in path_parts:
             try:
                 current_package = next(
-                    package for package in current_package.subpackages if package.name == part
+                    package
+                    for package in current_package.subpackages
+                    if package.name == part
                 )
             except StopIteration:
-                new_package = domain.Package(name=part, path=current_package.path / part)
+                new_package = domain.Package(
+                    name=part, path=current_package.path / part
+                )
                 current_package.subpackages.append(new_package)
                 current_package = new_package
 
-        root_actions, all_actions = collect_actions(def_file)
+        root_actions, all_actions = collect_actions(def_file, ws_context=ws_context)
         for action_name in root_actions:
             try:
                 action_info = all_actions[action_name]
@@ -71,11 +78,20 @@ def optimize_package_tree(root_package: domain.Package) -> domain.Package:
     ...
 
 
-def collect_actions(project_def_path: Path) -> tuple[domain.RootActions, domain.AllActions]:
+def collect_actions(
+    project_def_path: Path, ws_context: workspace_context.WorkspaceContext
+) -> tuple[domain.RootActions, domain.AllActions]:
+    if project_def_path.as_posix() in ws_context.actions_by_package_path:
+        logger.trace(f"Found actions for {project_def_path.as_posix()} in context")
+        return ws_context.actions_by_package_path[project_def_path.as_posix()]
+
     if project_def_path.name == "pyproject.toml":
-        return collect_actions_pyproject(project_def_path)
+        result = collect_actions_pyproject(project_def_path, ws_context=ws_context)
     else:
-        return ([], {})
+        result = ([], {})
+
+    ws_context.actions_by_package_path[project_def_path.as_posix()] = result
+    return result
 
 
 class Preset(BaseModel):
@@ -106,11 +122,13 @@ class ActionConfig(BaseModel):
 
 
 def collect_actions_pyproject(
-    pyproject_path: Path,
+    pyproject_path: Path, ws_context: workspace_context.WorkspaceContext
 ) -> tuple[domain.RootActions, domain.AllActions]:
     # use root pyproject.toml as base (TODO: differ workspace and project in future?)
     if not pyproject_path.exists():
-        raise Exception(f"No pyproject.toml found in {pyproject_path.parent}")  # TODO: improve
+        raise Exception(
+            f"No pyproject.toml found in {pyproject_path.parent}"
+        )  # TODO: improve
 
     with open(pyproject_path, "rb") as pyproject_file:
         project_def = toml_loads(pyproject_file.read())
@@ -127,7 +145,9 @@ def collect_actions_pyproject(
         presets=finecode_config.presets, def_path=pyproject_path
     )
 
-    for action_name, action_def_raw in project_def["tool"]["finecode"].get("action", {}).items():
+    for action_name, action_def_raw in (
+        project_def["tool"]["finecode"].get("action", {}).items()
+    ):
         # TODO: handle validation errors
         action_def = ActionConfig(**action_def_raw)
         subactions: list[str] = []
@@ -171,7 +191,10 @@ def collect_actions_from_py_presets(
     all_actions: domain.AllActions = {}
     processed_presets: set[str] = set()
     presets_to_process: set[PresetToProcess] = set(
-        [PresetToProcess(source=preset.source, package_def_path=def_path) for preset in presets]
+        [
+            PresetToProcess(source=preset.source, package_def_path=def_path)
+            for preset in presets
+        ]
     )
     while len(presets_to_process) > 0:
         preset = presets_to_process.pop()
@@ -216,7 +239,9 @@ def collect_actions_from_py_presets(
 
         for action in preset_config.actions:
             if action.source is not None:
-                all_actions[action.name] = domain.Action(name=action.name, source=action.source)
+                all_actions[action.name] = domain.Action(
+                    name=action.name, source=action.source
+                )
                 root_actions.append(action.name)
             else:
                 try:
@@ -227,7 +252,9 @@ def collect_actions_from_py_presets(
                     root_actions.append(action.name)
                     all_actions[action.name] = domain.Action(
                         name=action.name,
-                        subactions=[subaction.name for subaction in action_config.subactions],
+                        subactions=[
+                            subaction.name for subaction in action_config.subactions
+                        ],
                     )
                     for subaction in action_config.subactions:
                         all_actions[subaction.name] = domain.Action(
