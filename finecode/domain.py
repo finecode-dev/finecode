@@ -2,6 +2,11 @@ from __future__ import annotations
 from pathlib import Path
 
 
+class Preset:
+    def __init__(self, source: str) -> None:
+        self.source = source
+
+
 class Action:
     # action is (collected) meta information about action in a project
     def __init__(
@@ -19,6 +24,7 @@ class Package:
         path: Path,
         subpackages: list[Package] | None = None,
         actions: list[Action] | None = None,
+        views: list[View] | None = None,
     ) -> None:
         self.name = name
         self.path = path
@@ -31,10 +37,21 @@ class Package:
         else:
             self.actions: list[Action] = []
 
+        if views is not None:
+            self.views = views
+        else:
+            self.views: list[View] = []
+
 
 RootActions = list[str]
 ActionsDict = dict[str, Action]
 AllActions = ActionsDict
+
+
+class View:
+    def __init__(self, name: str, source: str) -> None:
+        self.name = name
+        self.source = source
 
 
 __all__ = ["RootActions", "ActionsDict", "AllActions", "Action", "Package"]

@@ -2,7 +2,8 @@ from pathlib import Path
 
 from loguru import logger
 
-from .collect_actions import finecode_is_enabled_in_def, collect_actions_pyproject
+from .collect_actions import _collect_actions_in_config
+from ._read_configs import _finecode_is_enabled_in_def
 from finecode.workspace_context import WorkspaceContext
 
 
@@ -17,7 +18,7 @@ def find_package_for_file(file_path: Path, workspace_path: Path) -> Path:
     current_path = file_path
     while current_path != workspace_path:
         pyproject_path = current_path / "pyproject.toml"
-        if pyproject_path.exists() and finecode_is_enabled_in_def(
+        if pyproject_path.exists() and _finecode_is_enabled_in_def(
             def_file=pyproject_path
         ):
             return current_path
@@ -61,10 +62,12 @@ def find_package_with_action_for_file(
     current_path = file_path
     while current_path != workspace_path:
         pyproject_path = current_path / "pyproject.toml"
-        if pyproject_path.exists() and finecode_is_enabled_in_def(
+        if pyproject_path.exists() and _finecode_is_enabled_in_def(
             def_file=pyproject_path
         ):
-            _, all_actions = collect_actions_pyproject(pyproject_path=pyproject_path)
+            _, all_actions = _collect_actions_in_config(
+                pyproject_path=pyproject_path, ws_context=ws_context
+            )
             if action_name in all_actions:
                 ws_context.package_path_by_dir_and_action[dir_path][
                     action_name

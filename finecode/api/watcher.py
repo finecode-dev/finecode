@@ -3,6 +3,7 @@ from pathlib import Path
 from typing import Generator
 
 from watchdog.observers import Observer
+from watchdog.observers.api import BaseObserver
 from watchdog.events import FileSystemEventHandler
 
 
@@ -38,7 +39,9 @@ class LoggingEventHandler(FileSystemEventHandler):
 
 
 @contextmanager
-def watch_workspace_dir(dir_path: Path) -> Generator[Observer, None, None]:
+def watch_workspace_dir(
+    dir_path: Path,
+) -> Generator[BaseObserver, None, None]:
     # NOTE: watcher is not in all possible cases reliable, especially when there are a lot of
     # changes on Windows. Always provide possibility to refresh information manually if possible.
     observer = Observer()

@@ -1,12 +1,9 @@
-import os
-import site
-import re
 import importlib
 from pathlib import Path
 
-from command_runner import command_runner
 from loguru import logger
 
+from finecode.api import run_utils
 import finecode.domain as domain
 import finecode.workspace_context as workspace_context
 from .collect_actions import collect_actions
@@ -18,10 +15,7 @@ def run(
     project_root: Path,
     ws_context: workspace_context.WorkspaceContext,
 ) -> None:
-    # TODO: find def file instead of hardcoded pyproject.toml
-    root_actions, all_actions = collect_actions(
-        project_root / "pyproject.toml", ws_context=ws_context
-    )
+    root_actions, all_actions = collect_actions(project_root, ws_context=ws_context)
     if action not in root_actions:
         logger.warning(
             f"Action {action} not found. Available actions: {','.join(root_actions)}"
@@ -37,35 +31,18 @@ def __run_action(
     all_actions: dict[str, domain.Action],
     project_root: Path,
 ) -> None:
-    current_venv_path = Path(site.getsitepackages()[0]).parent.parent.parent
-    old_current_dir = os.getcwd()
-    os.chdir(project_root)
-    exit_code, output = command_runner(f"poetry env info")
-    os.chdir(old_current_dir)
-    if exit_code != 0:
-        logger.error(f"Cannot get env info in project {project_root}")
-        return
-    venv_path_match = re.search("Path:\ *(?P<venv_path>.*)\n", output)
-    if venv_path_match is None:
-        logger.error(f"Venv path not found in poetry output")
-        return
-    project_venv_path_str = venv_path_match.group("venv_path")
-    if project_venv_path_str == "NA":
-        # it can be checked whether venv exists with `poetry env list` and then either automatically
-        # activated or suggested to user to activate
-        logger.error(
-            f"No virtualenv found in {project_root}. Maybe it is not activated?"
-        )
+    current_venv_path = run_utils.get_current_venv_path()
+    try:
+        project_venv_path = run_utils.get_project_venv_path(project_root)
+    except run_utils.VenvNotFound:
         return
 
-    if current_venv_path != Path(project_venv_path_str):
+    if current_venv_path != project_venv_path:
         # TODO: check that project is managed via poetry
-        old_current_dir = os.getcwd()
-        os.chdir(project_root)
-        exit_code, output = command_runner(
-            f"poetry run python -m finecode.cli run {action.name} {apply_on.as_posix()}"
+        exit_code, output = run_utils.run_cmd_in_dir(
+            f"poetry run python -m finecode.cli run {action.name} {apply_on.as_posix()}",
+            project_root,
         )
-        os.chdir(old_current_dir)
         logger.debug(f"Output: {output}")
         if exit_code != 0:
             logger.error(f"Action execution failed: {output}")
@@ -82,16 +59,10 @@ def __run_action(
                 raise Exception(f"Action {subaction} not found")
             __run_action(subaction, apply_on, all_actions, project_root=project_root)
     elif action.source is not None:
-        cls_name = action.source.split(".")[-1]
-        module_path = ".".join(action.source.split(".")[:-1])
         logger.debug(f"Run {action.name} on {str(apply_on.absolute())}")
-
-        # TODO: handle errors
-        module = importlib.import_module(module_path)
         try:
-            action_cls = module.__dict__[cls_name]
-        except KeyError:
-            logger.error(f"Class {cls_name} not found in action module {module_path}")
+            action_cls = run_utils.import_class_by_source_str(action.source)
+        except ModuleNotFoundError:
             return
         # TODO: collect config
         config = {}
