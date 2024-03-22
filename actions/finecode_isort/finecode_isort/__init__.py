@@ -1,1 +1,1 @@
-from .action import IsortCodeAction
+from .action import IsortCodeAction, IsortCodeActionConfig

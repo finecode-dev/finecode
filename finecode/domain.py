@@ -1,5 +1,6 @@
 from __future__ import annotations
 from pathlib import Path
+from typing import Any
 
 
 class Preset:
@@ -25,6 +26,8 @@ class Package:
         subpackages: list[Package] | None = None,
         actions: list[Action] | None = None,
         views: list[View] | None = None,
+        # <action_name:config>
+        actions_configs: dict[str, dict[str, Any]] | None = None,
     ) -> None:
         self.name = name
         self.path = path
@@ -32,15 +35,18 @@ class Package:
             self.subpackages = subpackages
         else:
             self.subpackages: list[Package] = []
-        if actions is not None:
-            self.actions = actions
-        else:
-            self.actions: list[Action] = []
+        # None means actions were not collected yet
+        self.actions = actions
 
         if views is not None:
             self.views = views
         else:
             self.views: list[View] = []
+
+        if actions_configs is not None:
+            self.actions_configs = actions_configs
+        else:
+            self.actions_configs: dict[str, dict[str, Any]] = {}
 
 
 RootActions = list[str]

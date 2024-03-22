@@ -26,3 +26,7 @@ build-backend = "poetry.core.masonry.api"
 presets = [
     { source = "finecode_fine_py" }
 ]
+
+[tool.finecode.action.black.config]
+target_versions = ["PY311"]
+preview = true

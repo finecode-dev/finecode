@@ -1,1 +1,1 @@
-from .action import BlackCodeAction
+from .action import BlackCodeAction, BlackCodeActionConfig

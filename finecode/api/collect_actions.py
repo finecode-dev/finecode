@@ -1,8 +1,6 @@
 from pathlib import Path
 from typing import Any
 
-from loguru import logger
-
 import finecode.config_models as config_models
 import finecode.domain as domain
 import finecode.workspace_context as workspace_context
@@ -14,7 +12,7 @@ def collect_actions_recursively(
     try:
         root_package = ws_context.ws_packages[root_dir]
     except KeyError:
-        raise Exception('Root package not found')
+        raise Exception("Root package not found")
 
     return root_package
 
@@ -55,62 +53,67 @@ def collect_actions_recursively(
 
 
 def collect_actions(
-    package_path: Path, ws_context: workspace_context.WorkspaceContext
-) -> tuple[domain.RootActions, domain.AllActions]:
-    if package_path.as_posix() in ws_context.actions_by_package_path:
-        logger.trace(f"Found actions for {package_path.as_posix()} in context")
-        return ws_context.actions_by_package_path[package_path.as_posix()]
+    package_path: Path,
+    ws_context: workspace_context.WorkspaceContext,
+) -> list[domain.Action]:
+    # precondition: package raw config exists in ws_context if such package exists
+    try:
+        package = ws_context.ws_packages[package_path]
+    except KeyError:
+        raise ValueError(f"Package {package_path} doesn't exist")
+
+    if package.actions is not None:
+        return package.actions
 
     try:
         config = ws_context.ws_packages_raw_configs[package_path]
     except KeyError:
-        return ([], {})
-    result = _collect_actions_in_config(config)
-
-
-    ws_context.actions_by_package_path[package_path.as_posix()] = result
-    return result
+        raise Exception("First you need to parse config of package")
+    
+    actions, actions_configs = _collect_actions_in_config(config)
+    package.actions = actions
+    package.actions_configs = actions_configs
+    
+    return actions
 
 
 def _collect_actions_in_config(
     config: dict[str, Any]
-) -> tuple[domain.RootActions, domain.AllActions]:
-    root_actions: domain.RootActions = []
-    all_actions: domain.AllActions = {}
-    try:
-        finecode_config = config_models.FinecodeConfig(**config["tool"]["finecode"])
-    # TODO: handle validation error
-    except KeyError:
-        return (root_actions, all_actions)
+) -> tuple[list[domain.Action], dict[str, dict[str, Any]]]:
+    actions: list[domain.Action] = []
+    actions_configs: dict[str, dict[str, Any]] = {}
 
     for action_name, action_def_raw in (
         config["tool"]["finecode"].get("action", {}).items()
     ):
         # TODO: handle validation errors
-        action_def = config_models.ActionConfig(**action_def_raw)
-        subactions: list[str] = []
-        for subaction in action_def.subactions:
-            subactions.append(subaction.name)
-            if subaction.source is not None:
-                all_actions[subaction.name] = domain.Action(
-                    name=subaction.name, source=subaction.source
-                )
-        all_actions[action_name] = domain.Action(
-            name=action_name, subactions=subactions, source=action_def.source
-        )
-
-    for root_action in finecode_config.actions:
-        root_actions.append(root_action.name)
-        if root_action.source is not None:
-            source = root_action.source
-            subactions = []
-            all_actions[root_action.name] = domain.Action(
-                name=root_action.name, subactions=subactions, source=source
+        action_def = config_models.ActionDefinition(**action_def_raw)
+        actions.append(
+            domain.Action(
+                name=action_name,
+                subactions=[subaction.name for subaction in action_def.subactions],
+                source=action_def.source,
             )
-        else:
-            if root_action.name not in all_actions:
-                raise Exception(
-                    f"Action {root_action.name} has neither source or definition with subactions"
-                )
+        )
+        if action_def.config is not None:
+            actions_configs[action_name] = action_def.config
 
-    return (root_actions, all_actions)
+    return (actions, actions_configs)
+
+
+def get_subaction(
+    name: str, package_path: Path, ws_context: workspace_context.WorkspaceContext
+) -> domain.Action:
+    try:
+        package_raw_config = ws_context.ws_packages_raw_configs[package_path]
+    except KeyError:
+        raise ValueError("Package config not found")
+
+    try:
+        action_raw = package_raw_config["tool"]["finecode"]["action"][name]
+    except KeyError:
+        raise ValueError("Action definition not found")
+    try:
+        return domain.Action(name=name, source=action_raw["source"])
+    except ValueError:
+        raise ValueError("Action has no source")

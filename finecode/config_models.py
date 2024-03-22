@@ -1,42 +1,45 @@
+from typing import Any
 from pydantic import BaseModel
 
 
-class FinecodePresetConfig(BaseModel):
+class FinecodePresetDefinition(BaseModel):
     source: str
 
 
-class FinecodeActionConfig(BaseModel):
+class FinecodeActionDefinition(BaseModel):
     name: str
     source: str | None = None
 
 
-class FinecodeViewConfig(BaseModel):
+class FinecodeViewDefinition(BaseModel):
     name: str
     source: str
 
 
 class FinecodeConfig(BaseModel):
-    presets: list[FinecodePresetConfig] = []
-    actions: list[FinecodeActionConfig] = []
-    views: list[FinecodeViewConfig] = []
+    presets: list[FinecodePresetDefinition] = []
+    actions: list[FinecodeActionDefinition] = []
+    views: list[FinecodeViewDefinition] = []
+    action: dict[str, dict[str, Any]] = {}
 
 
-class PresetConfig(BaseModel):
-    extends: list[FinecodePresetConfig] = []
-    actions: list[FinecodeActionConfig] = []
+class PresetDefinition(BaseModel):
+    extends: list[FinecodePresetDefinition] = []
+    actions: list[FinecodeActionDefinition] = []
 
 
-class SubactionConfig(BaseModel):
+class SubactionDefinition(BaseModel):
     name: str
     source: str
 
 
-class ActionConfig(BaseModel):
+class ActionDefinition(BaseModel):
     # TODO: validate that one of both is required
     source: str | None = None
-    subactions: list[SubactionConfig] = []
+    subactions: list[SubactionDefinition] = []
+    config: dict[str, Any] | None = None
 
 
-class ViewConfig(BaseModel):
+class ViewDefinition(BaseModel):
     name: str
     source: str
