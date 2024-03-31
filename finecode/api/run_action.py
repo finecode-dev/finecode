@@ -40,13 +40,14 @@ def __run_action(
     project_root: Path,
     ws_context: workspace_context.WorkspaceContext,
 ) -> None:
-    current_venv_path = run_utils.get_current_venv_path()
+    logger.trace(f"Execute action {action.name} on {apply_on}")
     try:
-        project_venv_path = run_utils.get_project_venv_path(project_root)
-    except run_utils.VenvNotFound:
+        project_venv_path = ws_context.venv_path_by_package_path[project_root]
+    except KeyError:
+        logger.error(f"Project has no venv path: {project_root}")
         return
 
-    if current_venv_path != project_venv_path:
+    if ws_context.current_venv_path != project_venv_path:
         # TODO: check that project is managed via poetry
         exit_code, output = run_utils.run_cmd_in_dir(
             f"poetry run python -m finecode.cli run {action.name} {apply_on.as_posix()}",
@@ -102,3 +103,5 @@ def __run_action(
         logger.warning(
             f"Action {action.name} has neither source nor subactions, skip it"
         )
+        return
+    logger.trace(f"End of execution of action {action.name} on {apply_on}")

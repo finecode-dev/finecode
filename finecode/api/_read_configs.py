@@ -8,6 +8,7 @@ from command_runner import command_runner
 from loguru import logger
 
 from finecode import workspace_context, domain, config_models
+from finecode.api import run_utils
 
 
 def read_configs(ws_context: workspace_context.WorkspaceContext):
@@ -50,6 +51,14 @@ def read_configs_in_dir(
             normalize_package_config(project_def)
             ws_context.ws_packages_raw_configs[def_file.parent] = project_def
 
+            # TODO: can be parallelized
+            try:
+                project_venv_path = run_utils.get_project_venv_path(def_file.parent)
+            except run_utils.VenvNotFound:
+                logger.error(f"Failed to get project venv path in {def_file.parent}")
+                continue
+            ws_context.venv_path_by_package_path[def_file.parent] = project_venv_path
+
         path_parts = def_file.parent.relative_to(dir_path).parts
         current_package = root_package
         for part in path_parts:
@@ -85,7 +94,9 @@ def normalize_package_config(config: dict[str, Any]) -> None:
                     config["tool"]["finecode"]["action"][subaction["name"]] = {
                         "source": subaction["source"],
                         # avoid overwriting existing properties, e.g. action config
-                        **config["tool"]["finecode"]["action"].get(subaction["name"], {})
+                        **config["tool"]["finecode"]["action"].get(
+                            subaction["name"], {}
+                        ),
                     }
 
 
@@ -125,7 +136,9 @@ def read_preset_config(
         preset_toml = toml_loads(preset_toml_file.read()).value
 
     try:
-        preset_config = config_models.PresetDefinition(**preset_toml["finecode"]["preset"])
+        preset_config = config_models.PresetDefinition(
+            **preset_toml["finecode"]["preset"]
+        )
     except ValidationError as e:
         logger.error(str(preset_toml["finecode"]["preset"]) + e.json())
         return (preset_toml, None)
@@ -236,7 +249,9 @@ def _merge_package_configs(config1: dict[str, Any], config2: dict[str, Any]) -> 
                                 "config", {}
                             )
                         )
-                        tool_finecode_config1["action"][action_name]['config'] = new_action_config
+                        tool_finecode_config1["action"][action_name][
+                            "config"
+                        ] = new_action_config
                     new_action_info = action_info.update(
                         tool_finecode_config1["action"][action_name]
                     )
