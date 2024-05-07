@@ -1,3 +1,4 @@
+import asyncio
 import os
 from pathlib import Path
 
@@ -5,6 +6,7 @@ import click
 from loguru import logger
 
 import finecode.api as api
+import finecode.api.watcher as watcher
 import finecode.workspace_context as workspace_context
 
 
@@ -16,24 +18,90 @@ def cli(): ...
 def action(): ...
 
 
+async def _watch_and_run(
+    action: str,
+    apply_on: Path,
+    project_root: Path,
+    ws_context: workspace_context.WorkspaceContext,
+):
+    path_to_apply_on = apply_on
+    with watcher.watch_workspace_dir(apply_on) as watch_iterator:
+        async for change in watch_iterator:
+            logger.warning(change)
+            if change.kind == watcher.ChangeKind.DELETE:
+                ...  # TODO: stop
+            else:
+                if (
+                    change.kind == watcher.ChangeKind.RENAME
+                    or change.kind == watcher.ChangeKind.MOVE
+                ):
+                    path_to_apply_on = change.new_path
+                    assert path_to_apply_on is not None
+                else:
+                    path_to_apply_on = change.path
+                logger.trace(f"Change: {change.kind} {change.path}")
+                api.run(
+                    action=action,
+                    apply_on=path_to_apply_on,
+                    project_root=project_root,
+                    ws_context=ws_context,
+                )
+
+
+def find_project_root(
+    path: Path,
+    project_root: Path | None,
+) -> Path:
+    if project_root is not None:
+        # path provided by user has always higher priority
+        return project_root
+
+    current_path = path
+    while len(current_path.parts) > 1:
+        pyproject_path = current_path / "pyproject.toml"
+        if pyproject_path.exists():
+            return current_path
+        current_path = current_path.parent
+
+    return Path(os.getcwd())
+
+
 @action.command("run")
 @click.argument("action")
 @click.argument("apply_on", type=click.Path(exists=True))
 @click.option("-p", "project_root", type=click.Path(exists=True))
-def run_action(action: str, apply_on: str, project_root: Path | None = None) -> None:
+@click.option("-w", "watch", is_flag=True)
+def run_action(
+    action: str, apply_on: str, project_root: Path | None = None, watch: bool = False
+) -> None:
     logger.trace(f"Run action: {action} on {apply_on}")
-    if project_root is not None:
-        _project_root = project_root
-    else:
-        _project_root = Path(os.getcwd())
-    ws_context = workspace_context.WorkspaceContext([_project_root])
+
+    apply_on_path = Path(apply_on)
+    ws_dirs_paths: list[Path] = []
+    _project_root = find_project_root(apply_on_path, project_root)
+    ws_dirs_paths.append(_project_root)
+    cwd = Path(os.getcwd())
+    if _project_root != cwd:
+        # started project action from root
+        ws_dirs_paths.append(cwd)
+    ws_context = workspace_context.WorkspaceContext(ws_dirs_paths=ws_dirs_paths)
     api.read_configs(ws_context=ws_context)
-    api.run(
-        action=action,
-        apply_on=Path(apply_on),
-        project_root=_project_root,
-        ws_context=ws_context,
-    )
+    if not watch:
+        api.run(
+            action=action,
+            apply_on=apply_on_path,
+            project_root=_project_root,
+            ws_context=ws_context,
+        )
+    else:
+        asyncio.run(
+            _watch_and_run(
+                action=action,
+                apply_on=Path(apply_on),
+                project_root=_project_root,
+                ws_context=ws_context,
+            )
+        )
 
 
 @action.command("list")
@@ -92,7 +160,9 @@ def show_view(
 
     ws_context = workspace_context.WorkspaceContext([_project_root])
     api.read_configs(ws_context=ws_context)
-    api.collect_views_in_packages(list(ws_context.ws_packages.values()), ws_context=ws_context)
+    api.collect_views_in_packages(
+        list(ws_context.ws_packages.values()), ws_context=ws_context
+    )
     view_root_els = api.show_view(
         view_name=view_name, package_path=_project_root, ws_context=ws_context
     )
