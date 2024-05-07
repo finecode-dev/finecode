@@ -14,7 +14,7 @@ from finecode.api import run_utils
 def read_configs(ws_context: workspace_context.WorkspaceContext):
     # Read configs in all root directories of workspace
     logger.trace("Read configs in workspace")  # TODO: ws id?
-    for ws_dir_path in ws_context.ws_dirs_pathes:
+    for ws_dir_path in ws_context.ws_dirs_paths:
         read_configs_in_dir(dir_path=ws_dir_path, ws_context=ws_context)
     logger.trace("Reading configs in workspace finished")
 
@@ -36,7 +36,7 @@ def read_configs_in_dir(
         if def_file.name == "pyproject.toml":
             with open(def_file, "rb") as pyproject_file:
                 project_def = toml_loads(pyproject_file.read()).value
-
+            # TODO: validate that finecode is installed?
             finecode_raw_config = project_def.get("tool", {}).get("finecode", None)
             if finecode_raw_config:
                 finecode_config = config_models.FinecodeConfig(**finecode_raw_config)

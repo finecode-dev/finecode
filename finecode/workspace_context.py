@@ -8,7 +8,9 @@ import finecode.domain as domain
 
 @dataclass
 class WorkspaceContext:
-    ws_dirs_pathes: list[Path]
+    # ws directories paths - expected to be workspace root and other directories in workspace if
+    # they are outside of workspace root
+    ws_dirs_paths: list[Path]
     # tree of packages for each path in ws_dirs_pathes
     ws_packages: dict[Path, domain.Package] = field(default_factory=dict)
     # <package_path:config>

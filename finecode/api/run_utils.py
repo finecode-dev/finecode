@@ -13,14 +13,11 @@ class VenvNotFound(Exception):
 
 
 def get_project_venv_path(project_path: Path) -> Path:
-    old_current_dir = os.getcwd()
-    os.chdir(project_path)
-    exit_code, output = command_runner(f"poetry env info")
-    os.chdir(old_current_dir)
+    exit_code, output = run_cmd_in_dir("poetry env info", project_path)
     if exit_code != 0:
         logger.error(f"Cannot get env info in project {project_path}")
         raise VenvNotFound()
-    venv_path_match = re.search("Path:\ *(?P<venv_path>.*)\n", output)
+    venv_path_match = re.search(r"Path:\ *(?P<venv_path>.*)\n", output)
     if venv_path_match is None:
         logger.error(f"Venv path not found in poetry output")
         raise VenvNotFound()
@@ -44,8 +41,15 @@ def get_current_venv_path() -> Path:
 def run_cmd_in_dir(cmd: str, dir_path: Path) -> tuple[int, str]:
     old_current_dir = os.getcwd()
     os.chdir(dir_path)
+    # remove 'VIRTUAL_ENV' env variable to avoid impact of current venv if one is activated
+    old_virtual_env_value: str | None = None
+    if 'VIRTUAL_ENV' in os.environ:
+        old_virtual_env_value = os.environ['VIRTUAL_ENV']
+        del os.environ['VIRTUAL_ENV']
     exit_code, output = command_runner(cmd)
     os.chdir(old_current_dir)
+    if old_virtual_env_value is not None:
+        os.environ['VIRTUAL_ENV'] = old_virtual_env_value
     return (exit_code, output)
 
 

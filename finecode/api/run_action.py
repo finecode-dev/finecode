@@ -47,11 +47,52 @@ def __run_action(
         logger.error(f"Project has no venv path: {project_root}")
         return
 
-    if ws_context.current_venv_path != project_venv_path:
+    try:
+        project_package = ws_context.ws_packages[project_root]
+    except KeyError:
+        logger.error(f"Project package not found: {project_root}")
+        return
+
+    if project_package.actions is None:
+        logger.error("Project actions are not read yet")
+        return
+
+    # check first project package, then workspace package
+    current_venv_is_project_venv = ws_context.current_venv_path == project_venv_path
+    current_venv_is_workspace_venv = not current_venv_is_project_venv
+    action_in_project = False
+    try:
+        next(a for a in project_package.actions if a.name == action.name)
+        action_in_project = True
+    except StopIteration:
+        action_found = False
+        if current_venv_is_workspace_venv:
+            try:
+                workspace_package = ws_context.ws_packages[project_root]
+            except KeyError:
+                logger.error(f"Workspace package not found: {project_root}")
+                return
+
+            if workspace_package.actions is None:
+                logger.error("Actions in workspace package are not read yet")
+                return
+
+            try:
+                next(a for a in workspace_package.actions if a.name == action.name)
+                action_found = True
+            except StopIteration:
+                ...
+        if not action_found:
+            logger.error(
+                f"Action {action.name} not found neither in project nor in workspace"
+            )
+            return
+
+    if action_in_project and current_venv_is_workspace_venv:
         # TODO: check that project is managed via poetry
         exit_code, output = run_utils.run_cmd_in_dir(
-            f"poetry run python -m finecode.cli run {action.name} {apply_on.as_posix()}",
-            project_root,
+            f"poetry run python -m finecode.cli action run {action.name} {apply_on.absolute().as_posix()}",
+            dir_path=project_root,
         )
         logger.debug(f"Output: {output}")
         if exit_code != 0:
