@@ -1,18 +1,19 @@
 from __future__ import annotations
+
+import multiprocessing as mp
+import time
 from contextlib import contextmanager
 from dataclasses import dataclass
 from enum import Enum, auto
-import multiprocessing as mp
 from pathlib import Path
-import time
-from typing import Generator, Generic, TypeVar
 from threading import Timer
+from typing import Generator, Generic, TypeVar
 
 from loguru import logger
-from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
+from watchdog.observers import Observer
 
-import finecode.api.async_queue as async_queue
+import finecode.utils.async_proc_queue as async_queue
 
 
 @dataclass
@@ -24,9 +25,7 @@ class ChangeEvent:
 
     def __eq__(self, other: ChangeEvent) -> bool:
         return (
-            self.path == other.path
-            and self.kind == other.kind
-            and self.new_path == other.new_path
+            self.path == other.path and self.kind == other.kind and self.new_path == other.new_path
         )
 
 
@@ -70,25 +69,23 @@ class QueueingEventHandler(FileSystemEventHandler):
 
         what = "directory" if event.is_directory else "file"
         print(f"Created {what}: {event.src_path}")
-        self.queue_event(
-            ChangeEvent(path=Path(event.src_path), kind=ChangeKind.NEW)
-        )
+        self.queue_event(ChangeEvent(path=Path(event.src_path), kind=ChangeKind.NEW))
 
     def on_deleted(self, event):
         super().on_deleted(event)
 
         what = "directory" if event.is_directory else "file"
         print(f"Deleted {what}: {event.src_path}")
-        self.queue_event(
-            ChangeEvent(path=Path(event.src_path), kind=ChangeKind.DELETE)
-        )
+        self.queue_event(ChangeEvent(path=Path(event.src_path), kind=ChangeKind.DELETE))
 
     def on_modified(self, event):
         super().on_modified(event)
-
-        self.queue_event(
-            ChangeEvent(path=Path(event.src_path), kind=ChangeKind.MODIFY)
-        )
+        what = "directory" if event.is_directory else "file"
+        print(f"Modified {what}: {event.src_path}")
+        path = Path(event.src_path)
+        # TODO: generalize
+        if path.suffix == ".py":
+            self.queue_event(ChangeEvent(path=Path(event.src_path), kind=ChangeKind.MODIFY))
 
     def queue_event(self, event: ChangeEvent) -> None:
         self._event_buffer.append(event)

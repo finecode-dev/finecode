@@ -1,10 +1,13 @@
+import asyncio
 from pathlib import Path
 
 from loguru import logger
 
-from finecode.api import run_utils
 import finecode.domain as domain
 import finecode.workspace_context as workspace_context
+import finecode.workspace_manager as workspace_manager
+from finecode.api import run_utils
+
 from .collect_actions import collect_actions, get_subaction
 
 
@@ -17,9 +20,7 @@ def run(
     # TODO: optimize: find action info and collect all only if looked one was not found
     actions = collect_actions(project_root, ws_context=ws_context)
     try:
-        action_obj = next(
-            action_obj for action_obj in actions if action_obj.name == action
-        )
+        action_obj = next(action_obj for action_obj in actions if action_obj.name == action)
     except StopIteration:
         logger.warning(
             f"Action {action} not found. Available actions: {','.join([action_obj.name for action_obj in actions])}"
@@ -83,66 +84,71 @@ def __run_action(
             except StopIteration:
                 ...
         if not action_found:
-            logger.error(
-                f"Action {action.name} not found neither in project nor in workspace"
-            )
+            logger.error(f"Action {action.name} not found neither in project nor in workspace")
             return
 
     if action_in_project and current_venv_is_workspace_venv:
-        # TODO: check that project is managed via poetry
-        exit_code, output = run_utils.run_cmd_in_dir(
-            f"poetry run python -m finecode.cli action run {action.name} {apply_on.absolute().as_posix()}",
-            dir_path=project_root,
-        )
-        logger.debug(f"Output: {output}")
-        if exit_code != 0:
-            logger.error(f"Action execution failed: {output}")
-        else:
-            logger.success(f"Action {action.name} successfully executed")
-        return
-
-    if len(action.subactions) > 0:
-        # TODO: handle circular deps
-        for subaction in action.subactions:
-            try:
-                subaction_obj = get_subaction(
-                    name=subaction, package_path=project_root, ws_context=ws_context
+        if project_root in ws_context.ws_packages_extension_runners:
+            # extension runner is running for this project, send command to it
+            asyncio.run(
+                workspace_manager.run_action_in_runner(
+                    runner=ws_context.ws_packages_extension_runners[project_root],
+                    action=action,
+                    apply_on=apply_on,
                 )
-            except ValueError:
-                raise Exception(f"Action {subaction} not found")
-            __run_action(
-                subaction_obj,
-                apply_on,
-                project_root=project_root,
-                ws_context=ws_context,
             )
-    elif action.source is not None:
-        logger.debug(f"Run {action.name} on {str(apply_on.absolute())}")
-        try:
-            action_cls = run_utils.import_class_by_source_str(action.source)
-            action_config_cls = run_utils.import_class_by_source_str(
-                action.source + "Config"
+        else:
+            # no extension runner, use CLI
+
+            # TODO: check that project is managed via poetry
+            exit_code, output = run_utils.run_cmd_in_dir(
+                f"poetry run python -m finecode.cli action run {action.name} {apply_on.absolute().as_posix()}",
+                dir_path=project_root,
             )
-        except ModuleNotFoundError:
+            logger.debug(f"Output: {output}")
+            if exit_code != 0:
+                logger.error(f"Action execution failed: {output}")
+            else:
+                logger.success(f"Action {action.name} successfully executed")
             return
-
-        try:
-            action_config = ws_context.ws_packages[project_root].actions_configs[
-                action.name
-            ]
-        except KeyError:
-            action_config = {}
-
-        config = action_config_cls(**action_config)
-        action_instance = action_cls(config=config)
-        try:
-            action_instance.run(apply_on)
-        except Exception as e:
-            logger.exception(e)
-            # TODO: exit code != 0
     else:
-        logger.warning(
-            f"Action {action.name} has neither source nor subactions, skip it"
-        )
-        return
-    logger.trace(f"End of execution of action {action.name} on {apply_on}")
+        # run in current env
+        if len(action.subactions) > 0:
+            # TODO: handle circular deps
+            for subaction in action.subactions:
+                try:
+                    subaction_obj = get_subaction(
+                        name=subaction, package_path=project_root, ws_context=ws_context
+                    )
+                except ValueError:
+                    raise Exception(f"Action {subaction} not found")
+                __run_action(
+                    subaction_obj,
+                    apply_on,
+                    project_root=project_root,
+                    ws_context=ws_context,
+                )
+        elif action.source is not None:
+            logger.debug(f"Run {action.name} on {str(apply_on.absolute())}")
+            try:
+                action_cls = run_utils.import_class_by_source_str(action.source)
+                action_config_cls = run_utils.import_class_by_source_str(action.source + "Config")
+            except ModuleNotFoundError:
+                return
+
+            try:
+                action_config = ws_context.ws_packages[project_root].actions_configs[action.name]
+            except KeyError:
+                action_config = {}
+
+            config = action_config_cls(**action_config)
+            action_instance = action_cls(config=config)
+            try:
+                action_instance.run(apply_on)
+            except Exception as e:
+                logger.exception(e)
+                # TODO: exit code != 0
+        else:
+            logger.warning(f"Action {action.name} has neither source nor subactions, skip it")
+            return
+        logger.trace(f"End of execution of action {action.name} on {apply_on}")

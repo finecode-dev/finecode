@@ -7,6 +7,8 @@ from loguru import logger
 
 import finecode.api as api
 import finecode.api.watcher as watcher
+import finecode.extension_runner as extension_runner
+import finecode.workspace_manager as workspace_manager
 import finecode.workspace_context as workspace_context
 
 
@@ -119,6 +121,28 @@ def list_actions(project_root: Path | None = None) -> None:
 # TODO: action tree
 
 
+async def _start_and_run_forever(ws_root: Path) -> None:
+    ws_context = workspace_context.WorkspaceContext([ws_root])
+    await workspace_manager.start(ws_context)
+    root_package_path = Path("/home/user/Development/FineCode/finecode")
+    await _watch_and_run(
+        action='format',  # temporary for testing
+        apply_on=root_package_path,
+        project_root=root_package_path,
+        ws_context=ws_context,
+    )
+
+
+@cli.command()
+@click.option("--trace", "trace", is_flag=True)
+def start(trace: bool = False):
+    if trace:
+        _enable_trace_logging()
+
+    ws_root = Path(os.getcwd())
+    asyncio.run(_start_and_run_forever(ws_root))
+
+
 @cli.group()
 def view(): ...
 
@@ -171,13 +195,31 @@ def show_view(
 
 
 # TODO: json or similar output
-
 # TODO: print configuration
 
 
-if __name__ == "__main__":
+async def _start_runner():
+    app = extension_runner.create_extension_app()
+    try:
+        await app.run_async()
+        while True:
+            await asyncio.sleep(1)
+    finally:
+        app.stop()
+
+
+@cli.command()
+def runner():
+    asyncio.run(_start_runner())
+
+
+def _enable_trace_logging():
     import sys
 
     logger.remove()
     logger.add(sys.stderr, level="TRACE")
+
+
+if __name__ == "__main__":
+    _enable_trace_logging()
     cli()

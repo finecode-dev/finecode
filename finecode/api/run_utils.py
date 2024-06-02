@@ -27,7 +27,7 @@ def get_project_venv_path(project_path: Path) -> Path:
         # it can be checked whether venv exists with `poetry env list` and then either automatically
         # activated or suggested to user to activate
         logger.error(
-            f"No virtualenv found in {project_path}. Maybe it is not activated?"
+            f"No virtualenv found in {project_path}. Maybe it is not activated or you have wrong default env version?"
         )
         raise VenvNotFound()
 
