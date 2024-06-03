@@ -87,6 +87,7 @@ def __run_action(
             logger.error(f"Action {action.name} not found neither in project nor in workspace")
             return
 
+    ws_context.ignore_watch_paths.add(apply_on)
     if action_in_project and current_venv_is_workspace_venv:
         if project_root in ws_context.ws_packages_extension_runners:
             # extension runner is running for this project, send command to it
@@ -110,7 +111,6 @@ def __run_action(
                 logger.error(f"Action execution failed: {output}")
             else:
                 logger.success(f"Action {action.name} successfully executed")
-            return
     else:
         # run in current env
         if len(action.subactions) > 0:
@@ -134,6 +134,7 @@ def __run_action(
                 action_cls = run_utils.import_class_by_source_str(action.source)
                 action_config_cls = run_utils.import_class_by_source_str(action.source + "Config")
             except ModuleNotFoundError:
+                ws_context.ignore_watch_paths.remove(apply_on)
                 return
 
             try:
@@ -151,4 +152,5 @@ def __run_action(
         else:
             logger.warning(f"Action {action.name} has neither source nor subactions, skip it")
             return
+        ws_context.ignore_watch_paths.remove(apply_on)
         logger.trace(f"End of execution of action {action.name} on {apply_on}")

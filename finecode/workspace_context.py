@@ -22,6 +22,7 @@ class WorkspaceContext:
     ws_packages_extension_runners: dict[Path, ExtensionRunnerInfo] = field(
         default_factory=dict
     )
+    ignore_watch_paths: set[Path] = field(default_factory=set)
 
     # cache
     # <directory: <action_name: package_path>>

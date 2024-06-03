@@ -27,7 +27,7 @@ async def _watch_and_run(
     ws_context: workspace_context.WorkspaceContext,
 ):
     path_to_apply_on = apply_on
-    with watcher.watch_workspace_dir(apply_on) as watch_iterator:
+    with watcher.watch_workspace_dir(apply_on, ws_context) as watch_iterator:
         async for change in watch_iterator:
             logger.warning(change)
             if change.kind == watcher.ChangeKind.DELETE:

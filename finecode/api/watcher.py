@@ -7,13 +7,14 @@ from dataclasses import dataclass
 from enum import Enum, auto
 from pathlib import Path
 from threading import Timer
-from typing import Generator, Generic, TypeVar
+from typing import AsyncIterator, Generator, Generic, TypeVar
 
 from loguru import logger
 from watchdog.events import FileSystemEventHandler
 from watchdog.observers import Observer
 
 import finecode.utils.async_proc_queue as async_queue
+import finecode.workspace_context as workspace_context
 
 
 @dataclass
@@ -25,7 +26,9 @@ class ChangeEvent:
 
     def __eq__(self, other: ChangeEvent) -> bool:
         return (
-            self.path == other.path and self.kind == other.kind and self.new_path == other.new_path
+            self.path == other.path
+            and self.kind == other.kind
+            and self.new_path == other.new_path
         )
 
 
@@ -50,6 +53,7 @@ class QueueingEventHandler(FileSystemEventHandler):
         self._timer = Timer(0.1, self._timer_end)
         self._timer_is_running = False
         self._event_buffer: list[ChangeEvent] = []
+        self._ignore_pathes: set[Path] = set()
 
     def on_moved(self, event):
         super().on_moved(event)
@@ -84,8 +88,10 @@ class QueueingEventHandler(FileSystemEventHandler):
         print(f"Modified {what}: {event.src_path}")
         path = Path(event.src_path)
         # TODO: generalize
-        if path.suffix == ".py":
-            self.queue_event(ChangeEvent(path=Path(event.src_path), kind=ChangeKind.MODIFY))
+        if path.suffix == ".py" and path not in self._ignore_pathes:
+            self.queue_event(
+                ChangeEvent(path=Path(event.src_path), kind=ChangeKind.MODIFY)
+            )
 
     def queue_event(self, event: ChangeEvent) -> None:
         self._event_buffer.append(event)
@@ -148,19 +154,34 @@ def run_observer(event_queue: async_queue.AsyncQueue, dir_path: Path) -> None:
         observer.join()
 
 
+async def filter_ignore_paths(
+    ignore_paths: set[Path], iterator: AsyncQueueIterator[ChangeEvent]
+) -> AsyncIterator[ChangeEvent]:
+    async for event in iterator:
+        if event.path in ignore_paths:
+            continue
+        else:
+            yield event
+
+
 @contextmanager
 def watch_workspace_dir(
     dir_path: Path,
-) -> Generator[AsyncQueueIterator[ChangeEvent], None, None]:
+    ws_context: workspace_context.WorkspaceContext,
+) -> Generator[AsyncIterator[ChangeEvent], None, None]:
     # NOTE: watcher is not in all possible cases reliable, especially when there are a lot of
     # changes on Windows. Always provide possibility to refresh information manually if possible.
     event_queue = async_queue.create_async_process_queue()
     event_queue_iterator = AsyncQueueIterator(event_queue)
 
+    filtered_event_queue_iterator = filter_ignore_paths(
+        ws_context.ignore_watch_paths, event_queue_iterator
+    )
+
     try:
         p = mp.Process(target=run_observer, args=(event_queue, dir_path))
         p.start()
-        yield event_queue_iterator
+        yield filtered_event_queue_iterator
     finally:
         # TODO: send sig
         p.join()
