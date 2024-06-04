@@ -27,7 +27,7 @@ async def _watch_and_run(
     ws_context: workspace_context.WorkspaceContext,
 ):
     path_to_apply_on = apply_on
-    with watcher.watch_workspace_dir(apply_on, ws_context) as watch_iterator:
+    with watcher.watch_workspace_dirs(ws_context) as watch_iterator:
         async for change in watch_iterator:
             logger.warning(change)
             if change.kind == watcher.ChangeKind.DELETE:
@@ -96,14 +96,15 @@ def run_action(
             ws_context=ws_context,
         )
     else:
-        asyncio.run(
-            _watch_and_run(
-                action=action,
-                apply_on=Path(apply_on),
-                project_root=_project_root,
-                ws_context=ws_context,
-            )
-        )
+        ...  # TODO: restore
+        # asyncio.run(
+        #     _watch_and_run(
+        #         action=action,
+        #         apply_on=Path(apply_on),
+        #         project_root=_project_root,
+        #         ws_context=ws_context,
+        #     )
+        # )
 
 
 @action.command("list")

@@ -2,12 +2,12 @@ import os
 from pathlib import Path
 from typing import Any, NamedTuple
 
-from pydantic import ValidationError
-from tomlkit import loads as toml_loads
 from command_runner import command_runner
 from loguru import logger
+from pydantic import ValidationError
+from tomlkit import loads as toml_loads
 
-from finecode import workspace_context, domain, config_models
+from finecode import config_models, domain, workspace_context
 from finecode.api import run_utils
 
 
@@ -19,9 +19,7 @@ def read_configs(ws_context: workspace_context.WorkspaceContext):
     logger.trace("Reading configs in workspace finished")
 
 
-def read_configs_in_dir(
-    dir_path: Path, ws_context: workspace_context.WorkspaceContext
-) -> None:
+def read_configs_in_dir(dir_path: Path, ws_context: workspace_context.WorkspaceContext) -> None:
     # Find all packages, read their configs and save in ws context. Resolve presets and all 'source'
     # properties
     logger.trace(f"Read configs in {dir_path}")
@@ -41,9 +39,7 @@ def read_configs_in_dir(
             if finecode_raw_config:
                 finecode_config = config_models.FinecodeConfig(**finecode_raw_config)
                 new_config = collect_config_from_py_presets(
-                    presets_sources=[
-                        preset.source for preset in finecode_config.presets
-                    ],
+                    presets_sources=[preset.source for preset in finecode_config.presets],
                     def_path=def_file,
                 )
                 _merge_package_configs(project_def, new_config)
@@ -64,14 +60,10 @@ def read_configs_in_dir(
         for part in path_parts:
             try:
                 current_package = next(
-                    package
-                    for package in current_package.subpackages
-                    if package.name == part
+                    package for package in current_package.subpackages if package.name == part
                 )
             except StopIteration:
-                new_package = domain.Package(
-                    name=part, path=current_package.path / part
-                )
+                new_package = domain.Package(name=part, path=current_package.path / part)
                 current_package.subpackages.append(new_package)
                 current_package = new_package
 
@@ -87,16 +79,11 @@ def normalize_package_config(config: dict[str, Any]) -> None:
             for subaction in action.get("subactions", []):
                 # each action should be declared as 'tool.finecode.action.<name>', but we allow
                 # to set source directly in list of subactions to improve usability
-                if (
-                    isinstance(subaction, dict)
-                    and subaction.get("source", None) is not None
-                ):
+                if isinstance(subaction, dict) and subaction.get("source", None) is not None:
                     config["tool"]["finecode"]["action"][subaction["name"]] = {
                         "source": subaction["source"],
                         # avoid overwriting existing properties, e.g. action config
-                        **config["tool"]["finecode"]["action"].get(
-                            subaction["name"], {}
-                        ),
+                        **config["tool"]["finecode"]["action"].get(subaction["name"], {}),
                     }
 
 
@@ -136,9 +123,7 @@ def read_preset_config(
         preset_toml = toml_loads(preset_toml_file.read()).value
 
     try:
-        preset_config = config_models.PresetDefinition(
-            **preset_toml["finecode"]["preset"]
-        )
+        preset_config = config_models.PresetDefinition(**preset_toml["finecode"]["preset"])
     except ValidationError as e:
         logger.error(str(preset_toml["finecode"]["preset"]) + e.json())
         return (preset_toml, None)
@@ -154,9 +139,7 @@ def read_preset_config(
     return (preset_toml, preset_config)
 
 
-def collect_config_from_py_presets(
-    presets_sources: list[str], def_path: Path
-) -> dict[str, Any]:
+def collect_config_from_py_presets(presets_sources: list[str], def_path: Path) -> dict[str, Any]:
     config: dict[str, Any] = {}
     processed_presets: set[str] = set()
     presets_to_process: set[PresetToProcess] = set(
@@ -245,13 +228,9 @@ def _merge_package_configs(config1: dict[str, Any], config2: dict[str, Any]) -> 
                     # action with the same name, merge
                     if "config" in action_info:
                         new_action_config = action_info.get("config", {}).update(
-                            tool_finecode_config1["action"][action_name].get(
-                                "config", {}
-                            )
+                            tool_finecode_config1["action"][action_name].get("config", {})
                         )
-                        tool_finecode_config1["action"][action_name][
-                            "config"
-                        ] = new_action_config
+                        tool_finecode_config1["action"][action_name]["config"] = new_action_config
                     new_action_info = action_info.update(
                         tool_finecode_config1["action"][action_name]
                     )
@@ -269,11 +248,7 @@ def _merge_preset_configs(config1: dict[str, Any], config2: dict[str, Any]) -> N
     new_actions = config2.get("finecode", {}).get("preset", {}).get("actions", None)
     new_views = config2.get("finecode", {}).get("preset", {}).get("views", None)
     new_actions_configs = config2.get("finecode", {}).get("action", None)
-    if (
-        new_actions is not None
-        or new_views is not None
-        or new_actions_configs is not None
-    ):
+    if new_actions is not None or new_views is not None or new_actions_configs is not None:
         if not "finecode" in config1:
             config1["finecode"] = {}
         if not "preset" in config1["finecode"]:

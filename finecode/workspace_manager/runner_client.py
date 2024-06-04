@@ -1,5 +1,5 @@
-from modapp.client import Client
 from modapp.channels.aiohttp import AioHttpChannel
+from modapp.client import Client
 from modapp.converters.json import JsonConverter
 from modapp.validators.dataclass import DataclassValidator
 

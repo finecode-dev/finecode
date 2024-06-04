@@ -140,10 +140,11 @@ class AsyncQueueIterator(Generic[QueueElementType]):
         return result
 
 
-def run_observer(event_queue: async_queue.AsyncQueue, dir_path: Path) -> None:
+def run_observer(event_queue: async_queue.AsyncQueue, dir_paths: list[Path]) -> None:
     observer = Observer()
     event_handler = QueueingEventHandler(event_queue=event_queue)
-    observer.schedule(event_handler, dir_path, recursive=True)
+    for dir_path in dir_paths:
+        observer.schedule(event_handler, dir_path, recursive=True)
     observer.start()
     logger.trace(f"Start watcher on {dir_path}")
     try:
@@ -165,10 +166,12 @@ async def filter_ignore_paths(
 
 
 @contextmanager
-def watch_workspace_dir(
-    dir_path: Path,
+def watch_workspace_dirs(
     ws_context: workspace_context.WorkspaceContext,
 ) -> Generator[AsyncIterator[ChangeEvent], None, None]:
+    # optimization possibility: watch only those directories, in which there are watch-triggered
+    # actions
+
     # NOTE: watcher is not in all possible cases reliable, especially when there are a lot of
     # changes on Windows. Always provide possibility to refresh information manually if possible.
     event_queue = async_queue.create_async_process_queue()
@@ -179,7 +182,7 @@ def watch_workspace_dir(
     )
 
     try:
-        p = mp.Process(target=run_observer, args=(event_queue, dir_path))
+        p = mp.Process(target=run_observer, args=(event_queue, ws_context.dirs_paths))
         p.start()
         yield filtered_event_queue_iterator
     finally:

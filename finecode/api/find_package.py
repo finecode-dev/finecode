@@ -30,18 +30,27 @@ def find_package_for_file(file_path: Path, workspace_path: Path) -> Path:
 def find_package_with_action_for_file(
     file_path: Path,
     action_name: str,
-    workspace_path: Path,
+    workspace_path: Path | None,
     ws_context: WorkspaceContext,
 ) -> Path:
     logger.trace(
         f"Find package with action {action_name} for file {file_path.as_posix()}"
     )
-    try:
-        file_path.relative_to(workspace_path)
-    except ValueError:
-        raise ValueError(
-            f"File path {file_path} is not inside of workspace {workspace_path}"
-        )
+    if workspace_path is None:
+        for ws_dir in ws_context.ws_dirs_paths:
+            try:
+                file_path.relative_to(ws_dir)
+                workspace_path = ws_dir
+                break
+            except ValueError:
+                ...
+    else:
+        try:
+            file_path.relative_to(workspace_path)
+        except ValueError:
+            raise ValueError(
+                f"File path {file_path} is not inside of workspace {workspace_path}"
+            )
 
     dir_path = (
         file_path.as_posix() if file_path.is_dir() else file_path.parent.as_posix()
