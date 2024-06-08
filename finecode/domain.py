@@ -47,6 +47,8 @@ class Package:
         else:
             self.actions_configs: dict[str, dict[str, Any]] = {}
 
+    def __str__(self) -> str:
+        return f'Package(name="{self.name}", path="{self.path}")'
 
 RootActions = list[str]
 ActionsDict = dict[str, Action]

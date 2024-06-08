@@ -60,7 +60,7 @@ def collect_actions(
     try:
         package = ws_context.ws_packages[package_path]
     except KeyError:
-        raise ValueError(f"Package {package_path} doesn't exist")
+        raise ValueError(f"Package {package_path} doesn't exist. Existing packages: {ws_context.ws_packages}")
 
     if package.actions is not None:
         return package.actions

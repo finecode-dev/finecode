@@ -4,7 +4,6 @@ from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING
-import queue
 import threading
 import concurrent.futures as futures
 
@@ -17,7 +16,7 @@ import finecode.workspace_context as workspace_context
 import finecode.api as api
 import finecode.domain as domain
 import finecode.extension_runner.schemas as schemas
-from finecode.workspace_manager.client.finecode.extension_runner import (
+from finecode.workspace_manager.runner_client.finecode.extension_runner import (
     ExtensionRunnerService,
 )
 from finecode.workspace_manager.runner_client import create_client

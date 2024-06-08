@@ -2,6 +2,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from loguru import logger
 from black import reformat_one, WriteBack
 from black.concurrency import reformat_many
 from black.mode import Mode, TargetVersion
@@ -30,6 +31,7 @@ class BlackCodeActionConfig(CodeActionConfig):
 
 class BlackCodeAction(CodeFormatAction[BlackCodeActionConfig]):
     def run(self, apply_on: Path) -> FormatRunResult:
+        logger.trace('black start')
         report = self.get_report()
         reformat_one(
             src=apply_on,
@@ -38,6 +40,7 @@ class BlackCodeAction(CodeFormatAction[BlackCodeActionConfig]):
             mode=self.get_mode(),
             report=report,
         )
+        logger.trace('black end')
         return FormatRunResult(changed=report.change_count > 0, code=None)
 
     def run_on_many(self, apply_on: list[Path]) -> dict[Path, FormatRunResult]:
@@ -73,3 +76,11 @@ class BlackCodeAction(CodeFormatAction[BlackCodeActionConfig]):
 
     def get_report(self) -> Report:
         return Report(check=False, diff=False, quiet=True, verbose=True)
+
+
+if __name__ == "__main__":
+    import time
+    a = BlackCodeAction(BlackCodeActionConfig())
+    s = time.time()
+    a.run(Path("/home/user/Development/FineCode/finecode/finecode/cli.py"))
+    print("time: ", time.time() - s)
