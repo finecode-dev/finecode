@@ -182,7 +182,7 @@ def watch_workspace_dirs(
     )
 
     try:
-        p = mp.Process(target=run_observer, args=(event_queue, ws_context.dirs_paths))
+        p = mp.Process(target=run_observer, args=(event_queue, ws_context.ws_dirs_paths))
         p.start()
         yield filtered_event_queue_iterator
     finally:

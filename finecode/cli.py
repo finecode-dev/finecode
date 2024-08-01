@@ -8,8 +8,8 @@ from loguru import logger
 import finecode.api as api
 import finecode.api.watcher as watcher
 import finecode.extension_runner as extension_runner
-import finecode.workspace_manager as workspace_manager
 import finecode.workspace_context as workspace_context
+import finecode.workspace_manager as workspace_manager
 
 
 @click.group()
@@ -124,7 +124,7 @@ def list_actions(project_root: Path | None = None) -> None:
 
 async def _start_and_run_forever(ws_root: Path) -> None:
     ws_context = workspace_context.WorkspaceContext([ws_root])
-    await workspace_manager.start(ws_context)
+    await workspace_manager.start()
     root_package_path = Path("/home/user/Development/FineCode/finecode")
     await _watch_and_run(
         action='format',  # temporary for testing
@@ -142,6 +142,17 @@ def start(trace: bool = False):
 
     ws_root = Path(os.getcwd())
     asyncio.run(_start_and_run_forever(ws_root))
+
+
+@cli.command()
+@click.option("--trace", "trace", is_flag=True)
+def start_api(trace: bool = False):
+    if trace:
+        _enable_trace_logging()
+
+    loop = asyncio.get_event_loop()
+    loop.run_until_complete(workspace_manager.start())
+    loop.run_forever()
 
 
 @cli.group()
@@ -185,9 +196,7 @@ def show_view(
 
     ws_context = workspace_context.WorkspaceContext([_project_root])
     api.read_configs(ws_context=ws_context)
-    api.collect_views_in_packages(
-        list(ws_context.ws_packages.values()), ws_context=ws_context
-    )
+    api.collect_views_in_packages(list(ws_context.ws_packages.values()), ws_context=ws_context)
     view_root_els = api.show_view(
         view_name=view_name, package_path=_project_root, ws_context=ws_context
     )

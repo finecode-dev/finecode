@@ -1,0 +1,51 @@
+syntax = "proto3";
+
+package finecode.workspace_manager;
+
+message AddWorkspaceDirRequest {
+    string dir_path = 1;
+}
+
+message AddWorkspaceDirResponse {
+}
+
+message DeleteWorkspaceDirRequest {
+    string dir_path = 1;
+}
+
+message DeleteWorkspaceDirResponse {
+    
+}
+
+message ListActionsRequest {
+    
+    }
+
+message NormalizedAction {
+    string name = 1;
+    string project_path = 2;
+    repeated string subactions = 3;
+    bool is_package = 4;
+}
+
+message ListActionsResponse {
+    string root_action = 1;
+    map<string, NormalizedAction> actions_by_path = 2;
+}
+
+message RunActionRequest {
+    string action_name = 1;
+    string apply_on = 2;
+    // TODO: package_path ?
+}
+
+message RunActionResponse {
+}
+
+service WorkspaceManagerService {
+    rpc AddWorkspaceDir(AddWorkspaceDirRequest) returns (AddWorkspaceDirResponse);
+    rpc DeleteWorkspaceDir(DeleteWorkspaceDirRequest) returns (DeleteWorkspaceDirResponse);
+
+    rpc ListActions(ListActionsRequest) returns (ListActionsResponse);
+    rpc RunAction(RunActionRequest) returns (RunActionResponse);
+}

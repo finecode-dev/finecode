@@ -1,6 +1,3 @@
-import socket
-from contextlib import closing
-
 from modapp import Modapp
 from modapp.converters.json import JsonConverter
 
@@ -10,19 +7,12 @@ from modapp.transports.web_socketify_config import WebSocketifyTransportConfig
 from .api_routes import router
 
 
-def create_extension_app() -> Modapp:
-    # find free port
-    with closing(socket.socket(socket.AF_INET, socket.SOCK_STREAM)) as s:
-        s.bind(("localhost", 0))
-        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        free_port = s.getsockname()[1]
-    
-    # create modapp app
+def create_manager_app() -> Modapp:
     app = Modapp(
         set(
             [
                 WebSocketifyTransport(
-                    config=WebSocketifyTransportConfig(port=free_port),
+                    config=WebSocketifyTransportConfig(),
                     converter=JsonConverter(),
                 )
             ],

@@ -1,9 +1,9 @@
 from dataclasses import dataclass
-from modapp.base_model import BaseModel
+from modapp.models.dataclass import DataclassModel
 
 
 @dataclass
-class UpdateConfigRequest(BaseModel):
+class UpdateConfigRequest(DataclassModel):
     working_dir: str # Path?
     config: dict[str, str]
 
@@ -11,12 +11,12 @@ class UpdateConfigRequest(BaseModel):
 
 
 @dataclass
-class UpdateConfigResponse(BaseModel):
+class UpdateConfigResponse(DataclassModel):
     __modapp_path__ = "finecode.extension_runner.UpdateConfigResponse"
 
 
 @dataclass
-class RunActionRequest(BaseModel):
+class RunActionRequest(DataclassModel):
     action_name: str
     apply_on: str # Path?
     
@@ -24,5 +24,5 @@ class RunActionRequest(BaseModel):
 
 
 @dataclass
-class RunActionResponse(BaseModel):
+class RunActionResponse(DataclassModel):
     __modapp_path__ = "finecode.extension_runner.RunActionResponse"
