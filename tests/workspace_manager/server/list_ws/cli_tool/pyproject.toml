@@ -1,0 +1,25 @@
+[tool.poetry]
+name = "cli-tool"
+version = "0.1.0"
+description = ""
+authors = ["Vladyslav Hnatiuk <aders1234@gmail.com>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.10"
+
+[tool.poetry.group.dev.dependencies]
+finecode = { path = "../../../../../" }
+finecode_black = { path = "../../../../../actions/finecode_black" }
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.finecode]
+actions = [
+    { name = "format" }
+]
+
+[tool.finecode.action.format]
+subactions = [{ name = "black", source = "finecode.actions.black" }]

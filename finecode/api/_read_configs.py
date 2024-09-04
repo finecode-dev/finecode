@@ -23,7 +23,6 @@ def read_configs_in_dir(dir_path: Path, ws_context: workspace_context.WorkspaceC
     # Find all packages, read their configs and save in ws context. Resolve presets and all 'source'
     # properties
     logger.trace(f"Read configs in {dir_path}")
-    root_package = domain.Package(name=dir_path.name, path=dir_path)
     def_files_generator = dir_path.rglob("*")
     for def_file in def_files_generator:
         if def_file.name not in {
@@ -54,20 +53,11 @@ def read_configs_in_dir(dir_path: Path, ws_context: workspace_context.WorkspaceC
                 logger.error(f"Failed to get project venv path in {def_file.parent}")
                 continue
             ws_context.venv_path_by_package_path[def_file.parent] = project_venv_path
+        else:
+            logger.info(f'Package definition of type {def_file.name} is not supported yet')
+            continue
 
-        path_parts = def_file.parent.relative_to(dir_path).parts
-        current_package = root_package
-        for part in path_parts:
-            try:
-                current_package = next(
-                    package for package in current_package.subpackages if package.name == part
-                )
-            except StopIteration:
-                new_package = domain.Package(name=part, path=current_package.path / part)
-                current_package.subpackages.append(new_package)
-                current_package = new_package
-
-    ws_context.ws_packages[dir_path] = root_package
+        ws_context.ws_packages[def_file.parent] = domain.Package(name=def_file.parent.name, path=def_file.parent)
 
 
 def normalize_package_config(config: dict[str, Any]) -> None:

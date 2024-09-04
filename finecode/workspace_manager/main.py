@@ -60,11 +60,11 @@ async def start_in_ws_context(ws_context: workspace_context.WorkspaceContext) ->
 async def handle_runners_lifecycle(
     extension_runners: list[ExtensionRunnerInfo], ws_context: workspace_context.WorkspaceContext
 ):
-    ws_dirs = ws_context.ws_dirs_paths.copy()
     try:
         while True:
             await ws_context.ws_dirs_paths_changed.wait()
-            new_dirs, deleted_dirs = _find_changed_dirs(ws_context.ws_dirs_paths, ws_dirs)
+            ws_context.ws_dirs_paths_changed.clear()
+            new_dirs, deleted_dirs = _find_changed_dirs(ws_context.ws_dirs_paths, [runner.working_dir_path for runner in extension_runners])
             for deleted_dir in deleted_dirs:
                 try:
                     runner_to_delete = next(runner for runner in extension_runners if runner.working_dir_path == deleted_dir)
@@ -92,7 +92,7 @@ def _find_changed_dirs(new_dirs: list[Path], old_dirs: list[Path]) -> tuple[list
         if old_dir not in new_dirs:
             deleted_dirs.append(old_dir)
 
-    return added_dirs, old_dirs
+    return added_dirs, deleted_dirs
 
 
 async def start_extension_runner(
@@ -123,6 +123,7 @@ async def start_extension_runner(
         # method poller is required to get stdout in threaded mode
         method="poller",
         stop_on=partial(should_stop, runner_info.stop_event),
+        timeout=None
     )  # type: ignore
 
     asyncio.create_task(extension_runner_log_handler(runner_info))

@@ -146,7 +146,7 @@ def run_observer(event_queue: async_queue.AsyncQueue, dir_paths: list[Path]) -> 
     for dir_path in dir_paths:
         observer.schedule(event_handler, dir_path, recursive=True)
     observer.start()
-    logger.trace(f"Start watcher on {dir_path}")
+    logger.trace(f"Start watcher on {dir_paths}")
     try:
         while True:
             time.sleep(1)

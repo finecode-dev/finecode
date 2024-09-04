@@ -1,62 +1,77 @@
+from __future__ import annotations
+
 from dataclasses import dataclass
+from enum import IntEnum
 from modapp.models.dataclass import DataclassModel
 
 
 @dataclass
-class AddWorkspaceDirRequest(DataclassModel):
+class BaseModel(DataclassModel):
+    __model_config__ = {**DataclassModel.__model_config__, "camelCase": True}
+
+
+@dataclass
+class AddWorkspaceDirRequest(BaseModel):
     dir_path: str
     
     __modapp_path__ = "finecode.workspace_manager.AddWorkspaceDirRequest"
 
 
 @dataclass
-class AddWorkspaceDirResponse(DataclassModel):
+class AddWorkspaceDirResponse(BaseModel):
     __modapp_path__ = "finecode.workspace_manager.AddWorkspaceDirResponse"
 
 
 @dataclass
-class DeleteWorkspaceDirRequest(DataclassModel):
+class DeleteWorkspaceDirRequest(BaseModel):
     dir_path: str
 
     __modapp_path__ = "finecode.workspace_manager.DeleteWorkspaceDirRequest"
 
 
 @dataclass
-class DeleteWorkspaceDirResponse(DataclassModel):
+class DeleteWorkspaceDirResponse(BaseModel):
     __modapp_path__ = "finecode.workspace_manager.DeleteWorkspaceDirResponse"
 
 
 @dataclass
-class ListActionsRequest(DataclassModel):
+class ListActionsRequest(BaseModel):
+    parent_node_id: str = ""
+    
     __modapp_path__ = "finecode.workspace_manager.ListActionsRequest"
 
 
 @dataclass
-class NormalizedAction:
+class ActionTreeNode(BaseModel):
+    node_id: str
     name: str
-    project_path: str
-    subactions: list[str]
-    is_package: bool
+    node_type: NodeType
+    subnodes: list[ActionTreeNode]
     
-    __modapp_path__ = "finecode.workspace_manager.NormalizedAction"
+    class NodeType(IntEnum):
+        DIRECTORY = 0
+        PACKAGE = 1
+        ACTION = 2
+        PRESET = 3
+
+    __modapp_path__ = "finecode.workspace_manager.ActionTreeNode"
 
 
 @dataclass
-class ListActionsResponse(DataclassModel):
-    root_action: str
-    actions_by_path: dict[str, NormalizedAction]
+class ListActionsResponse(BaseModel):
+    nodes: list[ActionTreeNode]
     
     __modapp_path__ = "finecode.workspace_manager.ListActionsResponse"
 
 
 @dataclass
-class RunActionRequest(DataclassModel):
-    action_name: str
+class RunActionRequest(BaseModel):
+    action_node_id: str
     apply_on: str # Path?
     
     __modapp_path__ = "finecode.workspace_manager.RunActionRequest"
 
 
 @dataclass
-class RunActionResponse(DataclassModel):
+class RunActionResponse(BaseModel):
     __modapp_path__ = "finecode.workspace_manager.RunActionResponse"

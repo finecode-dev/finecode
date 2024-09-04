@@ -3,7 +3,12 @@ from modapp.models.dataclass import DataclassModel
 
 
 @dataclass
-class UpdateConfigRequest(DataclassModel):
+class BaseModel(DataclassModel):
+    ...
+
+
+@dataclass
+class UpdateConfigRequest(BaseModel):
     working_dir: str # Path?
     config: dict[str, str]
 
@@ -11,12 +16,12 @@ class UpdateConfigRequest(DataclassModel):
 
 
 @dataclass
-class UpdateConfigResponse(DataclassModel):
+class UpdateConfigResponse(BaseModel):
     __modapp_path__ = "finecode.extension_runner.UpdateConfigResponse"
 
 
 @dataclass
-class RunActionRequest(DataclassModel):
+class RunActionRequest(BaseModel):
     action_name: str
     apply_on: str # Path?
     
@@ -24,5 +29,5 @@ class RunActionRequest(DataclassModel):
 
 
 @dataclass
-class RunActionResponse(DataclassModel):
+class RunActionResponse(BaseModel):
     __modapp_path__ = "finecode.extension_runner.RunActionResponse"

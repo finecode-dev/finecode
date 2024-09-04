@@ -86,3 +86,15 @@ def find_package_with_action_for_file(
 
     ws_context.package_path_by_dir_and_action[dir_path][action_name] = workspace_path
     return workspace_path
+
+
+def is_package(dir_path: Path) -> bool:
+    pyproject_path = dir_path / 'pyproject.toml'
+    if pyproject_path.exists():
+        return True
+    
+    requirements_path = dir_path / 'requirements.txt'
+    if requirements_path.exists():
+        return True
+    
+    return False
