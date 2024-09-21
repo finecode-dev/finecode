@@ -27,6 +27,7 @@ class Package:
         views: list[View] | None = None,
         # <action_name:config>
         actions_configs: dict[str, dict[str, Any]] | None = None,
+        root_actions: list[str] | None = None,
     ) -> None:
         self.name = name
         self.path = path
@@ -36,6 +37,10 @@ class Package:
             self.subpackages: list[Package] = []
         # None means actions were not collected yet
         self.actions = actions
+        if root_actions is not None:
+            self.root_actions = root_actions
+        else:
+            self.root_actions = []
 
         if views is not None:
             self.views = views

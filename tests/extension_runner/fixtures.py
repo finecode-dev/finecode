@@ -7,14 +7,14 @@ from modapp.converters.json import JsonConverter
 import pytest
 
 import finecode.workspace_manager.main as workspace_manager_main
-from finecode.workspace_manager.server.api_routes import router
-from finecode.workspace_manager.server.api_routes import ws_context as global_ws_context
+from finecode.extension_runner.api_routes import router
+from finecode.extension_runner.api_routes import ws_context as global_ws_context
 
 
 pytestmark = pytest.mark.anyio
 
 
-def _create_manager_app() -> Modapp:
+def _create_runner_app() -> Modapp:
     app = Modapp(
         set(
             [
@@ -31,8 +31,8 @@ def _create_manager_app() -> Modapp:
 
 
 @pytest.fixture
-async def client_channel():
-    app = _create_manager_app()
+async def runner_client_channel():
+    app = _create_runner_app()
     json_converter = JsonConverter()
     try:
         inmemory_transport = next(

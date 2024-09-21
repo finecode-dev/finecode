@@ -23,7 +23,6 @@ class WorkspaceContext:
     ws_packages_raw_configs: dict[Path, dict[str, Any]] = field(default_factory=dict)
     ws_packages_extension_runners: dict[Path, ExtensionRunnerInfo] = field(default_factory=dict)
     ignore_watch_paths: set[Path] = field(default_factory=set)
-    ws_dirs_paths_changed: asyncio.Event = field(default_factory=asyncio.Event)
 
     # cache
     # <directory: <action_name: package_path>>

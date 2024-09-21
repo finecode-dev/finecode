@@ -73,7 +73,8 @@ def collect_actions(
     actions, actions_configs = _collect_actions_in_config(config)
     # TODO: validate
     first_level_actions_raw = [action_raw['name'] for action_raw in config["tool"]["finecode"].get("actions", [])]
-    package.actions = [action for action in actions if action.name in first_level_actions_raw]
+    package.root_actions = first_level_actions_raw
+    package.actions = actions
     package.actions_configs = actions_configs
     
     return actions

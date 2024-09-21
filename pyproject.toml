@@ -25,7 +25,7 @@ janus = { git ="https://github.com/Aksem/janus.git" }
 [tool.poetry.group.dev.dependencies]
 pytest = "^7.4.3"
 finecode_fine_py = { path = "presets/finecode_fine_py" }
-pytest-asyncio = "^0.23.8"
+anyio = "^4.4.0"
 
 [build-system]
 requires = ["poetry-core"]

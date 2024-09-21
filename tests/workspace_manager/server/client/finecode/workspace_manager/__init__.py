@@ -24,6 +24,15 @@ class WorkspaceManagerServiceCls:
             request,
             AddWorkspaceDirResponse,
         )
+    
+    async def run_action(
+        self, channel: BaseChannel, request: RunActionRequest
+    ) -> RunActionResponse:
+        return await channel.send_unary_unary(
+            "/finecode.workspace_manager.WorkspaceManagerService/RunAction",
+            request,
+            RunActionResponse,
+        )
 
 
 WorkspaceManagerService = WorkspaceManagerServiceCls()
@@ -68,3 +77,16 @@ class AddWorkspaceDirRequest(BaseModel):
 @dataclass
 class AddWorkspaceDirResponse(BaseModel):
     __modapp_path__ = "finecode.workspace_manager.AddWorkspaceDirResponse"
+
+
+@dataclass
+class RunActionRequest(BaseModel):
+    action_node_id: str
+    apply_on: str # Path?
+    
+    __modapp_path__ = "finecode.workspace_manager.RunActionRequest"
+
+
+@dataclass
+class RunActionResponse(BaseModel):
+    __modapp_path__ = "finecode.workspace_manager.RunActionResponse"

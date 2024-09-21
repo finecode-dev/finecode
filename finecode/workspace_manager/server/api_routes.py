@@ -3,6 +3,7 @@ from loguru import logger
 from modapp import APIRouter
 from modapp.errors import NotFoundError, ServerError
 from .endpoints import finecode
+import finecode.workspace_manager.main as manager_main
 import finecode.workspace_manager.server.schemas as schemas
 import finecode.api as api
 import finecode.workspace_context as workspace_context
@@ -18,7 +19,7 @@ async def add_workspace_dir(
     dir_path = Path(request.dir_path)
     ws_context.ws_dirs_paths.append(dir_path)
     api.read_configs_in_dir(dir_path=dir_path, ws_context=ws_context)
-    ws_context.ws_dirs_paths_changed.set()
+    await manager_main.update_runners(ws_context)
     return schemas.AddWorkspaceDirResponse()
 
 
@@ -27,7 +28,7 @@ async def delete_workspace_dir(
     request: schemas.DeleteWorkspaceDirRequest,
 ) -> schemas.DeleteWorkspaceDirResponse:
     ws_context.ws_dirs_paths.remove(Path(request.dir_path))
-    ws_context.ws_dirs_paths_changed.set()
+    await manager_main.update_runners(ws_context)
     return schemas.DeleteWorkspaceDirResponse()
 
 
@@ -54,10 +55,13 @@ def _dir_to_tree_node(dir_path: Path, ws_context: workspace_context.WorkspaceCon
                 api.collect_actions.collect_actions(package_path=package.path, ws_context=ws_context)
             assert package.actions is not None
             for action in package.actions:
+                if action.name not in package.root_actions:
+                    continue
+
                 node_id = f'{package.path.as_posix()}::{action.name}'
                 subnodes.append(schemas.ActionTreeNode(node_id=node_id, name=action.name, node_type=schemas.ActionTreeNode.NodeType.ACTION, subnodes=[]))
                 ws_context.cached_actions_by_id[node_id] = workspace_context.CachedAction(action_id=node_id, package_path=package.path, action_name=action.name)
-        # TODO: presets
+        # TODO: presets?
     else:
         for dir_item in dir_path.iterdir():
             if dir_item.is_dir():
@@ -108,7 +112,7 @@ async def run_action(
         logger.error(f"Unexpected error, package or action not found: {error}")
         raise ServerError()
 
-    api.run_action.__run_action(action=action, apply_on=Path(request.apply_on), project_root=package.path, ws_context=ws_context)
+    await api.run_action.__run_action(action=action, apply_on=Path(request.apply_on), project_root=package.path, ws_context=ws_context)
     # TODO: response
     print('run action', request)
     return schemas.RunActionResponse()

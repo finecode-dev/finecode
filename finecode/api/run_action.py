@@ -1,4 +1,3 @@
-import asyncio
 from pathlib import Path
 
 from loguru import logger
@@ -11,7 +10,7 @@ from finecode.api import run_utils
 from .collect_actions import collect_actions, get_subaction
 
 
-def run(
+async def run(
     action: str,
     apply_on: Path,
     project_root: Path,
@@ -27,7 +26,7 @@ def run(
         )
         return
 
-    __run_action(
+    await __run_action(
         action_obj,
         apply_on,
         project_root=project_root,
@@ -35,7 +34,7 @@ def run(
     )
 
 
-def __run_action(
+async def __run_action(
     action: domain.Action,
     apply_on: Path,
     project_root: Path,
@@ -91,16 +90,13 @@ def __run_action(
     if action_in_project and current_venv_is_workspace_venv:
         if project_root in ws_context.ws_packages_extension_runners:
             # extension runner is running for this project, send command to it
-            asyncio.run(
-                workspace_manager.run_action_in_runner(
-                    runner=ws_context.ws_packages_extension_runners[project_root],
-                    action=action,
-                    apply_on=apply_on,
-                )
+            await workspace_manager.run_action_in_runner(
+                runner=ws_context.ws_packages_extension_runners[project_root],
+                action=action,
+                apply_on=apply_on,
             )
         else:
             # no extension runner, use CLI
-
             # TODO: check that project is managed via poetry
             exit_code, output = run_utils.run_cmd_in_dir(
                 f"poetry run python -m finecode.cli action run {action.name} {apply_on.absolute().as_posix()}",
@@ -122,7 +118,7 @@ def __run_action(
                     )
                 except ValueError:
                     raise Exception(f"Action {subaction} not found")
-                __run_action(
+                await __run_action(
                     subaction_obj,
                     apply_on,
                     project_root=project_root,

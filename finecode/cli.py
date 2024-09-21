@@ -42,7 +42,7 @@ async def _watch_and_run(
                 else:
                     path_to_apply_on = change.path
                 logger.trace(f"Change: {change.kind} {change.path}")
-                api.run(
+                await api.run(
                     action=action,
                     apply_on=path_to_apply_on,
                     project_root=project_root,
@@ -89,12 +89,12 @@ def run_action(
     ws_context = workspace_context.WorkspaceContext(ws_dirs_paths=ws_dirs_paths)
     api.read_configs(ws_context=ws_context)
     if not watch:
-        api.run(
+        asyncio.run(api.run(
             action=action,
             apply_on=apply_on_path,
             project_root=_project_root,
             ws_context=ws_context,
-        )
+        ))
     else:
         ...  # TODO: restore
         # asyncio.run(
@@ -210,6 +210,9 @@ def show_view(
 
 async def _start_runner():
     app = extension_runner.create_extension_app()
+    project_root = Path(os.getcwd())
+    extension_runner.ws_context.ws_dirs_paths.append(project_root)
+    api.read_configs(ws_context=extension_runner.ws_context)
     try:
         await app.run_async()
         while True:

@@ -6,7 +6,7 @@ import threading
 from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Sequence
 
 import command_runner
 import janus
@@ -34,6 +34,7 @@ class ExtensionRunnerInfo:
     process_id: int
     output_queue: janus.Queue
     stop_event: threading.Event
+    started_event: asyncio.Event
     process_future: futures.Future | None
     port: int | None = None
     client: Client | None = None
@@ -46,43 +47,48 @@ async def start() -> None: # ws_context: workspace_context.WorkspaceContext
 
 
 async def start_in_ws_context(ws_context: workspace_context.WorkspaceContext) -> None:
-    extension_runners_start_coros = [
-        start_extension_runner(runner_dir=package_path)
-        for package_path in ws_context.ws_packages
-    ]
-    extension_runners = await asyncio.gather(*extension_runners_start_coros)
-
     # one for all, doesn't need to change on ws dirs change
     asyncio.create_task(
-        handle_runners_lifecycle(extension_runners, ws_context)
+        handle_runners_lifecycle(ws_context)
     )
 
+
+async def update_runners(ws_context: workspace_context.WorkspaceContext) -> None:
+    extension_runners = list(ws_context.ws_packages_extension_runners.values())
+    new_dirs, deleted_dirs = _find_changed_dirs([*ws_context.ws_packages.keys()], [runner.working_dir_path for runner in extension_runners])
+    for deleted_dir in deleted_dirs:
+        try:
+            runner_to_delete = next(runner for runner in extension_runners if runner.working_dir_path == deleted_dir)
+        except StopIteration:
+            continue
+        stop_extension_runner(runner_to_delete)
+        extension_runners.remove(runner_to_delete)
+
+    new_runners_coros = [start_extension_runner(runner_dir=new_dir) for new_dir in new_dirs]
+    new_runners = await asyncio.gather(*new_runners_coros)
+    extension_runners += new_runners
+    
+    ws_context.ws_packages_extension_runners = {runner.working_dir_path: runner for runner in extension_runners}
+
+
 async def handle_runners_lifecycle(
-    extension_runners: list[ExtensionRunnerInfo], ws_context: workspace_context.WorkspaceContext
+    ws_context: workspace_context.WorkspaceContext
 ):
+    await update_runners(ws_context)
     try:
         while True:
-            await ws_context.ws_dirs_paths_changed.wait()
-            ws_context.ws_dirs_paths_changed.clear()
-            new_dirs, deleted_dirs = _find_changed_dirs(ws_context.ws_dirs_paths, [runner.working_dir_path for runner in extension_runners])
-            for deleted_dir in deleted_dirs:
-                try:
-                    runner_to_delete = next(runner for runner in extension_runners if runner.working_dir_path == deleted_dir)
-                except StopIteration:
-                    continue
-                stop_extension_runner(runner_to_delete)
-                extension_runners.remove(runner_to_delete)
-
-            new_runners_coros = [start_extension_runner(runner_dir=new_dir) for new_dir in new_dirs]
-            new_runners = await asyncio.gather(*new_runners_coros)
-            extension_runners += new_runners
+            await asyncio.sleep(1)
+    except Exception as e:
+        print(e)
     finally:
         # TODO: stop all log handlers?
-        for runner in extension_runners:
+        for runner in ws_context.ws_packages_extension_runners.values():
             stop_extension_runner(runner)
+        
+        ws_context.ws_packages_extension_runners.clear()
 
 
-def _find_changed_dirs(new_dirs: list[Path], old_dirs: list[Path]) -> tuple[list[Path], list[Path]]:
+def _find_changed_dirs(new_dirs: Sequence[Path], old_dirs: Sequence[Path]) -> tuple[list[Path], list[Path]]:
     added_dirs: list[Path] = []
     deleted_dirs: list[Path] = []
     for new_dir in new_dirs:
@@ -102,6 +108,7 @@ async def start_extension_runner(
         process_id=0,
         working_dir_path=runner_dir,
         output_queue=janus.Queue(),
+        started_event=asyncio.Event(),
         process_future=None,
         stop_event=threading.Event()
     )
@@ -145,7 +152,7 @@ async def extension_runner_log_handler(runner: ExtensionRunnerInfo) -> None:
         if line is None:
             read_queue = False
         else:
-            print(line)
+            print(f"R{runner.process_id}", line)
             if runner.port is None and "Start web socketify server: " in line:
                 runner.port = int(line.split(":")[-1])
                 runner.client = create_client(f"http://localhost:{runner.port}")
@@ -157,6 +164,7 @@ async def extension_runner_log_handler(runner: ExtensionRunnerInfo) -> None:
                             config={},
                         ),
                     )
+                    runner.started_event.set()
                 except Exception as e:
                     logger.exception(e)
 
@@ -164,6 +172,8 @@ async def extension_runner_log_handler(runner: ExtensionRunnerInfo) -> None:
 
 
 async def run_action_in_runner(runner: ExtensionRunnerInfo, action: domain.Action, apply_on: Path):
+    if not runner.started_event.is_set():
+        await runner.started_event.wait()
     try:
         await ExtensionRunnerService.run_action(
             channel=runner.client.channel,
