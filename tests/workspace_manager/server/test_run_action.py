@@ -21,15 +21,19 @@ async def test__runs_action_in_package(client_channel):
 
     await asyncio.sleep(5)
 
-    request = RunActionRequest(action_node_id=f'{list_ws_dir_path.as_posix()}/cli_tool::format', apply_on=unformatted_src_path.as_posix())    
+    request = RunActionRequest(action_node_id=f'{list_ws_dir_path.as_posix()}/cli_tool::format', apply_on=unformatted_src_path.as_posix(), apply_on_text='')    
     response = await WorkspaceManagerService.run_action(channel=client_channel, request=request)
     
-    assert response == RunActionResponse()
-    with open(unformatted_src_path) as src_file:
-        src_content = src_file.read()
-    
-    assert src_content == """print("a")
+    assert response == RunActionResponse(result_text="""print("a")
 
 
 print("b")
-"""
+""")
+#     with open(unformatted_src_path) as src_file:
+#         src_content = src_file.read()
+    
+#     assert src_content == """print("a")
+
+
+# print("b")
+# """

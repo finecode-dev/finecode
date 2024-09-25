@@ -1,12 +1,14 @@
 import socket
 from contextlib import closing
 
+from loguru import logger
 from modapp import Modapp
 from modapp.converters.json import JsonConverter
 
 from modapp.transports.web_socketify import WebSocketifyTransport
 from modapp.transports.web_socketify_config import WebSocketifyTransportConfig
 
+import finecode.run_utils as run_utils
 from .api_routes import router
 
 
@@ -30,4 +32,5 @@ def create_extension_app() -> Modapp:
     )
 
     app.include_router(router)
+    logger.trace(f'Start extension runner in venv {run_utils.get_current_venv_path()}')
     return app

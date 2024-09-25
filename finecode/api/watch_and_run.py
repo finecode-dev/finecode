@@ -34,9 +34,10 @@ async def watch_and_run(
                         workspace_path=None,
                         ws_context=ws_context,
                     )
-                    await api.run(
-                        action=action,
-                        apply_on=path_to_apply_on,
-                        project_root=project_root,
-                        ws_context=ws_context,
-                    )
+                    # TODO
+                    # await api.run(
+                    #     action=action,
+                    #     apply_on=path_to_apply_on,
+                    #     project_root=project_root,
+                    #     ws_context=ws_context,
+                    # )

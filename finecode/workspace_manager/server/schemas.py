@@ -68,10 +68,13 @@ class ListActionsResponse(BaseModel):
 class RunActionRequest(BaseModel):
     action_node_id: str
     apply_on: str # Path?
+    apply_on_text: str
     
     __modapp_path__ = "finecode.workspace_manager.RunActionRequest"
 
 
 @dataclass
 class RunActionResponse(BaseModel):
+    result_text: str = ''
+    
     __modapp_path__ = "finecode.workspace_manager.RunActionResponse"

@@ -1,15 +1,14 @@
 from __future__ import annotations
 
-import asyncio
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import finecode.domain as domain
-from finecode.api import run_utils
+import finecode.run_utils as run_utils
 
 if TYPE_CHECKING:
-    from finecode.workspace_manager.main import ExtensionRunnerInfo
+    from finecode.workspace_manager.api import ExtensionRunnerInfo
 
 
 @dataclass

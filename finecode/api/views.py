@@ -5,7 +5,7 @@ from loguru import logger
 
 import finecode.domain as domain
 from finecode import config_models, workspace_context, views
-from finecode.api import run_utils
+from finecode import run_utils
 
 
 def collect_views_in_packages(

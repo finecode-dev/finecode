@@ -8,7 +8,7 @@ from pydantic import ValidationError
 from tomlkit import loads as toml_loads
 
 from finecode import config_models, domain, workspace_context
-from finecode.api import run_utils
+from finecode import run_utils
 
 
 def read_configs(ws_context: workspace_context.WorkspaceContext):

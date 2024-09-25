@@ -2,8 +2,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import IntEnum
-from modapp.models.dataclass import DataclassModel as BaseModel
+from modapp.models.dataclass import DataclassModel
 from modapp.client import BaseChannel
+
+
+@dataclass
+class BaseModel(DataclassModel):
+    __model_config__ = {**DataclassModel.__model_config__, "camelCase": True}
 
 
 class WorkspaceManagerServiceCls:
@@ -83,10 +88,13 @@ class AddWorkspaceDirResponse(BaseModel):
 class RunActionRequest(BaseModel):
     action_node_id: str
     apply_on: str # Path?
+    apply_on_text: str
     
     __modapp_path__ = "finecode.workspace_manager.RunActionRequest"
 
 
 @dataclass
 class RunActionResponse(BaseModel):
+    result_text: str
+    
     __modapp_path__ = "finecode.workspace_manager.RunActionResponse"

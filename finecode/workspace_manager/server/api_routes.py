@@ -6,7 +6,10 @@ from .endpoints import finecode
 import finecode.workspace_manager.main as manager_main
 import finecode.workspace_manager.server.schemas as schemas
 import finecode.api as api
+import finecode.domain as domain
 import finecode.workspace_context as workspace_context
+import finecode.workspace_manager.api as manager_api
+
 
 router = APIRouter()
 ws_context = workspace_context.WorkspaceContext([])
@@ -97,6 +100,8 @@ async def list_actions(
 async def run_action(
     request: schemas.RunActionRequest,
 ) -> schemas.RunActionResponse:
+    # TODO: validate apply_on and apply_on_text
+    
     try:
         cached_action = ws_context.cached_actions_by_id[request.action_node_id]
     except KeyError:
@@ -112,7 +117,94 @@ async def run_action(
         logger.error(f"Unexpected error, package or action not found: {error}")
         raise ServerError()
 
-    await api.run_action.__run_action(action=action, apply_on=Path(request.apply_on), project_root=package.path, ws_context=ws_context)
-    # TODO: response
-    print('run action', request)
-    return schemas.RunActionResponse()
+    logger.info('run action', request)
+    result = await __run_action(action=action, apply_on=Path(request.apply_on) if request.apply_on != '' else None, apply_on_text=request.apply_on_text, project_root=package.path, ws_context=ws_context)
+    return schemas.RunActionResponse(result_text=result or "")
+
+
+async def __run_action(
+    action: domain.Action,
+    apply_on: Path | None,
+    apply_on_text: str,
+    project_root: Path,
+    ws_context: workspace_context.WorkspaceContext,
+) -> str | None:
+    logger.trace(f"Execute action {action.name} on {apply_on}")
+    try:
+        project_venv_path = ws_context.venv_path_by_package_path[project_root]
+    except KeyError:
+        logger.error(f"Project has no venv path: {project_root}")
+        return
+
+    try:
+        project_package = ws_context.ws_packages[project_root]
+    except KeyError:
+        logger.error(f"Project package not found: {project_root}")
+        return
+
+    if project_package.actions is None:
+        logger.error("Project actions are not read yet")
+        return
+
+    # check first project package, then workspace package
+    current_venv_is_project_venv = ws_context.current_venv_path == project_venv_path
+    current_venv_is_workspace_venv = not current_venv_is_project_venv
+    try:
+        next(a for a in project_package.actions if a.name == action.name)
+    except StopIteration:
+        action_found = False
+        if current_venv_is_workspace_venv:
+            try:
+                workspace_package = ws_context.ws_packages[project_root]
+            except KeyError:
+                logger.error(f"Workspace package not found: {project_root}")
+                return
+
+            if workspace_package.actions is None:
+                logger.error("Actions in workspace package are not read yet")
+                return
+
+            try:
+                next(a for a in workspace_package.actions if a.name == action.name)
+                action_found = True
+            except StopIteration:
+                ...
+        if not action_found:
+            logger.error(f"Action {action.name} not found neither in project nor in workspace")
+            return
+
+
+    if apply_on:
+        ws_context.ignore_watch_paths.add(apply_on)
+
+    if project_root in ws_context.ws_packages_extension_runners:
+        # extension runner is running for this project, send command to it
+        result = await manager_api.run_action_in_runner(
+            runner=ws_context.ws_packages_extension_runners[project_root],
+            action=action,
+            apply_on=apply_on,
+            apply_on_text=apply_on_text
+        )
+    else:
+        raise NotImplementedError()
+        # # no extension runner, use CLI
+        # # TODO: check that project is managed via poetry
+        # exit_code, output = run_utils.run_cmd_in_dir(
+        #     f"poetry run python -m finecode.cli action run {action.name} {apply_on.absolute().as_posix()}",
+        #     dir_path=project_root,
+        # )
+        # logger.debug(f"Output: {output}")
+        # if exit_code != 0:
+        #     logger.error(f"Action execution failed: {output}")
+        # else:
+        #     logger.success(f"Action {action.name} successfully executed")
+        
+        # result = '' # TODO: correct result
+
+    if apply_on is not None:
+        try:
+            ws_context.ignore_watch_paths.remove(apply_on)
+        except KeyError:
+            ...
+    
+    return result

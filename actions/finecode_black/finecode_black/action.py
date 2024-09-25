@@ -2,12 +2,13 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+import finecode.action_utils as action_utils
 from loguru import logger
 from black import reformat_one, WriteBack
 from black.concurrency import reformat_many
 from black.mode import Mode, TargetVersion
 from black.report import Report
-from finecode import CodeFormatAction, CodeActionConfig, FormatRunResult
+from finecode import CodeFormatAction, CodeActionConfig, FormatRunResult, FormatRunPayload
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -30,18 +31,25 @@ class BlackCodeActionConfig(CodeActionConfig):
 
 
 class BlackCodeAction(CodeFormatAction[BlackCodeActionConfig]):
-    def run(self, apply_on: Path) -> FormatRunResult:
+    def run(self, payload: FormatRunPayload) -> FormatRunResult:
         logger.trace('black start')
         report = self.get_report()
-        reformat_one(
-            src=apply_on,
-            fast=False,
-            write_back=WriteBack.YES,
-            mode=self.get_mode(),
-            report=report,
-        )
+        # it seems like black can format only in-place, use tmp file
+        with action_utils.tmp_file_copy_path(file_path=payload.apply_on, file_content=payload.apply_on_text) as file_path:
+            reformat_one(
+                src=file_path,
+                fast=False,
+                write_back=WriteBack.YES,
+                mode=self.get_mode(),
+                report=report,
+            )
+            file_changed = report.change_count > 0
+            code: str | None = None
+            if file_changed:
+                with open(file_path, 'r') as f:
+                    code = f.read()
         logger.trace('black end')
-        return FormatRunResult(changed=report.change_count > 0, code=None)
+        return FormatRunResult(changed=file_changed, code=code)
 
     def run_on_many(self, apply_on: list[Path]) -> dict[Path, FormatRunResult]:
         report = self.get_report()
@@ -78,9 +86,9 @@ class BlackCodeAction(CodeFormatAction[BlackCodeActionConfig]):
         return Report(check=False, diff=False, quiet=True, verbose=True)
 
 
-if __name__ == "__main__":
-    import time
-    a = BlackCodeAction(BlackCodeActionConfig())
-    s = time.time()
-    a.run(Path("/home/user/Development/FineCode/finecode/finecode/cli.py"))
-    print("time: ", time.time() - s)
+# if __name__ == "__main__":
+#     import time
+#     a = BlackCodeAction(BlackCodeActionConfig())
+#     s = time.time()
+#     a.run(RunActionPayload(Path("/home/user/Development/FineCode/finecode/finecode/cli.py"), ''))
+#     print("time: ", time.time() - s)

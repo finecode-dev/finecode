@@ -16,6 +16,7 @@ message RunActionRequest {
 }
 
 message RunActionResponse {
+    string result_text = 1;
 }
 
 service ExtensionRunnerService {

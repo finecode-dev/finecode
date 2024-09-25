@@ -24,10 +24,13 @@ class UpdateConfigResponse(BaseModel):
 class RunActionRequest(BaseModel):
     action_name: str
     apply_on: str # Path?
+    apply_on_text: str
     
     __modapp_path__ = "finecode.extension_runner.RunActionRequest"
 
 
 @dataclass
 class RunActionResponse(BaseModel):
+    result_text: str
+    
     __modapp_path__ = "finecode.extension_runner.RunActionResponse"
