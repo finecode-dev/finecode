@@ -1,31 +1,40 @@
 from __future__ import annotations
-from typing import TYPE_CHECKING
 
 import isort.main as isort_main
 import isort.settings as isort_settings
-from finecode import CodeFormatAction, FormatRunResult, CodeActionConfig
-
-if TYPE_CHECKING:
-    from pathlib import Path
+from finecode import CodeFormatAction, FormatRunResult, CodeActionConfig, FormatRunPayload
+import finecode.action_utils as action_utils
 
 
 class IsortCodeActionConfig(CodeActionConfig):
     ...
 
+
 # TODO: run with a given config
-class IsortCodeAction(CodeFormatAction):
-    def run(self, apply_on: Path) -> FormatRunResult:
+class IsortCodeAction(CodeFormatAction[IsortCodeActionConfig]):
+    def run(self, payload: FormatRunPayload) -> FormatRunResult:
         # TODO: config
-        isort_main.sort_imports(
-            apply_on.as_posix(),
-            config=isort_settings.Config(),
-            check=False,
-            ask_to_apply=False,
-            show_diff=False,
-            write_to_stdout=False,
-            # extension=ext_format,
-            # config_trie=config_trie,
-        )
-        return FormatRunResult(changed=True, code=None)
+        changed: bool = False
+        code: str | None = None
+        with action_utils.tmp_file_copy_path(file_path=payload.apply_on, file_content=payload.apply_on_text) as file_path:
+            result = isort_main.sort_imports(
+                file_name=file_path.as_posix(),
+                # is it possible without overwriting?
+                config=isort_settings.Config(overwrite_in_place=True),
+                check=False,
+                ask_to_apply=False,
+                show_diff=False,
+                write_to_stdout=False,
+                # extension=ext_format,
+                # config_trie=config_trie,
+            )
+
+            # seems like isort doesn't return whether file was changed or not, only whether it is
+            # still incorrectly sorted and whether file was skipped
+            changed = result is not None and not result.skipped
+            if changed:
+                with open(file_path, 'r') as f:
+                    code = f.read()
+        return FormatRunResult(changed=changed, code=code)
 
     # TODO: analyze whether run_many is needed
