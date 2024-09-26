@@ -102,8 +102,14 @@ async def run_action(
 ) -> schemas.RunActionResponse:
     # TODO: validate apply_on and apply_on_text
     
+    _action_node_id = request.action_node_id
+    if ':' not in _action_node_id:
+        # general action without package path like 'format' or 'lint', normalize (=add package path)
+        package_path = api.find_package_with_action_for_file(file_path=Path(request.apply_on), action_name=_action_node_id, ws_context=ws_context)
+        _action_node_id = f'{package_path.as_posix()}::{_action_node_id}'
+    
     try:
-        cached_action = ws_context.cached_actions_by_id[request.action_node_id]
+        cached_action = ws_context.cached_actions_by_id[_action_node_id]
     except KeyError:
         raise NotFoundError()
 
