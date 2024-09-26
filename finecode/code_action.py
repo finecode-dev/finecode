@@ -1,7 +1,7 @@
 # code actions are implementations of actions
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TypeVar, Generic
+from typing import Sequence, TypeVar, Generic
 
 from pydantic import BaseModel
 
@@ -16,9 +16,19 @@ class RunActionPayload(BaseModel):
 class RunActionResult(BaseModel):
     ...
 
+
+
 CodeActionConfigType = TypeVar("CodeActionConfigType")
 RunPayloadType = TypeVar("RunPayloadType", bound=RunActionPayload)
 RunResultType = TypeVar("RunResultType", bound=RunActionResult)
+RunOnManyResult = dict[Path, RunResultType]
+
+
+class RunOnManyPayload(BaseModel, Generic[RunPayloadType]):
+    # single payloads are homogeneous, e.g. if one item has only apply_on or apply_on_text, then
+    # all items have the same properties
+    single_payloads: Sequence[RunPayloadType]
+    dir_path: Path
 
 
 class CodeAction(Generic[CodeActionConfigType, RunPayloadType, RunResultType]):
@@ -36,10 +46,10 @@ class CodeAction(Generic[CodeActionConfigType, RunPayloadType, RunResultType]):
     def __init__(self, config: CodeActionConfigType) -> None:
         self.config = config
 
-    def run(self, payload: RunPayloadType) -> RunResultType:
+    async def run(self, payload: RunPayloadType) -> RunResultType:
         raise NotImplementedError()
 
-    def run_on_many(self, apply_on: list[Path]) -> dict[Path, RunResultType]:
+    async def run_on_many(self, payload: RunOnManyPayload[RunPayloadType]) -> RunOnManyResult:
         raise NotImplementedError()
 
 
@@ -62,6 +72,8 @@ class FormatRunPayload(RunActionPayload):
 
 
 class FormatRunResult(RunActionResult):
+    # create additional more basic RunResult like ChangingCodeRunResult to cover other cases like
+    # code transformations?
     changed: bool
     # if formatter supports, it should return the result of formatting in `code`. Otherwise set it
     # to None, it will be interpreted as in-place formatting.

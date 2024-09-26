@@ -6,6 +6,7 @@ from .code_action import (
     CodeActionConfig,
     LintMessage,
     RunActionPayload,
+    RunOnManyPayload,
     FormatRunPayload,
 )
 

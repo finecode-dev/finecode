@@ -1,17 +1,19 @@
 from __future__ import annotations
+import asyncio
+from concurrent.futures import Executor, ProcessPoolExecutor, ThreadPoolExecutor
+import os
 from pathlib import Path
-from typing import TYPE_CHECKING
+import sys
+
+from loguru import logger
 
 import finecode.action_utils as action_utils
-from loguru import logger
 from black import reformat_one, WriteBack
-from black.concurrency import reformat_many
+from black.concurrency import schedule_formatting
 from black.mode import Mode, TargetVersion
 from black.report import Report
-from finecode import CodeFormatAction, CodeActionConfig, FormatRunResult, FormatRunPayload
+from finecode import CodeFormatAction, CodeActionConfig, FormatRunResult, FormatRunPayload, RunOnManyPayload
 
-if TYPE_CHECKING:
-    from pathlib import Path
 
 
 class BlackCodeActionConfig(CodeActionConfig):
@@ -31,8 +33,7 @@ class BlackCodeActionConfig(CodeActionConfig):
 
 
 class BlackCodeAction(CodeFormatAction[BlackCodeActionConfig]):
-    def run(self, payload: FormatRunPayload) -> FormatRunResult:
-        logger.trace('black start')
+    async def run(self, payload: FormatRunPayload) -> FormatRunResult:
         report = self.get_report()
         # it seems like black can format only in-place, use tmp file
         with action_utils.tmp_file_copy_path(file_path=payload.apply_on, file_content=payload.apply_on_text) as file_path:
@@ -48,23 +49,32 @@ class BlackCodeAction(CodeFormatAction[BlackCodeActionConfig]):
             if file_changed:
                 with open(file_path, 'r') as f:
                     code = f.read()
-        logger.trace('black end')
+
         return FormatRunResult(changed=file_changed, code=code)
 
-    def run_on_many(self, apply_on: list[Path]) -> dict[Path, FormatRunResult]:
+    async def run_on_many(self, payload: RunOnManyPayload[FormatRunPayload]) -> dict[Path, FormatRunResult]:
         report = self.get_report()
-        reformat_many(
-            sources=set(apply_on),
-            fast=False,
-            write_back=WriteBack.YES,
-            mode=self.get_mode(),
-            report=report,
-            workers=None,
-        )
-        # TODO: black report is generalized for all files, parse output?
-        return {
-            filepath: FormatRunResult(changed=True, code=None) for filepath in apply_on
-        }
+        with action_utils.tmp_dir_copy_path(dir_path=payload.dir_path, file_pathes_with_contents=[(single_payload.apply_on, single_payload.apply_on_text) for single_payload in payload.single_payloads]) as (dir_path, files_pathes):
+            await reformat_many(
+                sources=set(files_pathes),
+                fast=False,
+                write_back=WriteBack.YES,
+                mode=self.get_mode(),
+                report=report,
+                workers=None,
+            )
+        
+            result: dict[Path, FormatRunResult] = {}
+            for idx, single_payload in enumerate(payload.single_payloads):
+                if single_payload.apply_on is None:
+                    logger.error("Run on multiple supports only files")
+                    continue
+                with open(files_pathes[idx], 'r') as f:
+                    code = f.read()
+                # TODO: black report is generalized for all files, parse output?
+                result[single_payload.apply_on] = FormatRunResult(changed=True, code=code)
+        
+        return result
 
     def get_mode(self) -> Mode:
         return Mode(
@@ -86,9 +96,57 @@ class BlackCodeAction(CodeFormatAction[BlackCodeActionConfig]):
         return Report(check=False, diff=False, quiet=True, verbose=True)
 
 
-# if __name__ == "__main__":
-#     import time
-#     a = BlackCodeAction(BlackCodeActionConfig())
-#     s = time.time()
-#     a.run(RunActionPayload(Path("/home/user/Development/FineCode/finecode/finecode/cli.py"), ''))
-#     print("time: ", time.time() - s)
+async def reformat_many(
+    sources: set[Path],
+    fast: bool,
+    write_back: WriteBack,
+    mode: Mode,
+    report: Report,
+    workers: int | None,
+) -> None:
+    """Reformat multiple files using a ProcessPoolExecutor.
+    
+    This is a copy of `reformat_many` function from black. Original function expects to be started
+    outside of event loop and operates event loops of the whole program. Rework to allow to run as
+    a coroutine in another program.
+    
+    Removed code is kept as comments to make future migrations to new version easier."""
+    # maybe_install_uvloop()
+
+    executor: Executor
+    if workers is None:
+        workers = int(os.environ.get("BLACK_NUM_WORKERS", 0))
+        workers = workers or os.cpu_count() or 1
+    if sys.platform == "win32":
+        # Work around https://bugs.python.org/issue26903
+        workers = min(workers, 60)
+    try:
+        executor = ProcessPoolExecutor(max_workers=workers)
+    except (ImportError, NotImplementedError, OSError):
+        # we arrive here if the underlying system does not support multi-processing
+        # like in AWS Lambda or Termux, in which case we gracefully fallback to
+        # a ThreadPoolExecutor with just a single worker (more workers would not do us
+        # any good due to the Global Interpreter Lock)
+        executor = ThreadPoolExecutor(max_workers=1)
+
+    # loop = asyncio.new_event_loop()
+    # asyncio.set_event_loop(loop)
+    try:
+        # loop.run_until_complete(
+        await schedule_formatting(
+            sources=sources,
+            fast=fast,
+            write_back=write_back,
+            mode=mode,
+            report=report,
+            loop=asyncio.get_running_loop(),
+            executor=executor,
+        )
+        # )
+    finally:
+        # try:
+        #     shutdown(loop)
+        # finally:
+        #     asyncio.set_event_loop(None)
+        if executor is not None:
+            executor.shutdown()
