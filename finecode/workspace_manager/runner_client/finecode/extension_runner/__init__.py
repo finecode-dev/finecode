@@ -16,12 +16,13 @@ class ExtensionRunnerServiceCls:
         )
 
     async def update_config(
-        self, channel: BaseChannel, request: UpdateConfigRequest
+        self, channel: BaseChannel, request: UpdateConfigRequest, timeout: float | None = 5
     ) -> UpdateConfigResponse:
         return await channel.send_unary_unary(
             "/finecode.extension_runner.ExtensionRunnerService/UpdateConfig",
             request,
             UpdateConfigResponse,
+            timeout=timeout
         )
 
 

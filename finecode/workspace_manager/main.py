@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import threading
 from functools import partial
 from pathlib import Path
@@ -118,6 +119,9 @@ async def start_extension_runner(
             ...
         return None
 
+    # temporary remove VIRTUAL_ENV env variable to avoid starting in wrong venv
+    old_virtual_env_var = os.environ.get('VIRTUAL_ENV', '')
+    os.environ['VIRTUAL_ENV'] = ''
     runner_info.process_future = command_runner.command_runner_threaded(
         f"{_finecode_cmd} runner",
         process_callback=partial(save_process_info, runner_info),
@@ -127,6 +131,7 @@ async def start_extension_runner(
         stop_on=partial(should_stop, runner_info.stop_event),
         timeout=None
     )  # type: ignore
+    os.environ['VIRTUAL_ENV'] = old_virtual_env_var
 
     asyncio.create_task(extension_runner_log_handler(runner_info))
     return runner_info
@@ -156,11 +161,15 @@ async def extension_runner_log_handler(runner: manager_api.ExtensionRunnerInfo) 
                         channel=runner.client.channel,
                         request=UpdateConfigRequest(
                             working_dir=runner.working_dir_path.as_posix(),
-                            config={},
+                            config={}, # TODO: config
                         ),
+                        # on update_config extension runner also reads all configs, it can take a
+                        # time
+                        timeout=100
                     )
                     runner.started_event.set()
                 except Exception as e:
+                    # TODO: set package status to appropriate error
                     logger.exception(e)
 
     logger.trace(f"End log handler for {runner.working_dir_path}({runner.process_id})")

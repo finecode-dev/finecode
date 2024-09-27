@@ -8,8 +8,16 @@ authors = ["Vladyslav Hnatiuk <aders1234@gmail.com>"]
 python = "^3.10"
 
 [tool.poetry.group.dev.dependencies]
-finecode = { path = "../../../../" }
+finecode = { path = "../../../" }
 
 [build-system]
 requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
+
+[tool.finecode]
+actions = [
+    { name = "lint" }
+]
+
+[tool.finecode.action.lint]
+subactions = []

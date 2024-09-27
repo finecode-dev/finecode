@@ -35,7 +35,11 @@ async def delete_workspace_dir(
     return schemas.DeleteWorkspaceDirResponse()
 
 
-def _dir_to_tree_node(dir_path: Path, ws_context: workspace_context.WorkspaceContext) -> schemas.ActionTreeNode:
+def _dir_to_tree_node(dir_path: Path, ws_context: workspace_context.WorkspaceContext) -> schemas.ActionTreeNode | None:
+    # ignore directories: hidden directories like .git, .pytest_cache etc, node_modules
+    if dir_path.name.startswith('.') or dir_path.name  == 'node_modules':
+        return None
+
     # 1. Determine type of dir_path: package or directory
     dir_is_package = api.is_package(dir_path)
     dir_node_type = schemas.ActionTreeNode.NodeType.PACKAGE if dir_is_package else schemas.ActionTreeNode.NodeType.DIRECTORY
@@ -68,7 +72,9 @@ def _dir_to_tree_node(dir_path: Path, ws_context: workspace_context.WorkspaceCon
     else:
         for dir_item in dir_path.iterdir():
             if dir_item.is_dir():
-                subnodes.append(_dir_to_tree_node(dir_item, ws_context))
+                subnode = _dir_to_tree_node(dir_item, ws_context)
+                if subnode is not None:
+                    subnodes.append(subnode)
 
     # TODO: cache result?
     return schemas.ActionTreeNode(node_id=dir_path.as_posix(), name=dir_path.name, subnodes=subnodes, node_type=dir_node_type)
@@ -79,7 +85,11 @@ def _list_actions(ws_context: workspace_context.WorkspaceContext, parent_node_id
         # list ws dirs and first level
         nodes: list[schemas.ActionTreeNode] =[]
         for ws_dir_path in ws_context.ws_dirs_paths:
-            nodes.append(_dir_to_tree_node(ws_dir_path, ws_context))
+            node = _dir_to_tree_node(ws_dir_path, ws_context)
+            if node is not None:
+                nodes.append(node)
+        # sort nodes alphabetically to keep the order stable
+        nodes.sort(key=lambda node: node.name)
         return nodes
     else:
         # TODO
