@@ -13,7 +13,7 @@ from finecode import run_utils
 
 def read_configs(ws_context: workspace_context.WorkspaceContext):
     # Read configs in all root directories of workspace
-    logger.trace("Read configs in workspace")  # TODO: ws id?
+    logger.trace("Read configs in workspace")
     for ws_dir_path in ws_context.ws_dirs_paths:
         read_configs_in_dir(dir_path=ws_dir_path, ws_context=ws_context)
     logger.trace("Reading configs in workspace finished")
@@ -45,19 +45,16 @@ def read_configs_in_dir(dir_path: Path, ws_context: workspace_context.WorkspaceC
                 _merge_package_configs(project_def, new_config)
 
             ws_context.ws_packages_raw_configs[def_file.parent] = project_def
-
-            # TODO: can be parallelized
-            try:
-                project_venv_path = run_utils.get_project_venv_path(def_file.parent)
-            except run_utils.VenvNotFound:
-                logger.error(f"Failed to get project venv path in {def_file.parent}")
-                continue
-            ws_context.venv_path_by_package_path[def_file.parent] = project_venv_path
         else:
             logger.info(f'Package definition of type {def_file.name} is not supported yet')
             continue
 
-        ws_context.ws_packages[def_file.parent] = domain.Package(name=def_file.parent.name, path=def_file.parent)
+        finecode_sh_path = def_file.parent / 'finecode.sh'
+        status = domain.PackageStatus.READY
+        if not finecode_sh_path.exists():
+            status = domain.PackageStatus.NO_FINECODE_SH
+
+        ws_context.ws_packages[def_file.parent] = domain.Package(name=def_file.parent.name, path=def_file.parent, status=status)
 
 
 def normalize_package_config(config: dict[str, Any]) -> None:

@@ -136,11 +136,6 @@ async def __run_action(
     ws_context: workspace_context.WorkspaceContext,
 ) -> str | None:
     logger.trace(f"Execute action {action.name} on {apply_on}")
-    try:
-        project_venv_path = ws_context.venv_path_by_package_path[project_root]
-    except KeyError:
-        logger.error(f"Project has no venv path: {project_root}")
-        return
 
     try:
         project_package = ws_context.ws_packages[project_root]
@@ -152,29 +147,25 @@ async def __run_action(
         logger.error("Project actions are not read yet")
         return
 
-    # check first project package, then workspace package
-    current_venv_is_project_venv = ws_context.current_venv_path == project_venv_path
-    current_venv_is_workspace_venv = not current_venv_is_project_venv
     try:
         next(a for a in project_package.actions if a.name == action.name)
     except StopIteration:
         action_found = False
-        if current_venv_is_workspace_venv:
-            try:
-                workspace_package = ws_context.ws_packages[project_root]
-            except KeyError:
-                logger.error(f"Workspace package not found: {project_root}")
-                return
+        try:
+            workspace_package = ws_context.ws_packages[project_root]
+        except KeyError:
+            logger.error(f"Workspace package not found: {project_root}")
+            return
 
-            if workspace_package.actions is None:
-                logger.error("Actions in workspace package are not read yet")
-                return
+        if workspace_package.actions is None:
+            logger.error("Actions in workspace package are not read yet")
+            return
 
-            try:
-                next(a for a in workspace_package.actions if a.name == action.name)
-                action_found = True
-            except StopIteration:
-                ...
+        try:
+            next(a for a in workspace_package.actions if a.name == action.name)
+            action_found = True
+        except StopIteration:
+            ...
         if not action_found:
             logger.error(f"Action {action.name} not found neither in project nor in workspace")
             return

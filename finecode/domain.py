@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from enum import Enum, auto
 from pathlib import Path
 from typing import Any
 
@@ -22,6 +23,7 @@ class Package:
         self,
         name: str,
         path: Path,
+        status: PackageStatus,
         subpackages: list[Package] | None = None,
         actions: list[Action] | None = None,
         views: list[View] | None = None,
@@ -31,6 +33,7 @@ class Package:
     ) -> None:
         self.name = name
         self.path = path
+        self.status = status
         if subpackages is not None:
             self.subpackages = subpackages
         else:
@@ -54,6 +57,13 @@ class Package:
 
     def __str__(self) -> str:
         return f'Package(name="{self.name}", path="{self.path}")'
+
+
+class PackageStatus(Enum):
+    READY = auto()
+    NO_FINECODE = auto()
+    NO_FINECODE_SH = auto()
+
 
 RootActions = list[str]
 ActionsDict = dict[str, Action]

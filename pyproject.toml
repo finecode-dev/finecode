@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "finecode"
-version = "0.1.1"
+version = "0.1.2"
 description = ""
 authors = ["Vladyslav Hnatiuk <aders1234@gmail.com>"]
 readme = "README.md"

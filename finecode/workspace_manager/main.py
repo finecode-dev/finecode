@@ -10,6 +10,7 @@ import command_runner
 import janus
 from loguru import logger
 
+import finecode.domain as domain
 import finecode.workspace_context as workspace_context
 import finecode.utils.finecode_cmd as finecode_cmd
 import finecode.workspace_manager.api as manager_api
@@ -49,9 +50,9 @@ async def update_runners(ws_context: workspace_context.WorkspaceContext) -> None
         stop_extension_runner(runner_to_delete)
         extension_runners.remove(runner_to_delete)
 
-    new_runners_coros = [start_extension_runner(runner_dir=new_dir) for new_dir in new_dirs]
+    new_runners_coros = [start_extension_runner(runner_dir=new_dir, ws_context=ws_context) for new_dir in new_dirs]
     new_runners = await asyncio.gather(*new_runners_coros)
-    extension_runners += new_runners
+    extension_runners += [runner for runner in new_runners if runner is not None]
     
     ws_context.ws_packages_extension_runners = {runner.working_dir_path: runner for runner in extension_runners}
 
@@ -87,8 +88,9 @@ def _find_changed_dirs(new_dirs: Sequence[Path], old_dirs: Sequence[Path]) -> tu
 
 
 async def start_extension_runner(
-    runner_dir: Path
-) -> manager_api.ExtensionRunnerInfo:
+    runner_dir: Path,
+    ws_context: workspace_context.WorkspaceContext
+) -> manager_api.ExtensionRunnerInfo | None:
     runner_info = manager_api.ExtensionRunnerInfo(
         process_id=0,
         working_dir_path=runner_dir,
@@ -107,7 +109,15 @@ async def start_extension_runner(
     def should_stop(stop_event: threading.Event) -> bool:
         return stop_event.is_set()
 
-    _finecode_cmd = finecode_cmd.get_finecode_cmd(runner_dir)
+    try:
+        _finecode_cmd = finecode_cmd.get_finecode_cmd(runner_dir)
+    except ValueError:
+        try:
+            ws_context.ws_packages[runner_dir].status = domain.PackageStatus.NO_FINECODE_SH
+        except KeyError:
+            ...
+        return None
+
     runner_info.process_future = command_runner.command_runner_threaded(
         f"{_finecode_cmd} runner",
         process_callback=partial(save_process_info, runner_info),
