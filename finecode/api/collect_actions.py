@@ -69,7 +69,13 @@ def collect_actions(
         config = ws_context.ws_packages_raw_configs[package_path]
     except KeyError:
         raise Exception("First you need to parse config of package")
-    
+
+    if config.get('tool', {}).get('finecode', None) is None:
+        package.status = domain.PackageStatus.NO_FINECODE
+        package.actions = []
+        package.actions_configs = {}
+        return []
+
     actions, actions_configs = _collect_actions_in_config(config)
     # TODO: validate
     first_level_actions_raw = [action_raw['name'] for action_raw in config["tool"]["finecode"].get("actions", [])]

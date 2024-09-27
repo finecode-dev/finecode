@@ -27,7 +27,6 @@ class WorkspaceContext:
     # <directory: <action_name: package_path>>
     package_path_by_dir_and_action: dict[str, dict[str, Path]] = field(default_factory=dict)
     current_venv_path: Path = field(default_factory=lambda: run_utils.get_current_venv_path())
-    venv_path_by_package_path: dict[Path, Path] = field(default_factory=dict)
     cached_actions_by_id: dict[str, CachedAction] = field(default_factory=dict)
 
 
