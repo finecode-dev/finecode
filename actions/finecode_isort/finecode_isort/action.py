@@ -12,7 +12,7 @@ class IsortCodeActionConfig(CodeActionConfig):
 
 # TODO: run with a given config
 class IsortCodeAction(CodeFormatAction[IsortCodeActionConfig]):
-    def run(self, payload: FormatRunPayload) -> FormatRunResult:
+    async def run(self, payload: FormatRunPayload) -> FormatRunResult:
         # TODO: config
         changed: bool = False
         code: str | None = None
