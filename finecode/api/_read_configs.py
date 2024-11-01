@@ -33,7 +33,7 @@ def read_configs_in_dir(dir_path: Path, ws_context: workspace_context.WorkspaceC
             with open(def_file, "rb") as pyproject_file:
                 project_def = toml_loads(pyproject_file.read()).value
             # TODO: validate that finecode is installed?
-            normalize_package_config(project_def)
+
             finecode_raw_config = project_def.get("tool", {}).get("finecode", None)
             if finecode_raw_config:
                 finecode_config = config_models.FinecodeConfig(**finecode_raw_config)
@@ -43,6 +43,7 @@ def read_configs_in_dir(dir_path: Path, ws_context: workspace_context.WorkspaceC
                 )
                 _merge_package_configs(project_def, new_config)
 
+            normalize_package_config(project_def)
             ws_context.ws_packages_raw_configs[def_file.parent] = project_def
         else:
             logger.info(f'Package definition of type {def_file.name} is not supported yet')

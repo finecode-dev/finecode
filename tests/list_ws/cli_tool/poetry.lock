@@ -299,7 +299,7 @@ test = ["pytest (>=6)"]
 
 [[package]]
 name = "finecode"
-version = "0.1.0"
+version = "0.1.2"
 description = ""
 optional = false
 python-versions = "^3.10"
@@ -311,7 +311,7 @@ click = "^8.1.7"
 command-runner = "^1.5.1"
 janus = {git = "https://github.com/Aksem/janus.git"}
 loguru = "^0.7.0"
-modapp = {git = "https://github.com/Aksem/modapp.git", tag = "v0.3.14", extras = ["case-change", "json", "uvloop", "web-httpx", "web-socketify"]}
+modapp = {git = "https://github.com/Aksem/modapp.git", tag = "v0.3.15", extras = ["case-change", "json", "uvloop", "web-httpx", "web-socketify"]}
 pydantic = "^2.5.3"
 tomlkit = "^0.11.7"
 watchdog = "^4.0.0"
@@ -475,7 +475,7 @@ dev = ["Sphinx (==7.2.5)", "colorama (==0.4.5)", "colorama (==0.4.6)", "exceptio
 
 [[package]]
 name = "modapp"
-version = "0.3.14"
+version = "0.3.15"
 description = ""
 optional = false
 python-versions = "^3.9"
@@ -506,8 +506,8 @@ web-socketify = ["socketify (==0.0.27)"]
 [package.source]
 type = "git"
 url = "https://github.com/Aksem/modapp.git"
-reference = "v0.3.14"
-resolved_reference = "a7ecbaf354bdbf0c28652c7ec24491b01dbd8b94"
+reference = "v0.3.15"
+resolved_reference = "16bd8f592a16758817a8f1c500af8521b203daef"
 
 [[package]]
 name = "mypy-extensions"

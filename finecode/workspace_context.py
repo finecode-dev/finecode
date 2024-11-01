@@ -3,9 +3,9 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+import site
 
 import finecode.domain as domain
-import finecode.extension_runner.run_utils as run_utils
 
 if TYPE_CHECKING:
     from finecode.workspace_manager.api import ExtensionRunnerInfo
@@ -26,7 +26,7 @@ class WorkspaceContext:
     # cache
     # <directory: <action_name: package_path>>
     package_path_by_dir_and_action: dict[str, dict[str, Path]] = field(default_factory=dict)
-    current_venv_path: Path = field(default_factory=lambda: run_utils.get_current_venv_path())
+    current_venv_path: Path = field(default_factory=lambda: get_current_venv_path())
     cached_actions_by_id: dict[str, CachedAction] = field(default_factory=dict)
 
 
@@ -35,3 +35,7 @@ class CachedAction:
     action_id: str
     package_path: Path
     action_name: str
+
+
+def get_current_venv_path() -> Path:
+    return Path(site.getsitepackages()[0]).parent.parent.parent

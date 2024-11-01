@@ -1,0 +1,20 @@
+[tool.poetry]
+name = "ui-app"
+version = "0.1.0"
+description = ""
+authors = ["Vladyslav Hnatiuk <aders1234@gmail.com>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.10"
+
+[tool.poetry.group.dev.dependencies]
+finecode = { path = "../../../" }
+finecode_fine_py = { path = "../../../presets/finecode_fine_py" }
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.finecode]
+presets = [{ source = "finecode_fine_py" }]
