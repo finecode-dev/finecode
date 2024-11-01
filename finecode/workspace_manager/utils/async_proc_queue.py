@@ -1,9 +1,8 @@
 import asyncio
 import queue
-
-from multiprocessing import Manager, cpu_count
 from concurrent.futures import ThreadPoolExecutor
-from typing import Any, cast, Generic, TypeVar
+from multiprocessing import Manager, cpu_count
+from typing import Any, Generic, TypeVar, cast
 
 
 class QueueEnd:
@@ -12,7 +11,8 @@ class QueueEnd:
         return self.__class__ == other.__class__
 
 
-QueueItemType = TypeVar('QueueItemType')
+QueueItemType = TypeVar("QueueItemType")
+
 
 class _ProcQueue(Generic[QueueItemType]):
     def __init__(self, q: queue.Queue[QueueItemType]):
@@ -45,7 +45,7 @@ class _ProcQueue(Generic[QueueItemType]):
 
     def put_nowait(self, item: QueueItemType) -> None:
         self._queue.put_nowait(item)
-    
+
     def get(self) -> QueueItemType:
         return self._queue.get()
 

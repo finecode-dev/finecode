@@ -1,4 +1,5 @@
 from __future__ import annotations
+
 from dataclasses import dataclass
 
 from modapp.client import BaseChannel
@@ -22,7 +23,7 @@ class ExtensionRunnerServiceCls:
             "/finecode.extension_runner.ExtensionRunnerService/UpdateConfig",
             request,
             UpdateConfigResponse,
-            timeout=timeout
+            timeout=timeout,
         )
 
 
@@ -30,29 +31,28 @@ ExtensionRunnerService = ExtensionRunnerServiceCls()
 
 
 @dataclass
-class BaseModel(DataclassModel):
-    ...
+class BaseModel(DataclassModel): ...
 
 
 @dataclass
 class RunActionRequest(BaseModel):
     action_name: str
-    apply_on: str # Path?
+    apply_on: str  # Path?
     apply_on_text: str
-    
+
     __modapp_path__ = "finecode.extension_runner.RunActionRequest"
 
 
 @dataclass
 class RunActionResponse(BaseModel):
-    result_text: str = ''
-    
+    result_text: str = ""
+
     __modapp_path__ = "finecode.extension_runner.RunActionResponse"
 
 
 @dataclass
 class UpdateConfigRequest(BaseModel):
-    working_dir: str # Path?
+    working_dir: str  # Path?
     config: dict[str, str]
 
     __modapp_path__ = "finecode.extension_runner.UpdateConfigRequest"

@@ -1,22 +1,27 @@
 from pathlib import Path
+
 from loguru import logger
 from modapp import APIRouter
 from modapp.errors import ServerError
 
-from finecode.api.collect_actions import get_subaction
-from .endpoints import finecode
-import finecode.extension_runner.schemas as schemas
 import finecode.api as api
-import finecode.extension_runner.run_utils as run_utils
 import finecode.domain as domain
+import finecode.extension_runner.run_utils as run_utils
+import finecode.extension_runner.schemas as schemas
 import finecode.workspace_context as workspace_context
-from finecode.code_action import CodeFormatAction, FormatRunPayload, RunActionResult, RunOnManyResult, FormatRunResult, RunOnManyPayload
+from finecode.api.collect_actions import get_subaction
+from finecode.code_action import (CodeFormatAction, FormatRunPayload,
+                                  FormatRunResult, RunActionResult,
+                                  RunOnManyPayload, RunOnManyResult)
+
+from .endpoints import finecode
 
 router = APIRouter()
 ws_context = workspace_context.WorkspaceContext([])
 
 # temporary global storage
 _project_root: Path | None = None
+
 
 def _init_project(working_dir: Path):
     global _project_root
@@ -46,31 +51,41 @@ async def run_action(
     except StopIteration:
         logger.warning("Package not found")
         # TODO: raise error
-        return schemas.RunActionResponse(result_text='')
-    
+        return schemas.RunActionResponse(result_text="")
+
     try:
-        action_obj = next(action_obj for action_obj in package.actions if action_obj.name == request.action_name)
+        action_obj = next(
+            action_obj for action_obj in package.actions if action_obj.name == request.action_name
+        )
     except StopIteration:
         logger.warning(
             f"Action {request.action_name} not found. Available actions: {','.join([action_obj.name for action_obj in package.actions])}"
         )
         # TODO: raise error
-        return schemas.RunActionResponse(result_text='')
+        return schemas.RunActionResponse(result_text="")
 
     assert _project_root is not None
     try:
         result = await __run_action(
             action_obj,
-            Path(request.apply_on) if request.apply_on != '' else None,
+            Path(request.apply_on) if request.apply_on != "" else None,
             apply_on_text=request.apply_on_text,
             project_root=_project_root,
             ws_context=ws_context,
         )
-    except Exception as e: # TODO: concrete exceptions?
+    except Exception as e:  # TODO: concrete exceptions?
         logger.exception(e)
         raise ServerError("Failed to run action")
-    
-    return schemas.RunActionResponse(result_text=result.code if result is not None and isinstance(result, FormatRunResult) and result.code is not None else "")
+
+    return schemas.RunActionResponse(
+        result_text=(
+            result.code
+            if result is not None
+            and isinstance(result, FormatRunResult)
+            and result.code is not None
+            else ""
+        )
+    )
 
 
 async def __run_action(
@@ -116,10 +131,16 @@ async def __run_action(
                 project_root=project_root,
                 ws_context=ws_context,
             )
-            if result is not None and isinstance(result, FormatRunResult) and result.code is not None:
+            if (
+                result is not None
+                and isinstance(result, FormatRunResult)
+                and result.code is not None
+            ):
                 current_apply_on_text = result.code
     elif action.source is not None:
-        logger.debug(f"Run {action.name} on {str(apply_on.absolute() if apply_on is not None else '')}")
+        logger.debug(
+            f"Run {action.name} on {str(apply_on.absolute() if apply_on is not None else '')}"
+        )
         try:
             # TODO: cache
             action_cls = run_utils.import_class_by_source_str(action.source)
@@ -135,13 +156,19 @@ async def __run_action(
 
         config = action_config_cls(**action_config)
         action_instance = action_cls(config=config)
-        
+
         if apply_on is not None and apply_on.is_dir():
             # temporary solution, should be dependency injection or similar approach
             if isinstance(action_instance, CodeFormatAction):
                 # TODO: dynamic suffix for files
-                py_files_in_dir = apply_on.rglob('*.py')
-                payload = RunOnManyPayload(single_payloads=[FormatRunPayload(apply_on=py_file_path, apply_on_text='') for py_file_path in py_files_in_dir], dir_path=apply_on)
+                py_files_in_dir = apply_on.rglob("*.py")
+                payload = RunOnManyPayload(
+                    single_payloads=[
+                        FormatRunPayload(apply_on=py_file_path, apply_on_text="")
+                        for py_file_path in py_files_in_dir
+                    ],
+                    dir_path=apply_on,
+                )
             else:
                 raise NotImplementedError()
 
@@ -163,7 +190,7 @@ async def __run_action(
                 logger.exception(e)
                 return
                 # TODO: error
-            
+
             # both run and run_on_many don't modify original files, in case of changes they return
             # changed code in result. Then FineCode desides whether to change the file or just
             # return the changes. run_on_many supports currently only in-place changes, so save
@@ -172,7 +199,7 @@ async def __run_action(
                 for file_path, file_result in result.items():
                     assert isinstance(file_result, FormatRunResult)
                     if file_result.changed and file_result.code is not None:
-                        with open(file_path, 'w') as f:
+                        with open(file_path, "w") as f:
                             f.write(file_result.code)
         else:
             # temporary solution, should be dependency injection or similar approach
@@ -180,7 +207,7 @@ async def __run_action(
                 payload = FormatRunPayload(apply_on=apply_on, apply_on_text=apply_on_text)
             else:
                 raise NotImplementedError()
-            
+
             try:
                 result = await action_instance.run(payload)
             except Exception as e:

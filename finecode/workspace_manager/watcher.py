@@ -13,8 +13,8 @@ from loguru import logger
 from watchdog.events import FileSystemEventHandler
 from watchdog.observers import Observer
 
-import finecode.workspace_manager.utils.async_proc_queue as async_queue
 import finecode.workspace_context as workspace_context
+import finecode.workspace_manager.utils.async_proc_queue as async_queue
 
 
 @dataclass
@@ -90,9 +90,7 @@ class QueueingEventHandler(FileSystemEventHandler):
         path = Path(event.src_path)
         # TODO: generalize
         if path.suffix == ".py" and path not in self._ignore_pathes:
-            self.queue_event(
-                ChangeEvent(path=Path(event.src_path), kind=ChangeKind.MODIFY)
-            )
+            self.queue_event(ChangeEvent(path=Path(event.src_path), kind=ChangeKind.MODIFY))
 
     def queue_event(self, event: ChangeEvent) -> None:
         self._event_buffer.append(event)

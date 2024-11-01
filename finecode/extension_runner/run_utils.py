@@ -8,8 +8,7 @@ from command_runner import command_runner
 from loguru import logger
 
 
-class VenvNotFound(Exception):
-    ...
+class VenvNotFound(Exception): ...
 
 
 def get_project_venv_path(project_path: Path) -> Path:
@@ -43,13 +42,13 @@ def run_cmd_in_dir(cmd: str, dir_path: Path) -> tuple[int, str]:
     os.chdir(dir_path)
     # remove 'VIRTUAL_ENV' env variable to avoid impact of current venv if one is activated
     old_virtual_env_value: str | None = None
-    if 'VIRTUAL_ENV' in os.environ:
-        old_virtual_env_value = os.environ['VIRTUAL_ENV']
-        del os.environ['VIRTUAL_ENV']
+    if "VIRTUAL_ENV" in os.environ:
+        old_virtual_env_value = os.environ["VIRTUAL_ENV"]
+        del os.environ["VIRTUAL_ENV"]
     exit_code, output = command_runner(cmd)
     os.chdir(old_current_dir)
     if old_virtual_env_value is not None:
-        os.environ['VIRTUAL_ENV'] = old_virtual_env_value
+        os.environ["VIRTUAL_ENV"] = old_virtual_env_value
     return (exit_code, output)
 
 

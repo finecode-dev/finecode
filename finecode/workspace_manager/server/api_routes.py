@@ -1,17 +1,18 @@
 from pathlib import Path
+
 from loguru import logger
 from modapp import APIRouter
 from modapp.errors import NotFoundError, ServerError
-from .endpoints import finecode
-import finecode.workspace_manager.main as manager_main
-import finecode.workspace_manager.server.schemas as schemas
+
 import finecode.api as api
 import finecode.domain as domain
 import finecode.workspace_context as workspace_context
-
 import finecode.workspace_manager.api as manager_api
 import finecode.workspace_manager.find_package as find_package
+import finecode.workspace_manager.main as manager_main
+import finecode.workspace_manager.server.schemas as schemas
 
+from .endpoints import finecode
 
 router = APIRouter()
 ws_context = workspace_context.WorkspaceContext([])
@@ -37,14 +38,20 @@ async def delete_workspace_dir(
     return schemas.DeleteWorkspaceDirResponse()
 
 
-def _dir_to_tree_node(dir_path: Path, ws_context: workspace_context.WorkspaceContext) -> schemas.ActionTreeNode | None:
+def _dir_to_tree_node(
+    dir_path: Path, ws_context: workspace_context.WorkspaceContext
+) -> schemas.ActionTreeNode | None:
     # ignore directories: hidden directories like .git, .pytest_cache etc, node_modules
-    if dir_path.name.startswith('.') or dir_path.name  == 'node_modules':
+    if dir_path.name.startswith(".") or dir_path.name == "node_modules":
         return None
 
     # 1. Determine type of dir_path: package or directory
     dir_is_package = find_package.is_package(dir_path)
-    dir_node_type = schemas.ActionTreeNode.NodeType.PACKAGE if dir_is_package else schemas.ActionTreeNode.NodeType.DIRECTORY
+    dir_node_type = (
+        schemas.ActionTreeNode.NodeType.PACKAGE
+        if dir_is_package
+        else schemas.ActionTreeNode.NodeType.DIRECTORY
+    )
     subnodes: list[schemas.ActionTreeNode] = []
     if dir_is_package:
         # reading configs for ws dirs is not needed here, because it happens on adding directory
@@ -67,9 +74,18 @@ def _dir_to_tree_node(dir_path: Path, ws_context: workspace_context.WorkspaceCon
                 if action.name not in package.root_actions:
                     continue
 
-                node_id = f'{package.path.as_posix()}::{action.name}'
-                subnodes.append(schemas.ActionTreeNode(node_id=node_id, name=action.name, node_type=schemas.ActionTreeNode.NodeType.ACTION, subnodes=[]))
-                ws_context.cached_actions_by_id[node_id] = workspace_context.CachedAction(action_id=node_id, package_path=package.path, action_name=action.name)
+                node_id = f"{package.path.as_posix()}::{action.name}"
+                subnodes.append(
+                    schemas.ActionTreeNode(
+                        node_id=node_id,
+                        name=action.name,
+                        node_type=schemas.ActionTreeNode.NodeType.ACTION,
+                        subnodes=[],
+                    )
+                )
+                ws_context.cached_actions_by_id[node_id] = workspace_context.CachedAction(
+                    action_id=node_id, package_path=package.path, action_name=action.name
+                )
         # TODO: presets?
     else:
         for dir_item in dir_path.iterdir():
@@ -79,13 +95,17 @@ def _dir_to_tree_node(dir_path: Path, ws_context: workspace_context.WorkspaceCon
                     subnodes.append(subnode)
 
     # TODO: cache result?
-    return schemas.ActionTreeNode(node_id=dir_path.as_posix(), name=dir_path.name, subnodes=subnodes, node_type=dir_node_type)
+    return schemas.ActionTreeNode(
+        node_id=dir_path.as_posix(), name=dir_path.name, subnodes=subnodes, node_type=dir_node_type
+    )
 
 
-def _list_actions(ws_context: workspace_context.WorkspaceContext, parent_node_id: str | None = None) -> list[schemas.ActionTreeNode]:
+def _list_actions(
+    ws_context: workspace_context.WorkspaceContext, parent_node_id: str | None = None
+) -> list[schemas.ActionTreeNode]:
     if parent_node_id is None:
         # list ws dirs and first level
-        nodes: list[schemas.ActionTreeNode] =[]
+        nodes: list[schemas.ActionTreeNode] = []
         for ws_dir_path in ws_context.ws_dirs_paths:
             node = _dir_to_tree_node(ws_dir_path, ws_context)
             if node is not None:
@@ -105,7 +125,11 @@ async def list_actions(
     if len(ws_context.ws_dirs_paths) == 0:
         return schemas.ListActionsResponse(nodes=[])
 
-    return schemas.ListActionsResponse(nodes=_list_actions(ws_context, request.parent_node_id if request.parent_node_id != '' else None))
+    return schemas.ListActionsResponse(
+        nodes=_list_actions(
+            ws_context, request.parent_node_id if request.parent_node_id != "" else None
+        )
+    )
 
 
 @router.endpoint(finecode.workspace_manager.WorkspaceManagerService.RunAction)
@@ -113,13 +137,15 @@ async def run_action(
     request: schemas.RunActionRequest,
 ) -> schemas.RunActionResponse:
     # TODO: validate apply_on and apply_on_text
-    
+
     _action_node_id = request.action_node_id
-    if ':' not in _action_node_id:
+    if ":" not in _action_node_id:
         # general action without package path like 'format' or 'lint', normalize (=add package path)
-        package_path = find_package.find_package_with_action_for_file(file_path=Path(request.apply_on), action_name=_action_node_id, ws_context=ws_context)
-        _action_node_id = f'{package_path.as_posix()}::{_action_node_id}'
-    
+        package_path = find_package.find_package_with_action_for_file(
+            file_path=Path(request.apply_on), action_name=_action_node_id, ws_context=ws_context
+        )
+        _action_node_id = f"{package_path.as_posix()}::{_action_node_id}"
+
     try:
         cached_action = ws_context.cached_actions_by_id[_action_node_id]
     except KeyError:
@@ -130,13 +156,21 @@ async def run_action(
         if package.actions is None:
             logger.error("Actions in package are not read yet, but expected")
             raise ServerError()
-        action = next(action for action in package.actions if action.name == cached_action.action_name)
+        action = next(
+            action for action in package.actions if action.name == cached_action.action_name
+        )
     except (KeyError, StopIteration) as error:
         logger.error(f"Unexpected error, package or action not found: {error}")
         raise ServerError()
 
-    logger.info('run action', request)
-    result = await __run_action(action=action, apply_on=Path(request.apply_on) if request.apply_on != '' else None, apply_on_text=request.apply_on_text, project_root=package.path, ws_context=ws_context)
+    logger.info("run action", request)
+    result = await __run_action(
+        action=action,
+        apply_on=Path(request.apply_on) if request.apply_on != "" else None,
+        apply_on_text=request.apply_on_text,
+        project_root=package.path,
+        ws_context=ws_context,
+    )
     return schemas.RunActionResponse(result_text=result or "")
 
 
@@ -182,7 +216,6 @@ async def __run_action(
             logger.error(f"Action {action.name} not found neither in project nor in workspace")
             return
 
-
     if apply_on:
         ws_context.ignore_watch_paths.add(apply_on)
 
@@ -192,7 +225,7 @@ async def __run_action(
             runner=ws_context.ws_packages_extension_runners[project_root],
             action=action,
             apply_on=apply_on,
-            apply_on_text=apply_on_text
+            apply_on_text=apply_on_text,
         )
     else:
         raise NotImplementedError()
@@ -207,7 +240,7 @@ async def __run_action(
         #     logger.error(f"Action execution failed: {output}")
         # else:
         #     logger.success(f"Action {action.name} successfully executed")
-        
+
         # result = '' # TODO: correct result
 
     if apply_on is not None:
@@ -215,5 +248,5 @@ async def __run_action(
             ws_context.ignore_watch_paths.remove(apply_on)
         except KeyError:
             ...
-    
+
     return result

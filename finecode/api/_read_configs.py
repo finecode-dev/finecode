@@ -46,15 +46,17 @@ def read_configs_in_dir(dir_path: Path, ws_context: workspace_context.WorkspaceC
             normalize_package_config(project_def)
             ws_context.ws_packages_raw_configs[def_file.parent] = project_def
         else:
-            logger.info(f'Package definition of type {def_file.name} is not supported yet')
+            logger.info(f"Package definition of type {def_file.name} is not supported yet")
             continue
 
-        finecode_sh_path = def_file.parent / 'finecode.sh'
+        finecode_sh_path = def_file.parent / "finecode.sh"
         status = domain.PackageStatus.READY
         if not finecode_sh_path.exists():
             status = domain.PackageStatus.NO_FINECODE_SH
 
-        ws_context.ws_packages[def_file.parent] = domain.Package(name=def_file.parent.name, path=def_file.parent, status=status)
+        ws_context.ws_packages[def_file.parent] = domain.Package(
+            name=def_file.parent.name, path=def_file.parent, status=status
+        )
 
 
 def normalize_package_config(config: dict[str, Any]) -> None:

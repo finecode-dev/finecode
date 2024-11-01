@@ -1,6 +1,6 @@
 import asyncio
-import threading
 import concurrent.futures as futures
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -10,9 +10,8 @@ from modapp.client import Client
 
 import finecode.domain as domain
 from finecode.workspace_manager.runner_client.finecode.extension_runner import (
-    ExtensionRunnerService,
-    RunActionRequest
-)
+    ExtensionRunnerService, RunActionRequest)
+
 
 @dataclass
 class ExtensionRunnerInfo:
@@ -26,7 +25,9 @@ class ExtensionRunnerInfo:
     client: Client | None = None
 
 
-async def run_action_in_runner(runner: ExtensionRunnerInfo, action: domain.Action, apply_on: Path | None, apply_on_text: str) -> str | None:
+async def run_action_in_runner(
+    runner: ExtensionRunnerInfo, action: domain.Action, apply_on: Path | None, apply_on_text: str
+) -> str | None:
     if not runner.started_event.is_set():
         await runner.started_event.wait()
     assert runner.client is not None
@@ -35,7 +36,9 @@ async def run_action_in_runner(runner: ExtensionRunnerInfo, action: domain.Actio
         result = await ExtensionRunnerService.run_action(
             channel=runner.client.channel,
             request=RunActionRequest(
-                action_name=action.name, apply_on=apply_on.as_posix() if apply_on is not None else '', apply_on_text=apply_on_text
+                action_name=action.name,
+                apply_on=apply_on.as_posix() if apply_on is not None else "",
+                apply_on_text=apply_on_text,
             ),
         )
         if result is None:

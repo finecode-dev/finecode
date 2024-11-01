@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import isort.main as isort_main
 import isort.settings as isort_settings
-from finecode import CodeFormatAction, FormatRunResult, CodeActionConfig, FormatRunPayload
+
 import finecode.action_utils as action_utils
+from finecode import (CodeActionConfig, CodeFormatAction, FormatRunPayload,
+                      FormatRunResult)
 
 
-class IsortCodeActionConfig(CodeActionConfig):
-    ...
+class IsortCodeActionConfig(CodeActionConfig): ...
 
 
 # TODO: run with a given config
@@ -16,7 +17,9 @@ class IsortCodeAction(CodeFormatAction[IsortCodeActionConfig]):
         # TODO: config
         changed: bool = False
         code: str | None = None
-        with action_utils.tmp_file_copy_path(file_path=payload.apply_on, file_content=payload.apply_on_text) as file_path:
+        with action_utils.tmp_file_copy_path(
+            file_path=payload.apply_on, file_content=payload.apply_on_text
+        ) as file_path:
             result = isort_main.sort_imports(
                 file_name=file_path.as_posix(),
                 # is it possible without overwriting?
@@ -33,7 +36,7 @@ class IsortCodeAction(CodeFormatAction[IsortCodeActionConfig]):
             # still incorrectly sorted and whether file was skipped
             changed = result is not None and not result.skipped
             if changed:
-                with open(file_path, 'r') as f:
+                with open(file_path, "r") as f:
                     code = f.read()
         return FormatRunResult(changed=changed, code=code)
 

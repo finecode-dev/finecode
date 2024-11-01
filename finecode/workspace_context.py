@@ -1,9 +1,9 @@
 from __future__ import annotations
 
+import site
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
-import site
 
 import finecode.domain as domain
 

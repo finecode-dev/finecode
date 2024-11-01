@@ -13,15 +13,14 @@ from loguru import logger
 
 import finecode.domain as domain
 import finecode.workspace_context as workspace_context
-import finecode.workspace_manager.finecode_cmd as finecode_cmd
 import finecode.workspace_manager.api as manager_api
+import finecode.workspace_manager.finecode_cmd as finecode_cmd
 from finecode.workspace_manager.runner_client import create_client
 from finecode.workspace_manager.runner_client.finecode.extension_runner import (
-    ExtensionRunnerService,
-    UpdateConfigRequest
-)
+    ExtensionRunnerService, UpdateConfigRequest)
+from finecode.workspace_manager.server.api_routes import \
+    ws_context as global_ws_context
 from finecode.workspace_manager.server.main import create_manager_app
-from finecode.workspace_manager.server.api_routes import ws_context as global_ws_context
 
 if TYPE_CHECKING:
     import subprocess
@@ -35,32 +34,36 @@ async def start() -> None:
 
 async def start_in_ws_context(ws_context: workspace_context.WorkspaceContext) -> None:
     # one for all, doesn't need to change on ws dirs change
-    asyncio.create_task(
-        handle_runners_lifecycle(ws_context)
-    )
+    asyncio.create_task(handle_runners_lifecycle(ws_context))
 
 
 async def update_runners(ws_context: workspace_context.WorkspaceContext) -> None:
     extension_runners = list(ws_context.ws_packages_extension_runners.values())
-    new_dirs, deleted_dirs = _find_changed_dirs([*ws_context.ws_packages.keys()], [runner.working_dir_path for runner in extension_runners])
+    new_dirs, deleted_dirs = _find_changed_dirs(
+        [*ws_context.ws_packages.keys()], [runner.working_dir_path for runner in extension_runners]
+    )
     for deleted_dir in deleted_dirs:
         try:
-            runner_to_delete = next(runner for runner in extension_runners if runner.working_dir_path == deleted_dir)
+            runner_to_delete = next(
+                runner for runner in extension_runners if runner.working_dir_path == deleted_dir
+            )
         except StopIteration:
             continue
         stop_extension_runner(runner_to_delete)
         extension_runners.remove(runner_to_delete)
 
-    new_runners_coros = [start_extension_runner(runner_dir=new_dir, ws_context=ws_context) for new_dir in new_dirs]
+    new_runners_coros = [
+        start_extension_runner(runner_dir=new_dir, ws_context=ws_context) for new_dir in new_dirs
+    ]
     new_runners = await asyncio.gather(*new_runners_coros)
     extension_runners += [runner for runner in new_runners if runner is not None]
-    
-    ws_context.ws_packages_extension_runners = {runner.working_dir_path: runner for runner in extension_runners}
+
+    ws_context.ws_packages_extension_runners = {
+        runner.working_dir_path: runner for runner in extension_runners
+    }
 
 
-async def handle_runners_lifecycle(
-    ws_context: workspace_context.WorkspaceContext
-):
+async def handle_runners_lifecycle(ws_context: workspace_context.WorkspaceContext):
     await update_runners(ws_context)
     try:
         while True:
@@ -71,11 +74,13 @@ async def handle_runners_lifecycle(
         # TODO: stop all log handlers?
         for runner in ws_context.ws_packages_extension_runners.values():
             stop_extension_runner(runner)
-        
+
         ws_context.ws_packages_extension_runners.clear()
 
 
-def _find_changed_dirs(new_dirs: Sequence[Path], old_dirs: Sequence[Path]) -> tuple[list[Path], list[Path]]:
+def _find_changed_dirs(
+    new_dirs: Sequence[Path], old_dirs: Sequence[Path]
+) -> tuple[list[Path], list[Path]]:
     added_dirs: list[Path] = []
     deleted_dirs: list[Path] = []
     for new_dir in new_dirs:
@@ -89,8 +94,7 @@ def _find_changed_dirs(new_dirs: Sequence[Path], old_dirs: Sequence[Path]) -> tu
 
 
 async def start_extension_runner(
-    runner_dir: Path,
-    ws_context: workspace_context.WorkspaceContext
+    runner_dir: Path, ws_context: workspace_context.WorkspaceContext
 ) -> manager_api.ExtensionRunnerInfo | None:
     runner_info = manager_api.ExtensionRunnerInfo(
         process_id=0,
@@ -98,7 +102,7 @@ async def start_extension_runner(
         output_queue=janus.Queue(),
         started_event=asyncio.Event(),
         process_future=None,
-        stop_event=threading.Event()
+        stop_event=threading.Event(),
     )
 
     def save_process_info(runner_info: manager_api.ExtensionRunnerInfo, process: subprocess.Popen):
@@ -120,8 +124,8 @@ async def start_extension_runner(
         return None
 
     # temporary remove VIRTUAL_ENV env variable to avoid starting in wrong venv
-    old_virtual_env_var = os.environ.get('VIRTUAL_ENV', '')
-    os.environ['VIRTUAL_ENV'] = ''
+    old_virtual_env_var = os.environ.get("VIRTUAL_ENV", "")
+    os.environ["VIRTUAL_ENV"] = ""
     runner_info.process_future = command_runner.command_runner_threaded(
         f"{_finecode_cmd} runner",
         process_callback=partial(save_process_info, runner_info),
@@ -129,9 +133,9 @@ async def start_extension_runner(
         # method poller is required to get stdout in threaded mode
         method="poller",
         stop_on=partial(should_stop, runner_info.stop_event),
-        timeout=None
+        timeout=None,
     )  # type: ignore
-    os.environ['VIRTUAL_ENV'] = old_virtual_env_var
+    os.environ["VIRTUAL_ENV"] = old_virtual_env_var
 
     asyncio.create_task(extension_runner_log_handler(runner_info))
     return runner_info
@@ -153,7 +157,7 @@ async def extension_runner_log_handler(runner: manager_api.ExtensionRunnerInfo) 
             read_queue = False
         else:
             print(f"R{runner.process_id}", line)
-            if runner.port is None and "Start web socketify server: " in line:
+            if runner.port is None and "Start server: " in line:
                 runner.port = int(line.split(":")[-1])
                 runner.client = create_client(f"http://localhost:{runner.port}")
                 try:
@@ -161,11 +165,11 @@ async def extension_runner_log_handler(runner: manager_api.ExtensionRunnerInfo) 
                         channel=runner.client.channel,
                         request=UpdateConfigRequest(
                             working_dir=runner.working_dir_path.as_posix(),
-                            config={}, # TODO: config
+                            config={},  # TODO: config
                         ),
                         # on update_config extension runner also reads all configs, it can take a
                         # time
-                        timeout=100
+                        timeout=100,
                     )
                     runner.started_event.set()
                 except Exception as e:

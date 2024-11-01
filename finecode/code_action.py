@@ -1,7 +1,7 @@
 # code actions are implementations of actions
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Sequence, TypeVar, Generic
+from typing import Generic, Sequence, TypeVar
 
 from pydantic import BaseModel
 
@@ -9,13 +9,10 @@ from pydantic import BaseModel
 class CodeActionConfig(BaseModel): ...
 
 
-class RunActionPayload(BaseModel):
-    ...
+class RunActionPayload(BaseModel): ...
 
 
-class RunActionResult(BaseModel):
-    ...
-
+class RunActionResult(BaseModel): ...
 
 
 CodeActionConfigType = TypeVar("CodeActionConfigType")

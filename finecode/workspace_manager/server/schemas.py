@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import IntEnum
+
 from modapp.models.dataclass import DataclassModel
 
 
@@ -13,7 +14,7 @@ class BaseModel(DataclassModel):
 @dataclass
 class AddWorkspaceDirRequest(BaseModel):
     dir_path: str
-    
+
     __modapp_path__ = "finecode.workspace_manager.AddWorkspaceDirRequest"
 
 
@@ -37,7 +38,7 @@ class DeleteWorkspaceDirResponse(BaseModel):
 @dataclass
 class ListActionsRequest(BaseModel):
     parent_node_id: str = ""
-    
+
     __modapp_path__ = "finecode.workspace_manager.ListActionsRequest"
 
 
@@ -47,7 +48,7 @@ class ActionTreeNode(BaseModel):
     name: str
     node_type: NodeType
     subnodes: list[ActionTreeNode]
-    
+
     class NodeType(IntEnum):
         DIRECTORY = 0
         PACKAGE = 1
@@ -60,21 +61,21 @@ class ActionTreeNode(BaseModel):
 @dataclass
 class ListActionsResponse(BaseModel):
     nodes: list[ActionTreeNode]
-    
+
     __modapp_path__ = "finecode.workspace_manager.ListActionsResponse"
 
 
 @dataclass
 class RunActionRequest(BaseModel):
     action_node_id: str
-    apply_on: str # Path?
+    apply_on: str  # Path?
     apply_on_text: str
-    
+
     __modapp_path__ = "finecode.workspace_manager.RunActionRequest"
 
 
 @dataclass
 class RunActionResponse(BaseModel):
-    result_text: str = ''
-    
+    result_text: str = ""
+
     __modapp_path__ = "finecode.workspace_manager.RunActionResponse"

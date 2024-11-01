@@ -1,4 +1,4 @@
-from modapp.routing import RouteMeta, Cardinality
+from modapp.routing import Cardinality, RouteMeta
 
 
 class ExtensionRunnerService:

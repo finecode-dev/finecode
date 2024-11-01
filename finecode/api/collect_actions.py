@@ -14,7 +14,9 @@ def collect_actions(
     try:
         package = ws_context.ws_packages[package_path]
     except KeyError:
-        raise ValueError(f"Package {package_path} doesn't exist. Existing packages: {ws_context.ws_packages}")
+        raise ValueError(
+            f"Package {package_path} doesn't exist. Existing packages: {ws_context.ws_packages}"
+        )
 
     if package.actions is not None:
         return package.actions
@@ -24,7 +26,7 @@ def collect_actions(
     except KeyError:
         raise Exception("First you need to parse config of package")
 
-    if config.get('tool', {}).get('finecode', None) is None:
+    if config.get("tool", {}).get("finecode", None) is None:
         package.status = domain.PackageStatus.NO_FINECODE
         package.actions = []
         package.actions_configs = {}
@@ -32,23 +34,23 @@ def collect_actions(
 
     actions, actions_configs = _collect_actions_in_config(config)
     # TODO: validate
-    first_level_actions_raw = [action_raw['name'] for action_raw in config["tool"]["finecode"].get("actions", [])]
+    first_level_actions_raw = [
+        action_raw["name"] for action_raw in config["tool"]["finecode"].get("actions", [])
+    ]
     package.root_actions = first_level_actions_raw
     package.actions = actions
     package.actions_configs = actions_configs
-    
+
     return actions
 
 
 def _collect_actions_in_config(
-    config: dict[str, Any]
+    config: dict[str, Any],
 ) -> tuple[list[domain.Action], dict[str, dict[str, Any]]]:
     actions: list[domain.Action] = []
     actions_configs: dict[str, dict[str, Any]] = {}
 
-    for action_name, action_def_raw in (
-        config["tool"]["finecode"].get("action", {}).items()
-    ):
+    for action_name, action_def_raw in config["tool"]["finecode"].get("action", {}).items():
         # TODO: handle validation errors
         action_def = config_models.ActionDefinition(**action_def_raw)
         actions.append(

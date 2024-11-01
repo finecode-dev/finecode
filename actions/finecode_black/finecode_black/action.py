@@ -1,19 +1,21 @@
 from __future__ import annotations
+
 import asyncio
-from concurrent.futures import Executor, ProcessPoolExecutor, ThreadPoolExecutor
 import os
-from pathlib import Path
 import sys
+from concurrent.futures import (Executor, ProcessPoolExecutor,
+                                ThreadPoolExecutor)
+from pathlib import Path
 
-from loguru import logger
-
-import finecode.action_utils as action_utils
-from black import reformat_one, WriteBack
+from black import WriteBack, reformat_one
 from black.concurrency import schedule_formatting
 from black.mode import Mode, TargetVersion
 from black.report import Report
-from finecode import CodeFormatAction, CodeActionConfig, FormatRunResult, FormatRunPayload, RunOnManyPayload
+from loguru import logger
 
+import finecode.action_utils as action_utils
+from finecode import (CodeActionConfig, CodeFormatAction, FormatRunPayload,
+                      FormatRunResult, RunOnManyPayload)
 
 
 class BlackCodeActionConfig(CodeActionConfig):
@@ -36,7 +38,9 @@ class BlackCodeAction(CodeFormatAction[BlackCodeActionConfig]):
     async def run(self, payload: FormatRunPayload) -> FormatRunResult:
         report = self.get_report()
         # it seems like black can format only in-place, use tmp file
-        with action_utils.tmp_file_copy_path(file_path=payload.apply_on, file_content=payload.apply_on_text) as file_path:
+        with action_utils.tmp_file_copy_path(
+            file_path=payload.apply_on, file_content=payload.apply_on_text
+        ) as file_path:
             reformat_one(
                 src=file_path,
                 fast=False,
@@ -47,14 +51,22 @@ class BlackCodeAction(CodeFormatAction[BlackCodeActionConfig]):
             file_changed = report.change_count > 0
             code: str | None = None
             if file_changed:
-                with open(file_path, 'r') as f:
+                with open(file_path, "r") as f:
                     code = f.read()
 
         return FormatRunResult(changed=file_changed, code=code)
 
-    async def run_on_many(self, payload: RunOnManyPayload[FormatRunPayload]) -> dict[Path, FormatRunResult]:
+    async def run_on_many(
+        self, payload: RunOnManyPayload[FormatRunPayload]
+    ) -> dict[Path, FormatRunResult]:
         report = self.get_report()
-        with action_utils.tmp_dir_copy_path(dir_path=payload.dir_path, file_pathes_with_contents=[(single_payload.apply_on, single_payload.apply_on_text) for single_payload in payload.single_payloads]) as (dir_path, files_pathes):
+        with action_utils.tmp_dir_copy_path(
+            dir_path=payload.dir_path,
+            file_pathes_with_contents=[
+                (single_payload.apply_on, single_payload.apply_on_text)
+                for single_payload in payload.single_payloads
+            ],
+        ) as (dir_path, files_pathes):
             await reformat_many(
                 sources=set(files_pathes),
                 fast=False,
@@ -63,24 +75,22 @@ class BlackCodeAction(CodeFormatAction[BlackCodeActionConfig]):
                 report=report,
                 workers=None,
             )
-        
+
             result: dict[Path, FormatRunResult] = {}
             for idx, single_payload in enumerate(payload.single_payloads):
                 if single_payload.apply_on is None:
                     logger.error("Run on multiple supports only files")
                     continue
-                with open(files_pathes[idx], 'r') as f:
+                with open(files_pathes[idx], "r") as f:
                     code = f.read()
                 # TODO: black report is generalized for all files, parse output?
                 result[single_payload.apply_on] = FormatRunResult(changed=True, code=code)
-        
+
         return result
 
     def get_mode(self) -> Mode:
         return Mode(
-            target_versions=set(
-                [TargetVersion[ver] for ver in self.config.target_versions]
-            ),
+            target_versions=set([TargetVersion[ver] for ver in self.config.target_versions]),
             line_length=self.config.line_length,
             is_pyi=False,
             is_ipynb=False,
@@ -105,11 +115,11 @@ async def reformat_many(
     workers: int | None,
 ) -> None:
     """Reformat multiple files using a ProcessPoolExecutor.
-    
+
     This is a copy of `reformat_many` function from black. Original function expects to be started
     outside of event loop and operates event loops of the whole program. Rework to allow to run as
     a coroutine in another program.
-    
+
     Removed code is kept as comments to make future migrations to new version easier."""
     # maybe_install_uvloop()
 

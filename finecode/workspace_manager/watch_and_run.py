@@ -1,9 +1,9 @@
 from loguru import logger
 
 import finecode.api as api
-import finecode.workspace_manager.watcher as watcher
-import finecode.workspace_manager.find_package as find_package
 import finecode.workspace_context as workspace_context
+import finecode.workspace_manager.find_package as find_package
+import finecode.workspace_manager.watcher as watcher
 
 
 async def watch_and_run(

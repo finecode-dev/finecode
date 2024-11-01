@@ -6,10 +6,10 @@ import click
 from loguru import logger
 
 import finecode.api as api
-import finecode.workspace_manager.watcher as watcher
 import finecode.extension_runner as extension_runner
 import finecode.workspace_context as workspace_context
 import finecode.workspace_manager as workspace_manager
+import finecode.workspace_manager.watcher as watcher
 
 
 @click.group()
@@ -130,7 +130,7 @@ async def _start_and_run_forever(ws_root: Path) -> None:
     await workspace_manager.start()
     root_package_path = Path("/home/user/Development/FineCode/finecode")
     await _watch_and_run(
-        action='format',  # temporary for testing
+        action="format",  # temporary for testing
         apply_on=root_package_path,
         project_root=root_package_path,
         ws_context=ws_context,

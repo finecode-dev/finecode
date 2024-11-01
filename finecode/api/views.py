@@ -4,7 +4,7 @@ from typing import Any
 from loguru import logger
 
 import finecode.domain as domain
-from finecode import config_models, workspace_context, views
+from finecode import config_models, views, workspace_context
 from finecode.extension_runner import run_utils
 
 
@@ -46,17 +46,19 @@ def show_view(
 
     if current_venv_path != project_venv_path:
         # TODO: check that project is managed via poetry
-        exit_code, output = run_utils.run_cmd_in_dir(f'', package_path)
+        exit_code, output = run_utils.run_cmd_in_dir(f"", package_path)
         logger.debug(f"Output: {output}")
         if exit_code != 0:
             logger.error(f"View show failed: {output}")
             return []
 
     try:
-        view = next(view for view in ws_context.ws_packages[package_path].views if view.name == view_name)
+        view = next(
+            view for view in ws_context.ws_packages[package_path].views if view.name == view_name
+        )
     except (KeyError, StopIteration):
         raise Exception("Package or view not found")
-    
+
     try:
         view_cls = run_utils.import_class_by_source_str(view.source)
     except ModuleNotFoundError:
