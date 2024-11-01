@@ -2,8 +2,8 @@ from pathlib import Path
 
 from loguru import logger
 
-from .collect_actions import collect_actions
-from ._read_configs import _finecode_is_enabled_in_def
+from ..api.collect_actions import collect_actions
+from ..api._read_configs import _finecode_is_enabled_in_def
 from finecode.workspace_context import WorkspaceContext
 
 

@@ -8,7 +8,9 @@ import finecode.workspace_manager.server.schemas as schemas
 import finecode.api as api
 import finecode.domain as domain
 import finecode.workspace_context as workspace_context
+
 import finecode.workspace_manager.api as manager_api
+import finecode.workspace_manager.find_package as find_package
 
 
 router = APIRouter()
@@ -41,7 +43,7 @@ def _dir_to_tree_node(dir_path: Path, ws_context: workspace_context.WorkspaceCon
         return None
 
     # 1. Determine type of dir_path: package or directory
-    dir_is_package = api.is_package(dir_path)
+    dir_is_package = find_package.is_package(dir_path)
     dir_node_type = schemas.ActionTreeNode.NodeType.PACKAGE if dir_is_package else schemas.ActionTreeNode.NodeType.DIRECTORY
     subnodes: list[schemas.ActionTreeNode] = []
     if dir_is_package:
@@ -59,7 +61,7 @@ def _dir_to_tree_node(dir_path: Path, ws_context: workspace_context.WorkspaceCon
 
         if package is not None:
             if package.actions is None:
-                api.collect_actions.collect_actions(package_path=package.path, ws_context=ws_context)
+                api.collect_actions(package_path=package.path, ws_context=ws_context)
             assert package.actions is not None
             for action in package.actions:
                 if action.name not in package.root_actions:
@@ -115,7 +117,7 @@ async def run_action(
     _action_node_id = request.action_node_id
     if ':' not in _action_node_id:
         # general action without package path like 'format' or 'lint', normalize (=add package path)
-        package_path = api.find_package_with_action_for_file(file_path=Path(request.apply_on), action_name=_action_node_id, ws_context=ws_context)
+        package_path = find_package.find_package_with_action_for_file(file_path=Path(request.apply_on), action_name=_action_node_id, ws_context=ws_context)
         _action_node_id = f'{package_path.as_posix()}::{_action_node_id}'
     
     try:

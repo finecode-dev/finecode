@@ -1,12 +1,13 @@
 from pathlib import Path
 from loguru import logger
 from modapp import APIRouter
+from modapp.errors import ServerError
 
 from finecode.api.collect_actions import get_subaction
 from .endpoints import finecode
 import finecode.extension_runner.schemas as schemas
 import finecode.api as api
-import finecode.run_utils as run_utils
+import finecode.extension_runner.run_utils as run_utils
 import finecode.domain as domain
 import finecode.workspace_context as workspace_context
 from finecode.code_action import CodeFormatAction, FormatRunPayload, RunActionResult, RunOnManyResult, FormatRunResult, RunOnManyPayload
@@ -21,7 +22,7 @@ def _init_project(working_dir: Path):
     global _project_root
     _project_root = working_dir
     api.read_configs_in_dir(_project_root, ws_context)
-    api.collect_actions.collect_actions(package_path=_project_root, ws_context=ws_context)
+    api.collect_actions(package_path=_project_root, ws_context=ws_context)
 
 
 @router.endpoint(finecode.extension_runner.ExtensionRunnerService.UpdateConfig)
@@ -57,13 +58,17 @@ async def run_action(
         return schemas.RunActionResponse(result_text='')
 
     assert _project_root is not None
-    result = await __run_action(
-        action_obj,
-        Path(request.apply_on) if request.apply_on != '' else None,
-        apply_on_text=request.apply_on_text,
-        project_root=_project_root,
-        ws_context=ws_context,
-    )
+    try:
+        result = await __run_action(
+            action_obj,
+            Path(request.apply_on) if request.apply_on != '' else None,
+            apply_on_text=request.apply_on_text,
+            project_root=_project_root,
+            ws_context=ws_context,
+        )
+    except Exception as e: # TODO: concrete exceptions?
+        logger.exception(e)
+        raise ServerError("Failed to run action")
     
     return schemas.RunActionResponse(result_text=result.code if result is not None and isinstance(result, FormatRunResult) and result.code is not None else "")
 
@@ -102,7 +107,7 @@ async def __run_action(
                     name=subaction, package_path=project_root, ws_context=ws_context
                 )
             except ValueError:
-                raise Exception(f"Action {subaction} not found")
+                raise ValueError(f"Action {subaction} not found")
 
             result = await __run_action(
                 subaction_obj,

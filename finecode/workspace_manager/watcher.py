@@ -13,7 +13,7 @@ from loguru import logger
 from watchdog.events import FileSystemEventHandler
 from watchdog.observers import Observer
 
-import finecode.utils.async_proc_queue as async_queue
+import finecode.workspace_manager.utils.async_proc_queue as async_queue
 import finecode.workspace_context as workspace_context
 
 
@@ -24,9 +24,10 @@ class ChangeEvent:
     # used for MOVE and RENAME events
     new_path: Path | None = None
 
-    def __eq__(self, other: ChangeEvent) -> bool:
+    def __eq__(self, other: object) -> bool:
         return (
-            self.path == other.path
+            isinstance(other, ChangeEvent)
+            and self.path == other.path
             and self.kind == other.kind
             and self.new_path == other.new_path
         )
@@ -181,8 +182,8 @@ def watch_workspace_dirs(
         ws_context.ignore_watch_paths, event_queue_iterator
     )
 
+    p = mp.Process(target=run_observer, args=(event_queue, ws_context.ws_dirs_paths))
     try:
-        p = mp.Process(target=run_observer, args=(event_queue, ws_context.ws_dirs_paths))
         p.start()
         yield filtered_event_queue_iterator
     finally:

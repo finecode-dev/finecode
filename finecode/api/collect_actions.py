@@ -6,52 +6,6 @@ import finecode.domain as domain
 import finecode.workspace_context as workspace_context
 
 
-def collect_actions_recursively(
-    root_dir: Path, ws_context: workspace_context.WorkspaceContext
-) -> domain.Package:
-    try:
-        root_package = ws_context.ws_packages[root_dir]
-    except KeyError:
-        raise Exception("Root package not found")
-
-    return root_package
-
-    # root_package = domain.Package(name=root_dir.name, path=root_dir)
-    # def_files_generator = root_dir.rglob("*")
-    # for def_file in def_files_generator:
-    #     if def_file.name not in {"pyproject.toml", "package.json", "finecode.toml"}:
-    #         continue
-
-    #     if not finecode_is_enabled_in_def(def_file):
-    #         continue
-
-    #     path_parts = def_file.parent.relative_to(root_dir).parts
-    #     current_package = root_package
-    #     for part in path_parts:
-    #         try:
-    #             current_package = next(
-    #                 package
-    #                 for package in current_package.subpackages
-    #                 if package.name == part
-    #             )
-    #         except StopIteration:
-    #             new_package = domain.Package(
-    #                 name=part, path=current_package.path / part
-    #             )
-    #             current_package.subpackages.append(new_package)
-    #             current_package = new_package
-    #
-    #     root_actions, all_actions = collect_actions(def_file, ws_context=ws_context)
-    #     for action_name in root_actions:
-    #         try:
-    #             action_info = all_actions[action_name]
-    #             current_package.actions.append(action_info)
-    #         except KeyError:
-    #             # TODO: process correctly, return as invalid
-    #             logger.warning(f"Action not found: {action_name}")
-    # return root_package
-
-
 def collect_actions(
     package_path: Path,
     ws_context: workspace_context.WorkspaceContext,
@@ -124,5 +78,5 @@ def get_subaction(
         raise ValueError("Action definition not found")
     try:
         return domain.Action(name=name, source=action_raw["source"])
-    except ValueError:
+    except KeyError:
         raise ValueError("Action has no source")

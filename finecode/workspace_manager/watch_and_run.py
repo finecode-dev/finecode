@@ -1,7 +1,8 @@
 from loguru import logger
 
 import finecode.api as api
-import finecode.api.watcher as watcher
+import finecode.workspace_manager.watcher as watcher
+import finecode.workspace_manager.find_package as find_package
 import finecode.workspace_context as workspace_context
 
 
@@ -28,10 +29,9 @@ async def watch_and_run(
                 # TODO: on which files should it be applied? format only on changed and lint?
                 for action in ["lint", "format"]:
                     # TODO: this can be cached
-                    project_root = api.find_package_with_action_for_file(
+                    project_root = find_package.find_package_with_action_for_file(
                         file_path=path_to_apply_on,
                         action_name=action,
-                        workspace_path=None,
                         ws_context=ws_context,
                     )
                     # TODO

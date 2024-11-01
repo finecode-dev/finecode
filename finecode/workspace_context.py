@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import finecode.domain as domain
-import finecode.run_utils as run_utils
+import finecode.extension_runner.run_utils as run_utils
 
 if TYPE_CHECKING:
     from finecode.workspace_manager.api import ExtensionRunnerInfo

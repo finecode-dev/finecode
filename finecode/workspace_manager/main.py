@@ -13,7 +13,7 @@ from loguru import logger
 
 import finecode.domain as domain
 import finecode.workspace_context as workspace_context
-import finecode.utils.finecode_cmd as finecode_cmd
+import finecode.workspace_manager.finecode_cmd as finecode_cmd
 import finecode.workspace_manager.api as manager_api
 from finecode.workspace_manager.runner_client import create_client
 from finecode.workspace_manager.runner_client.finecode.extension_runner import (

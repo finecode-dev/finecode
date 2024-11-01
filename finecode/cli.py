@@ -6,7 +6,7 @@ import click
 from loguru import logger
 
 import finecode.api as api
-import finecode.api.watcher as watcher
+import finecode.workspace_manager.watcher as watcher
 import finecode.extension_runner as extension_runner
 import finecode.workspace_context as workspace_context
 import finecode.workspace_manager as workspace_manager
