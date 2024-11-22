@@ -18,15 +18,22 @@ import finecode.workspace_manager.finecode_cmd as finecode_cmd
 from finecode.workspace_manager.runner_client import create_client
 from finecode.workspace_manager.runner_client.finecode.extension_runner import (
     ExtensionRunnerService, UpdateConfigRequest)
+from finecode.workspace_manager.runner_client.modapp import ModappService, DataclassModel
 from finecode.workspace_manager.server.api_routes import \
     ws_context as global_ws_context
 from finecode.workspace_manager.server.main import create_manager_app
+from modapp.extras.logs import save_logs_to_file
+from modapp.extras.platformdirs import get_dirs
 
 if TYPE_CHECKING:
     import subprocess
 
 
 async def start() -> None:
+    log_dir_path = Path(get_dirs(app_name='FineCode_Workspace_Manager', app_author='FineCode', version='1.0').user_log_dir)
+    # tmp until fixed in modapp
+    logger.remove()
+    save_logs_to_file(file_path=log_dir_path / 'execution.log', log_level="TRACE")
     manager_app = create_manager_app()
     await manager_app.run_async()  # TODO: stop
     await start_in_ws_context(global_ws_context)
@@ -172,8 +179,16 @@ async def extension_runner_log_handler(runner: manager_api.ExtensionRunnerInfo) 
                         timeout=100,
                     )
                     runner.started_event.set()
+                    asyncio.create_task(keep_running_until_disconnect(runner))
                 except Exception as e:
                     # TODO: set package status to appropriate error
                     logger.exception(e)
 
     logger.trace(f"End log handler for {runner.working_dir_path}({runner.process_id})")
+
+
+async def keep_running_until_disconnect(runner: manager_api.ExtensionRunnerInfo):
+    logger.trace('Request keep running until disconnect')
+    stream = await ModappService.keep_running_until_disconnect(channel=runner.client.channel, request=DataclassModel())
+    async for _ in stream:
+        ...

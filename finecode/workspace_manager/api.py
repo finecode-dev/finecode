@@ -23,6 +23,7 @@ class ExtensionRunnerInfo:
     process_future: futures.Future | None
     port: int | None = None
     client: Client | None = None
+    keep_running_request_task: asyncio.Task | None = None
 
 
 async def run_action_in_runner(

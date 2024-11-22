@@ -13,12 +13,12 @@ watchdog = "^4.0.0"
 click = "^8.1.7"
 pydantic = "^2.5.3"
 command-runner = "^1.5.1"
-modapp = { git = "https://github.com/Aksem/modapp.git", tag = "v0.3.24", extras = [
+modapp = { git = "https://github.com/Aksem/modapp.git", tag = "v0.4.2", extras = [
     "uvloop",
     "web_aiohttp",
     "json",
-    "web_httpx",
-    "case_change"
+    "case_change",
+    "platformdirs"
 ] }
 janus = { git ="https://github.com/Aksem/janus.git" }
 
