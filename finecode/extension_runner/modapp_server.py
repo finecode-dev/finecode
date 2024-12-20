@@ -6,10 +6,9 @@ from modapp.transports.web_aiohttp_config import WebAiohttpTransportConfig
 
 import finecode.extension_runner.run_utils as run_utils
 
-from .api_routes import router
-
 
 def create_extension_app() -> Modapp:
+    from .api_routes import router
     # create modapp app
     app = Modapp(
         [

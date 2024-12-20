@@ -1,3 +1,4 @@
+# NOTE: it isn't used anymore, commands should be migrated to workspace_manager cli
 import asyncio
 import os
 from pathlib import Path
@@ -6,7 +7,6 @@ import click
 from loguru import logger
 
 import finecode.api as api
-import finecode.extension_runner as extension_runner
 import finecode.workspace_context as workspace_context
 import finecode.workspace_manager as workspace_manager
 import finecode.workspace_manager.watcher as watcher
@@ -147,17 +147,6 @@ def start(trace: bool = False):
     asyncio.run(_start_and_run_forever(ws_root))
 
 
-@cli.command()
-@click.option("--trace", "trace", is_flag=True)
-def start_api(trace: bool = False):
-    if trace:
-        _enable_trace_logging()
-
-    loop = asyncio.get_event_loop()
-    loop.run_until_complete(workspace_manager.start())
-    loop.run_forever()
-
-
 @cli.group()
 def view(): ...
 
@@ -209,21 +198,6 @@ def view(): ...
 
 # TODO: json or similar output
 # TODO: print configuration
-
-
-async def _start_runner():
-    app = extension_runner.create_extension_app()
-    try:
-        await app.run_async()
-        while True:
-            await asyncio.sleep(1)
-    finally:
-        app.stop()
-
-
-@cli.command()
-def runner():
-    asyncio.run(_start_runner())
 
 
 def _enable_trace_logging():

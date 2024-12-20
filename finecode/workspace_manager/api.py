@@ -6,11 +6,10 @@ from pathlib import Path
 
 import janus
 from loguru import logger
-from modapp.client import Client
+from lsprotocol import types
 
 import finecode.domain as domain
-from finecode.workspace_manager.runner_client.finecode.extension_runner import (
-    ExtensionRunnerService, RunActionRequest)
+from finecode.workspace_manager.runner_lsp_client import JsonRPCClient
 
 
 @dataclass
@@ -22,7 +21,7 @@ class ExtensionRunnerInfo:
     started_event: asyncio.Event
     process_future: futures.Future | None
     port: int | None = None
-    client: Client | None = None
+    client: JsonRPCClient | None = None
     keep_running_request_task: asyncio.Task | None = None
 
 
@@ -34,14 +33,8 @@ async def run_action_in_runner(
     assert runner.client is not None
 
     try:
-        result = await ExtensionRunnerService.run_action(
-            channel=runner.client.channel,
-            request=RunActionRequest(
-                action_name=action.name,
-                apply_on=apply_on.as_posix() if apply_on is not None else "",
-                apply_on_text=apply_on_text,
-            ),
-        )
+        result = await runner.client.protocol.send_request_async(types.WORKSPACE_EXECUTE_COMMAND, types.ExecuteCommandParams(command='actions/run', arguments=[action.name, apply_on.as_posix() if apply_on is not None else "", apply_on_text]))
+        logger.debug(f"Action result: {result}")
         if result is None:
             return None
         else:

@@ -1,0 +1,137 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Python: cli",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "./finecode/cli.py",
+            "args": [
+                "run",
+                "format",
+                "./finecode/cli.py"
+            ],
+            "console": "integratedTerminal",
+            "justMyCode": false
+        },
+        {
+            "name": "Python: cli action list",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "./finecode/cli.py",
+            "args": [
+                "action",
+                "list"
+            ],
+            "console": "integratedTerminal",
+            "justMyCode": false
+        },
+        {
+            "name": "Python: cli action run format ./finecode/cli.py",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "./finecode/cli.py",
+            "args": [
+                "action",
+                "run",
+                "format",
+                "./tests/nested_package/pyback/",
+                "-w"
+            ],
+            "console": "integratedTerminal",
+            "justMyCode": false
+        },
+        {
+            "name": "Python: cli start",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "./finecode/cli.py",
+            "args": [
+                "start"
+            ],
+            "console": "integratedTerminal",
+            "justMyCode": false
+        },
+        {
+            "name": "Python: cli start API",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "./finecode/cli.py",
+            "args": [
+                "start-api"
+            ],
+            "console": "integratedTerminal",
+            "justMyCode": false
+        },
+        {
+            "name": "Python: cli view list",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "./finecode/cli.py",
+            "args": [
+                "view",
+                "list"
+            ],
+            "console": "integratedTerminal",
+            "justMyCode": false
+        },
+        {
+            "name": "Python: cli view show poetry_dependencies",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "./finecode/cli.py",
+            "args": [
+                "view",
+                "show",
+                "poetry_dependencies"
+            ],
+            "console": "integratedTerminal",
+            "justMyCode": false
+        },
+        {
+            "name": "Python Tests",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${file}",
+            "purpose": [
+                "debug-test"
+            ],
+            "console": "integratedTerminal",
+            "justMyCode": false
+        },
+        {
+            "name": "Python: WM",
+            "type": "debugpy",
+            "request": "attach",
+            "connect": {
+                "host": "localhost",
+                "port": 5680
+            },
+            "justMyCode": false,
+            "logToFile": true,
+            "preLaunchTask": "Sleepdelay"
+            // "presentation": {
+            //     "hidden": true,
+            //     "group": "",
+            //     "order": 4
+            // }
+        },
+        {
+            "name": "Python: ER1",
+            "type": "debugpy",
+            "request": "attach",
+            "connect": {
+                "host": "localhost",
+                "port": 5681
+            },
+            "justMyCode": false,
+            "logToFile": true,
+            // "preLaunchTask": "Sleepdelay"
+            // "presentation": {
+            //     "hidden": true,
+            //     "group": "",
+            //     "order": 4
+            // }
+        },
+    ]
+}

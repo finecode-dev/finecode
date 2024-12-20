@@ -1,35 +1,33 @@
 from pathlib import Path
 
 from loguru import logger
-from modapp import APIRouter
-from modapp.errors import ServerError
 
 import finecode.api as api
 import finecode.domain as domain
 import finecode.extension_runner.run_utils as run_utils
 import finecode.extension_runner.schemas as schemas
 import finecode.workspace_context as workspace_context
+import finecode.extension_runner.global_state as global_state
 from finecode.api.collect_actions import get_subaction
 from finecode.code_action import (CodeFormatAction, FormatRunPayload,
                                   FormatRunResult, RunActionResult,
                                   RunOnManyPayload, RunOnManyResult)
 
-from .endpoints import finecode
-
-router = APIRouter()
-
 # temporary global storage
 _project_root: Path | None = None
+
+
+class ActionFailedException(Exception):
+    ...
 
 
 def _init_project(working_dir: Path):
     global _project_root
     _project_root = working_dir
-    api.read_configs_in_dir(_project_root, ws_context)
-    api.collect_actions(package_path=_project_root, ws_context=ws_context)
+    api.read_configs_in_dir(_project_root, global_state.ws_context)
+    api.collect_actions(package_path=_project_root, ws_context=global_state.ws_context)
 
 
-@router.endpoint(finecode.extension_runner.ExtensionRunnerService.UpdateConfig)
 async def update_config(
     request: schemas.UpdateConfigRequest,
 ) -> schemas.UpdateConfigResponse:
@@ -37,7 +35,6 @@ async def update_config(
     return schemas.UpdateConfigResponse()
 
 
-@router.endpoint(finecode.extension_runner.ExtensionRunnerService.RunAction)
 async def run_action(
     request: schemas.RunActionRequest,
 ) -> schemas.RunActionResponse:
@@ -46,7 +43,7 @@ async def run_action(
     # TODO: validate that path exists
 
     try:
-        package = ws_context.ws_packages[_project_root]
+        package = global_state.ws_context.ws_packages[_project_root]
     except StopIteration:
         logger.warning("Package not found")
         # TODO: raise error
@@ -70,11 +67,11 @@ async def run_action(
             Path(request.apply_on) if request.apply_on != "" else None,
             apply_on_text=request.apply_on_text,
             project_root=_project_root,
-            ws_context=ws_context,
+            ws_context=global_state.ws_context,
         )
     except Exception as e:  # TODO: concrete exceptions?
         logger.exception(e)
-        raise ServerError("Failed to run action")
+        raise ActionFailedException("Failed to run action")
 
     return schemas.RunActionResponse(
         result_text=(

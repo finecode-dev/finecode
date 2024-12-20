@@ -1,0 +1,1 @@
+extension server could use tcp communication with workspace manager, but for some reason it didn't work in first tries: it blocked the server, client connection was accepted, but no requests were processed.

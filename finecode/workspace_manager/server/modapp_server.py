@@ -1,18 +1,12 @@
-# import sys
-
-# from loguru import logger
 from modapp import Modapp
 from modapp.converters.json import JsonConverter
 from modapp.transports.web_aiohttp import WebAiohttpTransport
 from modapp.transports.web_aiohttp_config import WebAiohttpTransportConfig
 
-# logger.remove()
-# logger.add(sys.stdout, level="TRACE")
-
-from .api_routes import router
-
 
 def create_manager_app() -> Modapp:
+    from .api_routes import router
+
     app = Modapp(
             [
                 WebAiohttpTransport(
@@ -25,3 +19,6 @@ def create_manager_app() -> Modapp:
 
     app.include_router(router)
     return app
+
+
+__all__ = ['create_manager_app']
