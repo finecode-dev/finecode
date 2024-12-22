@@ -1,4 +1,4 @@
-import finecode.workspace_context as workspace_context
+import finecode.workspace_manager.context as context
 
 
-ws_context = workspace_context.WorkspaceContext([])
+ws_context = context.WorkspaceContext([])

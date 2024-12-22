@@ -11,7 +11,7 @@ from loguru import logger
 from lsprotocol import types
 
 import finecode.domain as domain
-import finecode.workspace_context as workspace_context
+import finecode.workspace_manager.context as context
 import finecode.workspace_manager.api as manager_api
 import finecode.workspace_manager.finecode_cmd as finecode_cmd
 from finecode.workspace_manager.runner_lsp_client import create_lsp_client_io # create_lsp_client_tcp
@@ -42,15 +42,15 @@ async def start(comm_type: communication_utils.CommunicationType, host: str | No
         await pygls_utils.start_io_async(server)
 
 
-async def start_in_ws_context(ws_context: workspace_context.WorkspaceContext) -> None:
+async def start_in_ws_context(ws_context: context.WorkspaceContext) -> None:
     # one for all, doesn't need to change on ws dirs change
     asyncio.create_task(handle_runners_lifecycle(ws_context))
 
 
-async def update_runners(ws_context: workspace_context.WorkspaceContext) -> None:
-    extension_runners = list(ws_context.ws_packages_extension_runners.values())
+async def update_runners(ws_context: context.WorkspaceContext) -> None:
+    extension_runners = list(ws_context.ws_projects_extension_runners.values())
     new_dirs, deleted_dirs = _find_changed_dirs(
-        [*ws_context.ws_packages.keys()], [runner.working_dir_path for runner in extension_runners]
+        [*ws_context.ws_projects.keys()], [runner.working_dir_path for runner in extension_runners]
     )
     for deleted_dir in deleted_dirs:
         try:
@@ -68,12 +68,12 @@ async def update_runners(ws_context: workspace_context.WorkspaceContext) -> None
     new_runners = await asyncio.gather(*new_runners_coros)
     extension_runners += [runner for runner in new_runners if runner is not None]
 
-    ws_context.ws_packages_extension_runners = {
+    ws_context.ws_projects_extension_runners = {
         runner.working_dir_path: runner for runner in extension_runners
     }
 
 
-async def handle_runners_lifecycle(ws_context: workspace_context.WorkspaceContext):
+async def handle_runners_lifecycle(ws_context: context.WorkspaceContext):
     await update_runners(ws_context)
     try:
         while True:
@@ -82,10 +82,10 @@ async def handle_runners_lifecycle(ws_context: workspace_context.WorkspaceContex
         logger.exception(e)
     finally:
         # TODO: stop all log handlers?
-        for runner in ws_context.ws_packages_extension_runners.values():
+        for runner in ws_context.ws_projects_extension_runners.values():
             stop_extension_runner(runner)
 
-        ws_context.ws_packages_extension_runners.clear()
+        ws_context.ws_projects_extension_runners.clear()
 
 
 def _find_changed_dirs(
@@ -104,7 +104,7 @@ def _find_changed_dirs(
 
 
 async def start_extension_runner(
-    runner_dir: Path, ws_context: workspace_context.WorkspaceContext
+    runner_dir: Path, ws_context: context.WorkspaceContext
 ) -> manager_api.ExtensionRunnerInfo | None:
     runner_info = manager_api.ExtensionRunnerInfo(
         process_id=0,
@@ -119,7 +119,7 @@ async def start_extension_runner(
         _finecode_cmd = finecode_cmd.get_finecode_cmd(runner_dir)
     except ValueError:
         try:
-            ws_context.ws_packages[runner_dir].status = domain.PackageStatus.NO_FINECODE_SH
+            ws_context.ws_projects[runner_dir].status = domain.ProjectStatus.NO_FINECODE_SH
         except KeyError:
             ...
         return None
@@ -167,5 +167,5 @@ async def init_runner(runner: manager_api.ExtensionRunnerInfo) -> None:
         logger.debug(f"Updated config of runner {runner.working_dir_path}, process id {runner.process_id}")
         runner.started_event.set()
     except Exception as e:
-        # TODO: set package status to appropriate error
+        # TODO: set project status to appropriate error
         logger.exception(e)

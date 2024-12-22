@@ -1,5 +1,6 @@
 # code actions are implementations of actions
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 from typing import Generic, Sequence, TypeVar
 
@@ -21,6 +22,17 @@ RunResultType = TypeVar("RunResultType", bound=RunActionResult)
 RunOnManyResult = dict[Path, RunResultType]
 
 
+@dataclass
+class ActionContext:
+    project_dir: Path
+
+    @property
+    @lru_cache(1)
+    def cache_dir(self) -> Path:
+        # runner-specific cache dir
+        ... # TODO
+
+
 class RunOnManyPayload(BaseModel, Generic[RunPayloadType]):
     # single payloads are homogeneous, e.g. if one item has only apply_on or apply_on_text, then
     # all items have the same properties
@@ -39,14 +51,23 @@ class CodeAction(Generic[CodeActionConfigType, RunPayloadType, RunResultType]):
     In action implementation there is no action config as such, because config definition includes
     default values.
     """
+    LANGUAGE: str = 'python'
+    IS_BACKGROUND: bool = False
 
-    def __init__(self, config: CodeActionConfigType) -> None:
+    def __init__(self, config: CodeActionConfigType, context: ActionContext) -> None:
         self.config = config
+        self.context = context
 
     async def run(self, payload: RunPayloadType) -> RunResultType:
         raise NotImplementedError()
 
     async def run_on_many(self, payload: RunOnManyPayload[RunPayloadType]) -> RunOnManyResult:
+        raise NotImplementedError()
+
+    async def run_in_background(self):
+        raise NotImplementedError()
+
+    async def stop(self):
         raise NotImplementedError()
 
 
@@ -60,7 +81,8 @@ class LintRunResult(RunActionResult): ...
 
 class CodeLintAction(CodeAction[CodeActionConfigType, LintRunPayload, LintRunResult]):
     # lint actions only analyses code, they don't modify it. This allows to run them in parallel.
-    ...
+    APPLIES_ONLY_ON_FILE: bool = False
+    NEEDS_WHOLE_PROJECT: bool = False
 
 
 class FormatRunPayload(RunActionPayload):

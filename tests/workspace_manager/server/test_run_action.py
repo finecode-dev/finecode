@@ -12,8 +12,8 @@ from .client.finecode.workspace_manager import (AddWorkspaceDirRequest,
 pytestmark = pytest.mark.anyio
 
 
-async def test__runs_action_in_package(client_channel):
-    # workspace with single package
+async def test__runs_action_in_project(client_channel):
+    # workspace with single project
     # TODO: move in fixture
     list_ws_dir_path = Path(__file__).parent.parent.parent / "list_ws"
     cli_tool_root_dir_path = list_ws_dir_path / "cli_tool"
@@ -43,8 +43,8 @@ print("b")
     )
 
 
-async def test__runs_general_action_in_package(client_channel):
-    # workspace with single package
+async def test__runs_general_action_in_project(client_channel):
+    # workspace with single project
     # TODO: move in fixture
     list_ws_dir_path = Path(__file__).parent.parent.parent / "list_ws"
     cli_tool_root_dir_path = list_ws_dir_path / "cli_tool"
@@ -72,8 +72,8 @@ print("b")
     )
 
 
-async def test__runs_action_in_one_of_packages(client_channel):
-    # workspace with multiple packages
+async def test__runs_action_in_one_of_projects(client_channel):
+    # workspace with multiple projects
     # TODO: move in fixture
     list_ws_dir_path = Path(__file__).parent.parent.parent / "list_ws"
     cli_tool_root_dir_path = list_ws_dir_path / "cli_tool"

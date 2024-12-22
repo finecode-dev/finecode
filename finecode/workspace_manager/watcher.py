@@ -13,7 +13,7 @@ from loguru import logger
 from watchdog.events import FileSystemEventHandler
 from watchdog.observers import Observer
 
-import finecode.workspace_context as workspace_context
+import finecode.workspace_manager.context as context
 import finecode.workspace_manager.utils.async_proc_queue as async_queue
 
 
@@ -166,7 +166,7 @@ async def filter_ignore_paths(
 
 @contextmanager
 def watch_workspace_dirs(
-    ws_context: workspace_context.WorkspaceContext,
+    ws_context: context.WorkspaceContext,
 ) -> Generator[AsyncIterator[ChangeEvent], None, None]:
     # optimization possibility: watch only those directories, in which there are watch-triggered
     # actions

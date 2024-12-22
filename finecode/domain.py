@@ -18,13 +18,13 @@ class Action:
         self.source: str | None = source
 
 
-class Package:
+class Project:
     def __init__(
         self,
         name: str,
         path: Path,
-        status: PackageStatus,
-        subpackages: list[Package] | None = None,
+        status: ProjectStatus,
+        subprojects: list[Project] | None = None,
         actions: list[Action] | None = None,
         views: list[View] | None = None,
         # <action_name:config>
@@ -34,10 +34,10 @@ class Package:
         self.name = name
         self.path = path
         self.status = status
-        if subpackages is not None:
-            self.subpackages = subpackages
+        if subprojects is not None:
+            self.subprojects = subprojects
         else:
-            self.subpackages: list[Package] = []
+            self.subprojects: list[Project] = []
         # None means actions were not collected yet
         self.actions = actions
         if root_actions is not None:
@@ -56,10 +56,10 @@ class Package:
             self.actions_configs: dict[str, dict[str, Any]] = {}
 
     def __str__(self) -> str:
-        return f'Package(name="{self.name}", path="{self.path}")'
+        return f'Project(name="{self.name}", path="{self.path}")'
 
 
-class PackageStatus(Enum):
+class ProjectStatus(Enum):
     READY = auto()
     NO_FINECODE = auto()
     NO_FINECODE_SH = auto()
@@ -76,4 +76,4 @@ class View:
         self.source = source
 
 
-__all__ = ["RootActions", "ActionsDict", "AllActions", "Action", "Package"]
+__all__ = ["RootActions", "ActionsDict", "AllActions", "Action", "Project"]

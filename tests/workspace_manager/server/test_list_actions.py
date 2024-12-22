@@ -8,16 +8,16 @@ from .client.finecode.workspace_manager import (AddWorkspaceDirRequest,
 
 async def test__returns_correct_list(client_channel):
     # ws dir 'list_ws':
-    # - package 'backend'
+    # - project 'backend'
     # - directory 'libraries'
-    # -- package 'domain'
+    # -- project 'domain'
     # --- action
     # --- preset
     # ---- action
     # ---- action
-    # - package 'cli_tool'
+    # - project 'cli_tool'
     # -- local action
-    # -- action from package 'black'
+    # -- action from project 'black'
     list_ws_dir_path = Path(__file__).parent.parent / "list_ws"
     add_ws_dir_request = AddWorkspaceDirRequest(dir_path=list_ws_dir_path.as_posix())
     await WorkspaceManagerService.add_workspace_dir(client_channel, add_ws_dir_request)

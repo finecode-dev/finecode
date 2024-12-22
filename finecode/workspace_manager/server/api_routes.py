@@ -6,16 +6,16 @@ from modapp.errors import NotFoundError, ServerError
 
 import finecode.api as api
 import finecode.domain as domain
-import finecode.workspace_context as workspace_context
+import finecode.workspace_manager.context as context
 import finecode.workspace_manager.api as manager_api
-import finecode.workspace_manager.find_package as find_package
+import finecode.workspace_manager.find_project as find_project
 import finecode.workspace_manager.main as manager_main
 import finecode.workspace_manager.server.schemas as schemas
 
 from .endpoints import finecode
 
 router = APIRouter()
-ws_context = workspace_context.WorkspaceContext([])
+ws_context = context.WorkspaceContext([])
 
 
 @router.endpoint(finecode.workspace_manager.WorkspaceManagerService.AddWorkspaceDir)
@@ -39,42 +39,42 @@ async def delete_workspace_dir(
 
 
 def _dir_to_tree_node(
-    dir_path: Path, ws_context: workspace_context.WorkspaceContext
+    dir_path: Path, ws_context: context.WorkspaceContext
 ) -> schemas.ActionTreeNode | None:
     # ignore directories: hidden directories like .git, .pytest_cache etc, node_modules
     if dir_path.name.startswith(".") or dir_path.name == "node_modules":
         return None
 
-    # 1. Determine type of dir_path: package or directory
-    dir_is_package = find_package.is_package(dir_path)
+    # 1. Determine type of dir_path: project or directory
+    dir_is_project = find_project.is_project(dir_path)
     dir_node_type = (
-        schemas.ActionTreeNode.NodeType.PACKAGE
-        if dir_is_package
+        schemas.ActionTreeNode.NodeType.PROJECT
+        if dir_is_project
         else schemas.ActionTreeNode.NodeType.DIRECTORY
     )
     subnodes: list[schemas.ActionTreeNode] = []
-    if dir_is_package:
+    if dir_is_project:
         # reading configs for ws dirs is not needed here, because it happens on adding directory
         # to workspace. Read only for nested dirs
         if dir_path not in ws_context.ws_dirs_paths:
-            # `read_configs_in_dir` looks for packages, parses them recursively and normalizes. It's
+            # `read_configs_in_dir` looks for projects, parses them recursively and normalizes. It's
             # not needed in this case and can be simplified
             api.read_configs_in_dir(dir_path, ws_context)
         try:
-            package = ws_context.ws_packages[dir_path]
+            project = ws_context.ws_projects[dir_path]
         except KeyError:
-            logger.trace(f"Package exists in {dir_path}, but no config found")
-            package = None
+            logger.trace(f"Project exists in {dir_path}, but no config found")
+            project = None
 
-        if package is not None:
-            if package.actions is None:
-                api.collect_actions(package_path=package.path, ws_context=ws_context)
-            assert package.actions is not None
-            for action in package.actions:
-                if action.name not in package.root_actions:
+        if project is not None:
+            if project.actions is None:
+                api.collect_actions(project_path=project.path, ws_context=ws_context)
+            assert project.actions is not None
+            for action in project.actions:
+                if action.name not in project.root_actions:
                     continue
 
-                node_id = f"{package.path.as_posix()}::{action.name}"
+                node_id = f"{project.path.as_posix()}::{action.name}"
                 subnodes.append(
                     schemas.ActionTreeNode(
                         node_id=node_id,
@@ -83,8 +83,8 @@ def _dir_to_tree_node(
                         subnodes=[],
                     )
                 )
-                ws_context.cached_actions_by_id[node_id] = workspace_context.CachedAction(
-                    action_id=node_id, package_path=package.path, action_name=action.name
+                ws_context.cached_actions_by_id[node_id] = context.CachedAction(
+                    action_id=node_id, project_path=project.path, action_name=action.name
                 )
         # TODO: presets?
     else:
@@ -101,7 +101,7 @@ def _dir_to_tree_node(
 
 
 def _list_actions(
-    ws_context: workspace_context.WorkspaceContext, parent_node_id: str | None = None
+    ws_context: context.WorkspaceContext, parent_node_id: str | None = None
 ) -> list[schemas.ActionTreeNode]:
     if parent_node_id is None:
         # list ws dirs and first level
@@ -140,11 +140,11 @@ async def run_action(
 
     _action_node_id = request.action_node_id
     if ":" not in _action_node_id:
-        # general action without package path like 'format' or 'lint', normalize (=add package path)
-        package_path = find_package.find_package_with_action_for_file(
+        # general action without project path like 'format' or 'lint', normalize (=add project path)
+        project_path = find_project.find_project_with_action_for_file(
             file_path=Path(request.apply_on), action_name=_action_node_id, ws_context=ws_context
         )
-        _action_node_id = f"{package_path.as_posix()}::{_action_node_id}"
+        _action_node_id = f"{project_path.as_posix()}::{_action_node_id}"
 
     try:
         cached_action = ws_context.cached_actions_by_id[_action_node_id]
@@ -152,15 +152,15 @@ async def run_action(
         raise NotFoundError()
 
     try:
-        package = ws_context.ws_packages[cached_action.package_path]
-        if package.actions is None:
-            logger.error("Actions in package are not read yet, but expected")
+        project = ws_context.ws_projects[cached_action.project_path]
+        if project.actions is None:
+            logger.error("Actions in project are not read yet, but expected")
             raise ServerError()
         action = next(
-            action for action in package.actions if action.name == cached_action.action_name
+            action for action in project.actions if action.name == cached_action.action_name
         )
     except (KeyError, StopIteration) as error:
-        logger.error(f"Unexpected error, package or action not found: {error}")
+        logger.error(f"Unexpected error, project or action not found: {error}")
         raise ServerError()
 
     logger.info("run action", request)
@@ -168,7 +168,7 @@ async def run_action(
         action=action,
         apply_on=Path(request.apply_on) if request.apply_on != "" else None,
         apply_on_text=request.apply_on_text,
-        project_root=package.path,
+        project_root=project.path,
         ws_context=ws_context,
     )
     return schemas.RunActionResponse(result_text=result or "")
@@ -179,36 +179,36 @@ async def __run_action(
     apply_on: Path | None,
     apply_on_text: str,
     project_root: Path,
-    ws_context: workspace_context.WorkspaceContext,
+    ws_context: context.WorkspaceContext,
 ) -> str | None:
     logger.trace(f"Execute action {action.name} on {apply_on}")
 
     try:
-        project_package = ws_context.ws_packages[project_root]
+        project_def = ws_context.ws_projects[project_root]
     except KeyError:
-        logger.error(f"Project package not found: {project_root}")
+        logger.error(f"Project definition not found: {project_root}")
         return
 
-    if project_package.actions is None:
+    if project_def.actions is None:
         logger.error("Project actions are not read yet")
         return
 
     try:
-        next(a for a in project_package.actions if a.name == action.name)
+        next(a for a in project_def.actions if a.name == action.name)
     except StopIteration:
         action_found = False
         try:
-            workspace_package = ws_context.ws_packages[project_root]
+            workspace_project = ws_context.ws_projects[project_root]
         except KeyError:
-            logger.error(f"Workspace package not found: {project_root}")
+            logger.error(f"Workspace project not found: {project_root}")
             return
 
-        if workspace_package.actions is None:
-            logger.error("Actions in workspace package are not read yet")
+        if workspace_project.actions is None:
+            logger.error("Actions in workspace project are not read yet")
             return
 
         try:
-            next(a for a in workspace_package.actions if a.name == action.name)
+            next(a for a in workspace_project.actions if a.name == action.name)
             action_found = True
         except StopIteration:
             ...
@@ -219,10 +219,10 @@ async def __run_action(
     if apply_on:
         ws_context.ignore_watch_paths.add(apply_on)
 
-    if project_root in ws_context.ws_packages_extension_runners:
+    if project_root in ws_context.ws_projects_extension_runners:
         # extension runner is running for this project, send command to it
         result = await manager_api.run_action_in_runner(
-            runner=ws_context.ws_packages_extension_runners[project_root],
+            runner=ws_context.ws_projects_extension_runners[project_root],
             action=action,
             apply_on=apply_on,
             apply_on_text=apply_on_text,

@@ -8,7 +8,7 @@ import finecode.api as api
 import finecode.domain as domain
 import finecode.extension_runner.run_utils as run_utils
 import finecode.extension_runner.schemas as schemas
-import finecode.workspace_context as workspace_context
+import finecode.workspace_manager.context as context
 from finecode.api.collect_actions import get_subaction
 from finecode.code_action import (CodeFormatAction, FormatRunPayload,
                                   FormatRunResult, RunActionResult,
@@ -26,7 +26,7 @@ def _init_project(working_dir: Path):
     global _project_root
     _project_root = working_dir
     api.read_configs_in_dir(_project_root, ws_context)
-    api.collect_actions(package_path=_project_root, ws_context=ws_context)
+    api.collect_actions(project_path=_project_root, ws_context=ws_context)
 
 
 @router.endpoint(finecode.extension_runner.ExtensionRunnerService.UpdateConfig)
@@ -46,19 +46,19 @@ async def run_action(
     # TODO: validate that path exists
 
     try:
-        package = ws_context.ws_packages[_project_root]
+        project = ws_context.ws_packages[_project_root]
     except StopIteration:
-        logger.warning("Package not found")
+        logger.warning("Project not found")
         # TODO: raise error
         return schemas.RunActionResponse(result_text="")
 
     try:
         action_obj = next(
-            action_obj for action_obj in package.actions if action_obj.name == request.action_name
+            action_obj for action_obj in project.actions if action_obj.name == request.action_name
         )
     except StopIteration:
         logger.warning(
-            f"Action {request.action_name} not found. Available actions: {','.join([action_obj.name for action_obj in package.actions])}"
+            f"Action {request.action_name} not found. Available actions: {','.join([action_obj.name for action_obj in project.actions])}"
         )
         # TODO: raise error
         return schemas.RunActionResponse(result_text="")
@@ -92,17 +92,17 @@ async def __run_action(
     apply_on: Path | None,
     apply_on_text: str,
     project_root: Path,
-    ws_context: workspace_context.WorkspaceContext,
+    ws_context: context.WorkspaceContext,
 ) -> RunActionResult | RunOnManyResult | None:
     logger.trace(f"Execute action {action.name} on {apply_on}")
 
     try:
-        project_package = ws_context.ws_packages[project_root]
+        project_def = ws_context.ws_projects[project_root]
     except KeyError:
-        logger.error(f"Project package not found: {project_root}")
+        logger.error(f"Project definition not found: {project_root}")
         return
 
-    if project_package.actions is None:
+    if project_def.actions is None:
         logger.error("Project actions are not read yet")
         return
 
@@ -118,7 +118,7 @@ async def __run_action(
         for subaction in action.subactions:
             try:
                 subaction_obj = get_subaction(
-                    name=subaction, package_path=project_root, ws_context=ws_context
+                    name=subaction, project_path=project_root, ws_context=ws_context
                 )
             except ValueError:
                 raise ValueError(f"Action {subaction} not found")
@@ -149,7 +149,7 @@ async def __run_action(
             return
 
         try:
-            action_config = ws_context.ws_packages[project_root].actions_configs[action.name]
+            action_config = ws_context.ws_projects[project_root].actions_configs[action.name]
         except KeyError:
             action_config = {}
 

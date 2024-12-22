@@ -13,7 +13,7 @@ from black.mode import Mode, TargetVersion
 from black.report import Report
 from loguru import logger
 
-import finecode.action_utils as action_utils
+import finecode.extension_runner.action_utils as action_utils
 from finecode import (CodeActionConfig, CodeFormatAction, FormatRunPayload,
                       FormatRunResult, RunOnManyPayload)
 
@@ -35,6 +35,8 @@ class BlackCodeActionConfig(CodeActionConfig):
 
 
 class BlackCodeAction(CodeFormatAction[BlackCodeActionConfig]):
+    LANGUAGE = 'python'
+    
     async def run(self, payload: FormatRunPayload) -> FormatRunResult:
         report = self.get_report()
         # it seems like black can format only in-place, use tmp file
@@ -66,7 +68,7 @@ class BlackCodeAction(CodeFormatAction[BlackCodeActionConfig]):
                 (single_payload.apply_on, single_payload.apply_on_text)
                 for single_payload in payload.single_payloads
             ],
-        ) as (dir_path, files_pathes):
+        ) as (_, files_pathes):
             await reformat_many(
                 sources=set(files_pathes),
                 fast=False,

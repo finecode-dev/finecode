@@ -7,10 +7,11 @@ from loguru import logger
 from pydantic import ValidationError
 from tomlkit import loads as toml_loads
 
-from finecode import config_models, domain, workspace_context
+from finecode import config_models, domain
+from finecode.workspace_manager import context
 
 
-def read_configs(ws_context: workspace_context.WorkspaceContext):
+def read_configs(ws_context: context.WorkspaceContext):
     # Read configs in all root directories of workspace
     logger.trace("Read configs in workspace")
     for ws_dir_path in ws_context.ws_dirs_paths:
@@ -18,8 +19,8 @@ def read_configs(ws_context: workspace_context.WorkspaceContext):
     logger.trace("Reading configs in workspace finished")
 
 
-def read_configs_in_dir(dir_path: Path, ws_context: workspace_context.WorkspaceContext) -> None:
-    # Find all packages, read their configs and save in ws context. Resolve presets and all 'source'
+def read_configs_in_dir(dir_path: Path, ws_context: context.WorkspaceContext) -> None:
+    # Find all projects, read their configs and save in ws context. Resolve presets and all 'source'
     # properties
     logger.trace(f"Read configs in {dir_path}")
     def_files_generator = dir_path.rglob("*")
@@ -41,25 +42,25 @@ def read_configs_in_dir(dir_path: Path, ws_context: workspace_context.WorkspaceC
                     presets_sources=[preset.source for preset in finecode_config.presets],
                     def_path=def_file,
                 )
-                _merge_package_configs(project_def, new_config)
+                _merge_projects_configs(project_def, new_config)
 
-            normalize_package_config(project_def)
-            ws_context.ws_packages_raw_configs[def_file.parent] = project_def
+            normalize_project_config(project_def)
+            ws_context.ws_projects_raw_configs[def_file.parent] = project_def
         else:
-            logger.info(f"Package definition of type {def_file.name} is not supported yet")
+            logger.info(f"Project definition of type {def_file.name} is not supported yet")
             continue
 
         finecode_sh_path = def_file.parent / "finecode.sh"
-        status = domain.PackageStatus.READY
+        status = domain.ProjectStatus.READY
         if not finecode_sh_path.exists():
-            status = domain.PackageStatus.NO_FINECODE_SH
+            status = domain.ProjectStatus.NO_FINECODE_SH
 
-        ws_context.ws_packages[def_file.parent] = domain.Package(
+        ws_context.ws_projects[def_file.parent] = domain.Project(
             name=def_file.parent.name, path=def_file.parent, status=status
         )
 
 
-def normalize_package_config(config: dict[str, Any]) -> None:
+def normalize_project_config(config: dict[str, Any]) -> None:
     # normalizes config in-place
     actions_dict = config.get("tool", {}).get("finecode", {}).get("action", None)
     if actions_dict is not None:
@@ -78,11 +79,11 @@ def normalize_package_config(config: dict[str, Any]) -> None:
 
 class PresetToProcess(NamedTuple):
     source: str
-    package_def_path: Path
+    project_def_path: Path
 
 
-def get_preset_package_path(preset: PresetToProcess, def_path: Path) -> Path | None:
-    logger.trace(f"Get preset package path: {preset.source}")
+def get_preset_project_path(preset: PresetToProcess, def_path: Path) -> Path | None:
+    logger.trace(f"Get preset project path: {preset.source}")
     old_current_dir = os.getcwd()
     os.chdir(def_path.parent)
     exit_code, output = command_runner(
@@ -94,9 +95,9 @@ def get_preset_package_path(preset: PresetToProcess, def_path: Path) -> Path | N
         logger.error(f"Cannot resolve preset {preset.source}")
         return None
 
-    preset_package_path = Path(output.strip("\n"))
-    logger.trace(f"Got: {preset.source} -> {preset_package_path}")
-    return preset_package_path
+    preset_project_path = Path(output.strip("\n"))
+    logger.trace(f"Got: {preset.source} -> {preset_project_path}")
+    return preset_project_path
 
 
 def read_preset_config(
@@ -105,7 +106,7 @@ def read_preset_config(
     # preset_id is used only for logs to make them more useful
     logger.trace(f"Read preset config: {preset_id}")
     if not config_path.exists():
-        logger.error(f"preset.toml not found in package '{preset_id}'")
+        logger.error(f"preset.toml not found in project '{preset_id}'")
         return (None, None)
 
     with open(config_path, "rb") as preset_toml_file:
@@ -133,7 +134,7 @@ def collect_config_from_py_presets(presets_sources: list[str], def_path: Path) -
     processed_presets: set[str] = set()
     presets_to_process: set[PresetToProcess] = set(
         [
-            PresetToProcess(source=preset_source, package_def_path=def_path)
+            PresetToProcess(source=preset_source, project_def_path=def_path)
             for preset_source in presets_sources
         ]
     )
@@ -141,11 +142,11 @@ def collect_config_from_py_presets(presets_sources: list[str], def_path: Path) -
         preset = presets_to_process.pop()
         processed_presets.add(preset.source)
 
-        preset_package_path = get_preset_package_path(preset=preset, def_path=def_path)
-        if preset_package_path is None:
+        preset_project_path = get_preset_project_path(preset=preset, def_path=def_path)
+        if preset_project_path is None:
             continue
 
-        preset_toml_path = preset_package_path / "preset.toml"
+        preset_toml_path = preset_project_path / "preset.toml"
         preset_toml, preset_config = read_preset_config(preset_toml_path, preset.source)
         if preset_toml is None or preset_config is None:
             continue
@@ -158,24 +159,24 @@ def collect_config_from_py_presets(presets_sources: list[str], def_path: Path) -
             presets_to_process.add(
                 PresetToProcess(
                     source=new_preset_source,
-                    package_def_path=def_path,
+                    project_def_path=def_path,
                 )
             )
 
-    return _preset_config_to_package_config(config)
+    return _preset_config_to_project_config(config)
 
 
-def optimize_package_tree(root_package: domain.Package) -> domain.Package:
+def optimize_project_tree(root_project: domain.Project) -> domain.Project:
     """
-    Combine empty packages:
-    - package1
-    -- package2
+    Combine empty projects:
+    - project1
+    -- project2
     --- action1
     ->
-    - package1/package2
+    - project1/project2
     -- action1
 
-    Root package is not optimized.
+    Root project is not optimized.
     """
     # TODO
     ...
@@ -193,7 +194,7 @@ def _finecode_is_enabled_in_def(def_file: Path) -> bool:
     return False
 
 
-def _merge_package_configs(config1: dict[str, Any], config2: dict[str, Any]) -> None:
+def _merge_projects_configs(config1: dict[str, Any], config2: dict[str, Any]) -> None:
     # merge config2 in config1 without overwriting
     if not "tool" in config1:
         config1["tool"] = {}
@@ -280,7 +281,7 @@ def _merge_preset_configs(config1: dict[str, Any], config2: dict[str, Any]) -> N
     config1.update(config2)
 
 
-def _preset_config_to_package_config(preset_config: dict[str, Any]) -> dict[str, Any]:
+def _preset_config_to_project_config(preset_config: dict[str, Any]) -> dict[str, Any]:
     # finecode.preset -> tool.finecode
     result = preset_config.copy()
     if preset_config.get("finecode", {}).get("preset", None) is not None:

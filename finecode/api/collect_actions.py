@@ -3,33 +3,33 @@ from typing import Any
 
 import finecode.config_models as config_models
 import finecode.domain as domain
-import finecode.workspace_context as workspace_context
+import finecode.workspace_manager.context as context
 
 
 def collect_actions(
-    package_path: Path,
-    ws_context: workspace_context.WorkspaceContext,
+    project_path: Path,
+    ws_context: context.WorkspaceContext,
 ) -> list[domain.Action]:
-    # precondition: package raw config exists in ws_context if such package exists
+    # precondition: project raw config exists in ws_context if such project exists
     try:
-        package = ws_context.ws_packages[package_path]
+        project = ws_context.ws_projects[project_path]
     except KeyError:
         raise ValueError(
-            f"Package {package_path} doesn't exist. Existing packages: {ws_context.ws_packages}"
+            f"Project {project_path} doesn't exist. Existing projects: {ws_context.ws_projects}"
         )
 
-    if package.actions is not None:
-        return package.actions
+    if project.actions is not None:
+        return project.actions
 
     try:
-        config = ws_context.ws_packages_raw_configs[package_path]
+        config = ws_context.ws_projects_raw_configs[project_path]
     except KeyError:
-        raise Exception("First you need to parse config of package")
+        raise Exception("First you need to parse config of project")
 
     if config.get("tool", {}).get("finecode", None) is None:
-        package.status = domain.PackageStatus.NO_FINECODE
-        package.actions = []
-        package.actions_configs = {}
+        project.status = domain.ProjectStatus.NO_FINECODE
+        project.actions = []
+        project.actions_configs = {}
         return []
 
     actions, actions_configs = _collect_actions_in_config(config)
@@ -37,9 +37,9 @@ def collect_actions(
     first_level_actions_raw = [
         action_raw["name"] for action_raw in config["tool"]["finecode"].get("actions", [])
     ]
-    package.root_actions = first_level_actions_raw
-    package.actions = actions
-    package.actions_configs = actions_configs
+    project.root_actions = first_level_actions_raw
+    project.actions = actions
+    project.actions_configs = actions_configs
 
     return actions
 
@@ -67,15 +67,15 @@ def _collect_actions_in_config(
 
 
 def get_subaction(
-    name: str, package_path: Path, ws_context: workspace_context.WorkspaceContext
+    name: str, project_path: Path, ws_context: context.WorkspaceContext
 ) -> domain.Action:
     try:
-        package_raw_config = ws_context.ws_packages_raw_configs[package_path]
+        project_raw_config = ws_context.ws_projects_raw_configs[project_path]
     except KeyError:
-        raise ValueError("Package config not found")
+        raise ValueError("Project config not found")
 
     try:
-        action_raw = package_raw_config["tool"]["finecode"]["action"][name]
+        action_raw = project_raw_config["tool"]["finecode"]["action"][name]
     except KeyError:
         raise ValueError("Action definition not found")
     try:

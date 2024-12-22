@@ -1,4 +1,4 @@
-import finecode.workspace_context as workspace_context
+import finecode.extension_runner.context as context 
 
 
-ws_context = workspace_context.WorkspaceContext([])
+runner_context: context.RunnerContext | None = None

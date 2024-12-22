@@ -3,7 +3,7 @@ from __future__ import annotations
 import isort.main as isort_main
 import isort.settings as isort_settings
 
-import finecode.action_utils as action_utils
+import finecode.extension_runner.action_utils as action_utils
 from finecode import (CodeActionConfig, CodeFormatAction, FormatRunPayload,
                       FormatRunResult)
 

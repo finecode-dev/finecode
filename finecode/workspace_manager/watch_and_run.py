@@ -1,13 +1,13 @@
 from loguru import logger
 
 import finecode.api as api
-import finecode.workspace_context as workspace_context
-import finecode.workspace_manager.find_package as find_package
+import finecode.workspace_manager.context as context
+import finecode.workspace_manager.find_project as find_project
 import finecode.workspace_manager.watcher as watcher
 
 
 async def watch_and_run(
-    ws_context: workspace_context.WorkspaceContext,
+    ws_context: context.WorkspaceContext,
 ):
     # watch workspace directories in which there are watch-triggered actions and run those actions
     with watcher.watch_workspace_dirs(ws_context) as watch_iterator:
@@ -29,7 +29,7 @@ async def watch_and_run(
                 # TODO: on which files should it be applied? format only on changed and lint?
                 for action in ["lint", "format"]:
                     # TODO: this can be cached
-                    project_root = find_package.find_package_with_action_for_file(
+                    project_root = find_project.find_project_with_action_for_file(
                         file_path=path_to_apply_on,
                         action_name=action,
                         ws_context=ws_context,

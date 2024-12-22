@@ -59,7 +59,7 @@ class ActionTreeNode(BaseModel):
 
     class NodeType(IntEnum):
         DIRECTORY = 0
-        PACKAGE = 1
+        PROJECT = 1
         ACTION = 2
         PRESET = 3
 
