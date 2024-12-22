@@ -24,7 +24,6 @@ import finecode.communication_utils as communication_utils
 
 async def start(comm_type: communication_utils.CommunicationType, host: str | None = None, port: int | None = None, trace: bool = False) -> None:
     log_dir_path = Path(get_dirs(app_name='FineCode_Workspace_Manager', app_author='FineCode', version='1.0').user_log_dir)
-    # tmp until fixed in modapp
     logger.remove()
     save_logs_to_file(file_path=log_dir_path / 'execution.log', log_level="TRACE" if trace else "INFO", stdout=False)
 
