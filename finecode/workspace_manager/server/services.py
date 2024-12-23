@@ -27,6 +27,8 @@ async def add_workspace_dir(
     dir_path = Path(request.dir_path)
     global_state.ws_context.ws_dirs_paths.append(dir_path)
     read_configs.read_configs_in_dir(dir_path=dir_path, ws_context=global_state.ws_context)
+    # actions are required to start runner
+    collect_actions.collect_actions(project_path=dir_path, ws_context=global_state.ws_context)
     await manager_main.update_runners(global_state.ws_context)
     return schemas.AddWorkspaceDirResponse()
 
