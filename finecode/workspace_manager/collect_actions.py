@@ -1,8 +1,8 @@
 from pathlib import Path
 from typing import Any
 
-import finecode.config_models as config_models
-import finecode.domain as domain
+import finecode.workspace_manager.config_models as config_models
+import finecode.workspace_manager.domain as domain
 import finecode.workspace_manager.context as context
 
 
@@ -64,21 +64,3 @@ def _collect_actions_in_config(
             actions_configs[action_name] = action_def.config
 
     return (actions, actions_configs)
-
-
-def get_subaction(
-    name: str, project_path: Path, ws_context: context.WorkspaceContext
-) -> domain.Action:
-    try:
-        project_raw_config = ws_context.ws_projects_raw_configs[project_path]
-    except KeyError:
-        raise ValueError("Project config not found")
-
-    try:
-        action_raw = project_raw_config["tool"]["finecode"]["action"][name]
-    except KeyError:
-        raise ValueError("Action definition not found")
-    try:
-        return domain.Action(name=name, source=action_raw["source"])
-    except KeyError:
-        raise ValueError("Action has no source")

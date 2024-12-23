@@ -8,7 +8,7 @@ import janus
 from loguru import logger
 from lsprotocol import types
 
-import finecode.domain as domain
+import finecode.workspace_manager.domain as domain
 from finecode.workspace_manager.runner_lsp_client import JsonRPCClient
 
 

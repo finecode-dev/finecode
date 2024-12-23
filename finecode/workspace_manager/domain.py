@@ -26,7 +26,7 @@ class Project:
         status: ProjectStatus,
         subprojects: list[Project] | None = None,
         actions: list[Action] | None = None,
-        views: list[View] | None = None,
+        # views: list[View] | None = None,
         # <action_name:config>
         actions_configs: dict[str, dict[str, Any]] | None = None,
         root_actions: list[str] | None = None,
@@ -45,10 +45,10 @@ class Project:
         else:
             self.root_actions = []
 
-        if views is not None:
-            self.views = views
-        else:
-            self.views: list[View] = []
+        # if views is not None:
+        #     self.views = views
+        # else:
+        #     self.views: list[View] = []
 
         if actions_configs is not None:
             self.actions_configs = actions_configs
@@ -70,10 +70,10 @@ ActionsDict = dict[str, Action]
 AllActions = ActionsDict
 
 
-class View:
-    def __init__(self, name: str, source: str) -> None:
-        self.name = name
-        self.source = source
+# class View:
+#     def __init__(self, name: str, source: str) -> None:
+#         self.name = name
+#         self.source = source
 
 
 __all__ = ["RootActions", "ActionsDict", "AllActions", "Action", "Project"]

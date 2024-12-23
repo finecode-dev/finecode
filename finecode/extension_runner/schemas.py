@@ -1,36 +1,41 @@
-from dataclasses import dataclass
-
-from modapp.models.dataclass import DataclassModel
-
-
-@dataclass
-class BaseModel(DataclassModel): ...
+from dataclasses import dataclass, asdict
+from pathlib import Path
+from typing import Any
 
 
 @dataclass
-class UpdateConfigRequest(BaseModel):
-    working_dir: str  # Path?
-    config: dict[str, str]
-
-    __modapp_path__ = "finecode.extension_runner.UpdateConfigRequest"
+class BaseSchema:
+    def to_dict(self):
+        return asdict(self)
 
 
 @dataclass
-class UpdateConfigResponse(BaseModel):
-    __modapp_path__ = "finecode.extension_runner.UpdateConfigResponse"
+class Action(BaseSchema):
+    name: str
+    actions: list[str]
+    source: str | None = None
 
 
 @dataclass
-class RunActionRequest(BaseModel):
+class UpdateConfigRequest(BaseSchema):
+    working_dir: Path
+    project_name: str
+    actions: dict[str, Action]
+    actions_configs: dict[str, dict[str, Any]]
+
+
+@dataclass
+class UpdateConfigResponse(BaseSchema):
+    ...
+
+
+@dataclass
+class RunActionRequest(BaseSchema):
     action_name: str
-    apply_on: str  # Path?
     apply_on_text: str
-
-    __modapp_path__ = "finecode.extension_runner.RunActionRequest"
+    apply_on: Path | None = None
 
 
 @dataclass
-class RunActionResponse(BaseModel):
+class RunActionResponse(BaseSchema):
     result_text: str
-
-    __modapp_path__ = "finecode.extension_runner.RunActionResponse"

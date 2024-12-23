@@ -4,8 +4,8 @@ from loguru import logger
 
 from finecode.workspace_manager.context import WorkspaceContext
 
-from ..api._read_configs import _finecode_is_enabled_in_def
-from ..api.collect_actions import collect_actions
+from .read_configs import _finecode_is_enabled_in_def
+from .collect_actions import collect_actions
 
 
 def find_project_for_file(file_path: Path, workspace_path: Path) -> Path:

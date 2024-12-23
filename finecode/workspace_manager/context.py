@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-import finecode.domain as domain
+import finecode.workspace_manager.domain as domain
 
 if TYPE_CHECKING:
     from finecode.workspace_manager.api import ExtensionRunnerInfo

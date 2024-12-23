@@ -2,10 +2,11 @@ from pathlib import Path
 
 from loguru import logger
 
-import finecode.api as api
-import finecode.domain as domain
+import finecode.workspace_manager.domain as domain
 import finecode.workspace_manager.context as context
 import finecode.workspace_manager.api as manager_api
+import finecode.workspace_manager.collect_actions as collect_actions
+import finecode.workspace_manager.read_configs as read_configs
 import finecode.workspace_manager.find_project as find_project
 import finecode.workspace_manager.main as manager_main
 import finecode.workspace_manager.server.schemas as schemas
@@ -25,7 +26,7 @@ async def add_workspace_dir(
 ) -> schemas.AddWorkspaceDirResponse:
     dir_path = Path(request.dir_path)
     global_state.ws_context.ws_dirs_paths.append(dir_path)
-    api.read_configs_in_dir(dir_path=dir_path, ws_context=global_state.ws_context)
+    read_configs.read_configs_in_dir(dir_path=dir_path, ws_context=global_state.ws_context)
     await manager_main.update_runners(global_state.ws_context)
     return schemas.AddWorkspaceDirResponse()
 
@@ -59,7 +60,7 @@ def _dir_to_tree_node(
         if dir_path not in ws_context.ws_dirs_paths:
             # `read_configs_in_dir` looks for projects, parses them recursively and normalizes. It's
             # not needed in this case and can be simplified
-            api.read_configs_in_dir(dir_path, ws_context)
+            read_configs.read_configs_in_dir(dir_path, ws_context)
         try:
             project = ws_context.ws_projects[dir_path]
         except KeyError:
@@ -68,7 +69,7 @@ def _dir_to_tree_node(
 
         if project is not None:
             if project.actions is None:
-                api.collect_actions(project_path=project.path, ws_context=ws_context)
+                collect_actions.collect_actions(project_path=project.path, ws_context=ws_context)
             assert project.actions is not None
             for action in project.actions:
                 if action.name not in project.root_actions:

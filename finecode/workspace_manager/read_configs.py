@@ -7,8 +7,7 @@ from loguru import logger
 from pydantic import ValidationError
 from tomlkit import loads as toml_loads
 
-from finecode import config_models, domain
-from finecode.workspace_manager import context
+from finecode.workspace_manager import config_models, context, domain
 
 
 def read_configs(ws_context: context.WorkspaceContext):

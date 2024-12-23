@@ -4,17 +4,17 @@ import asyncio
 import os
 import threading
 from pathlib import Path
-from typing import Sequence
+from typing import Any, Sequence
 
 import janus
 from loguru import logger
 from lsprotocol import types
 
-import finecode.domain as domain
+import finecode.workspace_manager.domain as domain
 import finecode.workspace_manager.context as context
 import finecode.workspace_manager.api as manager_api
 import finecode.workspace_manager.finecode_cmd as finecode_cmd
-from finecode.workspace_manager.runner_lsp_client import create_lsp_client_io # create_lsp_client_tcp
+from finecode.workspace_manager.runner_lsp_client import create_lsp_client_io
 from finecode.workspace_manager.server.lsp_server import create_lsp_server
 from modapp.extras.logs import save_logs_to_file
 from modapp.extras.platformdirs import get_dirs
@@ -126,9 +126,9 @@ async def start_extension_runner(
     # temporary remove VIRTUAL_ENV env variable to avoid starting in wrong venv
     old_virtual_env_var = os.environ.get("VIRTUAL_ENV", "")
     os.environ["VIRTUAL_ENV"] = ""
-    runner_info.client = await create_lsp_client_io(f"{_finecode_cmd}_runner --trace") # 'localhost', runner.port
+    runner_info.client = await create_lsp_client_io(f"{_finecode_cmd} -m finecode.extension_runner.cli --trace")
     os.environ["VIRTUAL_ENV"] = old_virtual_env_var
-    await init_runner(runner_info)
+    await init_runner(runner_info, ws_context.ws_projects[runner_dir], ws_context.ws_projects_raw_configs[runner_dir])
     return runner_info
 
 
@@ -140,11 +140,28 @@ def stop_extension_runner(runner: manager_api.ExtensionRunnerInfo) -> None:
     logger.trace(f"Stop extension runner {runner.process_id} in {runner.working_dir_path}")
 
 
-async def init_runner(runner: manager_api.ExtensionRunnerInfo) -> None:
+def get_subactions(
+    names: list[str], project_raw_config: dict[str, Any]
+) -> list[domain.Action]:
+    subactions: list[domain.Action] = []
+    for name in names:
+        try:
+            action_raw = project_raw_config["tool"]["finecode"]["action"][name]
+        except KeyError:
+            raise ValueError("Action definition not found")
+        try:
+            subactions.append(domain.Action(name=name, source=action_raw["source"]))
+        except KeyError:
+            raise ValueError("Action has no source")
+
+    return subactions
+
+
+async def init_runner(runner: manager_api.ExtensionRunnerInfo, project: domain.Project, project_raw_config: dict[str, Any]) -> None:
     # initialization is required to be able to perform other requests
     assert runner.client is not None
     try:
-        await asyncio.wait_for(runner.client.protocol.send_request_async(method=types.INITIALIZE, params=types.InitializeParams(process_id=os.getpid(), capabilities=types.ClientCapabilities(), client_info=types.ClientInfo(name='FineCode_WorkspaceManager', version='0.1.0'), trace=types.TraceValue.Verbose)), 20)
+        await asyncio.wait_for(runner.client.protocol.send_request_async(method=types.INITIALIZE, params=types.InitializeParams(process_id=os.getpid(), capabilities=types.ClientCapabilities(), client_info=types.ClientInfo(name='FineCode_WorkspaceManager', version='0.1.0'), trace=types.TraceValue.Verbose)), 10)
     except Exception as e:
         logger.exception(e)
         return
@@ -156,10 +173,27 @@ async def init_runner(runner: manager_api.ExtensionRunnerInfo) -> None:
         return
     logger.debug("LSP Server initialized")
 
+    assert project.actions is not None
+    all_actions = set([])
+    actions_to_process = set(project.actions)
+    while len(actions_to_process) > 0:
+        action = actions_to_process.pop()
+        all_actions.add(action)
+        actions_to_process |= set(get_subactions(names=action.subactions, project_raw_config=project_raw_config))
+    all_actions_dict = {action.name: action for action in all_actions}
+
     try:
-        # lsp client requuests have no timeout, add own one
+        # lsp client requests have no timeout, add own one
         try:
-            await asyncio.wait_for(runner.client.protocol.send_request_async(method='finecodeRunner/updateConfig', params={'working_dir': runner.working_dir_path.as_posix(), 'config': {}}), 60)
+            await asyncio.wait_for(runner.client.protocol.send_request_async(
+                method=types.WORKSPACE_EXECUTE_COMMAND,
+                params=types.ExecuteCommandParams(command='finecodeRunner/updateConfig', arguments=[
+                    runner.working_dir_path.as_posix(),
+                    runner.working_dir_path.stem,
+                    all_actions_dict,
+                    project.actions_configs
+                ])
+            ), 10)
         except TimeoutError:
             logger.error(f"Failed to update config of runner {runner.working_dir_path}")
         

@@ -2,38 +2,32 @@ from pathlib import Path
 
 from loguru import logger
 
-# import finecode.api as api
-import finecode.domain as domain
+from finecode.code_action import (CodeFormatAction, FormatRunPayload,
+                                  FormatRunResult, RunActionResult,
+                                  RunOnManyPayload, RunOnManyResult)
+import finecode.extension_runner.domain as domain
 import finecode.extension_runner.run_utils as run_utils
 import finecode.extension_runner.schemas as schemas
 import finecode.extension_runner.context as context
 import finecode.extension_runner.global_state as global_state
-from finecode.api.collect_actions import get_subaction
-from finecode.code_action import (CodeFormatAction, FormatRunPayload,
-                                  FormatRunResult, RunActionResult,
-                                  RunOnManyPayload, RunOnManyResult)
-
-# temporary global storage
-# _project_root: Path | None = None
 
 
 class ActionFailedException(Exception):
     ...
 
 
-# def _init_project(working_dir: Path):
-#     ...
-#     # global _project_root
-#     # _project_root = working_dir
-#     # api.read_configs_in_dir(_project_root, global_state.runner_context)
-#     # api.collect_actions(project_path=_project_root, ws_context=global_state.runner_context)
-
-
 async def update_config(
     request: schemas.UpdateConfigRequest,
 ) -> schemas.UpdateConfigResponse:
-    # _init_project(Path(request.working_dir))
-    # TODO: save config
+    global_state.runner_context = context.RunnerContext(
+        project=domain.Project(
+            name=request.project_name,
+            path=Path(request.working_dir),
+            actions={action_name: domain.Action(name=action.name, subactions=action.actions, source=action.source) for action_name, action in request.actions.items()},
+            actions_configs=request.actions_configs
+        ),
+    )
+
     return schemas.UpdateConfigResponse()
 
 
@@ -49,23 +43,26 @@ async def run_action(
 
     project = global_state.runner_context.project
 
+    if project.actions is None:
+        logger.error("Project actions are not read yet")
+        # TODO: raise error
+        return schemas.RunActionResponse(result_text="")
+
     try:
-        action_obj = next(
-            action_obj for action_obj in project.actions if action_obj.name == request.action_name
-        )
-    except StopIteration:
+        action_obj = project.actions[request.action_name]
+    except KeyError:
         logger.warning(
-            f"Action {request.action_name} not found. Available actions: {','.join([action_obj.name for action_obj in project.actions])}"
+            f"Action {request.action_name} not found. Available actions: {','.join([action_name for action_name in project.actions])}"
         )
         # TODO: raise error
         return schemas.RunActionResponse(result_text="")
 
     try:
         result = await __run_action(
-            action_obj,
-            Path(request.apply_on) if request.apply_on != "" else None,
+            action=action_obj,
+            apply_on=request.apply_on,
             apply_on_text=request.apply_on_text,
-            project_root=global_state.runner_context.project_dir_path,
+            project_root=global_state.runner_context.project.path,
             runner_context=global_state.runner_context,
         )
     except Exception as e:  # TODO: concrete exceptions?
@@ -113,10 +110,8 @@ async def __run_action(
         current_apply_on_text = apply_on_text
         for subaction in action.subactions:
             try:
-                subaction_obj = get_subaction(
-                    name=subaction, project_path=project_root, ws_context=ws_context
-                )
-            except ValueError:
+                subaction_obj = runner_context.project.actions[subaction]
+            except KeyError:
                 raise ValueError(f"Action {subaction} not found")
 
             result = await __run_action(

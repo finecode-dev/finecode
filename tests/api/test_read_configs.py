@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 
 from finecode.workspace_manager import context
-from finecode.api._read_configs import read_configs
+from finecode.workspace_manager._read_configs import read_configs
 
 
 @pytest.fixture
