@@ -4,7 +4,7 @@ from loguru import logger
 
 from finecode.code_action import (CodeFormatAction, FormatRunPayload,
                                   FormatRunResult, RunActionResult,
-                                  RunOnManyPayload, RunOnManyResult)
+                                  RunOnManyPayload, RunOnManyResult, ActionContext)
 import finecode.extension_runner.domain as domain
 import finecode.extension_runner.run_utils as run_utils
 import finecode.extension_runner.schemas as schemas
@@ -135,8 +135,9 @@ async def __run_action(
             # TODO: cache
             action_cls = run_utils.import_class_by_source_str(action.source)
             action_config_cls = run_utils.import_class_by_source_str(action.source + "Config")
-        except ModuleNotFoundError:
+        except ModuleNotFoundError as error:
             logger.error(f"Source of action {action.name} '{action.source}' could not be imported")
+            logger.error(error)
             return
 
         try:
@@ -145,7 +146,8 @@ async def __run_action(
             action_config = {}
 
         config = action_config_cls(**action_config)
-        action_instance = action_cls(config=config)
+        context = ActionContext(project_dir=runner_context.project.path)
+        action_instance = action_cls(config=config, context=context)
 
         if apply_on is not None and apply_on.is_dir():
             # temporary solution, should be dependency injection or similar approach
