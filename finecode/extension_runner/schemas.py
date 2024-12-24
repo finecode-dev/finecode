@@ -33,7 +33,7 @@ class UpdateConfigResponse(BaseSchema):
 class RunActionRequest(BaseSchema):
     action_name: str
     apply_on_text: str
-    apply_on: Path | None = None
+    apply_on: list[Path] | None = None
 
 
 @dataclass

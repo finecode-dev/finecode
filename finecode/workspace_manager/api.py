@@ -26,14 +26,14 @@ class ExtensionRunnerInfo:
 
 
 async def run_action_in_runner(
-    runner: ExtensionRunnerInfo, action: domain.Action, apply_on: Path | None, apply_on_text: str
+    runner: ExtensionRunnerInfo, action: domain.Action, apply_on: list[Path] | None, apply_on_text: str
 ) -> str | None:
     if not runner.started_event.is_set():
         await runner.started_event.wait()
     assert runner.client is not None
 
     try:
-        result = await runner.client.protocol.send_request_async(types.WORKSPACE_EXECUTE_COMMAND, types.ExecuteCommandParams(command='actions/run', arguments=[action.name, apply_on.as_posix() if apply_on is not None else "", apply_on_text]))
+        result = await runner.client.protocol.send_request_async(types.WORKSPACE_EXECUTE_COMMAND, types.ExecuteCommandParams(command='actions/run', arguments=[action.name, [path.as_posix() for path in apply_on] if apply_on is not None else [], apply_on_text]))
         logger.debug(f"Action result: {result}")
         if result is None:
             return None

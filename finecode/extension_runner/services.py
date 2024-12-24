@@ -82,7 +82,7 @@ async def run_action(
 
 async def __run_action(
     action: domain.Action,
-    apply_on: Path | None,
+    apply_on: list[Path] | None,
     apply_on_text: str,
     project_root: Path,
     runner_context: context.RunnerContext,
@@ -129,7 +129,7 @@ async def __run_action(
                 current_apply_on_text = result.code
     elif action.source is not None:
         logger.debug(
-            f"Run {action.name} on {str(apply_on.absolute() if apply_on is not None else '')}"
+            f"Run {action.name} on {str(apply_on if apply_on is not None else '')}"
         )
         try:
             # TODO: cache
@@ -149,26 +149,27 @@ async def __run_action(
         context = ActionContext(project_dir=runner_context.project.path)
         action_instance = action_cls(config=config, context=context)
 
-        if apply_on is not None and apply_on.is_dir():
+        if apply_on is not None and len(apply_on) > 1:
             # temporary solution, should be dependency injection or similar approach
             if isinstance(action_instance, CodeFormatAction):
-                # TODO: dynamic suffix for files
-                py_files_in_dir = apply_on.rglob("*.py")
                 payload = RunOnManyPayload(
                     single_payloads=[
                         FormatRunPayload(apply_on=py_file_path, apply_on_text="")
-                        for py_file_path in py_files_in_dir
+                        for py_file_path in apply_on
                     ],
-                    dir_path=apply_on,
+                    # it's temporary path of project, but it should be directory of corresponding representation
+                    dir_path=runner_context.project.path,
                 )
             else:
                 raise NotImplementedError()
 
+            logger.debug("Run on many")
             try:
                 result = await action_instance.run_on_many(payload)
             except NotImplementedError:
                 # Action.run_on_many is optional. If it isn't implemented, run Action.run on each
                 # file
+                logger.debug("Run on many is not implemented, run on single files")
                 result = {}
                 for single_payload in payload.single_payloads:
                     try:
@@ -196,10 +197,11 @@ async def __run_action(
         else:
             # temporary solution, should be dependency injection or similar approach
             if isinstance(action_instance, CodeFormatAction):
-                payload = FormatRunPayload(apply_on=apply_on, apply_on_text=apply_on_text)
+                payload = FormatRunPayload(apply_on=apply_on[0] if isinstance(apply_on, list) else None, apply_on_text=apply_on_text)
             else:
                 raise NotImplementedError()
 
+            logger.debug('Run on single')
             try:
                 result = await action_instance.run(payload)
             except Exception as e:

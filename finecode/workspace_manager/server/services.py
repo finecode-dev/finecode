@@ -217,15 +217,23 @@ async def __run_action(
             logger.error(f"Action {action.name} not found neither in project nor in workspace")
             return
 
-    if apply_on:
+    if apply_on is not None:
         ws_context.ignore_watch_paths.add(apply_on)
+    
+        # apply on file / apply on project: pass file as is and form list of files in case of project
+        if apply_on.is_dir():
+            all_apply_on = list(apply_on.rglob('*.py'))
+        else:
+            all_apply_on = [apply_on]
+    else:
+        all_apply_on = None
 
     if project_root in ws_context.ws_projects_extension_runners:
         # extension runner is running for this project, send command to it
         result = await manager_api.run_action_in_runner(
             runner=ws_context.ws_projects_extension_runners[project_root],
             action=action,
-            apply_on=apply_on,
+            apply_on=all_apply_on,
             apply_on_text=apply_on_text,
         )
     else:

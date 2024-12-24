@@ -28,8 +28,8 @@ def create_lsp_server() -> LanguageServer:
     register_run_action_on_file_cmd = server.command('finecode.runActionOnFile')
     register_run_action_on_file_cmd(run_action_on_file)
 
-    register_run_action_on_file_cmd = server.command('runActionOnProject')
-    register_run_action_on_file_cmd(run_action_on_project)
+    register_run_action_on_project_cmd = server.command('finecode.runActionOnProject')
+    register_run_action_on_project_cmd(run_action_on_project)
 
     return server
 
@@ -104,6 +104,8 @@ async def run_action_on_file(ls: LanguageServer, params):
 async def run_action_on_project(ls: LanguageServer, params):
     logger.info(f"run action on project {params}")
     params_dict = params[0]
-    run_action_request = schemas.RunActionRequest(action_node_id=params_dict['actionNodeId'], apply_on=params_dict.get('applyOn', ''), apply_on_text=params_dict.get('applyOnText', ''))
+    action_node_id = params_dict['projectPath']
+    apply_on = action_node_id.split('::')[0]
+    run_action_request = schemas.RunActionRequest(action_node_id=action_node_id, apply_on=apply_on, apply_on_text='')
     response = await services.run_action(run_action_request)
     return response.to_dict()
