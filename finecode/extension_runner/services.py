@@ -192,8 +192,11 @@ async def __run_action(
                 for file_path, file_result in result.items():
                     assert isinstance(file_result, FormatRunResult)
                     if file_result.changed and file_result.code is not None:
+                        logger.trace(f'Saving {file_path}')
                         with open(file_path, "w") as f:
                             f.write(file_result.code)
+                    else:
+                        logger.trace(f'File {file_path} was not changed or there is no result')
         else:
             # temporary solution, should be dependency injection or similar approach
             if isinstance(action_instance, CodeFormatAction):

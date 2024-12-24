@@ -20,7 +20,11 @@ class IsortCodeAction(CodeFormatAction[IsortCodeActionConfig]):
         with action_utils.tmp_file_copy_path(
             file_path=payload.apply_on, file_content=payload.apply_on_text
         ) as file_path:
-            result = isort_main.sort_imports(
+            # seems like isort doesn't return whether file was changed or not, only whether it is
+            # still incorrectly sorted and whether file was skipped, use finecode check instead
+            initial_file_version = action_utils.get_file_version(file_path)
+            # result = 
+            isort_main.sort_imports(
                 file_name=file_path.as_posix(),
                 # is it possible without overwriting?
                 config=isort_settings.Config(overwrite_in_place=True),
@@ -32,9 +36,9 @@ class IsortCodeAction(CodeFormatAction[IsortCodeActionConfig]):
                 # config_trie=config_trie,
             )
 
-            # seems like isort doesn't return whether file was changed or not, only whether it is
-            # still incorrectly sorted and whether file was skipped
-            changed = result is not None and not result.skipped
+            new_file_version = action_utils.get_file_version(file_path)
+            # result is not None and not result.skipped
+            changed = new_file_version != initial_file_version
             if changed:
                 with open(file_path, "r") as f:
                     code = f.read()

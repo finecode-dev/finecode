@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import os
 import sys
-from concurrent.futures import (Executor, ProcessPoolExecutor,
+from concurrent.futures import (Executor, # ProcessPoolExecutor,
                                 ThreadPoolExecutor)
 from pathlib import Path
 
@@ -69,6 +69,7 @@ class BlackCodeAction(CodeFormatAction[BlackCodeActionConfig]):
                 for single_payload in payload.single_payloads
             ],
         ) as (_, files_pathes):
+            initial_files_version = {file_path: action_utils.get_file_version(file_path) for file_path in files_pathes}
             await reformat_many(
                 sources=set(files_pathes),
                 fast=False,
@@ -83,10 +84,12 @@ class BlackCodeAction(CodeFormatAction[BlackCodeActionConfig]):
                 if single_payload.apply_on is None:
                     logger.error("Run on multiple supports only files")
                     continue
-                with open(files_pathes[idx], "r") as f:
+                file_path = files_pathes[idx]
+                with open(file_path, "r") as f:
                     code = f.read()
                 # TODO: black report is generalized for all files, parse output?
-                result[single_payload.apply_on] = FormatRunResult(changed=True, code=code)
+                file_changed = action_utils.get_file_version(single_payload.apply_on) != initial_files_version[file_path]
+                result[single_payload.apply_on] = FormatRunResult(changed=file_changed, code=code)
 
         return result
 
@@ -132,14 +135,16 @@ async def reformat_many(
     if sys.platform == "win32":
         # Work around https://bugs.python.org/issue26903
         workers = min(workers, 60)
-    try:
-        executor = ProcessPoolExecutor(max_workers=workers)
-    except (ImportError, NotImplementedError, OSError):
-        # we arrive here if the underlying system does not support multi-processing
-        # like in AWS Lambda or Termux, in which case we gracefully fallback to
-        # a ThreadPoolExecutor with just a single worker (more workers would not do us
-        # any good due to the Global Interpreter Lock)
-        executor = ThreadPoolExecutor(max_workers=1)
+    # TODO: process pool executor blocks for some reason execution. Investigate why and return it
+    # try:
+    #     executor = ProcessPoolExecutor(max_workers=workers)
+    # except (ImportError, NotImplementedError, OSError):
+
+    # we arrive here if the underlying system does not support multi-processing
+    # like in AWS Lambda or Termux, in which case we gracefully fallback to
+    # a ThreadPoolExecutor with just a single worker (more workers would not do us
+    # any good due to the Global Interpreter Lock)
+    executor = ThreadPoolExecutor(max_workers=1)
 
     # loop = asyncio.new_event_loop()
     # asyncio.set_event_loop(loop)

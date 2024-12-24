@@ -1,7 +1,9 @@
+import hashlib
 import os
 import tempfile
 from contextlib import contextmanager
 from pathlib import Path
+from typing import NamedTuple
 
 
 @contextmanager
@@ -56,3 +58,18 @@ def tmp_dir_copy_path(dir_path: Path, file_pathes_with_contents: list[tuple[Path
                 raise ValueError("Invalid arguments")
 
         yield tmp_dir_path, tmp_pathes
+
+
+
+class FileVersion(NamedTuple):
+    # currently we compare only the hash, but we could use the same approach as mypy and compare
+    # first change time of the file and hash only if needed
+    hash: str
+
+
+def get_file_version(file_path: Path) -> FileVersion:
+    with open(file_path, "rb") as file_obj:
+        hash_value = hashlib.file_digest(file_obj, "blake2b").hexdigest()
+    return FileVersion(
+        hash=hash_value,
+    )
