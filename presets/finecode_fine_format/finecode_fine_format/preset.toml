@@ -1,4 +1,4 @@
-[finecode.preset]
+[tool.finecode.preset]
 actions = [{ name = 'format' }]
 
 [tool.finecode.action.format]

@@ -1,5 +1,5 @@
-[finecode.preset]
+[tool.finecode.preset]
 extends = [
     { source = "finecode_fine_format" },
-    { source = "finecode_fine_lint" }
+    { source = "finecode_fine_lint" },
 ]
