@@ -66,8 +66,8 @@ async def _format_document(ls: LanguageServer, params: types.DocumentFormattingP
     action_request = schemas.RunActionRequest(action_node_id='format', apply_on=doc.path, apply_on_text=doc.source)
     response = await services.run_action(action_request)
 
-    if response.result.changed is True:
-        return [types.TextEdit(range=types.Range(start=types.Position(0, 0), end=types.Position(len(doc.lines), len(doc.lines[-1]))), new_text=response.result.code)]
+    if response.result['changed'] is True:
+        return [types.TextEdit(range=types.Range(start=types.Position(0, 0), end=types.Position(len(doc.lines), len(doc.lines[-1]))), new_text=response.result['code'])]
     return None
 
 
@@ -97,16 +97,21 @@ async def _lint_and_publish_results(ls: LanguageServer, path_to_lint: str):
     run_action_request = schemas.RunActionRequest(action_node_id='lint', apply_on=path_to_lint, apply_on_text='')
     try:
         response = await services.run_action(run_action_request)
-        logger.debug(f'response: {response}')
-        # assert isinstance(response, )
-        # ls.text_document_publish_diagnostics(types.PublishDiagnosticsParams())
-        # TODO: publish 
+        for file_path_str, lint_messages in response.result['messages'].items():
+            ls.text_document_publish_diagnostics(
+                types.PublishDiagnosticsParams(uri=f'file://{file_path_str}',
+                                               diagnostics=[
+                                                   types.Diagnostic(range=types.Range(types.Position(lint_message['line'], lint_message['column']), types.Position(lint_message['line'], lint_message['column'])), message=lint_message['message'], code=lint_message['code'])
+                                                   for lint_message in lint_messages
+                                                   ])
+            )
     except services.ActionNotFound:
         logger.info("No lint action")
 
 
 async def _document_did_save(ls: LanguageServer, params: types.DidSaveTextDocumentParams):
     logger.trace(f"Document did save: {params}")
+    await _lint_and_publish_results(ls, params.text_document.uri.replace('file://', ''))
 
 
 # async def _document_did_change(ls: LanguageServer, params: types.DidSaveTextDocumentParams):
@@ -142,9 +147,9 @@ async def run_action_on_file(ls: LanguageServer, params):
     response = await services.run_action(run_action_request)
     logger.debug(f'Response: {response}')
 
-    if action_node_id.endswith(':format') and response.result.changed is True:
+    if action_node_id.endswith(':format') and response.result['changed'] is True:
         doc = ls.workspace.get_text_document(document_meta.uri.external)
-        await ls.workspace_apply_edit_async(types.ApplyWorkspaceEditParams(edit=types.WorkspaceEdit(changes={document_meta.uri.external: [types.TextEdit(range=types.Range(start=types.Position(0, 0), end=types.Position(len(doc.lines), len(doc.lines[-1]))), new_text=response.result.code)]})))
+        await ls.workspace_apply_edit_async(types.ApplyWorkspaceEditParams(edit=types.WorkspaceEdit(changes={document_meta.uri.external: [types.TextEdit(range=types.Range(start=types.Position(0, 0), end=types.Position(len(doc.lines), len(doc.lines[-1]))), new_text=response.result['code'])]})))
 
     return response.to_dict()
 

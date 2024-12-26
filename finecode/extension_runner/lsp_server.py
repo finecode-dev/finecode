@@ -1,4 +1,4 @@
-from pathlib import Path
+import json
 
 from pygls.lsp.server import LanguageServer
 from lsprotocol import types
@@ -59,4 +59,6 @@ async def run_action(ls: LanguageServer, params):
     logger.trace(f'Run action: {params}')
     request = schemas.RunActionRequest(action_name=params[0], params=params[1])
     response = await services.run_action(request=request)
-    return response.to_dict()
+    # dict key can be path, but pygls fails to handle slashes in dict keys, use strings
+    # representation of result instead until the problem is properly solved
+    return { 'result':  json.dumps(response.to_dict()['result']) }

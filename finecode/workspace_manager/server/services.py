@@ -176,7 +176,7 @@ async def run_action(
         project_root=project.path,
         ws_context=global_state.ws_context,
     )
-    return schemas.RunActionResponse(result=result.result)
+    return schemas.RunActionResponse(result=result['result'])
 
 
 async def __run_action(

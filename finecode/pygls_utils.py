@@ -2,7 +2,7 @@ import logging
 import sys
 from threading import Event
 import asyncio
-from typing import BinaryIO, Optional
+from typing import Any, BinaryIO, Optional
 
 from loguru import logger
 from pygls.lsp.server import LanguageServer
@@ -73,3 +73,28 @@ async def start_io_async(
         pass
     finally:
         server.shutdown()
+
+
+def deserialize_pygls_object(pygls_object) -> dict[str, Any] | list[Any]:
+    deserialized: dict[str, Any] | list[Any]
+    if '_0' in pygls_object._fields:
+        # list
+        deserialized = []
+        for index in range(len(pygls_object)):
+            item = getattr(pygls_object, f'_{index}')
+            if hasattr(item, '__module__') and getattr(item, '__module__') == 'pygls.protocol':
+                deserialized_value = deserialize_pygls_object(item)
+            else:
+                deserialized_value = item
+            deserialized.append(deserialized_value)
+    else:
+        # dict
+        deserialized = {}
+        for field_name in pygls_object._fields:
+            field_value = getattr(pygls_object, field_name)
+            if hasattr(field_value, '__module__') and getattr(field_value, '__module__') == 'pygls.protocol':
+                deserialized_value = deserialize_pygls_object(field_value)
+            else:
+                deserialized_value = field_value
+            deserialized[field_name] = deserialized_value
+    return deserialized

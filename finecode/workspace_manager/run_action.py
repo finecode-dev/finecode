@@ -1,5 +1,6 @@
 import asyncio
 import concurrent.futures as futures
+import json
 import threading
 from dataclasses import dataclass
 from pathlib import Path
@@ -46,7 +47,7 @@ async def run_action_in_runner(
                     }
                 ]))
         logger.debug(f"Action result: {result}")
-        return result
+        return {"result": json.loads(result.result) }
     except Exception as e:
         logger.exception(e)
         return {}

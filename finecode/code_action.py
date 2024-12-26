@@ -72,7 +72,9 @@ class LintRunPayload(RunActionPayload):
 
 
 class LintRunResult(RunActionResult):
-    messages: dict[Path, LintMessage]
+    # dict key should be Path, but pygls fails to handle slashes in dict keys, use strings with 
+    # posix representation of path instead until the problem is properly solved
+    messages: dict[str, list[LintMessage]]
 
 
 class CodeLintAction(CodeAction[CodeActionConfigType, LintRunPayload, LintRunResult]):
@@ -103,7 +105,10 @@ class CodeFormatAction(CodeAction[CodeActionConfigType, FormatRunPayload, Format
 
 @dataclass(frozen=True)
 class LintMessage:
+    # TODO: add optional end position
     line: int
     column: int
     code: str
     message: str
+    # TODO: severity
+    # TODO: code description
