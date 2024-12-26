@@ -10,7 +10,8 @@ python = "^3.10"
 
 [tool.poetry.group.dev.dependencies]
 finecode = { path = "../../../" }
-finecode_fine_py = { path = "../../../presets/finecode_fine_py" }
+fine_python_recommended = { path = "../../../presets/fine_python_recommended" }
+debugpy = "^1.8.11"
 
 [build-system]
 requires = ["poetry-core"]
@@ -18,3 +19,7 @@ build-backend = "poetry.core.masonry.api"
 
 [tool.finecode]
 presets = [{ source = "finecode_fine_py" }]
+
+[tool.finecode.action.black.config]
+target_versions = ["PY312"]
+preview = true

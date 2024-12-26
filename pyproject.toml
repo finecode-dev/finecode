@@ -25,7 +25,7 @@ pygls = "~2.0.0-a2"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^7.4.3"
-finecode_fine_py = { path = "presets/finecode_fine_py" }
+fine_python_recommended = { path = "presets/fine_python_recommended" }
 anyio = "^4.4.0"
 debugpy = "^1.8.9"
 
@@ -34,12 +34,8 @@ requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
 
 [tool.finecode]
-presets = [{ source = "finecode_fine_py" }]
+presets = [{ source = "fine_python_recommended" }]
 
 [tool.finecode.action.black.config]
 target_versions = ["PY311"]
 preview = true
-
-[tool.poetry.scripts]
-finecode = "finecode.workspace_manager.cli:cli"
-finecode_runner = "finecode.extension_runner.cli:main"

@@ -1,5 +1,5 @@
 [tool.poetry]
-name = "finecode-fine-format"
+name = "fine_python_format"
 version = "0.1.0"
 description = ""
 authors = ["Vladyslav Hnatiuk <aders1234@gmail.com>"]
@@ -7,8 +7,8 @@ readme = "README.md"
 
 [tool.poetry.dependencies]
 python = "^3.10"
-finecode_black = { path = "../../actions/finecode_black" }
-finecode_isort = { path = "../../actions/finecode_isort" }
+fine_python_black = { path = "../../actions/fine_python_black" }
+fine_python_isort = { path = "../../actions/fine_python_isort" }
 
 [build-system]
 requires = ["poetry-core"]

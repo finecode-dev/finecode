@@ -1,5 +1,5 @@
 [tool.poetry]
-name = "finecode-black"
+name = "fine_python_recommended"
 version = "0.1.0"
 description = ""
 authors = ["Vladyslav Hnatiuk <aders1234@gmail.com>"]
@@ -7,8 +7,8 @@ readme = "README.md"
 
 [tool.poetry.dependencies]
 python = "^3.10"
-black = "^24.1.0"
-
+fine_python_format = { path = "../fine_python_format" }
+fine_python_lint = { path = "../fine_python_lint" }
 
 [build-system]
 requires = ["poetry-core"]

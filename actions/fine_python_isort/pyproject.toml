@@ -1,5 +1,5 @@
 [tool.poetry]
-name = "finecode-fine-py"
+name = "fine_python_isort"
 version = "0.1.0"
 description = ""
 authors = ["Vladyslav Hnatiuk <aders1234@gmail.com>"]
@@ -7,8 +7,8 @@ readme = "README.md"
 
 [tool.poetry.dependencies]
 python = "^3.10"
-finecode_fine_format = { path = "../finecode_fine_format" }
-finecode_fine_lint = { path = "../finecode_fine_lint" }
+isort = "^5.13.2"
+
 
 [build-system]
 requires = ["poetry-core"]

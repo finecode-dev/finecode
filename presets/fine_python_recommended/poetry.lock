@@ -72,7 +72,7 @@ files = [
 ]
 
 [[package]]
-name = "finecode-black"
+name = "fine-python-black"
 version = "0.1.0"
 description = ""
 optional = false
@@ -85,10 +85,10 @@ black = "^24.1.0"
 
 [package.source]
 type = "directory"
-url = "../../actions/finecode_black"
+url = "../../actions/fine_python_black"
 
 [[package]]
-name = "finecode-fine-format"
+name = "fine-python-format"
 version = "0.1.0"
 description = ""
 optional = false
@@ -97,31 +97,15 @@ files = []
 develop = false
 
 [package.dependencies]
-finecode_black = {path = "../../actions/finecode_black"}
-finecode_isort = {path = "../../actions/finecode_isort"}
+fine_python_black = {path = "../../actions/fine_python_black"}
+fine_python_isort = {path = "../../actions/fine_python_isort"}
 
 [package.source]
 type = "directory"
-url = "../finecode_fine_format"
+url = "../fine_python_format"
 
 [[package]]
-name = "finecode-fine-lint"
-version = "0.1.0"
-description = ""
-optional = false
-python-versions = "^3.10"
-files = []
-develop = false
-
-[package.dependencies]
-finecode_mypy = {path = "../../actions/finecode_mypy"}
-
-[package.source]
-type = "directory"
-url = "../finecode_fine_lint"
-
-[[package]]
-name = "finecode-isort"
+name = "fine-python-isort"
 version = "0.1.0"
 description = ""
 optional = false
@@ -134,10 +118,26 @@ isort = "^5.13.2"
 
 [package.source]
 type = "directory"
-url = "../../actions/finecode_isort"
+url = "../../actions/fine_python_isort"
 
 [[package]]
-name = "finecode-mypy"
+name = "fine-python-lint"
+version = "0.1.0"
+description = ""
+optional = false
+python-versions = "^3.10"
+files = []
+develop = false
+
+[package.dependencies]
+fine_python_mypy = {path = "../../actions/fine_python_mypy"}
+
+[package.source]
+type = "directory"
+url = "../fine_python_lint"
+
+[[package]]
+name = "fine-python-mypy"
 version = "0.1.0"
 description = ""
 optional = false
@@ -150,7 +150,7 @@ mypy = "^1.14.0"
 
 [package.source]
 type = "directory"
-url = "../../actions/finecode_mypy"
+url = "../../actions/fine_python_mypy"
 
 [[package]]
 name = "isort"
@@ -323,4 +323,4 @@ files = [
 [metadata]
 lock-version = "2.0"
 python-versions = "^3.10"
-content-hash = "d7760b26fe0e3c069986a216702e4fe5743e240ede73d5820a7677a86a4bed41"
+content-hash = "0cc38b28173399f1d7bf3dfe80ee27ed93ad0993255dc5c2856db536d0e8015f"

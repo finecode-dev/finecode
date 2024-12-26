@@ -10,8 +10,8 @@ python = "^3.10"
 
 [tool.poetry.group.dev.dependencies]
 finecode = { path = "../../../" }
-finecode_black = { path = "../../../actions/finecode_black" }
-finecode_isort = { path = "../../../actions/finecode_isort" }
+fine_python_black = { path = "../../../actions/fine_python_black" }
+fine_python_isort = { path = "../../../actions/fine_python_isort" }
 
 [build-system]
 requires = ["poetry-core"]
@@ -24,6 +24,6 @@ actions = [
 
 [tool.finecode.action.format]
 subactions = [
-    { name = "black", source = "finecode_black.BlackCodeAction" },
-    { name = "isort", source = "finecode_isort.IsortCodeAction" }
+    { name = "black", source = "fine_python_black.BlackCodeAction" },
+    { name = "isort", source = "fine_python_isort.IsortCodeAction" }
 ]
