@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import IntEnum
+from typing import Any
 
 from modapp.models.dataclass import DataclassModel
 
@@ -15,31 +16,25 @@ class BaseModel(DataclassModel):
 class AddWorkspaceDirRequest(BaseModel):
     dir_path: str
 
-    __modapp_path__ = "finecode.workspace_manager.AddWorkspaceDirRequest"
-
 
 @dataclass
 class AddWorkspaceDirResponse(BaseModel):
-    __modapp_path__ = "finecode.workspace_manager.AddWorkspaceDirResponse"
+    ...
 
 
 @dataclass
 class DeleteWorkspaceDirRequest(BaseModel):
     dir_path: str
 
-    __modapp_path__ = "finecode.workspace_manager.DeleteWorkspaceDirRequest"
-
 
 @dataclass
 class DeleteWorkspaceDirResponse(BaseModel):
-    __modapp_path__ = "finecode.workspace_manager.DeleteWorkspaceDirResponse"
+    ...
 
 
 @dataclass
 class ListActionsRequest(BaseModel):
     parent_node_id: str = ""
-
-    __modapp_path__ = "finecode.workspace_manager.ListActionsRequest"
 
 
 @dataclass
@@ -55,14 +50,10 @@ class ActionTreeNode(BaseModel):
         ACTION = 2
         PRESET = 3
 
-    __modapp_path__ = "finecode.workspace_manager.ActionTreeNode"
-
 
 @dataclass
 class ListActionsResponse(BaseModel):
     nodes: list[ActionTreeNode]
-
-    __modapp_path__ = "finecode.workspace_manager.ListActionsResponse"
 
 
 @dataclass
@@ -71,11 +62,7 @@ class RunActionRequest(BaseModel):
     apply_on: str  # Path?
     apply_on_text: str
 
-    __modapp_path__ = "finecode.workspace_manager.RunActionRequest"
-
 
 @dataclass
 class RunActionResponse(BaseModel):
-    result_text: str = ""
-
-    __modapp_path__ = "finecode.workspace_manager.RunActionResponse"
+    result: dict[str, Any]

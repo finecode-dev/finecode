@@ -1,6 +1,5 @@
-# code actions are implementations of actions
+from __future__ import annotations
 from dataclasses import dataclass
-from functools import lru_cache
 from pathlib import Path
 from typing import Generic, Sequence, TypeVar
 
@@ -25,12 +24,8 @@ RunOnManyResult = dict[Path, RunResultType]
 @dataclass
 class ActionContext:
     project_dir: Path
-
-    @property
-    @lru_cache(1)
-    def cache_dir(self) -> Path:
-        # runner-specific cache dir
-        ... # TODO
+    # runner-specific cache dir
+    cache_dir: Path
 
 
 class RunOnManyPayload(BaseModel, Generic[RunPayloadType]):
@@ -76,7 +71,8 @@ class LintRunPayload(RunActionPayload):
     apply_on_text: str
 
 
-class LintRunResult(RunActionResult): ...
+class LintRunResult(RunActionResult):
+    messages: dict[Path, LintMessage]
 
 
 class CodeLintAction(CodeAction[CodeActionConfigType, LintRunPayload, LintRunResult]):
@@ -107,7 +103,6 @@ class CodeFormatAction(CodeAction[CodeActionConfigType, FormatRunPayload, Format
 
 @dataclass(frozen=True)
 class LintMessage:
-    filepath: Path
     line: int
     column: int
     code: str

@@ -12,7 +12,7 @@ from lsprotocol import types
 
 import finecode.workspace_manager.domain as domain
 import finecode.workspace_manager.context as context
-import finecode.workspace_manager.api as manager_api
+import finecode.workspace_manager.run_action as manager_api
 import finecode.workspace_manager.finecode_cmd as finecode_cmd
 from finecode.workspace_manager.runner_lsp_client import create_lsp_client_io
 from finecode.workspace_manager.server.lsp_server import create_lsp_server

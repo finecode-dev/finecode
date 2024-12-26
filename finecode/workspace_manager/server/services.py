@@ -1,10 +1,11 @@
 from pathlib import Path
+from typing import Any
 
 from loguru import logger
 
 import finecode.workspace_manager.domain as domain
 import finecode.workspace_manager.context as context
-import finecode.workspace_manager.api as manager_api
+import finecode.workspace_manager.run_action as manager_api
 import finecode.workspace_manager.collect_actions as collect_actions
 import finecode.workspace_manager.read_configs as read_configs
 import finecode.workspace_manager.find_project as find_project
@@ -147,18 +148,21 @@ async def run_action(
         )
         _action_node_id = f"{project_path.as_posix()}::{_action_node_id}"
 
+    splitted_action_id = _action_node_id.split('::')
+    project_path = Path(splitted_action_id[0])
     try:
-        cached_action = global_state.ws_context.cached_actions_by_id[_action_node_id]
+        project = global_state.ws_context.ws_projects[project_path]
     except KeyError:
         raise ActionNotFound()
 
+    if project.actions is None:
+        logger.error("Actions in project are not read yet, but expected")
+        raise InternalError()
+
+    action_name = splitted_action_id[1]
     try:
-        project = global_state.ws_context.ws_projects[cached_action.project_path]
-        if project.actions is None:
-            logger.error("Actions in project are not read yet, but expected")
-            raise InternalError()
         action = next(
-            action for action in project.actions if action.name == cached_action.action_name
+            action for action in project.actions if action.name == action_name
         )
     except (KeyError, StopIteration) as error:
         logger.error(f"Unexpected error, project or action not found: {error}")
@@ -172,7 +176,7 @@ async def run_action(
         project_root=project.path,
         ws_context=global_state.ws_context,
     )
-    return schemas.RunActionResponse(result_text=result or "")
+    return schemas.RunActionResponse(result=result.result)
 
 
 async def __run_action(
@@ -181,18 +185,18 @@ async def __run_action(
     apply_on_text: str,
     project_root: Path,
     ws_context: context.WorkspaceContext,
-) -> str | None:
+) -> dict[str, Any]:
     logger.trace(f"Execute action {action.name} on {apply_on}")
 
     try:
         project_def = ws_context.ws_projects[project_root]
     except KeyError:
         logger.error(f"Project definition not found: {project_root}")
-        return
+        return {}
 
     if project_def.actions is None:
         logger.error("Project actions are not read yet")
-        return
+        return {}
 
     try:
         next(a for a in project_def.actions if a.name == action.name)
@@ -202,11 +206,11 @@ async def __run_action(
             workspace_project = ws_context.ws_projects[project_root]
         except KeyError:
             logger.error(f"Workspace project not found: {project_root}")
-            return
+            return {}
 
         if workspace_project.actions is None:
             logger.error("Actions in workspace project are not read yet")
-            return
+            return {}
 
         try:
             next(a for a in workspace_project.actions if a.name == action.name)
@@ -215,7 +219,7 @@ async def __run_action(
             ...
         if not action_found:
             logger.error(f"Action {action.name} not found neither in project nor in workspace")
-            return
+            return {}
 
     if apply_on is not None:
         ws_context.ignore_watch_paths.add(apply_on)
@@ -238,19 +242,6 @@ async def __run_action(
         )
     else:
         raise NotImplementedError()
-        # # no extension runner, use CLI
-        # # TODO: check that project is managed via poetry
-        # exit_code, output = run_utils.run_cmd_in_dir(
-        #     f"poetry run python -m finecode.cli action run {action.name} {apply_on.absolute().as_posix()}",
-        #     dir_path=project_root,
-        # )
-        # logger.debug(f"Output: {output}")
-        # if exit_code != 0:
-        #     logger.error(f"Action execution failed: {output}")
-        # else:
-        #     logger.success(f"Action {action.name} successfully executed")
-
-        # result = '' # TODO: correct result
 
     if apply_on is not None:
         try:

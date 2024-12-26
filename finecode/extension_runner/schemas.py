@@ -32,10 +32,9 @@ class UpdateConfigResponse(BaseSchema):
 @dataclass
 class RunActionRequest(BaseSchema):
     action_name: str
-    apply_on_text: str
-    apply_on: list[Path] | None = None
+    params: dict[str, Any]
 
 
 @dataclass
 class RunActionResponse(BaseSchema):
-    result_text: str
+    result: dict[str, Any]

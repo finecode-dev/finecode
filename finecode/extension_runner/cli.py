@@ -7,14 +7,14 @@ from pathlib import Path
 import click
 from loguru import logger
 from modapp.extras.logs import save_logs_to_file
-from modapp.extras.platformdirs import get_dirs
 
 import finecode.pygls_utils as pygls_utils
+import finecode.extension_runner.app_dirs as app_dirs
 import finecode.extension_runner.lsp_server as extension_runner_lsp
 
 
 async def _start_runner(trace: bool):
-    log_dir_path = Path(get_dirs(app_name='FineCode_ExtensionRunnerPy', app_author='FineCode', version='1.0').user_log_dir)
+    log_dir_path = Path(app_dirs.get_app_dirs().user_log_dir)
     logger.remove()
     # ~~extension runner communicates with workspace manager with tcp, we can print logs to stdout as well~~. See README.md
     save_logs_to_file(file_path=log_dir_path / 'execution.log', log_level="TRACE" if trace is True else "INFO", stdout=False)

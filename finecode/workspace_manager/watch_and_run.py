@@ -1,6 +1,6 @@
 from loguru import logger
 
-import finecode.api as api
+import finecode.workspace_manager.run_action as run_action
 import finecode.workspace_manager.context as context
 import finecode.workspace_manager.find_project as find_project
 import finecode.workspace_manager.watcher as watcher
@@ -35,7 +35,7 @@ async def watch_and_run(
                         ws_context=ws_context,
                     )
                     # TODO
-                    # await api.run(
+                    # await run_action.run(
                     #     action=action,
                     #     apply_on=path_to_apply_on,
                     #     project_root=project_root,

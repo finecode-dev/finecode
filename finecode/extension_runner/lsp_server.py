@@ -57,6 +57,6 @@ async def update_config(ls: LanguageServer, params):
 
 async def run_action(ls: LanguageServer, params):
     logger.trace(f'Run action: {params}')
-    request = schemas.RunActionRequest(action_name=params[0], apply_on=[Path(path_str) for path_str in params[1]] if params[1] != None else None, apply_on_text=params[2])
+    request = schemas.RunActionRequest(action_name=params[0], params=params[1])
     response = await services.run_action(request=request)
     return response.to_dict()

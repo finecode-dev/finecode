@@ -1,10 +1,12 @@
+import os
 from pathlib import Path
 
 from loguru import logger
 
-from finecode.code_action import (CodeFormatAction, FormatRunPayload,
-                                  FormatRunResult, RunActionResult,
+from finecode.code_action import (CodeFormatAction, CodeLintAction, FormatRunPayload,
+                                  FormatRunResult, LintRunPayload, RunActionResult,
                                   RunOnManyPayload, RunOnManyResult, ActionContext)
+from finecode.extension_runner import app_dirs
 import finecode.extension_runner.domain as domain
 import finecode.extension_runner.run_utils as run_utils
 import finecode.extension_runner.schemas as schemas
@@ -39,14 +41,14 @@ async def run_action(
     # TODO: validate that path exists
     if global_state.runner_context is None:
         # TODO: raise error
-        return schemas.RunActionResponse(result_text="")
+        return schemas.RunActionResponse({})
 
     project = global_state.runner_context.project
 
     if project.actions is None:
         logger.error("Project actions are not read yet")
         # TODO: raise error
-        return schemas.RunActionResponse(result_text="")
+        return schemas.RunActionResponse({})
 
     try:
         action_obj = project.actions[request.action_name]
@@ -55,13 +57,13 @@ async def run_action(
             f"Action {request.action_name} not found. Available actions: {','.join([action_name for action_name in project.actions])}"
         )
         # TODO: raise error
-        return schemas.RunActionResponse(result_text="")
+        return schemas.RunActionResponse({})
 
     try:
         result = await __run_action(
             action=action_obj,
-            apply_on=request.apply_on,
-            apply_on_text=request.apply_on_text,
+            apply_on=request.params['apply_on'],
+            apply_on_text=request.params['apply_on_text'],
             project_root=global_state.runner_context.project.path,
             runner_context=global_state.runner_context,
         )
@@ -69,15 +71,13 @@ async def run_action(
         logger.exception(e)
         raise ActionFailedException("Failed to run action")
 
-    return schemas.RunActionResponse(
-        result_text=(
-            result.code
-            if result is not None
-            and isinstance(result, FormatRunResult)
-            and result.code is not None
-            else ""
-        )
-    )
+    result_dict = {}
+    if isinstance(result, dict): # RunOnManyResult
+        result_dict = { path.as_posix(): file_result.model_dump() for path, file_result in result.items() }
+    elif isinstance(result, RunActionResult):
+        result_dict = result.model_dump()
+
+    return schemas.RunActionResponse(result=result_dict)
 
 
 async def __run_action(
@@ -114,7 +114,7 @@ async def __run_action(
             except KeyError:
                 raise ValueError(f"Action {subaction} not found")
 
-            result = await __run_action(
+            subaction_result = await __run_action(
                 subaction_obj,
                 apply_on,
                 current_apply_on_text,
@@ -122,11 +122,18 @@ async def __run_action(
                 runner_context=runner_context,
             )
             if (
-                result is not None
-                and isinstance(result, FormatRunResult)
-                and result.code is not None
+                subaction_result is not None
+                and isinstance(subaction_result, FormatRunResult)
+                and subaction_result.code is not None
             ):
-                current_apply_on_text = result.code
+                current_apply_on_text = subaction_result.code
+            
+            if isinstance(subaction_result, FormatRunResult) and subaction_result.changed is False and result is not None:
+                # if format subaction didn't change the code, save it only if there are no result at all
+                # if one subaction changed code and the next one didn't, expected result is changed code of the first one
+                continue
+            else:
+                result = subaction_result
     elif action.source is not None:
         logger.debug(
             f"Run {action.name} on {str(apply_on if apply_on is not None else '')}"
@@ -146,7 +153,13 @@ async def __run_action(
             action_config = {}
 
         config = action_config_cls(**action_config)
-        context = ActionContext(project_dir=runner_context.project.path)
+        project_path = runner_context.project.path
+        root_cache_dir = Path(app_dirs.get_app_dirs().user_cache_dir)
+        projects_cache_dir = root_cache_dir / 'projects'
+        os.makedirs(projects_cache_dir, exist_ok=True)
+        context = ActionContext(
+            project_dir=runner_context.project.path,
+            cache_dir=projects_cache_dir / f'{project_path.name}-{hash(project_path.as_posix())}')
         action_instance = action_cls(config=config, context=context)
 
         if apply_on is not None and len(apply_on) > 1:
@@ -201,6 +214,8 @@ async def __run_action(
             # temporary solution, should be dependency injection or similar approach
             if isinstance(action_instance, CodeFormatAction):
                 payload = FormatRunPayload(apply_on=apply_on[0] if isinstance(apply_on, list) else None, apply_on_text=apply_on_text)
+            elif isinstance(action_instance, CodeLintAction):
+                payload = LintRunPayload(apply_on=apply_on[0] if isinstance(apply_on, list) else None, apply_on_text=apply_on_text)
             else:
                 raise NotImplementedError()
 

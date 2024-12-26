@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any
 import finecode.workspace_manager.domain as domain
 
 if TYPE_CHECKING:
-    from finecode.workspace_manager.api import ExtensionRunnerInfo
+    from finecode.workspace_manager.run_action import ExtensionRunnerInfo
 
 
 @dataclass
