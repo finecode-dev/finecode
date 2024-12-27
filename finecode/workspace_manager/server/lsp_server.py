@@ -1,5 +1,6 @@
 import asyncio
 import typing
+
 from pygls.lsp.server import LanguageServer
 from lsprotocol import types
 from loguru import logger
@@ -44,8 +45,32 @@ def create_lsp_server() -> LanguageServer:
 
     return server
 
+LOG_LEVEL_MAP = {
+    "DEBUG": types.MessageType.Debug,
+    "INFO": types.MessageType.Info,
+    "SUCCESS": types.MessageType.Info,
+    "WARNING": types.MessageType.Warning,
+    "ERROR": types.MessageType.Error,
+    "CRITICAL": types.MessageType.Error,
+}
+
 
 async def _on_initialized(ls: LanguageServer, params: types.InitializedParams):
+    def pass_log_to_ls_client(log) -> None:
+        # disabling and enabling logging of pygls package is required to avoid logging loop,
+        # because there are logs inside of log_trace and window_log_message functions
+        logger.disable('pygls')
+        if log.record['level'].no < 10:
+            # trace
+            ls.log_trace(types.LogTraceParams(message=log.record['message']))
+        else:
+            level = LOG_LEVEL_MAP.get(log.record['level'].name, types.MessageType.Info)
+            ls.window_log_message(types.LogMessageParams(type=level, message=log.record['message']))
+        logger.enable('pygls')
+    
+    # loguru doesn't support passing partial with ls parameter, use nested function instead
+    logger.add(sink=pass_log_to_ls_client)
+    
     logger.info(f"initialized {params}")
 
     add_ws_dir_coros: list[typing.Coroutine] = []
