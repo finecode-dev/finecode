@@ -137,27 +137,33 @@ async def __run_action(
         logger.debug(
             f"Run {action.name} on {str(apply_on if apply_on is not None else '')}"
         )
-        try:
-            # TODO: cache
-            action_cls = run_utils.import_class_by_source_str(action.source)
-            action_config_cls = run_utils.import_class_by_source_str(action.source + "Config")
-        except ModuleNotFoundError as error:
-            logger.error(f"Source of action {action.name} '{action.source}' could not be imported")
-            logger.error(error)
-            return
+        
+        if action.name in runner_context.actions_instances_by_name:
+            action_instance = runner_context.actions_instances_by_name[action.name]
+            logger.trace(f'Instance of action {action.name} found in cache')
+        else:
+            logger.trace(f'Load action {action.name}')
+            try:
+                action_cls = run_utils.import_class_by_source_str(action.source)
+                action_config_cls = run_utils.import_class_by_source_str(action.source + "Config")
+            except ModuleNotFoundError as error:
+                logger.error(f"Source of action {action.name} '{action.source}' could not be imported")
+                logger.error(error)
+                return
 
-        try:
-            action_config = project_def.actions_configs[action.name]
-        except KeyError:
-            action_config = {}
+            try:
+                action_config = project_def.actions_configs[action.name]
+            except KeyError:
+                action_config = {}
 
-        config = action_config_cls(**action_config)
-        project_path = runner_context.project.path
-        project_cache_dir = project_dirs.get_project_dir(project_path=project_path) # , base_dir=root_cache_dir
-        context = ActionContext(
-            project_dir=runner_context.project.path,
-            cache_dir=project_cache_dir)
-        action_instance = action_cls(config=config, context=context)
+            config = action_config_cls(**action_config)
+            project_path = runner_context.project.path
+            project_cache_dir = project_dirs.get_project_dir(project_path=project_path)
+            context = ActionContext(
+                project_dir=runner_context.project.path,
+                cache_dir=project_cache_dir)
+            action_instance = action_cls(config=config, context=context)
+            runner_context.actions_instances_by_name[action.name] = action_instance
 
         if apply_on is not None and len(apply_on) > 1:
             # temporary solution, should be dependency injection or similar approach
