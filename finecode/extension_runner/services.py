@@ -1,4 +1,3 @@
-import os
 from pathlib import Path
 
 from loguru import logger
@@ -6,13 +5,12 @@ from loguru import logger
 from finecode.code_action import (CodeFormatAction, CodeLintAction, FormatRunPayload,
                                   FormatRunResult, LintRunPayload, RunActionResult,
                                   RunOnManyPayload, RunOnManyResult, ActionContext)
-from finecode.extension_runner import app_dirs
 import finecode.extension_runner.domain as domain
 import finecode.extension_runner.run_utils as run_utils
 import finecode.extension_runner.schemas as schemas
 import finecode.extension_runner.context as context
 import finecode.extension_runner.global_state as global_state
-
+import finecode.extension_runner.project_dirs as project_dirs
 
 class ActionFailedException(Exception):
     ...
@@ -21,10 +19,11 @@ class ActionFailedException(Exception):
 async def update_config(
     request: schemas.UpdateConfigRequest,
 ) -> schemas.UpdateConfigResponse:
+    project_path = Path(request.working_dir)
     global_state.runner_context = context.RunnerContext(
         project=domain.Project(
             name=request.project_name,
-            path=Path(request.working_dir),
+            path=project_path,
             actions={action_name: domain.Action(name=action.name, subactions=action.actions, source=action.source) for action_name, action in request.actions.items()},
             actions_configs=request.actions_configs
         ),
@@ -154,12 +153,10 @@ async def __run_action(
 
         config = action_config_cls(**action_config)
         project_path = runner_context.project.path
-        root_cache_dir = Path(app_dirs.get_app_dirs().user_cache_dir)
-        projects_cache_dir = root_cache_dir / 'projects'
-        os.makedirs(projects_cache_dir, exist_ok=True)
+        project_cache_dir = project_dirs.get_project_dir(project_path=project_path) # , base_dir=root_cache_dir
         context = ActionContext(
             project_dir=runner_context.project.path,
-            cache_dir=projects_cache_dir / f'{project_path.name}-{hash(project_path.as_posix())}')
+            cache_dir=project_cache_dir)
         action_instance = action_cls(config=config, context=context)
 
         if apply_on is not None and len(apply_on) > 1:

@@ -18,10 +18,11 @@ def read_configs(ws_context: context.WorkspaceContext):
     logger.trace("Reading configs in workspace finished")
 
 
-def read_configs_in_dir(dir_path: Path, ws_context: context.WorkspaceContext) -> None:
+def read_configs_in_dir(dir_path: Path, ws_context: context.WorkspaceContext) -> list[domain.Project]:
     # Find all projects, read their configs and save in ws context. Resolve presets and all 'source'
     # properties
     logger.trace(f"Read configs in {dir_path}")
+    new_projects: list[domain.Project] = []
     def_files_generator = dir_path.rglob("*")
     for def_file in def_files_generator:
         if def_file.name not in {
@@ -54,9 +55,12 @@ def read_configs_in_dir(dir_path: Path, ws_context: context.WorkspaceContext) ->
         if not finecode_sh_path.exists():
             status = domain.ProjectStatus.NO_FINECODE_SH
 
-        ws_context.ws_projects[def_file.parent] = domain.Project(
+        new_project = domain.Project(
             name=def_file.parent.name, path=def_file.parent, status=status
         )
+        ws_context.ws_projects[def_file.parent] = new_project
+        new_projects.append(new_project)
+    return new_projects
 
 
 def normalize_project_config(config: dict[str, Any]) -> None:

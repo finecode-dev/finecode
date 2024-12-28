@@ -1,7 +1,5 @@
 import asyncio
-import concurrent.futures as futures
 import json
-import threading
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -17,14 +15,17 @@ from finecode.workspace_manager.runner_lsp_client import JsonRPCClient
 @dataclass
 class ExtensionRunnerInfo:
     working_dir_path: Path
-    process_id: int
     output_queue: janus.Queue
-    stop_event: threading.Event
     started_event: asyncio.Event
-    process_future: futures.Future | None
-    port: int | None = None
     client: JsonRPCClient | None = None
     keep_running_request_task: asyncio.Task | None = None
+    
+    @property
+    def process_id(self) -> int:
+        if self.client is not None and self.client._server is not None:
+            return self.client._server.pid
+        else:
+            return 0
 
 
 async def run_action_in_runner(

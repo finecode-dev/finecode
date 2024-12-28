@@ -1,1 +1,1 @@
-poetry run finecode
+poetry run python
