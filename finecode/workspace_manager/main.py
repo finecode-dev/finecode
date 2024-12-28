@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import os
-import threading
 from pathlib import Path
 from typing import Any, Sequence
 
@@ -38,12 +37,22 @@ async def start(comm_type: communication_utils.CommunicationType, host: str | No
             raise ValueError("WS server requires host and port to be provided.")
         raise NotImplementedError()  # async version of start_ws is needed
     else:
-        await pygls_utils.start_io_async(server)
+        # await pygls_utils.start_io_async(server)
+        server.start_io()
 
 
-async def start_in_ws_context(ws_context: context.WorkspaceContext) -> None:
-    # one for all, doesn't need to change on ws dirs change
-    asyncio.create_task(handle_runners_lifecycle(ws_context))
+def start_sync(comm_type: communication_utils.CommunicationType, host: str | None = None, port: int | None = None, trace: bool = False) -> None:
+    log_dir_path = Path(get_dirs(app_name='FineCode_Workspace_Manager', app_author='FineCode', version='1.0').user_log_dir)
+    logger.remove()
+    save_logs_to_file(file_path=log_dir_path / 'execution.log', log_level="TRACE" if trace else "INFO", stdout=False)
+
+    server = create_lsp_server()
+    server.start_io()
+
+
+# async def start_in_ws_context(ws_context: context.WorkspaceContext) -> None:
+#     # one for all, doesn't need to change on ws dirs change
+#     asyncio.create_task(handle_runners_lifecycle(ws_context))
 
 
 async def update_runners(ws_context: context.WorkspaceContext) -> None:
@@ -58,7 +67,7 @@ async def update_runners(ws_context: context.WorkspaceContext) -> None:
             )
         except StopIteration:
             continue
-        stop_extension_runner(runner_to_delete)
+        await stop_extension_runner(runner_to_delete)
         extension_runners.remove(runner_to_delete)
 
     new_runners_coros = [
@@ -72,19 +81,19 @@ async def update_runners(ws_context: context.WorkspaceContext) -> None:
     }
 
 
-async def handle_runners_lifecycle(ws_context: context.WorkspaceContext):
-    await update_runners(ws_context)
-    try:
-        while True:
-            await asyncio.sleep(1)
-    except Exception as e:
-        logger.exception(e)
-    finally:
-        # TODO: stop all log handlers?
-        for runner in ws_context.ws_projects_extension_runners.values():
-            stop_extension_runner(runner)
+# async def handle_runners_lifecycle(ws_context: context.WorkspaceContext):
+#     await update_runners(ws_context)
+#     try:
+#         while True:
+#             await asyncio.sleep(1)
+#     except Exception as e:
+#         logger.exception(e)
+#     finally:
+#         # TODO: stop all log handlers?
+#         for runner in ws_context.ws_projects_extension_runners.values():
+#             stop_extension_runner(runner)
 
-        ws_context.ws_projects_extension_runners.clear()
+#         ws_context.ws_projects_extension_runners.clear()
 
 
 def _find_changed_dirs(
@@ -106,12 +115,9 @@ async def start_extension_runner(
     runner_dir: Path, ws_context: context.WorkspaceContext
 ) -> manager_api.ExtensionRunnerInfo | None:
     runner_info = manager_api.ExtensionRunnerInfo(
-        process_id=0,
         working_dir_path=runner_dir,
         output_queue=janus.Queue(),
         started_event=asyncio.Event(),
-        process_future=None,
-        stop_event=threading.Event(),
     )
 
     try:
@@ -123,21 +129,17 @@ async def start_extension_runner(
             ...
         return None
 
-    # temporary remove VIRTUAL_ENV env variable to avoid starting in wrong venv
-    old_virtual_env_var = os.environ.get("VIRTUAL_ENV", "")
-    os.environ["VIRTUAL_ENV"] = ""
-    runner_info.client = await create_lsp_client_io(f"{_finecode_cmd} -m finecode.extension_runner.cli --trace")
-    os.environ["VIRTUAL_ENV"] = old_virtual_env_var
+    runner_info.client = await create_lsp_client_io(f"{_finecode_cmd} -m finecode.extension_runner.cli --trace --project-path={runner_info.working_dir_path.as_posix()}", runner_info.working_dir_path)
     await init_runner(runner_info, ws_context.ws_projects[runner_dir], ws_context.ws_projects_raw_configs[runner_dir])
     return runner_info
 
 
-def stop_extension_runner(runner: manager_api.ExtensionRunnerInfo) -> None:
-    runner.stop_event.set()
-    if runner.process_future is not None:
-        # wait for end of the process to make sure it was stopped
-        runner.process_future.result()
-    logger.trace(f"Stop extension runner {runner.process_id} in {runner.working_dir_path}")
+async def stop_extension_runner(runner: manager_api.ExtensionRunnerInfo) -> None:
+    if runner.client is not None:
+        await runner.client.stop()
+        logger.trace(f"Stop extension runner {runner.process_id} in {runner.working_dir_path}")
+    else:
+        logger.trace(f"Tried to stop extension runner {runner.working_dir_path}, but it was not running")
 
 
 def get_subactions(
@@ -162,6 +164,16 @@ async def init_runner(runner: manager_api.ExtensionRunnerInfo, project: domain.P
     assert runner.client is not None
     try:
         await asyncio.wait_for(runner.client.protocol.send_request_async(method=types.INITIALIZE, params=types.InitializeParams(process_id=os.getpid(), capabilities=types.ClientCapabilities(), client_info=types.ClientInfo(name='FineCode_WorkspaceManager', version='0.1.0'), trace=types.TraceValue.Verbose)), 10)
+    except RuntimeError:
+        logger.error("Runner crashed?")
+        stdout, stderr = await runner.client._server.communicate()
+
+        logger.debug(f'[Runner exited with {runner.client._server.returncode}]')
+        if stdout:
+            logger.debug(f'[stdout]\n{stdout.decode()}')
+        if stderr:
+            logger.debug(f'[stderr]\n{stderr.decode()}')
+        return
     except Exception as e:
         logger.exception(e)
         return
@@ -173,7 +185,7 @@ async def init_runner(runner: manager_api.ExtensionRunnerInfo, project: domain.P
         return
     logger.debug("LSP Server initialized")
 
-    assert project.actions is not None
+    assert project.actions is not None, f"Actions of project {project.path} are not read yet"
     all_actions = set([])
     actions_to_process = set(project.actions)
     while len(actions_to_process) > 0:

@@ -1,11 +1,13 @@
-import asyncio
+# import asyncio
 import inspect
 import logging
+# from typing import Coroutine
 
 import click
 from loguru import logger
 
 import finecode.workspace_manager.main as workspace_manager
+# import finecode.workspace_manager.server.global_state as global_state
 import finecode.communication_utils as communication_utils
 
 
@@ -61,9 +63,13 @@ def start_api(trace: bool, debug: bool, tcp: int | None, ws: bool, stdio: bool, 
     else:
         raise ValueError("Specify either --tcp, --ws or --stdio")
 
-    loop = asyncio.get_event_loop()
-    loop.run_until_complete(workspace_manager.start(comm_type=comm_type, host=host, port=port, trace=trace))
-    loop.run_forever()
+    # loop = asyncio.get_event_loop()
+    # loop.run_until_complete(workspace_manager.start(comm_type=comm_type, host=host, port=port, trace=trace))
+    # loop.run_forever()
+
+    # workspace manager doesn't stop with async start after closing LS client(IDE). Use sync start
+    # until this problem is solved
+    workspace_manager.start_sync(comm_type=comm_type, host=host, port=port, trace=trace)
 
 
 if __name__ == "__main__":
