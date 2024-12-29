@@ -1,7 +1,15 @@
 from __future__ import annotations
+
+import enum
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Generic, Sequence, TypeVar
+
+if sys.version_info >= (3, 12):
+    from typing import TypedDict
+else:
+    from typing_extensions import TypedDict
 
 from pydantic import BaseModel
 
@@ -46,7 +54,8 @@ class CodeAction(Generic[CodeActionConfigType, RunPayloadType, RunResultType]):
     In action implementation there is no action config as such, because config definition includes
     default values.
     """
-    LANGUAGE: str = 'python'
+
+    LANGUAGE: str = "python"
     IS_BACKGROUND: bool = False
 
     def __init__(self, config: CodeActionConfigType, context: ActionContext) -> None:
@@ -72,7 +81,7 @@ class LintRunPayload(RunActionPayload):
 
 
 class LintRunResult(RunActionResult):
-    # dict key should be Path, but pygls fails to handle slashes in dict keys, use strings with 
+    # dict key should be Path, but pygls fails to handle slashes in dict keys, use strings with
     # posix representation of path instead until the problem is properly solved
     messages: dict[str, list[LintMessage]]
 
@@ -103,12 +112,29 @@ class CodeFormatAction(CodeAction[CodeActionConfigType, FormatRunPayload, Format
     ...
 
 
+class Position(TypedDict):
+    line: int
+    character: int
+
+
+class Range(TypedDict):
+    start: Position
+    end: Position
+
+
+class LintMessageSeverity(enum.IntEnum):
+    # use IntEnum to get json serialization out of the box
+    ERROR = 1
+    WARNING = 2
+    INFO = 3
+    HINT = 4
+
+
 @dataclass(frozen=True)
 class LintMessage:
-    # TODO: add optional end position
-    line: int
-    column: int
-    code: str
+    range: Range
     message: str
-    # TODO: severity
-    # TODO: code description
+    code: str | None = None
+    code_description: str | None = None
+    source: str | None = None
+    severity: LintMessageSeverity | None = None
