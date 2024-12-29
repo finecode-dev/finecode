@@ -32,7 +32,11 @@ def main(trace: bool, debug: bool, project_path: Path):
 
     global_state.log_level = "INFO" if trace is False else "TRACE"
     global_state.project_dir_path = project_path
-    asyncio.run(runner_start.start_runner())
+    # asyncio.run(runner_start.start_runner())
+    
+    # extension runner doesn't stop with async start after closing LS client(WM). Use sync start
+    # until this problem is solved
+    runner_start.start_runner_sync()
 
 
 if __name__ == "__main__":
