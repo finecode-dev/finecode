@@ -134,7 +134,7 @@ async def _lint_and_publish_results(ls: LanguageServer, path_to_lint: str):
             ls.text_document_publish_diagnostics(
                 types.PublishDiagnosticsParams(uri=f'file://{file_path_str}',
                                                diagnostics=[
-                                                   types.Diagnostic(range=types.Range(types.Position(lint_message['range']['start']['line'], lint_message['range']['start']['character']), types.Position(lint_message['range']['end']['line'], lint_message['range']['end']['character'])), message=lint_message['message'], code=lint_message.get('code', None), code_description=lint_message.get('code_description', None), source=lint_message.get('source', None), severity=lint_message.get('severity', None))
+                                                   types.Diagnostic(range=types.Range(types.Position(lint_message['range']['start']['line'], lint_message['range']['start']['character']), types.Position(lint_message['range']['end']['line'], lint_message['range']['end']['character'])), message=lint_message['message'], code=lint_message.get('code', None), code_description=lint_message.get('code_description', None), source=lint_message.get('source', None), severity=types.DiagnosticSeverity(lint_message.get('severity', None)) if lint_message.get('severity', None) is not None else None)
                                                    for lint_message in lint_messages
                                                    ])
             )
