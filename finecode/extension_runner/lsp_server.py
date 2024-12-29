@@ -21,6 +21,9 @@ def create_lsp_server() -> LanguageServer:
     
     register_run_task_cmd = server.command('actions/run')
     register_run_task_cmd(run_action)
+    
+    register_reload_action_cmd = server.command('actions/reload')
+    register_reload_action_cmd(reload_action)
 
     return server
 
@@ -62,3 +65,9 @@ async def run_action(ls: LanguageServer, params):
     # dict key can be path, but pygls fails to handle slashes in dict keys, use strings
     # representation of result instead until the problem is properly solved
     return { 'result':  json.dumps(response.to_dict()['result']) }
+
+
+async def reload_action(ls: LanguageServer, params):
+    logger.trace(f'Reload action: {params}')
+    services.reload_action(params[0])
+    return {}

@@ -1,4 +1,5 @@
 import asyncio
+from pathlib import Path
 import typing
 
 from pygls.lsp.server import LanguageServer
@@ -8,6 +9,7 @@ from loguru import logger
 import finecode.workspace_manager.server.schemas as schemas
 import finecode.workspace_manager.server.services as services
 import finecode.workspace_manager.server.global_state as global_state
+import finecode.workspace_manager.main as main
 
 
 def create_lsp_server() -> LanguageServer:
@@ -34,14 +36,20 @@ def create_lsp_server() -> LanguageServer:
     register_document_did_open_feature(_document_did_save)
     
     # Finecode
-    register_list_actions_feature = server.feature('finecode/getActions')
-    register_list_actions_feature(list_actions)
+    register_list_actions_cmd = server.command('finecode.getActions')
+    register_list_actions_cmd(list_actions)
     
     register_run_action_on_file_cmd = server.command('finecode.runActionOnFile')
     register_run_action_on_file_cmd(run_action_on_file)
 
     register_run_action_on_project_cmd = server.command('finecode.runActionOnProject')
     register_run_action_on_project_cmd(run_action_on_project)
+
+    register_reload_action_cmd = server.command('finecode.reloadAction')
+    register_reload_action_cmd(reload_action)
+
+    register_restart_extension_runner_cmd = server.command('finecode.restartExtensionRunner')
+    register_restart_extension_runner_cmd(restart_extension_runner)
 
     return server
 
@@ -122,11 +130,11 @@ async def _lint_and_publish_results(ls: LanguageServer, path_to_lint: str):
     run_action_request = schemas.RunActionRequest(action_node_id='lint', apply_on=path_to_lint, apply_on_text='')
     try:
         response = await services.run_action(run_action_request)
-        for file_path_str, lint_messages in response.result['messages'].items():
+        for file_path_str, lint_messages in response.result.get('messages', {}).items():
             ls.text_document_publish_diagnostics(
                 types.PublishDiagnosticsParams(uri=f'file://{file_path_str}',
                                                diagnostics=[
-                                                   types.Diagnostic(range=types.Range(types.Position(lint_message['line'], lint_message['column']), types.Position(lint_message['line'], lint_message['column'])), message=lint_message['message'], code=lint_message['code'])
+                                                   types.Diagnostic(range=types.Range(types.Position(lint_message['range']['start']['line'], lint_message['range']['start']['character']), types.Position(lint_message['range']['end']['line'], lint_message['range']['end']['character'])), message=lint_message['message'], code=lint_message.get('code', None), code_description=lint_message.get('code_description', None), source=lint_message.get('source', None), severity=lint_message.get('severity', None))
                                                    for lint_message in lint_messages
                                                    ])
             )
@@ -189,3 +197,38 @@ async def run_action_on_project(ls: LanguageServer, params):
     run_action_request = schemas.RunActionRequest(action_node_id=action_node_id, apply_on=apply_on, apply_on_text='')
     response = await services.run_action(run_action_request)
     return response.to_dict()
+
+
+async def reload_action(ls: LanguageServer, params):
+    logger.info(f"reload action {params}")
+    await global_state.server_initialized.wait()
+    
+    params_dict = params[0]
+    action_node_id = params_dict['projectPath']
+    await services.reload_action(action_node_id)
+    
+    return {}
+
+
+async def restart_extension_runner(ls: LanguageServer, params):
+    logger.info(f"restart extension runner {params}")
+    await global_state.server_initialized.wait()
+
+    params_dict = params[0]
+    runner_working_dir_str = params_dict['projectPath']
+    runner_working_dir_path = Path(runner_working_dir_str)
+
+    # TODO: reload config?
+
+    try:
+        runner = global_state.ws_context.ws_projects_extension_runners[runner_working_dir_path]
+    except KeyError:
+        logger.error(f"Cannot find runner for {runner_working_dir_str}")
+        return
+
+    # `stop_extension_runner` waits for end of the process, explicit shutdown request is required
+    # to stop it
+    # await runner.client.protocol.send_request_async(types.SHUTDOWN)
+    await main.stop_extension_runner(runner)
+    new_runner = await main.start_extension_runner(runner_dir=runner_working_dir_path, ws_context=global_state.ws_context)
+    global_state.ws_context.ws_projects_extension_runners[runner_working_dir_path] = new_runner

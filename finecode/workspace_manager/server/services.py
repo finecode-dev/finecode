@@ -251,3 +251,29 @@ async def __run_action(
             ...
 
     return result
+
+
+async def reload_action(action_node_id: str) -> None:
+    splitted_action_id = action_node_id.split('::')
+    project_path = Path(splitted_action_id[0])
+    try:
+        project = global_state.ws_context.ws_projects[project_path]
+    except KeyError:
+        raise ActionNotFound()
+
+    if project.actions is None:
+        logger.error("Actions in project are not read yet, but expected")
+        raise InternalError()
+
+    action_name = splitted_action_id[1]
+    try:
+        next(
+            action for action in project.actions if action.name == action_name
+        )
+    except (StopIteration) as error:
+        logger.error(f"Unexpected error, project or action not found: {error}")
+        raise InternalError()
+    
+    runner = global_state.ws_context.ws_projects_extension_runners[project_path]
+
+    await manager_api.reload_action_in_runner(runner, action_name)

@@ -8,23 +8,36 @@ from typing import Any, Sequence
 import janus
 from loguru import logger
 from lsprotocol import types
-
-import finecode.workspace_manager.domain as domain
-import finecode.workspace_manager.context as context
-import finecode.workspace_manager.run_action as manager_api
-import finecode.workspace_manager.finecode_cmd as finecode_cmd
-from finecode.workspace_manager.runner_lsp_client import create_lsp_client_io
-from finecode.workspace_manager.server.lsp_server import create_lsp_server
 from modapp.extras.logs import save_logs_to_file
 from modapp.extras.platformdirs import get_dirs
-import finecode.pygls_utils as pygls_utils
+
 import finecode.communication_utils as communication_utils
+import finecode.pygls_utils as pygls_utils
+import finecode.workspace_manager.context as context
+import finecode.workspace_manager.domain as domain
+import finecode.workspace_manager.finecode_cmd as finecode_cmd
+import finecode.workspace_manager.run_action as manager_api
+from finecode.workspace_manager.runner_lsp_client import create_lsp_client_io
+from finecode.workspace_manager.server.lsp_server import create_lsp_server
 
 
-async def start(comm_type: communication_utils.CommunicationType, host: str | None = None, port: int | None = None, trace: bool = False) -> None:
-    log_dir_path = Path(get_dirs(app_name='FineCode_Workspace_Manager', app_author='FineCode', version='1.0').user_log_dir)
+async def start(
+    comm_type: communication_utils.CommunicationType,
+    host: str | None = None,
+    port: int | None = None,
+    trace: bool = False,
+) -> None:
+    log_dir_path = Path(
+        get_dirs(
+            app_name="FineCode_Workspace_Manager", app_author="FineCode", version="1.0"
+        ).user_log_dir
+    )
     logger.remove()
-    save_logs_to_file(file_path=log_dir_path / 'execution.log', log_level="TRACE" if trace else "INFO", stdout=False)
+    save_logs_to_file(
+        file_path=log_dir_path / "execution.log",
+        log_level="TRACE" if trace else "INFO",
+        stdout=False,
+    )
 
     server = create_lsp_server()
     if comm_type == communication_utils.CommunicationType.TCP:
@@ -41,10 +54,23 @@ async def start(comm_type: communication_utils.CommunicationType, host: str | No
         server.start_io()
 
 
-def start_sync(comm_type: communication_utils.CommunicationType, host: str | None = None, port: int | None = None, trace: bool = False) -> None:
-    log_dir_path = Path(get_dirs(app_name='FineCode_Workspace_Manager', app_author='FineCode', version='1.0').user_log_dir)
+def start_sync(
+    comm_type: communication_utils.CommunicationType,
+    host: str | None = None,
+    port: int | None = None,
+    trace: bool = False,
+) -> None:
+    log_dir_path = Path(
+        get_dirs(
+            app_name="FineCode_Workspace_Manager", app_author="FineCode", version="1.0"
+        ).user_log_dir
+    )
     logger.remove()
-    save_logs_to_file(file_path=log_dir_path / 'execution.log', log_level="TRACE" if trace else "INFO", stdout=False)
+    save_logs_to_file(
+        file_path=log_dir_path / "execution.log",
+        log_level="TRACE" if trace else "INFO",
+        stdout=False,
+    )
 
     server = create_lsp_server()
     server.start_io()
@@ -129,22 +155,33 @@ async def start_extension_runner(
             ...
         return None
 
-    runner_info.client = await create_lsp_client_io(f"{_finecode_cmd} -m finecode.extension_runner.cli --trace --project-path={runner_info.working_dir_path.as_posix()}", runner_info.working_dir_path)
-    await init_runner(runner_info, ws_context.ws_projects[runner_dir], ws_context.ws_projects_raw_configs[runner_dir])
+    runner_info.client = await create_lsp_client_io(
+        f"{_finecode_cmd} -m finecode.extension_runner.cli --trace --project-path={runner_info.working_dir_path.as_posix()}",
+        runner_info.working_dir_path,
+    )
+    await init_runner(
+        runner_info,
+        ws_context.ws_projects[runner_dir],
+        ws_context.ws_projects_raw_configs[runner_dir],
+    )
     return runner_info
 
 
 async def stop_extension_runner(runner: manager_api.ExtensionRunnerInfo) -> None:
     if runner.client is not None:
+        logger.trace(f'Trying to stop extension runner {runner.working_dir_path}')
+        # `runner.client.stop()` doesn't work, it just hangs. Need to be investigated. Terminate
+        # forcefully until the problem is properly solved.
+        runner.client._server.terminate()
         await runner.client.stop()
         logger.trace(f"Stop extension runner {runner.process_id} in {runner.working_dir_path}")
     else:
-        logger.trace(f"Tried to stop extension runner {runner.working_dir_path}, but it was not running")
+        logger.trace(
+            f"Tried to stop extension runner {runner.working_dir_path}, but it was not running"
+        )
 
 
-def get_subactions(
-    names: list[str], project_raw_config: dict[str, Any]
-) -> list[domain.Action]:
+def get_subactions(names: list[str], project_raw_config: dict[str, Any]) -> list[domain.Action]:
     subactions: list[domain.Action] = []
     for name in names:
         try:
@@ -159,20 +196,37 @@ def get_subactions(
     return subactions
 
 
-async def init_runner(runner: manager_api.ExtensionRunnerInfo, project: domain.Project, project_raw_config: dict[str, Any]) -> None:
+async def init_runner(
+    runner: manager_api.ExtensionRunnerInfo,
+    project: domain.Project,
+    project_raw_config: dict[str, Any],
+) -> None:
     # initialization is required to be able to perform other requests
     assert runner.client is not None
     try:
-        await asyncio.wait_for(runner.client.protocol.send_request_async(method=types.INITIALIZE, params=types.InitializeParams(process_id=os.getpid(), capabilities=types.ClientCapabilities(), client_info=types.ClientInfo(name='FineCode_WorkspaceManager', version='0.1.0'), trace=types.TraceValue.Verbose)), 10)
+        await asyncio.wait_for(
+            runner.client.protocol.send_request_async(
+                method=types.INITIALIZE,
+                params=types.InitializeParams(
+                    process_id=os.getpid(),
+                    capabilities=types.ClientCapabilities(),
+                    client_info=types.ClientInfo(
+                        name="FineCode_WorkspaceManager", version="0.1.0"
+                    ),
+                    trace=types.TraceValue.Verbose,
+                ),
+            ),
+            10,
+        )
     except RuntimeError:
         logger.error("Runner crashed?")
         stdout, stderr = await runner.client._server.communicate()
 
-        logger.debug(f'[Runner exited with {runner.client._server.returncode}]')
+        logger.debug(f"[Runner exited with {runner.client._server.returncode}]")
         if stdout:
-            logger.debug(f'[stdout]\n{stdout.decode()}')
+            logger.debug(f"[stdout]\n{stdout.decode()}")
         if stderr:
-            logger.debug(f'[stderr]\n{stderr.decode()}')
+            logger.debug(f"[stderr]\n{stderr.decode()}")
         return
     except Exception as e:
         logger.exception(e)
@@ -191,25 +245,35 @@ async def init_runner(runner: manager_api.ExtensionRunnerInfo, project: domain.P
     while len(actions_to_process) > 0:
         action = actions_to_process.pop()
         all_actions.add(action)
-        actions_to_process |= set(get_subactions(names=action.subactions, project_raw_config=project_raw_config))
+        actions_to_process |= set(
+            get_subactions(names=action.subactions, project_raw_config=project_raw_config)
+        )
     all_actions_dict = {action.name: action for action in all_actions}
 
     try:
         # lsp client requests have no timeout, add own one
         try:
-            await asyncio.wait_for(runner.client.protocol.send_request_async(
-                method=types.WORKSPACE_EXECUTE_COMMAND,
-                params=types.ExecuteCommandParams(command='finecodeRunner/updateConfig', arguments=[
-                    runner.working_dir_path.as_posix(),
-                    runner.working_dir_path.stem,
-                    all_actions_dict,
-                    project.actions_configs
-                ])
-            ), 10)
+            await asyncio.wait_for(
+                runner.client.protocol.send_request_async(
+                    method=types.WORKSPACE_EXECUTE_COMMAND,
+                    params=types.ExecuteCommandParams(
+                        command="finecodeRunner/updateConfig",
+                        arguments=[
+                            runner.working_dir_path.as_posix(),
+                            runner.working_dir_path.stem,
+                            all_actions_dict,
+                            project.actions_configs,
+                        ],
+                    ),
+                ),
+                10,
+            )
         except TimeoutError:
             logger.error(f"Failed to update config of runner {runner.working_dir_path}")
-        
-        logger.debug(f"Updated config of runner {runner.working_dir_path}, process id {runner.process_id}")
+
+        logger.debug(
+            f"Updated config of runner {runner.working_dir_path}, process id {runner.process_id}"
+        )
         runner.started_event.set()
     except Exception as e:
         # TODO: set project status to appropriate error

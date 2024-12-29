@@ -52,3 +52,23 @@ async def run_action_in_runner(
     except Exception as e:
         logger.exception(e)
         return {}
+
+
+async def reload_action_in_runner(runner: ExtensionRunnerInfo, action_name: str) -> None:
+    if not runner.started_event.is_set():
+        await runner.started_event.wait()
+    assert runner.client is not None
+    
+    try:
+        result = await runner.client.protocol.send_request_async(
+            types.WORKSPACE_EXECUTE_COMMAND,
+            types.ExecuteCommandParams(
+                command='actions/reload',
+                arguments=[
+                    action_name,
+                ]))
+        logger.debug(f"Action reload result: {result}")
+        return {}
+    except Exception as e:
+        logger.exception(e)
+        return {}

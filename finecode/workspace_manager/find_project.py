@@ -4,8 +4,8 @@ from loguru import logger
 
 from finecode.workspace_manager.context import WorkspaceContext
 
-from .read_configs import _finecode_is_enabled_in_def
 from .collect_actions import collect_actions
+from .read_configs import _finecode_is_enabled_in_def
 
 
 def find_project_for_file(file_path: Path, workspace_path: Path) -> Path:
@@ -41,7 +41,9 @@ def find_project_with_action_for_file(
             ...
 
     if workspace_path is None:
-        raise ValueError("File doesn't belong to the workspace")
+        raise ValueError(
+            f"File {file_path} doesn't belong to one of workspace directories. Workspace directories: {ws_context.ws_dirs_paths}"
+        )
 
     dir_path = file_path if file_path.is_dir() else file_path.parent
     dir_path_str = file_path.as_posix() if file_path.is_dir() else file_path.parent.as_posix()

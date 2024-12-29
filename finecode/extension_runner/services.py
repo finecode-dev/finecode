@@ -1,19 +1,22 @@
+import sys
 from pathlib import Path
 
 from loguru import logger
 
-from finecode.code_action import (CodeFormatAction, CodeLintAction, FormatRunPayload,
-                                  FormatRunResult, LintRunPayload, RunActionResult,
-                                  RunOnManyPayload, RunOnManyResult, ActionContext)
-import finecode.extension_runner.domain as domain
-import finecode.extension_runner.run_utils as run_utils
-import finecode.extension_runner.schemas as schemas
 import finecode.extension_runner.context as context
+import finecode.extension_runner.domain as domain
 import finecode.extension_runner.global_state as global_state
 import finecode.extension_runner.project_dirs as project_dirs
+import finecode.extension_runner.run_utils as run_utils
+import finecode.extension_runner.schemas as schemas
+from finecode.code_action import (ActionContext, CodeFormatAction,
+                                  CodeLintAction, FormatRunPayload,
+                                  FormatRunResult, LintRunPayload,
+                                  RunActionResult, RunOnManyPayload,
+                                  RunOnManyResult)
 
-class ActionFailedException(Exception):
-    ...
+
+class ActionFailedException(Exception): ...
 
 
 async def update_config(
@@ -24,8 +27,13 @@ async def update_config(
         project=domain.Project(
             name=request.project_name,
             path=project_path,
-            actions={action_name: domain.Action(name=action.name, subactions=action.actions, source=action.source) for action_name, action in request.actions.items()},
-            actions_configs=request.actions_configs
+            actions={
+                action_name: domain.Action(
+                    name=action.name, subactions=action.actions, source=action.source
+                )
+                for action_name, action in request.actions.items()
+            },
+            actions_configs=request.actions_configs,
         ),
     )
 
@@ -61,8 +69,8 @@ async def run_action(
     try:
         result = await __run_action(
             action=action_obj,
-            apply_on=request.params['apply_on'],
-            apply_on_text=request.params['apply_on_text'],
+            apply_on=request.params["apply_on"],
+            apply_on_text=request.params["apply_on_text"],
             project_root=global_state.runner_context.project.path,
             runner_context=global_state.runner_context,
         )
@@ -71,8 +79,10 @@ async def run_action(
         raise ActionFailedException("Failed to run action")
 
     result_dict = {}
-    if isinstance(result, dict): # RunOnManyResult
-        result_dict = { path.as_posix(): file_result.model_dump() for path, file_result in result.items() }
+    if isinstance(result, dict):  # RunOnManyResult
+        result_dict = {
+            path.as_posix(): file_result.model_dump() for path, file_result in result.items()
+        }
     elif isinstance(result, RunActionResult):
         result_dict = result.model_dump()
 
@@ -126,28 +136,32 @@ async def __run_action(
                 and subaction_result.code is not None
             ):
                 current_apply_on_text = subaction_result.code
-            
-            if isinstance(subaction_result, FormatRunResult) and subaction_result.changed is False and result is not None:
+
+            if (
+                isinstance(subaction_result, FormatRunResult)
+                and subaction_result.changed is False
+                and result is not None
+            ):
                 # if format subaction didn't change the code, save it only if there are no result at all
                 # if one subaction changed code and the next one didn't, expected result is changed code of the first one
                 continue
             else:
                 result = subaction_result
     elif action.source is not None:
-        logger.debug(
-            f"Run {action.name} on {str(apply_on if apply_on is not None else '')}"
-        )
-        
+        logger.debug(f"Run {action.name} on {str(apply_on if apply_on is not None else '')}")
+
         if action.name in runner_context.actions_instances_by_name:
             action_instance = runner_context.actions_instances_by_name[action.name]
-            logger.trace(f'Instance of action {action.name} found in cache')
+            logger.trace(f"Instance of action {action.name} found in cache")
         else:
-            logger.trace(f'Load action {action.name}')
+            logger.trace(f"Load action {action.name}")
             try:
                 action_cls = run_utils.import_class_by_source_str(action.source)
                 action_config_cls = run_utils.import_class_by_source_str(action.source + "Config")
             except ModuleNotFoundError as error:
-                logger.error(f"Source of action {action.name} '{action.source}' could not be imported")
+                logger.error(
+                    f"Source of action {action.name} '{action.source}' could not be imported"
+                )
                 logger.error(error)
                 return
 
@@ -160,8 +174,8 @@ async def __run_action(
             project_path = runner_context.project.path
             project_cache_dir = project_dirs.get_project_dir(project_path=project_path)
             context = ActionContext(
-                project_dir=runner_context.project.path,
-                cache_dir=project_cache_dir)
+                project_dir=runner_context.project.path, cache_dir=project_cache_dir
+            )
             action_instance = action_cls(config=config, context=context)
             runner_context.actions_instances_by_name[action.name] = action_instance
 
@@ -208,21 +222,27 @@ async def __run_action(
                 for file_path, file_result in result.items():
                     assert isinstance(file_result, FormatRunResult)
                     if file_result.changed and file_result.code is not None:
-                        logger.trace(f'Saving {file_path}')
+                        logger.trace(f"Saving {file_path}")
                         with open(file_path, "w") as f:
                             f.write(file_result.code)
                     else:
-                        logger.trace(f'File {file_path} was not changed or there is no result')
+                        logger.trace(f"File {file_path} was not changed or there is no result")
         else:
             # temporary solution, should be dependency injection or similar approach
             if isinstance(action_instance, CodeFormatAction):
-                payload = FormatRunPayload(apply_on=apply_on[0] if isinstance(apply_on, list) else None, apply_on_text=apply_on_text)
+                payload = FormatRunPayload(
+                    apply_on=apply_on[0] if isinstance(apply_on, list) else None,
+                    apply_on_text=apply_on_text,
+                )
             elif isinstance(action_instance, CodeLintAction):
-                payload = LintRunPayload(apply_on=apply_on[0] if isinstance(apply_on, list) else None, apply_on_text=apply_on_text)
+                payload = LintRunPayload(
+                    apply_on=apply_on[0] if isinstance(apply_on, list) else None,
+                    apply_on_text=apply_on_text,
+                )
             else:
                 raise NotImplementedError()
 
-            logger.debug('Run on single')
+            logger.debug("Run on single")
             try:
                 result = await action_instance.run(payload)
             except Exception as e:
@@ -235,3 +255,45 @@ async def __run_action(
 
     logger.trace(f"End of execution of action {action.name} on {apply_on}")
     return result
+
+
+def reload_action(action_name: str) -> None:
+    if global_state.runner_context is None:
+        # TODO: raise error
+        return
+
+    project_def = global_state.runner_context.project
+
+    if project_def.actions is None:
+        logger.error("Project actions are not read yet")
+        return
+
+    try:
+        action_obj = project_def.actions[action_name]
+    except KeyError:
+        logger.warning(
+            f"Action {action_name} not found. Available actions: {','.join([action_name for action_name in project_def.actions])}"
+        )
+        # TODO: raise error
+        return
+
+    actions_to_remove = [action_name, *action_obj.subactions]
+
+    for _action_name in actions_to_remove:
+        try:
+            action_instance = global_state.runner_context.actions_instances_by_name[_action_name]
+            action_package = action_instance.__module__.split(".")[0]
+
+            del global_state.runner_context.actions_instances_by_name[_action_name]
+            logger.trace(f"Removed '{_action_name}' instance from cache")
+        except KeyError:
+            logger.info(f"Tried to reload action '{_action_name}', but it was not found")
+            action_package = None
+
+        if action_package is not None:
+            sys.modules = {
+                key: value
+                for key, value in sys.modules.items()
+                if key != action_package and not key.startswith(action_package + ".")
+            }
+            logger.trace(f"Remove modules of package '{action_package}' from cache")
