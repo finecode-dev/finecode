@@ -277,3 +277,20 @@ async def reload_action(action_node_id: str) -> None:
     runner = global_state.ws_context.ws_projects_extension_runners[project_path]
 
     await manager_api.reload_action_in_runner(runner, action_name)
+
+
+async def handle_changed_ws_dirs(added: list[Path], removed: list[Path]) -> None:
+    for added_ws_dir_path in added:
+        global_state.ws_context.ws_dirs_paths.append(added_ws_dir_path)
+        new_projects = read_configs.read_configs_in_dir(dir_path=added_ws_dir_path, ws_context=global_state.ws_context)
+        for new_project in new_projects:
+            # actions are required to start runner
+            collect_actions.collect_actions(project_path=new_project.path, ws_context=global_state.ws_context)
+
+    for removed_ws_dir_path in removed:
+        try:
+            global_state.ws_context.ws_dirs_paths.remove(removed_ws_dir_path)
+        except ValueError:
+            logger.warning(f'Ws Directory {removed_ws_dir_path} was removed from ws, but not found in ws context')
+
+    await manager_main.update_runners(global_state.ws_context)
