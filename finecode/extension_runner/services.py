@@ -1,4 +1,5 @@
 import sys
+import types
 from pathlib import Path
 
 from loguru import logger
@@ -291,9 +292,16 @@ def reload_action(action_name: str) -> None:
             action_package = None
 
         if action_package is not None:
-            sys.modules = {
-                key: value
-                for key, value in sys.modules.items()
-                if key != action_package and not key.startswith(action_package + ".")
-            }
+            loaded_package_modules = dict(
+                [
+                    (key, value)
+                    for key, value in sys.modules.items()
+                    if key.startswith(action_package) and isinstance(value, types.ModuleType)
+                ]
+            )
+
+            # delete references to these loaded modules from sys.modules
+            for key in loaded_package_modules:
+                del sys.modules[key]
+
             logger.trace(f"Remove modules of package '{action_package}' from cache")
