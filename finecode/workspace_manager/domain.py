@@ -22,7 +22,8 @@ class Project:
     def __init__(
         self,
         name: str,
-        path: Path,
+        dir_path: Path,
+        def_path: Path,
         status: ProjectStatus,
         subprojects: list[Project] | None = None,
         actions: list[Action] | None = None,
@@ -32,13 +33,15 @@ class Project:
         root_actions: list[str] | None = None,
     ) -> None:
         self.name = name
-        self.path = path
+        self.dir_path = dir_path
+        self.def_path = def_path
         self.status = status
         if subprojects is not None:
             self.subprojects = subprojects
         else:
             self.subprojects: list[Project] = []
         # None means actions were not collected yet
+        # if project.status is RUNNING, then actions are not None
         self.actions = actions
         if root_actions is not None:
             self.root_actions = root_actions
@@ -56,13 +59,15 @@ class Project:
             self.actions_configs: dict[str, dict[str, Any]] = {}
 
     def __str__(self) -> str:
-        return f'Project(name="{self.name}", path="{self.path}")'
+        return f'Project(name="{self.name}", path="{self.dir_path}")'
 
 
 class ProjectStatus(Enum):
     READY = auto()
     NO_FINECODE = auto()
     NO_FINECODE_SH = auto()
+    RUNNER_FAILED = auto()
+    RUNNING = auto()
 
 
 RootActions = list[str]

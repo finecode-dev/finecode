@@ -5,10 +5,10 @@ import sys
 from loguru import logger
 from modapp.extras.logs import save_logs_to_file
 
-import finecode.pygls_utils as pygls_utils
-import finecode.extension_runner.project_dirs as project_dirs
-import finecode.extension_runner.lsp_server as extension_runner_lsp
 import finecode.extension_runner.global_state as global_state
+import finecode.extension_runner.lsp_server as extension_runner_lsp
+import finecode.extension_runner.project_dirs as project_dirs
+import finecode.pygls_utils as pygls_utils
 
 
 async def start_runner():

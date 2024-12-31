@@ -85,7 +85,7 @@ async def _on_initialized(ls: LanguageServer, params: types.InitializedParams):
     # loguru doesn't support passing partial with ls parameter, use nested function instead
     logger.add(sink=pass_log_to_ls_client)
 
-    logger.info(f"initialized {params}")
+    logger.info(f"initialized, adding workspace directories")
 
     add_ws_dir_coros: list[typing.Coroutine] = []
     for ws_dir in ls.workspace.folders.values():
@@ -94,6 +94,7 @@ async def _on_initialized(ls: LanguageServer, params: types.InitializedParams):
 
     await asyncio.gather(*add_ws_dir_coros)
     global_state.server_initialized.set()
+    logger.trace("Workspace directories added, end of initialized handler")
 
 
 async def _workspace_did_change_workspace_folders(

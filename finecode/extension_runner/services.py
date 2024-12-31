@@ -1,3 +1,4 @@
+import importlib
 import sys
 import types
 from pathlib import Path
@@ -53,11 +54,6 @@ async def run_action(
 
     project = global_state.runner_context.project
 
-    if project.actions is None:
-        logger.error("Project actions are not read yet")
-        # TODO: raise error
-        return schemas.RunActionResponse({})
-
     try:
         action_obj = project.actions[request.action_name]
     except KeyError:
@@ -104,10 +100,6 @@ async def __run_action(
         return
 
     project_def = global_state.runner_context.project
-
-    if project_def.actions is None:
-        logger.error("Project actions are not read yet")
-        return
 
     result: RunActionResult | RunOnManyResult | None = None
     # run in current env
@@ -265,10 +257,6 @@ def reload_action(action_name: str) -> None:
 
     project_def = global_state.runner_context.project
 
-    if project_def.actions is None:
-        logger.error("Project actions are not read yet")
-        return
-
     try:
         action_obj = project_def.actions[action_name]
     except KeyError:
@@ -305,3 +293,12 @@ def reload_action(action_name: str) -> None:
                 del sys.modules[key]
 
             logger.trace(f"Remove modules of package '{action_package}' from cache")
+
+
+def resolve_package_path(package_name: str) -> str:
+    try:
+        package_path = importlib.util.find_spec(package_name).submodule_search_locations[0]
+    except Exception:
+        raise ValueError(f"Cannot find package {package_name}")
+    
+    return package_path

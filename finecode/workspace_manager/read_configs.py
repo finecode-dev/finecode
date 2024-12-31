@@ -1,27 +1,17 @@
-import os
 from pathlib import Path
 from typing import Any, NamedTuple
 
-from command_runner import command_runner
 from loguru import logger
 from pydantic import ValidationError
 from tomlkit import loads as toml_loads
 
-from finecode.workspace_manager import config_models, context, domain
+from finecode.workspace_manager import (config_models, context, domain,
+                                        runner_client)
 
 
-def read_configs(ws_context: context.WorkspaceContext):
-    # Read configs in all root directories of workspace
-    logger.trace("Read configs in workspace")
-    for ws_dir_path in ws_context.ws_dirs_paths:
-        read_configs_in_dir(dir_path=ws_dir_path, ws_context=ws_context)
-    logger.trace("Reading configs in workspace finished")
-
-
-def read_configs_in_dir(dir_path: Path, ws_context: context.WorkspaceContext) -> list[domain.Project]:
-    # Find all projects, read their configs and save in ws context. Resolve presets and all 'source'
-    # properties
-    logger.trace(f"Read configs in {dir_path}")
+async def read_projects_in_dir(dir_path: Path, ws_context: context.WorkspaceContext) -> list[domain.Project]:
+    # Find all projects in directory
+    logger.trace(f"Read directories in {dir_path}")
     new_projects: list[domain.Project] = []
     def_files_generator = dir_path.rglob("*")
     for def_file in def_files_generator:
@@ -30,37 +20,39 @@ def read_configs_in_dir(dir_path: Path, ws_context: context.WorkspaceContext) ->
         }:  # "package.json", "finecode.toml"
             continue
 
-        if def_file.name == "pyproject.toml":
-            with open(def_file, "rb") as pyproject_file:
-                project_def = toml_loads(pyproject_file.read()).value
-            # TODO: validate that finecode is installed?
-
-            finecode_raw_config = project_def.get("tool", {}).get("finecode", None)
-            if finecode_raw_config:
-                finecode_config = config_models.FinecodeConfig(**finecode_raw_config)
-                new_config = collect_config_from_py_presets(
-                    presets_sources=[preset.source for preset in finecode_config.presets],
-                    def_path=def_file,
-                )
-                _merge_projects_configs(project_def, new_config)
-
-            normalize_project_config(project_def)
-            ws_context.ws_projects_raw_configs[def_file.parent] = project_def
-        else:
-            logger.info(f"Project definition of type {def_file.name} is not supported yet")
-            continue
-
         finecode_sh_path = def_file.parent / "finecode.sh"
         status = domain.ProjectStatus.READY
         if not finecode_sh_path.exists():
             status = domain.ProjectStatus.NO_FINECODE_SH
 
         new_project = domain.Project(
-            name=def_file.parent.name, path=def_file.parent, status=status
+            name=def_file.parent.name, dir_path=def_file.parent, def_path=def_file, status=status
         )
         ws_context.ws_projects[def_file.parent] = new_project
         new_projects.append(new_project)
     return new_projects
+
+
+async def read_project_config(project: domain.Project, ws_context: context.WorkspaceContext) -> None:
+    if project.def_path.name == "pyproject.toml":
+        with open(project.def_path, "rb") as pyproject_file:
+            project_def = toml_loads(pyproject_file.read()).value
+        # TODO: validate that finecode is installed?
+
+        finecode_raw_config = project_def.get("tool", {}).get("finecode", None)
+        if finecode_raw_config:
+            finecode_config = config_models.FinecodeConfig(**finecode_raw_config)
+            new_config = await collect_config_from_py_presets(
+                presets_sources=[preset.source for preset in finecode_config.presets],
+                def_path=project.def_path,
+                runner=ws_context.ws_projects_extension_runners[project.dir_path]
+            )
+            _merge_projects_configs(project_def, new_config)
+
+        normalize_project_config(project_def)
+        ws_context.ws_projects_raw_configs[project.dir_path] = project_def
+    else:
+        logger.info(f"Project definition of type {project.def_path.name} is not supported yet")
 
 
 def normalize_project_config(config: dict[str, Any]) -> None:
@@ -85,20 +77,15 @@ class PresetToProcess(NamedTuple):
     project_def_path: Path
 
 
-def get_preset_project_path(preset: PresetToProcess, def_path: Path) -> Path | None:
+async def get_preset_project_path(preset: PresetToProcess, def_path: Path, runner: runner_client.ExtensionRunnerInfo) -> Path | None:
     logger.trace(f"Get preset project path: {preset.source}")
-    old_current_dir = os.getcwd()
-    os.chdir(def_path.parent)
-    exit_code, output = command_runner(
-        f'poetry run python -c "import {preset.source}; import os;'
-        f' print(os.path.dirname({preset.source}.__file__))"'
-    )
-    os.chdir(old_current_dir)
-    if exit_code != 0 or not isinstance(output, str):
-        logger.error(f"Cannot resolve preset {preset.source}")
-        return None
 
-    preset_project_path = Path(output.strip("\n"))
+    resolve_path_result = await runner_client.resolve_package_path(runner, preset.source)
+    try:
+        preset_project_path = Path(resolve_path_result['packagePath'])
+    except KeyError:
+        raise ValueError(f'Preset source cannot be resolved: {preset.source}')
+    
     logger.trace(f"Got: {preset.source} -> {preset_project_path}")
     return preset_project_path
 
@@ -132,7 +119,7 @@ def read_preset_config(
     return (preset_toml, preset_config)
 
 
-def collect_config_from_py_presets(presets_sources: list[str], def_path: Path) -> dict[str, Any]:
+async def collect_config_from_py_presets(presets_sources: list[str], def_path: Path, runner: runner_client.ExtensionRunnerInfo) -> dict[str, Any]:
     config: dict[str, Any] = {}
     processed_presets: set[str] = set()
     presets_to_process: set[PresetToProcess] = set(
@@ -145,7 +132,7 @@ def collect_config_from_py_presets(presets_sources: list[str], def_path: Path) -
         preset = presets_to_process.pop()
         processed_presets.add(preset.source)
 
-        preset_project_path = get_preset_project_path(preset=preset, def_path=def_path)
+        preset_project_path = await get_preset_project_path(preset=preset, def_path=def_path, runner=runner)
         if preset_project_path is None:
             continue
 

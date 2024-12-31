@@ -1,6 +1,7 @@
-from .code_action import (CodeActionConfig, CodeFormatAction, CodeLintAction,
-                          FormatRunPayload, FormatRunResult, LintMessage,
-                          LintRunResult, RunActionPayload, RunOnManyPayload, LintRunPayload, CodeAction)
+from .code_action import (CodeAction, CodeActionConfig, CodeFormatAction,
+                          CodeLintAction, FormatRunPayload, FormatRunResult,
+                          LintMessage, LintRunPayload, LintRunResult,
+                          RunActionPayload, RunOnManyPayload)
 
 __all__ = [
     "CodeLintAction",

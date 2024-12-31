@@ -1,14 +1,11 @@
-# import asyncio
 import inspect
 import logging
-# from typing import Coroutine
 
 import click
 from loguru import logger
 
-import finecode.workspace_manager.main as workspace_manager
-# import finecode.workspace_manager.server.global_state as global_state
 import finecode.communication_utils as communication_utils
+import finecode.workspace_manager.main as workspace_manager
 
 
 @click.group()

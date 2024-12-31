@@ -1,13 +1,12 @@
+import asyncio
 import logging
 import sys
 from threading import Event
-import asyncio
 from typing import Any, BinaryIO, Optional
 
 from loguru import logger
+from pygls.io_ import StdinAsyncReader, StdoutWriter, run_async
 from pygls.lsp.server import LanguageServer
-from pygls.io_ import run_async, StdinAsyncReader, StdoutWriter
-
 
 std_logger = logging.getLogger(__name__)
 

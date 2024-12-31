@@ -1,36 +1,32 @@
+import asyncio
 from pathlib import Path
 from typing import Any
 
 from loguru import logger
 
-import finecode.workspace_manager.domain as domain
 import finecode.workspace_manager.context as context
-import finecode.workspace_manager.run_action as manager_api
-import finecode.workspace_manager.collect_actions as collect_actions
-import finecode.workspace_manager.read_configs as read_configs
+import finecode.workspace_manager.domain as domain
 import finecode.workspace_manager.find_project as find_project
 import finecode.workspace_manager.main as manager_main
-import finecode.workspace_manager.server.schemas as schemas
+import finecode.workspace_manager.read_configs as read_configs
+import finecode.workspace_manager.runner_client as manager_api
 import finecode.workspace_manager.server.global_state as global_state
+import finecode.workspace_manager.server.schemas as schemas
 
 
-class ActionNotFound(Exception):
-    ...
+class ActionNotFound(Exception): ...
 
 
-class InternalError(Exception):
-    ...
+class InternalError(Exception): ...
 
 
 async def add_workspace_dir(
     request: schemas.AddWorkspaceDirRequest,
 ) -> schemas.AddWorkspaceDirResponse:
+    logger.trace(f"Add workspace dir {request.dir_path}")
     dir_path = Path(request.dir_path)
     global_state.ws_context.ws_dirs_paths.append(dir_path)
-    new_projects = read_configs.read_configs_in_dir(dir_path=dir_path, ws_context=global_state.ws_context)
-    for new_project in new_projects:
-        # actions are required to start runner
-        collect_actions.collect_actions(project_path=new_project.path, ws_context=global_state.ws_context)
+    await read_configs.read_projects_in_dir(dir_path, global_state.ws_context)
     await manager_main.update_runners(global_state.ws_context)
     return schemas.AddWorkspaceDirResponse()
 
@@ -43,7 +39,7 @@ async def delete_workspace_dir(
     return schemas.DeleteWorkspaceDirResponse()
 
 
-def _dir_to_tree_node(
+async def _dir_to_tree_node(
     dir_path: Path, ws_context: context.WorkspaceContext
 ) -> schemas.ActionTreeNode | None:
     # ignore directories: hidden directories like .git, .pytest_cache etc, node_modules
@@ -59,12 +55,6 @@ def _dir_to_tree_node(
     )
     subnodes: list[schemas.ActionTreeNode] = []
     if dir_is_project:
-        # reading configs for ws dirs is not needed here, because it happens on adding directory
-        # to workspace. Read only for nested dirs
-        if dir_path not in ws_context.ws_dirs_paths:
-            # `read_configs_in_dir` looks for projects, parses them recursively and normalizes. It's
-            # not needed in this case and can be simplified
-            read_configs.read_configs_in_dir(dir_path, ws_context)
         try:
             project = ws_context.ws_projects[dir_path]
         except KeyError:
@@ -72,30 +62,32 @@ def _dir_to_tree_node(
             project = None
 
         if project is not None:
-            if project.actions is None:
-                collect_actions.collect_actions(project_path=project.path, ws_context=ws_context)
-            assert project.actions is not None
-            for action in project.actions:
-                if action.name not in project.root_actions:
-                    continue
+            if project.status == domain.ProjectStatus.RUNNING:
+                assert project.actions is not None
+                for action in project.actions:
+                    if action.name not in project.root_actions:
+                        continue
 
-                node_id = f"{project.path.as_posix()}::{action.name}"
-                subnodes.append(
-                    schemas.ActionTreeNode(
-                        node_id=node_id,
-                        name=action.name,
-                        node_type=schemas.ActionTreeNode.NodeType.ACTION,
-                        subnodes=[],
+                    node_id = f"{project.dir_path.as_posix()}::{action.name}"
+                    subnodes.append(
+                        schemas.ActionTreeNode(
+                            node_id=node_id,
+                            name=action.name,
+                            node_type=schemas.ActionTreeNode.NodeType.ACTION,
+                            subnodes=[],
+                        )
                     )
-                )
-                ws_context.cached_actions_by_id[node_id] = context.CachedAction(
-                    action_id=node_id, project_path=project.path, action_name=action.name
-                )
-        # TODO: presets?
+                    ws_context.cached_actions_by_id[node_id] = context.CachedAction(
+                        action_id=node_id, project_path=project.dir_path, action_name=action.name
+                    )
+            # TODO: presets?
+        else:
+            logger.info(f"Project is not running: {project.dir_path}")
+            ... # TODO: error status
     else:
         for dir_item in dir_path.iterdir():
             if dir_item.is_dir():
-                subnode = _dir_to_tree_node(dir_item, ws_context)
+                subnode = await _dir_to_tree_node(dir_item, ws_context)
                 if subnode is not None:
                     subnodes.append(subnode)
 
@@ -105,14 +97,22 @@ def _dir_to_tree_node(
     )
 
 
-def _list_actions(
+async def _list_actions(
     ws_context: context.WorkspaceContext, parent_node_id: str | None = None
 ) -> list[schemas.ActionTreeNode]:
     if parent_node_id is None:
         # list ws dirs and first level
+
+        # wait for start of all runners, this is required to be able to resolve presets
+        all_started_coros = [
+            runner.initialized_event.wait()
+            for runner in ws_context.ws_projects_extension_runners.values()
+        ]
+        await asyncio.gather(*all_started_coros)
+
         nodes: list[schemas.ActionTreeNode] = []
         for ws_dir_path in ws_context.ws_dirs_paths:
-            node = _dir_to_tree_node(ws_dir_path, ws_context)
+            node = await _dir_to_tree_node(ws_dir_path, ws_context)
             if node is not None:
                 nodes.append(node)
         # sort nodes alphabetically to keep the order stable
@@ -130,8 +130,9 @@ async def list_actions(
         return schemas.ListActionsResponse(nodes=[])
 
     return schemas.ListActionsResponse(
-        nodes=_list_actions(
-            global_state.ws_context, request.parent_node_id if request.parent_node_id != "" else None
+        nodes=await _list_actions(
+            global_state.ws_context,
+            request.parent_node_id if request.parent_node_id != "" else None,
         )
     )
 
@@ -145,11 +146,13 @@ async def run_action(
     if ":" not in _action_node_id:
         # general action without project path like 'format' or 'lint', normalize (=add project path)
         project_path = find_project.find_project_with_action_for_file(
-            file_path=Path(request.apply_on), action_name=_action_node_id, ws_context=global_state.ws_context
+            file_path=Path(request.apply_on),
+            action_name=_action_node_id,
+            ws_context=global_state.ws_context,
         )
         _action_node_id = f"{project_path.as_posix()}::{_action_node_id}"
 
-    splitted_action_id = _action_node_id.split('::')
+    splitted_action_id = _action_node_id.split("::")
     project_path = Path(splitted_action_id[0])
     try:
         project = global_state.ws_context.ws_projects[project_path]
@@ -162,9 +165,7 @@ async def run_action(
 
     action_name = splitted_action_id[1]
     try:
-        action = next(
-            action for action in project.actions if action.name == action_name
-        )
+        action = next(action for action in project.actions if action.name == action_name)
     except (KeyError, StopIteration) as error:
         logger.error(f"Unexpected error, project or action not found: {error}")
         raise InternalError()
@@ -174,10 +175,10 @@ async def run_action(
         action=action,
         apply_on=Path(request.apply_on) if request.apply_on != "" else None,
         apply_on_text=request.apply_on_text,
-        project_root=project.path,
+        project_root=project.dir_path,
         ws_context=global_state.ws_context,
     )
-    return schemas.RunActionResponse(result=result['result'])
+    return schemas.RunActionResponse(result=result["result"])
 
 
 async def __run_action(
@@ -195,8 +196,8 @@ async def __run_action(
         logger.error(f"Project definition not found: {project_root}")
         return {}
 
-    if project_def.actions is None:
-        logger.error("Project actions are not read yet")
+    if project_def.status != domain.ProjectStatus.RUNNING:
+        logger.error(f"Extension runner is not running in {project_def.dir_path}. Please check logs.")
         return {}
 
     try:
@@ -224,10 +225,10 @@ async def __run_action(
 
     if apply_on is not None:
         ws_context.ignore_watch_paths.add(apply_on)
-    
+
         # apply on file / apply on project: pass file as is and form list of files in case of project
         if apply_on.is_dir():
-            all_apply_on = list(apply_on.rglob('*.py'))
+            all_apply_on = list(apply_on.rglob("*.py"))
         else:
             all_apply_on = [apply_on]
     else:
@@ -235,7 +236,7 @@ async def __run_action(
 
     if project_root in ws_context.ws_projects_extension_runners:
         # extension runner is running for this project, send command to it
-        result = await manager_api.run_action_in_runner(
+        result = await manager_api.run_action(
             runner=ws_context.ws_projects_extension_runners[project_root],
             action=action,
             apply_on=all_apply_on,
@@ -254,7 +255,7 @@ async def __run_action(
 
 
 async def reload_action(action_node_id: str) -> None:
-    splitted_action_id = action_node_id.split('::')
+    splitted_action_id = action_node_id.split("::")
     project_path = Path(splitted_action_id[0])
     try:
         project = global_state.ws_context.ws_projects[project_path]
@@ -267,30 +268,26 @@ async def reload_action(action_node_id: str) -> None:
 
     action_name = splitted_action_id[1]
     try:
-        next(
-            action for action in project.actions if action.name == action_name
-        )
-    except (StopIteration) as error:
+        next(action for action in project.actions if action.name == action_name)
+    except StopIteration as error:
         logger.error(f"Unexpected error, project or action not found: {error}")
         raise InternalError()
-    
+
     runner = global_state.ws_context.ws_projects_extension_runners[project_path]
 
-    await manager_api.reload_action_in_runner(runner, action_name)
+    await manager_api.reload_action(runner, action_name)
 
 
 async def handle_changed_ws_dirs(added: list[Path], removed: list[Path]) -> None:
     for added_ws_dir_path in added:
         global_state.ws_context.ws_dirs_paths.append(added_ws_dir_path)
-        new_projects = read_configs.read_configs_in_dir(dir_path=added_ws_dir_path, ws_context=global_state.ws_context)
-        for new_project in new_projects:
-            # actions are required to start runner
-            collect_actions.collect_actions(project_path=new_project.path, ws_context=global_state.ws_context)
 
     for removed_ws_dir_path in removed:
         try:
             global_state.ws_context.ws_dirs_paths.remove(removed_ws_dir_path)
         except ValueError:
-            logger.warning(f'Ws Directory {removed_ws_dir_path} was removed from ws, but not found in ws context')
+            logger.warning(
+                f"Ws Directory {removed_ws_dir_path} was removed from ws, but not found in ws context"
+            )
 
     await manager_main.update_runners(global_state.ws_context)

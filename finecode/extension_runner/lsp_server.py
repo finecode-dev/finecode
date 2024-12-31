@@ -1,8 +1,8 @@
 import json
 
-from pygls.lsp.server import LanguageServer
-from lsprotocol import types
 from loguru import logger
+from lsprotocol import types
+from pygls.lsp.server import LanguageServer
 
 import finecode.extension_runner.schemas as schemas
 import finecode.extension_runner.services as services
@@ -24,18 +24,11 @@ def create_lsp_server() -> LanguageServer:
     
     register_reload_action_cmd = server.command('actions/reload')
     register_reload_action_cmd(reload_action)
+    
+    register_resolve_package_path_cmd = server.command('packages/resolvePath')
+    register_resolve_package_path_cmd(resolve_package_path)
 
     return server
-
-
-# def _format_document(ls: LanguageServer, params: types.DocumentFormattingParams):
-#     """Format the entire document"""
-#     # logging.debug("%s", params)
-
-#     # doc = ls.workspace.get_text_document(params.text_document.uri)
-#     # rows = parse_document(doc)
-#     # return format_table(rows)
-#     return None
 
 
 def _on_initialized(ls: LanguageServer, params: types.InitializedParams):
@@ -71,3 +64,9 @@ async def reload_action(ls: LanguageServer, params):
     logger.trace(f'Reload action: {params}')
     services.reload_action(params[0])
     return {}
+
+
+async def resolve_package_path(ls: LanguageServer, params):
+    logger.trace(f"Resolve package path: {params}")
+    result = services.resolve_package_path(params[0])
+    return {"packagePath": result}

@@ -13,11 +13,13 @@ from modapp.extras.platformdirs import get_dirs
 
 import finecode.communication_utils as communication_utils
 import finecode.pygls_utils as pygls_utils
+import finecode.workspace_manager.collect_actions as collect_actions
 import finecode.workspace_manager.context as context
 import finecode.workspace_manager.domain as domain
 import finecode.workspace_manager.finecode_cmd as finecode_cmd
-import finecode.workspace_manager.run_action as manager_api
-from finecode.workspace_manager.runner_lsp_client import create_lsp_client_io
+import finecode.workspace_manager.read_configs as read_configs
+import finecode.workspace_manager.runner_client as manager_api
+from finecode.workspace_manager.create_lsp_client import create_lsp_client_io
 from finecode.workspace_manager.server.lsp_server import create_lsp_server
 
 
@@ -97,7 +99,9 @@ async def update_runners(ws_context: context.WorkspaceContext) -> None:
         extension_runners.remove(runner_to_delete)
 
     new_runners_coros = [
-        start_extension_runner(runner_dir=new_dir, ws_context=ws_context) for new_dir in new_dirs
+        start_extension_runner(runner_dir=new_dir, ws_context=ws_context)
+        for new_dir in new_dirs
+        if ws_context.ws_projects[new_dir].status == domain.ProjectStatus.READY
     ]
     new_runners = await asyncio.gather(*new_runners_coros)
     extension_runners += [runner for runner in new_runners if runner is not None]
@@ -106,20 +110,11 @@ async def update_runners(ws_context: context.WorkspaceContext) -> None:
         runner.working_dir_path: runner for runner in extension_runners
     }
 
-
-# async def handle_runners_lifecycle(ws_context: context.WorkspaceContext):
-#     await update_runners(ws_context)
-#     try:
-#         while True:
-#             await asyncio.sleep(1)
-#     except Exception as e:
-#         logger.exception(e)
-#     finally:
-#         # TODO: stop all log handlers?
-#         for runner in ws_context.ws_projects_extension_runners.values():
-#             stop_extension_runner(runner)
-
-#         ws_context.ws_projects_extension_runners.clear()
+    init_runners_coros = [
+        init_runner(runner, ws_context.ws_projects[runner.working_dir_path], ws_context)
+        for runner in extension_runners
+    ]
+    await asyncio.gather(*init_runners_coros)
 
 
 def _find_changed_dirs(
@@ -143,7 +138,7 @@ async def start_extension_runner(
     runner_info = manager_api.ExtensionRunnerInfo(
         working_dir_path=runner_dir,
         output_queue=janus.Queue(),
-        started_event=asyncio.Event(),
+        initialized_event=asyncio.Event(),
     )
 
     try:
@@ -159,17 +154,12 @@ async def start_extension_runner(
         f"{_finecode_cmd} -m finecode.extension_runner.cli --trace --project-path={runner_info.working_dir_path.as_posix()}",
         runner_info.working_dir_path,
     )
-    await init_runner(
-        runner_info,
-        ws_context.ws_projects[runner_dir],
-        ws_context.ws_projects_raw_configs[runner_dir],
-    )
     return runner_info
 
 
 async def stop_extension_runner(runner: manager_api.ExtensionRunnerInfo) -> None:
     if runner.client is not None:
-        logger.trace(f'Trying to stop extension runner {runner.working_dir_path}')
+        logger.trace(f"Trying to stop extension runner {runner.working_dir_path}")
         # `runner.client.stop()` doesn't work, it just hangs. Need to be investigated. Terminate
         # forcefully until the problem is properly solved.
         runner.client._server.terminate()
@@ -199,9 +189,10 @@ def get_subactions(names: list[str], project_raw_config: dict[str, Any]) -> list
 async def init_runner(
     runner: manager_api.ExtensionRunnerInfo,
     project: domain.Project,
-    project_raw_config: dict[str, Any],
+    ws_context: context.WorkspaceContext,
 ) -> None:
     # initialization is required to be able to perform other requests
+    logger.trace(f"Init runner {runner.working_dir_path}")
     assert runner.client is not None
     try:
         await asyncio.wait_for(
@@ -219,6 +210,8 @@ async def init_runner(
             10,
         )
     except RuntimeError:
+        project.status = domain.ProjectStatus.RUNNER_FAILED
+        runner.initialized_event.set()
         logger.error("Runner crashed?")
         stdout, stderr = await runner.client._server.communicate()
 
@@ -229,24 +222,34 @@ async def init_runner(
             logger.debug(f"[stderr]\n{stderr.decode()}")
         return
     except Exception as e:
+        project.status = domain.ProjectStatus.RUNNER_FAILED
+        runner.initialized_event.set()
         logger.exception(e)
         return
 
     try:
         runner.client.protocol.notify(method=types.INITIALIZED, params=types.InitializedParams())
     except Exception as e:
+        project.status = domain.ProjectStatus.RUNNER_FAILED
+        runner.initialized_event.set()
         logger.exception(e)
         return
     logger.debug("LSP Server initialized")
 
-    assert project.actions is not None, f"Actions of project {project.path} are not read yet"
+    await read_configs.read_project_config(project=project, ws_context=ws_context)
+    collect_actions.collect_actions(project_path=project.dir_path, ws_context=ws_context)
+
+    assert project.actions is not None, f"Actions of project {project.dir_path} are not read yet"
     all_actions = set([])
     actions_to_process = set(project.actions)
     while len(actions_to_process) > 0:
         action = actions_to_process.pop()
         all_actions.add(action)
         actions_to_process |= set(
-            get_subactions(names=action.subactions, project_raw_config=project_raw_config)
+            get_subactions(
+                names=action.subactions,
+                project_raw_config=ws_context.ws_projects_raw_configs[project.dir_path],
+            )
         )
     all_actions_dict = {action.name: action for action in all_actions}
 
@@ -274,7 +277,9 @@ async def init_runner(
         logger.debug(
             f"Updated config of runner {runner.working_dir_path}, process id {runner.process_id}"
         )
-        runner.started_event.set()
+        project.status = domain.ProjectStatus.RUNNING
+        runner.initialized_event.set()
     except Exception as e:
-        # TODO: set project status to appropriate error
+        project.status = domain.ProjectStatus.RUNNER_FAILED
+        runner.initialized_event.set()
         logger.exception(e)

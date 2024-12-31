@@ -2,8 +2,8 @@ from pathlib import Path
 from typing import Any
 
 import finecode.workspace_manager.config_models as config_models
-import finecode.workspace_manager.domain as domain
 import finecode.workspace_manager.context as context
+import finecode.workspace_manager.domain as domain
 
 
 def collect_actions(

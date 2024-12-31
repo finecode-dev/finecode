@@ -22,7 +22,6 @@ class Project:
     ) -> None:
         self.name = name
         self.path = path
-        # None means actions were not collected yet
         self.actions = actions
         self.actions_configs = actions_configs
 
