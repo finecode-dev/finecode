@@ -4,9 +4,11 @@ from loguru import logger
 
 from finecode.workspace_manager.context import WorkspaceContext
 
-from .collect_actions import collect_actions
-from .read_configs import _finecode_is_enabled_in_def
+from .config.collect_actions import collect_actions
+from .config.read_configs import _finecode_is_enabled_in_def
 
+
+# TODO: use functions from config package, don't check directly
 
 def find_project_for_file(file_path: Path, workspace_path: Path) -> Path:
     try:

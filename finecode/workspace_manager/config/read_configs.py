@@ -5,8 +5,9 @@ from loguru import logger
 from pydantic import ValidationError
 from tomlkit import loads as toml_loads
 
-from finecode.workspace_manager import (config_models, context, domain,
-                                        runner_client)
+from finecode.workspace_manager import (context, domain)
+from finecode.workspace_manager.runner import runner_client, runner_info
+from finecode.workspace_manager.config import config_models
 
 
 async def read_projects_in_dir(dir_path: Path, ws_context: context.WorkspaceContext) -> list[domain.Project]:
@@ -77,7 +78,7 @@ class PresetToProcess(NamedTuple):
     project_def_path: Path
 
 
-async def get_preset_project_path(preset: PresetToProcess, def_path: Path, runner: runner_client.ExtensionRunnerInfo) -> Path | None:
+async def get_preset_project_path(preset: PresetToProcess, def_path: Path, runner: runner_info.ExtensionRunnerInfo) -> Path | None:
     logger.trace(f"Get preset project path: {preset.source}")
 
     resolve_path_result = await runner_client.resolve_package_path(runner, preset.source)
@@ -119,7 +120,7 @@ def read_preset_config(
     return (preset_toml, preset_config)
 
 
-async def collect_config_from_py_presets(presets_sources: list[str], def_path: Path, runner: runner_client.ExtensionRunnerInfo) -> dict[str, Any]:
+async def collect_config_from_py_presets(presets_sources: list[str], def_path: Path, runner: runner_info.ExtensionRunnerInfo) -> dict[str, Any]:
     config: dict[str, Any] = {}
     processed_presets: set[str] = set()
     presets_to_process: set[PresetToProcess] = set(

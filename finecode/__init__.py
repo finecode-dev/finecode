@@ -1,4 +1,4 @@
-from .code_action import (CodeAction, CodeActionConfig, CodeFormatAction,
+from .extension_runner.code_action import (CodeAction, CodeActionConfig, CodeFormatAction,
                           CodeLintAction, FormatRunPayload, FormatRunResult,
                           LintMessage, LintRunPayload, LintRunResult,
                           RunActionPayload, RunOnManyPayload)

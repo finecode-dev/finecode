@@ -6,7 +6,6 @@ from loguru import logger
 from lsprotocol import types
 from pygls.lsp.server import LanguageServer
 
-import finecode.workspace_manager.main as main
 import finecode.workspace_manager.server.global_state as global_state
 import finecode.workspace_manager.server.schemas as schemas
 import finecode.workspace_manager.server.services as services
@@ -50,6 +49,9 @@ def create_lsp_server() -> LanguageServer:
 
     register_reload_action_cmd = server.command("finecode.reloadAction")
     register_reload_action_cmd(reload_action)
+
+    register_reset_cmd = server.command("finecode.reset")
+    register_reset_cmd(reset)
 
     register_restart_extension_runner_cmd = server.command("finecode.restartExtensionRunner")
     register_restart_extension_runner_cmd(restart_extension_runner)
@@ -206,8 +208,8 @@ async def list_actions(ls: LanguageServer, params):
     logger.info(f"list_actions {params}")
     await global_state.server_initialized.wait()
 
-    logger.info(f"{params} {type(params)} {len(params)} {params[0]}")
-    request = schemas.ListActionsRequest(parent_node_id="")  # params.get('parentNodeId', '')
+    parent_node_id = params[0]
+    request = schemas.ListActionsRequest(parent_node_id=parent_node_id)
     result = await services.list_actions(request=request)
     return result.to_dict()
 
@@ -287,6 +289,12 @@ async def reload_action(ls: LanguageServer, params):
     return {}
 
 
+async def reset(ls: LanguageServer, params):
+    logger.info("Reset WM")
+    await global_state.server_initialized.wait()
+    ...
+
+
 async def restart_extension_runner(ls: LanguageServer, params):
     logger.info(f"restart extension runner {params}")
     await global_state.server_initialized.wait()
@@ -295,19 +303,4 @@ async def restart_extension_runner(ls: LanguageServer, params):
     runner_working_dir_str = params_dict["projectPath"]
     runner_working_dir_path = Path(runner_working_dir_str)
 
-    # TODO: reload config?
-
-    try:
-        runner = global_state.ws_context.ws_projects_extension_runners[runner_working_dir_path]
-    except KeyError:
-        logger.error(f"Cannot find runner for {runner_working_dir_str}")
-        return
-
-    # `stop_extension_runner` waits for end of the process, explicit shutdown request is required
-    # to stop it
-    # await runner.client.protocol.send_request_async(types.SHUTDOWN)
-    await main.stop_extension_runner(runner)
-    new_runner = await main.start_extension_runner(
-        runner_dir=runner_working_dir_path, ws_context=global_state.ws_context
-    )
-    global_state.ws_context.ws_projects_extension_runners[runner_working_dir_path] = new_runner
+    await services.restart_extension_runner(runner_working_dir_path)

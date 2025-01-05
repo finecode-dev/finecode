@@ -11,7 +11,7 @@ import finecode.extension_runner.global_state as global_state
 import finecode.extension_runner.project_dirs as project_dirs
 import finecode.extension_runner.run_utils as run_utils
 import finecode.extension_runner.schemas as schemas
-from finecode.code_action import (ActionContext, CodeFormatAction,
+from finecode.extension_runner.code_action import (ActionContext, CodeFormatAction,
                                   CodeLintAction, FormatRunPayload,
                                   FormatRunResult, LintRunPayload,
                                   RunActionResult, RunOnManyPayload,

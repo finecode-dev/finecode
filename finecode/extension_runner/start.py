@@ -8,7 +8,7 @@ from modapp.extras.logs import save_logs_to_file
 import finecode.extension_runner.global_state as global_state
 import finecode.extension_runner.lsp_server as extension_runner_lsp
 import finecode.extension_runner.project_dirs as project_dirs
-import finecode.pygls_utils as pygls_utils
+import finecode.pygls_server_utils as pygls_server_utils
 
 
 async def start_runner():
@@ -41,7 +41,7 @@ async def start_runner():
     logger.info(f"Project path: {global_state.project_dir_path}")
 
     server = extension_runner_lsp.create_lsp_server()
-    await pygls_utils.start_io_async(server)
+    await pygls_server_utils.start_io_async(server)
 
 
 def start_runner_sync():

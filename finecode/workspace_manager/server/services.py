@@ -8,10 +8,11 @@ import finecode.workspace_manager.context as context
 import finecode.workspace_manager.domain as domain
 import finecode.workspace_manager.find_project as find_project
 import finecode.workspace_manager.main as manager_main
-import finecode.workspace_manager.read_configs as read_configs
-import finecode.workspace_manager.runner_client as manager_api
+import finecode.workspace_manager.config.read_configs as read_configs
+import finecode.workspace_manager.runner.runner_client as runner_client
 import finecode.workspace_manager.server.global_state as global_state
 import finecode.workspace_manager.server.schemas as schemas
+import finecode.workspace_manager.runner.manager as runner_manager
 
 
 class ActionNotFound(Exception): ...
@@ -25,9 +26,13 @@ async def add_workspace_dir(
 ) -> schemas.AddWorkspaceDirResponse:
     logger.trace(f"Add workspace dir {request.dir_path}")
     dir_path = Path(request.dir_path)
+    
+    if dir_path in global_state.ws_context.ws_dirs_paths:
+        raise ValueError("Directory is already added")
+
     global_state.ws_context.ws_dirs_paths.append(dir_path)
     await read_configs.read_projects_in_dir(dir_path, global_state.ws_context)
-    await manager_main.update_runners(global_state.ws_context)
+    await runner_manager.update_runners(global_state.ws_context)
     return schemas.AddWorkspaceDirResponse()
 
 
@@ -35,7 +40,7 @@ async def delete_workspace_dir(
     request: schemas.DeleteWorkspaceDirRequest,
 ) -> schemas.DeleteWorkspaceDirResponse:
     global_state.ws_context.ws_dirs_paths.remove(Path(request.dir_path))
-    await manager_main.update_runners(global_state.ws_context)
+    await runner_manager.update_runners(global_state.ws_context)
     return schemas.DeleteWorkspaceDirResponse()
 
 
@@ -236,7 +241,7 @@ async def __run_action(
 
     if project_root in ws_context.ws_projects_extension_runners:
         # extension runner is running for this project, send command to it
-        result = await manager_api.run_action(
+        result = await runner_client.run_action(
             runner=ws_context.ws_projects_extension_runners[project_root],
             action=action,
             apply_on=all_apply_on,
@@ -275,7 +280,7 @@ async def reload_action(action_node_id: str) -> None:
 
     runner = global_state.ws_context.ws_projects_extension_runners[project_path]
 
-    await manager_api.reload_action(runner, action_name)
+    await runner_client.reload_action(runner, action_name)
 
 
 async def handle_changed_ws_dirs(added: list[Path], removed: list[Path]) -> None:
@@ -291,3 +296,21 @@ async def handle_changed_ws_dirs(added: list[Path], removed: list[Path]) -> None
             )
 
     await manager_main.update_runners(global_state.ws_context)
+
+
+async def restart_extension_runner(runner_working_dir_path: Path) -> None:
+    # TODO: reload config?
+    try:
+        runner = global_state.ws_context.ws_projects_extension_runners[runner_working_dir_path]
+    except KeyError:
+        logger.error(f"Cannot find runner for {runner_working_dir_path}")
+        return
+
+    # `stop_extension_runner` waits for end of the process, explicit shutdown request is required
+    # to stop it
+    # await runner.client.protocol.send_request_async(types.SHUTDOWN)
+    await runner_manager.stop_extension_runner(runner)
+    new_runner = await runner_manager.start_extension_runner(
+        runner_dir=runner_working_dir_path, ws_context=global_state.ws_context
+    )
+    global_state.ws_context.ws_projects_extension_runners[runner_working_dir_path] = new_runner
