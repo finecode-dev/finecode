@@ -1,7 +1,7 @@
 from .extension_runner.code_action import (CodeAction, CodeActionConfig, CodeFormatAction,
                           CodeLintAction, FormatRunPayload, FormatRunResult,
                           LintMessage, LintRunPayload, LintRunResult,
-                          RunActionPayload, RunOnManyPayload)
+                          RunActionPayload)
 
 __all__ = [
     "CodeLintAction",

@@ -1,19 +1,23 @@
 import asyncio
 import os
 from pathlib import Path
+from typing import Coroutine
 
-import janus
 from loguru import logger
 
-import finecode.workspace_manager.config.raw_config_utils as raw_config_utils
-import finecode.workspace_manager.context as context
-import finecode.workspace_manager.domain as domain
-import finecode.workspace_manager.finecode_cmd as finecode_cmd
-import finecode.workspace_manager.runner.runner_client as runner_client
-from finecode.workspace_manager.runner import runner_info
 from finecode import dirs_utils
 from finecode.pygls_client_utils import create_lsp_client_io
-from finecode.workspace_manager.config import read_configs, collect_actions
+from finecode.workspace_manager import context, domain, finecode_cmd
+from finecode.workspace_manager.config import (collect_actions,
+                                               raw_config_utils, read_configs)
+from finecode.workspace_manager.runner import runner_client, runner_info
+
+project_changed_callback: Coroutine | None = None
+
+
+async def notify_project_changed(project: domain.Project) -> None:
+    if project_changed_callback is not None:
+        await project_changed_callback(project)
 
 
 async def start_extension_runner(
@@ -21,7 +25,6 @@ async def start_extension_runner(
 ) -> runner_info.ExtensionRunnerInfo | None:
     runner_info_instance = runner_info.ExtensionRunnerInfo(
         working_dir_path=runner_dir,
-        output_queue=janus.Queue(),
         initialized_event=asyncio.Event(),
     )
 
@@ -30,29 +33,47 @@ async def start_extension_runner(
     except ValueError:
         try:
             ws_context.ws_projects[runner_dir].status = domain.ProjectStatus.NO_FINECODE_SH
+            await notify_project_changed(ws_context.ws_projects[runner_dir])
         except KeyError:
             ...
         return None
 
     runner_info_instance.client = await create_lsp_client_io(
+        runner_info.CustomJsonRpcClient,
         f"{_finecode_cmd} -m finecode.extension_runner.cli --trace --project-path={runner_info_instance.working_dir_path.as_posix()}",
         runner_info_instance.working_dir_path,
     )
+
+    async def on_exit():
+        logger.debug(f"Extension Runner {runner_info_instance.working_dir_path} exited")
+        ws_context.ws_projects[runner_dir].status = domain.ProjectStatus.EXITED
+        await notify_project_changed(ws_context.ws_projects[runner_dir])
+        # TODO: restart if WM is not stopping
+
+    runner_info_instance.client.server_exit_callback = on_exit
     return runner_info_instance
 
 
 async def stop_extension_runner(runner: runner_info.ExtensionRunnerInfo) -> None:
     if runner.client is not None:
         logger.trace(f"Trying to stop extension runner {runner.working_dir_path}")
-        # `runner.client.stop()` doesn't work, it just hangs. Need to be investigated. Terminate
-        # forcefully until the problem is properly solved.
-        runner.client._server.terminate()
-        await runner.client.stop()
-        logger.trace(f"Stop extension runner {runner.process_id} in {runner.working_dir_path}")
+        if not runner.client.stopped:
+            # `runner.client.stop()` doesn't work, it just hangs. Need to be investigated. Terminate
+            # forcefully until the problem is properly solved.
+            runner.client._server.terminate()
+            await runner.client.stop()
+            logger.trace(f"Stop extension runner {runner.process_id} in {runner.working_dir_path}")
+        else:
+            logger.trace(f"Extension runner was not running")
     else:
         logger.trace(
             f"Tried to stop extension runner {runner.working_dir_path}, but it was not running"
         )
+
+
+async def kill_extension_runner(runner: runner_info.ExtensionRunnerInfo) -> None:
+    runner.client._server.terminate()
+    await runner.client.stop()
 
 
 async def update_runners(ws_context: context.WorkspaceContext) -> None:
@@ -104,28 +125,17 @@ async def _init_runner(
             client_name="FineCode_WorkspaceManager",
             client_version="0.1.0",
         )
-    except RuntimeError:
+    except runner_client.BaseRunnerRequestException:
         project.status = domain.ProjectStatus.RUNNER_FAILED
+        await notify_project_changed(project)
         runner.initialized_event.set()
-        logger.error("Runner crashed?")
-        stdout, stderr = await runner.client._server.communicate()
-
-        logger.debug(f"[Runner exited with {runner.client._server.returncode}]")
-        if stdout:
-            logger.debug(f"[stdout]\n{stdout.decode()}")
-        if stderr:
-            logger.debug(f"[stderr]\n{stderr.decode()}")
-        return
-    except Exception as e:
-        project.status = domain.ProjectStatus.RUNNER_FAILED
-        runner.initialized_event.set()
-        logger.exception(e)
         return
 
     try:
         await runner_client.notify_initialized(runner)
     except Exception as e:
         project.status = domain.ProjectStatus.RUNNER_FAILED
+        await notify_project_changed(project)
         runner.initialized_event.set()
         logger.exception(e)
         return
@@ -149,15 +159,16 @@ async def _init_runner(
     all_actions_dict = {action.name: action for action in all_actions}
 
     try:
-        runner_client.update_config(runner, all_actions_dict, project.actions_configs)
-    except Exception as e:
+        await runner_client.update_config(runner, all_actions_dict, project.actions_configs)
+    except runner_client.BaseRunnerRequestException as e:
         project.status = domain.ProjectStatus.RUNNER_FAILED
+        await notify_project_changed(project)
         runner.initialized_event.set()
-        logger.exception(e)
         return
 
     logger.debug(
         f"Updated config of runner {runner.working_dir_path}, process id {runner.process_id}"
     )
     project.status = domain.ProjectStatus.RUNNING
+    await notify_project_changed(project)
     runner.initialized_event.set()

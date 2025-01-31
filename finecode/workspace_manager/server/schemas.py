@@ -43,6 +43,7 @@ class ActionTreeNode(BaseModel):
     name: str
     node_type: NodeType
     subnodes: list[ActionTreeNode]
+    status: str
 
     class NodeType(IntEnum):
         DIRECTORY = 0

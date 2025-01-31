@@ -1,21 +1,15 @@
 import importlib
+import inspect
 import sys
 import types
 from pathlib import Path
+from typing import Type
 
 from loguru import logger
 
-import finecode.extension_runner.context as context
-import finecode.extension_runner.domain as domain
-import finecode.extension_runner.global_state as global_state
-import finecode.extension_runner.project_dirs as project_dirs
-import finecode.extension_runner.run_utils as run_utils
-import finecode.extension_runner.schemas as schemas
-from finecode.extension_runner.code_action import (ActionContext, CodeFormatAction,
-                                  CodeLintAction, FormatRunPayload,
-                                  FormatRunResult, LintRunPayload,
-                                  RunActionResult, RunOnManyPayload,
-                                  RunOnManyResult)
+from finecode.extension_runner import (code_action, context, domain,
+                                       global_state, project_dirs, run_utils,
+                                       schemas)
 
 
 class ActionFailedException(Exception): ...
@@ -25,6 +19,7 @@ async def update_config(
     request: schemas.UpdateConfigRequest,
 ) -> schemas.UpdateConfigResponse:
     project_path = Path(request.working_dir)
+
     global_state.runner_context = context.RunnerContext(
         project=domain.Project(
             name=request.project_name,
@@ -40,6 +35,36 @@ async def update_config(
     )
 
     return schemas.UpdateConfigResponse()
+
+
+def get_action_payload_type(
+    action: domain.Action, all_actions: dict[str, domain.Action]
+) -> Type[code_action.RunPayloadType]:
+    if action.source is not None:
+        try:
+            action_cls = run_utils.import_class_by_source_str(action.source)
+        except ModuleNotFoundError as error:
+            logger.error(f"Source of action {action.name} '{action.source}' could not be imported")
+            logger.error(error)
+            return
+
+        run_method = action_cls.run
+        run_method_annotations = inspect.get_annotations(run_method, eval_str=True)
+        # TODO: handle errors
+        payload_type = run_method_annotations["payload"]
+        return payload_type
+    else:
+        # all subactions should have the same payload type
+        if len(action.subactions) == 0:
+            raise ValueError(f"Action {action.name} doesn't have neither source nor subactions")
+
+        first_subaction_name = action.subactions[0]
+        try:
+            first_subaction = all_actions[first_subaction_name]
+        except KeyError:
+            raise ValueError(f"Subaction {first_subaction_name} not found in actions")
+
+        return get_action_payload_type(first_subaction, all_actions)
 
 
 async def run_action(
@@ -63,53 +88,48 @@ async def run_action(
         # TODO: raise error
         return schemas.RunActionResponse({})
 
+    # TODO: cache
+    payload_type = get_action_payload_type(action_obj, project.actions)
+    # TODO: handle errors
+    payload = payload_type(**request.params)
     try:
         result = await __run_action(
             action=action_obj,
-            apply_on=request.params["apply_on"],
-            apply_on_text=request.params["apply_on_text"],
+            payload=payload,
             project_root=global_state.runner_context.project.path,
             runner_context=global_state.runner_context,
         )
-    except Exception as e:  # TODO: concrete exceptions?
+    except Exception as e:
         logger.exception(e)
         raise ActionFailedException("Failed to run action")
 
     result_dict = {}
-    if isinstance(result, dict):  # RunOnManyResult
-        result_dict = {
-            path.as_posix(): file_result.model_dump() for path, file_result in result.items()
-        }
-    elif isinstance(result, RunActionResult):
+    if isinstance(result, code_action.RunActionResult):
         result_dict = result.model_dump()
+    else:
+        raise ActionFailedException(f"Unexpected result type: {type(result).__name__}")
 
     return schemas.RunActionResponse(result=result_dict)
 
 
 async def __run_action(
     action: domain.Action,
-    apply_on: list[Path] | None,
-    apply_on_text: str,
+    payload: code_action.RunActionPayload,
     project_root: Path,
     runner_context: context.RunnerContext,
-) -> RunActionResult | RunOnManyResult | None:
-    logger.trace(f"Execute action {action.name} on {apply_on}")
+) -> code_action.RunActionResult | None:
+    logger.trace(f"Execute action {action.name}: {payload}")
 
     if global_state.runner_context is None:
         # TODO: raise error
         return
 
     project_def = global_state.runner_context.project
-
-    result: RunActionResult | RunOnManyResult | None = None
+    current_payload: code_action.RunActionPayload = payload
+    current_result: code_action.RunActionResult | None = None
     # run in current env
     if len(action.subactions) > 0:
         # TODO: handle circular deps
-        # can be optimized: find files for run_on_many in root action, not in each subaction
-        # individually
-        #
-        # apply_on_text can change after subaction run, apply_on stays always the same
-        current_apply_on_text = apply_on_text
         for subaction in action.subactions:
             try:
                 subaction_obj = runner_context.project.actions[subaction]
@@ -118,30 +138,25 @@ async def __run_action(
 
             subaction_result = await __run_action(
                 subaction_obj,
-                apply_on,
-                current_apply_on_text,
+                current_payload,
                 project_root=project_root,
                 runner_context=runner_context,
             )
-            if (
-                subaction_result is not None
-                and isinstance(subaction_result, FormatRunResult)
-                and subaction_result.code is not None
-            ):
-                current_apply_on_text = subaction_result.code
-
-            if (
-                isinstance(subaction_result, FormatRunResult)
-                and subaction_result.changed is False
-                and result is not None
-            ):
-                # if format subaction didn't change the code, save it only if there are no result at all
-                # if one subaction changed code and the next one didn't, expected result is changed code of the first one
-                continue
+            if current_result is None:
+                current_result = subaction_result
             else:
-                result = subaction_result
+                try:
+                    current_result.update(subaction_result)
+                except NotImplementedError:
+                    ...
+
+            if subaction_result is not None:
+                try:
+                    current_payload = current_result.to_next_payload(current_payload)
+                except NotImplementedError:
+                    ...
     elif action.source is not None:
-        logger.debug(f"Run {action.name} on {str(apply_on if apply_on is not None else '')}")
+        logger.debug(f"Run {action.name} on {current_payload}")
 
         if action.name in runner_context.actions_instances_by_name:
             action_instance = runner_context.actions_instances_by_name[action.name]
@@ -166,88 +181,25 @@ async def __run_action(
             config = action_config_cls(**action_config)
             project_path = runner_context.project.path
             project_cache_dir = project_dirs.get_project_dir(project_path=project_path)
-            context = ActionContext(
+            context = code_action.ActionContext(
                 project_dir=runner_context.project.path, cache_dir=project_cache_dir
             )
             action_instance = action_cls(config=config, context=context)
             runner_context.actions_instances_by_name[action.name] = action_instance
 
-        if apply_on is not None and len(apply_on) > 1:
-            # temporary solution, should be dependency injection or similar approach
-            if isinstance(action_instance, CodeFormatAction):
-                payload = RunOnManyPayload(
-                    single_payloads=[
-                        FormatRunPayload(apply_on=py_file_path, apply_on_text="")
-                        for py_file_path in apply_on
-                    ],
-                    # it's temporary path of project, but it should be directory of corresponding representation
-                    dir_path=runner_context.project.path,
-                )
-            else:
-                raise NotImplementedError()
-
-            logger.debug("Run on many")
-            try:
-                result = await action_instance.run_on_many(payload)
-            except NotImplementedError:
-                # Action.run_on_many is optional. If it isn't implemented, run Action.run on each
-                # file
-                logger.debug("Run on many is not implemented, run on single files")
-                result = {}
-                for single_payload in payload.single_payloads:
-                    try:
-                        single_result = await action_instance.run(single_payload)
-                        assert single_payload.apply_on is not None
-                        result[single_payload.apply_on] = single_result
-                    except Exception as e:
-                        logger.exception(e)
-                        # TODO: error
-            except Exception as e:
-                logger.exception(e)
-                return
-                # TODO: error
-
-            # both run and run_on_many don't modify original files, in case of changes they return
-            # changed code in result. Then FineCode desides whether to change the file or just
-            # return the changes. run_on_many supports currently only in-place changes, so save
-            # them
-            if isinstance(action_instance, CodeFormatAction) and result is not None:
-                for file_path, file_result in result.items():
-                    assert isinstance(file_result, FormatRunResult)
-                    if file_result.changed and file_result.code is not None:
-                        logger.trace(f"Saving {file_path}")
-                        with open(file_path, "w") as f:
-                            f.write(file_result.code)
-                    else:
-                        logger.trace(f"File {file_path} was not changed or there is no result")
-        else:
-            # temporary solution, should be dependency injection or similar approach
-            if isinstance(action_instance, CodeFormatAction):
-                payload = FormatRunPayload(
-                    apply_on=apply_on[0] if isinstance(apply_on, list) else None,
-                    apply_on_text=apply_on_text,
-                )
-            elif isinstance(action_instance, CodeLintAction):
-                payload = LintRunPayload(
-                    apply_on=apply_on[0] if isinstance(apply_on, list) else None,
-                    apply_on_text=apply_on_text,
-                )
-            else:
-                raise NotImplementedError()
-
-            logger.debug("Run on single")
-            try:
-                result = await action_instance.run(payload)
-            except Exception as e:
-                logger.exception(e)
-                return
-                # TODO: error
+        logger.debug("Run on single")
+        try:
+            current_result = await action_instance.run(payload)
+        except Exception as e:
+            logger.exception(e)
+            return
+            # TODO: error
     else:
         logger.warning(f"Action {action.name} has neither source nor subactions, skip it")
         return
 
-    logger.trace(f"End of execution of action {action.name} on {apply_on}")
-    return result
+    logger.trace(f"End of execution of action {action.name} on {payload}")
+    return current_result
 
 
 def reload_action(action_name: str) -> None:
@@ -300,5 +252,5 @@ def resolve_package_path(package_name: str) -> str:
         package_path = importlib.util.find_spec(package_name).submodule_search_locations[0]
     except Exception:
         raise ValueError(f"Cannot find package {package_name}")
-    
+
     return package_path

@@ -1,5 +1,6 @@
 import os
 from pathlib import Path
+from typing import Type
 
 from pygls.client import JsonRPCClient
 
@@ -10,9 +11,11 @@ async def create_lsp_client_tcp(host: str, port: int) -> JsonRPCClient:
     return ls
 
 
-async def create_lsp_client_io(server_cmd: str, working_dir_path: Path) -> JsonRPCClient:
-    ls = JsonRPCClient()
-    splitted_cmd = server_cmd.split(' ')
+async def create_lsp_client_io(
+    client_cls: Type[JsonRPCClient], server_cmd: str, working_dir_path: Path
+) -> JsonRPCClient:
+    ls = client_cls()
+    splitted_cmd = server_cmd.split(" ")
     executable, *args = splitted_cmd
 
     old_working_dir = os.getcwd()
@@ -26,4 +29,4 @@ async def create_lsp_client_io(server_cmd: str, working_dir_path: Path) -> JsonR
     return ls
 
 
-__all__ = ['JsonRPCClient', 'create_lsp_client_tcp', 'create_lsp_client_io']
+__all__ = ["JsonRPCClient", "create_lsp_client_tcp", "create_lsp_client_io"]

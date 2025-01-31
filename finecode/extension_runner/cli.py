@@ -1,11 +1,10 @@
-import asyncio
 import os
 from pathlib import Path
 
 import click
 from loguru import logger
 
-import finecode.extension_runner.global_state as global_state
+from finecode.extension_runner import global_state
 import finecode.extension_runner.start as runner_start
 
 

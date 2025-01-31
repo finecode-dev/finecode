@@ -68,6 +68,7 @@ class ProjectStatus(Enum):
     NO_FINECODE_SH = auto()
     RUNNER_FAILED = auto()
     RUNNING = auto()
+    EXITED = auto()
 
 
 RootActions = list[str]

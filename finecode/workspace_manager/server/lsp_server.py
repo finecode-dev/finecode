@@ -1,17 +1,23 @@
 import asyncio
 import typing
+from functools import partial
 from pathlib import Path
 
 from loguru import logger
 from lsprotocol import types
 from pygls.lsp.server import LanguageServer
 
-import finecode.workspace_manager.server.global_state as global_state
-import finecode.workspace_manager.server.schemas as schemas
-import finecode.workspace_manager.server.services as services
+import finecode.workspace_manager.server.endpoints.code_actions as code_actions_endpoints
+import finecode.workspace_manager.server.endpoints.code_lens as code_lens_endpoints
+import finecode.workspace_manager.server.endpoints.diagnostics as diagnostics_endpoints
+import finecode.workspace_manager.server.endpoints.formatting as formatting_endpoints
+import finecode.workspace_manager.server.endpoints.inlay_hints as inlay_hints_endpoints
+from finecode.workspace_manager.server import global_state, schemas, services
 
 
 def create_lsp_server() -> LanguageServer:
+    # handle all requests explicitly because there are different types of requests: project-specific,
+    # workspace-wide. Some Workspace-wide support partial responses, some not.
     server = LanguageServer("FineCode_Workspace_Manager_Server", "v1")
 
     register_initialized_feature = server.feature(types.INITIALIZED)
@@ -22,13 +28,13 @@ def create_lsp_server() -> LanguageServer:
 
     # Formatting
     register_formatting_feature = server.feature(types.TEXT_DOCUMENT_FORMATTING)
-    register_formatting_feature(_format_document)
+    register_formatting_feature(formatting_endpoints.format_document)
 
     register_range_formatting_feature = server.feature(types.TEXT_DOCUMENT_RANGE_FORMATTING)
-    register_range_formatting_feature(_format_range)
+    register_range_formatting_feature(formatting_endpoints.format_range)
 
     register_ranges_formatting_feature = server.feature(types.TEXT_DOCUMENT_RANGES_FORMATTING)
-    register_ranges_formatting_feature(_format_ranges)
+    register_ranges_formatting_feature(formatting_endpoints.format_ranges)
 
     # linting
     register_document_did_open_feature = server.feature(types.TEXT_DOCUMENT_DID_OPEN)
@@ -37,9 +43,40 @@ def create_lsp_server() -> LanguageServer:
     register_document_did_open_feature = server.feature(types.TEXT_DOCUMENT_DID_SAVE)
     register_document_did_open_feature(_document_did_save)
 
+    # code actions
+    register_document_code_action_feature = server.feature(types.TEXT_DOCUMENT_CODE_ACTION)
+    register_document_code_action_feature(code_actions_endpoints.document_code_action)
+
+    register_code_action_resolve_feature = server.feature(types.CODE_ACTION_RESOLVE)
+    register_code_action_resolve_feature(code_actions_endpoints.code_action_resolve)
+
+    # code lens
+    register_document_code_lens_feature = server.feature(types.TEXT_DOCUMENT_CODE_LENS)
+    register_document_code_lens_feature(code_lens_endpoints.document_code_lens)
+
+    register_code_lens_resolve_feature = server.feature(types.CODE_LENS_RESOLVE)
+    register_code_lens_resolve_feature(code_lens_endpoints.code_lens_resolve)
+
+    # diagnostics
+    register_text_document_diagnostic_feature = server.feature(types.TEXT_DOCUMENT_DIAGNOSTIC)
+    register_text_document_diagnostic_feature(diagnostics_endpoints.document_diagnostic)
+
+    register_workspace_diagnostic_feature = server.feature(types.WORKSPACE_DIAGNOSTIC)
+    register_workspace_diagnostic_feature(diagnostics_endpoints.workspace_diagnostic)
+
+    # inline hints
+    register_document_inlay_hint_feature = server.feature(types.TEXT_DOCUMENT_INLAY_HINT)
+    register_document_inlay_hint_feature(inlay_hints_endpoints.document_inlay_hint)
+
+    register_inlay_hint_feature = server.feature(types.INLAY_HINT_RESOLVE)
+    register_inlay_hint_feature(inlay_hints_endpoints.inlay_hint_resolve)
+
     # Finecode
     register_list_actions_cmd = server.command("finecode.getActions")
     register_list_actions_cmd(list_actions)
+
+    register_list_actions_for_position_cmd = server.command("finecode.getActionsForPosition")
+    register_list_actions_for_position_cmd(list_actions_for_position)
 
     register_run_action_on_file_cmd = server.command("finecode.runActionOnFile")
     register_run_action_on_file_cmd(run_action_on_file)
@@ -55,6 +92,9 @@ def create_lsp_server() -> LanguageServer:
 
     register_restart_extension_runner_cmd = server.command("finecode.restartExtensionRunner")
     register_restart_extension_runner_cmd(restart_extension_runner)
+
+    register_shutdown_feature = server.feature(types.SHUTDOWN)
+    register_shutdown_feature(_on_shutdown)
 
     return server
 
@@ -89,6 +129,12 @@ async def _on_initialized(ls: LanguageServer, params: types.InitializedParams):
 
     logger.info(f"initialized, adding workspace directories")
 
+    services.register_project_changed_callback(partial(notify_changed_action_node, ls))
+    services.register_send_user_message_notification_callback(
+        partial(send_user_message_notification, ls)
+    )
+    services.register_send_user_message_request_callback(partial(send_user_message_request, ls))
+
     add_ws_dir_coros: list[typing.Coroutine] = []
     for ws_dir in ls.workspace.folders.values():
         request = schemas.AddWorkspaceDirRequest(dir_path=ws_dir.uri.replace("file://", ""))
@@ -104,104 +150,30 @@ async def _workspace_did_change_workspace_folders(
 ):
     logger.trace(f"Workspace dirs were changed: {params}")
     await services.handle_changed_ws_dirs(
-        added=[ws_folder.uri.lstrip("file://") for ws_folder in params.event.added],
-        removed=[ws_folder.uri.lstrip("file://") for ws_folder in params.event.removed],
+        added=[Path(ws_folder.uri.lstrip("file://")) for ws_folder in params.event.added],
+        removed=[Path(ws_folder.uri.lstrip("file://")) for ws_folder in params.event.removed],
     )
-
-
-async def _format_document(ls: LanguageServer, params: types.DocumentFormattingParams):
-    """Format the entire document"""
-    logger.info(f"format document {params}")
-    await global_state.server_initialized.wait()
-
-    doc = ls.workspace.get_text_document(params.text_document.uri)
-    action_request = schemas.RunActionRequest(
-        action_node_id="format", apply_on=doc.path, apply_on_text=doc.source
-    )
-    response = await services.run_action(action_request)
-
-    if response.result["changed"] is True:
-        return [
-            types.TextEdit(
-                range=types.Range(
-                    start=types.Position(0, 0),
-                    end=types.Position(len(doc.lines), len(doc.lines[-1])),
-                ),
-                new_text=response.result["code"],
-            )
-        ]
-    return None
-
-
-async def _format_range(ls: LanguageServer, params: types.DocumentRangeFormattingParams):
-    logger.info(f"format range {params}")
-    await global_state.server_initialized.wait()
-
-    return []
-
-
-async def _format_ranges(ls: LanguageServer, params: types.DocumentRangesFormattingParams):
-    logger.info(f"format ranges {params}")
-    await global_state.server_initialized.wait()
-
-    return []
 
 
 async def _document_did_open(ls: LanguageServer, params: types.DidOpenTextDocumentParams):
-    logger.trace(f"Document did open: {params}")
-    await _lint_and_publish_results(ls, params.text_document.uri.replace("file://", ""))
+    logger.trace(f"Document did open: {params.text_document.uri}")
 
 
-async def _lint_and_publish_results(ls: LanguageServer, path_to_lint: str):
-    await global_state.server_initialized.wait()
-
-    # TODO: check whether 'lint' action is available and enabled
-    run_action_request = schemas.RunActionRequest(
-        action_node_id="lint", apply_on=path_to_lint, apply_on_text=""
-    )
-    try:
-        response = await services.run_action(run_action_request)
-        for file_path_str, lint_messages in response.result.get("messages", {}).items():
-            ls.text_document_publish_diagnostics(
-                types.PublishDiagnosticsParams(
-                    uri=f"file://{file_path_str}",
-                    diagnostics=[
-                        types.Diagnostic(
-                            range=types.Range(
-                                types.Position(
-                                    lint_message["range"]["start"]["line"],
-                                    lint_message["range"]["start"]["character"],
-                                ),
-                                types.Position(
-                                    lint_message["range"]["end"]["line"],
-                                    lint_message["range"]["end"]["character"],
-                                ),
-                            ),
-                            message=lint_message["message"],
-                            code=lint_message.get("code", None),
-                            code_description=lint_message.get("code_description", None),
-                            source=lint_message.get("source", None),
-                            severity=(
-                                types.DiagnosticSeverity(lint_message.get("severity", None))
-                                if lint_message.get("severity", None) is not None
-                                else None
-                            ),
-                        )
-                        for lint_message in lint_messages
-                    ],
-                )
-            )
-    except services.ActionNotFound:
-        logger.info("No lint action")
+#     await _lint_and_publish_results(ls, params.text_document.uri.replace("file://", ""))
 
 
 async def _document_did_save(ls: LanguageServer, params: types.DidSaveTextDocumentParams):
     logger.trace(f"Document did save: {params}")
-    await _lint_and_publish_results(ls, params.text_document.uri.replace("file://", ""))
+    # await _lint_and_publish_results(ls, params.text_document.uri.replace("file://", ""))
 
 
 # async def _document_did_change(ls: LanguageServer, params: types.DidSaveTextDocumentParams):
 #     ...
+
+
+async def _on_shutdown(ls: LanguageServer, params):
+    logger.info("on shutdown handler", params)
+    await services.on_shutdown()
 
 
 async def list_actions(ls: LanguageServer, params):
@@ -210,6 +182,17 @@ async def list_actions(ls: LanguageServer, params):
 
     parent_node_id = params[0]
     request = schemas.ListActionsRequest(parent_node_id=parent_node_id)
+    result = await services.list_actions(request=request)
+    return result.to_dict()
+
+
+async def list_actions_for_position(ls: LanguageServer, params):
+    logger.info(f"list_actions for position {params}")
+    await global_state.server_initialized.wait()
+
+    position = params[0]
+    # TODO
+    request = schemas.ListActionsRequest(parent_node_id="")
     result = await services.list_actions(request=request)
     return result.to_dict()
 
@@ -241,7 +224,7 @@ async def run_action_on_file(ls: LanguageServer, params):
     response = await services.run_action(run_action_request)
     logger.debug(f"Response: {response}")
 
-    if action_node_id.endswith(":format") and response.result["changed"] is True:
+    if action_node_id.endswith(":format") and response.result.get("changed", False) is True:
         doc = ls.workspace.get_text_document(document_meta.uri.external)
         await ls.workspace_apply_edit_async(
             types.ApplyWorkspaceEditParams(
@@ -304,3 +287,25 @@ async def restart_extension_runner(ls: LanguageServer, params):
     runner_working_dir_path = Path(runner_working_dir_str)
 
     await services.restart_extension_runner(runner_working_dir_path)
+
+
+async def notify_changed_action_node(ls: LanguageServer, action: schemas.ActionTreeNode) -> None:
+    # lsp client requests have no timeout, add own one
+    # try:
+    ls.protocol.notify(method="actionsNodes/changed", params=action.to_dict())
+    # except TimeoutError:
+    #     logger.error(f"Failed to notify about changed action node")
+    #     raise Exception()  # TODO
+
+
+def send_user_message_notification(ls: LanguageServer, message: str, message_type: str) -> None:
+    ls.window_show_message(types.ShowMessageParams(type=message_type, message=message))
+
+
+async def send_user_message_request(ls: LanguageServer, message: str, message_type: str) -> None:
+    await ls.window_show_message_request_async(
+        types.ShowMessageRequestParams(type=message_type, message=message)
+    )
+
+
+__all__ = ["create_lsp_server"]

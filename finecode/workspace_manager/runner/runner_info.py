@@ -3,21 +3,29 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import Coroutine
 
-import janus
+from finecode.pygls_client_utils import JsonRPCClient
 
-if TYPE_CHECKING:
-    from finecode.pygls_client_utils import JsonRPCClient
+
+class CustomJsonRpcClient(JsonRPCClient):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.server_exit_callback: Coroutine | None = None
+
+    async def server_exit(self, server):
+        result = await super().server_exit(server)
+        if self.server_exit_callback is not None:
+            await self.server_exit_callback()
+        return result
 
 
 @dataclass
 class ExtensionRunnerInfo:
     working_dir_path: Path
-    output_queue: janus.Queue
     # NOTE: initialized doesn't mean the runner is running, check its status
     initialized_event: asyncio.Event
-    client: JsonRPCClient | None = None
+    client: CustomJsonRpcClient | None = None
     keep_running_request_task: asyncio.Task | None = None
 
     @property

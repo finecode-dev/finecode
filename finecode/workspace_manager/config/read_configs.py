@@ -8,6 +8,7 @@ from tomlkit import loads as toml_loads
 from finecode.workspace_manager import (context, domain)
 from finecode.workspace_manager.runner import runner_client, runner_info
 from finecode.workspace_manager.config import config_models
+from finecode.workspace_manager.server import user_messages
 
 
 async def read_projects_in_dir(dir_path: Path, ws_context: context.WorkspaceContext) -> list[domain.Project]:
@@ -81,7 +82,12 @@ class PresetToProcess(NamedTuple):
 async def get_preset_project_path(preset: PresetToProcess, def_path: Path, runner: runner_info.ExtensionRunnerInfo) -> Path | None:
     logger.trace(f"Get preset project path: {preset.source}")
 
-    resolve_path_result = await runner_client.resolve_package_path(runner, preset.source)
+    try:
+        resolve_path_result = await runner_client.resolve_package_path(runner, preset.source)
+    except runner_client.BaseRunnerRequestException as error:
+        error_message = error.args[0] if len(error.args) > 0 else ''
+        user_messages.error(f"Failed to get preset project path: {error_message}")
+        return None
     try:
         preset_project_path = Path(resolve_path_result['packagePath'])
     except KeyError:

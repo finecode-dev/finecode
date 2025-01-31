@@ -4,12 +4,12 @@ import enum
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Generic, Sequence, TypeVar
+from typing import Generic, TypeVar
 
 if sys.version_info >= (3, 12):
-    from typing import TypedDict
+    from typing import TypedDict, override
 else:
-    from typing_extensions import TypedDict
+    from typing_extensions import TypedDict, override
 
 from pydantic import BaseModel
 
@@ -20,13 +20,17 @@ class CodeActionConfig(BaseModel): ...
 class RunActionPayload(BaseModel): ...
 
 
-class RunActionResult(BaseModel): ...
+class RunActionResult(BaseModel):
+    def update(self, other: RunActionResult) -> None:
+        raise NotImplementedError()
+
+    def to_next_payload(self, original_request: RunActionPayload) -> RunActionPayload:
+        raise NotImplementedError()
 
 
 CodeActionConfigType = TypeVar("CodeActionConfigType")
 RunPayloadType = TypeVar("RunPayloadType", bound=RunActionPayload)
 RunResultType = TypeVar("RunResultType", bound=RunActionResult)
-RunOnManyResult = dict[Path, RunResultType]
 
 
 @dataclass
@@ -34,13 +38,6 @@ class ActionContext:
     project_dir: Path
     # runner-specific cache dir
     cache_dir: Path
-
-
-class RunOnManyPayload(BaseModel, Generic[RunPayloadType]):
-    # single payloads are homogeneous, e.g. if one item has only apply_on or apply_on_text, then
-    # all items have the same properties
-    single_payloads: Sequence[RunPayloadType]
-    dir_path: Path
 
 
 class CodeAction(Generic[CodeActionConfigType, RunPayloadType, RunResultType]):
@@ -65,12 +62,6 @@ class CodeAction(Generic[CodeActionConfigType, RunPayloadType, RunResultType]):
     async def run(self, payload: RunPayloadType) -> RunResultType:
         raise NotImplementedError()
 
-    async def run_on_many(self, payload: RunOnManyPayload[RunPayloadType]) -> RunOnManyResult:
-        raise NotImplementedError()
-
-    async def run_in_background(self):
-        raise NotImplementedError()
-
     async def stop(self):
         raise NotImplementedError()
 
@@ -84,6 +75,11 @@ class LintRunResult(RunActionResult):
     # dict key should be Path, but pygls fails to handle slashes in dict keys, use strings with
     # posix representation of path instead until the problem is properly solved
     messages: dict[str, list[LintMessage]]
+
+    def update(self, other: RunActionResult) -> None:
+        if not isinstance(other, RunActionResult):
+            return
+        self.messages.update(other.messages)
 
 
 class CodeLintAction(CodeAction[CodeActionConfigType, LintRunPayload, LintRunResult]):
@@ -104,6 +100,22 @@ class FormatRunResult(RunActionResult):
     # if formatter supports, it should return the result of formatting in `code`. Otherwise set it
     # to None, it will be interpreted as in-place formatting.
     code: str | None
+
+    @override
+    def update(self, other: RunActionResult) -> None:
+        if not isinstance(other, FormatRunResult):
+            return
+        if other.changed is True and other.code is not None:
+            self.code = other.code
+
+    @override
+    def to_next_payload(self, original_request: FormatRunPayload) -> FormatRunPayload:
+        if self.changed is True and self.code is not None:
+            return FormatRunPayload(
+                apply_on=original_request.apply_on,
+                apply_on_text=self.code,
+            )
+        return original_request
 
 
 class CodeFormatAction(CodeAction[CodeActionConfigType, FormatRunPayload, FormatRunResult]):
