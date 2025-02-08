@@ -3,19 +3,23 @@ from __future__ import annotations
 import asyncio
 import os
 import sys
-from concurrent.futures import (Executor, # ProcessPoolExecutor,
-                                ThreadPoolExecutor)
+from concurrent.futures import Executor  # ProcessPoolExecutor,
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+if sys.version_info < (3, 12):
+    from typing_extensions import override
+else:
+    from typing import override
 
 from black import WriteBack, reformat_one
 from black.concurrency import schedule_formatting
 from black.mode import Mode, TargetVersion
 from black.report import Report
-from loguru import logger
 
-import finecode.extension_runner.action_utils as action_utils
+from finecode.extension_runner import action_utils
+from finecode.extension_runner.interfaces import ilogger
 from finecode import (CodeActionConfig, CodeFormatAction, FormatRunPayload,
-                      FormatRunResult, RunOnManyPayload)
+                      FormatRunResult, CodeActionConfigType, ActionContext)
 
 
 class BlackCodeActionConfig(CodeActionConfig):
@@ -35,10 +39,17 @@ class BlackCodeActionConfig(CodeActionConfig):
 
 
 class BlackCodeAction(CodeFormatAction[BlackCodeActionConfig]):
-    LANGUAGE = 'python'
-    
+    LANGUAGE = "python"
+
+    def __init__(self, config: CodeActionConfigType, context: ActionContext, logger: ilogger.ILogger) -> None:
+        super().__init__(config, context)
+        self.logger = logger
+
+    @override
     async def run(self, payload: FormatRunPayload) -> FormatRunResult:
         report = self.get_report()
+        # avoid outputting low-level logs of black, our goal is to trace finecode, not flake8 itself
+        self.logger.disable('fine_python_black')
         # it seems like black can format only in-place, use tmp file
         with action_utils.tmp_file_copy_path(
             file_path=payload.apply_on, file_content=payload.apply_on_text
@@ -55,43 +66,50 @@ class BlackCodeAction(CodeFormatAction[BlackCodeActionConfig]):
             if file_changed:
                 with open(file_path, "r") as f:
                     code = f.read()
-
+        self.logger.enable('fine_python_black')
         return FormatRunResult(changed=file_changed, code=code)
 
-    async def run_on_many(
-        self, payload: RunOnManyPayload[FormatRunPayload]
-    ) -> dict[Path, FormatRunResult]:
-        report = self.get_report()
-        with action_utils.tmp_dir_copy_path(
-            dir_path=payload.dir_path,
-            file_pathes_with_contents=[
-                (single_payload.apply_on, single_payload.apply_on_text)
-                for single_payload in payload.single_payloads
-            ],
-        ) as (_, files_pathes):
-            initial_files_version = {file_path: action_utils.get_file_version(file_path) for file_path in files_pathes}
-            await reformat_many(
-                sources=set(files_pathes),
-                fast=False,
-                write_back=WriteBack.YES,
-                mode=self.get_mode(),
-                report=report,
-                workers=None,
-            )
+    # async def run_on_many(
+    #     self, payload: RunOnManyPayload[FormatRunPayload]
+    # ) -> dict[Path, FormatRunResult]:
+    #     report = self.get_report()
+    #     with action_utils.tmp_dir_copy_path(
+    #         dir_path=payload.dir_path,
+    #         file_pathes_with_contents=[
+    #             (single_payload.apply_on, single_payload.apply_on_text)
+    #             for single_payload in payload.single_payloads
+    #         ],
+    #     ) as (_, files_pathes):
+    #         initial_files_version = {
+    #             file_path: action_utils.get_file_version(file_path) for file_path in files_pathes
+    #         }
+    #         logger.disable()
+    #         await reformat_many(
+    #             sources=set(files_pathes),
+    #             fast=False,
+    #             write_back=WriteBack.YES,
+    #             mode=self.get_mode(),
+    #             report=report,
+    #             workers=None,
+    #         )
+    #         logger.enable()
 
-            result: dict[Path, FormatRunResult] = {}
-            for idx, single_payload in enumerate(payload.single_payloads):
-                if single_payload.apply_on is None:
-                    logger.error("Run on multiple supports only files")
-                    continue
-                file_path = files_pathes[idx]
-                with open(file_path, "r") as f:
-                    code = f.read()
-                # TODO: black report is generalized for all files, parse output?
-                file_changed = action_utils.get_file_version(single_payload.apply_on) != initial_files_version[file_path]
-                result[single_payload.apply_on] = FormatRunResult(changed=file_changed, code=code)
+    #         result: dict[Path, FormatRunResult] = {}
+    #         for idx, single_payload in enumerate(payload.single_payloads):
+    #             if single_payload.apply_on is None:
+    #                 logger.error("Run on multiple supports only files")
+    #                 continue
+    #             file_path = files_pathes[idx]
+    #             with open(file_path, "r") as f:
+    #                 code = f.read()
+    #             # TODO: black report is generalized for all files, parse output?
+    #             file_changed = (
+    #                 action_utils.get_file_version(single_payload.apply_on)
+    #                 != initial_files_version[file_path]
+    #             )
+    #             result[single_payload.apply_on] = FormatRunResult(changed=file_changed, code=code)
 
-        return result
+    #     return result
 
     def get_mode(self) -> Mode:
         return Mode(

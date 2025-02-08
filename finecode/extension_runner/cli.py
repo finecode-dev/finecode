@@ -11,20 +11,21 @@ import finecode.extension_runner.start as runner_start
 @click.command()
 @click.option("--trace", "trace", is_flag=True, default=False)
 @click.option("--debug", "debug", is_flag=True, default=False)
+@click.option("--debug-port", "debug_port", type=int, default=5680)
 @click.option(
     "--project-path",
     "project_path",
     type=click.Path(exists=True, file_okay=False, resolve_path=True, path_type=Path),
     required=True,
 )
-def main(trace: bool, debug: bool, project_path: Path):
+def main(trace: bool, debug: bool, debug_port: int, project_path: Path):
     if debug is True:
         import debugpy
 
         # avoid debugger warnings printed to stdout, they affect I/O communication
         os.environ["PYDEVD_DISABLE_FILE_VALIDATION"] = "1"
         try:
-            debugpy.listen(5681)
+            debugpy.listen(debug_port)
             debugpy.wait_for_client()
         except Exception as e:
             logger.info(e)

@@ -3,6 +3,7 @@ from pathlib import Path
 from loguru import logger
 
 from finecode.workspace_manager.context import WorkspaceContext
+from finecode.workspace_manager import domain
 
 
 def find_project_with_action_for_file(
@@ -49,7 +50,14 @@ def find_project_with_action_for_file(
         ws_context.project_path_by_dir_and_action[dir_path_str] = {}
 
     for project_dir_path in file_projects_pathes:
-        project_actions = ws_context.ws_projects[project_dir_path].actions
+        project = ws_context.ws_projects[project_dir_path]
+        project_actions = project.actions
+        if project_actions is None:
+            if project.status == domain.ProjectStatus.NO_FINECODE:
+                continue
+            else:
+                raise ValueError(f"Action is related to project {project_dir_path} but its action cannot be resolved({project.status})")
+        
         try:
             next(action for action in project_actions if action.name == action_name)
         except StopIteration:

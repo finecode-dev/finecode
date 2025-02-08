@@ -1,0 +1,15 @@
+[tool.poetry]
+name = "fine_python_lint"
+version = "0.1.0"
+description = ""
+authors = ["Vladyslav Hnatiuk <aders1234@gmail.com>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.10"
+fine_python_mypy = { path = "../../actions/fine_python_mypy" }
+fine_python_flake8 = { path = "../../actions/fine_python_flake8" }
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"

@@ -3,6 +3,9 @@ actions = [{ name = 'format' }]
 
 [tool.finecode.action.format]
 subactions = [
-    { name = "black", source = "fine_python_black.BlackCodeAction" },
     { name = "isort", source = "fine_python_isort.IsortCodeAction" },
+    { name = "black", source = "fine_python_black.BlackCodeAction" }
 ]
+
+[tool.finecode.action.black.config]
+line_length = 119

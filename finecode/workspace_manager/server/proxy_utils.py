@@ -12,6 +12,10 @@ from finecode.workspace_manager.runner import runner_client, runner_info
 ResponseType = TypeVar("ResponseType")
 
 
+class ActionRunFailed(Exception):
+    ...
+
+
 async def find_action_project_and_run_in_runner(
     file_path: Path,
     action_name: str,
@@ -26,14 +30,14 @@ async def find_action_project_and_run_in_runner(
         )
     except ValueError as error:
         logger.warning(f"Skip {action_name} on {file_path}: {error}")
-        return None
+        raise ActionRunFailed(error)
 
     project_status = ws_context.ws_projects[project_path].status
     if project_status != domain.ProjectStatus.RUNNING:
         logger.info(
             f"Extension runner {project_path} is not running, status: {project_status.name}"
         )
-        return None
+        raise ActionRunFailed(f"Extension runner {project_path} is not running, status: {project_status.name}")
 
     runner = ws_context.ws_projects_extension_runners[project_path]
     try:
@@ -47,10 +51,11 @@ async def find_action_project_and_run_in_runner(
                     *params,
                 ],
             ),
+            timeout=None
         )
     except runner_client.BaseRunnerRequestException as error:
         logger.error(f"Error on running action {action_name} on {file_path}: {error}")
-        return None
+        raise ActionRunFailed(error)
 
     return json.loads(response.result)
 

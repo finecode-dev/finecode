@@ -135,12 +135,15 @@ async def _on_initialized(ls: LanguageServer, params: types.InitializedParams):
     )
     services.register_send_user_message_request_callback(partial(send_user_message_request, ls))
 
-    add_ws_dir_coros: list[typing.Coroutine] = []
-    for ws_dir in ls.workspace.folders.values():
-        request = schemas.AddWorkspaceDirRequest(dir_path=ws_dir.uri.replace("file://", ""))
-        add_ws_dir_coros.append(services.add_workspace_dir(request=request))
+    try:
+        async with asyncio.TaskGroup() as tg:
+            for ws_dir in ls.workspace.folders.values():
+                request = schemas.AddWorkspaceDirRequest(dir_path=ws_dir.uri.replace("file://", ""))
+                tg.create_task(services.add_workspace_dir(request=request))
+    except Exception as error:
+        logger.exception(error)
+        raise error
 
-    await asyncio.gather(*add_ws_dir_coros)
     global_state.server_initialized.set()
     logger.trace("Workspace directories added, end of initialized handler")
 

@@ -285,7 +285,7 @@ async def __run_action(
             )
         except runner_client.BaseRunnerRequestException as error:
             error_message = error.args[0] if len(error.args) > 0 else ""
-            user_messages.error(f"Action {action.name} failed: {error_message}")
+            await user_messages.error(f"Action {action.name} failed: {error_message}")
             return {}
     else:
         raise NotImplementedError()
@@ -324,7 +324,7 @@ async def reload_action(action_node_id: str) -> None:
         await runner_client.reload_action(runner, action_name)
     except runner_client.BaseRunnerRequestException as error:
         error_message = error.args[0] if len(error.args) > 0 else ""
-        user_messages.error(f"Action {action_name} reload failed: {error_message}")
+        await user_messages.error(f"Action {action_name} reload failed: {error_message}")
 
 
 async def handle_changed_ws_dirs(added: list[Path], removed: list[Path]) -> None:

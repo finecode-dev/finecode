@@ -1,0 +1,11 @@
+[tool.finecode.preset]
+actions = [{ name = 'lint' }]
+
+[tool.finecode.action.lint]
+subactions = [
+    # { name = "mypy", source = "fine_python_mypy.MypyCodeAction" },
+    { name = "flake8", source = "fine_python_flake8.Flake8CodeAction" },
+]
+
+[tool.finecode.action.flake8.config]
+max_line_length = 119

@@ -43,5 +43,3 @@ class IsortCodeAction(CodeFormatAction[IsortCodeActionConfig]):
                 with open(file_path, "r") as f:
                     code = f.read()
         return FormatRunResult(changed=changed, code=code)
-
-    # TODO: analyze whether run_many is needed

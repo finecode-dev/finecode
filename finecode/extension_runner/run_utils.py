@@ -52,15 +52,15 @@ def run_cmd_in_dir(cmd: str, dir_path: Path) -> tuple[int, str]:
     return (exit_code, output)
 
 
-def import_class_by_source_str(source: str):
-    cls_name = source.split(".")[-1]
+def import_module_member_by_source_str(source: str):
+    member_name = source.split(".")[-1]
     module_path = ".".join(source.split(".")[:-1])
 
     # TODO: handle errors
     module = importlib.import_module(module_path)
     try:
-        cls = module.__dict__[cls_name]
-        return cls
+        member = module.__dict__[member_name]
+        return member
     except KeyError:
-        logger.error(f"Class {cls_name} not found in module {module_path}")
+        logger.error(f"Member {member_name} not found in module {module_path}")
         raise ModuleNotFoundError()
