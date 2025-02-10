@@ -3,16 +3,24 @@ import inspect
 import sys
 import types
 from pathlib import Path
-from typing import Type
+from typing import Any, Callable, Type
 
 from loguru import logger
 
 from finecode.extension_runner import (code_action, context, domain,
                                        global_state, project_dirs, run_utils,
-                                       schemas)
+                                       schemas, bootstrap)
 
 
 class ActionFailedException(Exception): ...
+
+
+document_requester: Callable
+
+
+async def get_document(uri: str):
+    doc = await document_requester(uri)
+    return doc
 
 
 async def update_config(
@@ -33,6 +41,10 @@ async def update_config(
             actions_configs=request.actions_configs,
         ),
     )
+    
+    # currently update_config is called only once directly after runner start. So we can bootstrap
+    # here. Should be changed after adding updating configuration on the fly.
+    bootstrap.bootstrap(get_document)
 
     return schemas.UpdateConfigResponse()
 
@@ -42,13 +54,16 @@ def get_action_payload_type(
 ) -> Type[code_action.RunPayloadType]:
     if action.source is not None:
         try:
-            action_cls = run_utils.import_class_by_source_str(action.source)
+            action_handler = run_utils.import_module_member_by_source_str(action.source)
         except ModuleNotFoundError as error:
             logger.error(f"Source of action {action.name} '{action.source}' could not be imported")
             logger.error(error)
             return
 
-        run_method = action_cls.run
+        if inspect.isclass(action_handler):
+            run_method = action_handler.run
+        else:
+            run_method = action_handler
         run_method_annotations = inspect.get_annotations(run_method, eval_str=True)
         # TODO: handle errors
         payload_type = run_method_annotations["payload"]
@@ -158,14 +173,20 @@ async def __run_action(
     elif action.source is not None:
         logger.debug(f"Run {action.name} on {current_payload}")
 
+        action_handler_is_class: bool = False
         if action.name in runner_context.actions_instances_by_name:
             action_instance = runner_context.actions_instances_by_name[action.name]
+            action_run_func = action_instance.run
+            action_handler_is_class = True
             logger.trace(f"Instance of action {action.name} found in cache")
         else:
             logger.trace(f"Load action {action.name}")
             try:
-                action_cls = run_utils.import_class_by_source_str(action.source)
-                action_config_cls = run_utils.import_class_by_source_str(action.source + "Config")
+                action_handler = run_utils.import_module_member_by_source_str(action.source)
+                # TODO: get config class name from annotation?
+                action_config_cls = run_utils.import_module_member_by_source_str(
+                    action.source + "Config"
+                )
             except ModuleNotFoundError as error:
                 logger.error(
                     f"Source of action {action.name} '{action.source}' could not be imported"
@@ -184,12 +205,51 @@ async def __run_action(
             context = code_action.ActionContext(
                 project_dir=runner_context.project.path, cache_dir=project_cache_dir
             )
-            action_instance = action_cls(config=config, context=context)
-            runner_context.actions_instances_by_name[action.name] = action_instance
+            if inspect.isclass(action_handler):
+                action_func_parameters = inspect.signature(action_handler.__init__).parameters
+                action_func_annotations = inspect.get_annotations(action_handler.__init__, eval_str=True)
+                args: dict[str, Any] = {
+                    "config": config,
+                    "context": context
+                }
+                for param_name in action_func_parameters.keys():
+                    if param_name in ['self', 'config', 'context']:
+                        continue
+                    # TODO: handle errors
+                    param_type = action_func_annotations[param_name]
+                    param_value = bootstrap.get_service_instance(param_type)
+                    args[param_name] = param_value
+
+                action_instance = action_handler(**args)
+                runner_context.actions_instances_by_name[action.name] = action_instance
+                action_run_func = action_instance.run
+                action_handler_is_class = True
+            else:
+                action_run_func = action_handler
 
         logger.debug("Run on single")
+        action_func_parameters = inspect.signature(action_run_func).parameters
+        action_func_annotations = inspect.get_annotations(action_run_func, eval_str=True)
+        args: dict[str, Any] = {
+            "payload": payload
+        }
+        for param_name in action_func_parameters.keys():
+            if param_name == 'payload':
+                continue
+            # TODO: handle errors
+            param_type = action_func_annotations[param_name]
+            param_value = bootstrap.get_service_instance(param_type)
+            args[param_name] = param_value
+
+        # TODO: cache parameters
         try:
-            current_result = await action_instance.run(payload)
+            # there is also `inspect.iscoroutinefunction` but it cannot recognize coroutine functions
+            # which are class methods.
+            call_result = action_run_func(**args)
+            if inspect.isawaitable(call_result):
+                current_result = await call_result
+            else:
+                current_result = call_result
         except Exception as e:
             logger.exception(e)
             return
@@ -222,29 +282,35 @@ def reload_action(action_name: str) -> None:
 
     for _action_name in actions_to_remove:
         try:
-            action_instance = global_state.runner_context.actions_instances_by_name[_action_name]
-            action_package = action_instance.__module__.split(".")[0]
-
             del global_state.runner_context.actions_instances_by_name[_action_name]
             logger.trace(f"Removed '{_action_name}' instance from cache")
         except KeyError:
             logger.info(f"Tried to reload action '{_action_name}', but it was not found")
-            action_package = None
 
-        if action_package is not None:
-            loaded_package_modules = dict(
-                [
-                    (key, value)
-                    for key, value in sys.modules.items()
-                    if key.startswith(action_package) and isinstance(value, types.ModuleType)
-                ]
-            )
+        try:
+            action_obj = project_def.actions[action_name]
+        except KeyError:
+            logger.warning(f"Definition of action {action_name} not found")
+            continue
 
-            # delete references to these loaded modules from sys.modules
-            for key in loaded_package_modules:
-                del sys.modules[key]
+        action_source = action_obj.source
+        if action_source is None:
+            continue
+        action_package = action_source.split('.')[0]
 
-            logger.trace(f"Remove modules of package '{action_package}' from cache")
+        loaded_package_modules = dict(
+            [
+                (key, value)
+                for key, value in sys.modules.items()
+                if key.startswith(action_package) and isinstance(value, types.ModuleType)
+            ]
+        )
+
+        # delete references to these loaded modules from sys.modules
+        for key in loaded_package_modules:
+            del sys.modules[key]
+
+        logger.trace(f"Remove modules of package '{action_package}' from cache")
 
 
 def resolve_package_path(package_name: str) -> str:
@@ -254,3 +320,11 @@ def resolve_package_path(package_name: str) -> str:
         raise ValueError(f"Cannot find package {package_name}")
 
     return package_path
+
+
+def document_did_open(document_uri: str) -> None:
+    global_state.runner_context.docs_owned_by_client.append(document_uri)
+
+
+def document_did_close(document_uri: str) -> None:
+    global_state.runner_context.docs_owned_by_client.remove(document_uri)

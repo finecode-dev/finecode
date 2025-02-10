@@ -21,6 +21,10 @@ class WorkspaceContext:
     ws_projects_raw_configs: dict[Path, dict[str, Any]] = field(default_factory=dict)
     ws_projects_extension_runners: dict[Path, ExtensionRunnerInfo] = field(default_factory=dict)
     ignore_watch_paths: set[Path] = field(default_factory=set)
+    
+    # we save list of meta and pygls manages content of documents automatically. They can be accessed
+    # using `ls.workspace.get_text_document()` function
+    opened_documents: dict[str, domain.TextDocumentInfo] = field(default_factory=dict)
 
     # cache
     # <directory: <action_name: project_path>>

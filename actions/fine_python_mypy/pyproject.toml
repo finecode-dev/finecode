@@ -1,0 +1,15 @@
+[tool.poetry]
+name = "fine_python_mypy"
+version = "0.1.0"
+description = ""
+authors = ["Vladyslav Hnatiuk <aders1234@gmail.com>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.10"
+mypy = "^1.14.0"
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"

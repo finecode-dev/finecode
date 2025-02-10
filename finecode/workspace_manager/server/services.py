@@ -40,6 +40,10 @@ def register_send_user_message_request_callback(send_user_message_request_callba
     user_messages._lsp_message_send = send_user_message_request_callback
 
 
+def register_document_getter(get_document_func):
+    runner_manager.get_document = get_document_func
+
+
 async def add_workspace_dir(
     request: schemas.AddWorkspaceDirRequest,
 ) -> schemas.AddWorkspaceDirResponse:
@@ -108,9 +112,9 @@ async def _dir_to_tree_node(
                         action_id=node_id, project_path=project.dir_path, action_name=action.name
                     )
             # TODO: presets?
-        else:
-            logger.info(f"Project is not running: {project.dir_path}")
-            ...  # TODO: error status
+            else:
+                logger.info(f"Project is not running: {project.dir_path}")
+                ...  # TODO: error status
     else:
         for dir_item in dir_path.iterdir():
             if dir_item.is_dir():

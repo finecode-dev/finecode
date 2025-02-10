@@ -1,5 +1,4 @@
 import asyncio
-import typing
 from functools import partial
 from pathlib import Path
 
@@ -10,6 +9,7 @@ from pygls.lsp.server import LanguageServer
 import finecode.workspace_manager.server.endpoints.code_actions as code_actions_endpoints
 import finecode.workspace_manager.server.endpoints.code_lens as code_lens_endpoints
 import finecode.workspace_manager.server.endpoints.diagnostics as diagnostics_endpoints
+import finecode.workspace_manager.server.endpoints.document_sync as document_sync_endpoints
 import finecode.workspace_manager.server.endpoints.formatting as formatting_endpoints
 import finecode.workspace_manager.server.endpoints.inlay_hints as inlay_hints_endpoints
 from finecode.workspace_manager.server import global_state, schemas, services
@@ -36,12 +36,18 @@ def create_lsp_server() -> LanguageServer:
     register_ranges_formatting_feature = server.feature(types.TEXT_DOCUMENT_RANGES_FORMATTING)
     register_ranges_formatting_feature(formatting_endpoints.format_ranges)
 
-    # linting
+    # document sync
     register_document_did_open_feature = server.feature(types.TEXT_DOCUMENT_DID_OPEN)
-    register_document_did_open_feature(_document_did_open)
+    register_document_did_open_feature(document_sync_endpoints.document_did_open)
 
-    register_document_did_open_feature = server.feature(types.TEXT_DOCUMENT_DID_SAVE)
-    register_document_did_open_feature(_document_did_save)
+    register_document_did_save_feature = server.feature(types.TEXT_DOCUMENT_DID_SAVE)
+    register_document_did_save_feature(document_sync_endpoints.document_did_save)
+
+    register_document_did_change_feature = server.feature(types.TEXT_DOCUMENT_DID_CHANGE)
+    register_document_did_change_feature(document_sync_endpoints.document_did_change)
+
+    register_document_did_close_feature = server.feature(types.TEXT_DOCUMENT_DID_CLOSE)
+    register_document_did_close_feature(document_sync_endpoints.document_did_close)
 
     # code actions
     register_document_code_action_feature = server.feature(types.TEXT_DOCUMENT_CODE_ACTION)
@@ -127,8 +133,18 @@ async def _on_initialized(ls: LanguageServer, params: types.InitializedParams):
     # loguru doesn't support passing partial with ls parameter, use nested function instead
     logger.add(sink=pass_log_to_ls_client)
 
-    logger.info(f"initialized, adding workspace directories")
+    async def get_document(params):
+        doc_info = global_state.ws_context.opened_documents[params.uri]
+        text = ls.workspace.get_text_document(params.uri).source
+        return {
+            "uri": params.uri,
+            "version": doc_info.version,
+            "text": text
+        }
 
+    logger.info("initialized, adding workspace directories")
+
+    services.register_document_getter(get_document)
     services.register_project_changed_callback(partial(notify_changed_action_node, ls))
     services.register_send_user_message_notification_callback(
         partial(send_user_message_notification, ls)
@@ -156,22 +172,6 @@ async def _workspace_did_change_workspace_folders(
         added=[Path(ws_folder.uri.lstrip("file://")) for ws_folder in params.event.added],
         removed=[Path(ws_folder.uri.lstrip("file://")) for ws_folder in params.event.removed],
     )
-
-
-async def _document_did_open(ls: LanguageServer, params: types.DidOpenTextDocumentParams):
-    logger.trace(f"Document did open: {params.text_document.uri}")
-
-
-#     await _lint_and_publish_results(ls, params.text_document.uri.replace("file://", ""))
-
-
-async def _document_did_save(ls: LanguageServer, params: types.DidSaveTextDocumentParams):
-    logger.trace(f"Document did save: {params}")
-    # await _lint_and_publish_results(ls, params.text_document.uri.replace("file://", ""))
-
-
-# async def _document_did_change(ls: LanguageServer, params: types.DidSaveTextDocumentParams):
-#     ...
 
 
 async def _on_shutdown(ls: LanguageServer, params):

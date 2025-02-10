@@ -28,3 +28,12 @@ class Project:
     def __str__(self) -> str:
         return f'Project(name="{self.name}", path="{self.path}")'
 
+
+class TextDocumentInfo:
+    def __init__(self, uri: str, version: str, text: str) -> None:
+        self.uri = uri
+        self.version = version
+        self.text = text
+    
+    def __str__(self) -> str:
+        return f'TextDocumentInfo(uri="{self.uri}", version="{self.version}", text="{self.text}")'

@@ -20,6 +20,13 @@ class TextDocumentIdentifier(BaseModel):
     uri: str
 
 
+class TextDocumentItem(BaseModel):
+    uri: str
+    language_id: str
+    version: int
+    text: str
+
+
 class InlayHintPayload(RunActionPayload):
     text_document: TextDocumentIdentifier
     range: Range

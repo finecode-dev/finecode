@@ -67,8 +67,7 @@ class CodeAction(Generic[CodeActionConfigType, RunPayloadType, RunResultType]):
 
 
 class LintRunPayload(RunActionPayload):
-    apply_on: Path | None
-    apply_on_text: str
+    apply_on: Path
 
 
 class LintRunResult(RunActionResult):
@@ -89,8 +88,7 @@ class CodeLintAction(CodeAction[CodeActionConfigType, LintRunPayload, LintRunRes
 
 
 class FormatRunPayload(RunActionPayload):
-    apply_on: Path | None
-    apply_on_text: str
+    apply_on: Path
 
 
 class FormatRunResult(RunActionResult):

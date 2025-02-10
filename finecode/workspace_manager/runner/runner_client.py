@@ -159,3 +159,11 @@ async def update_config(
             ],
         ),
     )
+
+
+async def notify_document_did_open(runner: ExtensionRunnerInfo, document_info: domain.TextDocumentInfo) -> None:
+    runner.client.protocol.notify(method=types.TEXT_DOCUMENT_DID_OPEN, params=types.DidOpenTextDocumentParams(text_document=types.TextDocumentItem(uri=document_info.uri, language_id='', version=int(document_info.version), text='')))
+
+
+async def notify_document_did_close(runner: ExtensionRunnerInfo, document_uri: str) -> None:
+    runner.client.protocol.notify(method=types.TEXT_DOCUMENT_DID_CLOSE, params=types.DidCloseTextDocumentParams(text_document=types.TextDocumentIdentifier(document_uri)))

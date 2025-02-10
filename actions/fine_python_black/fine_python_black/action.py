@@ -6,20 +6,27 @@ import sys
 from concurrent.futures import Executor  # ProcessPoolExecutor,
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+
 if sys.version_info < (3, 12):
     from typing_extensions import override
 else:
     from typing import override
 
-from black import WriteBack, reformat_one
+import black
+from black import WriteBack
 from black.concurrency import schedule_formatting
 from black.mode import Mode, TargetVersion
 from black.report import Report
 
-from finecode.extension_runner import action_utils
-from finecode.extension_runner.interfaces import ilogger
-from finecode import (CodeActionConfig, CodeFormatAction, FormatRunPayload,
-                      FormatRunResult, CodeActionConfigType, ActionContext)
+from finecode.extension_runner.interfaces import icache, ilogger, ifilemanager
+from finecode import (
+    CodeActionConfig,
+    CodeFormatAction,
+    FormatRunPayload,
+    FormatRunResult,
+    CodeActionConfigType,
+    ActionContext,
+)
 
 
 class BlackCodeActionConfig(CodeActionConfig):
@@ -41,33 +48,53 @@ class BlackCodeActionConfig(CodeActionConfig):
 class BlackCodeAction(CodeFormatAction[BlackCodeActionConfig]):
     LANGUAGE = "python"
 
-    def __init__(self, config: CodeActionConfigType, context: ActionContext, logger: ilogger.ILogger) -> None:
+    CACHE_KEY = "BlackFormatter"
+
+    def __init__(
+        self,
+        config: CodeActionConfigType,
+        context: ActionContext,
+        logger: ilogger.ILogger,
+        file_manager: ifilemanager.IFileManager,
+        cache: icache.ICache,
+    ) -> None:
         super().__init__(config, context)
         self.logger = logger
+        self.file_manager = file_manager
+        self.cache = cache
 
     @override
     async def run(self, payload: FormatRunPayload) -> FormatRunResult:
-        report = self.get_report()
+        file_path = payload.apply_on
+        try:
+            new_file_content = await self.cache.get_file_cache(file_path, self.CACHE_KEY)
+            return FormatRunResult(changed=False, code=new_file_content)
+        except icache.CacheMissException:
+            pass
+
+        file_content = await self.file_manager.get_content(file_path)
+        file_version = await self.file_manager.get_file_version(file_path)
+        file_changed = False
+        new_file_content = file_content
         # avoid outputting low-level logs of black, our goal is to trace finecode, not flake8 itself
-        self.logger.disable('fine_python_black')
-        # it seems like black can format only in-place, use tmp file
-        with action_utils.tmp_file_copy_path(
-            file_path=payload.apply_on, file_content=payload.apply_on_text
-        ) as file_path:
-            reformat_one(
-                src=file_path,
-                fast=False,
-                write_back=WriteBack.YES,
-                mode=self.get_mode(),
-                report=report,
+        self.logger.disable("fine_python_black")
+
+        # use part of `format_file_in_place` function from `black.__init__` we need to format raw
+        # text.
+        try:
+            # `fast` whether to validate code after formatting
+            # `lines` is range to format
+            new_file_content = black.format_file_contents(
+                file_content, fast=False, mode=self.get_mode()  # , lines=lines
             )
-            file_changed = report.change_count > 0
-            code: str | None = None
-            if file_changed:
-                with open(file_path, "r") as f:
-                    code = f.read()
-        self.logger.enable('fine_python_black')
-        return FormatRunResult(changed=file_changed, code=code)
+            file_changed = True
+        except black.NothingChanged:
+            ...
+
+        self.logger.enable("fine_python_black")
+
+        await self.cache.save_file_cache(file_path, file_version, self.CACHE_KEY, new_file_content)
+        return FormatRunResult(changed=file_changed, code=new_file_content)
 
     # async def run_on_many(
     #     self, payload: RunOnManyPayload[FormatRunPayload]

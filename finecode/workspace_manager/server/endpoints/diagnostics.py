@@ -16,11 +16,11 @@ def map_lint_message_dict_to_diagnostic(lint_message: dict[str, Any]) -> types.D
     return types.Diagnostic(
         range=types.Range(
             types.Position(
-                lint_message["range"]["start"]["line"],
+                lint_message["range"]["start"]["line"] - 1,
                 lint_message["range"]["start"]["character"],
             ),
             types.Position(
-                lint_message["range"]["end"]["line"],
+                lint_message["range"]["end"]["line"] - 1,
                 lint_message["range"]["end"]["character"],
             ),
         ),
@@ -100,6 +100,7 @@ async def workspace_diagnostic(
 ) -> types.WorkspaceDiagnosticReport | None:
     # TODO: partial responses
     logger.trace(f"Workspace diagnostic requested: {params}")
+    await global_state.server_initialized.wait()
 
     # find which runner is responsible for which files
     # currently FineCode supports only raw python files, find them in each ws project
@@ -107,11 +108,12 @@ async def workspace_diagnostic(
     #       if both parent and child projects have lint action, exclude files of chid from parent
     # check which runners are active and run in them
 
-    responses = await proxy_utils.run_action_in_all_runners(
-        action_name="lint",
-        params=params,
-        ws_context=global_state.ws_context,
-    )
+    responses = []
+    # responses = await proxy_utils.run_action_in_all_runners(
+    #     action_name="lint",
+    #     params=params,
+    #     ws_context=global_state.ws_context,
+    # )
 
     merged_response: types.WorkspaceDiagnosticReport | None = None
     for response in responses:
@@ -137,4 +139,6 @@ async def workspace_diagnostic(
     #     else:
     #         merged_response.items.extend(response.items)
 
-    return merged_response
+    # lsprotocol allows None as return value, but then vscode throws error 'cannot read items of null'
+    # keep empty report instead
+    return types.WorkspaceDiagnosticReport(items=[])

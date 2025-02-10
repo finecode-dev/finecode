@@ -13,6 +13,7 @@ from finecode.workspace_manager.config import (collect_actions,
 from finecode.workspace_manager.runner import runner_client, runner_info
 
 project_changed_callback: Coroutine | None = None
+get_document: Coroutine | None = None
 
 
 async def notify_project_changed(project: domain.Project) -> None:
@@ -38,9 +39,16 @@ async def start_extension_runner(
             ...
         return None
 
+    process_args: list[str] = ['--trace', f'--project-path={runner_info_instance.working_dir_path.as_posix()}']
+    # TODO: config parameter for debug and debug port
+    # if runner_info_instance.working_dir_path == Path('/home/user/Development/FineCode/finecode'):
+    #     process_args.append('--debug')
+    #     process_args.append(f"--debug-port=5681")
+
+    process_args_str: str = ' '.join(process_args)
     runner_info_instance.client = await create_lsp_client_io(
         runner_info.CustomJsonRpcClient,
-        f"{_finecode_cmd} -m finecode.extension_runner.cli --trace --project-path={runner_info_instance.working_dir_path.as_posix()}",
+        f"{_finecode_cmd} -m finecode.extension_runner.cli {process_args_str}",
         runner_info_instance.working_dir_path,
     )
 
@@ -51,6 +59,9 @@ async def start_extension_runner(
         # TODO: restart if WM is not stopping
 
     runner_info_instance.client.server_exit_callback = on_exit
+
+    register_get_document_feature = runner_info_instance.client.feature('documents/get')
+    register_get_document_feature(get_document)
     return runner_info_instance
 
 
@@ -64,7 +75,7 @@ async def stop_extension_runner(runner: runner_info.ExtensionRunnerInfo) -> None
             await runner.client.stop()
             logger.trace(f"Stop extension runner {runner.process_id} in {runner.working_dir_path}")
         else:
-            logger.trace(f"Extension runner was not running")
+            logger.trace("Extension runner was not running")
     else:
         logger.trace(
             f"Tried to stop extension runner {runner.working_dir_path}, but it was not running"
@@ -171,4 +182,24 @@ async def _init_runner(
     )
     project.status = domain.ProjectStatus.RUNNING
     await notify_project_changed(project)
+
+    await send_opened_files(runner=runner, opened_files=list(ws_context.opened_documents.values()))
+
     runner.initialized_event.set()
+
+
+async def send_opened_files(runner: runner_info.ExtensionRunnerInfo, opened_files: list[domain.TextDocumentInfo]):
+    files_for_runner: list[domain.TextDocumentInfo] = []
+    for opened_file_info in opened_files:
+        file_path = Path(opened_file_info.uri.replace("file://", ""))
+        if not file_path.is_relative_to(runner.working_dir_path):
+            continue
+        else:
+            files_for_runner.append(opened_file_info)
+
+    try:
+        async with asyncio.TaskGroup() as tg:
+            for file_info in files_for_runner:
+                tg.create_task(runner_client.notify_document_did_open(runner=runner, document_info=domain.TextDocumentInfo(uri=file_info.uri, version=file_info.version)))
+    except ExceptionGroup as eg:
+        logger.error(f"Error while sending opened document: {eg.exceptions}")

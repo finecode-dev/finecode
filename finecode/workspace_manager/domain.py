@@ -82,4 +82,13 @@ AllActions = ActionsDict
 #         self.source = source
 
 
-__all__ = ["RootActions", "ActionsDict", "AllActions", "Action", "Project"]
+class TextDocumentInfo:
+    def __init__(self, uri: str, version: str) -> None:
+        self.uri = uri
+        self.version = version
+    
+    def __str__(self) -> str:
+        return f'TextDocumentInfo(uri="{self.uri}", version="{self.version}")'
+
+
+__all__ = ["RootActions", "ActionsDict", "AllActions", "Action", "Project", "TextDocumentInfo"]
