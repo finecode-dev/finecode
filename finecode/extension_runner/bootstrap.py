@@ -19,7 +19,8 @@ container: dict[str, Any] = {}
 
 
 def bootstrap(get_document_func: Callable):
-    logger_instance = loguru_logger.LoguruLogger()
+    # logger_instance = loguru_logger.LoguruLogger()
+    logger_instance = loguru_logger.get_logger()
     file_manager_instance = file_manager.FileManager(
         docs_owned_by_client=global_state.runner_context.docs_owned_by_client,
         get_document_func=get_document_func,
