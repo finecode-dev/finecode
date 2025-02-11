@@ -93,6 +93,9 @@ class BlackCodeAction(CodeFormatAction[BlackCodeActionConfig]):
 
         self.logger.enable("fine_python_black")
 
+        # save for next subactions
+        run_context.file_content = new_file_content
+
         await self.cache.save_file_cache(file_path, file_version, self.CACHE_KEY, new_file_content)
         return FormatRunResult(changed=file_changed, code=new_file_content)
 

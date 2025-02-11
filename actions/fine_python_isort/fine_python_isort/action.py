@@ -62,5 +62,8 @@ class IsortCodeAction(CodeFormatAction[IsortCodeActionConfig]):
                 file_changed = True
                 new_file_content = output_stream.read()
 
+        # save for next subactions
+        run_context.file_content = new_file_content
+
         await self.cache.save_file_cache(file_path, file_version, self.CACHE_KEY, new_file_content)
         return FormatRunResult(changed=file_changed, code=new_file_content)

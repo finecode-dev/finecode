@@ -1,4 +1,3 @@
-
 import sys
 from pathlib import Path
 
@@ -9,7 +8,13 @@ if sys.version_info >= (3, 12):
 else:
     from typing_extensions import override
 
-from finecode.extension_runner.code_action import CodeAction, CodeActionConfigType, RunActionContext, RunActionPayload, RunActionResult
+from finecode.extension_runner.code_action import (
+    CodeAction,
+    CodeActionConfigType,
+    RunActionContext,
+    RunActionPayload,
+    RunActionResult,
+)
 
 
 class FormatRunPayload(RunActionPayload):
@@ -27,8 +32,8 @@ class FormatRunContext(RunActionContext):
     ) -> None:
         super().__init__()
         self.file_manager = file_manager
-        
-        self.file_content: str = ''
+
+        self.file_content: str = ""
         # file version is needed to allow proper(version-specific) caching in action. There are at
         # least 2 solutions:
         # - pass file version as payload
@@ -36,7 +41,7 @@ class FormatRunContext(RunActionContext):
         # We use the second one, because the first one would require additional annotation of payload
         # parameters to distinguish between user inputs and values added during run, this would make
         # handling of user inputs more tricky.
-        self.file_version: str = ''
+        self.file_version: str = ""
 
     async def init(self, initial_payload: FormatRunPayload) -> None:
         file_path = initial_payload.file_path
@@ -54,6 +59,7 @@ class FormatRunResult(RunActionResult):
         if not isinstance(other, FormatRunResult):
             return
         if other.changed is True:
+            self.changed = True
             self.code = other.code
 
 
