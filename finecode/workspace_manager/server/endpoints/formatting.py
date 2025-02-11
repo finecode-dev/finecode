@@ -25,7 +25,7 @@ async def format_document(ls: LanguageServer, params: types.DocumentFormattingPa
         response = await proxy_utils.find_action_project_and_run_in_runner(
             file_path=file_path,
             action_name="format",
-            params=[{"apply_on": file_path, "apply_on_text": doc.source}],
+            params=[{"file_path": file_path}],
             ws_context=global_state.ws_context,
         )
     except Exception as error:  # TODO

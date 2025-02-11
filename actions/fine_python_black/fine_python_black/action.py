@@ -7,6 +7,8 @@ from concurrent.futures import Executor  # ProcessPoolExecutor,
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
+from finecode.extension_runner.actions.format import FormatRunContext
+
 if sys.version_info < (3, 12):
     from typing_extensions import override
 else:
@@ -18,7 +20,7 @@ from black.concurrency import schedule_formatting
 from black.mode import Mode, TargetVersion
 from black.report import Report
 
-from finecode.extension_runner.interfaces import icache, ilogger, ifilemanager
+from finecode.extension_runner.interfaces import icache, ilogger
 from finecode import (
     CodeActionConfig,
     CodeFormatAction,
@@ -55,25 +57,23 @@ class BlackCodeAction(CodeFormatAction[BlackCodeActionConfig]):
         config: CodeActionConfigType,
         context: ActionContext,
         logger: ilogger.ILogger,
-        file_manager: ifilemanager.IFileManager,
         cache: icache.ICache,
     ) -> None:
         super().__init__(config, context)
         self.logger = logger
-        self.file_manager = file_manager
         self.cache = cache
 
     @override
-    async def run(self, payload: FormatRunPayload) -> FormatRunResult:
-        file_path = payload.apply_on
+    async def run(self, payload: FormatRunPayload, run_context: FormatRunContext) -> FormatRunResult:
+        file_path = payload.file_path
         try:
             new_file_content = await self.cache.get_file_cache(file_path, self.CACHE_KEY)
             return FormatRunResult(changed=False, code=new_file_content)
         except icache.CacheMissException:
             pass
 
-        file_content = await self.file_manager.get_content(file_path)
-        file_version = await self.file_manager.get_file_version(file_path)
+        file_content = run_context.file_content
+        file_version = run_context.file_version
         file_changed = False
         new_file_content = file_content
         # avoid outputting low-level logs of black, our goal is to trace finecode, not flake8 itself

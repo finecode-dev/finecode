@@ -50,7 +50,3 @@ class InMemoryCache(icache.ICache):
 
             self.logger.debug(f"Use cached value for {file_path}, key {key}")
             return cached_value
-
-    def file_changed_since_state(self, file_path: Path, last_state: str) -> bool: ...
-
-    def get_file_state(self, file_path: Path) -> str: ...

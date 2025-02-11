@@ -1,15 +1,15 @@
 from __future__ import annotations
 
-import enum
+
 import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Generic, TypeVar
 
 if sys.version_info >= (3, 12):
-    from typing import TypedDict, override
+    from typing import override
 else:
-    from typing_extensions import TypedDict, override
+    from typing_extensions import override
 
 from pydantic import BaseModel
 
@@ -24,13 +24,22 @@ class RunActionResult(BaseModel):
     def update(self, other: RunActionResult) -> None:
         raise NotImplementedError()
 
-    def to_next_payload(self, original_request: RunActionPayload) -> RunActionPayload:
-        raise NotImplementedError()
+RunPayloadType = TypeVar("RunPayloadType", bound=RunActionPayload)
+
+class RunActionContext:
+    # data object to save data between action steps(only during one run, after run data is removed)
+    # keep it simple, without business logic, just data storage, but you still may initialize values
+    # in constructor using dependency injection if needed to avoid handling in action cases when run
+    # context is not initialized and is initialized already.
+
+    async def init(self, initial_payload: RunPayloadType) -> None:
+        ...
 
 
 CodeActionConfigType = TypeVar("CodeActionConfigType")
-RunPayloadType = TypeVar("RunPayloadType", bound=RunActionPayload)
+
 RunResultType = TypeVar("RunResultType", bound=RunActionResult)
+RunContextType = TypeVar("RunContextType", bound=RunActionContext)
 
 
 @dataclass
@@ -40,7 +49,7 @@ class ActionContext:
     cache_dir: Path
 
 
-class CodeAction(Generic[CodeActionConfigType, RunPayloadType, RunResultType]):
+class CodeAction(Generic[CodeActionConfigType, RunPayloadType, RunContextType, RunResultType]):
     """
     **Action config**
     Configuration can be set in following places by priority:
@@ -59,92 +68,8 @@ class CodeAction(Generic[CodeActionConfigType, RunPayloadType, RunResultType]):
         self.config = config
         self.context = context
 
-    async def run(self, payload: RunPayloadType) -> RunResultType:
+    async def run(self, payload: RunPayloadType, run_context: RunContextType) -> RunResultType:
         raise NotImplementedError()
 
     async def stop(self):
         raise NotImplementedError()
-
-
-class LintRunPayload(RunActionPayload):
-    apply_on: Path
-
-
-class LintRunResult(RunActionResult):
-    # dict key should be Path, but pygls fails to handle slashes in dict keys, use strings with
-    # posix representation of path instead until the problem is properly solved
-    messages: dict[str, list[LintMessage]]
-
-    def update(self, other: RunActionResult) -> None:
-        if not isinstance(other, RunActionResult):
-            return
-        self.messages.update(other.messages)
-
-
-class CodeLintAction(CodeAction[CodeActionConfigType, LintRunPayload, LintRunResult]):
-    # lint actions only analyses code, they don't modify it. This allows to run them in parallel.
-    APPLIES_ONLY_ON_FILE: bool = False
-    NEEDS_WHOLE_PROJECT: bool = False
-
-
-class FormatRunPayload(RunActionPayload):
-    apply_on: Path
-
-
-class FormatRunResult(RunActionResult):
-    # create additional more basic RunResult like ChangingCodeRunResult to cover other cases like
-    # code transformations?
-    changed: bool
-    # if formatter supports, it should return the result of formatting in `code`. Otherwise set it
-    # to None, it will be interpreted as in-place formatting.
-    code: str | None
-
-    @override
-    def update(self, other: RunActionResult) -> None:
-        if not isinstance(other, FormatRunResult):
-            return
-        if other.changed is True and other.code is not None:
-            self.code = other.code
-
-    @override
-    def to_next_payload(self, original_request: FormatRunPayload) -> FormatRunPayload:
-        if self.changed is True and self.code is not None:
-            return FormatRunPayload(
-                apply_on=original_request.apply_on,
-                apply_on_text=self.code,
-            )
-        return original_request
-
-
-class CodeFormatAction(CodeAction[CodeActionConfigType, FormatRunPayload, FormatRunResult]):
-    # format actions can both analyse and modify the code. Analysis is required for example to
-    # report errors that cannot be fixed automatically.
-    ...
-
-
-class Position(TypedDict):
-    line: int
-    character: int
-
-
-class Range(TypedDict):
-    start: Position
-    end: Position
-
-
-class LintMessageSeverity(enum.IntEnum):
-    # use IntEnum to get json serialization out of the box
-    ERROR = 1
-    WARNING = 2
-    INFO = 3
-    HINT = 4
-
-
-@dataclass(frozen=True)
-class LintMessage:
-    range: Range
-    message: str
-    code: str | None = None
-    code_description: str | None = None
-    source: str | None = None
-    severity: LintMessageSeverity | None = None
