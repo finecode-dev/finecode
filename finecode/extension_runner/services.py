@@ -4,6 +4,7 @@ import sys
 import types
 from pathlib import Path
 from typing import Any, Callable, Type
+import time
 
 from loguru import logger
 
@@ -128,6 +129,7 @@ async def instantiate_run_context(
 async def run_action(
     request: schemas.RunActionRequest,
 ) -> schemas.RunActionResponse:
+    logger.trace(f"Run action '{request.action_name}'")
     # TODO: check whether config is set
     # TODO: validate that action exists
     # TODO: validate that path exists
@@ -135,8 +137,8 @@ async def run_action(
         # TODO: raise error
         return schemas.RunActionResponse({})
 
+    start_time = time.time_ns()
     project_def = global_state.runner_context.project
-
     action_to_process: list[str] = [request.action_name]
     actions_to_execute: list[domain.Action] = []
 
@@ -191,6 +193,9 @@ async def run_action(
     else:
         raise ActionFailedException(f"Unexpected result type: {type(current_result).__name__}")
 
+    end_time = time.time_ns()
+    duration = (end_time - start_time) / 1_000_000
+    logger.trace(f"Run action end '{request.action_name}', duration: {duration}ms")
     return schemas.RunActionResponse(result=result_dict)
 
 
@@ -201,7 +206,9 @@ async def execute_action_handler(
     runner_context: context.RunnerContext,
     project_def: domain.Project,
 ) -> code_action.RunActionResult | None:
-    logger.debug(f"Run {action.name} on {payload}")
+    logger.trace(f"Run {action.name} on {payload}")
+    start_time = time.time_ns()
+
     if action.name in runner_context.actions_instances_by_name:
         action_instance = runner_context.actions_instances_by_name[action.name]
         action_run_func = action_instance.run
@@ -254,7 +261,9 @@ async def execute_action_handler(
         return
         # TODO: error
 
-    logger.trace(f"End of execution of action {action.name} on {payload}")
+    end_time = time.time_ns()
+    duration = (end_time - start_time) / 1_000_000
+    logger.trace(f"End of execution of action {action.name} on {payload}, duration: {duration}ms")
     return current_result
 
 
