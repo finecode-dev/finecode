@@ -1,41 +1,79 @@
-[tool.poetry]
+[project]
 name = "finecode"
-version = "0.1.2"
+version = "0.2.0"
 description = ""
-authors = ["Vladyslav Hnatiuk <aders1234@gmail.com>"]
+authors = [{ name = "Vladyslav Hnatiuk", email = "aders1234@gmail.com" }]
 readme = "README.md"
+requires-python = ">=3.11, <= 3.13"
+dependencies = [
+    "loguru==0.7.*",
+    "tomlkit==0.11.*",
+    "watchdog==4.0.*",
+    "click==8.1.*",
+    "pydantic==2.10.*",
+    "command_runner==1.7.*",
+    "platformdirs==4.3.*",
+    "pygls==2.0.0-a2",
+]
 
-[tool.poetry.dependencies]
-python = "^3.10"
-loguru = "^0.7.0"
-tomlkit = "^0.11.7"
-watchdog = "^4.0.0"
-click = "^8.1.7"
-pydantic = "^2.5.3"
-command-runner = "^1.5.1"
-modapp = { git = "https://github.com/Aksem/modapp.git", tag = "v0.4.2", extras = [
-    "uvloop",
-    "web_aiohttp",
-    "json",
-    "case_change",
-    "platformdirs"
-] }
-janus = { git ="https://github.com/Aksem/janus.git" }
-pygls = "~2.0.0-a2"
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"
+
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^7.4.3"
+fine_python_aksem = { path = "../fine_python_aksem" }
 fine_python_recommended = { path = "presets/fine_python_recommended" }
+fine_python_import_linter = { path = "actions/fine_python_import_linter" }
 anyio = "^4.4.0"
 debugpy = "^1.8.9"
 
-[build-system]
-requires = ["poetry-core"]
-build-backend = "poetry.core.masonry.api"
 
 [tool.finecode]
-presets = [{ source = "fine_python_recommended" }]
+presets = [
+    { source = "fine_python_recommended" },
+    # { source = "fine_python_aksem" },
+]
 
 [tool.finecode.action.black.config]
 target_versions = ["PY311"]
 preview = true
+
+[tool.importlinter]
+root_package = "finecode"
+include_external_packages = true
+
+[[tool.importlinter.contracts]]
+id = "wm-layered"
+name = "WM layered architecture"
+type = "layers"
+layers = [
+    "finecode.workspace_manager.server.lsp_server",
+    "finecode.workspace_manager.server.services",
+    "finecode.workspace_manager.domain",
+]
+
+[[tool.importlinter.contracts]]
+id = "er-layered"
+name = "ER layered architecture"
+type = "layers"
+layers = [
+    "finecode.extension_runner.lsp_server",
+    "finecode.extension_runner.services",
+    "finecode.extension_runner.domain",
+]
+
+[[tool.importlinter.contracts]]
+# such check doesn't control whether there are no raw requests in lsp_server, currently this should
+# be checked manually. We should check access to `runner.client.protocol` to avoid this?
+id = "wm-use-runner-client"
+name = "WM uses LSP requests only in runner_client and lsp_server, no raw requests in app"
+type = "forbidden"
+source_modules = ["finecode.workspace_manager"]
+forbidden_modules = ["lsprotocol"]
+ignore_imports = [
+    "finecode.workspace_manager.runner.runner_client -> lsprotocol",
+    "finecode.workspace_manager.server.lsp_server -> lsprotocol",
+]

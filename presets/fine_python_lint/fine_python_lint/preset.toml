@@ -1,10 +1,16 @@
 [tool.finecode.preset]
-actions = [{ name = 'lint' }]
+actions = [{ name = 'lint' }, { name = 'lint_many' }]
 
 [tool.finecode.action.lint]
 subactions = [
     # { name = "mypy", source = "fine_python_mypy.MypyCodeAction" },
     { name = "flake8", source = "fine_python_flake8.Flake8CodeAction" },
+]
+
+[tool.finecode.action.lint_many]
+# how to reuse config for both?
+subactions = [
+    { name = "flake8_many", source = "fine_python_flake8.Flake8ManyCodeAction" },
 ]
 
 [tool.finecode.action.flake8.config]

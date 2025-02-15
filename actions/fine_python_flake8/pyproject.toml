@@ -1,15 +1,16 @@
-[tool.poetry]
-name = "fine_python_flake8"
+[project]
+name = "fine-python-flake8"
 version = "0.1.0"
 description = ""
-authors = ["Vladyslav Hnatiuk <aders1234@gmail.com>"]
+authors = [{ name = "Vladyslav Hnatiuk", email = "aders1234@gmail.com" }]
 readme = "README.md"
-
-[tool.poetry.dependencies]
-python = "^3.10"
-flake8 = "^7.1.1"
+requires-python = ">=3.11, <= 3.13"
+dependencies = [
+    "finecode @ file:///home/user/Development/FineCode/finecode/",
+    "fine_python_ast @ file:///home/user/Development/FineCode/finecode/actions/fine_python_ast",
+]
 
 
 [build-system]
-requires = ["poetry-core"]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
 build-backend = "poetry.core.masonry.api"

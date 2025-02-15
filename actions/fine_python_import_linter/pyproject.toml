@@ -1,14 +1,13 @@
 [project]
-name = "fine-python-lint"
+name = "fine-python-import-linter"
 version = "0.1.0"
 description = ""
 authors = [{ name = "Vladyslav Hnatiuk", email = "aders1234@gmail.com" }]
 readme = "README.md"
-requires-python = ">=3.11, <= 3.13"
+requires-python = ">=3.11, <=3.13"
 dependencies = [
     "finecode @ file:///home/user/Development/FineCode/finecode/",
-    "fine_python_mypy @ file:///home/user/Development/FineCode/finecode/actions/fine_python_mypy",
-    "fine_python_flake8 @ file:///home/user/Development/FineCode/finecode/actions/fine_python_flake8",
+    "import-linter (>=2.1,<3.0)",
 ]
 
 
