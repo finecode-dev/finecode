@@ -32,6 +32,9 @@ async def format_document(ls: LanguageServer, params: types.DocumentFormattingPa
         logger.error(f"Error document formatting {file_path}: {error}")
         return None
 
+    if response is None:
+        return []
+
     if response.get("changed", True) is True:
         return [
             types.TextEdit(

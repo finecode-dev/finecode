@@ -9,6 +9,7 @@ dependencies = [
     "finecode @ file:///home/user/Development/FineCode/finecode/",
     "fine_python_mypy @ file:///home/user/Development/FineCode/finecode/actions/fine_python_mypy",
     "fine_python_flake8 @ file:///home/user/Development/FineCode/finecode/actions/fine_python_flake8",
+    "flake8-bugbear (>=24.12.12,<25.0.0)",
 ]
 
 

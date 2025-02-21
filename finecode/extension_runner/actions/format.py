@@ -1,5 +1,6 @@
 import sys
 from pathlib import Path
+from typing import NamedTuple
 
 from finecode.extension_runner.interfaces import ifilemanager
 
@@ -66,4 +67,39 @@ class FormatRunResult(RunActionResult):
 class CodeFormatAction(CodeAction[CodeActionConfigType, FormatRunPayload, FormatRunContext, FormatRunResult]):
     # format actions can both analyse and modify the code. Analysis is required for example to
     # report errors that cannot be fixed automatically.
+    ...
+
+
+class FormatManyRunPayload(RunActionPayload):
+    # TODO: in-place as parameter? Also in single?
+    file_paths: list[Path]
+
+
+class FileInfo(NamedTuple):
+    file_content: str
+    file_version: str
+
+
+class FormatManyRunContext(RunActionContext):
+    def __init__(
+        self,
+        file_manager: ifilemanager.IFileManager,
+    ) -> None:
+        super().__init__()
+        self.file_manager = file_manager
+
+        self.file_info_by_path: dict[Path, FileInfo] = {}
+
+    async def init(self, initial_payload: FormatManyRunPayload) -> None:
+        for file_path in initial_payload.file_paths:
+            file_content = await self.file_manager.get_content(file_path)
+            file_version = await self.file_manager.get_file_version(file_path)
+            self.file_info_by_path[file_path] = FileInfo(file_content=file_content, file_version=file_version)
+
+
+class FormatManyRunResult(RunActionResult):
+    result_by_file_path: dict[Path, FormatRunResult]
+
+
+class FormatManyCodeAction(CodeAction[CodeActionConfigType, FormatManyRunPayload, RunActionContext, FormatManyRunResult]):
     ...

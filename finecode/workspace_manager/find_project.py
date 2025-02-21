@@ -6,6 +6,10 @@ from finecode.workspace_manager.context import WorkspaceContext
 from finecode.workspace_manager import domain
 
 
+class FileNotInWorkspaceException(BaseException):
+    ...
+
+
 def find_project_with_action_for_file(
     file_path: Path,
     action_name: str,
@@ -31,9 +35,8 @@ def find_project_with_action_for_file(
             continue
 
     if len(file_projects_pathes) == 0:
-        raise ValueError(
-            f"File {file_path} doesn't belong to one of projects in workspace. Workspace projects: {sorted_project_dirs}"
-        )
+        logger.debug(f"File {file_path} doesn't belong to one of projects in workspace. Workspace projects: {sorted_project_dirs}")
+        raise FileNotInWorkspaceException(f"File {file_path} doesn't belong to one of projects in workspace")
 
     dir_path = file_path if file_path.is_dir() else file_path.parent
     dir_path_str = dir_path.as_posix()

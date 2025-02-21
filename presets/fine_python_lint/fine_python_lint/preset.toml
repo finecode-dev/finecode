@@ -14,4 +14,8 @@ subactions = [
 ]
 
 [tool.finecode.action.flake8.config]
-max_line_length = 119
+max_line_length = 80
+extend_select = ["B950"]
+# W391 is not compatible with black, because black adds an empty line to the end of the file
+# TODO: move in recommended config once config merging is implemented
+extend_ignore = ["E203", "E501", "E701", "W391"]

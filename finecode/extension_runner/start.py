@@ -3,8 +3,8 @@ import logging
 import sys
 
 from loguru import logger
-from modapp.extras.logs import save_logs_to_file
 
+from finecode import logs
 import finecode.extension_runner.global_state as global_state
 import finecode.extension_runner.lsp_server as extension_runner_lsp
 import finecode.extension_runner.project_dirs as project_dirs
@@ -15,7 +15,7 @@ async def start_runner():
     project_log_dir_path = project_dirs.get_project_dir(global_state.project_dir_path)
     logger.remove()
     # ~~extension runner communicates with workspace manager with tcp, we can print logs to stdout as well~~. See README.md
-    save_logs_to_file(file_path=project_log_dir_path / 'execution.log', log_level=global_state.log_level, stdout=False)
+    logs.save_logs_to_file(file_path=project_log_dir_path / "execution.log", log_level=global_state.log_level, stdout=False)
 
     # pygls uses standard python logger, intercept it and pass logs to loguru
     class InterceptHandler(logging.Handler):
@@ -36,7 +36,7 @@ async def start_runner():
             logger.opt(depth=depth, exception=record.exc_info).log(level, record.getMessage())
 
     logging.basicConfig(handlers=[InterceptHandler()], level=0, force=True)
-    
+
     logger.info(f"Python executable: {sys.executable}")
     logger.info(f"Project path: {global_state.project_dir_path}")
 
@@ -47,8 +47,11 @@ async def start_runner():
 def start_runner_sync():
     project_log_dir_path = project_dirs.get_project_dir(global_state.project_dir_path)
     logger.remove()
+    # disable logging raw messages
+    # TODO: make configurable
+    logger.configure(activation=[("pygls.protocol.json_rpc", False)])
     # ~~extension runner communicates with workspace manager with tcp, we can print logs to stdout as well~~. See README.md
-    save_logs_to_file(file_path=project_log_dir_path / 'execution.log', log_level=global_state.log_level, stdout=False)
+    logs.save_logs_to_file(file_path=project_log_dir_path / "execution.log", log_level=global_state.log_level, stdout=False)
 
     # pygls uses standard python logger, intercept it and pass logs to loguru
     class InterceptHandler(logging.Handler):
@@ -69,7 +72,7 @@ def start_runner_sync():
             logger.opt(depth=depth, exception=record.exc_info).log(level, record.getMessage())
 
     logging.basicConfig(handlers=[InterceptHandler()], level=0, force=True)
-    
+
     logger.info(f"Python executable: {sys.executable}")
     logger.info(f"Project path: {global_state.project_dir_path}")
 

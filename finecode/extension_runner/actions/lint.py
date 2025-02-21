@@ -37,10 +37,8 @@ class LintMessage:
     severity: LintMessageSeverity | None = None
 
 
-
-
 class LintRunPayload(RunActionPayload):
-    apply_on: Path
+    file_path: Path
 
 
 class LintRunResult(RunActionResult):
@@ -56,5 +54,18 @@ class LintRunResult(RunActionResult):
 
 class CodeLintAction(CodeAction[CodeActionConfigType, LintRunPayload, RunActionContext, LintRunResult]):
     # lint actions only analyses code, they don't modify it. This allows to run them in parallel.
-    APPLIES_ONLY_ON_FILE: bool = False
-    NEEDS_WHOLE_PROJECT: bool = False
+    ...
+    # APPLIES_ONLY_ON_FILE: bool = False
+    # NEEDS_WHOLE_PROJECT: bool = False
+
+
+class LintManyRunPayload(RunActionPayload):
+    file_paths: list[Path]
+
+
+class LintManyRunResult(LintRunResult):
+    ...
+
+
+class CodeLintManyAction(CodeAction[CodeActionConfigType, LintManyRunPayload, RunActionContext, LintManyRunResult]):
+    ...

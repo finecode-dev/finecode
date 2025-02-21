@@ -1,11 +1,19 @@
 [tool.finecode.preset]
-actions = [{ name = 'format' }]
+actions = [{ name = 'format' }, { name = 'format_many' }]
 
 [tool.finecode.action.format]
 subactions = [
     { name = "isort", source = "fine_python_isort.IsortCodeAction" },
-    { name = "black", source = "fine_python_black.BlackCodeAction" }
+    { name = "black", source = "fine_python_black.BlackCodeAction" },
 ]
 
-[tool.finecode.action.black.config]
-line_length = 119
+[tool.finecode.action.format_many]
+subactions = [
+    # { name = "isort_many", source = "fine_python_isort.IsortManyCodeAction" },
+    { name = "black_many", source = "fine_python_black.BlackManyCodeAction" },
+]
+
+[tool.finecode.action.isort.config]
+# make isort config compatible with black
+# see https://black.readthedocs.io/en/stable/guides/using_black_with_other_tools.html#isort
+profile = "black"

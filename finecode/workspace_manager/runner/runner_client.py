@@ -80,10 +80,9 @@ async def notify_initialized(runner: ExtensionRunnerInfo) -> None:
 
 async def run_action(
     runner: ExtensionRunnerInfo,
-    action: domain.Action,
-    apply_on: list[Path] | None,
-    apply_on_text: str,
-) -> dict[str, Any]:
+    action_name: str,
+    params: list[Any],
+) -> Any:
     if not runner.initialized_event.is_set():
         await runner.initialized_event.wait()
     assert runner.client is not None
@@ -94,17 +93,13 @@ async def run_action(
         params=types.ExecuteCommandParams(
             command="actions/run",
             arguments=[
-                action.name,
-                {
-                    "apply_on": (
-                        [path.as_posix() for path in apply_on] if apply_on is not None else []
-                    ),
-                    "apply_on_text": apply_on_text,
-                },
+                action_name,
+                *params,
             ],
         ),
+        timeout=None
     )
-    return {"result": json.loads(response.result)}
+    return json.loads(response.result)
 
 
 async def reload_action(runner: ExtensionRunnerInfo, action_name: str) -> None:

@@ -206,7 +206,7 @@ async def execute_action_handler(
     runner_context: context.RunnerContext,
     project_def: domain.Project,
 ) -> code_action.RunActionResult | None:
-    logger.trace(f"Run {action.name} on {payload}")
+    logger.trace(f"Run {action.name} on {str(payload)[:100]}...")
     start_time = time.time_ns()
 
     if action.name in runner_context.actions_instances_by_name:
@@ -217,17 +217,28 @@ async def execute_action_handler(
         logger.trace(f"Load action {action.name}")
         try:
             action_handler = run_utils.import_module_member_by_source_str(action.source)
+        except ModuleNotFoundError as error:
+            logger.error(f"Source of action {action.name} '{action.source}' could not be imported")
+            logger.error(error)
+            return
+        
+        try:
             # TODO: get config class name from annotation?
             action_config_cls = run_utils.import_module_member_by_source_str(action.source + "Config")
         except ModuleNotFoundError as error:
-            logger.error(f"Source of action {action.name} '{action.source}' could not be imported")
+            logger.error(f"Source of action config {action.name} '{action.source}Config' could not be imported")
             logger.error(error)
             return
 
         try:
             action_config = project_def.actions_configs[action.name]
         except KeyError:
-            action_config = {}
+            # tmp solution for matching configs like lint and lint_many
+            if action.name.endswith('_many'):
+                single_action_name = action.name[:-(len('_many'))]
+                action_config = project_def.actions_configs.get(single_action_name, {})
+            else:
+                action_config = {}
 
         config = action_config_cls(**action_config)
         project_path = project_def.path
@@ -263,7 +274,7 @@ async def execute_action_handler(
 
     end_time = time.time_ns()
     duration = (end_time - start_time) / 1_000_000
-    logger.trace(f"End of execution of action {action.name} on {payload}, duration: {duration}ms")
+    logger.trace(f"End of execution of action {action.name} on {str(payload)[:100]}..., duration: {duration}ms")
     return current_result
 
 

@@ -48,7 +48,9 @@ async def start_tcp_async(server: LanguageServer, host: str, port: int) -> None:
 
 
 async def start_io_async(
-    server: LanguageServer, stdin: Optional[BinaryIO] = None, stdout: Optional[BinaryIO] = None
+    server: LanguageServer,
+    stdin: Optional[BinaryIO] = None,
+    stdout: Optional[BinaryIO] = None,
 ):
     """Starts an asynchronous IO server."""
     logger.info("Starting async IO server")
@@ -76,12 +78,15 @@ async def start_io_async(
 
 def deserialize_pygls_object(pygls_object) -> dict[str, Any] | list[Any]:
     deserialized: dict[str, Any] | list[Any]
-    if '_0' in pygls_object._fields:
+    if "_0" in pygls_object._fields:
         # list
         deserialized = []
         for index in range(len(pygls_object)):
-            item = getattr(pygls_object, f'_{index}')
-            if hasattr(item, '__module__') and getattr(item, '__module__') == 'pygls.protocol':
+            item = getattr(pygls_object, f"_{index}")
+            if (
+                hasattr(item, "__module__")
+                and getattr(item, "__module__") == "pygls.protocol"
+            ):
                 deserialized_value = deserialize_pygls_object(item)
             else:
                 deserialized_value = item
@@ -91,7 +96,10 @@ def deserialize_pygls_object(pygls_object) -> dict[str, Any] | list[Any]:
         deserialized = {}
         for field_name in pygls_object._fields:
             field_value = getattr(pygls_object, field_name)
-            if hasattr(field_value, '__module__') and getattr(field_value, '__module__') == 'pygls.protocol':
+            if (
+                hasattr(field_value, "__module__")
+                and getattr(field_value, "__module__") == "pygls.protocol"
+            ):
                 deserialized_value = deserialize_pygls_object(field_value)
             else:
                 deserialized_value = field_value

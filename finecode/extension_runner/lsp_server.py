@@ -77,7 +77,7 @@ async def update_config(ls: LanguageServer, params):
 
 
 async def run_action(ls: LanguageServer, params):
-    logger.trace(f"Run action: {params}")
+    logger.trace(f"Run action: {params[0]}")
     request = schemas.RunActionRequest(action_name=params[0], params=params[1])
     response = await services.run_action(request=request)
     # dict key can be path, but pygls fails to handle slashes in dict keys, use strings

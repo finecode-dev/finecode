@@ -67,95 +67,152 @@ async def delete_workspace_dir(
     return schemas.DeleteWorkspaceDirResponse()
 
 
-async def _dir_to_tree_node(
-    dir_path: Path, ws_context: context.WorkspaceContext
-) -> schemas.ActionTreeNode | None:
-    # ignore directories: hidden directories like .git, .pytest_cache etc, node_modules
-    if dir_path.name.startswith(".") or dir_path.name == "node_modules":
-        return None
+def create_node_list_for_ws(ws_context: context.WorkspaceContext) -> list[schemas.ActionTreeNode]:
+    nodes: list[schemas.ActionTreeNode] = []
+    projects_by_ws_dir: dict[Path, list[Path]] = {}
+    
+    all_ws_dirs = list(ws_context.ws_dirs_paths)
+    all_ws_dirs.sort()
+    
+    all_projects_paths = list(ws_context.ws_projects.keys())
+    all_projects_paths.sort()
+    
+    while len(all_ws_dirs) > 0:
+        ws_dir = all_ws_dirs.pop()
+        projects_by_ws_dir[ws_dir] = []
 
-    # 1. Determine type of dir_path: project or directory
-    dir_is_project = find_project.is_project(dir_path)
-    dir_node_type = (
-        schemas.ActionTreeNode.NodeType.PROJECT
-        if dir_is_project
-        else schemas.ActionTreeNode.NodeType.DIRECTORY
-    )
-    subnodes: list[schemas.ActionTreeNode] = []
-    status = ""
-    if dir_is_project:
-        try:
-            project = ws_context.ws_projects[dir_path]
-        except KeyError:
-            logger.trace(f"Project exists in {dir_path}, but no config found")
-            project = None
+        while True:
+            project_path = all_projects_paths[0]
+            if project_path.is_relative_to(ws_dir):
+                projects_by_ws_dir[ws_dir].append(project_path)
+                all_projects_paths.pop(0)
+            
+            if len(all_projects_paths) == 0:
+                break
 
-        if project is not None:
-            status = project.status.name
-            if project.status == domain.ProjectStatus.RUNNING:
-                assert project.actions is not None
-                for action in project.actions:
-                    if action.name not in project.root_actions:
-                        continue
+    # build node tree so that:
+    # - all ws dirs are in tree either as project or directory
+    # - all projects are shown with subprojects and actions and subactions
+    for ws_dir in ws_context.ws_dirs_paths:
+        ws_dir_projects = projects_by_ws_dir[ws_dir]
+        ws_dir_nodes_by_path: dict[Path, schemas.ActionTreeNode] = {}
 
-                    node_id = f"{project.dir_path.as_posix()}::{action.name}"
-                    subnodes.append(
-                        schemas.ActionTreeNode(
-                            node_id=node_id,
-                            name=action.name,
-                            node_type=schemas.ActionTreeNode.NodeType.ACTION,
-                            subnodes=[],
-                            status="",
-                        )
-                    )
-                    ws_context.cached_actions_by_id[node_id] = context.CachedAction(
-                        action_id=node_id, project_path=project.dir_path, action_name=action.name
-                    )
-            # TODO: presets?
+        # process ws_dir separately, because only it can be directory
+        if ws_dir in ws_dir_projects:
+            dir_node_type = schemas.ActionTreeNode.NodeType.PROJECT
+            try:
+                project = ws_context.ws_projects[ws_dir]
+            except KeyError:
+                logger.trace(f"Project exists in {ws_dir}, but no config found")
+                project = None
+
+            if project is not None:
+                status = project.status.name
             else:
-                logger.info(f"Project is not running: {project.dir_path}")
-                ...  # TODO: error status
-    else:
-        for dir_item in dir_path.iterdir():
-            if dir_item.is_dir():
-                subnode = await _dir_to_tree_node(dir_item, ws_context)
-                if subnode is not None:
-                    subnodes.append(subnode)
+                status = ''
+        else:
+            dir_node_type = schemas.ActionTreeNode.NodeType.DIRECTORY
+            status = ''
 
-    # TODO: cache result?
-    return schemas.ActionTreeNode(
-        node_id=dir_path.as_posix(),
-        name=dir_path.name,
-        subnodes=subnodes,
-        node_type=dir_node_type,
-        status=status,
-    )
+        actions_nodes = get_project_action_tree(project=project, ws_context=ws_context)
+        node = schemas.ActionTreeNode(
+            node_id=ws_dir.as_posix(),
+            name=ws_dir.name,
+            subnodes=actions_nodes,
+            node_type=dir_node_type,
+            status=status,
+        )
+        nodes.append(node)
+        ws_dir_nodes_by_path[ws_dir] = node
+        
+        for project_path in ws_dir_projects:
+            try:
+                project = ws_context.ws_projects[project_path]
+            except KeyError:
+                logger.trace(f"Project exists in {project_path}, but no config found")
+                project = None
+
+            status = ''
+            if project is not None:
+                status = project.status.name
+
+            actions_nodes = get_project_action_tree(project=project, ws_context=ws_context)
+            node = schemas.ActionTreeNode(
+                node_id=project_path.as_posix(),
+                name=project_path.name,
+                subnodes=actions_nodes,
+                node_type=schemas.ActionTreeNode.NodeType.PROJECT,
+                status=status,
+            )
+            
+
+            # check from back(=from the deepest node) to find the nearest parent node
+            for ws_dir_node_path in list(ws_dir_nodes_by_path.keys())[::-1]:
+                if project_path.is_relative_to(ws_dir_node_path):
+                    ws_dir_nodes_by_path[ws_dir_node_path].subnodes.append(node)
+                    break
+            
+            ws_dir_nodes_by_path[project_path] = node
+
+    return nodes
+
+
+def get_project_action_tree(project: domain.Project, ws_context: context.WorkspaceContext) -> list[schemas.ActionTreeNode]:
+    actions_nodes: list[schemas.ActionTreeNode] = []
+    if project.status == domain.ProjectStatus.RUNNING:
+        assert project.actions is not None
+        for action in project.actions:
+            if action.name not in project.root_actions:
+                continue
+
+            node_id = f"{project.dir_path.as_posix()}::{action.name}"
+            subactions_nodes = [
+                schemas.ActionTreeNode(
+                    node_id=f"{project.dir_path.as_posix()}::{subaction_name}",
+                    name=subaction_name,
+                    node_type=schemas.ActionTreeNode.NodeType.ACTION,
+                    subnodes=[],
+                    status="",
+                ) for subaction_name in action.subactions
+            ]
+            actions_nodes.append(
+                schemas.ActionTreeNode(
+                    node_id=node_id,
+                    name=action.name,
+                    node_type=schemas.ActionTreeNode.NodeType.ACTION,
+                    subnodes=subactions_nodes,
+                    status="",
+                )
+            )
+            ws_context.cached_actions_by_id[node_id] = context.CachedAction(
+                action_id=node_id, project_path=project.dir_path, action_name=action.name
+            )
+    else:
+        logger.info(f"Project is not running: {project.dir_path}, no actions will be shown")
+
+    return actions_nodes
 
 
 async def _list_actions(
     ws_context: context.WorkspaceContext, parent_node_id: str | None = None
 ) -> list[schemas.ActionTreeNode]:
-    if parent_node_id is None:
-        # list ws dirs and first level
+    # currently it always returns full tree
+    #
+    # if parent_node_id is None:
+    # list ws dirs and first level
 
-        # wait for start of all runners, this is required to be able to resolve presets
-        all_started_coros = [
-            runner.initialized_event.wait()
-            for runner in ws_context.ws_projects_extension_runners.values()
-        ]
-        await asyncio.gather(*all_started_coros)
+    # wait for start of all runners, this is required to be able to resolve presets
+    all_started_coros = [
+        runner.initialized_event.wait()
+        for runner in ws_context.ws_projects_extension_runners.values()
+    ]
+    await asyncio.gather(*all_started_coros)
 
-        nodes: list[schemas.ActionTreeNode] = []
-        for ws_dir_path in ws_context.ws_dirs_paths:
-            node = await _dir_to_tree_node(ws_dir_path, ws_context)
-            if node is not None:
-                nodes.append(node)
-        # sort nodes alphabetically to keep the order stable
-        nodes.sort(key=lambda node: node.name)
-        return nodes
-    else:
-        # TODO
-        return []
+    nodes: list[schemas.ActionTreeNode] = create_node_list_for_ws(ws_context)
+    return nodes
+    # else:
+    #     # TODO
+    #     return []
 
 
 async def list_actions(
@@ -219,8 +276,7 @@ async def run_action(
         project_root=project.dir_path,
         ws_context=global_state.ws_context,
     )
-    # in case of error, there is no result in dict
-    return schemas.RunActionResponse(result=result.get("result", {}))
+    return schemas.RunActionResponse(result=result)
 
 
 async def __run_action(
@@ -283,9 +339,15 @@ async def __run_action(
         try:
             result = await runner_client.run_action(
                 runner=ws_context.ws_projects_extension_runners[project_root],
-                action=action,
-                apply_on=all_apply_on,
-                apply_on_text=apply_on_text,
+                action_name=action.name,
+                params=[
+                    {
+                    "apply_on": (
+                        [path.as_posix() for path in all_apply_on] if apply_on is not None else []
+                    ),
+                    "apply_on_text": apply_on_text,
+                }
+                ]
             )
         except runner_client.BaseRunnerRequestException as error:
             error_message = error.args[0] if len(error.args) > 0 else ""

@@ -1,22 +1,23 @@
 from __future__ import annotations
+
 from io import StringIO
 
 import isort.api as isort_api
 import isort.settings as isort_settings
 
-from finecode.extension_runner.interfaces import icache, ilogger
 from finecode import (
+    ActionContext,
     CodeActionConfig,
     CodeFormatAction,
+    FormatRunContext,
     FormatRunPayload,
     FormatRunResult,
-    CodeActionConfigType,
-    ActionContext,
-    FormatRunContext,
 )
+from finecode.extension_runner.interfaces import icache, ilogger
 
 
-class IsortCodeActionConfig(CodeActionConfig): ...
+class IsortCodeActionConfig(CodeActionConfig):
+    profile: str = ""
 
 
 class IsortCodeAction(CodeFormatAction[IsortCodeActionConfig]):
@@ -24,7 +25,7 @@ class IsortCodeAction(CodeFormatAction[IsortCodeActionConfig]):
 
     def __init__(
         self,
-        config: CodeActionConfigType,
+        config: IsortCodeActionConfig,
         context: ActionContext,
         logger: ilogger.ILogger,
         cache: icache.ICache,
@@ -33,10 +34,14 @@ class IsortCodeAction(CodeFormatAction[IsortCodeActionConfig]):
         self.logger = logger
         self.cache = cache
 
-    async def run(self, payload: FormatRunPayload, run_context: FormatRunContext) -> FormatRunResult:
+    async def run(
+        self, payload: FormatRunPayload, run_context: FormatRunContext
+    ) -> FormatRunResult:
         file_path = payload.file_path
         try:
-            new_file_content = await self.cache.get_file_cache(file_path, self.CACHE_KEY)
+            new_file_content = await self.cache.get_file_cache(
+                file_path, self.CACHE_KEY
+            )
             return FormatRunResult(changed=False, code=new_file_content)
         except icache.CacheMissException:
             pass
@@ -52,7 +57,9 @@ class IsortCodeAction(CodeFormatAction[IsortCodeActionConfig]):
             changed = isort_api.sort_stream(
                 input_stream=input_stream,
                 output_stream=output_stream,
-                config=isort_settings.Config(),  # TODO: config
+                config=isort_settings.Config(
+                    profile=self.config.profile
+                ),  # TODO: config
                 file_path=file_path,
                 disregard_skip=True,
                 extension=".py",
@@ -65,5 +72,7 @@ class IsortCodeAction(CodeFormatAction[IsortCodeActionConfig]):
         # save for next subactions
         run_context.file_content = new_file_content
 
-        await self.cache.save_file_cache(file_path, file_version, self.CACHE_KEY, new_file_content)
+        await self.cache.save_file_cache(
+            file_path, file_version, self.CACHE_KEY, new_file_content
+        )
         return FormatRunResult(changed=file_changed, code=new_file_content)

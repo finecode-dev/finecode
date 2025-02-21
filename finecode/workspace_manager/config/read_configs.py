@@ -17,11 +17,8 @@ async def read_projects_in_dir(
     # Find all projects in directory
     logger.trace(f"Read directories in {dir_path}")
     new_projects: list[domain.Project] = []
-    def_files_generator = dir_path.rglob("*")
+    def_files_generator = dir_path.rglob("pyproject.toml")
     for def_file in def_files_generator:
-        if def_file.name != "pyproject.toml":
-            continue
-        
         status = domain.ProjectStatus.READY
         actions: list[domain.Action] | None = None
         actions_configs: dict[str, dict[str, Any]] | None = None
@@ -33,7 +30,6 @@ async def read_projects_in_dir(
             status = domain.ProjectStatus.NO_FINECODE
             actions = []
             actions_configs = {}
-            return []
         else:
             # finecode config exists, check also finecode.sh
             finecode_sh_path = def_file.parent / "finecode.sh"
