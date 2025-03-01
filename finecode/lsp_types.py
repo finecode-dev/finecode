@@ -2,8 +2,7 @@
 from __future__ import annotations
 import enum
 
-from finecode import RunActionPayload, RunActionResult
-from finecode.extension_runner.code_action import BaseModel
+from finecode_extension_api.code_action import BaseModel, RunActionPayload, RunActionResult
 
 
 class Position(BaseModel):

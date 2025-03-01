@@ -4,7 +4,7 @@ from typing import Any
 
 from pygls.lsp.server import LanguageServer
 from loguru import logger
-from finecode.workspace_manager import context, domain, find_project, project_analyzer
+from finecode.workspace_manager import context, domain, project_analyzer
 from finecode.workspace_manager.runner import runner_client
 from finecode.workspace_manager.server import global_state, schemas, user_messages
 from finecode.workspace_manager.server.services import ActionNotFound, InternalError
@@ -17,18 +17,18 @@ async def list_actions(ls: LanguageServer, params):
     parent_node_id = params[0]
     request = schemas.ListActionsRequest(parent_node_id=parent_node_id)
     result = await _list_actions(request=request)
-    return result.to_dict()
+    return result.model_dump(by_alias=True)
 
 
 async def list_actions_for_position(ls: LanguageServer, params):
     logger.info(f"list_actions for position {params}")
     await global_state.server_initialized.wait()
 
-    position = params[0]
+    # position = params[0]
     # TODO
     request = schemas.ListActionsRequest(parent_node_id="")
     result = await _list_actions(request=request)
-    return result.to_dict()
+    return result.model_dump(by_alias=True)
 
 
 def get_project_action_tree(
@@ -240,7 +240,7 @@ async def run_action_on_file(ls: LanguageServer, params):
     response = await run_action(run_action_request)
     logger.debug(f"Response: {response}")
 
-    return response.to_dict()
+    return response.model_dump(by_alias=True)
 
 
 async def run_action_on_project(ls: LanguageServer, params):
@@ -255,7 +255,7 @@ async def run_action_on_project(ls: LanguageServer, params):
     #     action_node_id=action_node_id, apply_on=apply_on, apply_on_text=""
     # )
     # response = await services.run_action(run_action_request)
-    # return response.to_dict()
+    # return response.model_dump(by_alias=True)
 
 
 async def reload_action(ls: LanguageServer, params):
@@ -384,4 +384,4 @@ async def __run_action(
 async def notify_changed_action_node(
     ls: LanguageServer, action: schemas.ActionTreeNode
 ) -> None:
-    ls.protocol.notify(method="actionsNodes/changed", params=action.to_dict())
+    ls.protocol.notify(method="actionsNodes/changed", params=action.model_dump(by_alias=True))

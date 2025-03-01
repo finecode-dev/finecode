@@ -1,41 +1,38 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 from enum import IntEnum
 from typing import Any
 
-from modapp.models.dataclass import DataclassModel
+import pydantic
+from pydantic.alias_generators import to_camel
 
 
-@dataclass
-class BaseModel(DataclassModel):
-    __model_config__ = {**DataclassModel.__model_config__, "camelCase": True}
+class BaseModel(pydantic.BaseModel):
+    model_config = pydantic.ConfigDict(
+        alias_generator=pydantic.AliasGenerator(
+            serialization_alias=to_camel,
+        )
+    )
 
 
-@dataclass
 class AddWorkspaceDirRequest(BaseModel):
     dir_path: str
 
 
-@dataclass
 class AddWorkspaceDirResponse(BaseModel): ...
 
 
-@dataclass
 class DeleteWorkspaceDirRequest(BaseModel):
     dir_path: str
 
 
-@dataclass
 class DeleteWorkspaceDirResponse(BaseModel): ...
 
 
-@dataclass
 class ListActionsRequest(BaseModel):
     parent_node_id: str = ""
 
 
-@dataclass
 class ActionTreeNode(BaseModel):
     node_id: str
     name: str
@@ -50,17 +47,14 @@ class ActionTreeNode(BaseModel):
         PRESET = 3
 
 
-@dataclass
 class ListActionsResponse(BaseModel):
     nodes: list[ActionTreeNode]
 
 
-@dataclass
 class RunActionRequest(BaseModel):
     action_node_id: str
     params: dict[str, Any]
 
 
-@dataclass
 class RunActionResponse(BaseModel):
     result: dict[str, Any]
