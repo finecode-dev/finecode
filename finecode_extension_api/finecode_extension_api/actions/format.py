@@ -2,14 +2,14 @@ import sys
 from pathlib import Path
 from typing import NamedTuple
 
-from finecode.extension_runner.interfaces import ifilemanager
+from finecode_extension_api.interfaces import ifilemanager
 
 if sys.version_info >= (3, 12):
     from typing import override
 else:
     from typing_extensions import override
 
-from finecode.extension_runner.code_action import (
+from finecode_extension_api.code_action import (
     CodeAction,
     CodeActionConfig,
     CodeActionConfigType,
