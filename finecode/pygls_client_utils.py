@@ -20,11 +20,14 @@ async def create_lsp_client_io(
 
     old_working_dir = os.getcwd()
     os.chdir(working_dir_path)
+
     # temporary remove VIRTUAL_ENV env variable to avoid starting in wrong venv
-    old_virtual_env_var = os.environ.get("VIRTUAL_ENV", "")
-    os.environ["VIRTUAL_ENV"] = ""
+    old_virtual_env_var = os.environ.pop("VIRTUAL_ENV", None)
+
     await ls.start_io(executable, *args)
-    os.environ["VIRTUAL_ENV"] = old_virtual_env_var
+    if old_virtual_env_var is not None:
+        os.environ["VIRTUAL_ENV"] = old_virtual_env_var
+
     os.chdir(old_working_dir)  # restore original working directory
     return ls
 
