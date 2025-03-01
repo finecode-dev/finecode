@@ -10,7 +10,6 @@ from loguru import logger
 
 from finecode.extension_runner import (
     bootstrap,
-    code_action,
     context,
     domain,
     global_state,
@@ -18,6 +17,7 @@ from finecode.extension_runner import (
     run_utils,
     schemas,
 )
+from finecode_extension_api import code_action
 
 
 class ActionFailedException(Exception): ...

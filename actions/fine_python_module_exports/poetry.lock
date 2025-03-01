@@ -79,7 +79,7 @@ description = "Cross-platform colored terminal text."
 optional = false
 python-versions = "!=3.0.*,!=3.1.*,!=3.2.*,!=3.3.*,!=3.4.*,!=3.5.*,!=3.6.*,>=2.7"
 groups = ["main"]
-markers = "sys_platform == \"win32\" or platform_system == \"Windows\""
+markers = "platform_system == \"Windows\" or sys_platform == \"win32\""
 files = [
     {file = "colorama-0.4.6-py2.py3-none-any.whl", hash = "sha256:4f1d9991f5acc0ca119f9d443620b77f9d6b33703e51011c16baf57afb285fc6"},
     {file = "colorama-0.4.6.tar.gz", hash = "sha256:08695f5cb7ed6e0531a20572697297273c47b8cae5a63ffc6d6ed5c201be6e44"},
@@ -145,6 +145,27 @@ type = "git"
 url = "ssh://git@github.com/Aksem/FineCode.git"
 reference = "HEAD"
 resolved_reference = "88cb88e0bd922a5c7af61de3064df30eb5398b43"
+
+[[package]]
+name = "finecode-extension-api"
+version = "0.1.0"
+description = ""
+optional = false
+python-versions = ">=3.11"
+groups = ["main"]
+files = []
+develop = false
+
+[package.dependencies]
+pydantic = ">=2.10.6,<3.0.0"
+typing-extensions = ">=4.12.2,<5.0.0"
+
+[package.source]
+type = "git"
+url = "ssh://git@github.com/Aksem/FineCode.git"
+reference = "HEAD"
+resolved_reference = "25a672c9b6f2727162756459410a747f80e0ead4"
+subdirectory = "finecode_extension_api"
 
 [[package]]
 name = "loguru"
@@ -466,4 +487,4 @@ dev = ["black (>=19.3b0) ; python_version >= \"3.6\"", "pytest (>=4.6.2)"]
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.11, <=3.13"
-content-hash = "ea4768725340aa1176fccfe15a190ecddbb94cf431eba57733b1112695fb1c86"
+content-hash = "60f378db87cbee389ee68596e6d0e16168fb48f4c5ed4d06146bc55c536d637a"

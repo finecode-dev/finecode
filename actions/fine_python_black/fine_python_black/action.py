@@ -9,7 +9,7 @@ import sys
 # from concurrent.futures import ThreadPoolExecutor
 # from pathlib import Path
 
-from finecode.extension_runner.actions.format import (
+from finecode_extension_api.actions.format import (
     FileInfo,
     FormatManyRunContext,
     FormatManyRunPayload,
@@ -30,13 +30,12 @@ from black.mode import Mode, TargetVersion
 
 # from black.report import Report
 
-from finecode import (
+from finecode_extension_api.code_action import (
     ActionContext,
     CodeActionConfig,
-    FormatCodeAction,
 )
-from finecode.extension_runner.actions import format as format_action
-from finecode.extension_runner.interfaces import icache, ilogger
+from finecode_extension_api.actions import format as format_action
+from finecode_extension_api.interfaces import icache, ilogger
 
 
 class BlackCodeActionConfig(CodeActionConfig):
@@ -58,7 +57,7 @@ class BlackCodeActionConfig(CodeActionConfig):
     python_cell_magics: bool = False  # it should be a set?
 
 
-class BlackCodeAction(FormatCodeAction[BlackCodeActionConfig]):
+class BlackCodeAction(format_action.FormatCodeAction[BlackCodeActionConfig]):
     CACHE_KEY = "BlackFormatter"
 
     def __init__(
@@ -137,7 +136,7 @@ def get_black_mode(config: BlackCodeActionConfig) -> Mode:
 class BlackManyCodeActionConfig(BlackCodeActionConfig): ...
 
 
-class BlackManyCodeAction(FormatCodeAction[BlackCodeActionConfig]):
+class BlackManyCodeAction(format_action.FormatCodeAction[BlackCodeActionConfig]):
     CACHE_KEY = "BlackFormatter"
 
     def __init__(

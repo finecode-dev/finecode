@@ -8,7 +8,7 @@ if sys.version_info >= (3, 12):
 else:
     from typing_extensions import TypedDict
 
-from finecode.extension_runner.code_action import (
+from finecode_extension_api.code_action import (
     CodeAction,
     CodeActionConfigType,
     RunActionContext,

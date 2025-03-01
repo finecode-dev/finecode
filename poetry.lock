@@ -431,6 +431,27 @@ type = "directory"
 url = "presets/fine_python_recommended"
 
 [[package]]
+name = "finecode-extension-api"
+version = "0.1.0"
+description = ""
+optional = false
+python-versions = ">=3.11"
+groups = ["main"]
+files = []
+develop = false
+
+[package.dependencies]
+pydantic = ">=2.10.6,<3.0.0"
+typing-extensions = ">=4.12.2,<5.0.0"
+
+[package.source]
+type = "git"
+url = "ssh://git@github.com/Aksem/FineCode.git"
+reference = "HEAD"
+resolved_reference = "25a672c9b6f2727162756459410a747f80e0ead4"
+subdirectory = "finecode_extension_api"
+
+[[package]]
 name = "flake8"
 version = "7.1.1"
 description = "the modular source code checker: pep8 pyflakes and co"
@@ -1129,4 +1150,4 @@ dev = ["black (>=19.3b0) ; python_version >= \"3.6\"", "pytest (>=4.6.2)"]
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.11, <= 3.13"
-content-hash = "714f89dcce17d97970f9fe58fdf8df511087bd61d48931af4226b2b1e59b22f9"
+content-hash = "ea9cf7ee34a0368073c1213662d0340b185b48ace68f33945f52d14bbafc6e05"

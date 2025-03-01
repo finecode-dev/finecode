@@ -3,7 +3,7 @@ from pathlib import Path
 
 from fine_python_ast import iast_provider
 
-from finecode.extension_runner.interfaces import icache, ifilemanager, ilogger
+from finecode_extension_api.interfaces import icache, ifilemanager, ilogger
 
 
 class PythonSingleAstProvider(iast_provider.IPythonSingleAstProvider):

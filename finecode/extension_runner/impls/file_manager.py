@@ -2,7 +2,7 @@ import hashlib
 from pathlib import Path
 from typing import Callable
 
-from finecode.extension_runner.interfaces import ifilemanager, ilogger
+from finecode_extension_api.interfaces import ifilemanager, ilogger
 from finecode import pygls_types_utils
 
 

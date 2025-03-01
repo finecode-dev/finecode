@@ -1,7 +1,7 @@
 from pathlib import Path
 from typing import Any
 
-from finecode.extension_runner.interfaces import icache, ifilemanager, ilogger
+from finecode_extension_api.interfaces import icache, ifilemanager, ilogger
 
 
 class InMemoryCache(icache.ICache):

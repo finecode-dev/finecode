@@ -26,7 +26,7 @@ from finecode.extension_runner.impls import (
     inmemory_cache,
     loguru_logger,
 )
-from finecode.extension_runner.interfaces import (
+from finecode_extension_api.interfaces import (
     icache,
     icommandrunner,
     ifilemanager,

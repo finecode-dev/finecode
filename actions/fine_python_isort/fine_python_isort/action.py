@@ -5,15 +5,17 @@ from io import StringIO
 import isort.api as isort_api
 import isort.settings as isort_settings
 
-from finecode import (
+from finecode_extension_api.code_action import (
     ActionContext,
     CodeActionConfig,
+)
+from finecode_extension_api.actions.format import (
     FormatCodeAction,
     FormatRunContext,
     FormatRunPayload,
     FormatRunResult,
 )
-from finecode.extension_runner.interfaces import icache, ilogger
+from finecode_extension_api.interfaces import icache, ilogger
 
 
 class IsortCodeActionConfig(CodeActionConfig):

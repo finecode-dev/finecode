@@ -14,6 +14,7 @@ dependencies = [
     "command_runner==1.7.*",
     "platformdirs==4.3.*",
     "pygls==2.0.0-a2",
+    "finecode_extension_api @ git+ssh://git@github.com:Aksem/FineCode.git#subdirectory=finecode_extension_api",
 ]
 
 

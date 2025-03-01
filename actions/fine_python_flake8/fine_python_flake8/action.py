@@ -8,22 +8,19 @@ from flake8 import checker, processor, style_guide, violation
 from flake8.api import legacy as flake8
 from flake8.plugins import finder
 
-from finecode import (
-    CodeActionConfig,
+from finecode_extension_api.actions.lint import (
     LintCodeAction,
-    LintMessage,
-    LintRunPayload,
-    LintRunResult,
-)
-from finecode.extension_runner.actions.lint import (
     LintManyRunPayload,
     LintManyRunResult,
     LintMessageSeverity,
+    LintMessage,
+    LintRunPayload,
+    LintRunResult,
     Position,
     Range,
 )
-from finecode.extension_runner.code_action import ActionContext
-from finecode.extension_runner.interfaces import ifilemanager, ilogger
+from finecode_extension_api.code_action import ActionContext, CodeActionConfig
+from finecode_extension_api.interfaces import ifilemanager, ilogger
 
 
 class Flake8CodeActionConfig(CodeActionConfig):
