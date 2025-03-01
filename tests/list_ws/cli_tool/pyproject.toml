@@ -7,8 +7,8 @@ readme = "README.md"
 requires-python = ">=3.11, <= 3.13"
 dependencies = [
     "finecode @ git+ssh://git@github.com:Aksem/FineCode.git",
-    "fine_python_black @ git+ssh://git@github.com:Aksem/FineCode.git#subdirectory=actions/fine_python_black/",
-    "fine_python_isort @ git+ssh://git@github.com:Aksem/FineCode.git#subdirectory=actions/fine_python_isort/",
+    "fine_python_black @ git+ssh://git@github.com:Aksem/FineCode.git#subdirectory=actions/fine_python_black",
+    "fine_python_isort @ git+ssh://git@github.com:Aksem/FineCode.git#subdirectory=actions/fine_python_isort",
 ]
 
 

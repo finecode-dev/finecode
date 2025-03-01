@@ -157,11 +157,14 @@ develop = false
 
 [package.dependencies]
 black = ">=25.1.0,<26.0.0"
-finecode = {path = "/home/user/Development/FineCode/finecode"}
+finecode_extension_api = {git = "ssh://git@github.com/Aksem/FineCode.git", subdirectory = "finecode_extension_api"}
 
 [package.source]
-type = "directory"
-url = "../../../actions/fine_python_black"
+type = "git"
+url = "ssh://git@github.com/Aksem/FineCode.git"
+reference = "HEAD"
+resolved_reference = "f946ab9a08ad4d031df9c1b8bc40897238271667"
+subdirectory = "actions/fine_python_black/"
 
 [[package]]
 name = "fine-python-isort"
@@ -174,12 +177,15 @@ files = []
 develop = false
 
 [package.dependencies]
-finecode = {path = "/home/user/Development/FineCode/finecode"}
+finecode_extension_api = {git = "ssh://git@github.com/Aksem/FineCode.git", subdirectory = "finecode_extension_api"}
 isort = ">=5.13,<6"
 
 [package.source]
-type = "directory"
-url = "../../../actions/fine_python_isort"
+type = "git"
+url = "ssh://git@github.com/Aksem/FineCode.git"
+reference = "HEAD"
+resolved_reference = "f946ab9a08ad4d031df9c1b8bc40897238271667"
+subdirectory = "actions/fine_python_isort/"
 
 [[package]]
 name = "finecode"
@@ -194,6 +200,7 @@ develop = false
 [package.dependencies]
 click = "==8.1.*"
 command_runner = "==1.7.*"
+finecode_extension_api = {git = "ssh://git@github.com/Aksem/FineCode.git", subdirectory = "finecode_extension_api"}
 loguru = "==0.7.*"
 platformdirs = "==4.3.*"
 pydantic = "==2.10.*"
@@ -202,8 +209,31 @@ tomlkit = "==0.11.*"
 watchdog = "==4.0.*"
 
 [package.source]
-type = "directory"
-url = "../../.."
+type = "git"
+url = "ssh://git@github.com/Aksem/FineCode.git"
+reference = "HEAD"
+resolved_reference = "f946ab9a08ad4d031df9c1b8bc40897238271667"
+
+[[package]]
+name = "finecode-extension-api"
+version = "0.1.0"
+description = ""
+optional = false
+python-versions = ">=3.11"
+groups = ["main"]
+files = []
+develop = false
+
+[package.dependencies]
+pydantic = ">=2.10.6,<3.0.0"
+typing-extensions = ">=4.12.2,<5.0.0"
+
+[package.source]
+type = "git"
+url = "ssh://git@github.com/Aksem/FineCode.git"
+reference = "HEAD"
+resolved_reference = "f946ab9a08ad4d031df9c1b8bc40897238271667"
+subdirectory = "finecode_extension_api"
 
 [[package]]
 name = "isort"
@@ -576,4 +606,4 @@ dev = ["black (>=19.3b0) ; python_version >= \"3.6\"", "pytest (>=4.6.2)"]
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.11, <= 3.13"
-content-hash = "da68154e434a629d3c9d9709c95d5600249a1bce58b7146c66c03bc65ba78502"
+content-hash = "fb8778b2892263ada8cdfbe05613827f2750f3340b4a1a4abd440719d112cf5b"

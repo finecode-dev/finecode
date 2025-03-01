@@ -113,6 +113,7 @@ develop = false
 [package.dependencies]
 click = "==8.1.*"
 command_runner = "==1.7.*"
+finecode_extension_api = {git = "ssh://git@github.com/Aksem/FineCode.git", subdirectory = "finecode_extension_api"}
 loguru = "==0.7.*"
 platformdirs = "==4.3.*"
 pydantic = "==2.10.*"
@@ -121,8 +122,31 @@ tomlkit = "==0.11.*"
 watchdog = "==4.0.*"
 
 [package.source]
-type = "directory"
-url = "../../.."
+type = "git"
+url = "ssh://git@github.com/Aksem/FineCode.git"
+reference = "HEAD"
+resolved_reference = "f946ab9a08ad4d031df9c1b8bc40897238271667"
+
+[[package]]
+name = "finecode-extension-api"
+version = "0.1.0"
+description = ""
+optional = false
+python-versions = ">=3.11"
+groups = ["main"]
+files = []
+develop = false
+
+[package.dependencies]
+pydantic = ">=2.10.6,<3.0.0"
+typing-extensions = ">=4.12.2,<5.0.0"
+
+[package.source]
+type = "git"
+url = "ssh://git@github.com/Aksem/FineCode.git"
+reference = "HEAD"
+resolved_reference = "f946ab9a08ad4d031df9c1b8bc40897238271667"
+subdirectory = "finecode_extension_api"
 
 [[package]]
 name = "loguru"
@@ -444,4 +468,4 @@ dev = ["black (>=19.3b0) ; python_version >= \"3.6\"", "pytest (>=4.6.2)"]
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.11, <= 3.13"
-content-hash = "515be900e77e4b3eccbe6b39d04429133c2e1c6b50ab6d5d45f777be9965aca3"
+content-hash = "16960f5c0dd594a910250ebbd40141b8e5a45eac6867e0448d56cf5b6cf7631b"
