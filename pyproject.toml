@@ -24,7 +24,7 @@ build-backend = "poetry.core.masonry.api"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^7.4.3"
-fine_python_aksem = { path = "../fine_python_aksem" }
+fine_python_aksem = { git = "git@github.com:Aksem/fine_python_aksem.git" }
 fine_python_recommended = { path = "presets/fine_python_recommended" }
 fine_python_import_linter = { path = "actions/fine_python_import_linter" }
 anyio = "^4.4.0"
