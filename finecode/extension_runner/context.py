@@ -1,7 +1,7 @@
 from dataclasses import dataclass, field
 
 import finecode.extension_runner.domain as domain
-from finecode import CodeAction
+from finecode_extension_api.code_action import CodeAction
 
 
 @dataclass
