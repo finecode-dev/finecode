@@ -24,6 +24,8 @@ async def find_action_project_and_run_in_runner(
         )
     except find_project.FileNotInWorkspaceException:
         return None
+    except find_project.FileHasNotActionException as error:
+        raise error
     except ValueError as error:
         logger.warning(f"Skip {action_name} on {file_path}: {error}")
         raise ActionRunFailed(error)
@@ -31,10 +33,12 @@ async def find_action_project_and_run_in_runner(
     project_status = ws_context.ws_projects[project_path].status
     if project_status != domain.ProjectStatus.RUNNING:
         logger.info(
-            f"Extension runner {project_path} is not running, status: {project_status.name}"
+            f"Extension runner {project_path} is not running, "
+            f"status: {project_status.name}"
         )
         raise ActionRunFailed(
-            f"Extension runner {project_path} is not running, status: {project_status.name}"
+            f"Extension runner {project_path} is not running, "
+            f"status: {project_status.name}"
         )
 
     runner = ws_context.ws_projects_extension_runners[project_path]

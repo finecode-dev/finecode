@@ -9,6 +9,9 @@ from finecode.workspace_manager import domain
 class FileNotInWorkspaceException(BaseException): ...
 
 
+class FileHasNotActionException(BaseException): ...
+
+
 def find_project_with_action_for_file(
     file_path: Path,
     action_name: str,
@@ -16,8 +19,8 @@ def find_project_with_action_for_file(
 ) -> Path:
     """
     NOTE: It can be that file_path belongs to one project, but this project doesn't
-          implemented the action we are looking for. In this case case we need to check parent project
-          and so on.
+          implemented the action we are looking for. In this case case we need to check
+          parent project and so on.
     """
     logger.trace(
         f"Find project with action {action_name} for file {file_path.as_posix()}"
@@ -37,7 +40,8 @@ def find_project_with_action_for_file(
 
     if len(file_projects_pathes) == 0:
         logger.debug(
-            f"File {file_path} doesn't belong to one of projects in workspace. Workspace projects: {sorted_project_dirs}"
+            f"File {file_path} doesn't belong to one of projects in "
+            f"workspace. Workspace projects: {sorted_project_dirs}"
         )
         raise FileNotInWorkspaceException(
             f"File {file_path} doesn't belong to one of projects in workspace"
@@ -51,8 +55,9 @@ def find_project_with_action_for_file(
         )
         is not None
     ):
+        project_path = ws_context.project_path_by_dir_and_action[dir_path_str][action_name]
         logger.trace(
-            f"Found in context: {ws_context.project_path_by_dir_and_action[dir_path_str][action_name]}"
+            f"Found in context: {project_path}"
         )
         return ws_context.project_path_by_dir_and_action[dir_path_str][action_name]
 
@@ -67,7 +72,8 @@ def find_project_with_action_for_file(
                 continue
             else:
                 raise ValueError(
-                    f"Action is related to project {project_dir_path} but its action cannot be resolved({project.status})"
+                    f"Action is related to project {project_dir_path} but its action "
+                    f"cannot be resolved({project.status})"
                 )
 
         try:
@@ -80,8 +86,9 @@ def find_project_with_action_for_file(
         ] = project_dir_path
         return project_dir_path
 
-    raise ValueError(
-        f"File belongs to project(s), but no of them has action {action_name}: {file_projects_pathes}"
+    raise FileHasNotActionException(
+        f"File belongs to project(s), but no of them has action {action_name}: "
+        f"{file_projects_pathes}"
     )
 
 

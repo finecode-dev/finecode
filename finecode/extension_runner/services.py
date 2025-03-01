@@ -1,10 +1,10 @@
 import importlib
 import inspect
 import sys
+import time
 import types
 from pathlib import Path
 from typing import Any, Callable, Type
-import time
 
 from loguru import logger
 
@@ -55,8 +55,8 @@ async def update_config(
         ),
     )
 
-    # currently update_config is called only once directly after runner start. So we can bootstrap
-    # here. Should be changed after adding updating configuration on the fly.
+    # currently update_config is called only once directly after runner start. So we can
+    # bootstrap here. Should be changed after adding updating configuration on the fly.
     bootstrap.bootstrap(
         get_document_func=get_document, save_document_func=save_document
     )
@@ -98,7 +98,8 @@ def get_action_payload_type(
                 )
             except ModuleNotFoundError as error:
                 logger.error(
-                    f"Source of action {action.name} '{action.source}' could not be imported"
+                    f"Source of action {action.name} '{action.source}' "
+                    "could not be imported"
                 )
                 logger.error(error)
                 return
@@ -179,8 +180,12 @@ async def run_action(
         try:
             action_obj = project_def.actions[action_name]
         except KeyError:
+            available_actions_str = ",".join(
+                [action_name for action_name in project_def.actions]
+            )
             logger.warning(
-                f"Action {request.action_name} not found. Available actions: {','.join([action_name for action_name in project_def.actions])}"
+                f"Action {request.action_name} not found. "
+                f"Available actions: {available_actions_str}"
             )
             # TODO: raise error
             return schemas.RunActionResponse({})
@@ -191,11 +196,13 @@ async def run_action(
         action_to_process += action_obj.subactions
 
     # design decisions:
-    # - keep payload unchanged between all subaction runs. For intermediate data use run_context
-    # - result is modifiable. Result of each subaction updates the previous result. In case of
-    #   failure of subaction, at least result of all previous subactions is returned. (experimental)
-    #   TODO: Would it be better to provide interface for intermiate results like messages from linter
-    #   and make result non-modifiable?
+    # - keep payload unchanged between all subaction runs.
+    #   For intermediate data use run_context
+    # - result is modifiable. Result of each subaction updates the previous result.
+    #   In case of failure of subaction, at least result of all previous subactions is
+    #   returned. (experimental)
+    #   TODO: Would it be better to provide interface for intermiate results like
+    #         messages from linter and make result non-modifiable?
     # TODO: cache
     payload_type = get_action_payload_type(actions_to_execute)
     if payload_type is not None:
@@ -270,7 +277,8 @@ async def execute_action_handler(
             )
         except ModuleNotFoundError as error:
             logger.error(
-                f"Source of action config {action.name} '{action.source}Config' could not be imported"
+                f"Source of action config {action.name} "
+                f"'{action.source}Config' could not be imported"
             )
             logger.error(error)
             return
@@ -340,7 +348,9 @@ def reload_action(action_name: str) -> None:
     try:
         action_obj = project_def.actions[action_name]
     except KeyError:
-        available_actions_str = ','.join([action_name for action_name in project_def.actions])
+        available_actions_str = ",".join(
+            [action_name for action_name in project_def.actions]
+        )
         logger.warning(
             f"Action {action_name} not found. Available actions: {available_actions_str}"
         )
