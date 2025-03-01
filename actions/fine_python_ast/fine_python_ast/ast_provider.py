@@ -33,7 +33,10 @@ class PythonSingleAstProvider(iast_provider.IPythonSingleAstProvider):
         file_content: str = await self.file_manager.get_content(file_path)
         file_version: str = await self.file_manager.get_file_version(file_path)
 
-        ast_instance = ast.parse(file_content)
+        try:
+            ast_instance = ast.parse(file_content)
+        except SyntaxError as error:
+            raise error
 
         await self.cache.save_file_cache(
             file_path=file_path,

@@ -12,8 +12,8 @@ from finecode_extension_api.actions.lint import (
     LintCodeAction,
     LintManyRunPayload,
     LintManyRunResult,
-    LintMessageSeverity,
     LintMessage,
+    LintMessageSeverity,
     LintRunPayload,
     LintRunResult,
     Position,
@@ -67,7 +67,12 @@ class Flake8CodeAction(LintCodeAction[Flake8CodeActionConfig]):
     async def run(self, payload: LintRunPayload) -> LintRunResult:
         file_path = payload.file_path
         file_content = await self.file_manager.get_content(file_path)
-        file_ast = await self.ast_provider.get_file_ast(file_path=file_path)
+
+        try:
+            file_ast = await self.ast_provider.get_file_ast(file_path=file_path)
+        except SyntaxError:
+            return LintRunResult(messages={})
+
         self.flake8_style_guide._application.options.filenames = [str(file_path)]
         lint_messages = run_flake8_on_single_file(
             file_path=file_path,
@@ -202,7 +207,11 @@ class Flake8ManyCodeAction(LintCodeAction[Flake8ManyCodeActionConfig]):
         # TODO: multiprocess pool
         for file_path in file_paths:
             file_content = await self.file_manager.get_content(file_path)
-            file_ast = await self.ast_provider.get_file_ast(file_path=file_path)
+            try:
+                file_ast = await self.ast_provider.get_file_ast(file_path=file_path)
+            except SyntaxError:
+                continue
+
             lint_messages = run_flake8_on_single_file(
                 file_path=file_path,
                 file_content=file_content,
@@ -211,7 +220,6 @@ class Flake8ManyCodeAction(LintCodeAction[Flake8ManyCodeActionConfig]):
                 decider=self.flake8_decider,
             )
             messages[str(file_path)] = lint_messages
-
 
         return LintManyRunResult(messages=messages)
 
