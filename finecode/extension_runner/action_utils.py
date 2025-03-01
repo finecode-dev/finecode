@@ -18,7 +18,8 @@ def permanent_or_tmp_file_path(file_path: Path | None, file_content: str):
 
 @contextmanager
 def tmp_file_copy_path(file_path: Path | None, file_content: str):
-    # the same extension is important, because some tools like black check file extension as well
+    # the same extension is important, because some tools like black check file
+    # extension as well
     with tempfile.NamedTemporaryFile(
         suffix=file_path.suffix if file_path is not None else None
     ) as tmp_file:
@@ -66,8 +67,8 @@ def tmp_dir_copy_path(
 
 
 class FileVersion(NamedTuple):
-    # currently we compare only the hash, but we could use the same approach as mypy and compare
-    # first change time of the file and hash only if needed
+    # currently we compare only the hash, but we could use the same approach as mypy and
+    # compare first change time of the file and hash only if needed
     hash: str
 
 

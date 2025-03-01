@@ -176,8 +176,8 @@ class BlackManyCodeAction(format_action.FormatCodeAction[BlackCodeActionConfig])
             # not flake8 itself
             self.logger.disable("fine_python_black")
 
-            # use part of `format_file_in_place` function from `black.__init__` we need to
-            # format raw text.
+            # use part of `format_file_in_place` function from `black.__init__` we need
+            # to format raw text.
             try:
                 # `fast` whether to validate code after formatting
                 # `lines` is range to format
@@ -268,7 +268,8 @@ class BlackManyCodeAction(format_action.FormatCodeAction[BlackCodeActionConfig])
 #     to be started outside of event loop and operates event loops of the whole program.
 #     Rework to allow to run as a coroutine in another program.
 
-#     Removed code is kept as comments to make future migrations to new version easier."""
+#     Removed code is kept as comments to make future migrations to new version easier.
+#     """
 #     # maybe_install_uvloop()
 
 #     executor: Executor

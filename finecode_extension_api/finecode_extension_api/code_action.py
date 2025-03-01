@@ -1,15 +1,8 @@
 from __future__ import annotations
 
-
-import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Generic, TypeVar
-
-if sys.version_info >= (3, 12):
-    from typing import override
-else:
-    from typing_extensions import override
 
 from pydantic import BaseModel
 
@@ -29,10 +22,11 @@ RunPayloadType = TypeVar("RunPayloadType", bound=RunActionPayload)
 
 
 class RunActionContext:
-    # data object to save data between action steps(only during one run, after run data is removed)
-    # keep it simple, without business logic, just data storage, but you still may initialize values
-    # in constructor using dependency injection if needed to avoid handling in action cases when run
-    # context is not initialized and is initialized already.
+    # data object to save data between action steps(only during one run, after run data
+    # is removed). Keep it simple, without business logic, just data storage, but you
+    # still may initialize values in constructor using dependency injection if needed
+    # to avoid handling in action cases when run context is not initialized and is
+    # initialized already.
 
     async def init(self, initial_payload: RunPayloadType) -> None: ...
 
@@ -60,8 +54,8 @@ class CodeAction(
     - workspace definition (if action is enabled in workspace definition)
     - preset or composable action, it depends where action comes from
 
-    In action implementation there is no action config as such, because config definition includes
-    default values.
+    In action implementation there is no action config as such, because config
+    definition includes default values.
     """
 
     LANGUAGE: str = "python"

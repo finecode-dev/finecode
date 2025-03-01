@@ -59,8 +59,8 @@ class FileManager(ifilemanager.IFileManager):
             with open(file_path, "rb") as f:
                 file_version = hashlib.file_digest(f, "sha256").hexdigest()
 
-            # 12 chars is enough to distinguish. The whole value is 64 chars length and is not really
-            # needed in logs
+            # 12 chars is enough to distinguish. The whole value is 64 chars length and
+            # is not really needed in logs
             file_version = f"{file_version[:12]}..."
 
         self.logger.debug(f"Version of {file_path}: {file_version}")

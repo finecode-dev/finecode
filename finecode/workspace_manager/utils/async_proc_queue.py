@@ -2,7 +2,7 @@ import asyncio
 import queue
 from concurrent.futures import ThreadPoolExecutor
 from multiprocessing import Manager, cpu_count
-from typing import Any, Generic, TypeVar, cast
+from typing import Generic, TypeVar, cast
 
 
 class QueueEnd:

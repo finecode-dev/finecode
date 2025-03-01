@@ -79,7 +79,8 @@ async def handle_changed_ws_dirs(added: list[Path], removed: list[Path]) -> None
             global_state.ws_context.ws_dirs_paths.remove(removed_ws_dir_path)
         except ValueError:
             logger.warning(
-                f"Ws Directory {removed_ws_dir_path} was removed from ws, but not found in ws context"
+                f"Ws Directory {removed_ws_dir_path} was removed from ws,"
+                " but not found in ws context"
             )
 
     await runner_manager.update_runners(global_state.ws_context)
@@ -95,8 +96,8 @@ async def restart_extension_runner(runner_working_dir_path: Path) -> None:
         logger.error(f"Cannot find runner for {runner_working_dir_path}")
         return
 
-    # `stop_extension_runner` waits for end of the process, explicit shutdown request is required
-    # to stop it
+    # `stop_extension_runner` waits for end of the process, explicit shutdown request
+    # is required to stop it
     # await runner.client.protocol.send_request_async(types.SHUTDOWN)
     await runner_manager.stop_extension_runner(runner)
     new_runner = await runner_manager.start_extension_runner(
@@ -108,12 +109,13 @@ async def restart_extension_runner(runner_working_dir_path: Path) -> None:
 
 
 async def on_shutdown():
-    get_running_runners = lambda: [
-        runner
-        for runner in global_state.ws_context.ws_projects_extension_runners.values()
-        if global_state.ws_context.ws_projects[runner.working_dir_path].status
-        == domain.ProjectStatus.RUNNING
-    ]
+    def get_running_runners():
+        return [
+            runner
+            for runner in global_state.ws_context.ws_projects_extension_runners.values()
+            if global_state.ws_context.ws_projects[runner.working_dir_path].status
+            == domain.ProjectStatus.RUNNING
+        ]
     logger.info("Check that all runners stop in 5 seconds")
     seconds_waited = 0
     running_runners = get_running_runners()

@@ -53,9 +53,6 @@ async def document_diagnostic(
 
     file_path = pygls_types_utils.uri_str_to_path(params.text_document.uri)
 
-    # TODO: check whether 'lint' action is available and enabled
-    # TODO: file is read from file system. If it was changed and not saved in IDE, changes are ignored.
-    #       read file using LSP API
     response = await proxy_utils.find_action_project_and_run_in_runner(
         file_path=file_path,
         action_name="lint",
@@ -113,7 +110,8 @@ async def workspace_diagnostic(
     # find which runner is responsible for which files
     # currently FineCode supports only raw python files, find them in each ws project
     # exclude projects without finecode
-    # if both parent and child projects have lint action, exclude files of chid from parent
+    # if both parent and child projects have lint action, exclude files of chid from
+    # parent
     # check which runners are active and run in them
 
     projects = global_state.ws_context.ws_projects
@@ -156,7 +154,8 @@ async def workspace_diagnostic(
         project = global_state.ws_context.ws_projects[project_dir_path]
         if project.status != domain.ProjectStatus.RUNNING:
             logger.warning(
-                f"Runner of project {project_dir_path} is not running, lint in it will not be executed"
+                f"Runner of project {project_dir_path} is not running,"
+                " lint in it will not be executed"
             )
             continue
 
@@ -204,6 +203,6 @@ async def workspace_diagnostic(
                 )
                 items.append(new_report)
 
-    # lsprotocol allows None as return value, but then vscode throws error 'cannot read items of null'
-    # keep empty report instead
+    # lsprotocol allows None as return value, but then vscode throws error
+    # 'cannot read items of null'. keep empty report instead
     return types.WorkspaceDiagnosticReport(items=items)

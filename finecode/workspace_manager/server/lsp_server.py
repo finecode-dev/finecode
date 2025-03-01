@@ -17,8 +17,9 @@ from finecode.workspace_manager.server import global_state, schemas, services
 
 
 def create_lsp_server() -> LanguageServer:
-    # handle all requests explicitly because there are different types of requests: project-specific,
-    # workspace-wide. Some Workspace-wide support partial responses, some not.
+    # handle all requests explicitly because there are different types of requests:
+    # project-specific, workspace-wide. Some Workspace-wide support partial responses,
+    # some not.
     server = LanguageServer("FineCode_Workspace_Manager_Server", "v1")
 
     register_initialized_feature = server.feature(types.INITIALIZED)
@@ -138,8 +139,9 @@ LOG_LEVEL_MAP = {
 
 async def _on_initialized(ls: LanguageServer, params: types.InitializedParams):
     def pass_log_to_ls_client(log) -> None:
-        # disabling and enabling logging of pygls package is required to avoid logging loop,
-        # because there are logs inside of log_trace and window_log_message functions
+        # disabling and enabling logging of pygls package is required to avoid logging
+        # loop, because there are logs inside of log_trace and window_log_message
+        # functions
         logger.disable("pygls")
         if log.record["level"].no < 10:
             # trace
@@ -155,7 +157,8 @@ async def _on_initialized(ls: LanguageServer, params: types.InitializedParams):
         # TODO: unify with main
         logger.configure(activation=[("pygls.protocol.json_rpc", False)])
 
-    # loguru doesn't support passing partial with ls parameter, use nested function instead
+    # loguru doesn't support passing partial with ls parameter, use nested function
+    # instead
     logger.add(sink=pass_log_to_ls_client)
 
     async def get_document(params):
@@ -203,10 +206,12 @@ async def _workspace_did_change_workspace_folders(
     logger.trace(f"Workspace dirs were changed: {params}")
     await services.handle_changed_ws_dirs(
         added=[
-            Path(ws_folder.uri.lstrip("file://")) for ws_folder in params.event.added
+            Path(ws_folder.uri.removeprefix("file://"))
+            for ws_folder in params.event.added
         ],
         removed=[
-            Path(ws_folder.uri.lstrip("file://")) for ws_folder in params.event.removed
+            Path(ws_folder.uri.removeprefix("file://"))
+            for ws_folder in params.event.removed
         ],
     )
 

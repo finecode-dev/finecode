@@ -117,8 +117,8 @@ async def stop_extension_runner(runner: runner_info.ExtensionRunnerInfo) -> None
     if runner.client is not None:
         logger.trace(f"Trying to stop extension runner {runner.working_dir_path}")
         if not runner.client.stopped:
-            # `runner.client.stop()` doesn't work, it just hangs. Need to be investigated. Terminate
-            # forcefully until the problem is properly solved.
+            # `runner.client.stop()` doesn't work, it just hangs. Need to be
+            # investigated. Terminate forcefully until the problem is properly solved.
             runner.client._server.terminate()
             await runner.client.stop()
             logger.trace(
@@ -232,7 +232,7 @@ async def _init_runner(
         await runner_client.update_config(
             runner, all_actions_dict, project.actions_configs
         )
-    except runner_client.BaseRunnerRequestException as e:
+    except runner_client.BaseRunnerRequestException:
         project.status = domain.ProjectStatus.RUNNER_FAILED
         await notify_project_changed(project)
         runner.initialized_event.set()

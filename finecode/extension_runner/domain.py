@@ -38,4 +38,5 @@ class TextDocumentInfo:
         self.text = text
 
     def __str__(self) -> str:
-        return f'TextDocumentInfo(uri="{self.uri}", version="{self.version}", text="{self.text}")'
+        return (f'TextDocumentInfo(uri="{self.uri}", version="{self.version}",'
+                f' text="{self.text}")')

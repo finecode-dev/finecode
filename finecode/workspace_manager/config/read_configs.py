@@ -200,9 +200,9 @@ async def collect_config_from_py_presets(
 
 def _merge_projects_configs(config1: dict[str, Any], config2: dict[str, Any]) -> None:
     # merge config2 in config1 without overwriting
-    if not "tool" in config1:
+    if "tool" not in config1:
         config1["tool"] = {}
-    if not "finecode" in config1["tool"]:
+    if "finecode" not in config1["tool"]:
         config1["tool"]["finecode"] = {}
 
     tool_finecode_config1 = config1["tool"]["finecode"]
@@ -212,7 +212,7 @@ def _merge_projects_configs(config1: dict[str, Any], config2: dict[str, Any]) ->
         if key == "action":
             # first process actions explicitly to merge correct configs
             assert isinstance(value, dict)
-            if not "action" in tool_finecode_config1:
+            if "action" not in tool_finecode_config1:
                 tool_finecode_config1["action"] = {}
             for action_name, action_info in value.items():
                 if action_name not in tool_finecode_config1["action"]:
@@ -254,27 +254,27 @@ def _merge_preset_configs(config1: dict[str, Any], config2: dict[str, Any]) -> N
         or new_views is not None
         or new_actions_defs_and_configs is not None
     ):
-        if not "tool" in config1:
+        if "tool" not in config1:
             config1["tool"] = {}
-        if not "finecode" in config1["tool"]:
+        if "finecode" not in config1["tool"]:
             config1["tool"]["finecode"] = {}
-        if not "preset" in config1["tool"]["finecode"]:
+        if "preset" not in config1["tool"]["finecode"]:
             config1["tool"]["finecode"]["preset"] = {}
 
         if new_actions is not None:
-            if not "actions" in config1["tool"]["finecode"]["preset"]:
+            if "actions" not in config1["tool"]["finecode"]["preset"]:
                 config1["tool"]["finecode"]["preset"]["actions"] = []
             config1["tool"]["finecode"]["preset"]["actions"].extend(new_actions)
             del config2["tool"]["finecode"]["preset"]["actions"]
 
         if new_views is not None:
-            if not "views" in config1["tool"]["finecode"]["preset"]:
+            if "views" not in config1["tool"]["finecode"]["preset"]:
                 config1["tool"]["finecode"]["preset"]["views"] = []
             config1["tool"]["finecode"]["preset"]["views"].extend(new_views)
             del config2["tool"]["finecode"]["preset"]["views"]
 
         if new_actions_defs_and_configs is not None:
-            if not "action" in config1["tool"]["finecode"]["preset"]:
+            if "action" not in config1["tool"]["finecode"]["preset"]:
                 config1["tool"]["finecode"]["preset"]["action"] = {}
 
             for action_name, action_info in new_actions_defs_and_configs.items():
@@ -315,9 +315,9 @@ def _preset_config_to_project_config(preset_config: dict[str, Any]) -> dict[str,
         preset_config.get("tool", {}).get("finecode", {}).get("preset", None)
         is not None
     ):
-        if not "tool" in result:
+        if "tool" not in result:
             result["tool"] = {}
-        if not "finecode" in result["tool"]:
+        if "finecode" not in result["tool"]:
             result["tool"]["finecode"] = {}
 
         result["tool"]["finecode"].update(preset_config["tool"]["finecode"]["preset"])

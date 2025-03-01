@@ -50,8 +50,9 @@ class LintRunPayload(RunActionPayload):
 
 
 class LintRunResult(RunActionResult):
-    # dict key should be Path, but pygls fails to handle slashes in dict keys, use strings with
-    # posix representation of path instead until the problem is properly solved
+    # dict key should be Path, but pygls fails to handle slashes in dict keys, use
+    # strings with posix representation of path instead until the problem is properly
+    # solved
     messages: dict[str, list[LintMessage]]
 
     def update(self, other: RunActionResult) -> None:
@@ -63,7 +64,8 @@ class LintRunResult(RunActionResult):
 class LintCodeAction(
     CodeAction[CodeActionConfigType, LintRunPayload, RunActionContext, LintRunResult]
 ):
-    # lint actions only analyses code, they don't modify it. This allows to run them in parallel.
+    # lint actions only analyses code, they don't modify it. This allows to run them in
+    # parallel.
     ...
     # APPLIES_ONLY_ON_FILE: bool = False
     # NEEDS_WHOLE_PROJECT: bool = False

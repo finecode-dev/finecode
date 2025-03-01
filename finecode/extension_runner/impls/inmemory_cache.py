@@ -52,7 +52,8 @@ class InMemoryCache(icache.ICache):
                 cached_value = file_cache[1][key]
             except KeyError:
                 self.logger.debug(
-                    f"Cached value for file {file_path} doesn't contain key {key}, cache miss"
+                    f"Cached value for file {file_path} doesn't contain key"
+                    f" {key}, cache miss"
                 )
                 raise icache.CacheMissException()
 

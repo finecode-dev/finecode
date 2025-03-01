@@ -20,10 +20,11 @@ from finecode_extension_api.code_action import (
 
 
 class FormatRunPayload(RunActionPayload):
-    # `apply_on` can be used as identifier of target file e.g. for caching. But it should never be
-    # use reading the file content even using finecode file manager, because formatting can be
-    # multi-step and output of previous step is input for the next step without saving permanently
-    # in file. Use `apply_on_text` as source of target file.
+    # `apply_on` can be used as identifier of target file e.g. for caching. But it
+    # should never be use reading the file content even using finecode file manager,
+    # because formatting can be multi-step and output of previous step is input for the
+    # next step without saving permanently in file. Use `apply_on_text` as source of
+    # target file.
     file_path: Path
     save: bool
 
@@ -37,13 +38,13 @@ class FormatRunContext(RunActionContext):
         self.file_manager = file_manager
 
         self.file_content: str = ""
-        # file version is needed to allow proper(version-specific) caching in action. There are at
-        # least 2 solutions:
+        # file version is needed to allow proper(version-specific) caching in action.
+        # There are at least 2 solutions:
         # - pass file version as payload
         # - use run-specific action context
-        # We use the second one, because the first one would require additional annotation of payload
-        # parameters to distinguish between user inputs and values added during run, this would make
-        # handling of user inputs more tricky.
+        # We use the second one, because the first one would require additional
+        # annotation of payload parameters to distinguish between user inputs and values
+        # added during run, this would make handling of user inputs more tricky.
         self.file_version: str = ""
 
     async def init(self, initial_payload: FormatRunPayload) -> None:
@@ -71,8 +72,8 @@ class FormatCodeAction(
         CodeActionConfigType, FormatRunPayload, FormatRunContext, FormatRunResult
     ]
 ):
-    # format actions can both analyse and modify the code. Analysis is required for example to
-    # report errors that cannot be fixed automatically.
+    # format actions can both analyse and modify the code. Analysis is required for
+    # example to report errors that cannot be fixed automatically.
     ...
 
 
