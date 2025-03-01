@@ -5,7 +5,7 @@ description = ""
 authors = [{ name = "Vladyslav Hnatiuk", email = "aders1234@gmail.com" }]
 readme = "README.md"
 requires-python = ">=3.11, <= 3.13"
-dependencies = ["finecode @ file:///home/user/Development/FineCode/finecode/"]
+dependencies = ["finecode @ git+ssh://git@github.com:Aksem/FineCode.git"]
 
 
 [build-system]
