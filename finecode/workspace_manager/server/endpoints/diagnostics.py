@@ -9,7 +9,7 @@ from loguru import logger
 from lsprotocol import types
 
 from finecode import pygls_types_utils
-from finecode.workspace_manager import domain
+from finecode.workspace_manager import domain, project_analyzer
 from finecode.workspace_manager.runner import runner_client
 from finecode.workspace_manager.server import global_state, proxy_utils
 
@@ -19,7 +19,9 @@ if TYPE_CHECKING:
     from finecode.workspace_manager.runner import runner_info
 
 
-def map_lint_message_dict_to_diagnostic(lint_message: dict[str, Any]) -> types.Diagnostic:
+def map_lint_message_dict_to_diagnostic(
+    lint_message: dict[str, Any],
+) -> types.Diagnostic:
     return types.Diagnostic(
         range=types.Range(
             types.Position(
@@ -71,16 +73,24 @@ async def document_diagnostic(
     except KeyError:
         requested_file_messages = []
     requested_files_diagnostic_items = [
-        map_lint_message_dict_to_diagnostic(lint_message) for lint_message in requested_file_messages
+        map_lint_message_dict_to_diagnostic(lint_message)
+        for lint_message in requested_file_messages
     ]
-    response = types.RelatedFullDocumentDiagnosticReport(items=requested_files_diagnostic_items)
+    response = types.RelatedFullDocumentDiagnosticReport(
+        items=requested_files_diagnostic_items
+    )
 
     related_files_diagnostics: dict[str, types.FullDocumentDiagnosticReport] = {}
     for file_path_str, file_lint_messages in lint_messages.items():
         file_report = types.FullDocumentDiagnosticReport(
-            items=[map_lint_message_dict_to_diagnostic(lint_message) for lint_message in file_lint_messages]
+            items=[
+                map_lint_message_dict_to_diagnostic(lint_message)
+                for lint_message in file_lint_messages
+            ]
         )
-        related_files_diagnostics[pygls_types_utils.path_to_uri_str(file_path_str)] = file_report
+        related_files_diagnostics[pygls_types_utils.path_to_uri_str(file_path_str)] = (
+            file_report
+        )
     response.related_documents = related_files_diagnostics
 
     return response
@@ -108,11 +118,19 @@ async def workspace_diagnostic(
 
     projects = global_state.ws_context.ws_projects
     relevant_projects: dict[Path, domain.Project] = {
-        path: project for path, project in projects.items() if project.status != domain.ProjectStatus.NO_FINECODE
+        path: project
+        for path, project in projects.items()
+        if project.status != domain.ProjectStatus.NO_FINECODE
     }
     exec_info_by_project_dir_path: dict[Path, LintActionExecInfo] = {}
     # exclude projects without lint action
     for project_dir_path, project_def in relevant_projects.copy().items():
+        if project_def.status != domain.ProjectStatus.RUNNING:
+            # projects that are not running, have no actions. Files of those projects
+            # will be not processed because we don't know whether it has one of expected
+            # actions
+            continue
+
         actions_names: list[str] = [action.name for action in project_def.actions]
         # TODO: support LSP endpoints?
         if "lint_many" in actions_names:
@@ -124,23 +142,33 @@ async def workspace_diagnostic(
             continue
 
         runner = global_state.ws_context.ws_projects_extension_runners[project_dir_path]
-        exec_info_by_project_dir_path[project_dir_path] = LintActionExecInfo(runner=runner, action_name=action_name)
+        exec_info_by_project_dir_path[project_dir_path] = LintActionExecInfo(
+            runner=runner, action_name=action_name
+        )
 
     relevant_projects_paths: list[Path] = list(relevant_projects.keys())
     # assign files to projects
-    files_by_projects: dict[Path, list[Path]] = get_files_by_projects(projects_dirs_paths=relevant_projects_paths)
+    files_by_projects: dict[Path, list[Path]] = project_analyzer.get_files_by_projects(
+        projects_dirs_paths=relevant_projects_paths
+    )
 
     for project_dir_path, files_for_runner in files_by_projects.items():
         project = global_state.ws_context.ws_projects[project_dir_path]
         if project.status != domain.ProjectStatus.RUNNING:
-            logger.warning(f"Runner of project {project_dir_path} is not running, lint in it will not be executed")
+            logger.warning(
+                f"Runner of project {project_dir_path} is not running, lint in it will not be executed"
+            )
             continue
 
         exec_info = exec_info_by_project_dir_path[project_dir_path]
         if exec_info.action_name == "lint_many":
-            exec_info.request_data = [{"file_paths": [file_path.as_posix() for file_path in files_for_runner]}]
+            exec_info.request_data = [
+                {"file_paths": [file_path.as_posix() for file_path in files_for_runner]}
+            ]
         elif exec_info.action_name == "lint":
-            exec_info.request_data = [{"file_path": file_path.as_posix()} for file_path in files_for_runner]
+            exec_info.request_data = [
+                {"file_path": file_path.as_posix()} for file_path in files_for_runner
+            ]
 
     exec_infos = list(exec_info_by_project_dir_path.values())
     send_tasks: list[asyncio.Task] = []
@@ -150,7 +178,9 @@ async def workspace_diagnostic(
                 for request_data in exec_info.request_data:
                     task = tg.create_task(
                         runner_client.run_action(
-                            runner=runner, action_name=exec_info.action_name, params=[request_data]
+                            runner=runner,
+                            action_name=exec_info.action_name,
+                            params=[request_data],
                         )
                     )
                     send_tasks.append(task)
@@ -167,87 +197,13 @@ async def workspace_diagnostic(
             for file_path_str, lint_messages in response.get("messages", {}).items():
                 new_report = types.WorkspaceFullDocumentDiagnosticReport(
                     uri=pygls_types_utils.path_to_uri_str(Path(file_path_str)),
-                    items=[map_lint_message_dict_to_diagnostic(lint_message) for lint_message in lint_messages],
+                    items=[
+                        map_lint_message_dict_to_diagnostic(lint_message)
+                        for lint_message in lint_messages
+                    ],
                 )
                 items.append(new_report)
 
     # lsprotocol allows None as return value, but then vscode throws error 'cannot read items of null'
     # keep empty report instead
     return types.WorkspaceDiagnosticReport(items=items)
-
-
-def get_files_by_projects(projects_dirs_paths: list[Path]) -> dict[Path, list[Path]]:
-    files_by_projects_dirs: dict[Path, list[Path]] = {}
-
-    # logger.trace(f"project defs in {dir_path}: {projects_defs}")
-    if len(projects_dirs_paths) == 1:
-        project_dir = projects_dirs_paths[0]
-        files_by_projects_dirs[project_dir] = [path for path in project_dir.rglob("*.py")]
-    else:
-        # copy to avoid modifying of argument values
-        projects_dirs = projects_dirs_paths.copy()
-        # sort by depth so that child items are first
-        # default reverse path sorting works so, that child items are before their parents
-        projects_dirs.sort(reverse=True)
-        for index, project_dir_path in enumerate(projects_dirs):
-            files_by_projects_dirs[project_dir_path] = []
-
-            child_project_by_rel_path: dict[Path, Path] = {}
-            # find children
-            for current_project_dir_path in projects_dirs[:index]:
-                if not current_project_dir_path.is_relative_to(project_dir_path):
-                    break
-                else:
-                    rel_to_project_dir_path = current_project_dir_path.relative_to(project_dir_path)
-                    child_project_by_rel_path[rel_to_project_dir_path] = current_project_dir_path
-
-            # convert child_project_by_rel_path to tree to be able to check whether directory contains
-            # subrojects without reiterating
-            child_project_tree: dict[str, str] = {}
-            for child_rel_path in child_project_by_rel_path.keys():
-                current_tree_branch = child_project_tree
-                for part in child_rel_path.parts:
-                    if part not in current_tree_branch:
-                        current_tree_branch[part] = {}
-                    current_tree_branch = current_tree_branch[part]
-
-            # use set, because one dir item can have multiple subprojects and we need it only once
-            dir_items_with_children: set[str] = set(
-                [dir_item_path.parts[0] for dir_item_path in child_project_by_rel_path.keys()]
-            )
-            if len(dir_items_with_children) == 0:
-                # if there are no children with subprojects, we can just rglob
-                files_by_projects_dirs[project_dir_path].extend(path for path in project_dir_path.rglob("*.py"))
-            else:
-                # process all dir items which don't have child projects
-                for dir_item in project_dir_path.iterdir():
-                    if dir_item.name in dir_items_with_children:
-                        continue
-                    else:
-                        if dir_item.suffix == ".py":
-                            files_by_projects_dirs[project_dir_path].append(dir_item)
-                        elif dir_item.is_dir():
-                            files_by_projects_dirs[project_dir_path].extend(path for path in dir_item.rglob("*.py"))
-
-                # process all dir items which have child projects
-                for rel_path in child_project_by_rel_path.keys():
-                    rel_path_parts = rel_path.parts
-                    current_tree_branch = child_project_tree
-                    # iterate from second item because the first one is directory we currently processing
-                    for index in range(len(rel_path_parts[1:])):
-                        current_path = project_dir_path / "/".join(rel_path_parts[: index + 1])
-                        current_tree_branch = current_tree_branch[rel_path_parts[index]]
-                        for dir_item in current_path.iterdir():
-                            if dir_item.suffix == ".py":
-                                files_by_projects_dirs[project_dir_path].append(dir_item)
-                            elif dir_item.is_dir():
-                                if dir_item.name in current_tree_branch:
-                                    # it's a path to child project, skip it
-                                    continue
-                                else:
-                                    # subdirectory without child projects, rglob it
-                                    files_by_projects_dirs[project_dir_path].extend(
-                                        path for path in dir_item.rglob("*.py")
-                                    )
-
-    return files_by_projects_dirs

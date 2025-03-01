@@ -55,17 +55,17 @@ class CodeActionPayload(RunActionPayload):
 
 
 class CodeActionKind(enum.Enum):
-    EMPTY = ''
-    QUICK_FIX = 'quickfix'
-    REFACTOR = 'refactor'
-    REFACTOR_EXTRACT  = 'refactor.extract'
-    REFACTOR_INLINE = 'refactor.inline'
-    REFACTOR_MOVE = 'refactor.move'
-    REFACTOR_REWRITE = 'refactor.rewrite'
-    SOURCE = 'source'
-    SOURCE_ORGANIZE_IMPORTS = 'source.organizeImports'
-    SOURCE_FIX_ALL = 'source.fixAll'
-    NOTEBOOK = 'notebook'
+    EMPTY = ""
+    QUICK_FIX = "quickfix"
+    REFACTOR = "refactor"
+    REFACTOR_EXTRACT = "refactor.extract"
+    REFACTOR_INLINE = "refactor.inline"
+    REFACTOR_MOVE = "refactor.move"
+    REFACTOR_REWRITE = "refactor.rewrite"
+    SOURCE = "source"
+    SOURCE_ORGANIZE_IMPORTS = "source.organizeImports"
+    SOURCE_FIX_ALL = "source.fixAll"
+    NOTEBOOK = "notebook"
 
 
 class CodeActionTriggerKind(enum.IntEnum):
@@ -79,5 +79,4 @@ class CodeActionContext(BaseModel):
     trigger_kind: CodeActionTriggerKind
 
 
-class Diagnostic(BaseModel):
-    ...
+class Diagnostic(BaseModel): ...

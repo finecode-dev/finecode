@@ -30,7 +30,8 @@ def collect_actions(
     actions, actions_configs = _collect_actions_in_config(config)
     # TODO: validate
     first_level_actions_raw = [
-        action_raw["name"] for action_raw in config["tool"]["finecode"].get("actions", [])
+        action_raw["name"]
+        for action_raw in config["tool"]["finecode"].get("actions", [])
     ]
     project.root_actions = first_level_actions_raw
     project.actions = actions
@@ -47,9 +48,9 @@ def _collect_actions_in_config(
 
     for action_def_raw in config["tool"]["finecode"].get("actions", []):
         # TODO: handle validation errors
-        action_name = action_def_raw.get('name', None)
+        action_name = action_def_raw.get("name", None)
         if action_name is None:
-            logger.trace(f'Action has no name, skip it: {action_def_raw}')
+            logger.trace(f"Action has no name, skip it: {action_def_raw}")
             continue
         action_def = config_models.ActionDefinition(**action_def_raw)
         action = domain.Action(
@@ -59,7 +60,9 @@ def _collect_actions_in_config(
         )
         actions_by_names[action_name] = action
 
-    for action_name, action_def_raw in config["tool"]["finecode"].get("action", {}).items():
+    for action_name, action_def_raw in (
+        config["tool"]["finecode"].get("action", {}).items()
+    ):
         # TODO: handle validation errors
         action_def = config_models.ActionDefinition(**action_def_raw)
         actions_by_names[action_name] = domain.Action(

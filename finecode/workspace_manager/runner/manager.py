@@ -4,21 +4,56 @@ from pathlib import Path
 from typing import Coroutine
 
 from loguru import logger
+from lsprotocol import types
 
 from finecode import dirs_utils
 from finecode.pygls_client_utils import create_lsp_client_io
 from finecode.workspace_manager import context, domain, finecode_cmd
-from finecode.workspace_manager.config import (collect_actions,
-                                               raw_config_utils, read_configs)
+from finecode.workspace_manager.config import (
+    collect_actions,
+    raw_config_utils,
+    read_configs,
+)
 from finecode.workspace_manager.runner import runner_client, runner_info
 
 project_changed_callback: Coroutine | None = None
 get_document: Coroutine | None = None
+apply_workspace_edit: Coroutine | None = None
 
 
 async def notify_project_changed(project: domain.Project) -> None:
     if project_changed_callback is not None:
         await project_changed_callback(project)
+
+
+async def _apply_workspace_edit(params: types.ApplyWorkspaceEditParams):
+    def map_change_object(change):
+        return types.TextEdit(
+            range=types.Range(
+                start=types.Position(
+                    line=change.range.start.line, character=change.range.start.character
+                ),
+                end=types.Position(
+                    change.range.end.line, character=change.range.end.character
+                ),
+            ),
+            new_text=change.newText,
+        )
+
+    converted_params = types.ApplyWorkspaceEditParams(
+        edit=types.WorkspaceEdit(
+            document_changes=[
+                types.TextDocumentEdit(
+                    text_document=types.OptionalVersionedTextDocumentIdentifier(
+                        document_edit.textDocument.uri
+                    ),
+                    edits=[map_change_object(change) for change in document_edit.edits],
+                )
+                for document_edit in params.edit.documentChanges
+            ]
+        )
+    )
+    return await apply_workspace_edit(converted_params)
 
 
 async def start_extension_runner(
@@ -33,19 +68,26 @@ async def start_extension_runner(
         _finecode_cmd = finecode_cmd.get_finecode_cmd(runner_dir)
     except ValueError:
         try:
-            ws_context.ws_projects[runner_dir].status = domain.ProjectStatus.NO_FINECODE_SH
+            ws_context.ws_projects[runner_dir].status = (
+                domain.ProjectStatus.NO_FINECODE_SH
+            )
             await notify_project_changed(ws_context.ws_projects[runner_dir])
         except KeyError:
             ...
         return None
 
-    process_args: list[str] = ['--trace', f'--project-path={runner_info_instance.working_dir_path.as_posix()}']
+    process_args: list[str] = [
+        "--trace",
+        f"--project-path={runner_info_instance.working_dir_path.as_posix()}",
+    ]
     # TODO: config parameter for debug and debug port
-    # if runner_info_instance.working_dir_path == Path('/home/user/Development/FineCode/finecode'):
-    #     process_args.append('--debug')
+    # if runner_info_instance.working_dir_path == Path(
+    #     "/home/user/Development/FineCode/finecode"
+    # ):
+    #     process_args.append("--debug")
     #     process_args.append(f"--debug-port=5681")
 
-    process_args_str: str = ' '.join(process_args)
+    process_args_str: str = " ".join(process_args)
     runner_info_instance.client = await create_lsp_client_io(
         runner_info.CustomJsonRpcClient,
         f"{_finecode_cmd} -m finecode.extension_runner.cli {process_args_str}",
@@ -60,8 +102,14 @@ async def start_extension_runner(
 
     runner_info_instance.client.server_exit_callback = on_exit
 
-    register_get_document_feature = runner_info_instance.client.feature('documents/get')
+    register_get_document_feature = runner_info_instance.client.feature("documents/get")
     register_get_document_feature(get_document)
+
+    register_workspace_apply_edit = runner_info_instance.client.feature(
+        types.WORKSPACE_APPLY_EDIT
+    )
+    register_workspace_apply_edit(_apply_workspace_edit)
+
     return runner_info_instance
 
 
@@ -73,7 +121,9 @@ async def stop_extension_runner(runner: runner_info.ExtensionRunnerInfo) -> None
             # forcefully until the problem is properly solved.
             runner.client._server.terminate()
             await runner.client.stop()
-            logger.trace(f"Stop extension runner {runner.process_id} in {runner.working_dir_path}")
+            logger.trace(
+                f"Stop extension runner {runner.process_id} in {runner.working_dir_path}"
+            )
         else:
             logger.trace("Extension runner was not running")
     else:
@@ -90,12 +140,15 @@ async def kill_extension_runner(runner: runner_info.ExtensionRunnerInfo) -> None
 async def update_runners(ws_context: context.WorkspaceContext) -> None:
     extension_runners = list(ws_context.ws_projects_extension_runners.values())
     new_dirs, deleted_dirs = dirs_utils.find_changed_dirs(
-        [*ws_context.ws_projects.keys()], [runner.working_dir_path for runner in extension_runners]
+        [*ws_context.ws_projects.keys()],
+        [runner.working_dir_path for runner in extension_runners],
     )
     for deleted_dir in deleted_dirs:
         try:
             runner_to_delete = next(
-                runner for runner in extension_runners if runner.working_dir_path == deleted_dir
+                runner
+                for runner in extension_runners
+                if runner.working_dir_path == deleted_dir
             )
         except StopIteration:
             continue
@@ -115,7 +168,9 @@ async def update_runners(ws_context: context.WorkspaceContext) -> None:
     }
 
     init_runners_coros = [
-        _init_runner(runner, ws_context.ws_projects[runner.working_dir_path], ws_context)
+        _init_runner(
+            runner, ws_context.ws_projects[runner.working_dir_path], ws_context
+        )
         for runner in extension_runners
     ]
     await asyncio.gather(*init_runners_coros)
@@ -153,9 +208,13 @@ async def _init_runner(
     logger.debug("LSP Server initialized")
 
     await read_configs.read_project_config(project=project, ws_context=ws_context)
-    collect_actions.collect_actions(project_path=project.dir_path, ws_context=ws_context)
+    collect_actions.collect_actions(
+        project_path=project.dir_path, ws_context=ws_context
+    )
 
-    assert project.actions is not None, f"Actions of project {project.dir_path} are not read yet"
+    assert (
+        project.actions is not None
+    ), f"Actions of project {project.dir_path} are not read yet"
     all_actions = set([])
     actions_to_process = set(project.actions)
     while len(actions_to_process) > 0:
@@ -170,7 +229,9 @@ async def _init_runner(
     all_actions_dict = {action.name: action for action in all_actions}
 
     try:
-        await runner_client.update_config(runner, all_actions_dict, project.actions_configs)
+        await runner_client.update_config(
+            runner, all_actions_dict, project.actions_configs
+        )
     except runner_client.BaseRunnerRequestException as e:
         project.status = domain.ProjectStatus.RUNNER_FAILED
         await notify_project_changed(project)
@@ -183,12 +244,16 @@ async def _init_runner(
     project.status = domain.ProjectStatus.RUNNING
     await notify_project_changed(project)
 
-    await send_opened_files(runner=runner, opened_files=list(ws_context.opened_documents.values()))
+    await send_opened_files(
+        runner=runner, opened_files=list(ws_context.opened_documents.values())
+    )
 
     runner.initialized_event.set()
 
 
-async def send_opened_files(runner: runner_info.ExtensionRunnerInfo, opened_files: list[domain.TextDocumentInfo]):
+async def send_opened_files(
+    runner: runner_info.ExtensionRunnerInfo, opened_files: list[domain.TextDocumentInfo]
+):
     files_for_runner: list[domain.TextDocumentInfo] = []
     for opened_file_info in opened_files:
         file_path = Path(opened_file_info.uri.replace("file://", ""))
@@ -200,6 +265,13 @@ async def send_opened_files(runner: runner_info.ExtensionRunnerInfo, opened_file
     try:
         async with asyncio.TaskGroup() as tg:
             for file_info in files_for_runner:
-                tg.create_task(runner_client.notify_document_did_open(runner=runner, document_info=domain.TextDocumentInfo(uri=file_info.uri, version=file_info.version)))
+                tg.create_task(
+                    runner_client.notify_document_did_open(
+                        runner=runner,
+                        document_info=domain.TextDocumentInfo(
+                            uri=file_info.uri, version=file_info.version
+                        ),
+                    )
+                )
     except ExceptionGroup as eg:
         logger.error(f"Error while sending opened document: {eg.exceptions}")

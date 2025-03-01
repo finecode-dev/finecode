@@ -18,8 +18,7 @@ class AddWorkspaceDirRequest(BaseModel):
 
 
 @dataclass
-class AddWorkspaceDirResponse(BaseModel):
-    ...
+class AddWorkspaceDirResponse(BaseModel): ...
 
 
 @dataclass
@@ -28,8 +27,7 @@ class DeleteWorkspaceDirRequest(BaseModel):
 
 
 @dataclass
-class DeleteWorkspaceDirResponse(BaseModel):
-    ...
+class DeleteWorkspaceDirResponse(BaseModel): ...
 
 
 @dataclass
@@ -60,8 +58,7 @@ class ListActionsResponse(BaseModel):
 @dataclass
 class RunActionRequest(BaseModel):
     action_node_id: str
-    apply_on: str  # Path?
-    apply_on_text: str
+    params: dict[str, Any]
 
 
 @dataclass

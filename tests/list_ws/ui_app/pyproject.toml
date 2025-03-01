@@ -1,21 +1,20 @@
-[tool.poetry]
-name = "ui-app"
+[project]
+name = "ui_app"
 version = "0.1.0"
 description = ""
-authors = ["Vladyslav Hnatiuk <aders1234@gmail.com>"]
+authors = [{ name = "Vladyslav Hnatiuk", email = "aders1234@gmail.com" }]
 readme = "README.md"
+requires-python = ">=3.11, <= 3.13"
+dependencies = [
+    "finecode @ file:///home/user/Development/FineCode/finecode/",
+    "fine_python_recommended @ file:///home/user/Development/FineCode/finecode/presets/fine_python_recommended/",
+]
 
-[tool.poetry.dependencies]
-python = "^3.10"
-
-[tool.poetry.group.dev.dependencies]
-finecode = { path = "../../../" }
-fine_python_recommended = { path = "../../../presets/fine_python_recommended" }
-debugpy = "^1.8.11"
 
 [build-system]
-requires = ["poetry-core"]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
 build-backend = "poetry.core.masonry.api"
+
 
 [tool.finecode]
 presets = [{ source = "fine_python_recommended" }]

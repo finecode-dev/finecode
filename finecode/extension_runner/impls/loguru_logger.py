@@ -1,6 +1,7 @@
 import sys
 
 import loguru
+
 # if sys.version_info < (3, 12):
 #     from typing_extensions import override
 # else:
@@ -21,11 +22,11 @@ import loguru
 #     @override
 #     def debug(self, message: str) -> None:
 #         loguru.logger.debug(message)
-    
+
 #     @override
 #     def disable(self, package: str) -> None:
 #         loguru.logger.disable(package)
-    
+
 #     @override
 #     def enable(self, package: str) -> None:
 #         loguru.logger.enable(package)
@@ -37,7 +38,7 @@ def get_logger():
     # additional patching with finding the right name of module would be required. To avoid this
     # for now just return loguru instance as instance of `ilogger.ILogger` (they are structurally
     # compatible).
-    
+
     # support non-unicode symbols: https://loguru.readthedocs.io/en/stable/resources/recipes.html#resolving-unicodeencodeerror-and-other-encoding-issues
     sys.stdout.reconfigure(encoding="utf-8", errors="backslashreplace")
     return loguru.logger

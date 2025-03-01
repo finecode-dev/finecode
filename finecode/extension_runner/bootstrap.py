@@ -9,25 +9,48 @@ Requirements on DI in FineCode:
 
 from typing import Any, Callable, Type, TypeVar
 
-import fine_python_mypy
+try:
+    import fine_python_ast
+except ImportError:
+    fine_python_ast = None
+
+try:
+    import fine_python_mypy
+except ImportError:
+    fine_python_mypy = None
 
 from finecode.extension_runner import global_state
-from finecode.extension_runner.impls import file_manager, inmemory_cache, loguru_logger
-from finecode.extension_runner.interfaces import icache, ifilemanager, ilogger
+from finecode.extension_runner.impls import (
+    command_runner,
+    file_manager,
+    inmemory_cache,
+    loguru_logger,
+)
+from finecode.extension_runner.interfaces import (
+    icache,
+    icommandrunner,
+    ifilemanager,
+    ilogger,
+)
 
 container: dict[str, Any] = {}
 
 
-def bootstrap(get_document_func: Callable):
+def bootstrap(get_document_func: Callable, save_document_func: Callable):
     # logger_instance = loguru_logger.LoguruLogger()
     logger_instance = loguru_logger.get_logger()
+    command_runner_instance = command_runner.CommandRunner()
     file_manager_instance = file_manager.FileManager(
         docs_owned_by_client=global_state.runner_context.docs_owned_by_client,
         get_document_func=get_document_func,
+        save_document_func=save_document_func,
         logger=logger_instance,
     )
-    cache_instance = inmemory_cache.InMemoryCache(file_manager=file_manager_instance, logger=logger_instance)
+    cache_instance = inmemory_cache.InMemoryCache(
+        file_manager=file_manager_instance, logger=logger_instance
+    )
     container[ilogger.ILogger] = logger_instance
+    container[icommandrunner.ICommandRunner] = command_runner_instance
     container[ifilemanager.IFileManager] = file_manager_instance
     container[icache.ICache] = cache_instance
 
@@ -43,6 +66,12 @@ def get_service_instance(service_type: Type[T]) -> T:
         return container[service_type]
     else:
         match service_type:
+            case fine_python_ast.IPythonSingleAstProvider:
+                service_instance = fine_python_ast.PythonSingleAstProvider(
+                    file_manager=container[ifilemanager.IFileManager],
+                    cache=container[icache.ICache],
+                    logger=container[ilogger.ILogger],
+                )
             case fine_python_mypy.IMypySingleAstProvider:
                 service_instance = fine_python_mypy.MypySingleAstProvider(
                     file_manager=container[ifilemanager.IFileManager],

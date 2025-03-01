@@ -36,7 +36,9 @@ def tmp_file_copy_path(file_path: Path | None, file_content: str):
 
 
 @contextmanager
-def tmp_dir_copy_path(dir_path: Path, file_pathes_with_contents: list[tuple[Path | None, str]]):
+def tmp_dir_copy_path(
+    dir_path: Path, file_pathes_with_contents: list[tuple[Path | None, str]]
+):
     with tempfile.TemporaryDirectory() as tmp_dir:
         tmp_dir_path = Path(tmp_dir)
         tmp_pathes: list[Path] = []
@@ -51,14 +53,16 @@ def tmp_dir_copy_path(dir_path: Path, file_pathes_with_contents: list[tuple[Path
                 os.makedirs(tmp_path.parent, exist_ok=True)
                 tmp_path.touch(exist_ok=True)
                 tmp_pathes.append(tmp_path)
-                with open(file_path, "rb") as original_file, open(tmp_path, "wb") as tmp_file:
+                with (
+                    open(file_path, "rb") as original_file,
+                    open(tmp_path, "wb") as tmp_file,
+                ):
                     tmp_file.write(original_file.read())
                     tmp_file.flush()
             else:
                 raise ValueError("Invalid arguments")
 
         yield tmp_dir_path, tmp_pathes
-
 
 
 class FileVersion(NamedTuple):

@@ -90,7 +90,9 @@ class QueueingEventHandler(FileSystemEventHandler):
         path = Path(event.src_path)
         # TODO: generalize
         if path.suffix == ".py" and path not in self._ignore_pathes:
-            self.queue_event(ChangeEvent(path=Path(event.src_path), kind=ChangeKind.MODIFY))
+            self.queue_event(
+                ChangeEvent(path=Path(event.src_path), kind=ChangeKind.MODIFY)
+            )
 
     def queue_event(self, event: ChangeEvent) -> None:
         self._event_buffer.append(event)
@@ -99,11 +101,11 @@ class QueueingEventHandler(FileSystemEventHandler):
             self._timer_is_running = True
 
     def _timer_end(self) -> None:
-        # 1. If file is watched and we change it, we get modified file and modified parent
-        #    directory events. Directory itself cannot be modified(only renamed, but it is
-        #    rename event), so we can safely remove these events. 'modified directory' seems to be
-        #    always the next event after 'modified file', even if multiple files were modified
-        #    (experimentally found on linux).
+        # 1. If file is watched and we change it, we get modified file and modified
+        #    parent directory events. Directory itself cannot be modified(only renamed,
+        #    but it is rename event), so we can safely remove these events. 'modified
+        #    directory' seems to be always the next event after 'modified file', even if
+        #    multiple files were modified (experimentally found on linux).
         last_modified_file_parent: Path | None = None
         events_to_raise = self._event_buffer.copy()
         for event in self._event_buffer:

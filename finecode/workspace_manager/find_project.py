@@ -6,8 +6,7 @@ from finecode.workspace_manager.context import WorkspaceContext
 from finecode.workspace_manager import domain
 
 
-class FileNotInWorkspaceException(BaseException):
-    ...
+class FileNotInWorkspaceException(BaseException): ...
 
 
 def find_project_with_action_for_file(
@@ -20,7 +19,9 @@ def find_project_with_action_for_file(
           implemented the action we are looking for. In this case case we need to check parent project
           and so on.
     """
-    logger.trace(f"Find project with action {action_name} for file {file_path.as_posix()}")
+    logger.trace(
+        f"Find project with action {action_name} for file {file_path.as_posix()}"
+    )
 
     # first find all projects to which file belongs
     file_projects_pathes: list[Path] = []
@@ -35,13 +36,19 @@ def find_project_with_action_for_file(
             continue
 
     if len(file_projects_pathes) == 0:
-        logger.debug(f"File {file_path} doesn't belong to one of projects in workspace. Workspace projects: {sorted_project_dirs}")
-        raise FileNotInWorkspaceException(f"File {file_path} doesn't belong to one of projects in workspace")
+        logger.debug(
+            f"File {file_path} doesn't belong to one of projects in workspace. Workspace projects: {sorted_project_dirs}"
+        )
+        raise FileNotInWorkspaceException(
+            f"File {file_path} doesn't belong to one of projects in workspace"
+        )
 
     dir_path = file_path if file_path.is_dir() else file_path.parent
     dir_path_str = dir_path.as_posix()
     if (
-        ws_context.project_path_by_dir_and_action.get(dir_path_str, {}).get(action_name, None)
+        ws_context.project_path_by_dir_and_action.get(dir_path_str, {}).get(
+            action_name, None
+        )
         is not None
     ):
         logger.trace(
@@ -59,17 +66,23 @@ def find_project_with_action_for_file(
             if project.status == domain.ProjectStatus.NO_FINECODE:
                 continue
             else:
-                raise ValueError(f"Action is related to project {project_dir_path} but its action cannot be resolved({project.status})")
-        
+                raise ValueError(
+                    f"Action is related to project {project_dir_path} but its action cannot be resolved({project.status})"
+                )
+
         try:
             next(action for action in project_actions if action.name == action_name)
         except StopIteration:
             continue
 
-        ws_context.project_path_by_dir_and_action[dir_path_str][action_name] = project_dir_path
+        ws_context.project_path_by_dir_and_action[dir_path_str][
+            action_name
+        ] = project_dir_path
         return project_dir_path
 
-    raise ValueError(f"File belongs to project(s), but no of them has action {action_name}: {file_projects_pathes}")
+    raise ValueError(
+        f"File belongs to project(s), but no of them has action {action_name}: {file_projects_pathes}"
+    )
 
 
 def is_project(dir_path: Path) -> bool:

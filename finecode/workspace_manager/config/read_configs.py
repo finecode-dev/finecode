@@ -22,10 +22,10 @@ async def read_projects_in_dir(
         status = domain.ProjectStatus.READY
         actions: list[domain.Action] | None = None
         actions_configs: dict[str, dict[str, Any]] | None = None
-        
+
         with open(def_file, "rb") as pyproject_file:
             project_def = toml_loads(pyproject_file.read()).value
-        
+
         if project_def.get("tool", {}).get("finecode", None) is None:
             status = domain.ProjectStatus.NO_FINECODE
             actions = []
@@ -33,12 +33,17 @@ async def read_projects_in_dir(
         else:
             # finecode config exists, check also finecode.sh
             finecode_sh_path = def_file.parent / "finecode.sh"
-            
+
             if not finecode_sh_path.exists():
                 status = domain.ProjectStatus.NO_FINECODE_SH
 
         new_project = domain.Project(
-            name=def_file.parent.name, dir_path=def_file.parent, def_path=def_file, status=status, actions=actions, actions_configs=actions_configs
+            name=def_file.parent.name,
+            dir_path=def_file.parent,
+            def_path=def_file,
+            status=status,
+            actions=actions,
+            actions_configs=actions_configs,
         )
         ws_context.ws_projects[def_file.parent] = new_project
         new_projects.append(new_project)
@@ -66,7 +71,9 @@ async def read_project_config(
         normalize_project_config(project_def)
         ws_context.ws_projects_raw_configs[project.dir_path] = project_def
     else:
-        logger.info(f"Project definition of type {project.def_path.name} is not supported yet")
+        logger.info(
+            f"Project definition of type {project.def_path.name} is not supported yet"
+        )
 
 
 def normalize_project_config(config: dict[str, Any]) -> None:
@@ -78,11 +85,16 @@ def normalize_project_config(config: dict[str, Any]) -> None:
             for subaction in action.get("subactions", []):
                 # each action should be declared as 'tool.finecode.action.<name>', but we allow
                 # to set source directly in list of subactions to improve usability
-                if isinstance(subaction, dict) and subaction.get("source", None) is not None:
+                if (
+                    isinstance(subaction, dict)
+                    and subaction.get("source", None) is not None
+                ):
                     config["tool"]["finecode"]["action"][subaction["name"]] = {
                         "source": subaction["source"],
                         # avoid overwriting existing properties, e.g. action config
-                        **config["tool"]["finecode"]["action"].get(subaction["name"], {}),
+                        **config["tool"]["finecode"]["action"].get(
+                            subaction["name"], {}
+                        ),
                     }
 
 
@@ -97,7 +109,9 @@ async def get_preset_project_path(
     logger.trace(f"Get preset project path: {preset.source}")
 
     try:
-        resolve_path_result = await runner_client.resolve_package_path(runner, preset.source)
+        resolve_path_result = await runner_client.resolve_package_path(
+            runner, preset.source
+        )
     except runner_client.BaseRunnerRequestException as error:
         error_message = error.args[0] if len(error.args) > 0 else ""
         await user_messages.error(f"Failed to get preset project path: {error_message}")
@@ -124,7 +138,9 @@ def read_preset_config(
         preset_toml = toml_loads(preset_toml_file.read()).value
 
     try:
-        preset_config = config_models.PresetDefinition(**preset_toml["tool"]["finecode"]["preset"])
+        preset_config = config_models.PresetDefinition(
+            **preset_toml["tool"]["finecode"]["preset"]
+        )
     except ValidationError as e:
         logger.error(str(preset_toml["tool"]["finecode"]["preset"]) + e.json())
         return (preset_toml, None)
@@ -205,11 +221,13 @@ def _merge_projects_configs(config1: dict[str, Any], config2: dict[str, Any]) ->
                 else:
                     # action with the same name, merge
                     if "config" in action_info:
-                        if 'config' not in tool_finecode_config1["action"][action_name]:
-                            tool_finecode_config1["action"][action_name]['config'] = {}
-                        
-                        action_config = tool_finecode_config1["action"][action_name]['config']
-                        action_config.update(action_info['config'])
+                        if "config" not in tool_finecode_config1["action"][action_name]:
+                            tool_finecode_config1["action"][action_name]["config"] = {}
+
+                        action_config = tool_finecode_config1["action"][action_name][
+                            "config"
+                        ]
+                        action_config.update(action_info["config"])
         elif key in config1:
             tool_finecode_config1[key].update(value)
         else:
@@ -220,10 +238,17 @@ def _merge_preset_configs(config1: dict[str, Any], config2: dict[str, Any]) -> N
     # merge config2 in config1 (in-place)
     # config1 is not overwritten by config2
     new_actions = (
-        config2.get("tool", {}).get("finecode", {}).get("preset", {}).get("actions", None)
+        config2.get("tool", {})
+        .get("finecode", {})
+        .get("preset", {})
+        .get("actions", None)
     )
-    new_views = config2.get("tool", {}).get("finecode", {}).get("preset", {}).get("views", None)
-    new_actions_defs_and_configs = config2.get("tool", {}).get("finecode", {}).get("action", None)
+    new_views = (
+        config2.get("tool", {}).get("finecode", {}).get("preset", {}).get("views", None)
+    )
+    new_actions_defs_and_configs = (
+        config2.get("tool", {}).get("finecode", {}).get("action", None)
+    )
     if (
         new_actions is not None
         or new_views is not None
@@ -256,8 +281,12 @@ def _merge_preset_configs(config1: dict[str, Any], config2: dict[str, Any]) -> N
                 if action_name not in config1["tool"]["finecode"]["preset"]["action"]:
                     config1["tool"]["finecode"]["preset"]["action"][action_name] = {}
 
-                action_def = {key: value for key, value in action_info.items() if key != "config"}
-                config1["tool"]["finecode"]["preset"]["action"][action_name].update(action_def)
+                action_def = {
+                    key: value for key, value in action_info.items() if key != "config"
+                }
+                config1["tool"]["finecode"]["preset"]["action"][action_name].update(
+                    action_def
+                )
 
                 try:
                     action_config = action_info["config"]
@@ -265,7 +294,9 @@ def _merge_preset_configs(config1: dict[str, Any], config2: dict[str, Any]) -> N
                     continue
 
                 action_config.update(
-                    config1["tool"]["finecode"]["preset"]["action"][action_name].get("config", {})
+                    config1["tool"]["finecode"]["preset"]["action"][action_name].get(
+                        "config", {}
+                    )
                 )
                 config1["tool"]["finecode"]["preset"]["action"][action_name][
                     "config"
@@ -280,7 +311,10 @@ def _merge_preset_configs(config1: dict[str, Any], config2: dict[str, Any]) -> N
 def _preset_config_to_project_config(preset_config: dict[str, Any]) -> dict[str, Any]:
     # tool.finecode.preset -> tool.finecode
     result = preset_config.copy()
-    if preset_config.get("tool", {}).get("finecode", {}).get("preset", None) is not None:
+    if (
+        preset_config.get("tool", {}).get("finecode", {}).get("preset", None)
+        is not None
+    ):
         if not "tool" in result:
             result["tool"] = {}
         if not "finecode" in result["tool"]:

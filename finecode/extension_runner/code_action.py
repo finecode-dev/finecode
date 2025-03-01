@@ -24,7 +24,9 @@ class RunActionResult(BaseModel):
     def update(self, other: RunActionResult) -> None:
         raise NotImplementedError()
 
+
 RunPayloadType = TypeVar("RunPayloadType", bound=RunActionPayload)
+
 
 class RunActionContext:
     # data object to save data between action steps(only during one run, after run data is removed)
@@ -32,8 +34,7 @@ class RunActionContext:
     # in constructor using dependency injection if needed to avoid handling in action cases when run
     # context is not initialized and is initialized already.
 
-    async def init(self, initial_payload: RunPayloadType) -> None:
-        ...
+    async def init(self, initial_payload: RunPayloadType) -> None: ...
 
 
 CodeActionConfigType = TypeVar("CodeActionConfigType")
@@ -49,7 +50,9 @@ class ActionContext:
     cache_dir: Path
 
 
-class CodeAction(Generic[CodeActionConfigType, RunPayloadType, RunContextType, RunResultType]):
+class CodeAction(
+    Generic[CodeActionConfigType, RunPayloadType, RunContextType, RunResultType]
+):
     """
     **Action config**
     Configuration can be set in following places by priority:
@@ -68,7 +71,9 @@ class CodeAction(Generic[CodeActionConfigType, RunPayloadType, RunContextType, R
         self.config = config
         self.context = context
 
-    async def run(self, payload: RunPayloadType, run_context: RunContextType) -> RunResultType:
+    async def run(
+        self, payload: RunPayloadType, run_context: RunContextType
+    ) -> RunResultType:
         raise NotImplementedError()
 
     async def stop(self):

@@ -5,7 +5,6 @@ from typing import Callable
 
 from loguru import logger
 
-
 _lsp_notification_send: Callable | None = None
 _lsp_message_send: Callable | None = None
 
@@ -41,9 +40,9 @@ class UserMessageType(IntEnum):
 async def send(message: str, message_type: UserMessageType):
     logger.trace(f"User message: [{message_type.name}] {message}")
     if _lsp_notification_send is not None:
-        await _lsp_notification_send(message_type.name, message)
+        await _lsp_notification_send(message, message_type.name)
     else:
         logger.error("Sender of user messages is not initialized")
 
 
-__all__ = ['error', 'warning', 'info', 'log', 'debug']
+__all__ = ["error", "warning", "info", "log", "debug"]

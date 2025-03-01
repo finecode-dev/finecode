@@ -5,17 +5,16 @@ from __future__ import annotations
 
 import asyncio
 import json
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from loguru import logger
 from lsprotocol import types
+from pygls import exceptions as pygls_exceptions
 
 import finecode.workspace_manager.domain as domain
 
 if TYPE_CHECKING:
-    from finecode.workspace_manager.runner.runner_info import \
-        ExtensionRunnerInfo
+    from finecode.workspace_manager.runner.runner_info import ExtensionRunnerInfo
 
 
 class BaseRunnerRequestException(Exception): ...
@@ -28,7 +27,10 @@ class ResponseTimeout(BaseRunnerRequestException): ...
 
 
 async def send_request(
-    runner: ExtensionRunnerInfo, method: str, params: Any | None, timeout: int | None = 10
+    runner: ExtensionRunnerInfo,
+    method: str,
+    params: Any | None,
+    timeout: int | None = 10,
 ) -> Any | None:
     try:
         response = await asyncio.wait_for(
@@ -57,10 +59,18 @@ async def send_request(
         raise ResponseTimeout(
             f"Timeout {timeout}s for response on {method} to runner {runner.working_dir_path}"
         )
+    except pygls_exceptions.JsonRpcInternalError as error:
+        logger.error(f"JsonRpcInternalError: {error.message}")
+        raise NoResponse(
+            f"Extension runner {runner.working_dir_path} returned no response, check it logs"
+        )
 
 
 async def initialize(
-    runner: ExtensionRunnerInfo, client_process_id, client_name: str, client_version: str
+    runner: ExtensionRunnerInfo,
+    client_process_id,
+    client_name: str,
+    client_version: str,
 ) -> None:
     await send_request(
         runner=runner,
@@ -75,7 +85,9 @@ async def initialize(
 
 
 async def notify_initialized(runner: ExtensionRunnerInfo) -> None:
-    runner.client.protocol.notify(method=types.INITIALIZED, params=types.InitializedParams())
+    runner.client.protocol.notify(
+        method=types.INITIALIZED, params=types.InitializedParams()
+    )
 
 
 async def run_action(
@@ -97,7 +109,7 @@ async def run_action(
                 *params,
             ],
         ),
-        timeout=None
+        timeout=None,
     )
     return json.loads(response.result)
 
@@ -139,7 +151,9 @@ async def resolve_package_path(runner: ExtensionRunnerInfo, package_name: str) -
 
 
 async def update_config(
-    runner: ExtensionRunnerInfo, actions: dict[str, Any], actions_configs: dict[str, Any]
+    runner: ExtensionRunnerInfo,
+    actions: dict[str, Any],
+    actions_configs: dict[str, Any],
 ) -> None:
     await send_request(
         runner=runner,
@@ -156,9 +170,28 @@ async def update_config(
     )
 
 
-async def notify_document_did_open(runner: ExtensionRunnerInfo, document_info: domain.TextDocumentInfo) -> None:
-    runner.client.protocol.notify(method=types.TEXT_DOCUMENT_DID_OPEN, params=types.DidOpenTextDocumentParams(text_document=types.TextDocumentItem(uri=document_info.uri, language_id='', version=int(document_info.version), text='')))
+async def notify_document_did_open(
+    runner: ExtensionRunnerInfo, document_info: domain.TextDocumentInfo
+) -> None:
+    runner.client.protocol.notify(
+        method=types.TEXT_DOCUMENT_DID_OPEN,
+        params=types.DidOpenTextDocumentParams(
+            text_document=types.TextDocumentItem(
+                uri=document_info.uri,
+                language_id="",
+                version=int(document_info.version),
+                text="",
+            )
+        ),
+    )
 
 
-async def notify_document_did_close(runner: ExtensionRunnerInfo, document_uri: str) -> None:
-    runner.client.protocol.notify(method=types.TEXT_DOCUMENT_DID_CLOSE, params=types.DidCloseTextDocumentParams(text_document=types.TextDocumentIdentifier(document_uri)))
+async def notify_document_did_close(
+    runner: ExtensionRunnerInfo, document_uri: str
+) -> None:
+    runner.client.protocol.notify(
+        method=types.TEXT_DOCUMENT_DID_CLOSE,
+        params=types.DidCloseTextDocumentParams(
+            text_document=types.TextDocumentIdentifier(document_uri)
+        ),
+    )

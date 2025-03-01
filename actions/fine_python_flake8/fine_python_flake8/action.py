@@ -10,7 +10,7 @@ from flake8.plugins import finder
 
 from finecode import (
     CodeActionConfig,
-    CodeLintAction,
+    LintCodeAction,
     LintMessage,
     LintRunPayload,
     LintRunResult,
@@ -32,7 +32,7 @@ class Flake8CodeActionConfig(CodeActionConfig):
     extend_ignore: list[str] | None = None
 
 
-class Flake8CodeAction(CodeLintAction[Flake8CodeActionConfig]):
+class Flake8CodeAction(LintCodeAction[Flake8CodeActionConfig]):
 
     def __init__(
         self,
@@ -46,6 +46,7 @@ class Flake8CodeAction(CodeLintAction[Flake8CodeActionConfig]):
         self.logger = logger
         self.file_manager = file_manager
         self.ast_provider = ast_provider
+        self.logger.disable("flake8.options.manager")
         # TODO: more options
         self.flake8_style_guide = flake8.get_style_guide(
             max_line_length=self.config.max_line_length,
@@ -60,11 +61,13 @@ class Flake8CodeAction(CodeLintAction[Flake8CodeActionConfig]):
             self.flake8_style_guide.options
         )
 
-    async def run(self, payload: LintRunPayload) -> LintRunResult:
         # avoid outputting low-level logs of flake8, our goal is to trace finecode,
         # not flake8 itself
-        self.logger.disable("flake8")
+        self.logger.disable("flake8.checker")
+        self.logger.disable("flake8.violation")
+        self.logger.disable("bugbear")
 
+    async def run(self, payload: LintRunPayload) -> LintRunResult:
         file_path = payload.file_path
         file_content = await self.file_manager.get_content(file_path)
         file_ast = await self.ast_provider.get_file_ast(file_path=file_path)
@@ -78,8 +81,6 @@ class Flake8CodeAction(CodeLintAction[Flake8CodeActionConfig]):
         )
         messages_by_filepath = {}
         messages_by_filepath[str(file_path)] = lint_messages
-
-        self.logger.enable("flake8")
 
         return LintRunResult(messages=messages_by_filepath)
 
@@ -165,7 +166,7 @@ def run_flake8_on_single_file(
 class Flake8ManyCodeActionConfig(Flake8CodeActionConfig): ...
 
 
-class Flake8ManyCodeAction(CodeLintAction[Flake8ManyCodeActionConfig]):
+class Flake8ManyCodeAction(LintCodeAction[Flake8ManyCodeActionConfig]):
 
     def __init__(
         self,
@@ -180,6 +181,7 @@ class Flake8ManyCodeAction(CodeLintAction[Flake8ManyCodeActionConfig]):
         self.file_manager = file_manager
         self.ast_provider = ast_provider
 
+        self.logger.disable("flake8.options.manager")
         self.flake8_style_guide = flake8.get_style_guide(
             max_line_length=self.config.max_line_length,
             extend_select=self.config.extend_select,
@@ -189,11 +191,12 @@ class Flake8ManyCodeAction(CodeLintAction[Flake8ManyCodeActionConfig]):
             self.flake8_style_guide.options
         )
 
+        self.logger.disable("flake8.checker")
+        self.logger.disable("flake8.violation")
+        self.logger.disable("bugbear")
+
     async def run(self, payload: LintManyRunPayload) -> LintManyRunResult:
         messages = {}
-        # avoid outputting low-level logs of flake8, our goal is to trace finecode,
-        # not flake8 itself
-        self.logger.disable("flake8")
 
         file_paths = payload.file_paths
         self.flake8_style_guide._application.options.filenames = [
@@ -212,7 +215,6 @@ class Flake8ManyCodeAction(CodeLintAction[Flake8ManyCodeActionConfig]):
             )
             messages[str(file_path)] = lint_messages
 
-        self.logger.enable("flake8")
 
         return LintManyRunResult(messages=messages)
 

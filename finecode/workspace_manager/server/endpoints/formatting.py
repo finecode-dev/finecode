@@ -16,7 +16,6 @@ async def format_document(ls: LanguageServer, params: types.DocumentFormattingPa
     logger.info(f"format document {params}")
     await global_state.server_initialized.wait()
 
-    doc = ls.workspace.get_text_document(params.text_document.uri)
     file_path = pygls_types_utils.uri_str_to_path(params.text_document.uri)
 
     # first check 'format' action, because it always replaces the whole content, then
@@ -25,7 +24,7 @@ async def format_document(ls: LanguageServer, params: types.DocumentFormattingPa
         response = await proxy_utils.find_action_project_and_run_in_runner(
             file_path=file_path,
             action_name="format",
-            params=[{"file_path": file_path}],
+            params=[{"file_path": file_path, "save": False}],
             ws_context=global_state.ws_context,
         )
     except Exception as error:  # TODO
@@ -36,6 +35,7 @@ async def format_document(ls: LanguageServer, params: types.DocumentFormattingPa
         return []
 
     if response.get("changed", True) is True:
+        doc = ls.workspace.get_text_document(params.text_document.uri)
         return [
             types.TextEdit(
                 range=types.Range(
@@ -78,7 +78,9 @@ async def format_range(ls: LanguageServer, params: types.DocumentRangeFormatting
     return []
 
 
-async def format_ranges(ls: LanguageServer, params: types.DocumentRangesFormattingParams):
+async def format_ranges(
+    ls: LanguageServer, params: types.DocumentRangesFormattingParams
+):
     logger.info(f"format ranges {params}")
     await global_state.server_initialized.wait()
 

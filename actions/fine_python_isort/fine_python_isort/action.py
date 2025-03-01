@@ -8,7 +8,7 @@ import isort.settings as isort_settings
 from finecode import (
     ActionContext,
     CodeActionConfig,
-    CodeFormatAction,
+    FormatCodeAction,
     FormatRunContext,
     FormatRunPayload,
     FormatRunResult,
@@ -20,7 +20,7 @@ class IsortCodeActionConfig(CodeActionConfig):
     profile: str = ""
 
 
-class IsortCodeAction(CodeFormatAction[IsortCodeActionConfig]):
+class IsortCodeAction(FormatCodeAction[IsortCodeActionConfig]):
     CACHE_KEY = "Isort"
 
     def __init__(

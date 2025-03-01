@@ -5,12 +5,14 @@ actions = [{ name = 'format' }, { name = 'format_many' }]
 subactions = [
     { name = "isort", source = "fine_python_isort.IsortCodeAction" },
     { name = "black", source = "fine_python_black.BlackCodeAction" },
+    { name = "save", source = "finecode.extension_runner.actions.format.FormatSaveInPlaceCodeAction" },
 ]
 
 [tool.finecode.action.format_many]
 subactions = [
     # { name = "isort_many", source = "fine_python_isort.IsortManyCodeAction" },
     { name = "black_many", source = "fine_python_black.BlackManyCodeAction" },
+    { name = "save_many", source = "finecode.extension_runner.actions.format.FormatManySaveInPlaceCodeAction" },
 ]
 
 [tool.finecode.action.isort.config]

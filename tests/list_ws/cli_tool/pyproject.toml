@@ -1,29 +1,27 @@
-[tool.poetry]
-name = "cli-tool"
+[project]
+name = "cli_tool"
 version = "0.1.0"
 description = ""
-authors = ["Vladyslav Hnatiuk <aders1234@gmail.com>"]
+authors = [{ name = "Vladyslav Hnatiuk", email = "aders1234@gmail.com" }]
 readme = "README.md"
+requires-python = ">=3.11, <= 3.13"
+dependencies = [
+    "finecode @ file:///home/user/Development/FineCode/finecode/",
+    "fine_python_black @ file:///home/user/Development/FineCode/finecode/actions/fine_python_black/",
+    "fine_python_isort @ file:///home/user/Development/FineCode/finecode/actions/fine_python_isort/",
+]
 
-[tool.poetry.dependencies]
-python = "^3.10"
-
-[tool.poetry.group.dev.dependencies]
-finecode = { path = "../../../" }
-fine_python_black = { path = "../../../actions/fine_python_black" }
-fine_python_isort = { path = "../../../actions/fine_python_isort" }
 
 [build-system]
-requires = ["poetry-core"]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
 build-backend = "poetry.core.masonry.api"
 
+
 [tool.finecode]
-actions = [
-    { name = "format" }
-]
+actions = [{ name = "format" }]
 
 [tool.finecode.action.format]
 subactions = [
     { name = "black", source = "fine_python_black.BlackCodeAction" },
-    { name = "isort", source = "fine_python_isort.IsortCodeAction" }
+    { name = "isort", source = "fine_python_isort.IsortCodeAction" },
 ]

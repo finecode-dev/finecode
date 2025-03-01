@@ -7,8 +7,7 @@ from finecode.workspace_manager import context, domain, find_project
 from finecode.workspace_manager.runner import runner_client
 
 
-class ActionRunFailed(Exception):
-    ...
+class ActionRunFailed(Exception): ...
 
 
 async def find_action_project_and_run_in_runner(
@@ -34,14 +33,14 @@ async def find_action_project_and_run_in_runner(
         logger.info(
             f"Extension runner {project_path} is not running, status: {project_status.name}"
         )
-        raise ActionRunFailed(f"Extension runner {project_path} is not running, status: {project_status.name}")
+        raise ActionRunFailed(
+            f"Extension runner {project_path} is not running, status: {project_status.name}"
+        )
 
     runner = ws_context.ws_projects_extension_runners[project_path]
     try:
         response = await runner_client.run_action(
-            runner=runner,
-            action_name=action_name,
-            params=params
+            runner=runner, action_name=action_name, params=params
         )
     except runner_client.BaseRunnerRequestException as error:
         logger.error(f"Error on running action {action_name} on {file_path}: {error}")

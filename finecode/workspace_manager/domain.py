@@ -12,7 +12,9 @@ class Preset:
 
 class Action:
     # action is (collected) meta information about action in a project
-    def __init__(self, name: str, subactions: list[str] | None = None, source: str | None = None):
+    def __init__(
+        self, name: str, subactions: list[str] | None = None, source: str | None = None
+    ):
         self.name: str = name
         self.subactions: list[str] = subactions if subactions is not None else []
         self.source: str | None = source
@@ -59,7 +61,12 @@ class Project:
             self.actions_configs: dict[str, dict[str, Any]] = {}
 
     def __str__(self) -> str:
-        return f'Project(name="{self.name}", path="{self.dir_path}")'
+        return (
+            f'Project(name="{self.name}", path="{self.dir_path}", status={self.status})'
+        )
+
+    def __repr__(self) -> str:
+        return str(self)
 
 
 class ProjectStatus(Enum):
@@ -86,9 +93,16 @@ class TextDocumentInfo:
     def __init__(self, uri: str, version: str) -> None:
         self.uri = uri
         self.version = version
-    
+
     def __str__(self) -> str:
         return f'TextDocumentInfo(uri="{self.uri}", version="{self.version}")'
 
 
-__all__ = ["RootActions", "ActionsDict", "AllActions", "Action", "Project", "TextDocumentInfo"]
+__all__ = [
+    "RootActions",
+    "ActionsDict",
+    "AllActions",
+    "Action",
+    "Project",
+    "TextDocumentInfo",
+]

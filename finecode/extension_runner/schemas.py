@@ -25,8 +25,7 @@ class UpdateConfigRequest(BaseSchema):
 
 
 @dataclass
-class UpdateConfigResponse(BaseSchema):
-    ...
+class UpdateConfigResponse(BaseSchema): ...
 
 
 @dataclass

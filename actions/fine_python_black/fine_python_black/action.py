@@ -4,11 +4,18 @@ from __future__ import annotations
 # import os
 from pathlib import Path
 import sys
+
 # from concurrent.futures import Executor  # ProcessPoolExecutor,
 # from concurrent.futures import ThreadPoolExecutor
 # from pathlib import Path
 
-from finecode.extension_runner.actions.format import FileInfo, FormatManyRunContext, FormatManyRunPayload, FormatRunContext
+from finecode.extension_runner.actions.format import (
+    FileInfo,
+    FormatManyRunContext,
+    FormatManyRunPayload,
+    FormatManyRunResult,
+    FormatRunContext,
+)
 
 if sys.version_info < (3, 12):
     from typing_extensions import override
@@ -16,15 +23,17 @@ else:
     from typing import override
 
 import black
+
 # from black import WriteBack
 # from black.concurrency import schedule_formatting
 from black.mode import Mode, TargetVersion
+
 # from black.report import Report
 
 from finecode import (
     ActionContext,
     CodeActionConfig,
-    CodeFormatAction,
+    FormatCodeAction,
 )
 from finecode.extension_runner.actions import format as format_action
 from finecode.extension_runner.interfaces import icache, ilogger
@@ -49,7 +58,7 @@ class BlackCodeActionConfig(CodeActionConfig):
     python_cell_magics: bool = False  # it should be a set?
 
 
-class BlackCodeAction(CodeFormatAction[BlackCodeActionConfig]):
+class BlackCodeAction(FormatCodeAction[BlackCodeActionConfig]):
     CACHE_KEY = "BlackFormatter"
 
     def __init__(
@@ -105,14 +114,14 @@ class BlackCodeAction(CodeFormatAction[BlackCodeActionConfig]):
         await self.cache.save_file_cache(
             file_path, file_version, self.CACHE_KEY, new_file_content
         )
-        return format_action.FormatRunResult(changed=file_changed, code=new_file_content)
+        return format_action.FormatRunResult(
+            changed=file_changed, code=new_file_content
+        )
 
 
 def get_black_mode(config: BlackCodeActionConfig) -> Mode:
     return Mode(
-        target_versions=set(
-            [TargetVersion[ver] for ver in config.target_versions]
-        ),
+        target_versions=set([TargetVersion[ver] for ver in config.target_versions]),
         line_length=config.line_length,
         is_pyi=False,
         is_ipynb=False,
@@ -125,11 +134,10 @@ def get_black_mode(config: BlackCodeActionConfig) -> Mode:
     )
 
 
-class BlackManyCodeActionConfig(BlackCodeActionConfig):
-    ...
+class BlackManyCodeActionConfig(BlackCodeActionConfig): ...
 
 
-class BlackManyCodeAction(CodeFormatAction[BlackCodeActionConfig]):
+class BlackManyCodeAction(FormatCodeAction[BlackCodeActionConfig]):
     CACHE_KEY = "BlackFormatter"
 
     def __init__(
@@ -148,7 +156,7 @@ class BlackManyCodeAction(CodeFormatAction[BlackCodeActionConfig]):
     async def run(
         self, payload: FormatManyRunPayload, run_context: FormatManyRunContext
     ) -> format_action.FormatRunResult:
-        results_by_file_path: dict[Path, format_action.FormatRunResult] = {}
+        result_by_file_path: dict[Path, format_action.FormatRunResult] = {}
         for file_path in payload.file_paths:
             file_content, file_version = run_context.file_info_by_path[file_path]
             # TODO: avoid repetition
@@ -156,7 +164,9 @@ class BlackManyCodeAction(CodeFormatAction[BlackCodeActionConfig]):
                 new_file_content = await self.cache.get_file_cache(
                     file_path, self.CACHE_KEY
                 )
-                results_by_file_path[file_path] = format_action.FormatRunResult(changed=False, code=new_file_content)
+                result_by_file_path[file_path] = format_action.FormatRunResult(
+                    changed=False, code=new_file_content
+                )
                 continue
             except icache.CacheMissException:
                 pass
@@ -182,14 +192,19 @@ class BlackManyCodeAction(CodeFormatAction[BlackCodeActionConfig]):
             self.logger.enable("fine_python_black")
 
             # save for next subactions
-            run_context.file_info_by_path[file_path] = FileInfo(new_file_content, file_version)
+            run_context.file_info_by_path[file_path] = FileInfo(
+                new_file_content, file_version
+            )
 
             await self.cache.save_file_cache(
                 file_path, file_version, self.CACHE_KEY, new_file_content
             )
-            results_by_file_path[file_path] = format_action.FormatRunResult(changed=file_changed, code=new_file_content)
-        
-        return results_by_file_path
+            result_by_file_path[file_path] = format_action.FormatRunResult(
+                changed=file_changed, code=new_file_content
+            )
+
+        return FormatManyRunResult(result_by_file_path=result_by_file_path)
+
 
 # def get_black_report() -> Report:
 #     return Report(check=False, diff=False, quiet=True, verbose=True)

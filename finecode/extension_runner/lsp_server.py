@@ -4,7 +4,7 @@ from loguru import logger
 from lsprotocol import types
 from pygls.lsp.server import LanguageServer
 
-from finecode.extension_runner import schemas, services, domain
+from finecode.extension_runner import domain, schemas, services
 
 
 def create_lsp_server() -> LanguageServer:
@@ -32,10 +32,47 @@ def create_lsp_server() -> LanguageServer:
     register_resolve_package_path_cmd(resolve_package_path)
 
     async def document_requester(uri: str):
-        document = await server.protocol.send_request_async('documents/get', params={ "uri": uri })
-        return domain.TextDocumentInfo(uri=document.uri, version=document.version, text=document.text)
+        document = await server.protocol.send_request_async(
+            "documents/get", params={"uri": uri}
+        )
+        return domain.TextDocumentInfo(
+            uri=document.uri, version=document.version, text=document.text
+        )
+
+    async def document_saver(uri: str, content: str):
+        document = await server.protocol.send_request_async(
+            "documents/get", params={"uri": uri}
+        )
+        document_lines = document.text.split("\n")
+        params = types.ApplyWorkspaceEditParams(
+            edit=types.WorkspaceEdit(
+                # dict seems to be incorrectly unstructured on client(pygls issue?)
+                # use document_changes instead of changes
+                document_changes=[
+                    types.TextDocumentEdit(
+                        text_document=types.OptionalVersionedTextDocumentIdentifier(
+                            uri=uri
+                        ),
+                        edits=[
+                            types.TextEdit(
+                                range=types.Range(
+                                    start=types.Position(line=0, character=0),
+                                    end=types.Position(
+                                        line=len(document_lines),
+                                        character=len(document_lines[-1]),
+                                    ),
+                                ),
+                                new_text=content,
+                            )
+                        ],
+                    )
+                ]
+            )
+        )
+        await server.workspace_apply_edit_async(params)
 
     services.document_requester = document_requester
+    services.document_saver = document_saver
 
     return server
 
@@ -45,12 +82,12 @@ def _on_initialized(ls: LanguageServer, params: types.InitializedParams):
 
 
 def _document_did_open(ls: LanguageServer, params: types.DidOpenTextDocumentParams):
-    logger.info(f'document did open: {params.text_document.uri}')
+    logger.info(f"document did open: {params.text_document.uri}")
     services.document_did_open(params.text_document.uri)
 
 
 def _document_did_close(ls: LanguageServer, params: types.DidCloseTextDocumentParams):
-    logger.info(f'document did close: {params.text_document.uri}')
+    logger.info(f"document did close: {params.text_document.uri}")
     services.document_did_close(params.text_document.uri)
 
 
@@ -66,7 +103,9 @@ async def update_config(ls: LanguageServer, params):
         project_name=project_name,
         actions={
             action_name: schemas.Action(
-                name=action["name"], actions=action["subactions"], source=action["source"]
+                name=action["name"],
+                actions=action["subactions"],
+                source=action["source"],
             )
             for action_name, action in actions.items()
         },

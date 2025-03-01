@@ -3,7 +3,9 @@ from typing import Any
 from finecode.workspace_manager import domain
 
 
-def get_subactions(names: list[str], project_raw_config: dict[str, Any]) -> list[domain.Action]:
+def get_subactions(
+    names: list[str], project_raw_config: dict[str, Any]
+) -> list[domain.Action]:
     subactions: list[domain.Action] = []
     for name in names:
         try:

@@ -1,11 +1,11 @@
 from .extension_runner.actions.format import (
-    CodeFormatAction,
+    FormatCodeAction,
     FormatRunContext,
     FormatRunPayload,
     FormatRunResult,
 )
 from .extension_runner.actions.lint import (
-    CodeLintAction,
+    LintCodeAction,
     LintMessage,
     LintRunPayload,
     LintRunResult,
@@ -21,11 +21,11 @@ from .extension_runner.code_action import (
 )
 
 __all__ = [
-    "CodeLintAction",
+    "LintCodeAction",
     "CodeAction",
     "CodeActionConfig",
     "LintRunResult",
-    "CodeFormatAction",
+    "FormatCodeAction",
     "FormatRunResult",
     "LintMessage",
     "RunActionPayload",

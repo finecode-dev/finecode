@@ -5,7 +5,9 @@ from finecode.extension_runner.interfaces import icache, ifilemanager, ilogger
 
 
 class InMemoryCache(icache.ICache):
-    def __init__(self, file_manager: ifilemanager.IFileManager, logger: ilogger.ILogger):
+    def __init__(
+        self, file_manager: ifilemanager.IFileManager, logger: ilogger.ILogger
+    ):
         self.file_manager = file_manager
         self.logger = logger
 
@@ -13,9 +15,11 @@ class InMemoryCache(icache.ICache):
 
         # TODO: clear file cache when file changes
 
-    async def save_file_cache(self, file_path: Path, file_version: str, key: str, value: Any) -> None:
+    async def save_file_cache(
+        self, file_path: Path, file_version: str, key: str, value: Any
+    ) -> None:
         current_file_version = await self.file_manager.get_file_version(file_path)
-        
+
         if file_version != current_file_version:
             # `value` was created for older version of file, don't save it
             return None
@@ -33,19 +37,23 @@ class InMemoryCache(icache.ICache):
         try:
             file_cache = self.cache_by_file[file_path]
         except KeyError:
-            self.logger.debug(f'No cache for file {file_path}, cache miss')
+            self.logger.debug(f"No cache for file {file_path}, cache miss")
             raise icache.CacheMissException()
 
         current_file_version = await self.file_manager.get_file_version(file_path)
         cached_file_version = file_cache[0]
         if cached_file_version != current_file_version:
-            self.logger.debug(f'Cached value for file {file_path} is outdated, cache miss')
+            self.logger.debug(
+                f"Cached value for file {file_path} is outdated, cache miss"
+            )
             raise icache.CacheMissException()
         else:
             try:
                 cached_value = file_cache[1][key]
             except KeyError:
-                self.logger.debug(f'Cached value for file {file_path} doesn\'t contain key {key}, cache miss')
+                self.logger.debug(
+                    f"Cached value for file {file_path} doesn't contain key {key}, cache miss"
+                )
                 raise icache.CacheMissException()
 
             self.logger.debug(f"Use cached value for {file_path}, key {key}")

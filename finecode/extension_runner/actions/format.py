@@ -11,6 +11,7 @@ else:
 
 from finecode.extension_runner.code_action import (
     CodeAction,
+    CodeActionConfig,
     CodeActionConfigType,
     RunActionContext,
     RunActionPayload,
@@ -24,6 +25,7 @@ class FormatRunPayload(RunActionPayload):
     # multi-step and output of previous step is input for the next step without saving permanently
     # in file. Use `apply_on_text` as source of target file.
     file_path: Path
+    save: bool
 
 
 class FormatRunContext(RunActionContext):
@@ -64,15 +66,48 @@ class FormatRunResult(RunActionResult):
             self.code = other.code
 
 
-class CodeFormatAction(CodeAction[CodeActionConfigType, FormatRunPayload, FormatRunContext, FormatRunResult]):
+class FormatCodeAction(
+    CodeAction[
+        CodeActionConfigType, FormatRunPayload, FormatRunContext, FormatRunResult
+    ]
+):
     # format actions can both analyse and modify the code. Analysis is required for example to
     # report errors that cannot be fixed automatically.
     ...
 
 
+class FormatSaveInPlaceCodeActionConfig(CodeActionConfig): ...
+
+
+class FormatSaveInPlaceCodeAction(FormatCodeAction[FormatSaveInPlaceCodeActionConfig]):
+    def __init__(
+        self,
+        config: FormatSaveInPlaceCodeActionConfig,
+        context: FormatRunContext,
+        file_manager: ifilemanager.IFileManager,
+    ) -> None:
+        super().__init__(config=config, context=context)
+        self.file_manager = file_manager
+
+    async def run(
+        self, payload: FormatRunPayload, run_context: FormatRunContext
+    ) -> FormatRunResult:
+        file_path = payload.file_path
+        file_content = run_context.file_content
+        save = payload.save
+
+        if save is True:
+            await self.file_manager.save_file(
+                file_path=file_path, file_content=file_content
+            )
+
+        result = FormatRunResult(changed=False, code=file_content)
+        return result
+
+
 class FormatManyRunPayload(RunActionPayload):
-    # TODO: in-place as parameter? Also in single?
     file_paths: list[Path]
+    save: bool
 
 
 class FileInfo(NamedTuple):
@@ -94,12 +129,69 @@ class FormatManyRunContext(RunActionContext):
         for file_path in initial_payload.file_paths:
             file_content = await self.file_manager.get_content(file_path)
             file_version = await self.file_manager.get_file_version(file_path)
-            self.file_info_by_path[file_path] = FileInfo(file_content=file_content, file_version=file_version)
+            self.file_info_by_path[file_path] = FileInfo(
+                file_content=file_content, file_version=file_version
+            )
 
 
 class FormatManyRunResult(RunActionResult):
     result_by_file_path: dict[Path, FormatRunResult]
 
+    @override
+    def update(self, other: RunActionResult) -> None:
+        if not isinstance(other, FormatManyRunResult):
+            return
 
-class FormatManyCodeAction(CodeAction[CodeActionConfigType, FormatManyRunPayload, RunActionContext, FormatManyRunResult]):
-    ...
+        for file_path, other_result in other.result_by_file_path.items():
+            if other_result.changed is True:
+                self.result_by_file_path[file_path] = other_result
+
+
+class FormatManyCodeAction(
+    CodeAction[
+        CodeActionConfigType,
+        FormatManyRunPayload,
+        RunActionContext,
+        FormatManyRunResult,
+    ]
+): ...
+
+
+class FormatManySaveInPlaceCodeActionConfig(CodeActionConfig): ...
+
+
+class FormatManySaveInPlaceCodeAction(
+    FormatManyCodeAction[FormatSaveInPlaceCodeActionConfig]
+):
+    def __init__(
+        self,
+        config: FormatSaveInPlaceCodeActionConfig,
+        context: FormatRunContext,
+        file_manager: ifilemanager.IFileManager,
+    ) -> None:
+        super().__init__(config=config, context=context)
+        self.file_manager = file_manager
+
+    async def run(
+        self, payload: FormatManyRunPayload, run_context: FormatManyRunContext
+    ) -> FormatManyRunResult:
+        file_paths = payload.file_paths
+        save = payload.save
+
+        if save is True:
+            for file_path in file_paths:
+                file_content = run_context.file_info_by_path[file_path].file_content
+                await self.file_manager.save_file(
+                    file_path=file_path, file_content=file_content
+                )
+
+        result = FormatManyRunResult(
+            result_by_file_path={
+                file_path: FormatRunResult(
+                    changed=False,
+                    code=run_context.file_info_by_path[file_path].file_content,
+                )
+                for file_path in file_paths
+            }
+        )
+        return result

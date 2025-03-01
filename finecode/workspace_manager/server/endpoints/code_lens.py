@@ -9,7 +9,9 @@ if TYPE_CHECKING:
     from pygls.lsp.server import LanguageServer
 
 
-async def document_code_lens(ls: LanguageServer, params: types.CodeLensParams) -> types.CodeLensResult:
+async def document_code_lens(
+    ls: LanguageServer, params: types.CodeLensParams
+) -> types.CodeLensResult:
     return [
         # Example:
         # types.CodeLens(
@@ -20,5 +22,7 @@ async def document_code_lens(ls: LanguageServer, params: types.CodeLensParams) -
     ]
 
 
-async def code_lens_resolve(ls: LanguageServer, params: types.CodeLens) -> types.CodeLens:
+async def code_lens_resolve(
+    ls: LanguageServer, params: types.CodeLens
+) -> types.CodeLens:
     logger.trace(f"resolve code lens {params}")
