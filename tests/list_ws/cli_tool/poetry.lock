@@ -163,8 +163,8 @@ finecode_extension_api = {git = "ssh://git@github.com/Aksem/FineCode.git", subdi
 type = "git"
 url = "ssh://git@github.com/Aksem/FineCode.git"
 reference = "HEAD"
-resolved_reference = "f946ab9a08ad4d031df9c1b8bc40897238271667"
-subdirectory = "actions/fine_python_black/"
+resolved_reference = "347f325b869e2408f9e4dcd54902947beedf80ed"
+subdirectory = "actions/fine_python_black"
 
 [[package]]
 name = "fine-python-isort"
@@ -184,8 +184,8 @@ isort = ">=5.13,<6"
 type = "git"
 url = "ssh://git@github.com/Aksem/FineCode.git"
 reference = "HEAD"
-resolved_reference = "f946ab9a08ad4d031df9c1b8bc40897238271667"
-subdirectory = "actions/fine_python_isort/"
+resolved_reference = "347f325b869e2408f9e4dcd54902947beedf80ed"
+subdirectory = "actions/fine_python_isort"
 
 [[package]]
 name = "finecode"
@@ -212,7 +212,7 @@ watchdog = "==4.0.*"
 type = "git"
 url = "ssh://git@github.com/Aksem/FineCode.git"
 reference = "HEAD"
-resolved_reference = "f946ab9a08ad4d031df9c1b8bc40897238271667"
+resolved_reference = "347f325b869e2408f9e4dcd54902947beedf80ed"
 
 [[package]]
 name = "finecode-extension-api"
@@ -232,7 +232,7 @@ typing-extensions = ">=4.12.2,<5.0.0"
 type = "git"
 url = "ssh://git@github.com/Aksem/FineCode.git"
 reference = "HEAD"
-resolved_reference = "f946ab9a08ad4d031df9c1b8bc40897238271667"
+resolved_reference = "347f325b869e2408f9e4dcd54902947beedf80ed"
 subdirectory = "finecode_extension_api"
 
 [[package]]
@@ -606,4 +606,4 @@ dev = ["black (>=19.3b0) ; python_version >= \"3.6\"", "pytest (>=4.6.2)"]
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.11, <= 3.13"
-content-hash = "fb8778b2892263ada8cdfbe05613827f2750f3340b4a1a4abd440719d112cf5b"
+content-hash = "3f3916f984fccec6cbf3c89b3b2a8347660b6e8173e5506e06e02e3f9680b192"
