@@ -20,7 +20,7 @@ from finecode_extension_api.actions.lint import (
     Range,
 )
 from finecode_extension_api.code_action import ActionContext, CodeActionConfig
-from finecode_extension_api.interfaces import ifilemanager, ilogger
+from finecode_extension_api.interfaces import icache, ifilemanager, ilogger
 
 
 class Flake8CodeActionConfig(CodeActionConfig):
@@ -30,16 +30,19 @@ class Flake8CodeActionConfig(CodeActionConfig):
 
 
 class Flake8CodeAction(LintCodeAction[Flake8CodeActionConfig]):
+    CACHE_KEY = 'flake8'
 
     def __init__(
         self,
         config: Flake8CodeActionConfig,
         context: ActionContext,
+        cache: icache.ICache,
         logger: ilogger.ILogger,
         file_manager: ifilemanager.IFileManager,
         ast_provider: iast_provider.IPythonSingleAstProvider,
     ) -> None:
         super().__init__(config, context)
+        self.cache = cache
         self.logger = logger
         self.file_manager = file_manager
         self.ast_provider = ast_provider
@@ -66,7 +69,16 @@ class Flake8CodeAction(LintCodeAction[Flake8CodeActionConfig]):
 
     async def run(self, payload: LintRunPayload) -> LintRunResult:
         file_path = payload.file_path
+        try:
+            cached_lint_messages = await self.cache.get_file_cache(
+                file_path, self.CACHE_KEY
+            )
+            return LintRunResult(messages={str(file_path): cached_lint_messages})
+        except icache.CacheMissException:
+            pass
+
         file_content = await self.file_manager.get_content(file_path)
+        file_version = await self.file_manager.get_file_version(file_path)
 
         try:
             file_ast = await self.ast_provider.get_file_ast(file_path=file_path)
@@ -83,6 +95,9 @@ class Flake8CodeAction(LintCodeAction[Flake8CodeActionConfig]):
         )
         messages_by_filepath = {}
         messages_by_filepath[str(file_path)] = lint_messages
+        await self.cache.save_file_cache(
+            file_path, file_version, self.CACHE_KEY, lint_messages
+        )
 
         return LintRunResult(messages=messages_by_filepath)
 
@@ -169,16 +184,19 @@ class Flake8ManyCodeActionConfig(Flake8CodeActionConfig): ...
 
 
 class Flake8ManyCodeAction(LintCodeAction[Flake8ManyCodeActionConfig]):
+    CACHE_KEY = 'flake8'
 
     def __init__(
         self,
         config: Flake8ManyCodeActionConfig,
         context: ActionContext,
+        cache: icache.ICache,
         logger: ilogger.ILogger,
         file_manager: ifilemanager.IFileManager,
         ast_provider: iast_provider.IPythonSingleAstProvider,
     ) -> None:
         super().__init__(config, context=context)
+        self.cache = cache
         self.logger = logger
         self.file_manager = file_manager
         self.ast_provider = ast_provider
@@ -206,7 +224,17 @@ class Flake8ManyCodeAction(LintCodeAction[Flake8ManyCodeActionConfig]):
         ]
         # TODO: multiprocess pool
         for file_path in file_paths:
+            try:
+                cached_lint_messages = await self.cache.get_file_cache(
+                    file_path, self.CACHE_KEY
+                )
+                messages[str(file_path)] = cached_lint_messages
+                continue
+            except icache.CacheMissException:
+                pass
+
             file_content = await self.file_manager.get_content(file_path)
+            file_version = await self.file_manager.get_file_version(file_path)
             try:
                 file_ast = await self.ast_provider.get_file_ast(file_path=file_path)
             except SyntaxError:
@@ -220,6 +248,9 @@ class Flake8ManyCodeAction(LintCodeAction[Flake8ManyCodeActionConfig]):
                 decider=self.flake8_decider,
             )
             messages[str(file_path)] = lint_messages
+            await self.cache.save_file_cache(
+                file_path, file_version, self.CACHE_KEY, lint_messages
+            )
 
         return LintManyRunResult(messages=messages)
 
