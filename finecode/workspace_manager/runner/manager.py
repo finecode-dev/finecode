@@ -117,9 +117,18 @@ async def stop_extension_runner(runner: runner_info.ExtensionRunnerInfo) -> None
     if runner.client is not None:
         logger.trace(f"Trying to stop extension runner {runner.working_dir_path}")
         if not runner.client.stopped:
+            logger.debug("Send shutdown to server")
+            try:
+                await runner_client.shutdown(runner=runner)
+            except Exception as e:
+                # TODO: handle
+                logger.error(f"Failed to shutdown {e}")
+
+            await runner_client.exit(runner)
+            logger.debug("Sent exit to server")
             # `runner.client.stop()` doesn't work, it just hangs. Need to be
             # investigated. Terminate forcefully until the problem is properly solved.
-            runner.client._server.terminate()
+            # runner.client._server.terminate()
             await runner.client.stop()
             logger.trace(
                 f"Stop extension runner {runner.process_id} in {runner.working_dir_path}"
@@ -191,7 +200,8 @@ async def _init_runner(
             client_name="FineCode_WorkspaceManager",
             client_version="0.1.0",
         )
-    except runner_client.BaseRunnerRequestException:
+    except runner_client.BaseRunnerRequestException as error:
+        logger.error(f"Runner failed to initialize: {error}")
         project.status = domain.ProjectStatus.RUNNER_FAILED
         await notify_project_changed(project)
         runner.initialized_event.set()
@@ -199,11 +209,12 @@ async def _init_runner(
 
     try:
         await runner_client.notify_initialized(runner)
-    except Exception as e:
+    except Exception as error:
+        logger.error(f"Failed to notify runner about initialization: {error}")
         project.status = domain.ProjectStatus.RUNNER_FAILED
         await notify_project_changed(project)
         runner.initialized_event.set()
-        logger.exception(e)
+        logger.exception(error)
         return
     logger.debug("LSP Server initialized")
 

@@ -32,6 +32,7 @@ from finecode_extension_api.interfaces import (
     ifilemanager,
     ilogger,
 )
+from finecode_extension_api import code_action
 
 container: dict[str, Any] = {}
 
@@ -62,6 +63,10 @@ T = TypeVar("T")
 
 
 def get_service_instance(service_type: Type[T]) -> T:
+    if service_type == code_action.ActionHandlerLifecycle:
+        return code_action.ActionHandlerLifecycle()
+
+    # singletons
     if service_type in container:
         return container[service_type]
     else:

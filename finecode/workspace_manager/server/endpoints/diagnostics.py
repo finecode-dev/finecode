@@ -177,7 +177,7 @@ async def workspace_diagnostic(
                 for request_data in exec_info.request_data:
                     task = tg.create_task(
                         runner_client.run_action(
-                            runner=runner,
+                            runner=exec_info.runner,
                             action_name=exec_info.action_name,
                             params=[request_data],
                         )

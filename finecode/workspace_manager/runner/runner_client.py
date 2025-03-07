@@ -171,6 +171,16 @@ async def update_config(
     )
 
 
+async def shutdown(
+    runner: ExtensionRunnerInfo,
+) -> None:
+    await send_request(runner=runner, method=types.SHUTDOWN, params=None)
+
+
+async def exit(runner: ExtensionRunnerInfo) -> None:
+    runner.client.protocol.notify(method=types.EXIT)
+
+
 async def notify_document_did_open(
     runner: ExtensionRunnerInfo, document_info: domain.TextDocumentInfo
 ) -> None:

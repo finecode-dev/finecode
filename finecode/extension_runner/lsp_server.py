@@ -1,5 +1,6 @@
 import json
 
+import pygls.exceptions as pygls_exceptions
 from loguru import logger
 from lsprotocol import types
 from pygls.lsp.server import LanguageServer
@@ -12,6 +13,9 @@ def create_lsp_server() -> LanguageServer:
 
     register_initialized_feature = server.feature(types.INITIALIZED)
     register_initialized_feature(_on_initialized)
+
+    register_shutdown_feature = server.feature(types.SHUTDOWN)
+    register_shutdown_feature(_on_shutdown)
 
     register_document_did_open_feature = server.feature(types.TEXT_DOCUMENT_DID_OPEN)
     register_document_did_open_feature(_document_did_open)
@@ -32,9 +36,16 @@ def create_lsp_server() -> LanguageServer:
     register_resolve_package_path_cmd(resolve_package_path)
 
     async def document_requester(uri: str):
-        document = await server.protocol.send_request_async(
-            "documents/get", params={"uri": uri}
-        )
+        try:
+            document = await server.protocol.send_request_async(
+                "documents/get", params={"uri": uri}
+            )
+        except pygls_exceptions.JsonRpcInternalError as error:
+            if error.message == "Exception: Document is not opened":
+                raise domain.TextDocumentNotOpened()
+            else:
+                raise error
+
         return domain.TextDocumentInfo(
             uri=document.uri, version=document.version, text=document.text
         )
@@ -79,6 +90,11 @@ def create_lsp_server() -> LanguageServer:
 
 def _on_initialized(ls: LanguageServer, params: types.InitializedParams):
     logger.info(f"initialized {params}")
+
+
+def _on_shutdown(ls: LanguageServer, params):
+    logger.info("Shutdown extension runner")
+    services.shutdown_all_action_handlers()
 
 
 def _document_did_open(ls: LanguageServer, params: types.DidOpenTextDocumentParams):

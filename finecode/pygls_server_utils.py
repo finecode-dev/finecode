@@ -1,4 +1,3 @@
-import asyncio
 import logging
 import sys
 from threading import Event
@@ -11,40 +10,40 @@ from pygls.lsp.server import LanguageServer
 std_logger = logging.getLogger(__name__)
 
 
-async def start_tcp_async(server: LanguageServer, host: str, port: int) -> None:
-    """Starts TCP server."""
-    logger.info(f"Starting TCP server on {host}:{port}")
+# async def start_tcp_async(server: LanguageServer, host: str, port: int) -> None:
+#     """Starts TCP server."""
+#     logger.info(f"Starting TCP server on {host}:{port}")
 
-    server._stop_event = stop_event = Event()
+#     server._stop_event = stop_event = Event()
 
-    async def lsp_connection(
-        reader: asyncio.StreamReader, writer: asyncio.StreamWriter
-    ):
-        logger.debug("Connected to client")
-        self.protocol.set_writer(writer)  # type: ignore
-        await run_async(
-            stop_event=stop_event,
-            reader=reader,
-            protocol=server.protocol,
-            logger=std_logger,
-            error_handler=server.report_server_error,
-        )
-        logger.debug("Main loop finished")
-        server.shutdown()
+#     async def lsp_connection(
+#         reader: asyncio.StreamReader, writer: asyncio.StreamWriter
+#     ):
+#         logger.debug("Connected to client")
+#         self.protocol.set_writer(writer)  # type: ignore
+#         await run_async(
+#             stop_event=stop_event,
+#             reader=reader,
+#             protocol=server.protocol,
+#             logger=std_logger,
+#             error_handler=server.report_server_error,
+#         )
+#         logger.debug("Main loop finished")
+#         server.shutdown()
 
-    async def tcp_server(h: str, p: int):
-        server._server = await asyncio.start_server(lsp_connection, h, p)
+#     async def tcp_server(h: str, p: int):
+#         server._server = await asyncio.start_server(lsp_connection, h, p)
 
-        addrs = ", ".join(str(sock.getsockname()) for sock in server._server.sockets)
-        logger.info(f"Serving on {addrs}")
+#         addrs = ", ".join(str(sock.getsockname()) for sock in server._server.sockets)
+#         logger.info(f"Serving on {addrs}")
 
-        async with server._server:
-            await server._server.serve_forever()
+#         async with server._server:
+#             await server._server.serve_forever()
 
-    try:
-        await tcp_server(host, port)
-    except asyncio.CancelledError:
-        logger.debug("Server was cancelled")
+#     try:
+#         await tcp_server(host, port)
+#     except asyncio.CancelledError:
+#         logger.debug("Server was cancelled")
 
 
 async def start_io_async(
@@ -85,7 +84,7 @@ def deserialize_pygls_object(pygls_object) -> dict[str, Any] | list[Any]:
             item = getattr(pygls_object, f"_{index}")
             if (
                 hasattr(item, "__module__")
-                and getattr(item, "__module__") == "pygls.protocol"
+                and item.__module__ == "pygls.protocol"
             ):
                 deserialized_value = deserialize_pygls_object(item)
             else:
@@ -98,7 +97,7 @@ def deserialize_pygls_object(pygls_object) -> dict[str, Any] | list[Any]:
             field_value = getattr(pygls_object, field_name)
             if (
                 hasattr(field_value, "__module__")
-                and getattr(field_value, "__module__") == "pygls.protocol"
+                and field_value.__module__ == "pygls.protocol"
             ):
                 deserialized_value = deserialize_pygls_object(field_value)
             else:

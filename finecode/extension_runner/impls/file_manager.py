@@ -2,8 +2,9 @@ import hashlib
 from pathlib import Path
 from typing import Callable
 
-from finecode_extension_api.interfaces import ifilemanager, ilogger
 from finecode import pygls_types_utils
+from finecode.extension_runner import domain
+from finecode_extension_api.interfaces import ifilemanager, ilogger
 
 
 class FileManager(ifilemanager.IFileManager):
@@ -25,15 +26,15 @@ class FileManager(ifilemanager.IFileManager):
 
         if file_uri in self.docs_owned_by_client:
             # docs owned by client cannot be cached, always read from client
-            document_info = await self.get_document_func(file_uri)
-            return document_info.text
+            try:
+                document_info = await self.get_document_func(file_uri)
+                file_content = document_info.text
+            except domain.TextDocumentNotOpened:
+                file_content = self.read_content_file_from_fs(file_path=file_path)
         else:
-            # TODO: handle errors: file doesn't exist, cannot be opened etc
-            with open(file_path, "r") as f:
-                file_content = f.read()
-            self.logger.debug(f"Read file: {file_path}")
+            file_content = self.read_content_file_from_fs(file_path=file_path)
 
-            return file_content
+        return file_content
 
     async def get_file_version(self, file_path: Path) -> str:
         file_uri = pygls_types_utils.path_to_uri_str(file_path)
@@ -41,8 +42,11 @@ class FileManager(ifilemanager.IFileManager):
 
         if file_uri in self.docs_owned_by_client:
             # read file from client
-            document_info = await self.get_document_func(file_uri)
-            file_version = str(document_info.version)
+            try:
+                document_info = await self.get_document_func(file_uri)
+                file_version = str(document_info.version)
+            except domain.TextDocumentNotOpened:
+                file_version = self.get_hash_of_file_from_fs(file_path=file_path)
         else:
             # TODO
             # st = file_path.stat()
@@ -55,13 +59,7 @@ class FileManager(ifilemanager.IFileManager):
             #         return True
             # return False
 
-            # TODO: handle errors: file doesn't exist, cannot be opened etc
-            with open(file_path, "rb") as f:
-                file_version = hashlib.file_digest(f, "sha256").hexdigest()
-
-            # 12 chars is enough to distinguish. The whole value is 64 chars length and
-            # is not really needed in logs
-            file_version = f"{file_version[:12]}..."
+            file_version = self.get_hash_of_file_from_fs(file_path=file_path)
 
         self.logger.debug(f"Version of {file_path}: {file_version}")
         return file_version
@@ -73,3 +71,25 @@ class FileManager(ifilemanager.IFileManager):
         else:
             with open(file_path, "w") as f:
                 f.write(file_content)
+
+    # helper methods
+    def read_content_file_from_fs(self, file_path: Path) -> str:
+        # don't use this method directly, use `get_content` instead
+        # TODO: handle errors: file doesn't exist, cannot be opened etc
+        self.logger.debug(f"Read file: {file_path}")
+        with open(file_path, "r") as f:
+            file_content = f.read()
+
+        return file_content
+
+    def get_hash_of_file_from_fs(self, file_path: Path) -> str:
+        # don't use this method directly, use `get_file_version` instead
+        # TODO: handle errors: file doesn't exist, cannot be opened etc
+        with open(file_path, "rb") as f:
+            file_version = hashlib.file_digest(f, "sha256").hexdigest()
+
+        # 12 chars is enough to distinguish. The whole value is 64 chars length and
+        # is not really needed in logs
+        file_version = f"{file_version[:12]}..."
+
+        return file_version

@@ -258,6 +258,7 @@ async def execute_action_handler(
     if action.name in runner_context.actions_instances_by_name:
         action_instance = runner_context.actions_instances_by_name[action.name]
         action_run_func = action_instance.run
+        exec_info = runner_context.action_handlers_exec_info_by_name[action.name]
         logger.trace(f"Instance of action {action.name} found in cache")
     else:
         logger.trace(f"Load action {action.name}")
@@ -299,6 +300,8 @@ async def execute_action_handler(
         context = code_action.ActionContext(
             project_dir=project_path, cache_dir=project_cache_dir
         )
+        exec_info = domain.ActionHandlerExecInfo()
+        runner_context.action_handlers_exec_info_by_name[action.name] = exec_info
         if inspect.isclass(action_handler):
             args = resolve_func_args_with_di(
                 func=action_handler.__init__,
@@ -306,11 +309,29 @@ async def execute_action_handler(
                 params_to_ignore=["self"],
             )
 
+            if "lifecycle" in args:
+                exec_info.lifecycle = args["lifecycle"]
+
             action_instance = action_handler(**args)
             runner_context.actions_instances_by_name[action.name] = action_instance
             action_run_func = action_instance.run
         else:
             action_run_func = action_handler
+
+        if (
+            exec_info.lifecycle is not None
+            and exec_info.lifecycle.on_initialize_callable is not None
+        ):
+            logger.trace(f"Initialize {action.name} action handler")
+            try:
+                initialize_callable_result = (
+                    exec_info.lifecycle.on_initialize_callable()
+                )
+                if inspect.isawaitable(initialize_callable_result):
+                    await initialize_callable_result
+            except Exception as e:
+                logger.error(f"Failed to initialize action {action.name}: {e}")
+                return
 
     args = resolve_func_args_with_di(
         func=action_run_func,
@@ -318,8 +339,8 @@ async def execute_action_handler(
     )
     # TODO: cache parameters
     try:
-        # there is also `inspect.iscoroutinefunction` but it cannot recognize coroutine functions
-        # which are class methods.
+        # there is also `inspect.iscoroutinefunction` but it cannot recognize coroutine
+        # functions which are class methods.
         call_result = action_run_func(**args)
         if inspect.isawaitable(call_result):
             current_result = await call_result
@@ -333,7 +354,8 @@ async def execute_action_handler(
     end_time = time.time_ns()
     duration = (end_time - start_time) / 1_000_000
     logger.trace(
-        f"End of execution of action {action.name} on {str(payload)[:100]}..., duration: {duration}ms"
+        f"End of execution of action {action.name}"
+        f" on {str(payload)[:100]}..., duration: {duration}ms"
     )
     return current_result
 
@@ -352,7 +374,8 @@ def reload_action(action_name: str) -> None:
             [action_name for action_name in project_def.actions]
         )
         logger.warning(
-            f"Action {action_name} not found. Available actions: {available_actions_str}"
+            f"Action {action_name} not found."
+            f" Available actions: {available_actions_str}"
         )
         # TODO: raise error
         return
@@ -366,6 +389,17 @@ def reload_action(action_name: str) -> None:
         except KeyError:
             logger.info(
                 f"Tried to reload action '{_action_name}', but it was not found"
+            )
+
+        if (
+            _action_name
+            in global_state.runner_context.action_handlers_exec_info_by_name
+        ):
+            shutdown_action_handler(
+                action_handler_name=_action_name,
+                exec_info=global_state.runner_context.action_handlers_exec_info_by_name[
+                    _action_name
+                ],
             )
 
         try:
@@ -412,3 +446,29 @@ def document_did_open(document_uri: str) -> None:
 
 def document_did_close(document_uri: str) -> None:
     global_state.runner_context.docs_owned_by_client.remove(document_uri)
+
+
+def shutdown_action_handler(
+    action_handler_name: str, exec_info: domain.ActionHandlerExecInfo
+) -> None:
+    # action handler exec info expected to exist in runner_context
+    if (
+        exec_info.lifecycle is not None
+        and exec_info.lifecycle.on_shutdown_callable is not None
+    ):
+        logger.trace(f"Shutdown {action_handler_name} action handler")
+        try:
+            exec_info.lifecycle.on_shutdown_callable()
+        except Exception as e:
+            logger.error(f"Failed to shutdown action {action_handler_name}: {e}")
+
+
+def shutdown_all_action_handlers() -> None:
+    logger.trace("Shutdown all action handlers")
+    for (
+        action_handler_name,
+        exec_info,
+    ) in global_state.runner_context.action_handlers_exec_info_by_name.items():
+        shutdown_action_handler(
+            action_handler_name=action_handler_name, exec_info=exec_info
+        )

@@ -1,6 +1,9 @@
 from __future__ import annotations
+
 from pathlib import Path
 from typing import Any
+
+from finecode_extension_api import code_action
 
 
 class Action:
@@ -38,5 +41,15 @@ class TextDocumentInfo:
         self.text = text
 
     def __str__(self) -> str:
-        return (f'TextDocumentInfo(uri="{self.uri}", version="{self.version}",'
-                f' text="{self.text}")')
+        return (
+            f'TextDocumentInfo(uri="{self.uri}", version="{self.version}",'
+            f' text="{self.text}")'
+        )
+
+
+class TextDocumentNotOpened(Exception): ...
+
+
+class ActionHandlerExecInfo:
+    def __init__(self):
+        self.lifecycle: code_action.ActionHandlerLifecycle | None = None

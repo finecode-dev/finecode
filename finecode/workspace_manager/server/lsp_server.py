@@ -162,7 +162,21 @@ async def _on_initialized(ls: LanguageServer, params: types.InitializedParams):
     logger.add(sink=pass_log_to_ls_client)
 
     async def get_document(params):
-        doc_info = global_state.ws_context.opened_documents[params.uri]
+        try:
+            doc_info = global_state.ws_context.opened_documents[params.uri]
+        except KeyError:
+            # this error can happen even if ER processes documents correctly: document
+            # is opened, action execution starts, user closes the document, ER is busy
+            # at this moment, action execution comes to reading the file before new sync
+            # of opened documents -> error occurs. ER is expected to be always never
+            # blocked, but still avoid possible error.
+            #
+            # pygls makes all exceptions on server side JsonRpcInternalError and they
+            # should be matched by text.
+            # Example: https://github.com/openlawlibrary/pygls/blob/main/tests/
+            #           lsp/test_errors.py#L108C24-L108C44
+            raise Exception("Document is not opened")
+
         text = ls.workspace.get_text_document(params.uri).source
         return {"uri": params.uri, "version": doc_info.version, "text": text}
 

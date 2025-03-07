@@ -1,8 +1,13 @@
 # TODO: some fields are missing
 from __future__ import annotations
+
 import enum
 
-from finecode_extension_api.code_action import BaseModel, RunActionPayload, RunActionResult
+from finecode_extension_api.code_action import (
+    BaseModel,
+    RunActionPayload,
+    RunActionResult,
+)
 
 
 class Position(BaseModel):

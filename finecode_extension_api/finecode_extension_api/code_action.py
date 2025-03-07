@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Generic, TypeVar
@@ -42,6 +43,22 @@ class ActionContext:
     project_dir: Path
     # runner-specific cache dir
     cache_dir: Path
+
+
+InitializeCallable = Callable[[], None]
+ShutdownCallable = Callable[[], None]
+
+
+class ActionHandlerLifecycle:
+    def __init__(self):
+        self.on_initialize_callable: InitializeCallable | None = None
+        self.on_shutdown_callable: InitializeCallable | None = None
+
+    def on_initialize(self, callable: InitializeCallable) -> None:
+        self.on_initialize_callable = callable
+
+    def on_shutdown(self, callable: ShutdownCallable) -> None:
+        self.on_shutdown_callable = callable
 
 
 class CodeAction(
