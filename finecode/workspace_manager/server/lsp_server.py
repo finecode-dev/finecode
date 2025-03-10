@@ -6,14 +6,27 @@ from loguru import logger
 from lsprotocol import types
 from pygls.lsp.server import LanguageServer
 
-import finecode.workspace_manager.server.endpoints.action_tree as action_tree_endpoints
-import finecode.workspace_manager.server.endpoints.code_actions as code_actions_endpoints
-import finecode.workspace_manager.server.endpoints.code_lens as code_lens_endpoints
-import finecode.workspace_manager.server.endpoints.diagnostics as diagnostics_endpoints
-import finecode.workspace_manager.server.endpoints.document_sync as document_sync_endpoints
-import finecode.workspace_manager.server.endpoints.formatting as formatting_endpoints
 import finecode.workspace_manager.server.endpoints.inlay_hints as inlay_hints_endpoints
 from finecode.workspace_manager.server import global_state, schemas, services
+from finecode.workspace_manager.server.endpoints import (
+    action_tree as action_tree_endpoints,
+)
+from finecode.workspace_manager.server.endpoints import (
+    code_actions as code_actions_endpoints,
+)
+from finecode.workspace_manager.server.endpoints import code_lens as code_lens_endpoints
+from finecode.workspace_manager.server.endpoints import (
+    diagnostics as diagnostics_endpoints,
+)
+from finecode.workspace_manager.server.endpoints import (
+    document_sync as document_sync_endpoints,
+)
+from finecode.workspace_manager.server.endpoints import (
+    formatting as formatting_endpoints,
+)
+from finecode.workspace_manager.server.endpoints import (
+    inlay_hints as inlay_hints_endpoints,
+)
 
 
 def create_lsp_server() -> LanguageServer:

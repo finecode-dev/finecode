@@ -2,8 +2,9 @@ import asyncio
 from pathlib import Path
 from typing import Any
 
-from pygls.lsp.server import LanguageServer
 from loguru import logger
+from pygls.lsp.server import LanguageServer
+
 from finecode.workspace_manager import context, domain, project_analyzer
 from finecode.workspace_manager.runner import runner_client
 from finecode.workspace_manager.server import global_state, schemas, user_messages
@@ -305,7 +306,8 @@ async def run_action(
     # TODO: validate apply_on and apply_on_text
     _action_node_id = request.action_node_id
     # if ":" not in _action_node_id:
-    #     # general action without project path like 'format' or 'lint', normalize (=add project path)
+    #     # general action without project path like 'format' or 'lint',
+    #     #  normalize (=add project path)
     #     try:
     #         project_path = find_project.find_project_with_action_for_file(
     #             file_path=Path(request.apply_on),
@@ -384,4 +386,6 @@ async def __run_action(
 async def notify_changed_action_node(
     ls: LanguageServer, action: schemas.ActionTreeNode
 ) -> None:
-    ls.protocol.notify(method="actionsNodes/changed", params=action.model_dump(by_alias=True))
+    ls.protocol.notify(
+        method="actionsNodes/changed", params=action.model_dump(by_alias=True)
+    )

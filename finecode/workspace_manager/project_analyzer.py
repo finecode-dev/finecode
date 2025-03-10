@@ -13,7 +13,8 @@ def get_files_by_projects(projects_dirs_paths: list[Path]) -> dict[Path, list[Pa
         # copy to avoid modifying of argument values
         projects_dirs = projects_dirs_paths.copy()
         # sort by depth so that child items are first
-        # default reverse path sorting works so, that child items are before their parents
+        # default reverse path sorting works so, that child items are before their
+        # parents
         projects_dirs.sort(reverse=True)
         for index, project_dir_path in enumerate(projects_dirs):
             files_by_projects_dirs[project_dir_path] = []
@@ -31,8 +32,8 @@ def get_files_by_projects(projects_dirs_paths: list[Path]) -> dict[Path, list[Pa
                         current_project_dir_path
                     )
 
-            # convert child_project_by_rel_path to tree to be able to check whether directory contains
-            # subrojects without reiterating
+            # convert child_project_by_rel_path to tree to be able to check whether
+            # directory contains subrojects without reiterating
             child_project_tree: dict[str, str] = {}
             for child_rel_path in child_project_by_rel_path.keys():
                 current_tree_branch = child_project_tree
@@ -41,7 +42,8 @@ def get_files_by_projects(projects_dirs_paths: list[Path]) -> dict[Path, list[Pa
                         current_tree_branch[part] = {}
                     current_tree_branch = current_tree_branch[part]
 
-            # use set, because one dir item can have multiple subprojects and we need it only once
+            # use set, because one dir item can have multiple subprojects and we need
+            # it only once
             dir_items_with_children: set[str] = set(
                 [
                     dir_item_path.parts[0]
@@ -67,15 +69,27 @@ def get_files_by_projects(projects_dirs_paths: list[Path]) -> dict[Path, list[Pa
                             )
 
                 # process all dir items which have child projects
+                #
+                # avoid repeating processing of the same directories which would cause
+                # duplicates in list of files by saving processed branches
+                processed_branches: list[dict[str, str]] = []
                 for rel_path in child_project_by_rel_path.keys():
                     rel_path_parts = rel_path.parts
                     current_tree_branch = child_project_tree
-                    # iterate from second item because the first one is directory we currently processing
+                    if current_tree_branch in processed_branches:
+                        continue
+                    processed_branches.append(current_tree_branch)
+                    # iterate from second item because the first one is directory we
+                    # currently processing
                     for index in range(len(rel_path_parts[1:])):
                         current_path = project_dir_path / "/".join(
                             rel_path_parts[: index + 1]
                         )
                         current_tree_branch = current_tree_branch[rel_path_parts[index]]
+                        if current_tree_branch in processed_branches:
+                            continue
+                        processed_branches.append(current_tree_branch)
+                        
                         for dir_item in current_path.iterdir():
                             if dir_item.suffix == ".py":
                                 files_by_projects_dirs[project_dir_path].append(

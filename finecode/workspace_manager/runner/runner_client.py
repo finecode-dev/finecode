@@ -53,7 +53,8 @@ async def send_request(
             logger.debug(f"[stderr]\n{stderr.decode()}")
 
         raise NoResponse(
-            f"Extension runner {runner.working_dir_path} crashed, no response on {method}"
+            f"Extension runner {runner.working_dir_path} crashed,"
+            f" no response on {method}"
         )
     except TimeoutError:
         raise ResponseTimeout(

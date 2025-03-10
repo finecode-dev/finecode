@@ -26,13 +26,13 @@ from finecode.extension_runner.impls import (
     inmemory_cache,
     loguru_logger,
 )
+from finecode_extension_api import code_action
 from finecode_extension_api.interfaces import (
     icache,
     icommandrunner,
     ifilemanager,
     ilogger,
 )
-from finecode_extension_api import code_action
 
 container: dict[str, Any] = {}
 
@@ -40,7 +40,7 @@ container: dict[str, Any] = {}
 def bootstrap(get_document_func: Callable, save_document_func: Callable):
     # logger_instance = loguru_logger.LoguruLogger()
     logger_instance = loguru_logger.get_logger()
-    command_runner_instance = command_runner.CommandRunner()
+    command_runner_instance = command_runner.CommandRunner(logger=logger_instance)
     file_manager_instance = file_manager.FileManager(
         docs_owned_by_client=global_state.runner_context.docs_owned_by_client,
         get_document_func=get_document_func,

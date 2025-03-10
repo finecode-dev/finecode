@@ -22,6 +22,7 @@ if TYPE_CHECKING:
 def map_lint_message_dict_to_diagnostic(
     lint_message: dict[str, Any],
 ) -> types.Diagnostic:
+    code_description_url = lint_message.get("code_description", None)
     return types.Diagnostic(
         range=types.Range(
             types.Position(
@@ -35,7 +36,11 @@ def map_lint_message_dict_to_diagnostic(
         ),
         message=lint_message["message"],
         code=lint_message.get("code", None),
-        code_description=lint_message.get("code_description", None),
+        code_description=(
+            types.CodeDescription(href=code_description_url)
+            if code_description_url is not None
+            else None
+        ),
         source=lint_message.get("source", None),
         severity=(
             types.DiagnosticSeverity(lint_message.get("severity", None))
@@ -56,7 +61,7 @@ async def document_diagnostic(
     response = await proxy_utils.find_action_project_and_run_in_runner(
         file_path=file_path,
         action_name="lint",
-        params=[{"file_path": file_path}],
+        params=[{"file_paths": [file_path]}],
         ws_context=global_state.ws_context,
     )
 
@@ -160,17 +165,14 @@ async def workspace_diagnostic(
             continue
 
         exec_info = exec_info_by_project_dir_path[project_dir_path]
-        if exec_info.action_name == "lint_many":
+        if exec_info.action_name == "lint_many" or exec_info.action_name == "lint":
             exec_info.request_data = [
                 {"file_paths": [file_path.as_posix() for file_path in files_for_runner]}
-            ]
-        elif exec_info.action_name == "lint":
-            exec_info.request_data = [
-                {"file_path": file_path.as_posix()} for file_path in files_for_runner
             ]
 
     exec_infos = list(exec_info_by_project_dir_path.values())
     send_tasks: list[asyncio.Task] = []
+    # TODO: partial results via ls.protocol.progress()
     try:
         async with asyncio.TaskGroup() as tg:
             for exec_info in exec_infos:
@@ -180,6 +182,7 @@ async def workspace_diagnostic(
                             runner=exec_info.runner,
                             action_name=exec_info.action_name,
                             params=[request_data],
+                            # TODO: params.partial_result_token
                         )
                     )
                     send_tasks.append(task)
