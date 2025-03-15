@@ -47,18 +47,23 @@ class ActionContext:
 
 InitializeCallable = Callable[[], None]
 ShutdownCallable = Callable[[], None]
+ExitCallable = Callable[[], None]
 
 
 class ActionHandlerLifecycle:
     def __init__(self):
         self.on_initialize_callable: InitializeCallable | None = None
-        self.on_shutdown_callable: InitializeCallable | None = None
+        self.on_shutdown_callable: ShutdownCallable | None = None
+        self.on_exit_callable: ExitCallable | None = None
 
     def on_initialize(self, callable: InitializeCallable) -> None:
         self.on_initialize_callable = callable
 
     def on_shutdown(self, callable: ShutdownCallable) -> None:
         self.on_shutdown_callable = callable
+
+    def on_exit(self, callable: ExitCallable) -> None:
+        self.on_exit_callable = callable
 
 
 class CodeAction(

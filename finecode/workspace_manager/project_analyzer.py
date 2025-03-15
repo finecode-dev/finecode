@@ -89,7 +89,7 @@ def get_files_by_projects(projects_dirs_paths: list[Path]) -> dict[Path, list[Pa
                         if current_tree_branch in processed_branches:
                             continue
                         processed_branches.append(current_tree_branch)
-                        
+
                         for dir_item in current_path.iterdir():
                             if dir_item.suffix == ".py":
                                 files_by_projects_dirs[project_dir_path].append(

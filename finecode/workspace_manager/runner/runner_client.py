@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import asyncio
+import asyncio.subprocess
 import json
 from typing import TYPE_CHECKING, Any
 
@@ -26,6 +27,17 @@ class NoResponse(BaseRunnerRequestException): ...
 class ResponseTimeout(BaseRunnerRequestException): ...
 
 
+async def log_process_log_streams(process: asyncio.subprocess.Process) -> None:
+    stdout, stderr = await process.communicate()
+
+    logger.debug(f"[Runner exited with {process.returncode}]")
+    if stdout:
+        logger.debug(f"[stdout]\n{stdout.decode()}")
+    if stderr:
+        logger.debug(f"[stderr]\n{stderr.decode()}")
+
+
+
 async def send_request(
     runner: ExtensionRunnerInfo,
     method: str,
@@ -44,19 +56,49 @@ async def send_request(
         return response
     except RuntimeError as error:
         logger.error(f"Extension runner crashed: {error}")
-        stdout, stderr = await runner.client._server.communicate()
-
-        logger.debug(f"[Runner exited with {runner.client._server.returncode}]")
-        if stdout:
-            logger.debug(f"[stdout]\n{stdout.decode()}")
-        if stderr:
-            logger.debug(f"[stderr]\n{stderr.decode()}")
-
+        await log_process_log_streams(process=runner.client._server)
         raise NoResponse(
             f"Extension runner {runner.working_dir_path} crashed,"
             f" no response on {method}"
         )
     except TimeoutError:
+        # can this happen?
+        # if runner.client._server.returncode != None:
+        #     await log_process_log_streams(process=runner.client._server)
+        raise ResponseTimeout(
+            f"Timeout {timeout}s for response on {method} to runner {runner.working_dir_path}"
+        )
+    except pygls_exceptions.JsonRpcInternalError as error:
+        logger.error(f"JsonRpcInternalError: {error.message}")
+        raise NoResponse(
+            f"Extension runner {runner.working_dir_path} returned no response, check it logs"
+        )
+
+
+def send_request_sync(
+    runner: ExtensionRunnerInfo,
+    method: str,
+    params: Any | None,
+    timeout: int | None = 10,
+) -> Any | None:
+    try:
+        response_future = runner.client.protocol.send_request(
+                method=method,
+                params=params,
+            )
+        response = response_future.result(timeout)
+        logger.debug(f"Got response on {method} from {runner.working_dir_path}")
+        return response
+    except RuntimeError as error:
+        logger.error(f"Extension runner crashed? {error}")
+        raise NoResponse(
+            f"Extension runner {runner.working_dir_path} crashed,"
+            f" no response on {method}"
+        )
+    except TimeoutError:
+        if runner.client._server.returncode != None:
+            logger.error("Extension runner stopped with"
+                         f" exit code {runner.client._server.returncode}")
         raise ResponseTimeout(
             f"Timeout {timeout}s for response on {method} to runner {runner.working_dir_path}"
         )
@@ -178,7 +220,17 @@ async def shutdown(
     await send_request(runner=runner, method=types.SHUTDOWN, params=None)
 
 
+async def shutdown_sync(
+    runner: ExtensionRunnerInfo,
+) -> None:
+    send_request_sync(runner=runner, method=types.SHUTDOWN, params=None)
+
+
 async def exit(runner: ExtensionRunnerInfo) -> None:
+    runner.client.protocol.notify(method=types.EXIT)
+
+
+def exit_sync(runner: ExtensionRunnerInfo) -> None:
     runner.client.protocol.notify(method=types.EXIT)
 
 

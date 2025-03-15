@@ -129,7 +129,8 @@ async def instantiate_run_context(
                 )
             except ModuleNotFoundError as error:
                 logger.error(
-                    f"Source of action {action.name} '{action.source}' could not be imported"
+                    f"Source of action {action.name} '{action.source}'"
+                    " could not be imported"
                 )
                 logger.error(error)
                 return
@@ -146,7 +147,8 @@ async def instantiate_run_context(
 
             if not issubclass(run_context_type, code_action.RunActionContext):
                 raise ValueError(
-                    f"Type of run_context '{run_context_type}' is not subclass of RunActionContext"
+                    f"Type of run_context '{run_context_type}' is not"
+                    " subclass of RunActionContext"
                 )
             constructor_args = resolve_func_args_with_di(
                 run_context_type.__init__, params_to_ignore=["self"]
@@ -266,7 +268,8 @@ async def execute_action_handler(
             action_handler = run_utils.import_module_member_by_source_str(action.source)
         except ModuleNotFoundError as error:
             logger.error(
-                f"Source of action {action.name} '{action.source}' could not be imported"
+                f"Source of action {action.name} '{action.source}'"
+                " could not be imported"
             )
             logger.error(error)
             return
@@ -301,6 +304,8 @@ async def execute_action_handler(
             project_dir=project_path, cache_dir=project_cache_dir
         )
         exec_info = domain.ActionHandlerExecInfo()
+        # save immediately in context to be able to shutdown it if the first execution
+        # is interrupted by stopping ER
         runner_context.action_handlers_exec_info_by_name[action.name] = exec_info
         if inspect.isclass(action_handler):
             args = resolve_func_args_with_di(
@@ -332,6 +337,7 @@ async def execute_action_handler(
             except Exception as e:
                 logger.error(f"Failed to initialize action {action.name}: {e}")
                 return
+        exec_info.status = domain.ActionHandlerExecInfoStatus.INITIALIZED
 
     args = resolve_func_args_with_di(
         func=action_run_func,
@@ -452,6 +458,9 @@ def shutdown_action_handler(
     action_handler_name: str, exec_info: domain.ActionHandlerExecInfo
 ) -> None:
     # action handler exec info expected to exist in runner_context
+    if exec_info.status == domain.ActionHandlerExecInfoStatus.SHUTDOWN:
+        return
+
     if (
         exec_info.lifecycle is not None
         and exec_info.lifecycle.on_shutdown_callable is not None
@@ -461,6 +470,7 @@ def shutdown_action_handler(
             exec_info.lifecycle.on_shutdown_callable()
         except Exception as e:
             logger.error(f"Failed to shutdown action {action_handler_name}: {e}")
+    exec_info.status = domain.ActionHandlerExecInfoStatus.SHUTDOWN
 
 
 def shutdown_all_action_handlers() -> None:
@@ -472,3 +482,30 @@ def shutdown_all_action_handlers() -> None:
         shutdown_action_handler(
             action_handler_name=action_handler_name, exec_info=exec_info
         )
+
+
+def exit_action_handler(
+    action_handler_name: str, exec_info: domain.ActionHandlerExecInfo
+) -> None:
+    # action handler exec info expected to exist in runner_context
+    if (
+        exec_info.lifecycle is not None
+        and exec_info.lifecycle.on_exit_callable is not None
+    ):
+        logger.trace(f"Exit {action_handler_name} action handler")
+        try:
+            exec_info.lifecycle.on_exit_callable()
+        except Exception as e:
+            logger.error(f"Failed to exit action {action_handler_name}: {e}")
+
+
+def exit_all_action_handlers() -> None:
+    logger.trace("Exit all action handlers")
+    for (
+        action_handler_name,
+        exec_info,
+    ) in global_state.runner_context.action_handlers_exec_info_by_name.items():
+        exit_action_handler(
+            action_handler_name=action_handler_name, exec_info=exec_info
+        )
+    global_state.runner_context.action_handlers_exec_info_by_name = {}

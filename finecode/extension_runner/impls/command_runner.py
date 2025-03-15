@@ -1,5 +1,6 @@
 import asyncio
 import asyncio.subprocess
+import shlex
 import subprocess
 from pathlib import Path
 
@@ -75,14 +76,9 @@ class CommandRunner(icommandrunner.ICommandRunner):
         self, cmd: str, cwd: Path | None = None, env: dict[str, str] | None = None
     ) -> icommandrunner.IAsyncProcess:
         self.logger.debug(f"Async subprocess run: {cmd} in {cwd}")
-        # splitted_cmd = cmd.split(" ")
-        # program = splitted_cmd[0]
-        # args = splitted_cmd[1:]
         # TODO: investigate why it works only with shell, not exec
         async_subprocess = await asyncio.create_subprocess_shell(
             cmd,
-            # program,
-            # *args,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             cwd=cwd,
@@ -93,10 +89,10 @@ class CommandRunner(icommandrunner.ICommandRunner):
     def run_sync(
         self, cmd: str, cwd: Path | None = None, env: dict[str, str] | None = None
     ) -> icommandrunner.ISyncProcess:
-        splitted_cmd = cmd.split(" ")
-        self.logger.debug(f"Sync subprocess run: {splitted_cmd}")
+        cmd_parts = shlex.split(cmd)
+        self.logger.debug(f"Sync subprocess run: {cmd_parts}")
         async_subprocess = subprocess.Popen(
-            splitted_cmd,
+            cmd_parts,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             cwd=cwd,

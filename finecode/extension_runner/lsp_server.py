@@ -1,15 +1,29 @@
+# keep at least until `lsp_server.ServerErrors` is used, because it is hidden under
+# `TYPE_CHECKING` and its evaluation in runtime causes crash
+from __future__ import annotations
+
+import atexit
 import json
+import time
 
 import pygls.exceptions as pygls_exceptions
 from loguru import logger
 from lsprotocol import types
-from pygls.lsp.server import LanguageServer
+from pygls.lsp import server as lsp_server
 
 from finecode.extension_runner import domain, schemas, services
 
 
-def create_lsp_server() -> LanguageServer:
-    server = LanguageServer("FineCode_Extension_Runner_Server", "v1")
+class CustomLanguageServer(lsp_server.LanguageServer):
+    def report_server_error(self, error: Exception, source: lsp_server.ServerErrors):
+        # return logging of error (`lsp_server.LanguageServer` overwrites it)
+        super(lsp_server.LanguageServer, self).report_server_error(error, source)
+        # send to client
+        super().report_server_error(error, source)
+
+
+def create_lsp_server() -> lsp_server.LanguageServer:
+    server = CustomLanguageServer("FineCode_Extension_Runner_Server", "v1")
 
     register_initialized_feature = server.feature(types.INITIALIZED)
     register_initialized_feature(_on_initialized)
@@ -34,6 +48,15 @@ def create_lsp_server() -> LanguageServer:
 
     register_resolve_package_path_cmd = server.command("packages/resolvePath")
     register_resolve_package_path_cmd(resolve_package_path)
+    
+    def on_process_exit():
+        logger.info("Exit extension runner")
+        services.shutdown_all_action_handlers()
+        # wait for graceful shutdown of all subprocesses if such exist
+        time.sleep(2)
+        services.exit_all_action_handlers()
+
+    atexit.register(on_process_exit)
 
     async def document_requester(uri: str):
         try:
@@ -88,26 +111,30 @@ def create_lsp_server() -> LanguageServer:
     return server
 
 
-def _on_initialized(ls: LanguageServer, params: types.InitializedParams):
+def _on_initialized(ls: lsp_server.LanguageServer, params: types.InitializedParams):
     logger.info(f"initialized {params}")
 
 
-def _on_shutdown(ls: LanguageServer, params):
+def _on_shutdown(ls: lsp_server.LanguageServer, params):
     logger.info("Shutdown extension runner")
     services.shutdown_all_action_handlers()
 
 
-def _document_did_open(ls: LanguageServer, params: types.DidOpenTextDocumentParams):
+def _document_did_open(
+    ls: lsp_server.LanguageServer, params: types.DidOpenTextDocumentParams
+):
     logger.info(f"document did open: {params.text_document.uri}")
     services.document_did_open(params.text_document.uri)
 
 
-def _document_did_close(ls: LanguageServer, params: types.DidCloseTextDocumentParams):
+def _document_did_close(
+    ls: lsp_server.LanguageServer, params: types.DidCloseTextDocumentParams
+):
     logger.info(f"document did close: {params.text_document.uri}")
     services.document_did_close(params.text_document.uri)
 
 
-async def update_config(ls: LanguageServer, params):
+async def update_config(ls: lsp_server.LanguageServer, params):
     logger.trace(f"Update config: {params}")
     working_dir = params[0]
     project_name = params[1]
@@ -131,7 +158,7 @@ async def update_config(ls: LanguageServer, params):
     return response.to_dict()
 
 
-async def run_action(ls: LanguageServer, params):
+async def run_action(ls: lsp_server.LanguageServer, params):
     logger.trace(f"Run action: {params[0]}")
     request = schemas.RunActionRequest(action_name=params[0], params=params[1])
     response = await services.run_action(request=request)
@@ -140,13 +167,13 @@ async def run_action(ls: LanguageServer, params):
     return {"result": json.dumps(response.to_dict()["result"])}
 
 
-async def reload_action(ls: LanguageServer, params):
+async def reload_action(ls: lsp_server.LanguageServer, params):
     logger.trace(f"Reload action: {params}")
     services.reload_action(params[0])
     return {}
 
 
-async def resolve_package_path(ls: LanguageServer, params):
+async def resolve_package_path(ls: lsp_server.LanguageServer, params):
     logger.trace(f"Resolve package path: {params}")
     result = services.resolve_package_path(params[0])
     return {"packagePath": result}

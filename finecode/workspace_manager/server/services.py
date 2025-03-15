@@ -114,30 +114,14 @@ async def restart_extension_runner(runner_working_dir_path: Path) -> None:
     )
 
 
-async def on_shutdown():
-    def get_running_runners():
-        return [
+def on_shutdown():
+    running_runners = [
             runner
             for runner in global_state.ws_context.ws_projects_extension_runners.values()
             if global_state.ws_context.ws_projects[runner.working_dir_path].status
             == domain.ProjectStatus.RUNNING
         ]
+    logger.info(f"Stop all {len(running_runners)} running extension runners")
 
-    logger.info("Check that all runners stop in 5 seconds")
-    seconds_waited = 0
-    running_runners = get_running_runners()
-
-    while seconds_waited < 5:
-        await asyncio.sleep(1)
-        seconds_waited += 1
-        running_runners = get_running_runners()
-        if len(running_runners) == 0:
-            break
-
-    if len(running_runners) > 0:
-        logger.debug("Not all runners stopped after 5 seconds, kill running")
-        kill_coros = [
-            runner_manager.kill_extension_runner(runner) for runner in running_runners
-        ]
-        await asyncio.gather(*kill_coros)
-        logger.info(f"Killed {len(running_runners)} running runners")
+    for runner in running_runners:
+        runner_manager.stop_extension_runner_sync(runner=runner)

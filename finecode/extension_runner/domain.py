@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import enum
 from pathlib import Path
 from typing import Any
 
@@ -53,3 +54,10 @@ class TextDocumentNotOpened(Exception): ...
 class ActionHandlerExecInfo:
     def __init__(self):
         self.lifecycle: code_action.ActionHandlerLifecycle | None = None
+        self.status: ActionHandlerExecInfoStatus = ActionHandlerExecInfoStatus.CREATED
+
+
+class ActionHandlerExecInfoStatus(enum.Enum):
+    CREATED = enum.auto()
+    INITIALIZED = enum.auto()
+    SHUTDOWN = enum.auto()

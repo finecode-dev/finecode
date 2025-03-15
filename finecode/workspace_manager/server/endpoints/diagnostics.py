@@ -60,7 +60,7 @@ async def document_diagnostic(
 
     response = await proxy_utils.find_action_project_and_run_in_runner(
         file_path=file_path,
-        action_name="lint",
+        action_name="lint_many",
         params=[{"file_paths": [file_path]}],
         ws_context=global_state.ws_context,
     )
@@ -90,7 +90,8 @@ async def document_diagnostic(
                 for lint_message in file_lint_messages
             ]
         )
-        related_files_diagnostics[pygls_types_utils.path_to_uri_str(file_path_str)] = (
+        file_path = Path(file_path_str)
+        related_files_diagnostics[pygls_types_utils.path_to_uri_str(file_path)] = (
             file_report
         )
     response.related_documents = related_files_diagnostics

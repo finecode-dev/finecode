@@ -38,10 +38,7 @@ class Project:
         self.dir_path = dir_path
         self.def_path = def_path
         self.status = status
-        if subprojects is not None:
-            self.subprojects = subprojects
-        else:
-            self.subprojects: list[Project] = []
+        self.subprojects: list[Project] = subprojects if subprojects is not None else []
         # None means actions were not collected yet
         # if project.status is RUNNING, then actions are not None
         self.actions = actions

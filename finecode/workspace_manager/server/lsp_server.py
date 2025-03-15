@@ -243,9 +243,9 @@ async def _workspace_did_change_workspace_folders(
     )
 
 
-async def _on_shutdown(ls: LanguageServer, params):
+def _on_shutdown(ls: LanguageServer, params):
     logger.info("on shutdown handler", params)
-    await services.on_shutdown()
+    services.on_shutdown()
 
 
 async def reset(ls: LanguageServer, params):

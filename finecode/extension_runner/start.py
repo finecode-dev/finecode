@@ -4,18 +4,19 @@ import sys
 
 from loguru import logger
 
-from finecode import logs
 import finecode.extension_runner.global_state as global_state
 import finecode.extension_runner.lsp_server as extension_runner_lsp
 import finecode.extension_runner.project_dirs as project_dirs
-import finecode.pygls_server_utils as pygls_server_utils
+from finecode import logs
+
+# import finecode.pygls_server_utils as pygls_server_utils
 
 
 # async def start_runner():
 #     project_log_dir_path = project_dirs.get_project_dir(global_state.project_dir_path)
 #     logger.remove()
-#     # ~~extension runner communicates with workspace manager with tcp, we can print logs
-#     # to stdout as well~~. See README.md
+#     # ~~extension runner communicates with workspace manager with tcp, we can print
+#     # logs to stdout as well~~. See README.md
 #     logs.save_logs_to_file(
 #         file_path=project_log_dir_path / "execution.log",
 #         log_level=global_state.log_level,

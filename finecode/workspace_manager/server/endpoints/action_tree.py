@@ -364,7 +364,8 @@ async def __run_action(
 
     if project_def.status != domain.ProjectStatus.RUNNING:
         logger.error(
-            f"Extension runner is not running in {project_def.dir_path}. Please check logs."
+            f"Extension runner is not running in {project_def.dir_path}."
+            " Please check logs."
         )
         return {}
 

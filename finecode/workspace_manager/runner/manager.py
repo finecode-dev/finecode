@@ -126,18 +126,44 @@ async def stop_extension_runner(runner: runner_info.ExtensionRunnerInfo) -> None
 
             await runner_client.exit(runner)
             logger.debug("Sent exit to server")
-            # `runner.client.stop()` doesn't work, it just hangs. Need to be
-            # investigated. Terminate forcefully until the problem is properly solved.
-            # runner.client._server.terminate()
             await runner.client.stop()
             logger.trace(
-                f"Stop extension runner {runner.process_id} in {runner.working_dir_path}"
+                f"Stop extension runner {runner.process_id}"
+                f" in {runner.working_dir_path}"
             )
         else:
             logger.trace("Extension runner was not running")
     else:
         logger.trace(
-            f"Tried to stop extension runner {runner.working_dir_path}, but it was not running"
+            f"Tried to stop extension runner {runner.working_dir_path},"
+            " but it was not running"
+        )
+
+
+
+def stop_extension_runner_sync(runner: runner_info.ExtensionRunnerInfo) -> None:
+    if runner.client is not None:
+        logger.trace(f"Trying to stop extension runner {runner.working_dir_path}")
+        if not runner.client.stopped:
+            logger.debug("Send shutdown to server")
+            try:
+                runner_client.shutdown_sync(runner=runner)
+            except Exception as e:
+                # TODO: handle
+                logger.error(f"Failed to shutdown {e}")
+
+            runner_client.exit_sync(runner)
+            logger.debug("Sent exit to server")
+            logger.trace(
+                f"Stop extension runner {runner.process_id}"
+                f" in {runner.working_dir_path}"
+            )
+        else:
+            logger.trace("Extension runner was not running")
+    else:
+        logger.trace(
+            f"Tried to stop extension runner {runner.working_dir_path},"
+            " but it was not running"
         )
 
 
