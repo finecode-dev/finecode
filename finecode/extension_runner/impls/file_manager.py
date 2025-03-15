@@ -61,7 +61,10 @@ class FileManager(ifilemanager.IFileManager):
 
             file_version = self.get_hash_of_file_from_fs(file_path=file_path)
 
-        self.logger.debug(f"Version of {file_path}: {file_version}")
+        # 12 chars is enough to distinguish. The whole value is 64 chars length and
+        # is not really needed in logs
+        file_version_readable = f"{file_version[:12]}..."
+        self.logger.debug(f"Version of {file_path}: {file_version_readable}")
         return file_version
 
     async def save_file(self, file_path: Path, file_content: str) -> None:
@@ -87,9 +90,5 @@ class FileManager(ifilemanager.IFileManager):
         # TODO: handle errors: file doesn't exist, cannot be opened etc
         with open(file_path, "rb") as f:
             file_version = hashlib.file_digest(f, "sha256").hexdigest()
-
-        # 12 chars is enough to distinguish. The whole value is 64 chars length and
-        # is not really needed in logs
-        file_version = f"{file_version[:12]}..."
 
         return file_version
