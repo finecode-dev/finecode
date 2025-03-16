@@ -170,11 +170,12 @@ async def filter_ignore_paths(
 def watch_workspace_dirs(
     ws_context: context.WorkspaceContext,
 ) -> Generator[AsyncIterator[ChangeEvent], None, None]:
-    # optimization possibility: watch only those directories, in which there are watch-triggered
-    # actions
+    # optimization possibility: watch only those directories, in which there are
+    # watch-triggered actions
 
-    # NOTE: watcher is not in all possible cases reliable, especially when there are a lot of
-    # changes on Windows. Always provide possibility to refresh information manually if possible.
+    # NOTE: watcher is not in all possible cases reliable, especially when there are a
+    # lot of changes on Windows. Always provide possibility to refresh information
+    # manually if possible.
     event_queue = async_queue.create_async_process_queue()
     event_queue_iterator = AsyncQueueIterator(event_queue)
 

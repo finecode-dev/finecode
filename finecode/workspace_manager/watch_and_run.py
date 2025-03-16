@@ -8,7 +8,8 @@ import finecode.workspace_manager.watcher as watcher
 async def watch_and_run(
     ws_context: context.WorkspaceContext,
 ):
-    # watch workspace directories in which there are watch-triggered actions and run those actions
+    # watch workspace directories in which there are watch-triggered actions and run
+    # those actions
     with watcher.watch_workspace_dirs(ws_context) as watch_iterator:
         async for change in watch_iterator:
             logger.warning(change)
@@ -24,8 +25,10 @@ async def watch_and_run(
                 else:
                     path_to_apply_on = change.path
                 logger.trace(f"Change: {change.kind} {change.path}")
-                # TODO: currently only linter and format are hardcoded, this list should be dynamic
-                # TODO: on which files should it be applied? format only on changed and lint?
+                # TODO: currently only linter and format are hardcoded, this list
+                #       should be dynamic
+                # TODO: on which files should it be applied? format only on changed
+                #       and lint?
                 for action in ["lint", "format"]:
                     # TODO: this can be cached
                     project_root = find_project.find_project_with_action_for_file(

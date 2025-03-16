@@ -12,8 +12,8 @@ if TYPE_CHECKING:
 
 @dataclass
 class WorkspaceContext:
-    # ws directories paths - expected to be workspace root and other directories in workspace if
-    # they are outside of workspace root
+    # ws directories paths - expected to be workspace root and other directories in
+    # workspace if they are outside of workspace root
     ws_dirs_paths: list[Path]
     # all projects in the workspace
     ws_projects: dict[Path, domain.Project] = field(default_factory=dict)
@@ -24,8 +24,8 @@ class WorkspaceContext:
     )
     ignore_watch_paths: set[Path] = field(default_factory=set)
 
-    # we save list of meta and pygls manages content of documents automatically. They can be accessed
-    # using `ls.workspace.get_text_document()` function
+    # we save list of meta and pygls manages content of documents automatically.
+    # They can be accessed using `ls.workspace.get_text_document()` function
     opened_documents: dict[str, domain.TextDocumentInfo] = field(default_factory=dict)
 
     # cache

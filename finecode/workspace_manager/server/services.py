@@ -1,4 +1,3 @@
-import asyncio
 from pathlib import Path
 
 from loguru import logger
@@ -116,11 +115,11 @@ async def restart_extension_runner(runner_working_dir_path: Path) -> None:
 
 def on_shutdown():
     running_runners = [
-            runner
-            for runner in global_state.ws_context.ws_projects_extension_runners.values()
-            if global_state.ws_context.ws_projects[runner.working_dir_path].status
-            == domain.ProjectStatus.RUNNING
-        ]
+        runner
+        for runner in global_state.ws_context.ws_projects_extension_runners.values()
+        if global_state.ws_context.ws_projects[runner.working_dir_path].status
+        == domain.ProjectStatus.RUNNING
+    ]
     logger.info(f"Stop all {len(running_runners)} running extension runners")
 
     for runner in running_runners:

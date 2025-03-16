@@ -1,12 +1,11 @@
 import os
-from pathlib import Path
 import shlex
 import subprocess
 import sys
+from pathlib import Path
 from typing import Type
 
 from pygls.client import JsonRPCClient
-
 
 # async def create_lsp_client_tcp(host: str, port: int) -> JsonRPCClient:
 #     ls = JsonRPCClient()
@@ -31,13 +30,18 @@ async def create_lsp_client_io(
     # start_new_session = True .. process has parent id of real parent, but is not
     #                             ended if parent was ended
     start_new_session = True
-    if sys.platform == 'win32':
+    if sys.platform == "win32":
         # use creationflags because `start_new_session` doesn't work on Windows
         # subprocess.CREATE_NO_WINDOW .. no console window on Windows. TODO: test
         creationflags = subprocess.DETACHED_PROCESS | subprocess.CREATE_NO_WINDOW
         start_new_session = False
 
-    await ls.start_io(executable, *args, start_new_session=start_new_session, creationflags=creationflags)
+    await ls.start_io(
+        executable,
+        *args,
+        start_new_session=start_new_session,
+        creationflags=creationflags,
+    )
     if old_virtual_env_var is not None:
         os.environ["VIRTUAL_ENV"] = old_virtual_env_var
 
@@ -45,4 +49,4 @@ async def create_lsp_client_io(
     return ls
 
 
-__all__ = ["JsonRPCClient", "create_lsp_client_io"] # "create_lsp_client_tcp",
+__all__ = ["JsonRPCClient", "create_lsp_client_io"]  # "create_lsp_client_tcp",

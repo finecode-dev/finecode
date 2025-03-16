@@ -316,7 +316,8 @@ async def run_action(
     #         )
     #     except ValueError:
     #         logger.warning(
-    #             f"Skip {_action_node_id} on {request.apply_on}, because file is not in workspace"
+    #             f"Skip {_action_node_id} on {request.apply_on},"
+    #               " because file is not in workspace"
     #         )
     #         return schemas.RunActionResponse({})
     #     _action_node_id = f"{project_path.as_posix()}::{_action_node_id}"

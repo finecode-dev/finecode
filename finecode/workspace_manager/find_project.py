@@ -2,8 +2,8 @@ from pathlib import Path
 
 from loguru import logger
 
-from finecode.workspace_manager.context import WorkspaceContext
 from finecode.workspace_manager import domain
+from finecode.workspace_manager.context import WorkspaceContext
 
 
 class FileNotInWorkspaceException(BaseException): ...
@@ -55,10 +55,9 @@ def find_project_with_action_for_file(
         )
         is not None
     ):
-        project_path = ws_context.project_path_by_dir_and_action[dir_path_str][action_name]
-        logger.trace(
-            f"Found in context: {project_path}"
-        )
+        project_path_by_action = ws_context.project_path_by_dir_and_action[dir_path_str]
+        project_path = project_path_by_action[action_name]
+        logger.trace(f"Found in context: {project_path}")
         return ws_context.project_path_by_dir_and_action[dir_path_str][action_name]
 
     if dir_path_str not in ws_context.project_path_by_dir_and_action:

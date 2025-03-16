@@ -6,7 +6,6 @@ from loguru import logger
 from lsprotocol import types
 from pygls.lsp.server import LanguageServer
 
-import finecode.workspace_manager.server.endpoints.inlay_hints as inlay_hints_endpoints
 from finecode.workspace_manager.server import global_state, schemas, services
 from finecode.workspace_manager.server.endpoints import (
     action_tree as action_tree_endpoints,
