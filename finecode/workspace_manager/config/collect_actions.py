@@ -19,7 +19,8 @@ def collect_actions(
         project = ws_context.ws_projects[project_path]
     except KeyError:
         raise ValueError(
-            f"Project {project_path} doesn't exist. Existing projects: {ws_context.ws_projects}"
+            f"Project {project_path} doesn't exist."
+            f" Existing projects: {ws_context.ws_projects}"
         )
 
     try:

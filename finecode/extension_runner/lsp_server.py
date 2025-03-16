@@ -48,7 +48,7 @@ def create_lsp_server() -> lsp_server.LanguageServer:
 
     register_resolve_package_path_cmd = server.command("packages/resolvePath")
     register_resolve_package_path_cmd(resolve_package_path)
-    
+
     def on_process_exit():
         logger.info("Exit extension runner")
         services.shutdown_all_action_handlers()

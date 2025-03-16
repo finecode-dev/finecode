@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass
 import logging
-from pathlib import Path
 import shlex
+from dataclasses import dataclass
+from pathlib import Path
 from typing import Coroutine
 
 from pygls.io_ import run_async
@@ -54,7 +54,6 @@ class CustomJsonRpcClient(JsonRPCClient):
 
         self._server = server
         self._async_tasks.extend([connection, notify_exit])
-
 
     async def server_exit(self, server):
         result = await super().server_exit(server)

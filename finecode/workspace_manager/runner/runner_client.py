@@ -37,7 +37,6 @@ async def log_process_log_streams(process: asyncio.subprocess.Process) -> None:
         logger.debug(f"[stderr]\n{stderr.decode()}")
 
 
-
 async def send_request(
     runner: ExtensionRunnerInfo,
     method: str,
@@ -66,12 +65,14 @@ async def send_request(
         # if runner.client._server.returncode != None:
         #     await log_process_log_streams(process=runner.client._server)
         raise ResponseTimeout(
-            f"Timeout {timeout}s for response on {method} to runner {runner.working_dir_path}"
+            f"Timeout {timeout}s for response on {method} to"
+            f" runner {runner.working_dir_path}"
         )
     except pygls_exceptions.JsonRpcInternalError as error:
         logger.error(f"JsonRpcInternalError: {error.message}")
         raise NoResponse(
-            f"Extension runner {runner.working_dir_path} returned no response, check it logs"
+            f"Extension runner {runner.working_dir_path} returned no response,"
+            " check it logs"
         )
 
 
@@ -83,9 +84,9 @@ def send_request_sync(
 ) -> Any | None:
     try:
         response_future = runner.client.protocol.send_request(
-                method=method,
-                params=params,
-            )
+            method=method,
+            params=params,
+        )
         response = response_future.result(timeout)
         logger.debug(f"Got response on {method} from {runner.working_dir_path}")
         return response
@@ -96,9 +97,11 @@ def send_request_sync(
             f" no response on {method}"
         )
     except TimeoutError:
-        if runner.client._server.returncode != None:
-            logger.error("Extension runner stopped with"
-                         f" exit code {runner.client._server.returncode}")
+        if runner.client._server.returncode is not None:
+            logger.error(
+                "Extension runner stopped with"
+                f" exit code {runner.client._server.returncode}"
+            )
         raise ResponseTimeout(
             f"Timeout {timeout}s for response on {method} to runner {runner.working_dir_path}"
         )

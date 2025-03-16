@@ -140,7 +140,6 @@ async def stop_extension_runner(runner: runner_info.ExtensionRunnerInfo) -> None
         )
 
 
-
 def stop_extension_runner_sync(runner: runner_info.ExtensionRunnerInfo) -> None:
     if runner.client is not None:
         logger.trace(f"Trying to stop extension runner {runner.working_dir_path}")
@@ -276,7 +275,8 @@ async def _init_runner(
         return
 
     logger.debug(
-        f"Updated config of runner {runner.working_dir_path}, process id {runner.process_id}"
+        f"Updated config of runner {runner.working_dir_path},"
+        f" process id {runner.process_id}"
     )
     project.status = domain.ProjectStatus.RUNNING
     await notify_project_changed(project)

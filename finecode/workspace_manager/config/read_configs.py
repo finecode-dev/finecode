@@ -83,8 +83,9 @@ def normalize_project_config(config: dict[str, Any]) -> None:
         # copy dict values to avoid changing size of iterated list during iteration
         for action in [*actions_dict.values()]:
             for subaction in action.get("subactions", []):
-                # each action should be declared as 'tool.finecode.action.<name>', but we allow
-                # to set source directly in list of subactions to improve usability
+                # each action should be declared as 'tool.finecode.action.<name>',
+                # but we allow to set source directly in list of subactions to improve
+                # usability
                 if (
                     isinstance(subaction, dict)
                     and subaction.get("source", None) is not None
