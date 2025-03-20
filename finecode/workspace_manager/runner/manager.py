@@ -59,11 +59,6 @@ async def _apply_workspace_edit(params: types.ApplyWorkspaceEditParams):
 async def start_extension_runner(
     runner_dir: Path, ws_context: context.WorkspaceContext
 ) -> runner_info.ExtensionRunnerInfo | None:
-    runner_info_instance = runner_info.ExtensionRunnerInfo(
-        working_dir_path=runner_dir,
-        initialized_event=asyncio.Event(),
-    )
-
     try:
         _finecode_cmd = finecode_cmd.get_finecode_cmd(runner_dir)
     except ValueError:
@@ -78,20 +73,23 @@ async def start_extension_runner(
 
     process_args: list[str] = [
         "--trace",
-        f"--project-path={runner_info_instance.working_dir_path.as_posix()}",
+        f"--project-path={runner_dir.as_posix()}",
     ]
     # TODO: config parameter for debug and debug port
-    # if runner_info_instance.working_dir_path == Path(
+    # if runner_dir == Path(
     #     "/home/user/Development/FineCode/finecode"
     # ):
     #     process_args.append("--debug")
     #     process_args.append(f"--debug-port=5681")
 
     process_args_str: str = " ".join(process_args)
-    runner_info_instance.client = await create_lsp_client_io(
+    client = await create_lsp_client_io(
         runner_info.CustomJsonRpcClient,
         f"{_finecode_cmd} -m finecode.extension_runner.cli {process_args_str}",
-        runner_info_instance.working_dir_path,
+        runner_dir,
+    )
+    runner_info_instance = runner_info.ExtensionRunnerInfo(
+        working_dir_path=runner_dir, initialized_event=asyncio.Event(), client=client
     )
 
     async def on_exit():
@@ -114,60 +112,49 @@ async def start_extension_runner(
 
 
 async def stop_extension_runner(runner: runner_info.ExtensionRunnerInfo) -> None:
-    if runner.client is not None:
-        logger.trace(f"Trying to stop extension runner {runner.working_dir_path}")
-        if not runner.client.stopped:
-            logger.debug("Send shutdown to server")
-            try:
-                await runner_client.shutdown(runner=runner)
-            except Exception as e:
-                # TODO: handle
-                logger.error(f"Failed to shutdown {e}")
+    logger.trace(f"Trying to stop extension runner {runner.working_dir_path}")
+    if not runner.client.stopped:
+        logger.debug("Send shutdown to server")
+        try:
+            await runner_client.shutdown(runner=runner)
+        except Exception as e:
+            # TODO: handle
+            logger.error(f"Failed to shutdown {e}")
 
-            await runner_client.exit(runner)
-            logger.debug("Sent exit to server")
-            await runner.client.stop()
-            logger.trace(
-                f"Stop extension runner {runner.process_id}"
-                f" in {runner.working_dir_path}"
-            )
-        else:
-            logger.trace("Extension runner was not running")
-    else:
+        await runner_client.exit(runner)
+        logger.debug("Sent exit to server")
+        await runner.client.stop()
         logger.trace(
-            f"Tried to stop extension runner {runner.working_dir_path},"
-            " but it was not running"
+            f"Stop extension runner {runner.process_id}"
+            f" in {runner.working_dir_path}"
         )
+    else:
+        logger.trace("Extension runner was not running")
 
 
 def stop_extension_runner_sync(runner: runner_info.ExtensionRunnerInfo) -> None:
-    if runner.client is not None:
-        logger.trace(f"Trying to stop extension runner {runner.working_dir_path}")
-        if not runner.client.stopped:
-            logger.debug("Send shutdown to server")
-            try:
-                runner_client.shutdown_sync(runner=runner)
-            except Exception as e:
-                # TODO: handle
-                logger.error(f"Failed to shutdown {e}")
+    logger.trace(f"Trying to stop extension runner {runner.working_dir_path}")
+    if not runner.client.stopped:
+        logger.debug("Send shutdown to server")
+        try:
+            runner_client.shutdown_sync(runner=runner)
+        except Exception as e:
+            # TODO: handle
+            logger.error(f"Failed to shutdown {e}")
 
-            runner_client.exit_sync(runner)
-            logger.debug("Sent exit to server")
-            logger.trace(
-                f"Stop extension runner {runner.process_id}"
-                f" in {runner.working_dir_path}"
-            )
-        else:
-            logger.trace("Extension runner was not running")
-    else:
+        runner_client.exit_sync(runner)
+        logger.debug("Sent exit to server")
         logger.trace(
-            f"Tried to stop extension runner {runner.working_dir_path},"
-            " but it was not running"
+            f"Stop extension runner {runner.process_id}"
+            f" in {runner.working_dir_path}"
         )
+    else:
+        logger.trace("Extension runner was not running")
 
 
 async def kill_extension_runner(runner: runner_info.ExtensionRunnerInfo) -> None:
-    runner.client._server.terminate()
+    if runner.client._server is not None:
+        runner.client._server.terminate()
     await runner.client.stop()
 
 
@@ -217,7 +204,6 @@ async def _init_runner(
 ) -> None:
     # initialization is required to be able to perform other requests
     logger.trace(f"Init runner {runner.working_dir_path}")
-    assert runner.client is not None
     try:
         await runner_client.initialize(
             runner,
