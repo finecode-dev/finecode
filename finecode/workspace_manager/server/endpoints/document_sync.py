@@ -42,7 +42,7 @@ async def document_did_open(
                         runner=runner, document_info=document_info
                     )
                 )
-    except Exception as e:
+    except ExceptionGroup as e:
         logger.error(f"Error while sending opened document: {e}")
 
 
@@ -77,7 +77,7 @@ async def document_did_close(
                         runner=runner, document_uri=params.text_document.uri
                     )
                 )
-    except Exception as e:
+    except ExceptionGroup as e:
         logger.error(f"Error while sending closed document: {e}")
 
 

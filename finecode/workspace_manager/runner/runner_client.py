@@ -103,12 +103,14 @@ def send_request_sync(
                 f" exit code {runner.client._server.returncode}"
             )
         raise ResponseTimeout(
-            f"Timeout {timeout}s for response on {method} to runner {runner.working_dir_path}"
+            f"Timeout {timeout}s for response on {method}"
+            f" to runner {runner.working_dir_path}"
         )
     except pygls_exceptions.JsonRpcInternalError as error:
         logger.error(f"JsonRpcInternalError: {error.message}")
         raise NoResponse(
-            f"Extension runner {runner.working_dir_path} returned no response, check it logs"
+            f"Extension runner {runner.working_dir_path} returned no response,"
+            " check it logs"
         )
 
 
@@ -143,7 +145,6 @@ async def run_action(
 ) -> Any:
     if not runner.initialized_event.is_set():
         await runner.initialized_event.wait()
-    assert runner.client is not None
 
     response = await send_request(
         runner=runner,
@@ -163,7 +164,6 @@ async def run_action(
 async def reload_action(runner: ExtensionRunnerInfo, action_name: str) -> None:
     if not runner.initialized_event.is_set():
         await runner.initialized_event.wait()
-    assert runner.client is not None
 
     await send_request(
         runner=runner,
@@ -182,8 +182,6 @@ async def resolve_package_path(runner: ExtensionRunnerInfo, package_name: str) -
     # config, which is then registered in runner. In this time runner is not available
     # for any other actions, so `runner.started_event` stays not set and should not be
     # checked here.
-    assert runner.client is not None
-
     response = await send_request(
         runner=runner,
         method=types.WORKSPACE_EXECUTE_COMMAND,
@@ -223,7 +221,7 @@ async def shutdown(
     await send_request(runner=runner, method=types.SHUTDOWN, params=None)
 
 
-async def shutdown_sync(
+def shutdown_sync(
     runner: ExtensionRunnerInfo,
 ) -> None:
     send_request_sync(runner=runner, method=types.SHUTDOWN, params=None)

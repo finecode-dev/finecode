@@ -13,7 +13,7 @@ from finecode.pygls_client_utils import JsonRPCClient
 
 
 class CustomJsonRpcClient(JsonRPCClient):
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self.server_exit_callback: Coroutine | None = None
 
@@ -67,12 +67,12 @@ class ExtensionRunnerInfo:
     working_dir_path: Path
     # NOTE: initialized doesn't mean the runner is running, check its status
     initialized_event: asyncio.Event
-    client: CustomJsonRpcClient | None = None
+    client: CustomJsonRpcClient
     keep_running_request_task: asyncio.Task | None = None
 
     @property
     def process_id(self) -> int:
-        if self.client is not None and self.client._server is not None:
+        if self.client._server is not None:
             return self.client._server.pid
         else:
             return 0

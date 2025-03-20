@@ -218,7 +218,7 @@ async def _on_initialized(ls: LanguageServer, params: types.InitializedParams):
                     dir_path=ws_dir.uri.replace("file://", "")
                 )
                 tg.create_task(services.add_workspace_dir(request=request))
-    except Exception as error:
+    except ExceptionGroup as error:
         logger.exception(error)
         raise error
 
