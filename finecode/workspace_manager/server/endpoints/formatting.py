@@ -23,8 +23,8 @@ async def format_document(ls: LanguageServer, params: types.DocumentFormattingPa
     try:
         response = await proxy_utils.find_action_project_and_run_in_runner(
             file_path=file_path,
-            action_name="format",
-            params=[{"file_path": file_path, "save": False}],
+            action_name="format_many",
+            params=[{"file_paths": [file_path], "save": False}],
             ws_context=global_state.ws_context,
         )
     except Exception as error:  # TODO
@@ -34,7 +34,13 @@ async def format_document(ls: LanguageServer, params: types.DocumentFormattingPa
     if response is None:
         return []
 
-    if response.get("changed", True) is True:
+    response_for_file = response.get("result_by_file_path", {}).get(
+        str(file_path), None
+    )
+    if response_for_file is None:
+        return []
+
+    if response_for_file.get("changed", True) is True:
         doc = ls.workspace.get_text_document(params.text_document.uri)
         return [
             types.TextEdit(
@@ -42,7 +48,7 @@ async def format_document(ls: LanguageServer, params: types.DocumentFormattingPa
                     start=types.Position(0, 0),
                     end=types.Position(len(doc.lines), len(doc.lines[-1])),
                 ),
-                new_text=response["code"],
+                new_text=response_for_file["code"],
             )
         ]
 

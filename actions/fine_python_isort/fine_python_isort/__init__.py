@@ -1,6 +1,6 @@
-from .action import IsortCodeAction, IsortCodeActionConfig
+from .action import IsortManyCodeAction, IsortManyCodeActionConfig
 
 __all__ = [
-    "IsortCodeAction",
-    "IsortCodeActionConfig",
+    "IsortManyCodeAction",
+    "IsortManyCodeActionConfig",
 ]
