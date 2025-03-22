@@ -4,7 +4,7 @@ version = "0.1.0"
 description = ""
 authors = [{ name = "Vladyslav Hnatiuk", email = "aders1234@gmail.com" }]
 readme = "README.md"
-requires-python = ">=3.11, <= 3.13"
+requires-python = ">=3.11, < 3.14"
 dependencies = [
     "finecode_extension_api @ git+ssh://git@github.com:Aksem/FineCode.git#subdirectory=finecode_extension_api",
     "black (>=25.1.0,<26.0.0)",

@@ -4,7 +4,7 @@ version = "0.1.0"
 description = ""
 authors = [{ name = "Vladyslav Hnatiuk", email = "aders1234@gmail.com" }]
 readme = "README.md"
-requires-python = ">=3.11, <= 3.13"
+requires-python = ">=3.11, < 3.14"
 dependencies = ["finecode @ git+ssh://git@github.com:Aksem/FineCode.git"]
 
 
@@ -14,7 +14,9 @@ build-backend = "poetry.core.masonry.api"
 
 
 [tool.finecode]
-actions = [{ name = "lint" }]
+actions = [
+    # { name = "lint" }
+]
 
-[tool.finecode.action.lint]
-subactions = []
+# [tool.finecode.action.lint]
+# subactions = []
