@@ -161,7 +161,12 @@ async def update_config(ls: lsp_server.LanguageServer, params):
 async def run_action(ls: lsp_server.LanguageServer, params):
     logger.trace(f"Run action: {params[0]}")
     request = schemas.RunActionRequest(action_name=params[0], params=params[1])
-    response = await services.run_action(request=request)
+    # pygls sends uncatched exceptions(e.g. internal errors) to client. Log them as well
+    try:
+        response = await services.run_action(request=request)
+    except Exception as e:
+        logger.exception(f"Run action error: {e}")
+        raise e
     # dict key can be path, but pygls fails to handle slashes in dict keys, use strings
     # representation of result instead until the problem is properly solved
     return {"result": json.dumps(response.to_dict()["result"])}

@@ -103,6 +103,8 @@ async def restart_extension_runner(runner_working_dir_path: Path) -> None:
     )
     if new_runner is None:
         logger.error("Extension runner didn't start")
+        return
+
     global_state.ws_context.ws_projects_extension_runners[runner_working_dir_path] = (
         new_runner
     )

@@ -1,6 +1,6 @@
-from .action import Flake8ManyCodeAction, Flake8ManyCodeActionConfig
+from .action import Flake8LintHandler, Flake8LintHandlerConfig
 
 __all__ = [
-    "Flake8ManyCodeAction",
-    "Flake8ManyCodeActionConfig",
+    "Flake8LintHandler",
+    "Flake8LintHandlerConfig",
 ]

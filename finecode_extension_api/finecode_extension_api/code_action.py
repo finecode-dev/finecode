@@ -1,17 +1,22 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
 from pathlib import Path
-from typing import Generic, TypeVar
+from typing import AsyncIterator, Generic, Protocol, TypeVar
 
 from pydantic import BaseModel
 
 
-class CodeActionConfig(BaseModel): ...
+class ActionHandlerConfig(BaseModel): ...
 
 
 class RunActionPayload(BaseModel): ...
+
+
+class RunActionWithPartialResult(RunActionPayload):
+    # `RunActionWithPartialResult` should be interface but to avoid multiple inheritance
+    # and problems with pydantic, make it subclass of `RunActionPayload`
+    partial_result_token: int | str | None = None
 
 
 class RunActionResult(BaseModel):
@@ -19,7 +24,10 @@ class RunActionResult(BaseModel):
         raise NotImplementedError()
 
 
-RunPayloadType = TypeVar("RunPayloadType", bound=RunActionPayload)
+RunPayloadType = TypeVar("RunPayloadType", bound=RunActionPayload) #  | AsyncIterator[RunActionPayload]
+RunIterablePayloadType = TypeVar("RunIterablePayloadType", bound=AsyncIterator[RunPayloadType])
+RunResultType = TypeVar("RunResultType", bound=RunActionResult) #  | AsyncIterator[RunActionResult]
+RunIterableResultType = TypeVar("RunResultType", bound=AsyncIterator[RunResultType])
 
 
 class RunActionContext:
@@ -32,17 +40,18 @@ class RunActionContext:
     async def init(self, initial_payload: RunPayloadType) -> None: ...
 
 
-CodeActionConfigType = TypeVar("CodeActionConfigType")
-
-RunResultType = TypeVar("RunResultType", bound=RunActionResult)
 RunContextType = TypeVar("RunContextType", bound=RunActionContext)
 
 
-@dataclass
 class ActionContext:
-    project_dir: Path
-    # runner-specific cache dir
-    cache_dir: Path
+    def __init__(self, project_dir: Path, cache_dir: Path) -> None:
+        self.project_dir = project_dir
+        # runner-specific cache dir
+        self.cache_dir = cache_dir
+
+
+class Action(Generic[RunPayloadType, RunContextType, RunResultType]):
+    ...
 
 
 InitializeCallable = Callable[[], None]
@@ -51,7 +60,7 @@ ExitCallable = Callable[[], None]
 
 
 class ActionHandlerLifecycle:
-    def __init__(self):
+    def __init__(self) -> None:
         self.on_initialize_callable: InitializeCallable | None = None
         self.on_shutdown_callable: ShutdownCallable | None = None
         self.on_exit_callable: ExitCallable | None = None
@@ -66,8 +75,12 @@ class ActionHandlerLifecycle:
         self.on_exit_callable = callable
 
 
-class CodeAction(
-    Generic[CodeActionConfigType, RunPayloadType, RunContextType, RunResultType]
+ActionHandlerConfigType = TypeVar("ActionHandlerConfigType", bound=ActionHandlerConfig, covariant=True)
+ActionType = TypeVar("ActionType", bound=Action[RunPayloadType | RunIterablePayloadType, RunContextType, RunResultType | RunIterableResultType], covariant=True)
+
+
+class ActionHandler(
+    Protocol[ActionType, ActionHandlerConfigType]
 ):
     """
     **Action config**
@@ -80,16 +93,9 @@ class CodeAction(
     definition includes default values.
     """
 
-    LANGUAGE: str = "python"
-    IS_BACKGROUND: bool = False
-
-    def __init__(self, config: CodeActionConfigType, context: ActionContext) -> None:
-        self.config = config
-        self.context = context
-
     async def run(
-        self, payload: RunPayloadType, run_context: RunContextType
-    ) -> RunResultType:
+        self, payload: RunPayloadType | RunIterablePayloadType, run_context: RunContextType
+    ) -> RunResultType | RunIterableResultType:
         raise NotImplementedError()
 
     async def stop(self):

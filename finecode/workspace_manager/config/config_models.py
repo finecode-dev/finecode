@@ -35,7 +35,6 @@ class SubactionDefinition(BaseModel):
 
 
 class ActionDefinition(BaseModel):
-    # TODO: validate that one of both is required
     source: str | None = None
     subactions: list[SubactionDefinition] = []
     config: dict[str, Any] | None = None

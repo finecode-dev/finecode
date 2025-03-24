@@ -66,11 +66,19 @@ def _collect_actions_in_config(
     ):
         # TODO: handle validation errors
         action_def = config_models.ActionDefinition(**action_def_raw)
-        actions_by_names[action_name] = domain.Action(
-            name=action_name,
-            subactions=[subaction.name for subaction in action_def.subactions],
-            source=action_def.source,
-        )
+        if action_name in actions_by_names:
+            # extend action
+            existing_action = actions_by_names[action_name]
+            # only subactions and source can be extended, name stays the same
+            existing_action.subactions.extend([subaction.name for subaction in action_def.subactions])
+            existing_action.source = existing_action.source or action_def.source
+        else:
+            # add action
+            actions_by_names[action_name] = domain.Action(
+                name=action_name,
+                subactions=[subaction.name for subaction in action_def.subactions],
+                source=action_def.source,
+            )
         if action_def.config is not None:
             actions_configs[action_name] = action_def.config
 

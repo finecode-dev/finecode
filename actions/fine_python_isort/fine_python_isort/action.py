@@ -11,31 +11,30 @@ from finecode_extension_api.actions import format as format_action
 from finecode_extension_api.interfaces import icache, ilogger
 
 
-class IsortManyCodeActionConfig(code_action.CodeActionConfig):
+class IsortFormatHandlerConfig(code_action.ActionHandlerConfig):
     profile: str = ""
 
 
-class IsortManyCodeAction(
-    format_action.FormatManyCodeAction[IsortManyCodeActionConfig]
+class IsortFormatHandler(
+    code_action.ActionHandler[format_action.FormatAction, IsortFormatHandlerConfig]
 ):
     CACHE_KEY = "Isort"
 
     def __init__(
         self,
-        config: IsortManyCodeActionConfig,
-        context: code_action.ActionContext,
+        config: IsortFormatHandlerConfig,
         logger: ilogger.ILogger,
         cache: icache.ICache,
     ) -> None:
-        super().__init__(config, context)
+        self.config = config
         self.logger = logger
         self.cache = cache
 
     async def run(
         self,
-        payload: format_action.FormatManyRunPayload,
-        run_context: format_action.FormatManyRunContext,
-    ) -> format_action.FormatManyRunResult:
+        payload: format_action.FormatRunPayload,
+        run_context: format_action.FormatRunContext,
+    ) -> format_action.FormatRunResult:
         result_by_file_path: dict[Path, format_action.FormatRunResult] = {}
         for file_path in payload.file_paths:
             file_content, file_version = run_context.file_info_by_path[file_path]
@@ -43,7 +42,7 @@ class IsortManyCodeAction(
                 new_file_content = await self.cache.get_file_cache(
                     file_path, self.CACHE_KEY
                 )
-                result_by_file_path[file_path] = format_action.FormatRunResult(
+                result_by_file_path[file_path] = format_action.FormatRunFileResult(
                     changed=False, code=new_file_content
                 )
                 continue
@@ -79,10 +78,10 @@ class IsortManyCodeAction(
             await self.cache.save_file_cache(
                 file_path, file_version, self.CACHE_KEY, new_file_content
             )
-            result_by_file_path[file_path] = format_action.FormatRunResult(
+            result_by_file_path[file_path] = format_action.FormatRunFileResult(
                 changed=file_changed, code=new_file_content
             )
 
-        return format_action.FormatManyRunResult(
+        return format_action.FormatRunResult(
             result_by_file_path=result_by_file_path
         )

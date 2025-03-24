@@ -1,13 +1,14 @@
 from dataclasses import dataclass, field
 
 from finecode.extension_runner import domain
-from finecode_extension_api.code_action import CodeAction
+from finecode_extension_api import code_action
 
 
 @dataclass
 class RunnerContext:
     project: domain.Project
-    actions_instances_by_name: dict[str, CodeAction] = field(default_factory=dict)
+    action_exec_info_by_name: dict[str, domain.ActionExecInfo] = field(default_factory=dict)
+    action_handlers_instances_by_name: dict[str, code_action.ActionHandler] = field(default_factory=dict)
     action_handlers_exec_info_by_name: dict[str, domain.ActionHandlerExecInfo] = field(
         default_factory=dict
     )

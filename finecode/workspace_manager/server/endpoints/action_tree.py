@@ -221,18 +221,9 @@ async def run_action_on_file(ls: LanguageServer, params):
     project_dir_path_str = action_node_id_parts[0]
     project_dir_path = Path(project_dir_path_str)
     action_name = action_node_id_parts[1]
-    if action_name.endswith("_many"):
-        file_paths_by_projects = project_analyzer.get_files_by_projects(
-            projects_dirs_paths=[project_dir_path]
-        )
-        file_paths = file_paths_by_projects[project_dir_path]
-        params = {"file_paths": file_paths}
-        if action_name == "format_many":
-            params["save"] = True
-    else:
-        params = {"file_path": document_meta.uri.path}
-        if action_name == "format":
-            params["save"] = False
+    params = {"file_paths": [document_meta.uri.path]}
+    if action_name == "format":
+        params["save"] = False
 
     run_action_request = schemas.RunActionRequest(
         action_node_id=action_node_id,
@@ -247,6 +238,14 @@ async def run_action_on_file(ls: LanguageServer, params):
 async def run_action_on_project(ls: LanguageServer, params):
     logger.info(f"run action on project {params}")
     await global_state.server_initialized.wait()
+
+    #     file_paths_by_projects = project_analyzer.get_files_by_projects(
+    #         projects_dirs_paths=[project_dir_path]
+    #     )
+    #     file_paths = file_paths_by_projects[project_dir_path]
+    #     params = {"file_paths": file_paths}
+    #     if action_name == "format":
+    #         params["save"] = True
 
     return {}
     # params_dict = params[0]

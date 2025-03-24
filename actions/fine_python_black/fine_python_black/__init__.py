@@ -1,9 +1,9 @@
 from .action import (
-    BlackManyCodeAction,
-    BlackManyCodeActionConfig,
+    BlackFormatHandler,
+    BlackFormatHandlerConfig,
 )
 
 __all__ = [
-    "BlackManyCodeAction",
-    "BlackManyCodeActionConfig",
+    "BlackFormatHandler",
+    "BlackFormatHandlerConfig",
 ]

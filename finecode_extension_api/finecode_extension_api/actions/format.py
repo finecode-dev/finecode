@@ -12,7 +12,7 @@ else:
 from finecode_extension_api import code_action
 
 
-class FormatManyRunPayload(code_action.RunActionPayload):
+class FormatRunPayload(code_action.RunActionPayload):
     file_paths: list[Path]
     save: bool
 
@@ -22,7 +22,7 @@ class FileInfo(NamedTuple):
     file_version: str
 
 
-class FormatManyRunContext(code_action.RunActionContext):
+class FormatRunContext(code_action.RunActionContext):
     def __init__(
         self,
         file_manager: ifilemanager.IFileManager,
@@ -32,7 +32,7 @@ class FormatManyRunContext(code_action.RunActionContext):
 
         self.file_info_by_path: dict[Path, FileInfo] = {}
 
-    async def init(self, initial_payload: FormatManyRunPayload) -> None:
+    async def init(self, initial_payload: FormatRunPayload) -> None:
         for file_path in initial_payload.file_paths:
             file_content = await self.file_manager.get_content(file_path)
             file_version = await self.file_manager.get_file_version(file_path)
@@ -41,26 +41,18 @@ class FormatManyRunContext(code_action.RunActionContext):
             )
 
 
-class FormatRunResult(code_action.RunActionResult):
+class FormatRunFileResult(code_action.RunActionResult):
     changed: bool
     # changed code or empty string if code was not changed
     code: str
 
+
+class FormatRunResult(code_action.RunActionResult):
+    result_by_file_path: dict[Path, FormatRunFileResult]
+
     @override
     def update(self, other: code_action.RunActionResult) -> None:
         if not isinstance(other, FormatRunResult):
-            return
-        if other.changed is True:
-            self.changed = True
-            self.code = other.code
-
-
-class FormatManyRunResult(code_action.RunActionResult):
-    result_by_file_path: dict[Path, FormatRunResult]
-
-    @override
-    def update(self, other: code_action.RunActionResult) -> None:
-        if not isinstance(other, FormatManyRunResult):
             return
 
         for file_path, other_result in other.result_by_file_path.items():
@@ -68,34 +60,26 @@ class FormatManyRunResult(code_action.RunActionResult):
                 self.result_by_file_path[file_path] = other_result
 
 
-class FormatManyCodeAction(
-    code_action.CodeAction[
-        code_action.CodeActionConfigType,
-        FormatManyRunPayload,
-        code_action.RunActionContext,
-        FormatManyRunResult,
-    ]
-): ...
+type FormatAction = code_action.Action[
+    FormatRunPayload, FormatRunContext, FormatRunResult
+]
 
 
-class FormatManySaveInPlaceCodeActionConfig(code_action.CodeActionConfig): ...
+class SaveFormatHandlerConfig(code_action.ActionHandlerConfig): ...
 
 
-class FormatManySaveInPlaceCodeAction(
-    FormatManyCodeAction[FormatManySaveInPlaceCodeActionConfig]
+class SaveFormatHandler(
+    code_action.ActionHandler[FormatAction, SaveFormatHandlerConfig]
 ):
     def __init__(
         self,
-        config: FormatManySaveInPlaceCodeActionConfig,
-        context: code_action.ActionContext,
         file_manager: ifilemanager.IFileManager,
     ) -> None:
-        super().__init__(config=config, context=context)
         self.file_manager = file_manager
 
     async def run(
-        self, payload: FormatManyRunPayload, run_context: FormatManyRunContext
-    ) -> FormatManyRunResult:
+        self, payload: FormatRunPayload, run_context: FormatRunContext
+    ) -> FormatRunResult:
         file_paths = payload.file_paths
         save = payload.save
 
@@ -106,9 +90,9 @@ class FormatManySaveInPlaceCodeAction(
                     file_path=file_path, file_content=file_content
                 )
 
-        result = FormatManyRunResult(
+        result = FormatRunResult(
             result_by_file_path={
-                file_path: FormatRunResult(
+                file_path: FormatRunFileResult(
                     changed=False,
                     code=run_context.file_info_by_path[file_path].file_content,
                 )

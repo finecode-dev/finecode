@@ -1,10 +1,12 @@
+import collections.abc
 import importlib
 import inspect
 import sys
 import time
 import types
+import typing
 from pathlib import Path
-from typing import Any, Callable, Type
+from typing import Any, Callable, TypeAliasType
 
 from loguru import logger
 
@@ -25,6 +27,7 @@ class ActionFailedException(Exception): ...
 
 document_requester: Callable
 document_saver: Callable
+partial_result_sender: Callable
 
 
 async def get_document(uri: str):
@@ -41,17 +44,32 @@ async def update_config(
 ) -> schemas.UpdateConfigResponse:
     project_path = Path(request.working_dir)
 
+    actions: dict[str, domain.Action] = {}
+    for action_name, action_schema_obj in request.actions.items():
+        if len(action_schema_obj.actions) > 0:
+            handlers: list[domain.ActionHandler] = []
+            for subaction_name in action_schema_obj.actions:
+                subaction_schema_obj = request.actions[subaction_name]
+                handlers.append(
+                    domain.ActionHandler(
+                        name=subaction_name,
+                        source=subaction_schema_obj.source,
+                        config=request.actions_configs.get(subaction_name, {}),
+                    )
+                )
+            action = domain.Action(
+                name=action_name,
+                config=request.actions_configs.get(action_name, {}),
+                handlers=handlers,
+                source=action_schema_obj.source,
+            )
+            actions[action_name] = action
+
     global_state.runner_context = context.RunnerContext(
         project=domain.Project(
             name=request.project_name,
             path=project_path,
-            actions={
-                action_name: domain.Action(
-                    name=action.name, subactions=action.actions, source=action.source
-                )
-                for action_name, action in request.actions.items()
-            },
-            actions_configs=request.actions_configs,
+            actions=actions,
         ),
     )
 
@@ -73,10 +91,17 @@ def resolve_func_args_with_di(
     func_annotations = inspect.get_annotations(func, eval_str=True)
     args: dict[str, Any] = {}
     for param_name in func_parameters.keys():
-        if params_to_ignore is not None and param_name in params_to_ignore:
+        # default object constructor(__init__) has signature __init__(self, *args, **kwargs)
+        # args and kwargs have no annotation and should not be filled by DI resolver.
+        # Ignore them.
+        if (
+            params_to_ignore is not None and param_name in params_to_ignore
+        ) or param_name in ["args", "kwargs"]:
             continue
         elif known_args is not None and param_name in known_args:
-            args[param_name] = known_args[param_name]
+            param_type = func_annotations[param_name]
+            # value in known args is a callable factory to instantiate param value
+            args[param_name] = known_args[param_name](param_type)
         else:
             # TODO: handle errors
             param_type = func_annotations[param_name]
@@ -86,116 +111,73 @@ def resolve_func_args_with_di(
     return args
 
 
-def get_action_payload_type(
-    actions_to_execute: list[domain.Action],
-) -> Type[code_action.RunPayloadType] | None:
-    # assume all actions have the same payload type, find the first one
-    for action in actions_to_execute:
-        if action.source is not None:
-            try:
-                action_handler = run_utils.import_module_member_by_source_str(
-                    action.source
-                )
-            except ModuleNotFoundError as error:
-                logger.error(
-                    f"Source of action {action.name} '{action.source}' "
-                    "could not be imported"
-                )
-                logger.error(error)
-                return
+def create_action_exec_info(action: domain.Action) -> domain.ActionExecInfo:
+    try:
+        action_type_def = run_utils.import_module_member_by_source_str(action.source)
+    except Exception as e:
+        logger.error(f"Error importing action type: {e}")
+        raise e
 
-            if inspect.isclass(action_handler):
-                run_method = action_handler.run
-            else:
-                run_method = action_handler
-            run_method_annotations = inspect.get_annotations(run_method, eval_str=True)
-            # TODO: handle errors
-            payload_type = run_method_annotations["payload"]
-            return payload_type
+    if not isinstance(action_type_def, TypeAliasType):
+        raise Exception("Action definition expected to be a type")
 
-    # action has no payload
-    return None
+    action_type_alias = action_type_def.__value__
 
+    if not isinstance(action_type_alias, typing._GenericAlias):
+        raise Exception(
+            "Action definition expected to be an instantiation of finecode_extension_api.code_action.Action type"
+        )
 
-async def instantiate_run_context(
-    actions_to_execute: list[domain.Action], payload: code_action.RunPayloadType
-) -> code_action.RunActionContext | None:
-    # assume all actions that have run context, have it of the same type
-    for action in actions_to_execute:
-        if action.source is not None:
-            try:
-                action_handler = run_utils.import_module_member_by_source_str(
-                    action.source
-                )
-            except ModuleNotFoundError as error:
-                logger.error(
-                    f"Source of action {action.name} '{action.source}'"
-                    " could not be imported"
-                )
-                logger.error(error)
-                return
+    try:
+        unpack_with_action = next(iter(action_type_alias))
+    except StopIteration:
+        raise Exception("Action type definition is invalid: no action type alias?")
 
-            if inspect.isclass(action_handler):
-                run_method = action_handler.run
-            else:
-                run_method = action_handler
-            run_method_annotations = inspect.get_annotations(run_method, eval_str=True)
-            try:
-                run_context_type = run_method_annotations["run_context"]
-            except KeyError:
-                continue
+    # typing.Unpack cannot used in isinstance:
+    # TypeError: typing.Unpack cannot be used with isinstance()
+    # if not isinstance(unpack_with_action,typing.Unpack):
+    #     raise Exception("Action type definition is invalid: type alias is not unpack")
 
-            if not issubclass(run_context_type, code_action.RunActionContext):
-                raise ValueError(
-                    f"Type of run_context '{run_context_type}' is not"
-                    " subclass of RunActionContext"
-                )
-            constructor_args = resolve_func_args_with_di(
-                run_context_type.__init__, params_to_ignore=["self"]
-            )
-            run_context = run_context_type(**constructor_args)
-            await run_context.init(initial_payload=payload)
-            return run_context
+    if len(unpack_with_action.__args__) != 1:
+        raise Exception("Action type definition is invalid: expected 1 Action instance")
 
-    # action has no run context
-    return None
+    action_generic_alias = unpack_with_action.__args__[0]
+    action_args = action_generic_alias.__args__
+
+    if len(action_args) != 3:
+        raise Exception(
+            "Action type definition is invalid: Action type expects 3 arguments"
+        )
+
+    payload_type, run_context_type, _ = action_args
+
+    # TODO: validate that classes and correct subclasses?
+
+    action_exec_info = domain.ActionExecInfo(
+        payload_type=payload_type, run_context_type=run_context_type
+    )
+    return action_exec_info
 
 
 async def run_action(
     request: schemas.RunActionRequest,
 ) -> schemas.RunActionResponse:
     logger.trace(f"Run action '{request.action_name}'")
-    # TODO: check whether config is set
-    # TODO: validate that action exists
-    # TODO: validate that path exists
+    # TODO: check whether config is set: this will be solved by passing initial
+    # configuration as payload of initialize
     if global_state.runner_context is None:
         # TODO: raise error
         return schemas.RunActionResponse({})
 
     start_time = time.time_ns()
     project_def = global_state.runner_context.project
-    action_to_process: list[str] = [request.action_name]
-    actions_to_execute: list[domain.Action] = []
 
-    while len(action_to_process) > 0:
-        action_name = action_to_process.pop(0)
-        try:
-            action_obj = project_def.actions[action_name]
-        except KeyError:
-            available_actions_str = ",".join(
-                [action_name for action_name in project_def.actions]
-            )
-            logger.warning(
-                f"Action {request.action_name} not found. "
-                f"Available actions: {available_actions_str}"
-            )
-            # TODO: raise error
-            return schemas.RunActionResponse({})
-
-        if action_obj.source is not None:
-            actions_to_execute.append(action_obj)
-
-        action_to_process += action_obj.subactions
+    try:
+        action = project_def.actions[request.action_name]
+    except KeyError:
+        # TODO: raise error
+        logger.error(f"Action {request.action_name} not found")
+        return schemas.RunActionResponse({})
 
     # design decisions:
     # - keep payload unchanged between all subaction runs.
@@ -203,42 +185,64 @@ async def run_action(
     # - result is modifiable. Result of each subaction updates the previous result.
     #   In case of failure of subaction, at least result of all previous subactions is
     #   returned. (experimental)
-    #   TODO: Would it be better to provide interface for intermiate results like
-    #         messages from linter and make result non-modifiable?
-    # TODO: cache
-    payload_type = get_action_payload_type(actions_to_execute)
-    if payload_type is not None:
-        # TODO: handle errors
-        payload = payload_type(**request.params)
-    else:
-        payload = None
-    run_context = await instantiate_run_context(actions_to_execute, payload)
-    current_result: code_action.RunActionResult | None = None
+
+    try:
+        action_exec_info = global_state.runner_context.action_exec_info_by_name[
+            request.action_name
+        ]
+    except KeyError:
+        action_exec_info = create_action_exec_info(action)
+        global_state.runner_context.action_exec_info_by_name[request.action_name] = (
+            action_exec_info
+        )
+
+    # TODO: catch validation errors
+    payload: code_action.RunActionPayload | None = None
+    if action_exec_info.payload_type is not None:
+        payload = action_exec_info.payload_type(**request.params)
+
+    run_context: code_action.RunActionContext | None = None
+    if action_exec_info.run_context_type is not None:
+        constructor_args = resolve_func_args_with_di(
+            action_exec_info.run_context_type.__init__, params_to_ignore=["self"]
+        )
+        run_context = action_exec_info.run_context_type(**constructor_args)
+        # TODO: handler errors
+        await run_context.init(initial_payload=payload)
+
+    action_result: code_action.RunActionResult | None = None
     runner_context = global_state.runner_context
 
-    for action in actions_to_execute:
-        action_result = await execute_action_handler(
-            action,
+    # instantiate only on demand?
+    project_path = project_def.path
+    project_cache_dir = project_dirs.get_project_dir(project_path=project_path)
+    action_context = code_action.ActionContext(
+        project_dir=project_path, cache_dir=project_cache_dir
+    )
+
+    for handler in action.handlers:
+        handler_result = await execute_action_handler(
+            handler=handler,
             payload=payload,
             run_context=run_context,
+            action_context=action_context,
             runner_context=runner_context,
-            project_def=project_def,
         )
-        if current_result is None:
-            current_result = action_result
+        if action_result is None:
+            action_result = handler_result
         else:
             try:
-                current_result.update(action_result)
+                action_result.update(handler_result)
             except NotImplementedError:
                 ...
 
     result_dict = {}
-    if isinstance(current_result, code_action.RunActionResult):
-        result_dict = current_result.model_dump(mode="json")
+    if isinstance(action_result, code_action.RunActionResult):
+        result_dict = action_result.model_dump(mode="json")
     else:
-        logger.error(f"Unexpected result type: {type(current_result).__name__}")
+        logger.error(f"Unexpected result type: {type(action_result).__name__}")
         raise ActionFailedException(
-            f"Unexpected result type: {type(current_result).__name__}"
+            f"Unexpected result type: {type(action_result).__name__}"
         )
 
     end_time = time.time_ns()
@@ -248,86 +252,71 @@ async def run_action(
 
 
 async def execute_action_handler(
-    action: domain.Action,
+    handler: domain.ActionHandler,
     payload: code_action.RunActionPayload | None,
-    run_context: code_action.RunActionContext,
+    run_context: code_action.RunActionContext | None,
+    action_context: code_action.ActionContext,
     runner_context: context.RunnerContext,
-    project_def: domain.Project,
 ) -> code_action.RunActionResult | None:
-    logger.trace(f"Run {action.name} on {str(payload)[:100]}...")
+    logger.trace(f"Run {handler.name} on {str(payload)[:100]}...")
     start_time = time.time_ns()
 
-    if action.name in runner_context.actions_instances_by_name:
-        action_instance = runner_context.actions_instances_by_name[action.name]
-        action_run_func = action_instance.run
-        exec_info = runner_context.action_handlers_exec_info_by_name[action.name]
-        logger.trace(f"Instance of action {action.name} found in cache")
+    if handler.name in runner_context.action_handlers_instances_by_name:
+        handler_instance = runner_context.action_handlers_instances_by_name[handler.name]
+        handler_run_func = handler_instance.run
+        exec_info = runner_context.action_handlers_exec_info_by_name[handler.name]
+        logger.trace(f"Instance of action handler {handler.name} found in cache")
     else:
-        logger.trace(f"Load action {action.name}")
+        logger.trace(f"Load action handler {handler.name}")
         try:
-            action_handler = run_utils.import_module_member_by_source_str(action.source)
+            action_handler = run_utils.import_module_member_by_source_str(
+                handler.source
+            )
         except ModuleNotFoundError as error:
             logger.error(
-                f"Source of action {action.name} '{action.source}'"
+                f"Source of action handler {handler.name} '{handler.source}'"
                 " could not be imported"
             )
             logger.error(error)
             return
 
-        try:
-            # TODO: get config class name from annotation?
-            action_config_cls = run_utils.import_module_member_by_source_str(
-                action.source + "Config"
-            )
-        except ModuleNotFoundError as error:
-            logger.error(
-                f"Source of action config {action.name} "
-                f"'{action.source}Config' could not be imported"
-            )
-            logger.error(error)
-            return
+        handler_raw_config = handler.config
 
-        try:
-            action_config = project_def.actions_configs[action.name]
-        except KeyError:
-            # tmp solution for matching configs like lint and lint_many
-            if action.name.endswith("_many"):
-                single_action_name = action.name[: -(len("_many"))]
-                action_config = project_def.actions_configs.get(single_action_name, {})
-            else:
-                action_config = {}
+        def get_handler_config(param_type):
+            # TODO: validation errors
+            return param_type(**handler_raw_config)
 
-        config = action_config_cls(**action_config)
-        project_path = project_def.path
-        project_cache_dir = project_dirs.get_project_dir(project_path=project_path)
-        context = code_action.ActionContext(
-            project_dir=project_path, cache_dir=project_cache_dir
-        )
+        def get_action_context(param_type):
+            return action_context
+
         exec_info = domain.ActionHandlerExecInfo()
         # save immediately in context to be able to shutdown it if the first execution
         # is interrupted by stopping ER
-        runner_context.action_handlers_exec_info_by_name[action.name] = exec_info
+        runner_context.action_handlers_exec_info_by_name[handler.name] = exec_info
         if inspect.isclass(action_handler):
             args = resolve_func_args_with_di(
                 func=action_handler.__init__,
-                known_args={"config": config, "context": context},
+                known_args={
+                    "config": get_handler_config,
+                    "context": get_action_context,
+                },
                 params_to_ignore=["self"],
             )
 
             if "lifecycle" in args:
                 exec_info.lifecycle = args["lifecycle"]
 
-            action_instance = action_handler(**args)
-            runner_context.actions_instances_by_name[action.name] = action_instance
-            action_run_func = action_instance.run
+            handler_instance = action_handler(**args)
+            runner_context.action_handlers_instances_by_name[handler.name] = handler_instance
+            handler_run_func = handler_instance.run
         else:
-            action_run_func = action_handler
+            handler_run_func = action_handler
 
         if (
             exec_info.lifecycle is not None
             and exec_info.lifecycle.on_initialize_callable is not None
         ):
-            logger.trace(f"Initialize {action.name} action handler")
+            logger.trace(f"Initialize {handler.name} action handler")
             try:
                 initialize_callable_result = (
                     exec_info.lifecycle.on_initialize_callable()
@@ -335,20 +324,48 @@ async def execute_action_handler(
                 if inspect.isawaitable(initialize_callable_result):
                     await initialize_callable_result
             except Exception as e:
-                logger.error(f"Failed to initialize action {action.name}: {e}")
+                logger.error(f"Failed to initialize action {handler.name}: {e}")
                 return
         exec_info.status = domain.ActionHandlerExecInfoStatus.INITIALIZED
 
+    def get_run_payload(param_type):
+        return payload
+
+    def get_run_context(param_type):
+        return run_context
+
     args = resolve_func_args_with_di(
-        func=action_run_func,
-        known_args={"payload": payload, "run_context": run_context},
+        func=handler_run_func,
+        known_args={"payload": get_run_payload, "run_context": get_run_context},
     )
     # TODO: cache parameters
     try:
         # there is also `inspect.iscoroutinefunction` but it cannot recognize coroutine
         # functions which are class methods.
-        call_result = action_run_func(**args)
-        if inspect.isawaitable(call_result):
+        call_result = handler_run_func(**args)
+        if isinstance(call_result, collections.abc.AsyncIterator):
+            end_result: code_action.RunActionResult | None = None
+            partial_result_counter = 0
+
+            # partial_result_token = (
+            #     payload.partial_result_token
+            #     if isinstance(payload, code_action.RunActionWithPartialResult)
+            #     else None
+            # )
+            # send_partial_results = partial_result_token is not None
+            async for partial_result in call_result:
+                partial_result_counter += 1
+
+                if end_result is None:
+                    end_result = partial_result
+                else:
+                    end_result.update(partial_result)
+            current_result = end_result
+            logger.debug(
+                f"Result of action handler {handler.name} consists of"
+                f" {partial_result_counter} partial results"
+            )
+        elif inspect.isawaitable(call_result):
             current_result = await call_result
         else:
             current_result = call_result
@@ -360,7 +377,7 @@ async def execute_action_handler(
     end_time = time.time_ns()
     duration = (end_time - start_time) / 1_000_000
     logger.trace(
-        f"End of execution of action {action.name}"
+        f"End of execution of action handler {handler.name}"
         f" on {str(payload)[:100]}..., duration: {duration}ms"
     )
     return current_result
@@ -386,11 +403,11 @@ def reload_action(action_name: str) -> None:
         # TODO: raise error
         return
 
-    actions_to_remove = [action_name, *action_obj.subactions]
+    actions_to_remove = [action_name, *action_obj.handlers]
 
     for _action_name in actions_to_remove:
         try:
-            del global_state.runner_context.actions_instances_by_name[_action_name]
+            del global_state.runner_context.action_handlers_instances_by_name[_action_name]
             logger.trace(f"Removed '{_action_name}' instance from cache")
         except KeyError:
             logger.info(

@@ -42,20 +42,16 @@ class Project:
         # None means actions were not collected yet
         # if project.status is RUNNING, then actions are not None
         self.actions = actions
-        if root_actions is not None:
-            self.root_actions = root_actions
-        else:
-            self.root_actions = []
+        self.root_actions: list[str] = root_actions if root_actions is not None else []
 
         # if views is not None:
         #     self.views = views
         # else:
         #     self.views: list[View] = []
 
-        if actions_configs is not None:
-            self.actions_configs = actions_configs
-        else:
-            self.actions_configs: dict[str, dict[str, Any]] = {}
+        self.actions_configs: dict[str, dict[str, Any]] = (
+            actions_configs if actions_configs is not None else {}
+        )
 
     def __str__(self) -> str:
         return (

@@ -23,7 +23,7 @@ async def format_document(ls: LanguageServer, params: types.DocumentFormattingPa
     try:
         response = await proxy_utils.find_action_project_and_run_in_runner(
             file_path=file_path,
-            action_name="format_many",
+            action_name="format",
             params=[{"file_paths": [file_path], "save": False}],
             ws_context=global_state.ws_context,
         )

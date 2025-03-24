@@ -92,25 +92,24 @@ def run_flake8_on_single_file(
     return lint_messages
 
 
-class Flake8ManyCodeActionConfig(code_action.CodeActionConfig):
+class Flake8LintHandlerConfig(code_action.ActionHandlerConfig):
     max_line_length: int = 79
     extend_select: list[str] | None = None
     extend_ignore: list[str] | None = None
 
 
-class Flake8ManyCodeAction(lint_action.LintManyCodeAction[Flake8ManyCodeActionConfig]):
+class Flake8LintHandler(code_action.ActionHandler[lint_action.LintAction, Flake8LintHandlerConfig]):
     CACHE_KEY = "flake8"
 
     def __init__(
         self,
-        config: Flake8ManyCodeActionConfig,
-        context: code_action.ActionContext,
+        config: Flake8LintHandlerConfig,
         cache: icache.ICache,
         logger: ilogger.ILogger,
         file_manager: ifilemanager.IFileManager,
         ast_provider: iast_provider.IPythonSingleAstProvider,
     ) -> None:
-        super().__init__(config, context=context)
+        self.config = config
         self.cache = cache
         self.logger = logger
         self.file_manager = file_manager
@@ -131,8 +130,8 @@ class Flake8ManyCodeAction(lint_action.LintManyCodeAction[Flake8ManyCodeActionCo
         self.logger.disable("bugbear")
 
     async def run(
-        self, payload: lint_action.LintManyRunPayload
-    ) -> collections.abc.AsyncIterator[lint_action.LintManyRunResult]:
+        self, payload: lint_action.LintRunPayload, run_context: code_action.RunActionContext
+    ) -> collections.abc.AsyncIterator[lint_action.LintRunResult]:
         file_paths = payload.file_paths
         self.flake8_style_guide._application.options.filenames = [
             str(file_path) for file_path in file_paths
@@ -145,7 +144,7 @@ class Flake8ManyCodeAction(lint_action.LintManyCodeAction[Flake8ManyCodeActionCo
                     file_path, self.CACHE_KEY
                 )
                 messages[str(file_path)] = cached_lint_messages
-                yield lint_action.LintManyRunResult(messages=messages)
+                yield lint_action.LintRunResult(messages=messages)
                 continue
             except icache.CacheMissException:
                 pass
@@ -169,7 +168,7 @@ class Flake8ManyCodeAction(lint_action.LintManyCodeAction[Flake8ManyCodeActionCo
                 file_path, file_version, self.CACHE_KEY, lint_messages
             )
 
-            yield lint_action.LintManyRunResult(messages=messages)
+            yield lint_action.LintRunResult(messages=messages)
 
 
 class CustomFlake8FileChecker(checker.FileChecker):

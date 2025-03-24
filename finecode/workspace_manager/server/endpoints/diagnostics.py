@@ -58,12 +58,24 @@ async def document_diagnostic(
 
     file_path = pygls_types_utils.uri_str_to_path(params.text_document.uri)
 
-    response = await proxy_utils.find_action_project_and_run_in_runner(
-        file_path=file_path,
-        action_name="lint_many",
-        params=[{"file_paths": [file_path]}],
-        ws_context=global_state.ws_context,
-    )
+    try:
+        response = await proxy_utils.find_action_project_and_run_in_runner(
+            file_path=file_path,
+            action_name="lint",
+            params=[
+                {
+                    "file_paths": [file_path],
+                    "partial_result_token": params.partial_result_token,
+                }
+            ],
+            ws_context=global_state.ws_context,
+        )
+
+    except proxy_utils.ActionRunFailed as error:
+        # don't throw error because vscode after a few sequential errors will stop
+        # requesting diagnostics until restart. Show user message instead
+        logger.error(str(error))  # TODO: user message
+        return None
 
     if response is None:
         return None
@@ -137,9 +149,7 @@ async def workspace_diagnostic(
 
         actions_names: list[str] = [action.name for action in project_def.actions]
         # TODO: support LSP endpoints?
-        if "lint_many" in actions_names:
-            action_name = "lint_many"
-        elif "lint" in actions_names:
+        if "lint" in actions_names:
             action_name = "lint"
         else:
             del relevant_projects[project_dir_path]
@@ -166,9 +176,14 @@ async def workspace_diagnostic(
             continue
 
         exec_info = exec_info_by_project_dir_path[project_dir_path]
-        if exec_info.action_name == "lint_many" or exec_info.action_name == "lint":
+        if exec_info.action_name == "lint":
             exec_info.request_data = [
-                {"file_paths": [file_path.as_posix() for file_path in files_for_runner]}
+                {
+                    "file_paths": [
+                        file_path.as_posix() for file_path in files_for_runner
+                    ],
+                    "partial_result_token": params.partial_result_token,
+                }
             ]
 
     exec_infos = list(exec_info_by_project_dir_path.values())
@@ -183,7 +198,6 @@ async def workspace_diagnostic(
                             runner=exec_info.runner,
                             action_name=exec_info.action_name,
                             params=[request_data],
-                            # TODO: params.partial_result_token
                         )
                     )
                     send_tasks.append(task)

@@ -1,6 +1,6 @@
-from .action import IsortManyCodeAction, IsortManyCodeActionConfig
+from .action import IsortFormatHandler, IsortFormatHandlerConfig
 
 __all__ = [
-    "IsortManyCodeAction",
-    "IsortManyCodeActionConfig",
+    "IsortFormatHandler",
+    "IsortFormatHandlerConfig",
 ]

@@ -1,3 +1,4 @@
+import collections.abc
 import enum
 import sys
 from dataclasses import dataclass
@@ -8,13 +9,7 @@ if sys.version_info >= (3, 12):
 else:
     from typing_extensions import TypedDict
 
-from finecode_extension_api.code_action import (
-    CodeAction,
-    CodeActionConfigType,
-    RunActionContext,
-    RunActionPayload,
-    RunActionResult,
-)
+from finecode_extension_api import code_action
 
 
 class Position(TypedDict):
@@ -45,11 +40,11 @@ class LintMessage:
     severity: LintMessageSeverity | None = None
 
 
-class LintRunPayload(RunActionPayload):
-    file_path: Path
+class LintRunPayload(code_action.RunActionWithPartialResult):
+    file_paths: list[Path]
 
 
-class LintRunResult(RunActionResult):
+class LintRunResult(code_action.RunActionResult):
     # messages is a dict to support messages for multiple files because it could be the
     # case that linter checks given file and its dependencies.
     #
@@ -58,8 +53,8 @@ class LintRunResult(RunActionResult):
     # solved
     messages: dict[str, list[LintMessage]]
 
-    def update(self, other: RunActionResult) -> None:
-        if not isinstance(other, RunActionResult):
+    def update(self, other: code_action.RunActionResult) -> None:
+        if not isinstance(other, LintRunResult):
             return
 
         for file_path_str, new_messages in other.messages.items():
@@ -68,25 +63,6 @@ class LintRunResult(RunActionResult):
             self.messages[file_path_str].extend(new_messages)
 
 
-class LintCodeAction(
-    CodeAction[CodeActionConfigType, LintRunPayload, RunActionContext, LintRunResult]
-):
-    # lint actions only analyses code, they don't modify it. This allows to run them in
-    # parallel.
-    ...
-    # APPLIES_ONLY_ON_FILE: bool = False
-    # NEEDS_WHOLE_PROJECT: bool = False
-
-
-class LintManyRunPayload(RunActionPayload):
-    file_paths: list[Path]
-
-
-class LintManyRunResult(LintRunResult): ...
-
-
-class LintManyCodeAction(
-    CodeAction[
-        CodeActionConfigType, LintManyRunPayload, RunActionContext, LintManyRunResult
-    ]
-): ...
+type LintAction = code_action.Action[LintRunPayload,
+        code_action.RunActionContext,
+        collections.abc.AsyncIterator[LintRunResult]]

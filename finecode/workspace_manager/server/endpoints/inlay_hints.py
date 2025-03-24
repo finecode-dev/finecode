@@ -51,7 +51,7 @@ async def document_inlay_hint(
     try:
         response = await proxy_utils.find_action_project_and_run_in_runner(
             file_path=file_path,
-            action_name="textDocumentInlayHint",
+            action_name="text_document_inlay_hint",
             params=[inlay_hint_params_to_dict(params)],
             ws_context=global_state.ws_context,
         )
