@@ -22,21 +22,21 @@ class FinecodeConfig(BaseModel):
     actions: list[FinecodeActionDefinition] = []
     views: list[FinecodeViewDefinition] = []
     action: dict[str, dict[str, Any]] = {}
+    action_handler: dict[str, dict[str, Any]] = {}
 
 
 class PresetDefinition(BaseModel):
     extends: list[FinecodePresetDefinition] = []
-    actions: list[FinecodeActionDefinition] = []
 
 
-class SubactionDefinition(BaseModel):
+class ActionHandlerDefinition(BaseModel):
     name: str
     source: str
 
 
 class ActionDefinition(BaseModel):
     source: str | None = None
-    subactions: list[SubactionDefinition] = []
+    handlers: list[ActionHandlerDefinition] = []
     config: dict[str, Any] | None = None
 
 

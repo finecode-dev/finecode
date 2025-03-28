@@ -10,14 +10,24 @@ class Preset:
         self.source = source
 
 
-class Action:
-    # action is (collected) meta information about action in a project
+
+class ActionHandler:
     def __init__(
-        self, name: str, subactions: list[str] | None = None, source: str | None = None
+        self, name: str, source: str, config: dict[str, Any]
     ):
         self.name: str = name
-        self.subactions: list[str] = subactions if subactions is not None else []
-        self.source: str | None = source
+        self.source: str = source
+        self.config: dict[str, Any] = config
+
+
+class Action:
+    def __init__(
+        self, name: str, source: str, handlers: list[ActionHandler], config: dict[str, Any]
+    ):
+        self.name: str = name
+        self.source: str = source
+        self.handlers: list[ActionHandler] = handlers
+        self.config = config
 
 
 class Project:
@@ -27,31 +37,15 @@ class Project:
         dir_path: Path,
         def_path: Path,
         status: ProjectStatus,
-        subprojects: list[Project] | None = None,
         actions: list[Action] | None = None,
-        # views: list[View] | None = None,
-        # <action_name:config>
-        actions_configs: dict[str, dict[str, Any]] | None = None,
-        root_actions: list[str] | None = None,
     ) -> None:
         self.name = name
         self.dir_path = dir_path
         self.def_path = def_path
         self.status = status
-        self.subprojects: list[Project] = subprojects if subprojects is not None else []
         # None means actions were not collected yet
         # if project.status is RUNNING, then actions are not None
         self.actions = actions
-        self.root_actions: list[str] = root_actions if root_actions is not None else []
-
-        # if views is not None:
-        #     self.views = views
-        # else:
-        #     self.views: list[View] = []
-
-        self.actions_configs: dict[str, dict[str, Any]] = (
-            actions_configs if actions_configs is not None else {}
-        )
 
     def __str__(self) -> str:
         return (

@@ -197,8 +197,7 @@ async def resolve_package_path(runner: ExtensionRunnerInfo, package_name: str) -
 
 async def update_config(
     runner: ExtensionRunnerInfo,
-    actions: dict[str, Any],
-    actions_configs: dict[str, Any],
+    actions: list[domain.Action],
 ) -> None:
     await send_request(
         runner=runner,
@@ -209,7 +208,6 @@ async def update_config(
                 runner.working_dir_path.as_posix(),
                 runner.working_dir_path.stem,
                 actions,
-                actions_configs,
             ],
         ),
     )

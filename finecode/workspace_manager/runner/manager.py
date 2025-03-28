@@ -11,7 +11,6 @@ from finecode.pygls_client_utils import create_lsp_client_io
 from finecode.workspace_manager import context, domain, finecode_cmd
 from finecode.workspace_manager.config import (
     collect_actions,
-    raw_config_utils,
     read_configs,
 )
 from finecode.workspace_manager.runner import runner_client, runner_info
@@ -237,22 +236,10 @@ async def _init_runner(
     assert (
         project.actions is not None
     ), f"Actions of project {project.dir_path} are not read yet"
-    all_actions = set([])
-    actions_to_process = set(project.actions)
-    while len(actions_to_process) > 0:
-        action = actions_to_process.pop()
-        all_actions.add(action)
-        actions_to_process |= set(
-            raw_config_utils.get_subactions(
-                names=action.subactions,
-                project_raw_config=ws_context.ws_projects_raw_configs[project.dir_path],
-            )
-        )
-    all_actions_dict = {action.name: action for action in all_actions}
 
     try:
         await runner_client.update_config(
-            runner, all_actions_dict, project.actions_configs
+            runner, project.actions
         )
     except runner_client.BaseRunnerRequestException:
         project.status = domain.ProjectStatus.RUNNER_FAILED

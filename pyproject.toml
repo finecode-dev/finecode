@@ -38,7 +38,7 @@ presets = [
     { source = "fine_python_aksem" },
 ]
 
-[tool.finecode.action.black.config]
+[tool.finecode.action_handler.black.config]
 target_versions = ["PY311"]
 preview = true
 

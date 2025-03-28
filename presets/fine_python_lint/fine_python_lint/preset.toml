@@ -1,15 +1,11 @@
-[tool.finecode.preset]
-actions = [
-    { name = 'lint', source = "finecode_extension_api.actions.lint.LintAction" },
-]
-
 [tool.finecode.action.lint]
-subactions = [
+source = "finecode_extension_api.actions.lint.LintAction"
+handlers = [
     { name = "flake8", source = "fine_python_flake8.Flake8LintHandler" },
     { name = "mypy", source = "fine_python_mypy.MypyLintHandler" },
 ]
 
-[tool.finecode.action.flake8.config]
+[tool.finecode.action_handler.flake8.config]
 max_line_length = 80
 extend_select = ["B950"]
 # W391 is not compatible with black, because black adds an empty line to the end of the file

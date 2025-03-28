@@ -46,24 +46,22 @@ async def update_config(
 
     actions: dict[str, domain.Action] = {}
     for action_name, action_schema_obj in request.actions.items():
-        if len(action_schema_obj.actions) > 0:
-            handlers: list[domain.ActionHandler] = []
-            for subaction_name in action_schema_obj.actions:
-                subaction_schema_obj = request.actions[subaction_name]
-                handlers.append(
-                    domain.ActionHandler(
-                        name=subaction_name,
-                        source=subaction_schema_obj.source,
-                        config=request.actions_configs.get(subaction_name, {}),
-                    )
+        handlers: list[domain.ActionHandler] = []
+        for handler_obj in action_schema_obj.handlers:
+            handlers.append(
+                domain.ActionHandler(
+                    name=handler_obj.name,
+                    source=handler_obj.source,
+                    config=handler_obj.config,
                 )
-            action = domain.Action(
-                name=action_name,
-                config=request.actions_configs.get(action_name, {}),
-                handlers=handlers,
-                source=action_schema_obj.source,
             )
-            actions[action_name] = action
+        action = domain.Action(
+            name=action_name,
+            config=action_schema_obj.config,
+            handlers=handlers,
+            source=action_schema_obj.source,
+        )
+        actions[action_name] = action
 
     global_state.runner_context = context.RunnerContext(
         project=domain.Project(
@@ -183,7 +181,7 @@ async def run_action(
     # - keep payload unchanged between all subaction runs.
     #   For intermediate data use run_context
     # - result is modifiable. Result of each subaction updates the previous result.
-    #   In case of failure of subaction, at least result of all previous subactions is
+    #   In case of failure of subaction, at least result of all previous handlers is
     #   returned. (experimental)
 
     try:

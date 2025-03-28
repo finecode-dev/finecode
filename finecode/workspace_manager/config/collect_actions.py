@@ -1,8 +1,6 @@
 from pathlib import Path
 from typing import Any
 
-from loguru import logger
-
 import finecode.workspace_manager.config.config_models as config_models
 import finecode.workspace_manager.context as context
 import finecode.workspace_manager.domain as domain
@@ -28,59 +26,28 @@ def collect_actions(
     except KeyError:
         raise Exception("First you need to parse config of project")
 
-    actions, actions_configs = _collect_actions_in_config(config)
-    # TODO: validate
-    first_level_actions_raw = [
-        action_raw["name"]
-        for action_raw in config["tool"]["finecode"].get("actions", [])
-    ]
-    project.root_actions = first_level_actions_raw
+    actions = _collect_actions_in_config(config)
     project.actions = actions
-    project.actions_configs = actions_configs
 
     return actions
 
 
 def _collect_actions_in_config(
     config: dict[str, Any],
-) -> tuple[list[domain.Action], dict[str, dict[str, Any]]]:
-    actions_by_names: dict[str, domain.Action] = {}
-    actions_configs: dict[str, dict[str, Any]] = {}
-
-    for action_def_raw in config["tool"]["finecode"].get("actions", []):
-        # TODO: handle validation errors
-        action_name = action_def_raw.get("name", None)
-        if action_name is None:
-            logger.trace(f"Action has no name, skip it: {action_def_raw}")
-            continue
-        action_def = config_models.ActionDefinition(**action_def_raw)
-        action = domain.Action(
-            name=action_name,
-            subactions=[subaction.name for subaction in action_def.subactions],
-            source=action_def.source,
-        )
-        actions_by_names[action_name] = action
+) -> list[domain.Action]:
+    actions: list[domain.Action] = []
 
     for action_name, action_def_raw in (
         config["tool"]["finecode"].get("action", {}).items()
     ):
         # TODO: handle validation errors
         action_def = config_models.ActionDefinition(**action_def_raw)
-        if action_name in actions_by_names:
-            # extend action
-            existing_action = actions_by_names[action_name]
-            # only subactions and source can be extended, name stays the same
-            existing_action.subactions.extend([subaction.name for subaction in action_def.subactions])
-            existing_action.source = existing_action.source or action_def.source
-        else:
-            # add action
-            actions_by_names[action_name] = domain.Action(
-                name=action_name,
-                subactions=[subaction.name for subaction in action_def.subactions],
-                source=action_def.source,
-            )
-        if action_def.config is not None:
-            actions_configs[action_name] = action_def.config
+        new_action = domain.Action(
+            name=action_name,
+            handlers=[domain.ActionHandler(name=handler.name, source=handler.source, config=config['tool']['finecode'].get('action_handler', {}).get(handler.name, {}).get('config', {})) for handler in action_def.handlers],
+            source=action_def.source,
+            config=action_def.config or {}
+        )
+        actions.append(new_action)
 
-    actions = actions_by_names.values()
-    return (actions, actions_configs)
+    return actions

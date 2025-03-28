@@ -1,16 +1,12 @@
-[tool.finecode.preset]
-actions = [
-    { name = 'format', source = "finecode_extension_api.actions.format.FormatAction" },
-]
-
 [tool.finecode.action.format]
-subactions = [
+source = "finecode_extension_api.actions.format.FormatAction"
+handlers = [
     { name = "isort", source = "fine_python_isort.IsortFormatHandler" },
     { name = "black", source = "fine_python_black.BlackFormatHandler" },
     { name = "save", source = "finecode_extension_api.actions.format.SaveFormatHandler" },
 ]
 
-[tool.finecode.action.isort.config]
+[tool.finecode.action_handler.isort.config]
 # make isort config compatible with black
 # see https://black.readthedocs.io/en/stable/guides/using_black_with_other_tools.html#isort
 profile = "black"

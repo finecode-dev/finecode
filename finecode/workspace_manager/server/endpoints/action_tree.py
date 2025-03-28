@@ -39,26 +39,23 @@ def get_project_action_tree(
     if project.status == domain.ProjectStatus.RUNNING:
         assert project.actions is not None
         for action in project.actions:
-            if action.name not in project.root_actions:
-                continue
-
             node_id = f"{project.dir_path.as_posix()}::{action.name}"
-            subactions_nodes = [
+            handlers_nodes = [
                 schemas.ActionTreeNode(
-                    node_id=f"{project.dir_path.as_posix()}::{subaction_name}",
-                    name=subaction_name,
+                    node_id=f"{project.dir_path.as_posix()}::{action.name}::{handler.name}",
+                    name=handler.name,
                     node_type=schemas.ActionTreeNode.NodeType.ACTION,
                     subnodes=[],
                     status="",
                 )
-                for subaction_name in action.subactions
+                for handler in action.handlers
             ]
             actions_nodes.append(
                 schemas.ActionTreeNode(
                     node_id=node_id,
                     name=action.name,
                     node_type=schemas.ActionTreeNode.NodeType.ACTION,
-                    subnodes=subactions_nodes,
+                    subnodes=handlers_nodes,
                     status="",
                 )
             )
@@ -102,7 +99,7 @@ def create_node_list_for_ws(
 
     # build node tree so that:
     # - all ws dirs are in tree either as project or directory
-    # - all projects are shown with subprojects and actions and subactions
+    # - all projects are shown with subprojects and actions and handlers
     for ws_dir in ws_context.ws_dirs_paths:
         ws_dir_projects = projects_by_ws_dir[ws_dir]
         ws_dir_nodes_by_path: dict[Path, schemas.ActionTreeNode] = {}

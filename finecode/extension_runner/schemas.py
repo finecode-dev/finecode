@@ -10,10 +10,18 @@ class BaseSchema:
 
 
 @dataclass
+class ActionHandler(BaseSchema):
+    name: str
+    source: str | None = None
+    config: dict[str, Any] | None = None
+
+
+@dataclass
 class Action(BaseSchema):
     name: str
-    actions: list[str]
+    handlers: list[ActionHandler]
     source: str | None = None
+    config: dict[str, Any] | None = None
 
 
 @dataclass
@@ -21,7 +29,6 @@ class UpdateConfigRequest(BaseSchema):
     working_dir: Path
     project_name: str
     actions: dict[str, Action]
-    actions_configs: dict[str, dict[str, Any]]
 
 
 @dataclass

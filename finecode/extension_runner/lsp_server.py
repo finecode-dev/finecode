@@ -1,3 +1,6 @@
+# wrap all endpoint handlers in try/except because pygls only sends errors to client
+# and don't log it locally
+#
 # keep at least until `lsp_server.ServerErrors` is used, because it is hidden under
 # `TYPE_CHECKING` and its evaluation in runtime causes crash
 from __future__ import annotations
@@ -136,26 +139,36 @@ def _document_did_close(
 
 async def update_config(ls: lsp_server.LanguageServer, params):
     logger.trace(f"Update config: {params}")
-    working_dir = params[0]
-    project_name = params[1]
-    actions = params[2]
-    actions_configs = params[3]
+    try:
+        working_dir = params[0]
+        project_name = params[1]
+        actions = params[2]
 
-    request = schemas.UpdateConfigRequest(
-        working_dir=working_dir,
-        project_name=project_name,
-        actions={
-            action_name: schemas.Action(
-                name=action["name"],
-                actions=action["subactions"],
-                source=action["source"],
-            )
-            for action_name, action in actions.items()
-        },
-        actions_configs=actions_configs,
-    )
-    response = await services.update_config(request=request)
-    return response.to_dict()
+        request = schemas.UpdateConfigRequest(
+            working_dir=working_dir,
+            project_name=project_name,
+            actions={
+                action["name"]: schemas.Action(
+                    name=action["name"],
+                    handlers=[
+                        schemas.ActionHandler(
+                            name=handler["name"],
+                            source=handler["source"],
+                            config=handler["config"],
+                        )
+                        for handler in action["handlers"]
+                    ],
+                    source=action["source"],
+                    config=action["config"],
+                )
+                for action in actions
+            },
+        )
+        response = await services.update_config(request=request)
+        return response.to_dict()
+    except Exception as e:
+        logger.exception(f"Update config error: {e}")
+        raise e
 
 
 async def run_action(ls: lsp_server.LanguageServer, params):
