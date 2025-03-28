@@ -7,8 +7,8 @@ readme = "README.md"
 requires-python = ">=3.11, < 3.14"
 dependencies = [
     "finecode @ git+ssh://git@github.com:Aksem/FineCode.git",
-    "fine_python_mypy @ git+ssh://git@github.com:Aksem/FineCode.git#subdirectory=actions/fine_python_mypy",
-    "fine_python_flake8 @ git+ssh://git@github.com:Aksem/FineCode.git#subdirectory=actions/fine_python_flake8",
+    "fine_python_mypy @ git+ssh://git@github.com:Aksem/FineCode.git#subdirectory=extensions/fine_python_mypy",
+    "fine_python_flake8 @ git+ssh://git@github.com:Aksem/FineCode.git#subdirectory=extensions/fine_python_flake8",
     "flake8-bugbear (>=24.12.12,<25.0.0)",
 ]
 
