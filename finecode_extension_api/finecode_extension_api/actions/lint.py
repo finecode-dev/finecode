@@ -40,8 +40,26 @@ class LintMessage:
     severity: LintMessageSeverity | None = None
 
 
-class LintRunPayload(code_action.RunActionWithPartialResult):
+class LintRunPayload(code_action.RunActionWithPartialResult, collections.abc.AsyncIterable):
     file_paths: list[Path]
+
+    async def __aiter__(self) -> collections.abc.AsyncIterator[Path]:
+        return LintRunPayloadIterator(self)
+
+
+class LintRunPayloadIterator(collections.abc.AsyncIterator):
+    async def __init__(self, lint_run_payload: LintRunPayload):
+        self.lint_run_payload = lint_run_payload
+        self.current_file_path_index = 0
+
+    async def __aiter__(self):
+        return self
+    
+    async def __anext__(self) -> Path:
+        if len(self.lint_run_payload.file_paths) < self.current_file_path_index:
+            raise StopAsyncIteration()
+        self.current_file_path_index += 1
+        return self.lint_run_payload.file_paths[self.current_file_path_index - 1]
 
 
 class LintRunResult(code_action.RunActionResult):
@@ -64,5 +82,5 @@ class LintRunResult(code_action.RunActionResult):
 
 
 type LintAction = code_action.Action[LintRunPayload,
-        code_action.RunActionContext,
-        collections.abc.AsyncIterator[LintRunResult]]
+        code_action.RunActionWithPartialResultsContext,
+        LintRunResult]

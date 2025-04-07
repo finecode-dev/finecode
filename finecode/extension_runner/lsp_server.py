@@ -15,6 +15,7 @@ from lsprotocol import types
 from pygls.lsp import server as lsp_server
 
 from finecode.extension_runner import domain, schemas, services
+from finecode_extension_api import code_action
 
 
 class CustomLanguageServer(lsp_server.LanguageServer):
@@ -108,8 +109,16 @@ def create_lsp_server() -> lsp_server.LanguageServer:
         )
         await server.workspace_apply_edit_async(params)
 
+    async def partial_result_sender(
+        token: int | str, partial_result: code_action.RunActionResult
+    ) -> None:
+        server.progress(
+            types.ProgressParams(token=token, value=partial_result.model_dump_json())
+        )
+
     services.document_requester = document_requester
     services.document_saver = document_saver
+    services.partial_result_sender = partial_result_sender
 
     return server
 

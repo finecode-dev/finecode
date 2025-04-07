@@ -1,7 +1,8 @@
 import asyncio
+import json
 import os
 from pathlib import Path
-from typing import Coroutine
+from typing import Callable, Coroutine
 
 from loguru import logger
 from lsprotocol import types
@@ -9,15 +10,13 @@ from lsprotocol import types
 from finecode import dirs_utils
 from finecode.pygls_client_utils import create_lsp_client_io
 from finecode.workspace_manager import context, domain, finecode_cmd
-from finecode.workspace_manager.config import (
-    collect_actions,
-    read_configs,
-)
+from finecode.workspace_manager.config import collect_actions, read_configs
 from finecode.workspace_manager.runner import runner_client, runner_info
 
-project_changed_callback: Coroutine | None = None
-get_document: Coroutine | None = None
-apply_workspace_edit: Coroutine | None = None
+project_changed_callback: Callable[[], Coroutine] | None = None
+get_document: Callable[[], Coroutine] | None = None
+apply_workspace_edit: Callable[[], Coroutine] | None = None
+report_progress: Callable[[], Coroutine] | None = None
 
 
 async def notify_project_changed(project: domain.Project) -> None:
@@ -106,6 +105,14 @@ async def start_extension_runner(
         types.WORKSPACE_APPLY_EDIT
     )
     register_workspace_apply_edit(_apply_workspace_edit)
+
+    async def on_progress(params: types.ProgressParams):
+        if report_progress is not None:
+            # TODO: convert value
+            await report_progress(params.token, json.loads(params.value))
+
+    register_progress_feature = runner_info_instance.client.feature(types.PROGRESS)
+    register_progress_feature(on_progress)
 
     return runner_info_instance
 
@@ -238,9 +245,7 @@ async def _init_runner(
     ), f"Actions of project {project.dir_path} are not read yet"
 
     try:
-        await runner_client.update_config(
-            runner, project.actions
-        )
+        await runner_client.update_config(runner, project.actions)
     except runner_client.BaseRunnerRequestException:
         project.status = domain.ProjectStatus.RUNNER_FAILED
         await notify_project_changed(project)
