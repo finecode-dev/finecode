@@ -120,9 +120,7 @@ def read_preset_config(
         preset_raw_def = {}
 
     try:
-        preset_config = config_models.PresetDefinition(
-            **preset_raw_def
-        )
+        preset_config = config_models.PresetDefinition(**preset_raw_def)
     except ValidationError as e:
         logger.error(str(preset_raw_def) + e.json())
         return (preset_toml, None)
@@ -279,8 +277,13 @@ def _merge_preset_configs(config1: dict[str, Any], config2: dict[str, Any]) -> N
             config1["tool"]["finecode"]["preset"]["action_handler"] = {}
 
         for handler_name, handler_info in new_actions_handlers_configs.items():
-            if handler_name not in config1["tool"]["finecode"]["preset"]["action_handler"]:
-                config1["tool"]["finecode"]["preset"]["action_handler"][handler_name] = {}
+            if (
+                handler_name
+                not in config1["tool"]["finecode"]["preset"]["action_handler"]
+            ):
+                config1["tool"]["finecode"]["preset"]["action_handler"][
+                    handler_name
+                ] = {}
 
             try:
                 handler_config = handler_info["config"]
@@ -288,9 +291,9 @@ def _merge_preset_configs(config1: dict[str, Any], config2: dict[str, Any]) -> N
                 continue
 
             handler_config.update(
-                config1["tool"]["finecode"]["preset"]["action_handler"][handler_name].get(
-                    "config", {}
-                )
+                config1["tool"]["finecode"]["preset"]["action_handler"][
+                    handler_name
+                ].get("config", {})
             )
             config1["tool"]["finecode"]["preset"]["action_handler"][handler_name][
                 "config"
@@ -298,14 +301,12 @@ def _merge_preset_configs(config1: dict[str, Any], config2: dict[str, Any]) -> N
 
         del config2["tool"]["finecode"]["action_handler"]
 
-
     try:
         del config2["tool"]["finecode"]["preset"]
     except KeyError:
         # preset definition is optional
         ...
     del config2["tool"]["finecode"]
-
 
 
 def _preset_config_to_project_config(preset_config: dict[str, Any]) -> dict[str, Any]:

@@ -31,7 +31,7 @@ from finecode_extension_api.interfaces import (
     icache,
     icommandrunner,
     ifilemanager,
-    ilogger,
+    ilogger
 )
 
 container: dict[str, Any] = {}

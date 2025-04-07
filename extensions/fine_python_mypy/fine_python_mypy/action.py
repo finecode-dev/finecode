@@ -24,7 +24,9 @@ class DmypyFailedError(Exception): ...
 class MypyManyCodeActionConfig(code_action.ActionHandlerConfig): ...
 
 
-class MypyLintHandler(code_action.ActionHandler[lint_action.LintAction, MypyManyCodeActionConfig]):
+class MypyLintHandler(
+    code_action.ActionHandler[lint_action.LintAction, MypyManyCodeActionConfig]
+):
     CACHE_KEY = "mypy"
 
     DMYPY_ARGS = [

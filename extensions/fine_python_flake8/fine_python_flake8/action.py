@@ -1,6 +1,5 @@
 import argparse
 import ast
-import collections.abc
 import operator
 from pathlib import Path
 
@@ -9,9 +8,9 @@ from flake8 import checker, processor, style_guide, violation
 from flake8.api import legacy as flake8
 from flake8.plugins import finder
 
-from finecode_extension_api import code_action
+from finecode_extension_api import code_action, partialresultscheduler
 from finecode_extension_api.actions import lint as lint_action
-from finecode_extension_api.interfaces import icache, ifilemanager, ilogger
+from finecode_extension_api.interfaces import icache, ifilemanager, ilogger, iprocessexecutor
 
 
 def map_flake8_check_result_to_lint_message(result: tuple) -> lint_action.LintMessage:
@@ -108,12 +107,16 @@ class Flake8LintHandler(code_action.ActionHandler[lint_action.LintAction, Flake8
         logger: ilogger.ILogger,
         file_manager: ifilemanager.IFileManager,
         ast_provider: iast_provider.IPythonSingleAstProvider,
+        process_executor: iprocessexecutor.IProcessExecutor,
+        # process_executor_factory: iprocessexecutorfactory.IProcessExecutorFactory,
     ) -> None:
         self.config = config
         self.cache = cache
         self.logger = logger
         self.file_manager = file_manager
         self.ast_provider = ast_provider
+        # self.process_executor_factory = process_executor_factory
+        self.process_executor = process_executor
 
         self.logger.disable("flake8.options.manager")
         self.flake8_style_guide = flake8.get_style_guide(
@@ -129,46 +132,49 @@ class Flake8LintHandler(code_action.ActionHandler[lint_action.LintAction, Flake8
         self.logger.disable("flake8.violation")
         self.logger.disable("bugbear")
 
+    async def run_on_single_file(self, file_path: Path) -> lint_action.LintRunResult | None:
+        # , executor: iprocessexecutorfactory.IProcessExecutor
+        messages = {}
+        try:
+            cached_lint_messages = await self.cache.get_file_cache(
+                file_path, self.CACHE_KEY
+            )
+            messages[str(file_path)] = cached_lint_messages
+            return lint_action.LintRunResult(messages=messages)
+        except icache.CacheMissException:
+            pass
+
+        file_content = await self.file_manager.get_content(file_path)
+        file_version = await self.file_manager.get_file_version(file_path)
+        try:
+            file_ast = await self.ast_provider.get_file_ast(file_path=file_path)
+        except SyntaxError:
+            return None
+
+        lint_messages = await self.process_executor.submit(func=run_flake8_on_single_file,
+            file_path=file_path,
+            file_content=file_content,
+            file_ast=file_ast,
+            guide=self.flake8_style_guide,
+            decider=self.flake8_decider
+        )
+        messages[str(file_path)] = lint_messages
+        await self.cache.save_file_cache(
+            file_path, file_version, self.CACHE_KEY, lint_messages
+        )
+
+        return lint_action.LintRunResult(messages=messages)
+
     async def run(
-        self, payload: lint_action.LintRunPayload, run_context: code_action.RunActionContext
-    ) -> collections.abc.AsyncIterator[lint_action.LintRunResult]:
-        file_paths = payload.file_paths
+        self, payload: lint_action.LintRunPayload, run_context: code_action.RunActionWithPartialResultsContext
+    ) -> None:
+        file_paths = [file_path async for file_path in payload]
         self.flake8_style_guide._application.options.filenames = [
             str(file_path) for file_path in file_paths
         ]
-        # TODO: multiprocess pool
+
         for file_path in file_paths:
-            messages = {}
-            try:
-                cached_lint_messages = await self.cache.get_file_cache(
-                    file_path, self.CACHE_KEY
-                )
-                messages[str(file_path)] = cached_lint_messages
-                yield lint_action.LintRunResult(messages=messages)
-                continue
-            except icache.CacheMissException:
-                pass
-
-            file_content = await self.file_manager.get_content(file_path)
-            file_version = await self.file_manager.get_file_version(file_path)
-            try:
-                file_ast = await self.ast_provider.get_file_ast(file_path=file_path)
-            except SyntaxError:
-                continue
-
-            lint_messages = run_flake8_on_single_file(
-                file_path=file_path,
-                file_content=file_content,
-                file_ast=file_ast,
-                guide=self.flake8_style_guide,
-                decider=self.flake8_decider,
-            )
-            messages[str(file_path)] = lint_messages
-            await self.cache.save_file_cache(
-                file_path, file_version, self.CACHE_KEY, lint_messages
-            )
-
-            yield lint_action.LintRunResult(messages=messages)
+            run_context.partial_result_scheduler.schedule(file_path, self.run_on_single_file(file_path))
 
 
 class CustomFlake8FileChecker(checker.FileChecker):

@@ -5,7 +5,7 @@ import logging
 import shlex
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Coroutine
+from typing import Callable, Coroutine
 
 from pygls.io_ import run_async
 
@@ -15,7 +15,7 @@ from finecode.pygls_client_utils import JsonRPCClient
 class CustomJsonRpcClient(JsonRPCClient):
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
-        self.server_exit_callback: Coroutine | None = None
+        self.server_exit_callback: Callable[[], Coroutine] | None = None
 
     async def start_io(self, cmd: str, *args, **kwargs):
         """Start the given server and communicate with it over stdio."""

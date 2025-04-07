@@ -116,7 +116,7 @@ class BlackFormatHandler(
 
             self.logger.enable("fine_python_black")
 
-            # save for next subactions
+            # save for next handlers
             run_context.file_info_by_path[file_path] = format_action.FileInfo(
                 new_file_content, file_version
             )

@@ -70,7 +70,7 @@ class IsortFormatHandler(
                     file_changed = True
                     new_file_content = output_stream.read()
 
-            # save for next subactions
+            # save for next handlers
             run_context.file_info_by_path[file_path] = format_action.FileInfo(
                 new_file_content, file_version
             )

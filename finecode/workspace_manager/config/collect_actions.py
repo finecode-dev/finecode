@@ -44,9 +44,19 @@ def _collect_actions_in_config(
         action_def = config_models.ActionDefinition(**action_def_raw)
         new_action = domain.Action(
             name=action_name,
-            handlers=[domain.ActionHandler(name=handler.name, source=handler.source, config=config['tool']['finecode'].get('action_handler', {}).get(handler.name, {}).get('config', {})) for handler in action_def.handlers],
+            handlers=[
+                domain.ActionHandler(
+                    name=handler.name,
+                    source=handler.source,
+                    config=config["tool"]["finecode"]
+                    .get("action_handler", {})
+                    .get(handler.name, {})
+                    .get("config", {}),
+                )
+                for handler in action_def.handlers
+            ],
             source=action_def.source,
-            config=action_def.config or {}
+            config=action_def.config or {},
         )
         actions.append(new_action)
 

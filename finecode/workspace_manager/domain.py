@@ -10,11 +10,8 @@ class Preset:
         self.source = source
 
 
-
 class ActionHandler:
-    def __init__(
-        self, name: str, source: str, config: dict[str, Any]
-    ):
+    def __init__(self, name: str, source: str, config: dict[str, Any]):
         self.name: str = name
         self.source: str = source
         self.config: dict[str, Any] = config
@@ -22,7 +19,11 @@ class ActionHandler:
 
 class Action:
     def __init__(
-        self, name: str, source: str, handlers: list[ActionHandler], config: dict[str, Any]
+        self,
+        name: str,
+        source: str,
+        handlers: list[ActionHandler],
+        config: dict[str, Any],
     ):
         self.name: str = name
         self.source: str = source
