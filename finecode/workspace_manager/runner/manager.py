@@ -12,11 +12,11 @@ from finecode.pygls_client_utils import create_lsp_client_io
 from finecode.workspace_manager import context, domain, finecode_cmd
 from finecode.workspace_manager.config import collect_actions, read_configs
 from finecode.workspace_manager.runner import runner_client, runner_info
+from finecode.workspace_manager.server import global_state
 
 project_changed_callback: Callable[[], Coroutine] | None = None
 get_document: Callable[[], Coroutine] | None = None
 apply_workspace_edit: Callable[[], Coroutine] | None = None
-report_progress: Callable[[], Coroutine] | None = None
 
 
 async def notify_project_changed(project: domain.Project) -> None:
@@ -74,11 +74,9 @@ async def start_extension_runner(
         f"--project-path={runner_dir.as_posix()}",
     ]
     # TODO: config parameter for debug and debug port
-    # if runner_dir == Path(
-    #     "/home/user/Development/FineCode/finecode"
-    # ):
+    # if runner_dir == Path("/home/user/Development/FineCode/finecode"):
     #     process_args.append("--debug")
-    #     process_args.append(f"--debug-port=5681")
+    #     process_args.append("--debug-port=5681")
 
     process_args_str: str = " ".join(process_args)
     client = await create_lsp_client_io(
@@ -107,9 +105,11 @@ async def start_extension_runner(
     register_workspace_apply_edit(_apply_workspace_edit)
 
     async def on_progress(params: types.ProgressParams):
-        if report_progress is not None:
-            # TODO: convert value
-            await report_progress(params.token, json.loads(params.value))
+        logger.debug(f"Got progress from runner for token: {params.token}")
+        partial_result = domain.PartialResult(
+            token=params.token, value=json.loads(params.value)
+        )
+        global_state.partial_results.publish(partial_result)
 
     register_progress_feature = runner_info_instance.client.feature(types.PROGRESS)
     register_progress_feature(on_progress)

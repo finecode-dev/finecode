@@ -6,8 +6,8 @@ from loguru import logger
 from lsprotocol import types
 
 from finecode import pygls_types_utils
-from finecode.workspace_manager import find_project
-from finecode.workspace_manager.server import global_state, proxy_utils
+from finecode.workspace_manager import find_project, proxy_utils
+from finecode.workspace_manager.server import global_state
 
 if TYPE_CHECKING:
     from pygls.lsp.server import LanguageServer
@@ -49,10 +49,10 @@ async def document_inlay_hint(
     logger.trace(f"Document inlay hints requested: {params}")
     file_path = pygls_types_utils.uri_str_to_path(params.text_document.uri)
     try:
-        response = await proxy_utils.find_action_project_and_run_in_runner(
+        response = await proxy_utils.find_action_project_and_run(
             file_path=file_path,
             action_name="text_document_inlay_hint",
-            params=[inlay_hint_params_to_dict(params)],
+            params=inlay_hint_params_to_dict(params),
             ws_context=global_state.ws_context,
         )
     except find_project.FileHasNotActionException:

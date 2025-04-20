@@ -212,8 +212,8 @@ async def _on_initialized(ls: LanguageServer, params: types.InitializedParams):
         partial(send_user_message_request, ls)
     )
 
-    async def report_progress(token: str | int, value: Any):
-        ls.progress(token, value)
+    def report_progress(token: str | int, value: Any):
+        ls.progress(types.ProgressParams(token, value))
 
     services.register_progress_reporter(report_progress)
 

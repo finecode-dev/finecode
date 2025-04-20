@@ -42,5 +42,11 @@ class RunActionRequest(BaseSchema):
 
 
 @dataclass
+class RunActionOptions(BaseSchema):
+    partial_result_token: int | str | None = None
+
+
+@dataclass
 class RunActionResponse(BaseSchema):
-    result: dict[str, Any]
+    # result can be empty e.g. if it was sent as a list of partial results
+    result: dict[str, Any] | None

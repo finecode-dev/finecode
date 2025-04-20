@@ -11,15 +11,11 @@ from typing import Any, Callable, TypeAliasType
 
 from loguru import logger
 
+from finecode.extension_runner import bootstrap, context, domain, global_state
 from finecode.extension_runner import (
-    bootstrap,
-    context,
-    domain,
-    global_state,
-    project_dirs,
-    run_utils,
-    schemas,
+    partial_result_sender as partial_result_sender_module,
 )
+from finecode.extension_runner import project_dirs, run_utils, schemas
 from finecode_extension_api import code_action
 
 
@@ -28,7 +24,14 @@ class ActionFailedException(Exception): ...
 
 document_requester: Callable
 document_saver: Callable
-partial_result_sender: Callable
+partial_result_sender: partial_result_sender_module.PartialResultSender
+
+
+def set_partial_result_sender(send_func: Callable) -> None:
+    global partial_result_sender
+    partial_result_sender = partial_result_sender_module.PartialResultSender(
+        sender=send_func, wait_time_ms=300
+    )
 
 
 async def get_document(uri: str):
@@ -90,7 +93,8 @@ def resolve_func_args_with_di(
     func_annotations = inspect.get_annotations(func, eval_str=True)
     args: dict[str, Any] = {}
     for param_name in func_parameters.keys():
-        # default object constructor(__init__) has signature __init__(self, *args, **kwargs)
+        # default object constructor(__init__) has signature
+        # __init__(self, *args, **kwargs)
         # args and kwargs have no annotation and should not be filled by DI resolver.
         # Ignore them.
         if (
@@ -110,54 +114,6 @@ def resolve_func_args_with_di(
     return args
 
 
-class PartialResultScheduler:
-    # send partial results not more often than every `wait_time_ms` ms. Only the
-    # last one can be sent immediately.
-    def __init__(self, sender: Callable, token: str | int, wait_time_ms: int) -> None:
-        # TODO: locks?
-        self.sender = sender
-        self.token = token
-        self.wait_time_ms = wait_time_ms
-
-        self.last_sent_at: int = time.time_ns()
-        self.scheduled_task: asyncio.Task | None = None
-        self.result_scheduled_to_send: code_action.RunActionResult | None = None
-
-    async def schedule_sending(
-        self, partial_result: code_action.RunActionResult
-    ) -> None:
-        current_time = time.time_ns()
-        time_since_last_send = current_time - self.last_sent_at
-        if time_since_last_send > (self.wait_time_ms * 1_000_000):
-            # send immediately
-            await self.sender(self.token, partial_result)
-            self.last_sent_at = current_time
-        else:
-            # schedule sending
-            if self.result_scheduled_to_send is None:
-                self.result_scheduled_to_send = partial_result
-            else:
-                self.result_scheduled_to_send.update(partial_result)
-
-            time_to_wait = (self.wait_time_ms * 1_000_000) - time_since_last_send
-            self.scheduled_task = asyncio.create_task(self._wait_and_send(time_to_wait))
-
-    async def send_all(self) -> None:
-        if self.scheduled_task is not None:
-            self.scheduled_task.cancel()
-
-        if self.result_scheduled_to_send is not None:
-            await self.sender(self.token, self.result_scheduled_to_send)
-            self.result_scheduled_to_send = None
-
-    async def _wait_and_send(self, wait_time_ms: int) -> None:
-        await asyncio.sleep(wait_time_ms / 1000)
-        await self.sender(self.token, self.result_scheduled_to_send)
-        current_time = time.time_ns()
-        self.last_sent_at = current_time
-        self.result_scheduled_to_send = None
-
-
 def create_action_exec_info(action: domain.Action) -> domain.ActionExecInfo:
     try:
         action_type_def = run_utils.import_module_member_by_source_str(action.source)
@@ -172,7 +128,8 @@ def create_action_exec_info(action: domain.Action) -> domain.ActionExecInfo:
 
     if not isinstance(action_type_alias, typing._GenericAlias):
         raise Exception(
-            "Action definition expected to be an instantiation of finecode_extension_api.code_action.Action type"
+            "Action definition expected to be an instantiation of"
+            " finecode_extension_api.code_action.Action type"
         )
 
     try:
@@ -206,7 +163,12 @@ def create_action_exec_info(action: domain.Action) -> domain.ActionExecInfo:
     return action_exec_info
 
 
-async def run_subresult_coros_concurrently(coros: list[collections.abc.Coroutine], send_partial_results: bool, partial_result_sender: Callable) -> code_action.RunActionResult | None:
+async def run_subresult_coros_concurrently(
+    coros: list[collections.abc.Coroutine],
+    send_partial_results: bool,
+    partial_result_token: int | str,
+    partial_result_sender: partial_result_sender_module.PartialResultSender,
+) -> code_action.RunActionResult | None:
     coros_tasks: list[asyncio.Task] = []
     try:
         async with asyncio.TaskGroup() as tg:
@@ -214,8 +176,11 @@ async def run_subresult_coros_concurrently(coros: list[collections.abc.Coroutine
                 coro_task = tg.create_task(coro)
                 coros_tasks.append(coro_task)
     except ExceptionGroup as eg:
-        ... # TODO
-    
+        logger.error(eg)
+        for exc in eg.exceptions:
+            logger.exception(exc)
+        # TODO
+
     action_subresult: code_action.RunActionResult | None = None
     for coro_task in coros_tasks:
         coro_result = coro_task.result()
@@ -224,15 +189,22 @@ async def run_subresult_coros_concurrently(coros: list[collections.abc.Coroutine
                 action_subresult = coro_result
             else:
                 action_subresult.update(coro_result)
-    
+
     if send_partial_results:
-        partial_result_sender(action_subresult)
+        await partial_result_sender.schedule_sending(
+            partial_result_token, action_subresult
+        )
         return None
     else:
         return action_subresult
 
 
-async def run_subresult_coros_sequentially(coros: list[collections.abc.Coroutine], send_partial_results: bool, partial_result_sender: Callable) -> code_action.RunActionResult | None:
+async def run_subresult_coros_sequentially(
+    coros: list[collections.abc.Coroutine],
+    send_partial_results: bool,
+    partial_result_token: int | str,
+    partial_result_sender: partial_result_sender_module.PartialResultSender,
+) -> code_action.RunActionResult | None:
     action_subresult: code_action.RunActionResult | None = None
     for coro in coros:
         coro_result = await coro
@@ -243,14 +215,16 @@ async def run_subresult_coros_sequentially(coros: list[collections.abc.Coroutine
                 action_subresult.update(coro_result)
 
     if send_partial_results:
-        partial_result_sender(action_subresult)
+        await partial_result_sender.schedule_sending(
+            partial_result_token, action_subresult
+        )
         return None
     else:
         return action_subresult
 
 
 async def run_action(
-    request: schemas.RunActionRequest,
+    request: schemas.RunActionRequest, options: schemas.RunActionOptions
 ) -> schemas.RunActionResponse:
     logger.trace(f"Run action '{request.action_name}'")
     # TODO: check whether config is set: this will be solved by passing initial
@@ -313,92 +287,125 @@ async def run_action(
     )
 
     # TODO: take value from action config
-    execute_handlers_concurrently = action.name == 'lint'
-    partial_result_token = (
-        payload.partial_result_token
-        if isinstance(payload, code_action.RunActionWithPartialResult)
-        else None
-    )
+    execute_handlers_concurrently = action.name == "lint"
+    partial_result_token = options.partial_result_token
     send_partial_results = partial_result_token is not None
-    # action payload can be iterable or not
-    if isinstance(payload, collections.abc.AsyncIterable):
-        # iterable: `run` method should not calculate results itself, but call
-        #           `partial_result_scheduler.schedule`. Then we execute provided
-        #           coroutines either concurrently or sequentially.
-        if not isinstance(run_context, code_action.RunActionWithPartialResultsContext):
-            raise ActionFailedException(f"Run context of action with iterable payload has to be of (sub)type `RunActionWithPartialResultsContext`. Action: {action.name}")
-        
-        for handler in action.handlers:
-            await execute_action_handler(
-                handler=handler,
-                payload=payload,
-                run_context=run_context,
-                action_context=action_context,
-                runner_context=runner_context,
-            )
-
-        parts = [part async for part in payload]
-        subresults_tasks: list[asyncio.Task] = []
-        try:
-            async with asyncio.TaskGroup() as tg:
-                for part in parts:
-                    if execute_handlers_concurrently:
-                        coro = run_subresult_coros_concurrently(run_context.partial_result_scheduler.coroutines_by_key[part], send_partial_results, partial_result_sender)
-                    else:
-                        coro = run_subresult_coros_sequentially(run_context.partial_result_scheduler.coroutines_by_key[part], send_partial_results, partial_result_sender)
-                    subresult_task = tg.create_task(coro)
-                    subresults_tasks.append(subresult_task)
-        except ExceptionGroup as eg:
-            ... # TODO
-
-        for subresult_task in subresults_tasks:
-            result = subresult_task.result()
-            if result is not None:
-                if action_result is None:
-                    action_result = result
-                else:
-                    action_result.update(result)
-    else:
-        # action payload not iterable, just execute handlers on the whole payload
-        if execute_handlers_concurrently:
-            handlers_tasks: list[asyncio.Task] = []
-            try:
-                async with asyncio.TaskGroup() as tg:
-                    for handler in action.handlers:
-                        handler_task = tg.create_task(execute_action_handler(
-                            handler=handler,
-                            payload=payload,
-                            run_context=run_context,
-                            action_context=action_context,
-                            runner_context=runner_context,
-                        ))
-                        handlers_tasks.append(handler_task)
-            except ExceptionGroup as eg:
-                ... # TODO
-            
-            for handler_task in handlers_tasks:
-                coro_result = handler_task.result()
-                if coro_result is not None:
-                    if action_subresult is None:
-                        action_subresult = coro_result
-                    else:
-                        action_subresult.update(coro_result)
-        else:
+    with action_exec_info.process_executor.activate():
+        # action payload can be iterable or not
+        if isinstance(payload, collections.abc.AsyncIterable):
+            # iterable: `run` method should not calculate results itself, but call
+            #           `partial_result_scheduler.schedule`. Then we execute provided
+            #           coroutines either concurrently or sequentially.
+            logger.trace("Iterable payload, execute all handlers to schedule coros")
             for handler in action.handlers:
-                handler_result = await execute_action_handler(
+                await execute_action_handler(
                     handler=handler,
                     payload=payload,
                     run_context=run_context,
                     action_context=action_context,
+                    action_exec_info=action_exec_info,
                     runner_context=runner_context,
                 )
 
-                if handler_result is not None:
-                    if action_result is None:
-                        action_result = handler_result
-                    else:
-                        action_result.update(handler_result)
+            parts = [part async for part in payload]
+            subresults_tasks: list[asyncio.Task] = []
+            logger.trace(
+                "Run subresult coros {exec_type} {partials} partial results".format(
+                    exec_type=(
+                        "concurrently"
+                        if execute_handlers_concurrently
+                        else "sequentially"
+                    ),
+                    partials="with" if send_partial_results else "without",
+                )
+            )
+            try:
+                async with asyncio.TaskGroup() as tg:
+                    for part in parts:
+                        if execute_handlers_concurrently:
+                            coro = run_subresult_coros_concurrently(
+                                run_context.partial_result_scheduler.coroutines_by_key[
+                                    part
+                                ],
+                                send_partial_results,
+                                partial_result_token,
+                                partial_result_sender,
+                            )
+                        else:
+                            coro = run_subresult_coros_sequentially(
+                                run_context.partial_result_scheduler.coroutines_by_key[
+                                    part
+                                ],
+                                send_partial_results,
+                                partial_result_token,
+                                partial_result_sender,
+                            )
+                        subresult_task = tg.create_task(coro)
+                        subresults_tasks.append(subresult_task)
+            except ExceptionGroup as eg:
+                logger.error(eg)
+                for exc in eg.exceptions:
+                    logger.exception(exc)
+                # TODO
 
+            if send_partial_results:
+                # all subresults are ready
+                await partial_result_sender.send_all_immediately()
+
+            for subresult_task in subresults_tasks:
+                result = subresult_task.result()
+                if result is not None:
+                    if action_result is None:
+                        action_result = result
+                    else:
+                        action_result.update(result)
+        else:
+            # action payload not iterable, just execute handlers on the whole payload
+            if execute_handlers_concurrently:
+                handlers_tasks: list[asyncio.Task] = []
+                try:
+                    async with asyncio.TaskGroup() as tg:
+                        for handler in action.handlers:
+                            handler_task = tg.create_task(
+                                execute_action_handler(
+                                    handler=handler,
+                                    payload=payload,
+                                    run_context=run_context,
+                                    action_context=action_context,
+                                    action_exec_info=action_exec_info,
+                                    runner_context=runner_context,
+                                )
+                            )
+                            handlers_tasks.append(handler_task)
+                except ExceptionGroup as eg:
+                    logger.error(eg)
+                    for exc in eg.exceptions:
+                        logger.exception(exc)
+                    # TODO
+
+                for handler_task in handlers_tasks:
+                    coro_result = handler_task.result()
+                    if coro_result is not None:
+                        if action_result is None:
+                            action_result = coro_result
+                        else:
+                            action_result.update(coro_result)
+            else:
+                for handler in action.handlers:
+                    handler_result = await execute_action_handler(
+                        handler=handler,
+                        payload=payload,
+                        run_context=run_context,
+                        action_context=action_context,
+                        action_exec_info=action_exec_info,
+                        runner_context=runner_context,
+                    )
+
+                    if handler_result is not None:
+                        if action_result is None:
+                            action_result = handler_result
+                        else:
+                            action_result.update(handler_result)
 
     result_dict = None
     if isinstance(action_result, code_action.RunActionResult):
@@ -419,6 +426,7 @@ async def execute_action_handler(
     handler: domain.ActionHandler,
     payload: code_action.RunActionPayload | None,
     run_context: code_action.RunActionContext | None,
+    action_exec_info: domain.ActionExecInfo,
     action_context: code_action.ActionContext,
     runner_context: context.RunnerContext,
 ) -> code_action.RunActionResult | None:
@@ -456,6 +464,9 @@ async def execute_action_handler(
         def get_action_context(param_type):
             return action_context
 
+        def get_process_executor(param_type):
+            return action_exec_info.process_executor
+
         exec_info = domain.ActionHandlerExecInfo()
         # save immediately in context to be able to shutdown it if the first execution
         # is interrupted by stopping ER
@@ -466,6 +477,7 @@ async def execute_action_handler(
                 known_args={
                     "config": get_handler_config,
                     "context": get_action_context,
+                    "process_executor": get_process_executor,
                 },
                 params_to_ignore=["self"],
             )
@@ -553,7 +565,10 @@ def reload_action(action_name: str) -> None:
         # TODO: raise error
         return
 
-    actions_to_remove = [action_name, *action_obj.handlers]
+    actions_to_remove: list[str] = [
+        action_name,
+        *[handler.name for handler in action_obj.handlers],
+    ]
 
     for _action_name in actions_to_remove:
         try:

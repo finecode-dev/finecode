@@ -5,7 +5,7 @@ from typing import Any
 from loguru import logger
 from pygls.lsp.server import LanguageServer
 
-from finecode.workspace_manager import context, domain, project_analyzer
+from finecode.workspace_manager import context, domain
 from finecode.workspace_manager.runner import runner_client
 from finecode.workspace_manager.server import global_state, schemas, user_messages
 from finecode.workspace_manager.server.services import ActionNotFound, InternalError
@@ -215,8 +215,6 @@ async def run_action_on_file(ls: LanguageServer, params):
         return None
 
     action_node_id_parts = action_node_id.split("::")
-    project_dir_path_str = action_node_id_parts[0]
-    project_dir_path = Path(project_dir_path_str)
     action_name = action_node_id_parts[1]
     params = {"file_paths": [document_meta.uri.path]}
     if action_name == "format":

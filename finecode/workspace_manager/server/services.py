@@ -47,7 +47,7 @@ def register_workspace_edit_applier(apply_workspace_edit_func):
 
 
 def register_progress_reporter(report_progress_func):
-    runner_manager.report_progress = report_progress_func
+    global_state.progress_reporter = report_progress_func
 
 
 async def add_workspace_dir(

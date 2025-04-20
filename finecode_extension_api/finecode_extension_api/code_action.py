@@ -5,8 +5,9 @@ import collections.abc
 from pathlib import Path
 from typing import Generic, Protocol, TypeVar
 
-from finecode_extension_api import partialresultscheduler
 from pydantic import BaseModel
+
+from finecode_extension_api import partialresultscheduler
 
 
 class ActionHandlerConfig(BaseModel): ...
@@ -15,21 +16,23 @@ class ActionHandlerConfig(BaseModel): ...
 class RunActionPayload(BaseModel): ...
 
 
-class RunActionWithPartialResult(RunActionPayload):
-    # `RunActionWithPartialResult` should be interface but to avoid multiple inheritance
-    # and problems with pydantic, make it subclass of `RunActionPayload`
-    partial_result_token: int | str | None = None
-
-
 class RunActionResult(BaseModel):
     def update(self, other: RunActionResult) -> None:
         raise NotImplementedError()
 
 
-RunPayloadType = TypeVar("RunPayloadType", bound=RunActionPayload) #  | AsyncIterator[RunActionPayload]
-RunIterablePayloadType = TypeVar("RunIterablePayloadType", bound=collections.abc.AsyncIterator[RunPayloadType])
-RunResultType = TypeVar("RunResultType", bound=RunActionResult) #  | AsyncIterator[RunActionResult]
-RunIterableResultType = TypeVar("RunResultType", bound=collections.abc.AsyncIterator[RunResultType])
+RunPayloadType = TypeVar(
+    "RunPayloadType", bound=RunActionPayload
+)  # | AsyncIterator[RunActionPayload]
+RunIterablePayloadType = TypeVar(
+    "RunIterablePayloadType", bound=collections.abc.AsyncIterator[RunPayloadType]
+)
+RunResultType = TypeVar(
+    "RunResultType", bound=RunActionResult
+)  # | AsyncIterator[RunActionResult]
+RunIterableResultType = TypeVar(
+    "RunResultType", bound=collections.abc.AsyncIterator[RunResultType]
+)
 
 
 class RunActionContext:
@@ -58,8 +61,7 @@ class ActionContext:
         self.cache_dir = cache_dir
 
 
-class Action(Generic[RunPayloadType, RunContextType, RunResultType]):
-    ...
+class Action(Generic[RunPayloadType, RunContextType, RunResultType]): ...
 
 
 InitializeCallable = collections.abc.Callable[[], None]
@@ -83,16 +85,24 @@ class ActionHandlerLifecycle:
         self.on_exit_callable = callable
 
 
-ActionHandlerConfigType = TypeVar("ActionHandlerConfigType", bound=ActionHandlerConfig, covariant=True)
-ActionType = TypeVar("ActionType", bound=Action[RunPayloadType | RunIterablePayloadType, RunContextType, RunResultType | RunIterableResultType], covariant=True)
+ActionHandlerConfigType = TypeVar(
+    "ActionHandlerConfigType", bound=ActionHandlerConfig, covariant=True
+)
+ActionType = TypeVar(
+    "ActionType",
+    bound=Action[
+        RunPayloadType | RunIterablePayloadType,
+        RunContextType,
+        RunResultType | RunIterableResultType,
+    ],
+    covariant=True,
+)
 
 
 IterableType = TypeVar("IterableType")
 
 
-class ActionHandler(
-    Protocol[ActionType, ActionHandlerConfigType]
-):
+class ActionHandler(Protocol[ActionType, ActionHandlerConfigType]):
     """
     **Action config**
     Configuration can be set in following places by priority:
@@ -106,7 +116,10 @@ class ActionHandler(
 
     async def run(
         self, payload: RunPayloadType, run_context: RunContextType
-    ) -> RunResultType | collections.abc.Mapping[IterableType, asyncio.Task[RunResultType]]:
+    ) -> (
+        RunResultType
+        | collections.abc.Mapping[IterableType, asyncio.Task[RunResultType]]
+    ):
         raise NotImplementedError()
 
     async def stop(self):

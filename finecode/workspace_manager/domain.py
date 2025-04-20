@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from enum import Enum, auto
 from pathlib import Path
-from typing import Any
+import typing
 
 
 class Preset:
@@ -11,10 +11,10 @@ class Preset:
 
 
 class ActionHandler:
-    def __init__(self, name: str, source: str, config: dict[str, Any]):
+    def __init__(self, name: str, source: str, config: dict[str, typing.Any]):
         self.name: str = name
         self.source: str = source
-        self.config: dict[str, Any] = config
+        self.config: dict[str, typing.Any] = config
 
 
 class Action:
@@ -23,7 +23,7 @@ class Action:
         name: str,
         source: str,
         handlers: list[ActionHandler],
-        config: dict[str, Any],
+        config: dict[str, typing.Any],
     ):
         self.name: str = name
         self.source: str = source
@@ -84,6 +84,11 @@ class TextDocumentInfo:
 
     def __str__(self) -> str:
         return f'TextDocumentInfo(uri="{self.uri}", version="{self.version}")'
+
+
+class PartialResult(typing.NamedTuple):
+    token: int | str
+    value: typing.Any
 
 
 __all__ = [

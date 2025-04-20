@@ -141,7 +141,8 @@ async def notify_initialized(runner: ExtensionRunnerInfo) -> None:
 async def run_action(
     runner: ExtensionRunnerInfo,
     action_name: str,
-    params: list[Any],
+    params: dict[str, Any],
+    options: dict[str, Any] | None = None
 ) -> Any:
     if not runner.initialized_event.is_set():
         await runner.initialized_event.wait()
@@ -153,7 +154,8 @@ async def run_action(
             command="actions/run",
             arguments=[
                 action_name,
-                *params,
+                params,
+                options
             ],
         ),
         timeout=None,
