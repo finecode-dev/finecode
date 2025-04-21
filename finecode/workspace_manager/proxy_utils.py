@@ -1,7 +1,6 @@
 import asyncio
 import collections.abc
 import contextlib
-import typing
 from pathlib import Path
 from typing import Any
 
@@ -72,7 +71,7 @@ async def run_action_in_runner(
     params: dict[str, Any],
     runner: runner_info.ExtensionRunnerInfo,
     options: dict[str, Any] | None = None,
-):
+) -> runner_client.RunActionRawResult:
     try:
         response = await runner_client.run_action(
             runner=runner, action_name=action_name, params=params, options=options
@@ -102,10 +101,7 @@ class AsyncList[T]():
         return AsyncListIterator(self)
 
 
-T = typing.TypeVar("T")
-
-
-class AsyncListIterator(collections.abc.AsyncIterator[T]):
+class AsyncListIterator[T](collections.abc.AsyncIterator[T]):
     def __init__(self, async_list: AsyncList[T]):
         self.async_list = async_list
         self.current_index = 0
@@ -168,10 +164,12 @@ async def run_with_partial_results(
     params: dict[str, Any],
     partial_result_token: int | str,
     runner: runner_info.ExtensionRunnerInfo,
-) -> collections.abc.AsyncIterable[Any]:
+) -> collections.abc.AsyncIterator[
+    collections.abc.AsyncIterable[domain.PartialResultRawValue]
+]:
     logger.trace(f"Run {action_name} in runner {runner.working_dir_path}")
 
-    result: AsyncList = AsyncList()
+    result: AsyncList[domain.PartialResultRawValue] = AsyncList()
     try:
         async with asyncio.TaskGroup() as tg:
             partial_results_task = tg.create_task(
@@ -204,7 +202,7 @@ async def find_action_project_and_run_with_partial_results(
     params: dict[str, Any],
     partial_result_token: int | str,
     ws_context: context.WorkspaceContext,
-) -> collections.abc.AsyncIterable[Any]:
+) -> collections.abc.AsyncIterator[runner_client.RunActionRawResult]:
     logger.trace(f"Run {action_name} on {file_path}")
     runner = find_action_project_runner(
         file_path=file_path, action_name=action_name, ws_context=ws_context

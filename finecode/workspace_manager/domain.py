@@ -86,9 +86,13 @@ class TextDocumentInfo:
         return f'TextDocumentInfo(uri="{self.uri}", version="{self.version}")'
 
 
+# json object
+type PartialResultRawValue = dict[str, typing.Any]
+
+
 class PartialResult(typing.NamedTuple):
     token: int | str
-    value: typing.Any
+    value: PartialResultRawValue
 
 
 __all__ = [

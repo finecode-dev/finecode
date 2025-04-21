@@ -138,12 +138,16 @@ async def notify_initialized(runner: ExtensionRunnerInfo) -> None:
     )
 
 
+# JSON object
+type RunActionRawResult = dict[str, Any]
+
+
 async def run_action(
     runner: ExtensionRunnerInfo,
     action_name: str,
     params: dict[str, Any],
     options: dict[str, Any] | None = None
-) -> Any:
+) -> RunActionRawResult:
     if not runner.initialized_event.is_set():
         await runner.initialized_event.wait()
 

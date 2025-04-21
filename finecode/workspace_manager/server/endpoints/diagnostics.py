@@ -21,7 +21,7 @@ if TYPE_CHECKING:
     from finecode.workspace_manager.runner import runner_info
 
 
-def map_lint_message_dict_to_diagnostic(
+def map_lint_message_to_diagnostic(
     lint_message: lint_action.LintMessage,
 ) -> types.Diagnostic:
     code_description_url = lint_message.code_description
@@ -82,7 +82,7 @@ async def document_diagnostic_with_full_result(
     except KeyError:
         requested_file_messages = []
     requested_files_diagnostic_items = [
-        map_lint_message_dict_to_diagnostic(lint_message)
+        map_lint_message_to_diagnostic(lint_message)
         for lint_message in requested_file_messages
     ]
     response = types.RelatedFullDocumentDiagnosticReport(
@@ -93,7 +93,7 @@ async def document_diagnostic_with_full_result(
     for file_path_str, file_lint_messages in lint_result.messages.items():
         file_report = types.FullDocumentDiagnosticReport(
             items=[
-                map_lint_message_dict_to_diagnostic(lint_message)
+                map_lint_message_to_diagnostic(lint_message)
                 for lint_message in file_lint_messages
             ]
         )
@@ -127,11 +127,56 @@ async def document_diagnostic_with_partial_results(
             partial_result_token=partial_result_token,
             ws_context=global_state.ws_context,
         ) as response:
-            # TODO: order of partial results is important in LSP? Order here?
+            # LSP defines that the first response should be `DocumentDiagnosticReport`
+            # with diagnostics information for requested file and then n responses
+            # with diagnostics for related documents using
+            # `DocumentDiagnosticReportPartialResult`.
+            #
+            # We get responses for all files in random order, first wait for response
+            # for requested file, send it and only then all other.
+            related_documents: dict[str, types.FullDocumentDiagnosticReport] = {}
+            got_response_for_requested_file: bool = False
+            requested_file_path_str = str(file_path)
             async for partial_response in response:
-                # TODO: convert partial response to LSP type
-                # global_state.progress_reporter(partial_result_token, partial_response)
-                logger.debug(f"---> {partial_response}")
+                lint_subresult = lint_action.LintRunResult(**partial_response)
+                for file_path_str, lint_messages in lint_subresult.messages.items():
+                    if requested_file_path_str == file_path_str:
+                        if got_response_for_requested_file:
+                            raise Exception(
+                                "Unexpected behavior: got response for requested file twice"
+                            )
+                        document_items = [
+                            map_lint_message_to_diagnostic(lint_message)
+                            for lint_message in lint_messages
+                        ]
+                        document_report = types.RelatedFullDocumentDiagnosticReport(
+                            items=document_items, related_documents=related_documents
+                        )
+                        global_state.progress_reporter(
+                            partial_result_token, document_report
+                        )
+                        got_response_for_requested_file = True
+                    else:
+                        document_uri = pygls_types_utils.path_to_uri_str(
+                            Path(file_path_str)
+                        )
+                        document_items = [
+                            map_lint_message_to_diagnostic(lint_message)
+                            for lint_message in lint_messages
+                        ]
+                        related_documents[document_uri] = (
+                            types.FullDocumentDiagnosticReport(items=document_items)
+                        )
+
+                if got_response_for_requested_file and len(related_documents) > 0:
+                    related_doc_diagnostics = (
+                        types.DocumentDiagnosticReportPartialResult(
+                            related_documents=related_documents
+                        )
+                    )
+                    global_state.progress_reporter(
+                        partial_result_token, related_doc_diagnostics
+                    )
     except proxy_utils.ActionRunFailed as error:
         # don't throw error because vscode after a few sequential errors will stop
         # requesting diagnostics until restart. Show user message instead
@@ -143,6 +188,10 @@ async def document_diagnostic_with_partial_results(
 async def document_diagnostic(
     ls: LanguageServer, params: types.DocumentDiagnosticParams
 ) -> types.DocumentDiagnosticReport | None:
+    """
+    LSP defines support of partial results in this endpoint, but testing of
+    VSCode 1.99.3 showed that it never sends partial result token here.
+    """
     logger.trace(f"Document diagnostic requested: {params}")
     await global_state.server_initialized.wait()
 
@@ -151,13 +200,23 @@ async def document_diagnostic(
     run_with_partial_results: bool = params.partial_result_token is not None
     try:
         if run_with_partial_results:
-            return await document_diagnostic_with_partial_results(
+            assert params.partial_result_token is not None
+
+            await document_diagnostic_with_partial_results(
                 file_path=file_path, partial_result_token=params.partial_result_token
             )
+            return None
         else:
             return await document_diagnostic_with_full_result(file_path=file_path)
     except Exception as e:
         logger.exception(e)
+
+        # we ignore exceptions on diagnostics, because some IDEs will stop
+        # calling diagnostics after certain number of failures(5 in case of VSCode).
+        # This is not relevant for FineCode, because it can be a problem in action
+        # handler, which can be disabled or reloaded without restarting the whole LSP
+        # server(IDE requires restart of LSP to start calling diagnostics again).
+        return None
 
 
 @dataclass
@@ -179,7 +238,6 @@ async def run_workspace_diagnostic_with_partial_results(
             partial_result_token=partial_result_token,
             runner=exec_info.runner,
         ) as response:
-            # TODO: order of partial results is important in LSP? Order here?
             async for partial_response in response:
                 lint_subresult = lint_action.LintRunResult(**partial_response)
                 lsp_subresult = types.WorkspaceDiagnosticReportPartialResult(
@@ -187,11 +245,14 @@ async def run_workspace_diagnostic_with_partial_results(
                         types.WorkspaceFullDocumentDiagnosticReport(
                             uri=pygls_types_utils.path_to_uri_str(Path(file_path_str)),
                             items=[
-                                map_lint_message_dict_to_diagnostic(lint_message)
+                                map_lint_message_to_diagnostic(lint_message)
                                 for lint_message in lint_messages
                             ],
                         )
-                        for file_path_str, lint_messages in lint_subresult.messages.items()
+                        for (
+                            file_path_str,
+                            lint_messages,
+                        ) in lint_subresult.messages.items()
                     ]
                 )
                 global_state.progress_reporter(partial_result_token, lsp_subresult)
@@ -248,7 +309,7 @@ async def workspace_diagnostic_with_full_result(exec_infos: list[LintActionExecI
                 new_report = types.WorkspaceFullDocumentDiagnosticReport(
                     uri=pygls_types_utils.path_to_uri_str(Path(file_path_str)),
                     items=[
-                        map_lint_message_dict_to_diagnostic(lint_message)
+                        map_lint_message_to_diagnostic(lint_message)
                         for lint_message in lint_messages
                     ],
                 )
@@ -286,6 +347,9 @@ async def workspace_diagnostic(
             # will be not processed because we don't know whether it has one of expected
             # actions
             continue
+
+        # all running projects have actions
+        assert project_def.actions is not None
 
         actions_names: list[str] = [action.name for action in project_def.actions]
         if "lint" in actions_names:
