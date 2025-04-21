@@ -42,6 +42,9 @@ class RunActionContext:
     # to avoid handling in action cases when run context is not initialized and is
     # initialized already.
 
+    def __init__(self, run_id: int) -> None:
+        self.run_id = run_id
+
     async def init(self, initial_payload: RunPayloadType) -> None: ...
 
 
@@ -49,8 +52,8 @@ RunContextType = TypeVar("RunContextType", bound=RunActionContext)
 
 
 class RunActionWithPartialResultsContext(RunActionContext):
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, run_id: int) -> None:
+        super().__init__(run_id=run_id)
         self.partial_result_scheduler = partialresultscheduler.PartialResultScheduler()
 
 

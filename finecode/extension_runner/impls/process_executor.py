@@ -3,6 +3,7 @@ import concurrent.futures
 import contextlib
 import functools
 import multiprocessing as mp
+import typing
 
 from loguru import logger
 
@@ -27,7 +28,9 @@ class ProcessExecutor(iprocessexecutor.IProcessExecutor):
                 self._py_process_executor.shutdown()
                 self._py_process_executor = None
 
-    async def submit(self, func, *args, **kwargs):
+    async def submit[T, **P](
+        self, func: typing.Callable[P, T], *args: P.args, **kwargs: P.kwargs
+    ):
         if not self._active:
             raise Exception("Process Executor is not activated")
 
@@ -46,7 +49,10 @@ class ProcessExecutor(iprocessexecutor.IProcessExecutor):
             func_to_execute = functools.partial(func, **kwargs)
 
         logger.debug(
-            f"Run in process executor, queue: {self._py_process_executor._queue_count}, processes: {len(self._py_process_executor._processes)}, max workers: {self._py_process_executor._max_workers}"
+            f"Run in process executor,"
+            f" queue: {self._py_process_executor._queue_count},"
+            f" processes: {len(self._py_process_executor._processes)},"
+            f" max workers: {self._py_process_executor._max_workers}"
         )
         try:
             result = await loop.run_in_executor(

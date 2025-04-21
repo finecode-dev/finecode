@@ -37,7 +37,7 @@ class IsortFormatHandler(
         payload: format_action.FormatRunPayload,
         run_context: format_action.FormatRunContext,
     ) -> format_action.FormatRunResult:
-        result_by_file_path: dict[Path, format_action.FormatRunResult] = {}
+        result_by_file_path: dict[Path, format_action.FormatRunFileResult] = {}
         for file_path in payload.file_paths:
             file_content, file_version = run_context.file_info_by_path[file_path]
             try:

@@ -193,7 +193,8 @@ async def run_action(ls: lsp_server.LanguageServer, params):
         raise e
     # dict key can be path, but pygls fails to handle slashes in dict keys, use strings
     # representation of result instead until the problem is properly solved
-    return {"result": json.dumps(response.to_dict()["result"])}
+    result_str = json.dumps(response.to_dict()["result"])
+    return {"result": result_str}
 
 
 async def reload_action(ls: lsp_server.LanguageServer, params):

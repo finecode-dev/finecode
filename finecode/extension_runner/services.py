@@ -86,7 +86,7 @@ async def update_config(
 
 def resolve_func_args_with_di(
     func: Callable,
-    known_args: dict[str, Any] | None = None,
+    known_args: dict[str, Callable[[Any], Any]] | None = None,
     params_to_ignore: list[str] | None = None,
 ):
     func_parameters = inspect.signature(func).parameters
@@ -223,10 +223,16 @@ async def run_subresult_coros_sequentially(
         return action_subresult
 
 
+last_run_id: int = 0
+
+
 async def run_action(
     request: schemas.RunActionRequest, options: schemas.RunActionOptions
 ) -> schemas.RunActionResponse:
-    logger.trace(f"Run action '{request.action_name}'")
+    global last_run_id
+    run_id = last_run_id
+    last_run_id += 1
+    logger.trace(f"Run action '{request.action_name}', run id: {run_id}")
     # TODO: check whether config is set: this will be solved by passing initial
     # configuration as payload of initialize
     if global_state.runner_context is None:
@@ -240,7 +246,7 @@ async def run_action(
         action = project_def.actions[request.action_name]
     except KeyError:
         # TODO: raise error
-        logger.error(f"Action {request.action_name} not found")
+        logger.error(f"R{run_id} | Action {request.action_name} not found")
         return schemas.RunActionResponse({})
 
     # design decisions:
@@ -270,7 +276,9 @@ async def run_action(
     run_context: code_action.RunActionContext | None = None
     if action_exec_info.run_context_type is not None:
         constructor_args = resolve_func_args_with_di(
-            action_exec_info.run_context_type.__init__, params_to_ignore=["self"]
+            action_exec_info.run_context_type.__init__,
+            known_args={"run_id": lambda _: run_id},
+            params_to_ignore=["self"],
         )
         run_context = action_exec_info.run_context_type(**constructor_args)
         # TODO: handler errors
@@ -296,12 +304,15 @@ async def run_action(
             # iterable: `run` method should not calculate results itself, but call
             #           `partial_result_scheduler.schedule`. Then we execute provided
             #           coroutines either concurrently or sequentially.
-            logger.trace("Iterable payload, execute all handlers to schedule coros")
+            logger.trace(
+                f"R{run_id} | Iterable payload, execute all handlers to schedule coros"
+            )
             for handler in action.handlers:
                 await execute_action_handler(
                     handler=handler,
                     payload=payload,
                     run_context=run_context,
+                    run_id=run_id,
                     action_context=action_context,
                     action_exec_info=action_exec_info,
                     runner_context=runner_context,
@@ -310,7 +321,8 @@ async def run_action(
             parts = [part async for part in payload]
             subresults_tasks: list[asyncio.Task] = []
             logger.trace(
-                "Run subresult coros {exec_type} {partials} partial results".format(
+                "R{run_id} | Run subresult coros {exec_type} {partials} partial results".format(
+                    run_id=run_id,
                     exec_type=(
                         "concurrently"
                         if execute_handlers_concurrently
@@ -350,6 +362,7 @@ async def run_action(
 
             if send_partial_results:
                 # all subresults are ready
+                logger.trace(f"R{run_id} | all subresults are ready, send them")
                 await partial_result_sender.send_all_immediately()
 
             for subresult_task in subresults_tasks:
@@ -371,6 +384,7 @@ async def run_action(
                                     handler=handler,
                                     payload=payload,
                                     run_context=run_context,
+                                    run_id=run_id,
                                     action_context=action_context,
                                     action_exec_info=action_exec_info,
                                     runner_context=runner_context,
@@ -396,6 +410,7 @@ async def run_action(
                         handler=handler,
                         payload=payload,
                         run_context=run_context,
+                        run_id=run_id,
                         action_context=action_context,
                         action_exec_info=action_exec_info,
                         runner_context=runner_context,
@@ -411,14 +426,18 @@ async def run_action(
     if isinstance(action_result, code_action.RunActionResult):
         result_dict = action_result.model_dump(mode="json")
     elif action_result is not None:
-        logger.error(f"Unexpected result type: {type(action_result).__name__}")
+        logger.error(
+            f"R{run_id} | Unexpected result type: {type(action_result).__name__}"
+        )
         raise ActionFailedException(
             f"Unexpected result type: {type(action_result).__name__}"
         )
 
     end_time = time.time_ns()
     duration = (end_time - start_time) / 1_000_000
-    logger.trace(f"Run action end '{request.action_name}', duration: {duration}ms")
+    logger.trace(
+        f"R{run_id} | Run action end '{request.action_name}', duration: {duration}ms"
+    )
     return schemas.RunActionResponse(result=result_dict)
 
 
@@ -426,11 +445,12 @@ async def execute_action_handler(
     handler: domain.ActionHandler,
     payload: code_action.RunActionPayload | None,
     run_context: code_action.RunActionContext | None,
+    run_id: int,
     action_exec_info: domain.ActionExecInfo,
     action_context: code_action.ActionContext,
     runner_context: context.RunnerContext,
 ) -> code_action.RunActionResult | None:
-    logger.trace(f"Run {handler.name} on {str(payload)[:100]}...")
+    logger.trace(f"R{run_id} | Run {handler.name} on {str(payload)[:100]}...")
     start_time = time.time_ns()
     execution_result: code_action.RunActionResult | None = None
 
@@ -440,20 +460,22 @@ async def execute_action_handler(
         ]
         handler_run_func = handler_instance.run
         exec_info = runner_context.action_handlers_exec_info_by_name[handler.name]
-        logger.trace(f"Instance of action handler {handler.name} found in cache")
+        logger.trace(
+            f"R{run_id} | Instance of action handler {handler.name} found in cache"
+        )
     else:
-        logger.trace(f"Load action handler {handler.name}")
+        logger.trace(f"R{run_id} | Load action handler {handler.name}")
         try:
             action_handler = run_utils.import_module_member_by_source_str(
                 handler.source
             )
         except ModuleNotFoundError as error:
             logger.error(
-                f"Source of action handler {handler.name} '{handler.source}'"
+                f"R{run_id} | Source of action handler {handler.name} '{handler.source}'"
                 " could not be imported"
             )
             logger.error(error)
-            return
+            return None
 
         handler_raw_config = handler.config
 
@@ -497,7 +519,7 @@ async def execute_action_handler(
             exec_info.lifecycle is not None
             and exec_info.lifecycle.on_initialize_callable is not None
         ):
-            logger.trace(f"Initialize {handler.name} action handler")
+            logger.trace(f"R{run_id} | Initialize {handler.name} action handler")
             try:
                 initialize_callable_result = (
                     exec_info.lifecycle.on_initialize_callable()
@@ -505,8 +527,10 @@ async def execute_action_handler(
                 if inspect.isawaitable(initialize_callable_result):
                     await initialize_callable_result
             except Exception as e:
-                logger.error(f"Failed to initialize action {handler.name}: {e}")
-                return
+                logger.error(
+                    f"R{run_id} | Failed to initialize action {handler.name}: {e}"
+                )
+                return None
         exec_info.status = domain.ActionHandlerExecInfoStatus.INITIALIZED
 
     def get_run_payload(param_type):
@@ -533,13 +557,13 @@ async def execute_action_handler(
             execution_result = call_result
     except Exception as e:
         logger.exception(e)
-        return
+        return None
         # TODO: error
 
     end_time = time.time_ns()
     duration = (end_time - start_time) / 1_000_000
     logger.trace(
-        f"End of execution of action handler {handler.name}"
+        f"R{run_id} | End of execution of action handler {handler.name}"
         f" on {str(payload)[:100]}..., duration: {duration}ms"
     )
     return execution_result

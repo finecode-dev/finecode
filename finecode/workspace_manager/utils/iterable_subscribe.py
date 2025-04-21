@@ -26,7 +26,7 @@ T = typing.TypeVar("T")
 
 
 class IterableSubscribeIterator(collections.abc.AsyncIterator[T]):
-    def __init__(self):
+    def __init__(self) -> None:
         self.values: list[T] = []
         self.change_event: asyncio.Event = asyncio.Event()
 

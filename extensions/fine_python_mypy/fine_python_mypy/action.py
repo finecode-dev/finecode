@@ -64,8 +64,12 @@ class MypyLintHandler(
         self._projects_being_checked_done_events: dict[Path, asyncio.Event] = {}
 
     async def run_on_single_file(
-        self, file_path: Path, project_path: Path, all_project_files: list[Path]
-    ) -> lint_action.LintRunResult | None:
+        self,
+        file_path: Path,
+        project_path: Path,
+        all_project_files: list[Path],
+        action_run_id: int,
+    ) -> lint_action.LintRunResult:
         # if mypy was run on the file, the result will be found in cache. If result
         # is not in cache, we need additionally to check whether mypy is not running
         # on the file right now, because we run mypy on the whole packages.
@@ -113,6 +117,10 @@ class MypyLintHandler(
                 all_processed_files_with_messages = await self._run_dmypy_on_project(
                     project_path, all_project_files
                 )
+                messages = {
+                    str(file_path): lint_messages
+                    for file_path, lint_messages in all_processed_files_with_messages.items()
+                }
 
                 for (
                     file_path,
@@ -133,6 +141,8 @@ class MypyLintHandler(
             finally:
                 project_checked_event.set()
                 del self._projects_being_checked_done_events[project_path]
+
+            return lint_action.LintRunResult(messages=messages)
 
     async def _run_dmypy_on_project(
         self, project_dir_path: Path, all_project_files: list[Path]
@@ -180,7 +190,12 @@ class MypyLintHandler(
             for file_path in project_files:
                 run_context.partial_result_scheduler.schedule(
                     file_path,
-                    self.run_on_single_file(file_path, project_path, project_files),
+                    self.run_on_single_file(
+                        file_path,
+                        project_path,
+                        project_files,
+                        action_run_id=run_context.run_id,
+                    ),
                 )
 
     def shutdown(self) -> None:

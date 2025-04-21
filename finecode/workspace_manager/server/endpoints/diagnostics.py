@@ -55,6 +55,7 @@ def map_lint_message_dict_to_diagnostic(
 async def document_diagnostic_with_full_result(
     file_path: Path,
 ) -> types.DocumentDiagnosticReport | None:
+    logger.trace(f"Document diagnostic with full result: {file_path}")
     try:
         response = await proxy_utils.find_action_project_and_run(
             file_path=file_path,
@@ -102,12 +103,14 @@ async def document_diagnostic_with_full_result(
         )
     response.related_documents = related_files_diagnostics
 
+    logger.trace(f"Document diagnostic with full result for {file_path} finished")
     return response
 
 
 async def document_diagnostic_with_partial_results(
     file_path: Path, partial_result_token: int | str
 ) -> None:
+    logger.trace(f"Document diagnostic with partial results: {file_path}")
     assert global_state.progress_reporter is not None, (
         "LSP Server in Workspace Manager was incorrectly initialized:"
         " progress reporter not registered"
@@ -146,12 +149,15 @@ async def document_diagnostic(
     file_path = pygls_types_utils.uri_str_to_path(params.text_document.uri)
 
     run_with_partial_results: bool = params.partial_result_token is not None
-    if run_with_partial_results:
-        return await document_diagnostic_with_partial_results(
-            file_path=file_path, partial_result_token=params.partial_result_token
-        )
-    else:
-        return await document_diagnostic_with_full_result(file_path=file_path)
+    try:
+        if run_with_partial_results:
+            return await document_diagnostic_with_partial_results(
+                file_path=file_path, partial_result_token=params.partial_result_token
+            )
+        else:
+            return await document_diagnostic_with_full_result(file_path=file_path)
+    except Exception as e:
+        logger.exception(e)
 
 
 @dataclass
@@ -164,6 +170,8 @@ class LintActionExecInfo:
 async def run_workspace_diagnostic_with_partial_results(
     exec_info: LintActionExecInfo, partial_result_token: str | int
 ):
+    assert global_state.progress_reporter is not None
+
     try:
         async with proxy_utils.run_with_partial_results(
             action_name="lint",
@@ -171,9 +179,6 @@ async def run_workspace_diagnostic_with_partial_results(
             partial_result_token=partial_result_token,
             runner=exec_info.runner,
         ) as response:
-            # global_state.progress_reporter(
-            #     partial_result_token, types.WorkspaceDiagnosticReport(items=[])
-            # )
             # TODO: order of partial results is important in LSP? Order here?
             async for partial_response in response:
                 lint_subresult = lint_action.LintRunResult(**partial_response)

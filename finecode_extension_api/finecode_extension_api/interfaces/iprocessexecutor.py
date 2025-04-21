@@ -1,7 +1,8 @@
+import typing
 from asyncio import BaseProtocol
 
 
 class IProcessExecutor(BaseProtocol):
-    async def submit(self, func, *args):
-        # TODO: return type, typing of func and args
-        ...
+    async def submit[T, **P](
+        self, func: typing.Callable[P, T], *args: P.args, **kwargs: P.kwargs
+    ): ...

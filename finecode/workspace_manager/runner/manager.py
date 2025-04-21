@@ -14,7 +14,9 @@ from finecode.workspace_manager.config import collect_actions, read_configs
 from finecode.workspace_manager.runner import runner_client, runner_info
 from finecode.workspace_manager.server import global_state
 
-project_changed_callback: Callable[[], Coroutine] | None = None
+project_changed_callback: (
+    Callable[[domain.Project], Coroutine[None, None, None]] | None
+) = None
 get_document: Callable[[], Coroutine] | None = None
 apply_workspace_edit: Callable[[], Coroutine] | None = None
 

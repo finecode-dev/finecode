@@ -25,9 +25,10 @@ class FileInfo(NamedTuple):
 class FormatRunContext(code_action.RunActionContext):
     def __init__(
         self,
+        run_id: int,
         file_manager: ifilemanager.IFileManager,
     ) -> None:
-        super().__init__()
+        super().__init__(run_id=run_id)
         self.file_manager = file_manager
 
         self.file_info_by_path: dict[Path, FileInfo] = {}

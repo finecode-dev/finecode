@@ -16,7 +16,7 @@ async def document_did_open(
     logger.trace(f"Document did open: {params.text_document.uri}")
     global_state.ws_context.opened_documents[params.text_document.uri] = (
         domain.TextDocumentInfo(
-            uri=params.text_document.uri, version=params.text_document.version
+            uri=params.text_document.uri, version=str(params.text_document.version)
         )
     )
 
