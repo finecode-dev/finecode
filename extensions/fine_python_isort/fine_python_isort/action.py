@@ -82,7 +82,7 @@ def format_one(
             config=isort_settings.Config(
                 profile=handler_config.profile
             ),  # TODO: config
-            file_path="",
+            file_path=None,
             disregard_skip=True,
             extension=".py",
         )

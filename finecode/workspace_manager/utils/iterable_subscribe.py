@@ -1,7 +1,6 @@
 import asyncio
 import collections.abc
 import contextlib
-import typing
 
 
 class IterableSubscribe[T]:
@@ -22,10 +21,7 @@ class IterableSubscribe[T]:
             self.iterators.remove(iterator)
 
 
-T = typing.TypeVar("T")
-
-
-class IterableSubscribeIterator(collections.abc.AsyncIterator[T]):
+class IterableSubscribeIterator[T](collections.abc.AsyncIterator[T]):
     def __init__(self) -> None:
         self.values: list[T] = []
         self.change_event: asyncio.Event = asyncio.Event()

@@ -80,7 +80,6 @@ class MypyLintHandler(
                 file_path, self.CACHE_KEY
             )
             messages[str(file_path)] = cached_lint_messages
-            # TODO: exclude from files to lint?
             return lint_action.LintRunResult(messages=messages)
         except icache.CacheMissException:
             pass
@@ -109,6 +108,8 @@ class MypyLintHandler(
                 project_checked_event
             )
             files_versions: dict[Path, str] = {}
+            # can we exclude cached files here? Using the right cache(one that handles
+            # dependencies as well) should be possible
             for file_path in all_project_files:
                 file_version = await self.file_manager.get_file_version(file_path)
                 files_versions[file_path] = file_version
@@ -119,7 +120,10 @@ class MypyLintHandler(
                 )
                 messages = {
                     str(file_path): lint_messages
-                    for file_path, lint_messages in all_processed_files_with_messages.items()
+                    for (
+                        file_path,
+                        lint_messages,
+                    ) in all_processed_files_with_messages.items()
                 }
 
                 for (

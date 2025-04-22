@@ -48,5 +48,5 @@ class RunActionOptions(BaseSchema):
 
 @dataclass
 class RunActionResponse(BaseSchema):
-    # result can be empty e.g. if it was sent as a list of partial results
+    # result can be empty(=None) e.g. if it was sent as a list of partial results
     result: dict[str, Any] | None
