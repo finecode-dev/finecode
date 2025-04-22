@@ -10,9 +10,6 @@ from flake8 import checker, processor, style_guide, violation
 from flake8.api import legacy as flake8
 from flake8.plugins import finder
 
-# temporary solution to be able to use logger in subprocess
-from loguru import logger
-
 from finecode_extension_api import code_action
 from finecode_extension_api.actions import lint as lint_action
 from finecode_extension_api.interfaces import (
@@ -50,7 +47,6 @@ def run_flake8_on_single_file(
     file_ast: ast.Module,
     config: Flake8LintHandlerConfig,
 ) -> list[lint_action.LintMessage]:
-    logger.trace(f"Run flake8 on {file_path}")
     lint_messages: list[lint_action.LintMessage] = []
     # flake8 expects lines with newline at the end
     file_lines = [line + "\n" for line in file_content.split("\n")]
@@ -107,7 +103,6 @@ def run_flake8_on_single_file(
             lint_message = map_flake8_check_result_to_lint_message(result)
             lint_messages.append(lint_message)
 
-    logger.trace(f"End of run flake8 on {file_path}")
     return lint_messages
 
 

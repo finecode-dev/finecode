@@ -1,9 +1,11 @@
 import asyncio
+import collections.abc
 import concurrent.futures
 import contextlib
 import functools
 import multiprocessing as mp
 import typing
+import sys
 
 from loguru import logger
 
@@ -16,7 +18,7 @@ class ProcessExecutor(iprocessexecutor.IProcessExecutor):
         self._active: bool = False
 
     @contextlib.contextmanager
-    def activate(self) -> None:
+    def activate(self) -> collections.abc.Iterator[None]:
         self._active = True
         try:
             yield
@@ -35,10 +37,12 @@ class ProcessExecutor(iprocessexecutor.IProcessExecutor):
             raise Exception("Process Executor is not activated")
 
         if self._py_process_executor is None:
-            # TODO: only for POSIX
-            # forkserver is default in Python 3.14+, use the same also with older
-            # versions
-            mp_context = mp.get_context("forkserver")
+            if sys.version_info < (3, 14, 0) and sys.platform == 'linux':
+                # forkserver is default on linux in Python 3.14+, use the same also
+                # with older versions
+                mp_context = mp.get_context("forkserver")
+            else:
+                mp_context = mp.get_context("spawn")
             self._py_process_executor = concurrent.futures.ProcessPoolExecutor(
                 mp_context=mp_context
             )
