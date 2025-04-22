@@ -138,11 +138,16 @@ async def notify_initialized(runner: ExtensionRunnerInfo) -> None:
     )
 
 
+# JSON object
+type RunActionRawResult = dict[str, Any]
+
+
 async def run_action(
     runner: ExtensionRunnerInfo,
     action_name: str,
-    params: list[Any],
-) -> Any:
+    params: dict[str, Any],
+    options: dict[str, Any] | None = None
+) -> RunActionRawResult:
     if not runner.initialized_event.is_set():
         await runner.initialized_event.wait()
 
@@ -153,7 +158,8 @@ async def run_action(
             command="actions/run",
             arguments=[
                 action_name,
-                *params,
+                params,
+                options
             ],
         ),
         timeout=None,

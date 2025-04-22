@@ -21,9 +21,9 @@ import black
 # from black.concurrency import schedule_formatting
 from black.mode import Mode, TargetVersion
 
-from finecode_extension_api.actions import format as format_action
 from finecode_extension_api import code_action
-from finecode_extension_api.interfaces import icache, ilogger
+from finecode_extension_api.actions import format as format_action
+from finecode_extension_api.interfaces import icache, ilogger, iprocessexecutor
 
 
 def get_black_mode(config: BlackFormatHandlerConfig) -> Mode:
@@ -70,10 +70,13 @@ class BlackFormatHandler(
         config: BlackFormatHandlerConfig,
         logger: ilogger.ILogger,
         cache: icache.ICache,
+        process_executor: iprocessexecutor.IProcessExecutor,
     ) -> None:
         self.config = config
         self.logger = logger
         self.cache = cache
+        self.process_executor = process_executor
+
         self.black_mode = get_black_mode(self.config)
 
     @override
@@ -82,7 +85,7 @@ class BlackFormatHandler(
         payload: format_action.FormatRunPayload,
         run_context: format_action.FormatRunContext,
     ) -> format_action.FormatRunResult:
-        result_by_file_path: dict[Path, format_action.FormatRunResult] = {}
+        result_by_file_path: dict[Path, format_action.FormatRunFileResult] = {}
         for file_path in payload.file_paths:
             file_content, file_version = run_context.file_info_by_path[file_path]
             try:
@@ -96,24 +99,12 @@ class BlackFormatHandler(
             except icache.CacheMissException:
                 pass
 
-            file_changed = False
-            new_file_content = file_content
             # avoid outputting low-level logs of black, our goal is to trace finecode,
             # not flake8 itself
             self.logger.disable("fine_python_black")
-
-            # use part of `format_file_in_place` function from `black.__init__` we need
-            # to format raw text.
-            try:
-                # `fast` whether to validate code after formatting
-                # `lines` is range to format
-                new_file_content = black.format_file_contents(
-                    file_content, fast=False, mode=self.black_mode  # , lines=lines
-                )
-                file_changed = True
-            except black.NothingChanged:
-                ...
-
+            new_file_content, file_changed = await self.process_executor.submit(
+                format_one, file_content, self.black_mode
+            )
             self.logger.enable("fine_python_black")
 
             # save for next handlers
@@ -128,9 +119,24 @@ class BlackFormatHandler(
                 changed=file_changed, code=new_file_content
             )
 
-        return format_action.FormatRunResult(
-            result_by_file_path=result_by_file_path
+        return format_action.FormatRunResult(result_by_file_path=result_by_file_path)
+
+
+def format_one(file_content: str, black_mode: Mode) -> tuple[str, bool]:
+    # use part of `format_file_in_place` function from `black.__init__` we need
+    # to format raw text.
+    try:
+        # `fast` whether to validate code after formatting
+        # `lines` is range to format
+        new_file_content = black.format_file_contents(
+            file_content, fast=False, mode=black_mode  # , lines=lines
         )
+        file_changed = True
+    except black.NothingChanged:
+        new_file_content = file_content
+        file_changed = False
+
+    return (new_file_content, file_changed)
 
 
 # original multiprocess implementation:

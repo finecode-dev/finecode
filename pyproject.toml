@@ -14,7 +14,7 @@ dependencies = [
     "command_runner==1.7.*",
     "platformdirs==4.3.*",
     "pygls==2.0.0-a2",
-    "finecode_extension_api @ git+ssh://git@github.com:Aksem/FineCode.git#subdirectory=finecode_extension_api",
+    "finecode_extension_api @ git+ssh://git@github.com:finecode-dev/finecode.git#subdirectory=finecode_extension_api",
 ]
 
 
@@ -26,8 +26,8 @@ build-backend = "poetry.core.masonry.api"
 [tool.poetry.group.dev.dependencies]
 pytest = "^7.4.3"
 fine_python_aksem = { git = "git@github.com:Aksem/fine_python_aksem.git" }
-fine_python_recommended = { git = "git@github.com:Aksem/FineCode.git", subdirectory = "presets/fine_python_recommended" }
-fine_python_import_linter = { git = "git@github.com:Aksem/FineCode.git", subdirectory = "extensions/fine_python_import_linter" }
+fine_python_recommended = { git = "git@github.com:finecode-dev/finecode.git", subdirectory = "presets/fine_python_recommended" }
+fine_python_import_linter = { git = "git@github.com:finecode-dev/finecode.git", subdirectory = "extensions/fine_python_import_linter" }
 anyio = "^4.4.0"
 debugpy = "^1.8.9"
 
@@ -39,7 +39,6 @@ presets = [
 ]
 
 [tool.finecode.action_handler.black.config]
-target_versions = ["PY311"]
 preview = true
 
 [tool.importlinter]

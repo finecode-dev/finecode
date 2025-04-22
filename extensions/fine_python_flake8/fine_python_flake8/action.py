@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import argparse
 import ast
 import operator
@@ -8,9 +10,14 @@ from flake8 import checker, processor, style_guide, violation
 from flake8.api import legacy as flake8
 from flake8.plugins import finder
 
-from finecode_extension_api import code_action, partialresultscheduler
+from finecode_extension_api import code_action
 from finecode_extension_api.actions import lint as lint_action
-from finecode_extension_api.interfaces import icache, ifilemanager, ilogger, iprocessexecutor
+from finecode_extension_api.interfaces import (
+    icache,
+    ifilemanager,
+    ilogger,
+    iprocessexecutor,
+)
 
 
 def map_flake8_check_result_to_lint_message(result: tuple) -> lint_action.LintMessage:
@@ -38,12 +45,20 @@ def run_flake8_on_single_file(
     file_path: Path,
     file_content: str,
     file_ast: ast.Module,
-    guide: flake8.StyleGuide,
-    decider: style_guide.DecisionEngine,
+    config: Flake8LintHandlerConfig,
 ) -> list[lint_action.LintMessage]:
     lint_messages: list[lint_action.LintMessage] = []
     # flake8 expects lines with newline at the end
     file_lines = [line + "\n" for line in file_content.split("\n")]
+    # TODO: investigate whether guide and decider can be reused. They cannot be
+    # instantiated in handler, because guide is not pickable and cannot be passed to
+    # function executed in process executor.
+    guide = flake8.get_style_guide(
+        max_line_length=config.max_line_length,
+        extend_select=config.extend_select,
+        extend_ignore=config.extend_ignore,
+    )
+    decider = style_guide.DecisionEngine(guide.options)
 
     file_checker = CustomFlake8FileChecker(
         filename=str(file_path),
@@ -97,7 +112,9 @@ class Flake8LintHandlerConfig(code_action.ActionHandlerConfig):
     extend_ignore: list[str] | None = None
 
 
-class Flake8LintHandler(code_action.ActionHandler[lint_action.LintAction, Flake8LintHandlerConfig]):
+class Flake8LintHandler(
+    code_action.ActionHandler[lint_action.LintAction, Flake8LintHandlerConfig]
+):
     CACHE_KEY = "flake8"
 
     def __init__(
@@ -108,32 +125,23 @@ class Flake8LintHandler(code_action.ActionHandler[lint_action.LintAction, Flake8
         file_manager: ifilemanager.IFileManager,
         ast_provider: iast_provider.IPythonSingleAstProvider,
         process_executor: iprocessexecutor.IProcessExecutor,
-        # process_executor_factory: iprocessexecutorfactory.IProcessExecutorFactory,
     ) -> None:
         self.config = config
         self.cache = cache
         self.logger = logger
         self.file_manager = file_manager
         self.ast_provider = ast_provider
-        # self.process_executor_factory = process_executor_factory
         self.process_executor = process_executor
 
         self.logger.disable("flake8.options.manager")
-        self.flake8_style_guide = flake8.get_style_guide(
-            max_line_length=self.config.max_line_length,
-            extend_select=self.config.extend_select,
-            extend_ignore=self.config.extend_ignore,
-        )
-        self.flake8_decider = style_guide.DecisionEngine(
-            self.flake8_style_guide.options
-        )
 
         self.logger.disable("flake8.checker")
         self.logger.disable("flake8.violation")
         self.logger.disable("bugbear")
 
-    async def run_on_single_file(self, file_path: Path) -> lint_action.LintRunResult | None:
-        # , executor: iprocessexecutorfactory.IProcessExecutor
+    async def run_on_single_file(
+        self, file_path: Path
+    ) -> lint_action.LintRunResult | None:
         messages = {}
         try:
             cached_lint_messages = await self.cache.get_file_cache(
@@ -151,12 +159,12 @@ class Flake8LintHandler(code_action.ActionHandler[lint_action.LintAction, Flake8
         except SyntaxError:
             return None
 
-        lint_messages = await self.process_executor.submit(func=run_flake8_on_single_file,
+        lint_messages = await self.process_executor.submit(
+            func=run_flake8_on_single_file,
             file_path=file_path,
             file_content=file_content,
             file_ast=file_ast,
-            guide=self.flake8_style_guide,
-            decider=self.flake8_decider
+            config=self.config,
         )
         messages[str(file_path)] = lint_messages
         await self.cache.save_file_cache(
@@ -166,15 +174,16 @@ class Flake8LintHandler(code_action.ActionHandler[lint_action.LintAction, Flake8
         return lint_action.LintRunResult(messages=messages)
 
     async def run(
-        self, payload: lint_action.LintRunPayload, run_context: code_action.RunActionWithPartialResultsContext
+        self,
+        payload: lint_action.LintRunPayload,
+        run_context: code_action.RunActionWithPartialResultsContext,
     ) -> None:
         file_paths = [file_path async for file_path in payload]
-        self.flake8_style_guide._application.options.filenames = [
-            str(file_path) for file_path in file_paths
-        ]
 
         for file_path in file_paths:
-            run_context.partial_result_scheduler.schedule(file_path, self.run_on_single_file(file_path))
+            run_context.partial_result_scheduler.schedule(
+                file_path, self.run_on_single_file(file_path)
+            )
 
 
 class CustomFlake8FileChecker(checker.FileChecker):

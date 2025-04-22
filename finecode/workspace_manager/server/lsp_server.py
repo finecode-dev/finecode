@@ -1,6 +1,7 @@
 import asyncio
 from functools import partial
 from pathlib import Path
+from typing import Any
 
 from loguru import logger
 from lsprotocol import types
@@ -210,6 +211,11 @@ async def _on_initialized(ls: LanguageServer, params: types.InitializedParams):
     services.register_send_user_message_request_callback(
         partial(send_user_message_request, ls)
     )
+
+    def report_progress(token: str | int, value: Any):
+        ls.progress(types.ProgressParams(token, value))
+
+    services.register_progress_reporter(report_progress)
 
     try:
         async with asyncio.TaskGroup() as tg:

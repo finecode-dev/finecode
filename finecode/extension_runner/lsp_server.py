@@ -15,6 +15,7 @@ from lsprotocol import types
 from pygls.lsp import server as lsp_server
 
 from finecode.extension_runner import domain, schemas, services
+from finecode_extension_api import code_action
 
 
 class CustomLanguageServer(lsp_server.LanguageServer):
@@ -108,8 +109,17 @@ def create_lsp_server() -> lsp_server.LanguageServer:
         )
         await server.workspace_apply_edit_async(params)
 
+    def send_partial_result(
+        token: int | str, partial_result: code_action.RunActionResult
+    ) -> None:
+        logger.debug(f"Send partial result for {token}")
+        server.progress(
+            types.ProgressParams(token=token, value=partial_result.model_dump_json())
+        )
+
     services.document_requester = document_requester
     services.document_saver = document_saver
+    services.set_partial_result_sender(send_partial_result)
 
     return server
 
@@ -174,15 +184,17 @@ async def update_config(ls: lsp_server.LanguageServer, params):
 async def run_action(ls: lsp_server.LanguageServer, params):
     logger.trace(f"Run action: {params[0]}")
     request = schemas.RunActionRequest(action_name=params[0], params=params[1])
+    options = schemas.RunActionOptions(**params[2] if params[2] is not None else {})
     # pygls sends uncatched exceptions(e.g. internal errors) to client. Log them as well
     try:
-        response = await services.run_action(request=request)
+        response = await services.run_action(request=request, options=options)
     except Exception as e:
         logger.exception(f"Run action error: {e}")
         raise e
     # dict key can be path, but pygls fails to handle slashes in dict keys, use strings
     # representation of result instead until the problem is properly solved
-    return {"result": json.dumps(response.to_dict()["result"])}
+    result_str = json.dumps(response.to_dict()["result"])
+    return {"result": result_str}
 
 
 async def reload_action(ls: lsp_server.LanguageServer, params):

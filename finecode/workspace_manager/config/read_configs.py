@@ -21,7 +21,6 @@ async def read_projects_in_dir(
     for def_file in def_files_generator:
         status = domain.ProjectStatus.READY
         actions: list[domain.Action] | None = None
-        actions_configs: dict[str, dict[str, Any]] | None = None
 
         with open(def_file, "rb") as pyproject_file:
             project_def = toml_loads(pyproject_file.read()).value
@@ -29,7 +28,6 @@ async def read_projects_in_dir(
         if project_def.get("tool", {}).get("finecode", None) is None:
             status = domain.ProjectStatus.NO_FINECODE
             actions = []
-            actions_configs = {}
         else:
             # finecode config exists, check also finecode.sh
             finecode_sh_path = def_file.parent / "finecode.sh"

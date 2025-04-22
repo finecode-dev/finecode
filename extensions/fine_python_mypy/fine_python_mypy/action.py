@@ -1,7 +1,6 @@
 # TODO: what to do with file manager? Mypy would need ability to check module text,
 # not only module file
 import asyncio
-import collections.abc
 import hashlib
 import sys
 from pathlib import Path
@@ -61,59 +60,116 @@ class MypyLintHandler(
 
         self._dmypy_active_projects: set[Path] = set([])
         self._process_lock_by_cwd: dict[Path, asyncio.Lock] = {}
+        # project that are being checked right now
+        self._projects_being_checked_done_events: dict[Path, asyncio.Event] = {}
 
-    async def run(
-        self, payload: lint_action.LintRunPayload
-    ) -> collections.abc.AsyncIterator[lint_action.LintRunResult]:
+    async def run_on_single_file(
+        self,
+        file_path: Path,
+        project_path: Path,
+        all_project_files: list[Path],
+        action_run_id: int,
+    ) -> lint_action.LintRunResult:
+        # if mypy was run on the file, the result will be found in cache. If result
+        # is not in cache, we need additionally to check whether mypy is not running
+        # on the file right now, because we run mypy on the whole packages.
         messages: dict[str, list[lint_action.LintMessage]] = {}
         # TODO: right cache with dependencies
-        file_paths = payload.file_paths
-        files_versions: dict[Path, str] = {}
-        files_to_lint: list[Path] = []
-        for file_path in file_paths:
+        try:
+            cached_lint_messages = await self.cache.get_file_cache(
+                file_path, self.CACHE_KEY
+            )
+            messages[str(file_path)] = cached_lint_messages
+            return lint_action.LintRunResult(messages=messages)
+        except icache.CacheMissException:
+            pass
+
+        if project_path in self._projects_being_checked_done_events:
+            # use events to know when checking of the project is done. Get results from
+            # cache because saving them locally would require more complex data
+            # structure and additional synchronization, because we need to to wait on
+            # the result, provide it to all waiting tasks and remove after that.
+            await self._projects_being_checked_done_events[project_path].wait()
             try:
                 cached_lint_messages = await self.cache.get_file_cache(
                     file_path, self.CACHE_KEY
                 )
-                messages[str(file_path)] = cached_lint_messages
-                continue
             except icache.CacheMissException:
-                pass
+                # if checking failed, there are no results in cache
+                cached_lint_messages = []
 
-            file_version = await self.file_manager.get_file_version(file_path)
-            files_versions[file_path] = file_version
-            files_to_lint.append(file_path)
-
-        yield lint_action.LintRunResult(messages=messages)
-
-        files_by_projects: dict[Path, list[Path]] = self.group_files_by_projects(
-            files_to_lint, self.context.project_dir
-        )
-        new_messages: dict[str, list[lint_action.LintMessage]] = {}
-        for project_dir_path, files in files_by_projects.items():
-            if project_dir_path not in self._process_lock_by_cwd:
-                self._process_lock_by_cwd[project_dir_path] = asyncio.Lock()
-
-            project_lock = self._process_lock_by_cwd[project_dir_path]
-            async with project_lock:
-                try:
-                    dmypy_run_output = await self._run_dmypy(
-                        file_paths=files, cwd=project_dir_path
-                    )
-                except DmypyFailedError:
-                    continue
-
-            project_lint_messages = output_parser.parse_output_using_regex(
-                content=dmypy_run_output, severity={}
+            messages[str(file_path)] = cached_lint_messages
+            return lint_action.LintRunResult(messages=messages)
+        else:
+            # save file versions at the beginning because file can be changed during
+            # checking and we want to cache result for current version, not for changed
+            project_checked_event = asyncio.Event()
+            self._projects_being_checked_done_events[project_path] = (
+                project_checked_event
             )
-            new_messages.update(project_lint_messages)
-            yield lint_action.LintRunResult(messages=project_lint_messages)
+            files_versions: dict[Path, str] = {}
+            # can we exclude cached files here? Using the right cache(one that handles
+            # dependencies as well) should be possible
+            for file_path in all_project_files:
+                file_version = await self.file_manager.get_file_version(file_path)
+                files_versions[file_path] = file_version
 
-        # we need iterate both `files_to_lint` and `new_messages` because the last
-        # one contains only files where problems where found and files without problems
-        # should be cached as well
+            try:
+                all_processed_files_with_messages = await self._run_dmypy_on_project(
+                    project_path, all_project_files
+                )
+                messages = {
+                    str(file_path): lint_messages
+                    for (
+                        file_path,
+                        lint_messages,
+                    ) in all_processed_files_with_messages.items()
+                }
+
+                for (
+                    file_path,
+                    lint_messages,
+                ) in all_processed_files_with_messages.items():
+                    try:
+                        file_version = files_versions[file_path]
+                    except KeyError:
+                        # mypy can resolve dependencies which are not in `files_to_lint`
+                        # and as result also not in `files_versions`
+                        file_version = await self.file_manager.get_file_version(
+                            file_path
+                        )
+
+                    await self.cache.save_file_cache(
+                        file_path, file_version, self.CACHE_KEY, lint_messages
+                    )
+            finally:
+                project_checked_event.set()
+                del self._projects_being_checked_done_events[project_path]
+
+            return lint_action.LintRunResult(messages=messages)
+
+    async def _run_dmypy_on_project(
+        self, project_dir_path: Path, all_project_files: list[Path]
+    ) -> dict[Path, list[lint_action.LintMessage]]:
+        new_messages: dict[str, list[lint_action.LintMessage]] = {}
+        if project_dir_path not in self._process_lock_by_cwd:
+            self._process_lock_by_cwd[project_dir_path] = asyncio.Lock()
+
+        project_lock = self._process_lock_by_cwd[project_dir_path]
+        async with project_lock:
+            try:
+                dmypy_run_output = await self._run_dmypy(
+                    file_paths=all_project_files, cwd=project_dir_path
+                )
+            except DmypyFailedError:
+                return {}
+
+        project_lint_messages = output_parser.parse_output_using_regex(
+            content=dmypy_run_output, severity={}
+        )
+        new_messages.update(project_lint_messages)
         all_processed_files_with_messages: dict[Path, list[lint_action.LintMessage]] = {
-            file_path: [] for file_path in files_to_lint
+            file_path: [] for file_path in all_project_files
         }
         all_processed_files_with_messages.update(
             {
@@ -121,17 +177,30 @@ class MypyLintHandler(
                 for file_path_str, lint_messages in new_messages.items()
             }
         )
-        for file_path, lint_messages in all_processed_files_with_messages.items():
-            try:
-                file_version = files_versions[file_path]
-            except KeyError:
-                # mypy can resolve dependencies which are not in `files_to_lint` and
-                # as result also not in `files_versions`
-                file_version = await self.file_manager.get_file_version(file_path)
+        return all_processed_files_with_messages
 
-            await self.cache.save_file_cache(
-                file_path, file_version, self.CACHE_KEY, lint_messages
-            )
+    async def run(
+        self,
+        payload: lint_action.LintRunPayload,
+        run_context: code_action.RunActionWithPartialResultsContext,
+    ) -> None:
+        file_paths = [file_path async for file_path in payload]
+
+        files_by_projects: dict[Path, list[Path]] = self.group_files_by_projects(
+            file_paths, self.context.project_dir
+        )
+
+        for project_path, project_files in files_by_projects.items():
+            for file_path in project_files:
+                run_context.partial_result_scheduler.schedule(
+                    file_path,
+                    self.run_on_single_file(
+                        file_path,
+                        project_path,
+                        project_files,
+                        action_run_id=run_context.run_id,
+                    ),
+                )
 
     def shutdown(self) -> None:
         for dmypy_process_cwd in self._dmypy_active_projects:

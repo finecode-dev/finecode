@@ -1,7 +1,8 @@
 import asyncio
+import json
 import os
 from pathlib import Path
-from typing import Coroutine
+from typing import Callable, Coroutine
 
 from loguru import logger
 from lsprotocol import types
@@ -9,15 +10,15 @@ from lsprotocol import types
 from finecode import dirs_utils
 from finecode.pygls_client_utils import create_lsp_client_io
 from finecode.workspace_manager import context, domain, finecode_cmd
-from finecode.workspace_manager.config import (
-    collect_actions,
-    read_configs,
-)
+from finecode.workspace_manager.config import collect_actions, read_configs
 from finecode.workspace_manager.runner import runner_client, runner_info
+from finecode.workspace_manager.server import global_state
 
-project_changed_callback: Coroutine | None = None
-get_document: Coroutine | None = None
-apply_workspace_edit: Coroutine | None = None
+project_changed_callback: (
+    Callable[[domain.Project], Coroutine[None, None, None]] | None
+) = None
+get_document: Callable[[], Coroutine] | None = None
+apply_workspace_edit: Callable[[], Coroutine] | None = None
 
 
 async def notify_project_changed(project: domain.Project) -> None:
@@ -75,11 +76,9 @@ async def start_extension_runner(
         f"--project-path={runner_dir.as_posix()}",
     ]
     # TODO: config parameter for debug and debug port
-    # if runner_dir == Path(
-    #     "/home/user/Development/FineCode/finecode"
-    # ):
+    # if runner_dir == Path("/home/user/Development/FineCode/finecode"):
     #     process_args.append("--debug")
-    #     process_args.append(f"--debug-port=5681")
+    #     process_args.append("--debug-port=5681")
 
     process_args_str: str = " ".join(process_args)
     client = await create_lsp_client_io(
@@ -106,6 +105,16 @@ async def start_extension_runner(
         types.WORKSPACE_APPLY_EDIT
     )
     register_workspace_apply_edit(_apply_workspace_edit)
+
+    async def on_progress(params: types.ProgressParams):
+        logger.debug(f"Got progress from runner for token: {params.token}")
+        partial_result = domain.PartialResult(
+            token=params.token, value=json.loads(params.value)
+        )
+        global_state.partial_results.publish(partial_result)
+
+    register_progress_feature = runner_info_instance.client.feature(types.PROGRESS)
+    register_progress_feature(on_progress)
 
     return runner_info_instance
 
@@ -238,9 +247,7 @@ async def _init_runner(
     ), f"Actions of project {project.dir_path} are not read yet"
 
     try:
-        await runner_client.update_config(
-            runner, project.actions
-        )
+        await runner_client.update_config(runner, project.actions)
     except runner_client.BaseRunnerRequestException:
         project.status = domain.ProjectStatus.RUNNER_FAILED
         await notify_project_changed(project)

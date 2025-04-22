@@ -7,8 +7,12 @@ from finecode_extension_api import code_action
 @dataclass
 class RunnerContext:
     project: domain.Project
-    action_exec_info_by_name: dict[str, domain.ActionExecInfo] = field(default_factory=dict)
-    action_handlers_instances_by_name: dict[str, code_action.ActionHandler] = field(default_factory=dict)
+    action_exec_info_by_name: dict[str, domain.ActionExecInfo] = field(
+        default_factory=dict
+    )
+    action_handlers_instances_by_name: dict[str, code_action.ActionHandler] = field(
+        default_factory=dict
+    )
     action_handlers_exec_info_by_name: dict[str, domain.ActionHandlerExecInfo] = field(
         default_factory=dict
     )

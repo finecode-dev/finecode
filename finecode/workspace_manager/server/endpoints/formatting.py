@@ -6,7 +6,8 @@ from loguru import logger
 from lsprotocol import types
 
 from finecode import pygls_types_utils
-from finecode.workspace_manager.server import global_state, proxy_utils
+from finecode.workspace_manager import proxy_utils
+from finecode.workspace_manager.server import global_state
 
 if TYPE_CHECKING:
     from pygls.lsp.server import LanguageServer
@@ -21,10 +22,10 @@ async def format_document(ls: LanguageServer, params: types.DocumentFormattingPa
     # first check 'format' action, because it always replaces the whole content, then
     # TEXT_DOCUMENT_FORMATTING feature, it can replace also parts of document
     try:
-        response = await proxy_utils.find_action_project_and_run_in_runner(
+        response = await proxy_utils.find_action_project_and_run(
             file_path=file_path,
             action_name="format",
-            params=[{"file_paths": [file_path], "save": False}],
+            params={"file_paths": [file_path], "save": False},
             ws_context=global_state.ws_context,
         )
     except Exception as error:  # TODO
