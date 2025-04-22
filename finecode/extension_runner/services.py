@@ -168,6 +168,8 @@ async def run_subresult_coros_concurrently(
     send_partial_results: bool,
     partial_result_token: int | str,
     partial_result_sender: partial_result_sender_module.PartialResultSender,
+    action_name: str,
+    run_id: int
 ) -> code_action.RunActionResult | None:
     coros_tasks: list[asyncio.Task] = []
     try:
@@ -176,10 +178,10 @@ async def run_subresult_coros_concurrently(
                 coro_task = tg.create_task(coro)
                 coros_tasks.append(coro_task)
     except ExceptionGroup as eg:
-        logger.error(eg)
+        logger.error(f'R{run_id} | {eg}')
         for exc in eg.exceptions:
             logger.exception(exc)
-        # TODO
+        raise ActionFailedException(f"Concurrent running action handlers of '{action_name}' failed(Run {run_id}). See logs for more details")
 
     action_subresult: code_action.RunActionResult | None = None
     for coro_task in coros_tasks:
@@ -204,10 +206,17 @@ async def run_subresult_coros_sequentially(
     send_partial_results: bool,
     partial_result_token: int | str,
     partial_result_sender: partial_result_sender_module.PartialResultSender,
+    action_name: str,
+    run_id: int
 ) -> code_action.RunActionResult | None:
     action_subresult: code_action.RunActionResult | None = None
     for coro in coros:
-        coro_result = await coro
+        try:
+            coro_result = await coro
+        except Exception as e:
+            logger.exception(e)
+            raise ActionFailedException(f"Running action handlers of '{action_name}' failed(Run {run_id}): {e}")
+
         if coro_result is not None:
             if action_subresult is None:
                 action_subresult = coro_result
@@ -236,8 +245,7 @@ async def run_action(
     # TODO: check whether config is set: this will be solved by passing initial
     # configuration as payload of initialize
     if global_state.runner_context is None:
-        # TODO: raise error
-        return schemas.RunActionResponse({})
+        raise ActionFailedException(f"Run of action failed because extension runner is not initialized yet")
 
     start_time = time.time_ns()
     project_def = global_state.runner_context.project
@@ -245,9 +253,8 @@ async def run_action(
     try:
         action = project_def.actions[request.action_name]
     except KeyError:
-        # TODO: raise error
         logger.error(f"R{run_id} | Action {request.action_name} not found")
-        return schemas.RunActionResponse({})
+        raise ActionFailedException(f"R{run_id} | Action {request.action_name} not found")
 
     # design decisions:
     # - keep payload unchanged between all subaction runs.
@@ -334,23 +341,29 @@ async def run_action(
             try:
                 async with asyncio.TaskGroup() as tg:
                     for part in parts:
+                        part_coros = run_context.partial_result_scheduler.coroutines_by_key[
+                            part
+                        ]
+                        del run_context.partial_result_scheduler.coroutines_by_key[
+                            part
+                        ]
                         if execute_handlers_concurrently:
                             coro = run_subresult_coros_concurrently(
-                                run_context.partial_result_scheduler.coroutines_by_key[
-                                    part
-                                ],
+                                part_coros,
                                 send_partial_results,
                                 partial_result_token,
                                 partial_result_sender,
+                                action.name,
+                                run_id
                             )
                         else:
                             coro = run_subresult_coros_sequentially(
-                                run_context.partial_result_scheduler.coroutines_by_key[
-                                    part
-                                ],
+                                part_coros,
                                 send_partial_results,
                                 partial_result_token,
                                 partial_result_sender,
+                                action.name,
+                                run_id
                             )
                         subresult_task = tg.create_task(coro)
                         subresults_tasks.append(subresult_task)
@@ -358,7 +371,7 @@ async def run_action(
                 logger.error(eg)
                 for exc in eg.exceptions:
                     logger.exception(exc)
-                # TODO
+                raise ActionFailedException(f"Running action handlers of '{action.name}' failed(Run {run_id}). See ER logs for more details")
 
             if send_partial_results:
                 # all subresults are ready
@@ -395,7 +408,7 @@ async def run_action(
                     logger.error(eg)
                     for exc in eg.exceptions:
                         logger.exception(exc)
-                    # TODO
+                    raise ActionFailedException(f"Running action handlers of '{action.name}' failed(Run {run_id}). See ER logs for more details")
 
                 for handler_task in handlers_tasks:
                     coro_result = handler_task.result()
@@ -557,8 +570,7 @@ async def execute_action_handler(
             execution_result = call_result
     except Exception as e:
         logger.exception(e)
-        return None
-        # TODO: error
+        raise ActionFailedException(f"Running action handler '{handler.name}' failed(Run {run_id}): {e}")
 
     end_time = time.time_ns()
     duration = (end_time - start_time) / 1_000_000
