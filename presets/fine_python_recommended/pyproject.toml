@@ -6,9 +6,9 @@ authors = [{ name = "Vladyslav Hnatiuk", email = "aders1234@gmail.com" }]
 readme = "README.md"
 requires-python = ">=3.11, < 3.14"
 dependencies = [
-    "finecode @ git+ssh://git@github.com:Aksem/FineCode.git",
-    "fine_python_format @ git+ssh://git@github.com:Aksem/FineCode.git#subdirectory=presets/fine_python_format",
-    "fine_python_lint @ git+ssh://git@github.com:Aksem/FineCode.git#subdirectory=presets/fine_python_lint",
+    "finecode @ git+ssh://git@github.com:finecode-dev/finecode.git",
+    "fine_python_format @ git+ssh://git@github.com:finecode-dev/finecode.git#subdirectory=presets/fine_python_format",
+    "fine_python_lint @ git+ssh://git@github.com:finecode-dev/finecode.git#subdirectory=presets/fine_python_lint",
 ]
 
 
