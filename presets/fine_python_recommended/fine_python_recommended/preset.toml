@@ -1,5 +1,2 @@
-[tool.finecode.preset]
-extends = [
-    { source = "fine_python_format" },
-    { source = "fine_python_lint" },
-]
+[tool.finecode]
+presets = [{ source = "fine_python_format" }, { source = "fine_python_lint" }]

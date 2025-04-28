@@ -1,0 +1,8 @@
+[tool.finecode]
+presets = [
+    { source = "fine_python_recommended" },
+    { source = "fine_python_aksem" },
+]
+
+[tool.finecode.action_handler.black.config]
+preview = true

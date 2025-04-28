@@ -1,14 +1,14 @@
 import asyncio
 from pathlib import Path
-from typing import Any
 
 from loguru import logger
 from pygls.lsp.server import LanguageServer
 
-from finecode.workspace_manager import context, domain
+from finecode.workspace_manager import services as wm_services
+from finecode.workspace_manager import context, domain, user_messages
 from finecode.workspace_manager.runner import runner_client
-from finecode.workspace_manager.server import global_state, schemas, user_messages
-from finecode.workspace_manager.server.services import ActionNotFound, InternalError
+from finecode.workspace_manager.lsp_server import global_state, schemas
+from finecode.workspace_manager.lsp_server.services import ActionNotFound, InternalError
 
 
 async def list_actions(ls: LanguageServer, params):
@@ -299,23 +299,6 @@ async def run_action(
 ) -> schemas.RunActionResponse:
     # TODO: validate apply_on and apply_on_text
     _action_node_id = request.action_node_id
-    # if ":" not in _action_node_id:
-    #     # general action without project path like 'format' or 'lint',
-    #     #  normalize (=add project path)
-    #     try:
-    #         project_path = find_project.find_project_with_action_for_file(
-    #             file_path=Path(request.apply_on),
-    #             action_name=_action_node_id,
-    #             ws_context=global_state.ws_context,
-    #         )
-    #     except ValueError:
-    #         logger.warning(
-    #             f"Skip {_action_node_id} on {request.apply_on},"
-    #               " because file is not in workspace"
-    #         )
-    #         return schemas.RunActionResponse({})
-    #     _action_node_id = f"{project_path.as_posix()}::{_action_node_id}"
-
     splitted_action_id = _action_node_id.split("::")
     project_path = Path(splitted_action_id[0])
     try:
@@ -328,55 +311,14 @@ async def run_action(
         raise InternalError()
 
     action_name = splitted_action_id[1]
-    try:
-        action = next(
-            action for action in project_def.actions if action.name == action_name
-        )
-    except (KeyError, StopIteration) as error:
-        logger.error(f"Unexpected error, project or action not found: {error}")
-        raise InternalError()
 
-    logger.info("run action", request)
-    result = await __run_action(
-        action=action,
+    result = await wm_services.run_action(
+        action=action_name,
         params=request.params,
         project_def=project_def,
         ws_context=global_state.ws_context,
     )
     return schemas.RunActionResponse(result=result)
-
-
-async def __run_action(
-    action: domain.Action,
-    params: dict[str, Any],
-    project_def: domain.Project,
-    ws_context: context.WorkspaceContext,
-) -> dict[str, Any]:
-    formatted_params = str(params)
-    if len(formatted_params) > 100:
-        formatted_params = f"{formatted_params[:100]}..."
-    logger.trace(f"Execute action {action.name} with {formatted_params}")
-
-    if project_def.status != domain.ProjectStatus.RUNNING:
-        logger.error(
-            f"Extension runner is not running in {project_def.dir_path}."
-            " Please check logs."
-        )
-        return {}
-
-    # extension runner is running for this project, send command to it
-    try:
-        result = await runner_client.run_action(
-            runner=ws_context.ws_projects_extension_runners[project_def.dir_path],
-            action_name=action.name,
-            params=[params],
-        )
-    except runner_client.BaseRunnerRequestException as error:
-        error_message = error.args[0] if len(error.args) > 0 else ""
-        await user_messages.error(f"Action {action.name} failed: {error_message}")
-        return {}
-
-    return result
 
 
 async def notify_changed_action_node(

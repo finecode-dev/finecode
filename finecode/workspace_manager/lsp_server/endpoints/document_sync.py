@@ -7,7 +7,7 @@ from pygls.lsp.server import LanguageServer
 
 from finecode.workspace_manager import domain
 from finecode.workspace_manager.runner import runner_client
-from finecode.workspace_manager.server import global_state
+from finecode.workspace_manager.lsp_server import global_state
 
 
 async def document_did_open(

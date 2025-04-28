@@ -32,7 +32,7 @@ class LintMessage(code_action.BaseModel):
     severity: LintMessageSeverity | None = None
 
 
-class LintRunPayload(code_action.RunActionResult, collections.abc.AsyncIterable):
+class LintRunPayload(code_action.RunActionPayload, collections.abc.AsyncIterable):
     file_paths: list[Path]
 
     def __aiter__(self) -> collections.abc.AsyncIterator[Path]:

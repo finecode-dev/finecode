@@ -20,6 +20,9 @@ class RunActionResult(BaseModel):
     def update(self, other: RunActionResult) -> None:
         raise NotImplementedError()
 
+    def to_text(self) -> str:
+        return str(self)
+
 
 RunPayloadType = TypeVar(
     "RunPayloadType", bound=RunActionPayload

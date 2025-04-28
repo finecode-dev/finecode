@@ -435,9 +435,14 @@ async def run_action(
                         else:
                             action_result.update(handler_result)
 
-    result_dict = None
+    serialized_result: dict[str, Any] | str | None = None
     if isinstance(action_result, code_action.RunActionResult):
-        result_dict = action_result.model_dump(mode="json")
+        if options.result_format == 'json':
+            serialized_result = action_result.model_dump(mode="json")
+        elif options.result_format == 'string':
+            serialized_result = action_result.to_text()
+        else:
+            raise ActionFailedException(f"Unsupported result format: {options.result_format}")
     elif action_result is not None:
         logger.error(
             f"R{run_id} | Unexpected result type: {type(action_result).__name__}"
@@ -451,7 +456,7 @@ async def run_action(
     logger.trace(
         f"R{run_id} | Run action end '{request.action_name}', duration: {duration}ms"
     )
-    return schemas.RunActionResponse(result=result_dict)
+    return schemas.RunActionResponse(result=serialized_result, format=options.result_format)
 
 
 async def execute_action_handler(

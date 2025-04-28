@@ -8,13 +8,14 @@ from tomlkit import loads as toml_loads
 from finecode.workspace_manager import context, domain
 from finecode.workspace_manager.config import config_models
 from finecode.workspace_manager.runner import runner_client, runner_info
-from finecode.workspace_manager.server import user_messages
+from finecode.workspace_manager import user_messages
 
 
 async def read_projects_in_dir(
     dir_path: Path, ws_context: context.WorkspaceContext
 ) -> list[domain.Project]:
     # Find all projects in directory
+    # `dir_path` expected to be absolute path
     logger.trace(f"Read directories in {dir_path}")
     new_projects: list[domain.Project] = []
     def_files_generator = dir_path.rglob("pyproject.toml")
@@ -50,6 +51,8 @@ async def read_projects_in_dir(
 async def read_project_config(
     project: domain.Project, ws_context: context.WorkspaceContext
 ) -> None:
+    # this function requires running project extension runner to get configuration
+    # from it
     if project.def_path.name == "pyproject.toml":
         with open(project.def_path, "rb") as pyproject_file:
             project_def = toml_loads(pyproject_file.read()).value
@@ -112,20 +115,11 @@ def read_preset_config(
         preset_toml = toml_loads(preset_toml_file.read()).value
 
     try:
-        preset_raw_def = preset_toml["tool"]["finecode"]["preset"]
+        presets = preset_toml["tool"]["finecode"]["presets"]
     except KeyError:
-        logger.trace(f"Preset {preset_id} has no definition")
-        preset_raw_def = {}
-
-    try:
-        preset_config = config_models.PresetDefinition(**preset_raw_def)
-    except ValidationError as e:
-        logger.error(str(preset_raw_def) + e.json())
-        return (preset_toml, None)
-
-    # extends is used only to get "parent" presets and is not part of public config
-    if "extends" in preset_toml:
-        del preset_toml["extends"]
+        presets = []
+    
+    preset_config = config_models.PresetDefinition(extends=presets)
 
     logger.trace(f"Reading preset config finished: {preset_id}")
     return (preset_toml, preset_config)
@@ -170,7 +164,7 @@ async def collect_config_from_py_presets(
                 )
             )
 
-    return _preset_config_to_project_config(config)
+    return config
 
 
 def _merge_projects_configs(config1: dict[str, Any], config2: dict[str, Any]) -> None:
@@ -213,7 +207,7 @@ def _merge_preset_configs(config1: dict[str, Any], config2: dict[str, Any]) -> N
     # merge config2 in config1 (in-place)
     # config1 is not overwritten by config2
     new_views = (
-        config2.get("tool", {}).get("finecode", {}).get("preset", {}).get("views", None)
+        config2.get("tool", {}).get("finecode", {}).get("views", None)
     )
     new_actions_defs_and_configs = (
         config2.get("tool", {}).get("finecode", {}).get("action", None)
@@ -230,27 +224,25 @@ def _merge_preset_configs(config1: dict[str, Any], config2: dict[str, Any]) -> N
             config1["tool"] = {}
         if "finecode" not in config1["tool"]:
             config1["tool"]["finecode"] = {}
-        if "preset" not in config1["tool"]["finecode"]:
-            config1["tool"]["finecode"]["preset"] = {}
 
         if new_views is not None:
-            if "views" not in config1["tool"]["finecode"]["preset"]:
-                config1["tool"]["finecode"]["preset"]["views"] = []
-            config1["tool"]["finecode"]["preset"]["views"].extend(new_views)
-            del config2["tool"]["finecode"]["preset"]["views"]
+            if "views" not in config1["tool"]["finecode"]:
+                config1["tool"]["finecode"]["views"] = []
+            config1["tool"]["finecode"]["views"].extend(new_views)
+            del config2["tool"]["finecode"]["views"]
 
         if new_actions_defs_and_configs is not None:
-            if "action" not in config1["tool"]["finecode"]["preset"]:
-                config1["tool"]["finecode"]["preset"]["action"] = {}
+            if "action" not in config1["tool"]["finecode"]:
+                config1["tool"]["finecode"]["action"] = {}
 
             for handler_name, handler_info in new_actions_defs_and_configs.items():
-                if handler_name not in config1["tool"]["finecode"]["preset"]["action"]:
-                    config1["tool"]["finecode"]["preset"]["action"][handler_name] = {}
+                if handler_name not in config1["tool"]["finecode"]["action"]:
+                    config1["tool"]["finecode"]["action"][handler_name] = {}
 
                 action_def = {
                     key: value for key, value in handler_info.items() if key != "config"
                 }
-                config1["tool"]["finecode"]["preset"]["action"][handler_name].update(
+                config1["tool"]["finecode"]["action"][handler_name].update(
                     action_def
                 )
 
@@ -260,26 +252,26 @@ def _merge_preset_configs(config1: dict[str, Any], config2: dict[str, Any]) -> N
                     continue
 
                 handler_config.update(
-                    config1["tool"]["finecode"]["preset"]["action"][handler_name].get(
+                    config1["tool"]["finecode"]["action"][handler_name].get(
                         "config", {}
                     )
                 )
-                config1["tool"]["finecode"]["preset"]["action"][handler_name][
+                config1["tool"]["finecode"]["action"][handler_name][
                     "config"
                 ] = handler_config
 
             del config2["tool"]["finecode"]["action"]
 
     if new_actions_handlers_configs is not None:
-        if "action_handler" not in config1["tool"]["finecode"]["preset"]:
-            config1["tool"]["finecode"]["preset"]["action_handler"] = {}
+        if "action_handler" not in config1["tool"]["finecode"]:
+            config1["tool"]["finecode"]["action_handler"] = {}
 
         for handler_name, handler_info in new_actions_handlers_configs.items():
             if (
                 handler_name
-                not in config1["tool"]["finecode"]["preset"]["action_handler"]
+                not in config1["tool"]["finecode"]["action_handler"]
             ):
-                config1["tool"]["finecode"]["preset"]["action_handler"][
+                config1["tool"]["finecode"]["action_handler"][
                     handler_name
                 ] = {}
 
@@ -289,37 +281,14 @@ def _merge_preset_configs(config1: dict[str, Any], config2: dict[str, Any]) -> N
                 continue
 
             handler_config.update(
-                config1["tool"]["finecode"]["preset"]["action_handler"][
+                config1["tool"]["finecode"]["action_handler"][
                     handler_name
                 ].get("config", {})
             )
-            config1["tool"]["finecode"]["preset"]["action_handler"][handler_name][
+            config1["tool"]["finecode"]["action_handler"][handler_name][
                 "config"
             ] = handler_config
 
         del config2["tool"]["finecode"]["action_handler"]
 
-    try:
-        del config2["tool"]["finecode"]["preset"]
-    except KeyError:
-        # preset definition is optional
-        ...
     del config2["tool"]["finecode"]
-
-
-def _preset_config_to_project_config(preset_config: dict[str, Any]) -> dict[str, Any]:
-    # tool.finecode.preset -> tool.finecode
-    result = preset_config.copy()
-    if (
-        preset_config.get("tool", {}).get("finecode", {}).get("preset", None)
-        is not None
-    ):
-        if "tool" not in result:
-            result["tool"] = {}
-        if "finecode" not in result["tool"]:
-            result["tool"]["finecode"] = {}
-
-        result["tool"]["finecode"].update(preset_config["tool"]["finecode"]["preset"])
-        del result["tool"]["finecode"]["preset"]
-
-    return result

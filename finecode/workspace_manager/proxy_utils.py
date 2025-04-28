@@ -7,8 +7,7 @@ from typing import Any
 from loguru import logger
 
 from finecode.workspace_manager import context, domain, find_project
-from finecode.workspace_manager.runner import runner_client, runner_info
-from finecode.workspace_manager.server import global_state
+from finecode.workspace_manager.runner import runner_client, runner_info, manager as runner_manager
 
 
 class ActionRunFailed(Exception): ...
@@ -150,7 +149,7 @@ async def get_partial_results(
     result_list: AsyncList, partial_result_token: int | str
 ) -> None:
     try:
-        with global_state.partial_results.iterator() as iterator:
+        with runner_manager.partial_results.iterator() as iterator:
             async for partial_result in iterator:
                 if partial_result.token == partial_result_token:
                     result_list.append(partial_result.value)
@@ -214,6 +213,35 @@ async def find_action_project_and_run_with_partial_results(
         partial_result_token=partial_result_token,
         runner=runner,
     )
+
+
+def find_all_projects_with_action(action_name: str, ws_context: context.WorkspaceContext) -> list[Path]:
+    projects = ws_context.ws_projects
+    relevant_projects: dict[Path, domain.Project] = {
+        path: project
+        for path, project in projects.items()
+        if project.status != domain.ProjectStatus.NO_FINECODE
+    }
+
+    # exclude projects without lint action
+    for project_dir_path, project_def in relevant_projects.copy().items():
+        if project_def.status != domain.ProjectStatus.RUNNING:
+            # projects that are not running, have no actions. Files of those projects
+            # will be not processed because we don't know whether it has one of expected
+            # actions
+            continue
+
+        # all running projects have actions
+        assert project_def.actions is not None
+
+        try:
+            next(action for action in project_def.actions if action.name == action_name)
+        except StopIteration:
+            del relevant_projects[project_dir_path]
+            continue
+
+    relevant_projects_paths: list[Path] = list(relevant_projects.keys())
+    return relevant_projects_paths
 
 
 __all__ = [

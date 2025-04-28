@@ -11,10 +11,10 @@ dependencies = [
     "watchdog==4.0.*",
     "click==8.1.*",
     "pydantic==2.10.*",
-    "command_runner==1.7.*",
     "platformdirs==4.3.*",
     "pygls==2.0.0-a2",
     "finecode_extension_api @ git+ssh://git@github.com:finecode-dev/finecode.git#subdirectory=finecode_extension_api",
+    "ordered-set==4.1.*",
 ]
 
 
@@ -25,21 +25,14 @@ build-backend = "poetry.core.masonry.api"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^7.4.3"
-fine_python_aksem = { git = "git@github.com:Aksem/fine_python_aksem.git" }
-fine_python_recommended = { git = "git@github.com:finecode-dev/finecode.git", subdirectory = "presets/fine_python_recommended" }
+finecode_dev_common_preset = { path = "./finecode_dev_common_preset", develop = true }
 fine_python_import_linter = { git = "git@github.com:finecode-dev/finecode.git", subdirectory = "extensions/fine_python_import_linter" }
 anyio = "^4.4.0"
 debugpy = "^1.8.9"
 
 
 [tool.finecode]
-presets = [
-    { source = "fine_python_recommended" },
-    { source = "fine_python_aksem" },
-]
-
-[tool.finecode.action_handler.black.config]
-preview = true
+presets = [{ source = "finecode_dev_common_preset" }]
 
 [tool.importlinter]
 root_package = "finecode"
@@ -50,8 +43,8 @@ id = "wm-layered"
 name = "WM layered architecture"
 type = "layers"
 layers = [
-    "finecode.workspace_manager.server.lsp_server",
-    "finecode.workspace_manager.server.services",
+    "finecode.workspace_manager.lsp_server.lsp_server",
+    "finecode.workspace_manager.lsp_server.services",
     "finecode.workspace_manager.domain",
 ]
 
@@ -75,5 +68,5 @@ source_modules = ["finecode.workspace_manager"]
 forbidden_modules = ["lsprotocol"]
 ignore_imports = [
     "finecode.workspace_manager.runner.runner_client -> lsprotocol",
-    "finecode.workspace_manager.server.lsp_server -> lsprotocol",
+    "finecode.workspace_manager.lsp_server.lsp_server -> lsprotocol",
 ]

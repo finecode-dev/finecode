@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import asyncio
 import asyncio.subprocess
+import enum
 import json
 from typing import TYPE_CHECKING, Any
 
@@ -142,6 +143,11 @@ async def notify_initialized(runner: ExtensionRunnerInfo) -> None:
 type RunActionRawResult = dict[str, Any]
 
 
+class RunResultFormat(enum.Enum):
+    JSON = 'json'
+    STRING = 'string'
+
+
 async def run_action(
     runner: ExtensionRunnerInfo,
     action_name: str,
@@ -164,7 +170,13 @@ async def run_action(
         ),
         timeout=None,
     )
-    return json.loads(response.result)
+
+    if response.format == 'string':
+        return response.result
+    elif response.format == 'json':
+        return json.loads(response.result)
+    else:
+        raise Exception(f"Not support result format: {response.format}")
 
 
 async def reload_action(runner: ExtensionRunnerInfo, action_name: str) -> None:

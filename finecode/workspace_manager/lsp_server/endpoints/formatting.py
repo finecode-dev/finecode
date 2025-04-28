@@ -7,7 +7,7 @@ from lsprotocol import types
 
 from finecode import pygls_types_utils
 from finecode.workspace_manager import proxy_utils
-from finecode.workspace_manager.server import global_state
+from finecode.workspace_manager.lsp_server import global_state
 
 if TYPE_CHECKING:
     from pygls.lsp.server import LanguageServer

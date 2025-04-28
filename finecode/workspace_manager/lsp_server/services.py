@@ -2,10 +2,10 @@ from pathlib import Path
 
 from loguru import logger
 
-from finecode.workspace_manager import domain
+from finecode.workspace_manager import domain, user_messages
 from finecode.workspace_manager.config import read_configs
 from finecode.workspace_manager.runner import manager as runner_manager
-from finecode.workspace_manager.server import global_state, schemas, user_messages
+from finecode.workspace_manager.lsp_server import global_state, schemas
 
 
 class ActionNotFound(Exception): ...
@@ -87,46 +87,3 @@ async def handle_changed_ws_dirs(added: list[Path], removed: list[Path]) -> None
             )
 
     await runner_manager.update_runners(global_state.ws_context)
-
-
-async def restart_extension_runner(runner_working_dir_path: Path) -> None:
-    # TODO: reload config?
-    try:
-        runner = global_state.ws_context.ws_projects_extension_runners[
-            runner_working_dir_path
-        ]
-    except KeyError:
-        logger.error(f"Cannot find runner for {runner_working_dir_path}")
-        return
-
-    await runner_manager.stop_extension_runner(runner)
-    del global_state.ws_context.ws_projects_extension_runners[runner_working_dir_path]
-
-    new_runner = await runner_manager.start_extension_runner(
-        runner_dir=runner_working_dir_path, ws_context=global_state.ws_context
-    )
-    if new_runner is None:
-        logger.error("Extension runner didn't start")
-        return
-
-    global_state.ws_context.ws_projects_extension_runners[runner_working_dir_path] = (
-        new_runner
-    )
-    await runner_manager._init_runner(
-        new_runner,
-        global_state.ws_context.ws_projects[runner.working_dir_path],
-        global_state.ws_context,
-    )
-
-
-def on_shutdown():
-    running_runners = [
-        runner
-        for runner in global_state.ws_context.ws_projects_extension_runners.values()
-        if global_state.ws_context.ws_projects[runner.working_dir_path].status
-        == domain.ProjectStatus.RUNNING
-    ]
-    logger.info(f"Stop all {len(running_runners)} running extension runners")
-
-    for runner in running_runners:
-        runner_manager.stop_extension_runner_sync(runner=runner)
