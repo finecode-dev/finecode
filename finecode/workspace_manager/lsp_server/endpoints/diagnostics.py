@@ -320,12 +320,9 @@ async def workspace_diagnostic_with_full_result(exec_infos: list[LintActionExecI
     return types.WorkspaceDiagnosticReport(items=items)
 
 
-async def workspace_diagnostic(
-    ls: LanguageServer, params: types.WorkspaceDiagnosticParams
+async def _workspace_diagnostic(params: types.WorkspaceDiagnosticParams
 ) -> types.WorkspaceDiagnosticReport | None:
-    logger.trace(f"Workspace diagnostic requested: {params}")
-    await global_state.server_initialized.wait()
-
+    
     relevant_projects_paths: list[Path] = proxy_utils.find_all_projects_with_action(action_name='lint', ws_context=global_state.ws_context)
     exec_info_by_project_dir_path: dict[Path, LintActionExecInfo] = {}
     
@@ -372,3 +369,27 @@ async def workspace_diagnostic(
         )
     else:
         return await workspace_diagnostic_with_full_result(exec_infos=exec_infos)
+
+
+
+async def workspace_diagnostic(
+    ls: LanguageServer, params: types.WorkspaceDiagnosticParams
+) -> types.WorkspaceDiagnosticReport | None:
+    logger.trace(f"Workspace diagnostic requested: {params}")
+    await global_state.server_initialized.wait()
+
+    # catch all exceptions for 2 reasons:
+    # - after a few sequential errors vscode will stop requesting diagnostics until
+    # restart. Show user message instead
+    # - pygls will cut information about exception in logs and it will be hard to
+    #   understand it
+    try:
+        return await _workspace_diagnostic(params)
+    except Exception as exception:
+        # TODO: user message
+        logger.exception(exception)
+        # lsprotocol allows None as return value, but then vscode throws error
+        # 'cannot read items of null'. keep empty report instead
+        return types.WorkspaceDiagnosticReport(items=[])
+
+
