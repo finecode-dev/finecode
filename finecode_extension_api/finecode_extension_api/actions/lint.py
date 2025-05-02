@@ -2,7 +2,7 @@ import collections.abc
 import enum
 from pathlib import Path
 
-from finecode_extension_api import code_action
+from finecode_extension_api import code_action, textstyler
 
 
 class Position(code_action.BaseModel):
@@ -71,6 +71,33 @@ class LintRunResult(code_action.RunActionResult):
             if file_path_str not in self.messages:
                 self.messages[file_path_str] = []
             self.messages[file_path_str].extend(new_messages)
+
+    def to_text(self) -> str | textstyler.StyledText:
+        text: textstyler.StyledText = textstyler.StyledText()
+        for file_path_str, file_messages in self.messages.items():
+            if len(file_messages) > 0:
+                for message in file_messages:
+                    # TODO: relative file path?
+                    source_str = ''
+                    if message.source is not None:
+                        source_str = f' ({message.source})'
+                    text.append_styled(file_path_str, bold=True)
+                    text.append(f':{message.range.start.line}')
+                    text.append(f':{message.range.start.character}: ')
+                    text.append_styled(message.code, foreground=textstyler.Color.RED)
+                    text.append(f' {message.message}{source_str}\n')
+            else:
+                text.append_styled(file_path_str, bold=True)
+                text.append(f': OK\n')
+
+        return text
+
+    @property
+    def return_code(self) -> code_action.RunReturnCode:
+        for lint_messages in self.messages.values():
+            if len(lint_messages) > 0:
+                return code_action.RunReturnCode.ERROR
+        return code_action.RunReturnCode.SUCCESS
 
 
 type LintAction = code_action.Action[

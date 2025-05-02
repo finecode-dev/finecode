@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import collections.abc
+import enum
 from pathlib import Path
 from typing import Generic, Protocol, TypeVar
 
@@ -16,12 +17,21 @@ class ActionHandlerConfig(BaseModel): ...
 class RunActionPayload(BaseModel): ...
 
 
+class RunReturnCode(enum.IntEnum):
+    SUCCESS = 0
+    ERROR = 1
+
+
 class RunActionResult(BaseModel):
     def update(self, other: RunActionResult) -> None:
         raise NotImplementedError()
 
     def to_text(self) -> str:
         return str(self)
+    
+    @property
+    def return_code(self) -> RunReturnCode:
+        return RunReturnCode.SUCCESS
 
 
 RunPayloadType = TypeVar(

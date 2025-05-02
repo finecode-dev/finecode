@@ -312,13 +312,13 @@ async def run_action(
 
     action_name = splitted_action_id[1]
 
-    result = await wm_services.run_action(
+    response = await wm_services.run_action(
         action=action_name,
         params=request.params,
         project_def=project_def,
         ws_context=global_state.ws_context,
     )
-    return schemas.RunActionResponse(result=result)
+    return schemas.RunActionResponse(result=response.result)
 
 
 async def notify_changed_action_node(

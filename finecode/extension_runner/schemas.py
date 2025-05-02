@@ -49,6 +49,7 @@ class RunActionOptions(BaseSchema):
 
 @dataclass
 class RunActionResponse(BaseSchema):
+    return_code: int
     # result can be empty(=None) e.g. if it was sent as a list of partial results
     result: dict[str, Any] | None
-    format: Literal['json'] | Literal['string'] = Literal['json']
+    format: Literal['json'] | Literal['string'] | Literal['styled_text_json'] = Literal['json']

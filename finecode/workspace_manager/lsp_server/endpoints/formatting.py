@@ -35,7 +35,7 @@ async def format_document(ls: LanguageServer, params: types.DocumentFormattingPa
     if response is None:
         return []
 
-    response_for_file = response.get("result_by_file_path", {}).get(
+    response_for_file = response.result.get("result_by_file_path", {}).get(
         str(file_path), None
     )
     if response_for_file is None:
@@ -75,7 +75,7 @@ async def format_document(ls: LanguageServer, params: types.DocumentFormattingPa
     #             character=len(doc.lines[-1])
     #         )
 
-    return response
+    return []
 
 
 async def format_range(ls: LanguageServer, params: types.DocumentRangeFormattingParams):

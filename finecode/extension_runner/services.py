@@ -16,7 +16,7 @@ from finecode.extension_runner import (
     partial_result_sender as partial_result_sender_module,
 )
 from finecode.extension_runner import project_dirs, run_utils, schemas
-from finecode_extension_api import code_action
+from finecode_extension_api import code_action, textstyler
 
 
 class ActionFailedException(Exception): ...
@@ -436,11 +436,21 @@ async def run_action(
                             action_result.update(handler_result)
 
     serialized_result: dict[str, Any] | str | None = None
+    result_format = 'string'
+    run_return_code = code_action.RunReturnCode.SUCCESS
     if isinstance(action_result, code_action.RunActionResult):
+        run_return_code = action_result.return_code
         if options.result_format == 'json':
             serialized_result = action_result.model_dump(mode="json")
+            result_format = 'json'
         elif options.result_format == 'string':
-            serialized_result = action_result.to_text()
+            result_text = action_result.to_text()
+            if isinstance(result_text, textstyler.StyledText):
+                serialized_result = result_text.to_json()
+                result_format = 'styled_text_json'
+            else:
+                serialized_result = result_text
+                result_format = 'string'
         else:
             raise ActionFailedException(f"Unsupported result format: {options.result_format}")
     elif action_result is not None:
@@ -456,7 +466,7 @@ async def run_action(
     logger.trace(
         f"R{run_id} | Run action end '{request.action_name}', duration: {duration}ms"
     )
-    return schemas.RunActionResponse(result=serialized_result, format=options.result_format)
+    return schemas.RunActionResponse(result=serialized_result, format=result_format, return_code=run_return_code.value)
 
 
 async def execute_action_handler(

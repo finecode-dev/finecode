@@ -76,7 +76,7 @@ def start_api(
 def run(ctx) -> None:
     args: list[str] = ctx.args
     actions_to_run: list[str] = []
-    project: str | None = None
+    projects: list[str] | None = None
     workdir_path: pathlib.Path = pathlib.Path(os.getcwd())
     processed_args_count: int = 0
     concurrently: bool = False
@@ -93,7 +93,10 @@ def run(ctx) -> None:
             else:
                 workdir_path = provided_workdir_path
         elif arg.startswith('--project'):
+            if projects is None:
+                projects = []
             project = arg.removeprefix('--project=')
+            projects.append(project)
         elif arg == '--concurrently':
             concurrently = True
         elif arg == '--trace':
@@ -132,8 +135,9 @@ def run(ctx) -> None:
         processed_args_count += 1
 
     try:
-        output = asyncio.run(run_cmd.run_actions(workdir_path, project, actions_to_run, action_payload, concurrently))
+        output, return_code = asyncio.run(run_cmd.run_actions(workdir_path, projects, actions_to_run, action_payload, concurrently))
         click.echo(output)
+        sys.exit(return_code)
     except run_cmd.RunFailed as exception:
         click.echo(exception.args[0], err=True)
         sys.exit(1)

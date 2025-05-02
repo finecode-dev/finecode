@@ -51,14 +51,15 @@ def on_shutdown(ws_context: context.WorkspaceContext):
 
 
 RunResultFormat = runner_client.RunResultFormat
+RunActionResponse = runner_client.RunActionResponse
 
 async def run_action(
     action_name: str,
     params: dict[str, typing.Any],
     project_def: domain.Project,
     ws_context: context.WorkspaceContext,
-    result_format: runner_client.RunResultFormat = runner_client.RunResultFormat.JSON,
-) -> dict[str, typing.Any] | str:
+    result_format: RunResultFormat = RunResultFormat.JSON,
+) -> RunActionResponse:
     formatted_params = str(params)
     if len(formatted_params) > 100:
         formatted_params = f"{formatted_params[:100]}..."
@@ -69,13 +70,13 @@ async def run_action(
             f"Extension runner is not running in {project_def.dir_path}."
             " Please check logs."
         )
-        return {}
+        return RunActionResponse(result={}, return_code=1)
 
     payload = payload_preprocessor.preprocess_for_project(action_name=action_name, payload=params, project_dir_path=project_def.dir_path)
 
     # extension runner is running for this project, send command to it
     try:
-        result = await runner_client.run_action(
+        response = await runner_client.run_action(
             runner=ws_context.ws_projects_extension_runners[project_def.dir_path],
             action_name=action_name,
             params=payload,
@@ -85,8 +86,8 @@ async def run_action(
         error_message = error.args[0] if len(error.args) > 0 else ""
         await user_messages.error(f"Action {action_name} failed: {error_message}")
         if result_format == runner_client.RunResultFormat.JSON:
-            return {}
+            return RunActionResponse(result={}, return_code=1)
         else:
-            return ""
+            return RunActionResponse(result='', return_code=1)
 
-    return result
+    return response

@@ -8,6 +8,7 @@ import asyncio.subprocess
 import enum
 import json
 from typing import TYPE_CHECKING, Any
+import typing
 
 from loguru import logger
 from lsprotocol import types
@@ -139,8 +140,12 @@ async def notify_initialized(runner: ExtensionRunnerInfo) -> None:
     )
 
 
-# JSON object
-type RunActionRawResult = dict[str, Any]
+# JSON object or text
+type RunActionRawResult = dict[str, Any] | str
+
+class RunActionResponse(typing.NamedTuple):
+    result: RunActionRawResult
+    return_code: int
 
 
 class RunResultFormat(enum.Enum):
@@ -153,7 +158,7 @@ async def run_action(
     action_name: str,
     params: dict[str, Any],
     options: dict[str, Any] | None = None
-) -> RunActionRawResult:
+) -> RunActionResponse:
     if not runner.initialized_event.is_set():
         await runner.initialized_event.wait()
 
@@ -171,12 +176,16 @@ async def run_action(
         timeout=None,
     )
 
+    return_code = response.return_code
+    raw_result = ''
     if response.format == 'string':
-        return response.result
-    elif response.format == 'json':
-        return json.loads(response.result)
+        raw_result = response.result
+    elif response.format == 'json' or response.format == 'styled_text_json':
+        raw_result = json.loads(response.result)
     else:
         raise Exception(f"Not support result format: {response.format}")
+
+    return RunActionResponse(result=raw_result, return_code=return_code)
 
 
 async def reload_action(runner: ExtensionRunnerInfo, action_name: str) -> None:

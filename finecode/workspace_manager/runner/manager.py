@@ -24,6 +24,10 @@ partial_results: iterable_subscribe.IterableSubscribe = (
 )
 
 
+class RunnerFailedToStart(Exception):
+    ...
+
+
 async def notify_project_changed(project: domain.Project) -> None:
     if project_changed_callback is not None:
         await project_changed_callback(project)
@@ -171,6 +175,11 @@ async def kill_extension_runner(runner: runner_info.ExtensionRunnerInfo) -> None
 
 
 async def update_runners(ws_context: context.WorkspaceContext) -> None:
+    # starts runners for new(=which don't have runner yet) projects in `ws_context`
+    # and stops runners for projects which are not in `ws_context` anymore
+    #
+    # during initialization of new runners it also reads their configurations and
+    # actions
     extension_runners = list(ws_context.ws_projects_extension_runners.values())
     new_dirs, deleted_dirs = dirs_utils.find_changed_dirs(
         [*ws_context.ws_projects.keys()],
@@ -202,7 +211,7 @@ async def update_runners(ws_context: context.WorkspaceContext) -> None:
     except ExceptionGroup as eg:
         for exception in eg.exceptions:
             logger.exception(exception)
-        raise Exception("Failed to start runners")
+        raise RunnerFailedToStart("Failed to start runner")
 
     extension_runners += [runner.result() for runner in new_runners_tasks if runner is not None]
 

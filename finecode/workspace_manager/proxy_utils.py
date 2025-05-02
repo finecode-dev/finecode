@@ -50,7 +50,7 @@ async def find_action_project_and_run(
     action_name: str,
     params: dict[str, Any],
     ws_context: context.WorkspaceContext,
-) -> Any | None:
+) -> runner_client.RunActionResponse:
     runner = find_action_project_runner(
         file_path=file_path, action_name=action_name, ws_context=ws_context
     )
@@ -70,7 +70,7 @@ async def run_action_in_runner(
     params: dict[str, Any],
     runner: runner_info.ExtensionRunnerInfo,
     options: dict[str, Any] | None = None,
-) -> runner_client.RunActionRawResult:
+) -> runner_client.RunActionResponse:
     try:
         response = await runner_client.run_action(
             runner=runner, action_name=action_name, params=params, options=options
@@ -223,7 +223,7 @@ def find_all_projects_with_action(action_name: str, ws_context: context.Workspac
         if project.status != domain.ProjectStatus.NO_FINECODE
     }
 
-    # exclude projects without lint action
+    # exclude not running projects and projects without requested action
     for project_dir_path, project_def in relevant_projects.copy().items():
         if project_def.status != domain.ProjectStatus.RUNNING:
             # projects that are not running, have no actions. Files of those projects

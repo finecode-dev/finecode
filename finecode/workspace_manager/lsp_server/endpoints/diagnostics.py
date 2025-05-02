@@ -75,7 +75,7 @@ async def document_diagnostic_with_full_result(
     if response is None:
         return None
 
-    lint_result: lint_action.LintRunResult = lint_action.LintRunResult(**response)
+    lint_result: lint_action.LintRunResult = lint_action.LintRunResult(**response.result)
 
     try:
         requested_file_messages = lint_result.messages.pop(str(file_path))
@@ -297,7 +297,7 @@ async def workspace_diagnostic_with_full_result(exec_infos: list[LintActionExecI
     except ExceptionGroup as eg:
         logger.error(f"Error in workspace diagnostic: {eg.exceptions}")
 
-    responses = [task.result() for task in send_tasks]
+    responses = [task.result().result for task in send_tasks]
 
     items: list[types.WorkspaceDocumentDiagnosticReport] = []
     for response in responses:
