@@ -24,8 +24,7 @@ partial_results: iterable_subscribe.IterableSubscribe = (
 )
 
 
-class RunnerFailedToStart(Exception):
-    ...
+class RunnerFailedToStart(Exception): ...
 
 
 async def notify_project_changed(project: domain.Project) -> None:
@@ -106,7 +105,9 @@ async def start_extension_runner(
     runner_info_instance.client.server_exit_callback = on_exit
 
     if get_document is not None:
-        register_get_document_feature = runner_info_instance.client.feature("documents/get")
+        register_get_document_feature = runner_info_instance.client.feature(
+            "documents/get"
+        )
         register_get_document_feature(get_document)
 
     register_workspace_apply_edit = runner_info_instance.client.feature(
@@ -213,7 +214,9 @@ async def update_runners(ws_context: context.WorkspaceContext) -> None:
             logger.exception(exception)
         raise RunnerFailedToStart("Failed to start runner")
 
-    extension_runners += [runner.result() for runner in new_runners_tasks if runner is not None]
+    extension_runners += [
+        runner.result() for runner in new_runners_tasks if runner is not None
+    ]
 
     ws_context.ws_projects_extension_runners = {
         runner.working_dir_path: runner for runner in extension_runners

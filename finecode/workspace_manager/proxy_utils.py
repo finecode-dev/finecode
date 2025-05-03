@@ -7,7 +7,8 @@ from typing import Any
 from loguru import logger
 
 from finecode.workspace_manager import context, domain, find_project
-from finecode.workspace_manager.runner import runner_client, runner_info, manager as runner_manager
+from finecode.workspace_manager.runner import manager as runner_manager
+from finecode.workspace_manager.runner import runner_client, runner_info
 
 
 class ActionRunFailed(Exception): ...
@@ -215,7 +216,9 @@ async def find_action_project_and_run_with_partial_results(
     )
 
 
-def find_all_projects_with_action(action_name: str, ws_context: context.WorkspaceContext) -> list[Path]:
+def find_all_projects_with_action(
+    action_name: str, ws_context: context.WorkspaceContext
+) -> list[Path]:
     projects = ws_context.ws_projects
     relevant_projects: dict[Path, domain.Project] = {
         path: project

@@ -2,12 +2,13 @@ import asyncio
 import os
 import pathlib
 import sys
+
 import click
 from loguru import logger
 
+import finecode.workspace_manager.main as workspace_manager
 from finecode import communication_utils
 from finecode.workspace_manager import logger_utils
-import finecode.workspace_manager.main as workspace_manager
 from finecode.workspace_manager.cli_app import run as run_cmd
 
 
@@ -81,27 +82,29 @@ def run(ctx) -> None:
     processed_args_count: int = 0
     concurrently: bool = False
     trace: bool = False
-    
+
     # finecode run parameters
     for arg in args:
-        if arg.startswith('--workdir'):
-            provided_workdir = arg.removeprefix('--workdir=')
+        if arg.startswith("--workdir"):
+            provided_workdir = arg.removeprefix("--workdir=")
             provided_workdir_path = pathlib.Path(provided_workdir).resolve()
             if not provided_workdir_path.exists():
-                click.echo(f"Provided workdir '{provided_workdir}' doesn't exist", err=True)
+                click.echo(
+                    f"Provided workdir '{provided_workdir}' doesn't exist", err=True
+                )
                 sys.exit(1)
             else:
                 workdir_path = provided_workdir_path
-        elif arg.startswith('--project'):
+        elif arg.startswith("--project"):
             if projects is None:
                 projects = []
-            project = arg.removeprefix('--project=')
+            project = arg.removeprefix("--project=")
             projects.append(project)
-        elif arg == '--concurrently':
+        elif arg == "--concurrently":
             concurrently = True
-        elif arg == '--trace':
+        elif arg == "--trace":
             trace = True
-        elif not arg.startswith('--'):
+        elif not arg.startswith("--"):
             break
         processed_args_count += 1
 
@@ -109,33 +112,43 @@ def run(ctx) -> None:
 
     # actions
     for arg in args[processed_args_count:]:
-        if not arg.startswith('--'):
+        if not arg.startswith("--"):
             actions_to_run.append(arg)
         else:
             break
         processed_args_count += 1
-    
+
     if len(actions_to_run) == 0:
         click.echo("No actions to run", err=True)
         sys.exit(1)
-    
+
     # action payload
     action_payload: dict[str, str] = {}
     for arg in args[processed_args_count:]:
-        if not arg.startswith('--'):
-            click.echo(f"All action parameters should be named and have form '--<name>=<value>'. Wrong parameter: '{arg}'", err=True)
+        if not arg.startswith("--"):
+            click.echo(
+                f"All action parameters should be named and have form '--<name>=<value>'. Wrong parameter: '{arg}'",
+                err=True,
+            )
             sys.exit(1)
         else:
-            if '=' not in arg:
-                click.echo(f"All action parameters should be named and have form '--<name>=<value>'. Wrong parameter: '{arg}'", err=True)
+            if "=" not in arg:
+                click.echo(
+                    f"All action parameters should be named and have form '--<name>=<value>'. Wrong parameter: '{arg}'",
+                    err=True,
+                )
                 sys.exit(1)
             else:
-                arg_name, arg_value = arg[2:].split('=')
+                arg_name, arg_value = arg[2:].split("=")
                 action_payload[arg_name] = arg_value
         processed_args_count += 1
 
     try:
-        output, return_code = asyncio.run(run_cmd.run_actions(workdir_path, projects, actions_to_run, action_payload, concurrently))
+        output, return_code = asyncio.run(
+            run_cmd.run_actions(
+                workdir_path, projects, actions_to_run, action_payload, concurrently
+            )
+        )
         click.echo(output)
         sys.exit(return_code)
     except run_cmd.RunFailed as exception:

@@ -2,13 +2,11 @@ from pathlib import Path
 from typing import Any, NamedTuple
 
 from loguru import logger
-from pydantic import ValidationError
 from tomlkit import loads as toml_loads
 
-from finecode.workspace_manager import context, domain
+from finecode.workspace_manager import context, domain, user_messages
 from finecode.workspace_manager.config import config_models
 from finecode.workspace_manager.runner import runner_client, runner_info
-from finecode.workspace_manager import user_messages
 
 
 async def read_projects_in_dir(
@@ -118,7 +116,7 @@ def read_preset_config(
         presets = preset_toml["tool"]["finecode"]["presets"]
     except KeyError:
         presets = []
-    
+
     preset_config = config_models.PresetDefinition(extends=presets)
 
     logger.trace(f"Reading preset config finished: {preset_id}")
@@ -206,9 +204,7 @@ def _merge_projects_configs(config1: dict[str, Any], config2: dict[str, Any]) ->
 def _merge_preset_configs(config1: dict[str, Any], config2: dict[str, Any]) -> None:
     # merge config2 in config1 (in-place)
     # config1 is not overwritten by config2
-    new_views = (
-        config2.get("tool", {}).get("finecode", {}).get("views", None)
-    )
+    new_views = config2.get("tool", {}).get("finecode", {}).get("views", None)
     new_actions_defs_and_configs = (
         config2.get("tool", {}).get("finecode", {}).get("action", None)
     )
@@ -242,9 +238,7 @@ def _merge_preset_configs(config1: dict[str, Any], config2: dict[str, Any]) -> N
                 action_def = {
                     key: value for key, value in handler_info.items() if key != "config"
                 }
-                config1["tool"]["finecode"]["action"][handler_name].update(
-                    action_def
-                )
+                config1["tool"]["finecode"]["action"][handler_name].update(action_def)
 
                 try:
                     handler_config = handler_info["config"]
@@ -267,13 +261,8 @@ def _merge_preset_configs(config1: dict[str, Any], config2: dict[str, Any]) -> N
             config1["tool"]["finecode"]["action_handler"] = {}
 
         for handler_name, handler_info in new_actions_handlers_configs.items():
-            if (
-                handler_name
-                not in config1["tool"]["finecode"]["action_handler"]
-            ):
-                config1["tool"]["finecode"]["action_handler"][
-                    handler_name
-                ] = {}
+            if handler_name not in config1["tool"]["finecode"]["action_handler"]:
+                config1["tool"]["finecode"]["action_handler"][handler_name] = {}
 
             try:
                 handler_config = handler_info["config"]
@@ -281,9 +270,9 @@ def _merge_preset_configs(config1: dict[str, Any], config2: dict[str, Any]) -> N
                 continue
 
             handler_config.update(
-                config1["tool"]["finecode"]["action_handler"][
-                    handler_name
-                ].get("config", {})
+                config1["tool"]["finecode"]["action_handler"][handler_name].get(
+                    "config", {}
+                )
             )
             config1["tool"]["finecode"]["action_handler"][handler_name][
                 "config"

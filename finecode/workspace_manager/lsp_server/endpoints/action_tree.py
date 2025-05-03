@@ -4,11 +4,12 @@ from pathlib import Path
 from loguru import logger
 from pygls.lsp.server import LanguageServer
 
+from finecode.workspace_manager import context, domain
 from finecode.workspace_manager import services as wm_services
-from finecode.workspace_manager import context, domain, user_messages
-from finecode.workspace_manager.runner import runner_client
+from finecode.workspace_manager import user_messages
 from finecode.workspace_manager.lsp_server import global_state, schemas
 from finecode.workspace_manager.lsp_server.services import ActionNotFound, InternalError
+from finecode.workspace_manager.runner import runner_client
 
 
 async def list_actions(ls: LanguageServer, params):
@@ -313,7 +314,7 @@ async def run_action(
     action_name = splitted_action_id[1]
 
     response = await wm_services.run_action(
-        action=action_name,
+        action_name=action_name,
         params=request.params,
         project_def=project_def,
         ws_context=global_state.ws_context,

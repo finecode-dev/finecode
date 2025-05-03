@@ -82,10 +82,7 @@ def deserialize_pygls_object(pygls_object) -> dict[str, Any] | list[Any]:
         deserialized = []
         for index in range(len(pygls_object)):
             item = getattr(pygls_object, f"_{index}")
-            if (
-                hasattr(item, "__module__")
-                and item.__module__ == "pygls.protocol"
-            ):
+            if hasattr(item, "__module__") and item.__module__ == "pygls.protocol":
                 deserialized_value = deserialize_pygls_object(item)
             else:
                 deserialized_value = item

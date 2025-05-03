@@ -4,8 +4,8 @@ from loguru import logger
 
 from finecode.workspace_manager import domain, user_messages
 from finecode.workspace_manager.config import read_configs
-from finecode.workspace_manager.runner import manager as runner_manager
 from finecode.workspace_manager.lsp_server import global_state, schemas
+from finecode.workspace_manager.runner import manager as runner_manager
 
 
 class ActionNotFound(Exception): ...

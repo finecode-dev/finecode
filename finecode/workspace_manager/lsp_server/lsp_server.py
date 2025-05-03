@@ -15,7 +15,9 @@ from finecode.workspace_manager.lsp_server.endpoints import (
 from finecode.workspace_manager.lsp_server.endpoints import (
     code_actions as code_actions_endpoints,
 )
-from finecode.workspace_manager.lsp_server.endpoints import code_lens as code_lens_endpoints
+from finecode.workspace_manager.lsp_server.endpoints import (
+    code_lens as code_lens_endpoints,
+)
 from finecode.workspace_manager.lsp_server.endpoints import (
     diagnostics as diagnostics_endpoints,
 )
@@ -268,8 +270,10 @@ async def restart_extension_runner(ls: LanguageServer, params):
     runner_working_dir_str = params_dict["projectPath"]
     runner_working_dir_path = Path(runner_working_dir_str)
 
-    await wm_services.restart_extension_runner(runner_working_dir_path, global_state.ws_context)
-  
+    await wm_services.restart_extension_runner(
+        runner_working_dir_path, global_state.ws_context
+    )
+
 
 def send_user_message_notification(
     ls: LanguageServer, message: str, message_type: str

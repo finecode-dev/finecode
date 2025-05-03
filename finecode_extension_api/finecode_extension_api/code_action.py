@@ -28,7 +28,7 @@ class RunActionResult(BaseModel):
 
     def to_text(self) -> str:
         return str(self)
-    
+
     @property
     def return_code(self) -> RunReturnCode:
         return RunReturnCode.SUCCESS

@@ -4,8 +4,8 @@ from pathlib import Path
 import click
 from loguru import logger
 
-from finecode.extension_runner import global_state
 import finecode.extension_runner.start as runner_start
+from finecode.extension_runner import global_state
 
 
 @click.command()

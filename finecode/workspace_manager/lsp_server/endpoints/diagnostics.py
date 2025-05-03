@@ -11,8 +11,8 @@ from lsprotocol import types
 
 from finecode import pygls_types_utils
 from finecode.workspace_manager import domain, project_analyzer, proxy_utils
-from finecode.workspace_manager.runner import runner_client
 from finecode.workspace_manager.lsp_server import global_state
+from finecode.workspace_manager.runner import runner_client
 from finecode_extension_api.actions import lint as lint_action
 
 if TYPE_CHECKING:
@@ -75,7 +75,9 @@ async def document_diagnostic_with_full_result(
     if response is None:
         return None
 
-    lint_result: lint_action.LintRunResult = lint_action.LintRunResult(**response.result)
+    lint_result: lint_action.LintRunResult = lint_action.LintRunResult(
+        **response.result
+    )
 
     try:
         requested_file_messages = lint_result.messages.pop(str(file_path))
@@ -320,18 +322,21 @@ async def workspace_diagnostic_with_full_result(exec_infos: list[LintActionExecI
     return types.WorkspaceDiagnosticReport(items=items)
 
 
-async def _workspace_diagnostic(params: types.WorkspaceDiagnosticParams
+async def _workspace_diagnostic(
+    params: types.WorkspaceDiagnosticParams,
 ) -> types.WorkspaceDiagnosticReport | None:
-    
-    relevant_projects_paths: list[Path] = proxy_utils.find_all_projects_with_action(action_name='lint', ws_context=global_state.ws_context)
+
+    relevant_projects_paths: list[Path] = proxy_utils.find_all_projects_with_action(
+        action_name="lint", ws_context=global_state.ws_context
+    )
     exec_info_by_project_dir_path: dict[Path, LintActionExecInfo] = {}
-    
+
     for project_dir_path in relevant_projects_paths:
         runner = global_state.ws_context.ws_projects_extension_runners[project_dir_path]
         exec_info_by_project_dir_path[project_dir_path] = LintActionExecInfo(
-            runner=runner, action_name='lint'
+            runner=runner, action_name="lint"
         )
-    
+
     # find which runner is responsible for which files
     # currently FineCode supports only raw python files, find them in each ws project
     # exclude projects without finecode
@@ -371,7 +376,6 @@ async def _workspace_diagnostic(params: types.WorkspaceDiagnosticParams
         return await workspace_diagnostic_with_full_result(exec_infos=exec_infos)
 
 
-
 async def workspace_diagnostic(
     ls: LanguageServer, params: types.WorkspaceDiagnosticParams
 ) -> types.WorkspaceDiagnosticReport | None:
@@ -391,5 +395,3 @@ async def workspace_diagnostic(
         # lsprotocol allows None as return value, but then vscode throws error
         # 'cannot read items of null'. keep empty report instead
         return types.WorkspaceDiagnosticReport(items=[])
-
-

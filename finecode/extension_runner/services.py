@@ -169,7 +169,7 @@ async def run_subresult_coros_concurrently(
     partial_result_token: int | str,
     partial_result_sender: partial_result_sender_module.PartialResultSender,
     action_name: str,
-    run_id: int
+    run_id: int,
 ) -> code_action.RunActionResult | None:
     coros_tasks: list[asyncio.Task] = []
     try:
@@ -178,10 +178,12 @@ async def run_subresult_coros_concurrently(
                 coro_task = tg.create_task(coro)
                 coros_tasks.append(coro_task)
     except ExceptionGroup as eg:
-        logger.error(f'R{run_id} | {eg}')
+        logger.error(f"R{run_id} | {eg}")
         for exc in eg.exceptions:
             logger.exception(exc)
-        raise ActionFailedException(f"Concurrent running action handlers of '{action_name}' failed(Run {run_id}). See logs for more details")
+        raise ActionFailedException(
+            f"Concurrent running action handlers of '{action_name}' failed(Run {run_id}). See logs for more details"
+        )
 
     action_subresult: code_action.RunActionResult | None = None
     for coro_task in coros_tasks:
@@ -207,7 +209,7 @@ async def run_subresult_coros_sequentially(
     partial_result_token: int | str,
     partial_result_sender: partial_result_sender_module.PartialResultSender,
     action_name: str,
-    run_id: int
+    run_id: int,
 ) -> code_action.RunActionResult | None:
     action_subresult: code_action.RunActionResult | None = None
     for coro in coros:
@@ -215,7 +217,9 @@ async def run_subresult_coros_sequentially(
             coro_result = await coro
         except Exception as e:
             logger.exception(e)
-            raise ActionFailedException(f"Running action handlers of '{action_name}' failed(Run {run_id}): {e}")
+            raise ActionFailedException(
+                f"Running action handlers of '{action_name}' failed(Run {run_id}): {e}"
+            )
 
         if coro_result is not None:
             if action_subresult is None:
@@ -245,7 +249,9 @@ async def run_action(
     # TODO: check whether config is set: this will be solved by passing initial
     # configuration as payload of initialize
     if global_state.runner_context is None:
-        raise ActionFailedException(f"Run of action failed because extension runner is not initialized yet")
+        raise ActionFailedException(
+            "Run of action failed because extension runner is not initialized yet"
+        )
 
     start_time = time.time_ns()
     project_def = global_state.runner_context.project
@@ -254,7 +260,9 @@ async def run_action(
         action = project_def.actions[request.action_name]
     except KeyError:
         logger.error(f"R{run_id} | Action {request.action_name} not found")
-        raise ActionFailedException(f"R{run_id} | Action {request.action_name} not found")
+        raise ActionFailedException(
+            f"R{run_id} | Action {request.action_name} not found"
+        )
 
     # design decisions:
     # - keep payload unchanged between all subaction runs.
@@ -341,12 +349,10 @@ async def run_action(
             try:
                 async with asyncio.TaskGroup() as tg:
                     for part in parts:
-                        part_coros = run_context.partial_result_scheduler.coroutines_by_key[
-                            part
-                        ]
-                        del run_context.partial_result_scheduler.coroutines_by_key[
-                            part
-                        ]
+                        part_coros = (
+                            run_context.partial_result_scheduler.coroutines_by_key[part]
+                        )
+                        del run_context.partial_result_scheduler.coroutines_by_key[part]
                         if execute_handlers_concurrently:
                             coro = run_subresult_coros_concurrently(
                                 part_coros,
@@ -354,7 +360,7 @@ async def run_action(
                                 partial_result_token,
                                 partial_result_sender,
                                 action.name,
-                                run_id
+                                run_id,
                             )
                         else:
                             coro = run_subresult_coros_sequentially(
@@ -363,7 +369,7 @@ async def run_action(
                                 partial_result_token,
                                 partial_result_sender,
                                 action.name,
-                                run_id
+                                run_id,
                             )
                         subresult_task = tg.create_task(coro)
                         subresults_tasks.append(subresult_task)
@@ -371,7 +377,10 @@ async def run_action(
                 logger.error(eg)
                 for exc in eg.exceptions:
                     logger.exception(exc)
-                raise ActionFailedException(f"Running action handlers of '{action.name}' failed(Run {run_id}). See ER logs for more details")
+                raise ActionFailedException(
+                    f"Running action handlers of '{action.name}' failed(Run {run_id})."
+                    " See ER logs for more details"
+                )
 
             if send_partial_results:
                 # all subresults are ready
@@ -408,7 +417,10 @@ async def run_action(
                     logger.error(eg)
                     for exc in eg.exceptions:
                         logger.exception(exc)
-                    raise ActionFailedException(f"Running action handlers of '{action.name}' failed(Run {run_id}). See ER logs for more details")
+                    raise ActionFailedException(
+                        f"Running action handlers of '{action.name}' failed"
+                        f"(Run {run_id}). See ER logs for more details"
+                    )
 
                 for handler_task in handlers_tasks:
                     coro_result = handler_task.result()
@@ -436,23 +448,25 @@ async def run_action(
                             action_result.update(handler_result)
 
     serialized_result: dict[str, Any] | str | None = None
-    result_format = 'string'
+    result_format = "string"
     run_return_code = code_action.RunReturnCode.SUCCESS
     if isinstance(action_result, code_action.RunActionResult):
         run_return_code = action_result.return_code
-        if options.result_format == 'json':
+        if options.result_format == "json":
             serialized_result = action_result.model_dump(mode="json")
-            result_format = 'json'
-        elif options.result_format == 'string':
+            result_format = "json"
+        elif options.result_format == "string":
             result_text = action_result.to_text()
             if isinstance(result_text, textstyler.StyledText):
                 serialized_result = result_text.to_json()
-                result_format = 'styled_text_json'
+                result_format = "styled_text_json"
             else:
                 serialized_result = result_text
-                result_format = 'string'
+                result_format = "string"
         else:
-            raise ActionFailedException(f"Unsupported result format: {options.result_format}")
+            raise ActionFailedException(
+                f"Unsupported result format: {options.result_format}"
+            )
     elif action_result is not None:
         logger.error(
             f"R{run_id} | Unexpected result type: {type(action_result).__name__}"
@@ -466,7 +480,11 @@ async def run_action(
     logger.trace(
         f"R{run_id} | Run action end '{request.action_name}', duration: {duration}ms"
     )
-    return schemas.RunActionResponse(result=serialized_result, format=result_format, return_code=run_return_code.value)
+    return schemas.RunActionResponse(
+        result=serialized_result,
+        format=result_format,
+        return_code=run_return_code.value,
+    )
 
 
 async def execute_action_handler(
@@ -585,7 +603,9 @@ async def execute_action_handler(
             execution_result = call_result
     except Exception as e:
         logger.exception(e)
-        raise ActionFailedException(f"Running action handler '{handler.name}' failed(Run {run_id}): {e}")
+        raise ActionFailedException(
+            f"Running action handler '{handler.name}' failed(Run {run_id}): {e}"
+        )
 
     end_time = time.time_ns()
     duration = (end_time - start_time) / 1_000_000

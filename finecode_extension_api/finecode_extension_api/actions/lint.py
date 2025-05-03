@@ -78,17 +78,17 @@ class LintRunResult(code_action.RunActionResult):
             if len(file_messages) > 0:
                 for message in file_messages:
                     # TODO: relative file path?
-                    source_str = ''
+                    source_str = ""
                     if message.source is not None:
-                        source_str = f' ({message.source})'
+                        source_str = f" ({message.source})"
                     text.append_styled(file_path_str, bold=True)
-                    text.append(f':{message.range.start.line}')
-                    text.append(f':{message.range.start.character}: ')
+                    text.append(f":{message.range.start.line}")
+                    text.append(f":{message.range.start.character}: ")
                     text.append_styled(message.code, foreground=textstyler.Color.RED)
-                    text.append(f' {message.message}{source_str}\n')
+                    text.append(f" {message.message}{source_str}\n")
             else:
                 text.append_styled(file_path_str, bold=True)
-                text.append(f': OK\n')
+                text.append(": OK\n")
 
         return text
 
