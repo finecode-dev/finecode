@@ -45,6 +45,10 @@ jobs:
           poetry config system-git-client true
 
           poetry install
+
+          pushd tests/list_ws/backend
+          poetry install
+          popd
         shell: bash
 
       - name: Lint
