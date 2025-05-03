@@ -44,6 +44,10 @@ jobs:
           # to dependencies, which we use
           poetry config system-git-client true
 
+          # we access only public repositories, use https instead to avoid set up of
+          # ssh key
+          git config --global url."https://github".insteadOf "git://github"
+
           poetry install
         shell: bash
 
