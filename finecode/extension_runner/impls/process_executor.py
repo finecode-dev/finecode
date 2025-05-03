@@ -4,8 +4,8 @@ import concurrent.futures
 import contextlib
 import functools
 import multiprocessing as mp
-import typing
 import sys
+import typing
 
 from loguru import logger
 
@@ -37,7 +37,7 @@ class ProcessExecutor(iprocessexecutor.IProcessExecutor):
             raise Exception("Process Executor is not activated")
 
         if self._py_process_executor is None:
-            if sys.version_info < (3, 14, 0) and sys.platform == 'linux':
+            if sys.version_info < (3, 14, 0) and sys.platform == "linux":
                 # forkserver is default on linux in Python 3.14+, use the same also
                 # with older versions
                 mp_context = mp.get_context("forkserver")

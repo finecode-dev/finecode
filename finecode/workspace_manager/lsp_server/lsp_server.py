@@ -7,24 +7,27 @@ from loguru import logger
 from lsprotocol import types
 from pygls.lsp.server import LanguageServer
 
-from finecode.workspace_manager.server import global_state, schemas, services
-from finecode.workspace_manager.server.endpoints import (
+from finecode.workspace_manager import services as wm_services
+from finecode.workspace_manager.lsp_server import global_state, schemas, services
+from finecode.workspace_manager.lsp_server.endpoints import (
     action_tree as action_tree_endpoints,
 )
-from finecode.workspace_manager.server.endpoints import (
+from finecode.workspace_manager.lsp_server.endpoints import (
     code_actions as code_actions_endpoints,
 )
-from finecode.workspace_manager.server.endpoints import code_lens as code_lens_endpoints
-from finecode.workspace_manager.server.endpoints import (
+from finecode.workspace_manager.lsp_server.endpoints import (
+    code_lens as code_lens_endpoints,
+)
+from finecode.workspace_manager.lsp_server.endpoints import (
     diagnostics as diagnostics_endpoints,
 )
-from finecode.workspace_manager.server.endpoints import (
+from finecode.workspace_manager.lsp_server.endpoints import (
     document_sync as document_sync_endpoints,
 )
-from finecode.workspace_manager.server.endpoints import (
+from finecode.workspace_manager.lsp_server.endpoints import (
     formatting as formatting_endpoints,
 )
-from finecode.workspace_manager.server.endpoints import (
+from finecode.workspace_manager.lsp_server.endpoints import (
     inlay_hints as inlay_hints_endpoints,
 )
 
@@ -250,7 +253,7 @@ async def _workspace_did_change_workspace_folders(
 
 def _on_shutdown(ls: LanguageServer, params):
     logger.info("on shutdown handler", params)
-    services.on_shutdown()
+    wm_services.on_shutdown(global_state.ws_context)
 
 
 async def reset(ls: LanguageServer, params):
@@ -267,7 +270,9 @@ async def restart_extension_runner(ls: LanguageServer, params):
     runner_working_dir_str = params_dict["projectPath"]
     runner_working_dir_path = Path(runner_working_dir_str)
 
-    await services.restart_extension_runner(runner_working_dir_path)
+    await wm_services.restart_extension_runner(
+        runner_working_dir_path, global_state.ws_context
+    )
 
 
 def send_user_message_notification(

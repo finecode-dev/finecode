@@ -5,7 +5,9 @@ from __future__ import annotations
 
 import asyncio
 import asyncio.subprocess
+import enum
 import json
+import typing
 from typing import TYPE_CHECKING, Any
 
 from loguru import logger
@@ -138,16 +140,26 @@ async def notify_initialized(runner: ExtensionRunnerInfo) -> None:
     )
 
 
-# JSON object
-type RunActionRawResult = dict[str, Any]
+# JSON object or text
+type RunActionRawResult = dict[str, Any] | str
+
+
+class RunActionResponse(typing.NamedTuple):
+    result: RunActionRawResult
+    return_code: int
+
+
+class RunResultFormat(enum.Enum):
+    JSON = "json"
+    STRING = "string"
 
 
 async def run_action(
     runner: ExtensionRunnerInfo,
     action_name: str,
     params: dict[str, Any],
-    options: dict[str, Any] | None = None
-) -> RunActionRawResult:
+    options: dict[str, Any] | None = None,
+) -> RunActionResponse:
     if not runner.initialized_event.is_set():
         await runner.initialized_event.wait()
 
@@ -156,15 +168,21 @@ async def run_action(
         method=types.WORKSPACE_EXECUTE_COMMAND,
         params=types.ExecuteCommandParams(
             command="actions/run",
-            arguments=[
-                action_name,
-                params,
-                options
-            ],
+            arguments=[action_name, params, options],
         ),
         timeout=None,
     )
-    return json.loads(response.result)
+
+    return_code = response.return_code
+    raw_result = ""
+    if response.format == "string":
+        raw_result = response.result
+    elif response.format == "json" or response.format == "styled_text_json":
+        raw_result = json.loads(response.result)
+    else:
+        raise Exception(f"Not support result format: {response.format}")
+
+    return RunActionResponse(result=raw_result, return_code=return_code)
 
 
 async def reload_action(runner: ExtensionRunnerInfo, action_name: str) -> None:

@@ -1,6 +1,4 @@
-from finecode_extension_api.code_action import (
-    BaseModel,
-)
+from finecode_extension_api.code_action import BaseModel
 
 
 class Position(BaseModel):

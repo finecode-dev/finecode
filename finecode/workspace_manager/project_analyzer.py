@@ -106,3 +106,8 @@ def get_files_by_projects(projects_dirs_paths: list[Path]) -> dict[Path, list[Pa
                                     )
 
     return files_by_projects_dirs
+
+
+def get_project_files(project_dir_path: Path) -> list[Path]:
+    files_by_projects = get_files_by_projects([project_dir_path])
+    return files_by_projects[project_dir_path]

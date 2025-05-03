@@ -9,7 +9,7 @@ if sys.version_info >= (3, 12):
 else:
     from typing_extensions import override
 
-from finecode_extension_api import code_action
+from finecode_extension_api import code_action, textstyler
 
 
 class FormatRunPayload(code_action.RunActionPayload):
@@ -59,6 +59,24 @@ class FormatRunResult(code_action.RunActionResult):
         for file_path, other_result in other.result_by_file_path.items():
             if other_result.changed is True:
                 self.result_by_file_path[file_path] = other_result
+
+    def to_text(self) -> str | textstyler.StyledText:
+        text: textstyler.StyledText = textstyler.StyledText()
+        unchanged_counter: int = 0
+
+        for file_path, file_result in self.result_by_file_path.items():
+            if file_result.changed:
+                text.append("reformatted ")
+                text.append_styled(file_path, bold=True)
+                text.append("\n")
+            else:
+                unchanged_counter += 1
+        text.append_styled(
+            f"{unchanged_counter} files", foreground=textstyler.Color.BLUE
+        )
+        text.append(" unchanged.")
+
+        return text
 
 
 type FormatAction = code_action.Action[

@@ -1,6 +1,6 @@
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 
 @dataclass
@@ -44,9 +44,12 @@ class RunActionRequest(BaseSchema):
 @dataclass
 class RunActionOptions(BaseSchema):
     partial_result_token: int | str | None = None
+    result_format: Literal["json"] | Literal["string"] = "json"
 
 
 @dataclass
 class RunActionResponse(BaseSchema):
+    return_code: int
     # result can be empty(=None) e.g. if it was sent as a list of partial results
     result: dict[str, Any] | None
+    format: Literal["json"] | Literal["string"] | Literal["styled_text_json"] = "json"

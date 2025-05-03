@@ -12,13 +12,19 @@ from finecode.pygls_client_utils import create_lsp_client_io
 from finecode.workspace_manager import context, domain, finecode_cmd
 from finecode.workspace_manager.config import collect_actions, read_configs
 from finecode.workspace_manager.runner import runner_client, runner_info
-from finecode.workspace_manager.server import global_state
+from finecode.workspace_manager.utils import iterable_subscribe
 
 project_changed_callback: (
     Callable[[domain.Project], Coroutine[None, None, None]] | None
 ) = None
 get_document: Callable[[], Coroutine] | None = None
 apply_workspace_edit: Callable[[], Coroutine] | None = None
+partial_results: iterable_subscribe.IterableSubscribe = (
+    iterable_subscribe.IterableSubscribe()
+)
+
+
+class RunnerFailedToStart(Exception): ...
 
 
 async def notify_project_changed(project: domain.Project) -> None:
@@ -98,8 +104,11 @@ async def start_extension_runner(
 
     runner_info_instance.client.server_exit_callback = on_exit
 
-    register_get_document_feature = runner_info_instance.client.feature("documents/get")
-    register_get_document_feature(get_document)
+    if get_document is not None:
+        register_get_document_feature = runner_info_instance.client.feature(
+            "documents/get"
+        )
+        register_get_document_feature(get_document)
 
     register_workspace_apply_edit = runner_info_instance.client.feature(
         types.WORKSPACE_APPLY_EDIT
@@ -111,7 +120,7 @@ async def start_extension_runner(
         partial_result = domain.PartialResult(
             token=params.token, value=json.loads(params.value)
         )
-        global_state.partial_results.publish(partial_result)
+        partial_results.publish(partial_result)
 
     register_progress_feature = runner_info_instance.client.feature(types.PROGRESS)
     register_progress_feature(on_progress)
@@ -167,6 +176,11 @@ async def kill_extension_runner(runner: runner_info.ExtensionRunnerInfo) -> None
 
 
 async def update_runners(ws_context: context.WorkspaceContext) -> None:
+    # starts runners for new(=which don't have runner yet) projects in `ws_context`
+    # and stops runners for projects which are not in `ws_context` anymore
+    #
+    # during initialization of new runners it also reads their configurations and
+    # actions
     extension_runners = list(ws_context.ws_projects_extension_runners.values())
     new_dirs, deleted_dirs = dirs_utils.find_changed_dirs(
         [*ws_context.ws_projects.keys()],
@@ -189,8 +203,20 @@ async def update_runners(ws_context: context.WorkspaceContext) -> None:
         for new_dir in new_dirs
         if ws_context.ws_projects[new_dir].status == domain.ProjectStatus.READY
     ]
-    new_runners = await asyncio.gather(*new_runners_coros)
-    extension_runners += [runner for runner in new_runners if runner is not None]
+    new_runners_tasks: list[asyncio.Task] = []
+    try:
+        async with asyncio.TaskGroup() as tg:
+            for coro in new_runners_coros:
+                runner_task = tg.create_task(coro)
+                new_runners_tasks.append(runner_task)
+    except ExceptionGroup as eg:
+        for exception in eg.exceptions:
+            logger.exception(exception)
+        raise RunnerFailedToStart("Failed to start runner")
+
+    extension_runners += [
+        runner.result() for runner in new_runners_tasks if runner is not None
+    ]
 
     ws_context.ws_projects_extension_runners = {
         runner.working_dir_path: runner for runner in extension_runners

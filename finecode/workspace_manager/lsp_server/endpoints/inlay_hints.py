@@ -7,7 +7,7 @@ from lsprotocol import types
 
 from finecode import pygls_types_utils
 from finecode.workspace_manager import find_project, proxy_utils
-from finecode.workspace_manager.server import global_state
+from finecode.workspace_manager.lsp_server import global_state
 
 if TYPE_CHECKING:
     from pygls.lsp.server import LanguageServer
@@ -67,7 +67,7 @@ async def document_inlay_hint(
     if response is None:
         return []
 
-    hints = response.get("hints", None)
+    hints = response.result.get("hints", None)
     return [dict_to_inlay_hint(hint) for hint in hints] if hints is not None else None
 
 
