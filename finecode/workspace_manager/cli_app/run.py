@@ -224,7 +224,7 @@ async def run_actions_in_running_project(
                 output=run_result_str, return_code=run_result.return_code
             )
     else:
-        for idx, action_name in enumerate(actions):
+        for action_name in actions:
             try:
                 run_result = await services.run_action(
                     action_name=action_name,
@@ -273,18 +273,18 @@ async def run_actions_in_all_projects(
     result_output: str = ""
     result_return_code: int = 0
 
-    run_in_many_projects = len(actions_by_project) > 0
+    run_in_many_projects = len(actions_by_project) > 1
     projects_paths = list(actions_by_project.keys())
     for idx, project_task in enumerate(project_handler_tasks):
         project_dir_path = projects_paths[idx]
         result_by_action = project_task.result()
-        run_many_actions = len(result_by_action) > 0
+        run_many_actions = len(result_by_action) > 1
 
         if idx > 0:
             result_output += "\n"
 
         if run_in_many_projects:
-            result_output += str(project_dir_path)
+            result_output += f"{str(project_dir_path)}\n"
 
         for action_name, action_result in result_by_action.items():
             if run_many_actions:
