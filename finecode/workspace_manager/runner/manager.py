@@ -211,7 +211,10 @@ async def update_runners(ws_context: context.WorkspaceContext) -> None:
                 new_runners_tasks.append(runner_task)
     except ExceptionGroup as eg:
         for exception in eg.exceptions:
-            logger.exception(exception)
+            if isinstance(exception, runner_client.BaseRunnerRequestException):
+                logger.error(exception.message)
+            else:
+                logger.exception(exception)
         raise RunnerFailedToStart("Failed to start runner")
 
     extension_runners += [
@@ -234,7 +237,10 @@ async def update_runners(ws_context: context.WorkspaceContext) -> None:
                 )
     except ExceptionGroup as eg:
         for exception in eg.exceptions:
-            logger.exception(exception)
+            if isinstance(exception, runner_client.BaseRunnerRequestException):
+                logger.error(exception.message)
+            else:
+                logger.exception(exception)
         raise RunnerFailedToStart("Failed to initialize runner")
 
 
