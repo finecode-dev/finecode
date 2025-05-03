@@ -11,6 +11,9 @@ from loguru import logger
 
 from finecode_extension_api.interfaces import iprocessexecutor
 
+P = typing.ParamSpec("P")
+T = typing.TypeVar("T")
+
 
 class ProcessExecutor(iprocessexecutor.IProcessExecutor):
     def __init__(self) -> None:
@@ -30,7 +33,7 @@ class ProcessExecutor(iprocessexecutor.IProcessExecutor):
                 self._py_process_executor.shutdown()
                 self._py_process_executor = None
 
-    async def submit[T, **P](
+    async def submit(
         self, func: typing.Callable[P, T], *args: P.args, **kwargs: P.kwargs
     ):
         if not self._active:

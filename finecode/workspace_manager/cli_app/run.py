@@ -104,10 +104,13 @@ def find_projects_with_actions(
 
     for project in ws_context.ws_projects.values():
         project_actions_names = [action.name for action in project.actions]
+        # find which of requested actions are available in the project
         action_to_run_in_project = (
-            ordered_set.OrderedSet(project_actions_names) - actions_set
+            actions_set & ordered_set.OrderedSet(project_actions_names)
         )
-        actions_by_project[project.dir_path] = list(action_to_run_in_project)
+        relevant_actions_in_project = list(action_to_run_in_project)
+        if len(relevant_actions_in_project) > 0:
+            actions_by_project[project.dir_path] = relevant_actions_in_project
 
     return actions_by_project
 
@@ -284,7 +287,7 @@ async def run_actions_in_all_projects(
             result_output += "\n"
 
         if run_in_many_projects:
-            result_output += f"{str(project_dir_path)}\n"
+            result_output += f"{click.style(str(project_dir_path), bold=True, underline=True)}\n"
 
         for action_name, action_result in result_by_action.items():
             if run_many_actions:

@@ -13,7 +13,12 @@ def init_logger(trace: bool, stdout: bool = False):
     logger.remove()
     # disable logging raw messages
     # TODO: make configurable
-    logger.configure(activation=[("pygls.protocol.json_rpc", False), ("pygls.feature_manager", False)])
+    logger.configure(
+        activation=[
+            ("pygls.protocol.json_rpc", False),
+            ("pygls.feature_manager", False),
+        ]
+    )
     logs.save_logs_to_file(
         file_path=log_dir_path / "execution.log",
         log_level="TRACE" if trace else "INFO",

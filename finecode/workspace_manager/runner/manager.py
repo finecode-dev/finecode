@@ -227,7 +227,9 @@ async def update_runners(ws_context: context.WorkspaceContext) -> None:
             for runner in extension_runners:
                 tg.create_task(
                     _init_runner(
-                runner, ws_context.ws_projects[runner.working_dir_path], ws_context
+                        runner,
+                        ws_context.ws_projects[runner.working_dir_path],
+                        ws_context,
                     )
                 )
     except ExceptionGroup as eg:
@@ -265,7 +267,9 @@ async def _init_runner(
         await notify_project_changed(project)
         runner.initialized_event.set()
         logger.exception(error)
-        raise RunnerFailedToStart(f"Runner failed to notify about initialization: {error}")
+        raise RunnerFailedToStart(
+            f"Runner failed to notify about initialization: {error}"
+        )
 
     logger.debug("LSP Server initialized")
 

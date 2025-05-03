@@ -7,7 +7,6 @@ import time
 import types
 import typing
 from pathlib import Path
-from typing import Any, Callable, TypeAliasType
 
 from loguru import logger
 
@@ -22,12 +21,12 @@ from finecode_extension_api import code_action, textstyler
 class ActionFailedException(Exception): ...
 
 
-document_requester: Callable
-document_saver: Callable
+document_requester: typing.Callable
+document_saver: typing.Callable
 partial_result_sender: partial_result_sender_module.PartialResultSender
 
 
-def set_partial_result_sender(send_func: Callable) -> None:
+def set_partial_result_sender(send_func: typing.Callable) -> None:
     global partial_result_sender
     partial_result_sender = partial_result_sender_module.PartialResultSender(
         sender=send_func, wait_time_ms=300
@@ -85,13 +84,13 @@ async def update_config(
 
 
 def resolve_func_args_with_di(
-    func: Callable,
-    known_args: dict[str, Callable[[Any], Any]] | None = None,
+    func: typing.Callable,
+    known_args: dict[str, typing.Callable[[typing.Any], typing.Any]] | None = None,
     params_to_ignore: list[str] | None = None,
 ):
     func_parameters = inspect.signature(func).parameters
     func_annotations = inspect.get_annotations(func, eval_str=True)
-    args: dict[str, Any] = {}
+    args: dict[str, typing.Any] = {}
     for param_name in func_parameters.keys():
         # default object constructor(__init__) has signature
         # __init__(self, *args, **kwargs)
@@ -121,7 +120,10 @@ def create_action_exec_info(action: domain.Action) -> domain.ActionExecInfo:
         logger.error(f"Error importing action type: {e}")
         raise e
 
-    if not isinstance(action_type_def, TypeAliasType):
+    # typing.TypeAliasType is available in Python 3.12+
+    if hasattr(typing, "TypeAliasType") and not isinstance(
+        action_type_def, typing.TypeAliasType
+    ):
         raise Exception("Action definition expected to be a type")
 
     action_type_alias = action_type_def.__value__
@@ -447,7 +449,7 @@ async def run_action(
                         else:
                             action_result.update(handler_result)
 
-    serialized_result: dict[str, Any] | str | None = None
+    serialized_result: dict[str, typing.Any] | str | None = None
     result_format = "string"
     run_return_code = code_action.RunReturnCode.SUCCESS
     if isinstance(action_result, code_action.RunActionResult):

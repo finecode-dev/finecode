@@ -1,9 +1,8 @@
 import typing
 from asyncio import BaseProtocol
 
-
-T = typing.TypeVar('T')
-P = typing.ParamSpec('P')
+T = typing.TypeVar("T")
+P = typing.ParamSpec("P")
 
 
 class IProcessExecutor(BaseProtocol):

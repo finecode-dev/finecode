@@ -5,11 +5,13 @@ description = ""
 authors = [{ name = "Vladyslav Hnatiuk", email = "aders1234@gmail.com" }]
 readme = "README.md"
 requires-python = ">=3.11, < 3.14"
-dependencies = [
-    "finecode @ git+ssh://git@github.com:Aksem/FineCode.git",
-    "fine_python_black @ git+ssh://git@github.com:Aksem/FineCode.git#subdirectory=actions/fine_python_black",
-    "fine_python_isort @ git+ssh://git@github.com:Aksem/FineCode.git#subdirectory=actions/fine_python_isort",
-]
+dependencies = []
+
+
+[tool.poetry.group.dev.dependencies]
+finecode = { path = "../../../", develop = true }
+fine_python_black = { path = "../../../extensions/fine_python_black", develop = true }
+fine_python_isort = { path = "../../../extensions/fine_python_isort", develop = true }
 
 
 [build-system]

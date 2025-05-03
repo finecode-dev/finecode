@@ -5,11 +5,10 @@ description = ""
 authors = [{ name = "Vladyslav Hnatiuk", email = "aders1234@gmail.com" }]
 readme = "README.md"
 requires-python = ">=3.11, < 3.14"
-dependencies = [
-    "finecode @ git+ssh://git@github.com:Aksem/FineCode.git",
-    "fine_python_recommended @ git+ssh://git@github.com:Aksem/FineCode.git#subdirectory=presets/fine_python_recommended",
-]
 
+[tool.poetry.group.dev.dependencies]
+finecode = { path = "../../../", develop = true }
+fine_python_recommended = { path = "../../../presets/fine_python_recommended", develop = true }
 
 [build-system]
 requires = ["poetry-core>=2.0.0,<3.0.0"]
