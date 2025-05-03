@@ -49,6 +49,18 @@ jobs:
           pushd tests/list_ws/backend
           poetry install
           popd
+
+          pushd tests/list_ws/cli_tool
+          poetry install
+          popd
+
+          pushd tests/list_ws/ui_app
+          poetry install
+          popd
+
+          pushd tests/nested_package/pyback
+          poetry install
+          popd
         shell: bash
 
       - name: Lint
