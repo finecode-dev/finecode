@@ -12,7 +12,7 @@ dependencies = [
 
 [tool.poetry.group.dev.dependencies]
 finecode = { git = "git@github.com:finecode-dev/finecode.git" }
-finecode_dev_common_preset = { path = "../finecode_dev_common_preset", develop = true }
+finecode_dev_common_preset = { path = "../../finecode_dev_common_preset", develop = true }
 
 [build-system]
 requires = ["poetry-core>=2.0.0,<3.0.0"]

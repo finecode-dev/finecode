@@ -199,13 +199,13 @@ files = []
 develop = false
 
 [package.dependencies]
-fine_python_module_exports = {git = "ssh://git@github.com/finecode-dev/finecode.git", subdirectory = "extensions/fine_python_module_exports"}
+fine_python_module_exports = {git = "https://github.com/finecode-dev/finecode.git", subdirectory = "extensions/fine_python_module_exports"}
 
 [package.source]
 type = "git"
-url = "ssh://git@github.com/Aksem/fine_python_aksem.git"
+url = "https://github.com/Aksem/fine_python_aksem.git"
 reference = "HEAD"
-resolved_reference = "eabddce6c8a40b66160233a4ac2bcc91cac93c6b"
+resolved_reference = "56ce22c3fb1228a6e85d1a8727a0fa74787608d9"
 
 [[package]]
 name = "fine-python-ast"
@@ -224,7 +224,7 @@ finecode_extension_api = {git = "https://github.com/finecode-dev/finecode.git", 
 type = "git"
 url = "https://github.com/finecode-dev/finecode.git"
 reference = "HEAD"
-resolved_reference = "49622067be2f3e8b1ff453a0e407d76fce05decc"
+resolved_reference = "946844b2f151a7091664c407f7e24ce01442bee5"
 subdirectory = "extensions/fine_python_ast"
 
 [[package]]
@@ -243,9 +243,9 @@ finecode_extension_api = {git = "https://github.com/finecode-dev/finecode.git", 
 
 [package.source]
 type = "git"
-url = "ssh://git@github.com/finecode-dev/finecode.git"
+url = "https://github.com/finecode-dev/finecode.git"
 reference = "HEAD"
-resolved_reference = "49622067be2f3e8b1ff453a0e407d76fce05decc"
+resolved_reference = "946844b2f151a7091664c407f7e24ce01442bee5"
 subdirectory = "extensions/fine_python_black"
 
 [[package]]
@@ -266,9 +266,9 @@ types-flake8 = ">=7.1.0.20241020,<8.0.0.0"
 
 [package.source]
 type = "git"
-url = "ssh://git@github.com/finecode-dev/finecode.git"
+url = "https://github.com/finecode-dev/finecode.git"
 reference = "HEAD"
-resolved_reference = "49622067be2f3e8b1ff453a0e407d76fce05decc"
+resolved_reference = "946844b2f151a7091664c407f7e24ce01442bee5"
 subdirectory = "extensions/fine_python_flake8"
 
 [[package]]
@@ -282,15 +282,14 @@ files = []
 develop = false
 
 [package.dependencies]
-fine_python_black = {git = "ssh://git@github.com/finecode-dev/finecode.git", subdirectory = "extensions/fine_python_black"}
-fine_python_isort = {git = "ssh://git@github.com/finecode-dev/finecode.git", subdirectory = "extensions/fine_python_isort"}
-finecode = {git = "ssh://git@github.com/finecode-dev/finecode.git"}
+fine_python_black = {git = "https://github.com/finecode-dev/finecode.git", subdirectory = "extensions/fine_python_black"}
+fine_python_isort = {git = "https://github.com/finecode-dev/finecode.git", subdirectory = "extensions/fine_python_isort"}
 
 [package.source]
 type = "git"
-url = "ssh://git@github.com/finecode-dev/finecode.git"
+url = "https://github.com/finecode-dev/finecode.git"
 reference = "HEAD"
-resolved_reference = "49622067be2f3e8b1ff453a0e407d76fce05decc"
+resolved_reference = "946844b2f151a7091664c407f7e24ce01442bee5"
 subdirectory = "presets/fine_python_format"
 
 [[package]]
@@ -311,7 +310,7 @@ import-linter = ">=2.1,<3.0"
 type = "git"
 url = "https://github.com/finecode-dev/finecode.git"
 reference = "HEAD"
-resolved_reference = "49622067be2f3e8b1ff453a0e407d76fce05decc"
+resolved_reference = "946844b2f151a7091664c407f7e24ce01442bee5"
 subdirectory = "extensions/fine_python_import_linter"
 
 [[package]]
@@ -330,9 +329,9 @@ isort = ">=5.13,<6"
 
 [package.source]
 type = "git"
-url = "ssh://git@github.com/finecode-dev/finecode.git"
+url = "https://github.com/finecode-dev/finecode.git"
 reference = "HEAD"
-resolved_reference = "49622067be2f3e8b1ff453a0e407d76fce05decc"
+resolved_reference = "946844b2f151a7091664c407f7e24ce01442bee5"
 subdirectory = "extensions/fine_python_isort"
 
 [[package]]
@@ -346,16 +345,15 @@ files = []
 develop = false
 
 [package.dependencies]
-fine_python_flake8 = {git = "ssh://git@github.com/finecode-dev/finecode.git", subdirectory = "extensions/fine_python_flake8"}
-fine_python_mypy = {git = "ssh://git@github.com/finecode-dev/finecode.git", subdirectory = "extensions/fine_python_mypy"}
-finecode = {git = "ssh://git@github.com/finecode-dev/finecode.git"}
+fine_python_flake8 = {git = "https://github.com/finecode-dev/finecode.git", subdirectory = "extensions/fine_python_flake8"}
+fine_python_mypy = {git = "https://github.com/finecode-dev/finecode.git", subdirectory = "extensions/fine_python_mypy"}
 flake8-bugbear = ">=24.12.12,<25.0.0"
 
 [package.source]
 type = "git"
-url = "ssh://git@github.com/finecode-dev/finecode.git"
+url = "https://github.com/finecode-dev/finecode.git"
 reference = "HEAD"
-resolved_reference = "49622067be2f3e8b1ff453a0e407d76fce05decc"
+resolved_reference = "946844b2f151a7091664c407f7e24ce01442bee5"
 subdirectory = "presets/fine_python_lint"
 
 [[package]]
@@ -374,9 +372,9 @@ finecode_extension_api = {git = "https://github.com/finecode-dev/finecode.git", 
 
 [package.source]
 type = "git"
-url = "ssh://git@github.com/finecode-dev/finecode.git"
+url = "https://github.com/finecode-dev/finecode.git"
 reference = "HEAD"
-resolved_reference = "49622067be2f3e8b1ff453a0e407d76fce05decc"
+resolved_reference = "946844b2f151a7091664c407f7e24ce01442bee5"
 subdirectory = "extensions/fine_python_module_exports"
 
 [[package]]
@@ -395,9 +393,9 @@ mypy = ">=1.15,<2.0"
 
 [package.source]
 type = "git"
-url = "ssh://git@github.com/finecode-dev/finecode.git"
+url = "https://github.com/finecode-dev/finecode.git"
 reference = "HEAD"
-resolved_reference = "49622067be2f3e8b1ff453a0e407d76fce05decc"
+resolved_reference = "946844b2f151a7091664c407f7e24ce01442bee5"
 subdirectory = "extensions/fine_python_mypy"
 
 [[package]]
@@ -411,15 +409,14 @@ files = []
 develop = false
 
 [package.dependencies]
-fine_python_format = {git = "ssh://git@github.com/finecode-dev/finecode.git", subdirectory = "presets/fine_python_format"}
-fine_python_lint = {git = "ssh://git@github.com/finecode-dev/finecode.git", subdirectory = "presets/fine_python_lint"}
-finecode = {git = "ssh://git@github.com/finecode-dev/finecode.git"}
+fine_python_format = {git = "https://github.com/finecode-dev/finecode.git", subdirectory = "presets/fine_python_format"}
+fine_python_lint = {git = "https://github.com/finecode-dev/finecode.git", subdirectory = "presets/fine_python_lint"}
 
 [package.source]
 type = "git"
 url = "https://github.com/finecode-dev/finecode.git"
 reference = "HEAD"
-resolved_reference = "49622067be2f3e8b1ff453a0e407d76fce05decc"
+resolved_reference = "946844b2f151a7091664c407f7e24ce01442bee5"
 subdirectory = "presets/fine_python_recommended"
 
 [[package]]
@@ -433,7 +430,7 @@ files = []
 develop = true
 
 [package.dependencies]
-fine_python_aksem = {git = "ssh://git@github.com/Aksem/fine_python_aksem.git"}
+fine_python_aksem = {git = "https://github.com/Aksem/fine_python_aksem.git"}
 fine_python_recommended = {git = "https://github.com/finecode-dev/finecode.git", subdirectory = "presets/fine_python_recommended"}
 
 [package.source]
@@ -458,7 +455,7 @@ typing-extensions = ">=4.12.2,<5.0.0"
 type = "git"
 url = "https://github.com/finecode-dev/finecode.git"
 reference = "HEAD"
-resolved_reference = "49622067be2f3e8b1ff453a0e407d76fce05decc"
+resolved_reference = "946844b2f151a7091664c407f7e24ce01442bee5"
 subdirectory = "finecode_extension_api"
 
 [[package]]
