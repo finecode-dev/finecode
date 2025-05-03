@@ -58,7 +58,7 @@ def save_logs_to_file(
         encoding="utf8",
         filter=filter_logs,
     )
-    logger.info(f"Log file: {file_path}")
+    logger.trace(f"Log file: {file_path}")
 
 
 def set_log_level_for_group(group: str, level: LogLevel | None):

@@ -99,7 +99,7 @@ def get_projects_by_names(
 def find_projects_with_actions(
     ws_context: context.WorkspaceContext, actions: list[str]
 ) -> dict[pathlib.Path, list[str]]:
-    actions_by_project: dict[pathlib.Path, list[str]] = []
+    actions_by_project: dict[pathlib.Path, list[str]] = {}
     actions_set = ordered_set.OrderedSet(actions)
 
     for project in ws_context.ws_projects.values():

@@ -222,13 +222,18 @@ async def update_runners(ws_context: context.WorkspaceContext) -> None:
         runner.working_dir_path: runner for runner in extension_runners
     }
 
-    init_runners_coros = [
-        _init_runner(
-            runner, ws_context.ws_projects[runner.working_dir_path], ws_context
-        )
-        for runner in extension_runners
-    ]
-    await asyncio.gather(*init_runners_coros)
+    try:
+        async with asyncio.TaskGroup() as tg:
+            for runner in extension_runners:
+                tg.create_task(
+                    _init_runner(
+                runner, ws_context.ws_projects[runner.working_dir_path], ws_context
+                    )
+                )
+    except ExceptionGroup as eg:
+        for exception in eg.exceptions:
+            logger.exception(exception)
+        raise RunnerFailedToStart("Failed to initialize runner")
 
 
 async def _init_runner(
@@ -250,7 +255,7 @@ async def _init_runner(
         project.status = domain.ProjectStatus.RUNNER_FAILED
         await notify_project_changed(project)
         runner.initialized_event.set()
-        return
+        raise RunnerFailedToStart(f"Runner failed to initialize: {error}")
 
     try:
         await runner_client.notify_initialized(runner)
@@ -260,7 +265,8 @@ async def _init_runner(
         await notify_project_changed(project)
         runner.initialized_event.set()
         logger.exception(error)
-        return
+        raise RunnerFailedToStart(f"Runner failed to notify about initialization: {error}")
+
     logger.debug("LSP Server initialized")
 
     await read_configs.read_project_config(project=project, ws_context=ws_context)
@@ -278,7 +284,7 @@ async def _init_runner(
         project.status = domain.ProjectStatus.RUNNER_FAILED
         await notify_project_changed(project)
         runner.initialized_event.set()
-        return
+        raise RunnerFailedToStart(f"Runner failed to update config: {error}")
 
     logger.debug(
         f"Updated config of runner {runner.working_dir_path},"

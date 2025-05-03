@@ -61,7 +61,11 @@ async def add_workspace_dir(
 
     global_state.ws_context.ws_dirs_paths.append(dir_path)
     await read_configs.read_projects_in_dir(dir_path, global_state.ws_context)
-    await runner_manager.update_runners(global_state.ws_context)
+    try:
+        await runner_manager.update_runners(global_state.ws_context)
+    except runner_manager.RunnerFailedToStart:
+        # user sees status in client(IDE), no need to raise explicit error
+        ...
     return schemas.AddWorkspaceDirResponse()
 
 
@@ -69,7 +73,11 @@ async def delete_workspace_dir(
     request: schemas.DeleteWorkspaceDirRequest,
 ) -> schemas.DeleteWorkspaceDirResponse:
     global_state.ws_context.ws_dirs_paths.remove(Path(request.dir_path))
-    await runner_manager.update_runners(global_state.ws_context)
+    try:
+        await runner_manager.update_runners(global_state.ws_context)
+    except runner_manager.RunnerFailedToStart:
+        # user sees status in client(IDE), no need to raise explicit error
+        ...
     return schemas.DeleteWorkspaceDirResponse()
 
 
@@ -86,4 +94,8 @@ async def handle_changed_ws_dirs(added: list[Path], removed: list[Path]) -> None
                 " but not found in ws context"
             )
 
-    await runner_manager.update_runners(global_state.ws_context)
+    try:
+        await runner_manager.update_runners(global_state.ws_context)
+    except runner_manager.RunnerFailedToStart:
+        # user sees status in client(IDE), no need to raise explicit error
+        ...
