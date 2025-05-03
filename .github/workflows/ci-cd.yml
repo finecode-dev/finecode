@@ -46,7 +46,7 @@ jobs:
 
           # we access only public repositories, use https instead to avoid set up of
           # ssh key
-          git config --global url."https://github".insteadOf "git://github"
+          git config --global url."https://github.com/".insteadOf git@github.com:
 
           poetry install
         shell: bash
