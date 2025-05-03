@@ -40,6 +40,10 @@ jobs:
 
       - name: Install dependencies
         run: |
+          # poetry default git client `dulwich` doesn't work properly with git urls
+          # to dependencies, which we use
+          poetry config system-git-client true
+
           poetry install
         shell: bash
 
