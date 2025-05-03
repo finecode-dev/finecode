@@ -6,12 +6,14 @@ authors = [{ name = "Vladyslav Hnatiuk", email = "aders1234@gmail.com" }]
 readme = "README.md"
 requires-python = ">=3.11, < 3.14"
 dependencies = [
-    "finecode @ git+ssh://git@github.com:finecode-dev/finecode.git",
-    "fine_python_mypy @ git+ssh://git@github.com:finecode-dev/finecode.git#subdirectory=extensions/fine_python_mypy",
-    "fine_python_flake8 @ git+ssh://git@github.com:finecode-dev/finecode.git#subdirectory=extensions/fine_python_flake8",
+    "fine_python_mypy @ git+https://github.com/finecode-dev/finecode.git#subdirectory=extensions/fine_python_mypy",
+    "fine_python_flake8 @ git+https://github.com/finecode-dev/finecode.git#subdirectory=extensions/fine_python_flake8",
     "flake8-bugbear (>=24.12.12,<25.0.0)",
 ]
 
+[tool.poetry.group.dev.dependencies]
+finecode = { git = "git@github.com:finecode-dev/finecode.git" }
+finecode_dev_common_preset = { path = "../finecode_dev_common_preset", develop = true }
 
 [build-system]
 requires = ["poetry-core>=2.0.0,<3.0.0"]
