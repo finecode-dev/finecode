@@ -31,7 +31,7 @@ def register_project_changed_callback(action_node_changed_callback):
 def register_send_user_message_notification_callback(
     send_user_message_notification_callback,
 ):
-    user_messages._lsp_notification_send = send_user_message_notification_callback
+    user_messages._notification_sender = send_user_message_notification_callback
 
 
 def register_send_user_message_request_callback(send_user_message_request_callback):

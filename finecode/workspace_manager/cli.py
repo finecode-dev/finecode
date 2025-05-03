@@ -8,7 +8,7 @@ from loguru import logger
 
 import finecode.workspace_manager.main as workspace_manager
 from finecode import communication_utils
-from finecode.workspace_manager import logger_utils
+from finecode.workspace_manager import logger_utils, user_messages
 from finecode.workspace_manager.cli_app import run as run_cmd
 
 
@@ -70,6 +70,12 @@ def start_api(
     # workspace manager doesn't stop with async start after closing LS client(IDE).
     # Use sync start until this problem is solved
     workspace_manager.start_sync(comm_type=comm_type, host=host, port=port, trace=trace)
+
+
+async def show_user_message(
+    message: str, message_type: str
+) -> None:
+    logger.log(message_type, message)
 
 
 @cli.command(context_settings=dict(ignore_unknown_options=True, allow_extra_args=True))
@@ -142,6 +148,8 @@ def run(ctx) -> None:
                 arg_name, arg_value = arg[2:].split("=")
                 action_payload[arg_name] = arg_value
         processed_args_count += 1
+
+    user_messages._notification_sender = show_user_message
 
     try:
         output, return_code = asyncio.run(
