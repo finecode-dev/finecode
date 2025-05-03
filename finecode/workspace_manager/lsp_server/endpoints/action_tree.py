@@ -289,9 +289,8 @@ async def __reload_action(action_node_id: str) -> None:
     try:
         await runner_client.reload_action(runner, action_name)
     except runner_client.BaseRunnerRequestException as error:
-        error_message = error.args[0] if len(error.args) > 0 else ""
         await user_messages.error(
-            f"Action {action_name} reload failed: {error_message}"
+            f"Action {action_name} reload failed: {error.message}"
         )
 
 

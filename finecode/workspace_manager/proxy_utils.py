@@ -60,8 +60,8 @@ async def find_action_project_and_run(
             runner=runner, action_name=action_name, params=params
         )
     except runner_client.BaseRunnerRequestException as error:
-        logger.error(f"Error on running action {action_name} on {file_path}: {error}")
-        raise ActionRunFailed(error)
+        logger.error(f"Error on running action {action_name} on {file_path}: {error.message}")
+        raise ActionRunFailed(error.message)
 
     return response
 
@@ -77,8 +77,8 @@ async def run_action_in_runner(
             runner=runner, action_name=action_name, params=params, options=options
         )
     except runner_client.BaseRunnerRequestException as error:
-        logger.error(f"Error on running action {action_name}: {error}")
-        raise ActionRunFailed(error)
+        logger.error(f"Error on running action {action_name}: {error.message}")
+        raise ActionRunFailed(error.message)
 
     return response
 

@@ -20,7 +20,9 @@ if TYPE_CHECKING:
     from finecode.workspace_manager.runner.runner_info import ExtensionRunnerInfo
 
 
-class BaseRunnerRequestException(Exception): ...
+class BaseRunnerRequestException(Exception):
+    def __init__(self, message: str) -> None:
+        self.message = message
 
 
 class NoResponse(BaseRunnerRequestException): ...

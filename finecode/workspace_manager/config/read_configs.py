@@ -88,8 +88,7 @@ async def get_preset_project_path(
             runner, preset.source
         )
     except runner_client.BaseRunnerRequestException as error:
-        error_message = error.args[0] if len(error.args) > 0 else ""
-        await user_messages.error(f"Failed to get preset project path: {error_message}")
+        await user_messages.error(f"Failed to get preset project path: {error.message}")
         return None
     try:
         preset_project_path = Path(resolve_path_result["packagePath"])

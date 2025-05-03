@@ -90,8 +90,7 @@ async def run_action(
             options={"result_format": result_format},
         )
     except runner_client.BaseRunnerRequestException as error:
-        error_message = error.args[0] if len(error.args) > 0 else ""
-        await user_messages.error(f"Action {action_name} failed: {error_message}")
+        await user_messages.error(f"Action {action_name} failed: {error.message}")
         if result_format == runner_client.RunResultFormat.JSON:
             return RunActionResponse(result={}, return_code=1)
         else:

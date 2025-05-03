@@ -253,11 +253,10 @@ async def _init_runner(
             client_version="0.1.0",
         )
     except runner_client.BaseRunnerRequestException as error:
-        logger.error(f"Runner failed to initialize: {error}")
         project.status = domain.ProjectStatus.RUNNER_FAILED
         await notify_project_changed(project)
         runner.initialized_event.set()
-        raise RunnerFailedToStart(f"Runner failed to initialize: {error}")
+        raise RunnerFailedToStart(f"Runner failed to initialize: {error.message}")
 
     try:
         await runner_client.notify_initialized(runner)
@@ -284,11 +283,11 @@ async def _init_runner(
 
     try:
         await runner_client.update_config(runner, project.actions)
-    except runner_client.BaseRunnerRequestException:
+    except runner_client.BaseRunnerRequestException as exception:
         project.status = domain.ProjectStatus.RUNNER_FAILED
         await notify_project_changed(project)
         runner.initialized_event.set()
-        raise RunnerFailedToStart(f"Runner failed to update config: {error}")
+        raise RunnerFailedToStart(f"Runner failed to update config: {exception.message}")
 
     logger.debug(
         f"Updated config of runner {runner.working_dir_path},"
