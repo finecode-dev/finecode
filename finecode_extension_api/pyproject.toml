@@ -15,7 +15,7 @@ requires = ["poetry-core>=2.0.0,<3.0.0"]
 build-backend = "poetry.core.masonry.api"
 
 [tool.poetry.group.dev.dependencies]
-finecode = { git = "git@github.com:finecode-dev/finecode.git" }
+finecode = { git = "https://github.com/finecode-dev/finecode.git" }
 finecode_dev_common_preset = { path = "../finecode_dev_common_preset", develop = true }
 
 [tool.finecode]

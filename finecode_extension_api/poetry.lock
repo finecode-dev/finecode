@@ -131,21 +131,6 @@ files = [
 ]
 
 [[package]]
-name = "command-runner"
-version = "1.7.3"
-description = "Platform agnostic command and shell execution tool, also allows UAC/sudo privilege elevation"
-optional = false
-python-versions = ">=2.7"
-groups = ["dev"]
-files = [
-    {file = "command_runner-1.7.3-py3-none-any.whl", hash = "sha256:fd2b89ccf6686c250eb056fa7ad6acf4817370f81df7b8b70b5cdb65ad5d074a"},
-    {file = "command_runner-1.7.3.tar.gz", hash = "sha256:d1e34a3c7ae218f6d6f705e9683efea1166628618df7ea3b9b20c968688b6835"},
-]
-
-[package.dependencies]
-psutil = ">=5.6.0"
-
-[[package]]
 name = "fine-python-aksem"
 version = "0.1.0"
 description = ""
@@ -156,14 +141,13 @@ files = []
 develop = false
 
 [package.dependencies]
-fine_python_module_exports = {git = "ssh://git@github.com/finecode-dev/finecode.git", subdirectory = "extensions/fine_python_module_exports"}
-finecode = {git = "ssh://git@github.com/finecode-dev/finecode.git"}
+fine_python_module_exports = {git = "https://github.com/finecode-dev/finecode.git", subdirectory = "extensions/fine_python_module_exports"}
 
 [package.source]
 type = "git"
-url = "ssh://git@github.com/Aksem/fine_python_aksem.git"
+url = "https://github.com/Aksem/fine_python_aksem.git"
 reference = "HEAD"
-resolved_reference = "46ddf861abbae3389ba51c0c121071b98fdbc7e9"
+resolved_reference = "56ce22c3fb1228a6e85d1a8727a0fa74787608d9"
 
 [[package]]
 name = "fine-python-ast"
@@ -176,13 +160,13 @@ files = []
 develop = false
 
 [package.dependencies]
-finecode_extension_api = {git = "ssh://git@github.com/finecode-dev/finecode.git", subdirectory = "finecode_extension_api"}
+finecode_extension_api = {git = "https://github.com/finecode-dev/finecode.git", subdirectory = "finecode_extension_api"}
 
 [package.source]
 type = "git"
-url = "ssh://git@github.com/finecode-dev/finecode.git"
+url = "https://github.com/finecode-dev/finecode.git"
 reference = "HEAD"
-resolved_reference = "439891bbf166521a6063a6fdfd561c9afa992c74"
+resolved_reference = "51fa7a9bb80d21455dc89c8b1c6e7049177363da"
 subdirectory = "extensions/fine_python_ast"
 
 [[package]]
@@ -197,13 +181,13 @@ develop = false
 
 [package.dependencies]
 black = ">=25.1.0,<26.0.0"
-finecode_extension_api = {git = "ssh://git@github.com/finecode-dev/finecode.git", subdirectory = "finecode_extension_api"}
+finecode_extension_api = {git = "https://github.com/finecode-dev/finecode.git", subdirectory = "finecode_extension_api"}
 
 [package.source]
 type = "git"
-url = "ssh://git@github.com/finecode-dev/finecode.git"
+url = "https://github.com/finecode-dev/finecode.git"
 reference = "HEAD"
-resolved_reference = "439891bbf166521a6063a6fdfd561c9afa992c74"
+resolved_reference = "51fa7a9bb80d21455dc89c8b1c6e7049177363da"
 subdirectory = "extensions/fine_python_black"
 
 [[package]]
@@ -217,16 +201,16 @@ files = []
 develop = false
 
 [package.dependencies]
-fine_python_ast = {git = "ssh://git@github.com/finecode-dev/finecode.git", subdirectory = "extensions/fine_python_ast"}
-finecode_extension_api = {git = "ssh://git@github.com/finecode-dev/finecode.git", subdirectory = "finecode_extension_api"}
+fine_python_ast = {git = "https://github.com/finecode-dev/finecode.git", subdirectory = "extensions/fine_python_ast"}
+finecode_extension_api = {git = "https://github.com/finecode-dev/finecode.git", subdirectory = "finecode_extension_api"}
 flake8 = ">=7.1.2,<8.0.0"
 types-flake8 = ">=7.1.0.20241020,<8.0.0.0"
 
 [package.source]
 type = "git"
-url = "ssh://git@github.com/finecode-dev/finecode.git"
+url = "https://github.com/finecode-dev/finecode.git"
 reference = "HEAD"
-resolved_reference = "439891bbf166521a6063a6fdfd561c9afa992c74"
+resolved_reference = "51fa7a9bb80d21455dc89c8b1c6e7049177363da"
 subdirectory = "extensions/fine_python_flake8"
 
 [[package]]
@@ -240,15 +224,14 @@ files = []
 develop = false
 
 [package.dependencies]
-fine_python_black = {git = "ssh://git@github.com/finecode-dev/finecode.git", subdirectory = "extensions/fine_python_black"}
-fine_python_isort = {git = "ssh://git@github.com/finecode-dev/finecode.git", subdirectory = "extensions/fine_python_isort"}
-finecode = {git = "ssh://git@github.com/finecode-dev/finecode.git"}
+fine_python_black = {git = "https://github.com/finecode-dev/finecode.git", subdirectory = "extensions/fine_python_black"}
+fine_python_isort = {git = "https://github.com/finecode-dev/finecode.git", subdirectory = "extensions/fine_python_isort"}
 
 [package.source]
 type = "git"
-url = "ssh://git@github.com/finecode-dev/finecode.git"
+url = "https://github.com/finecode-dev/finecode.git"
 reference = "HEAD"
-resolved_reference = "439891bbf166521a6063a6fdfd561c9afa992c74"
+resolved_reference = "51fa7a9bb80d21455dc89c8b1c6e7049177363da"
 subdirectory = "presets/fine_python_format"
 
 [[package]]
@@ -262,14 +245,14 @@ files = []
 develop = false
 
 [package.dependencies]
-finecode_extension_api = {git = "ssh://git@github.com/finecode-dev/finecode.git", subdirectory = "finecode_extension_api"}
+finecode_extension_api = {git = "https://github.com/finecode-dev/finecode.git", subdirectory = "finecode_extension_api"}
 isort = ">=5.13,<6"
 
 [package.source]
 type = "git"
-url = "ssh://git@github.com/finecode-dev/finecode.git"
+url = "https://github.com/finecode-dev/finecode.git"
 reference = "HEAD"
-resolved_reference = "439891bbf166521a6063a6fdfd561c9afa992c74"
+resolved_reference = "51fa7a9bb80d21455dc89c8b1c6e7049177363da"
 subdirectory = "extensions/fine_python_isort"
 
 [[package]]
@@ -283,16 +266,15 @@ files = []
 develop = false
 
 [package.dependencies]
-fine_python_flake8 = {git = "ssh://git@github.com/finecode-dev/finecode.git", subdirectory = "extensions/fine_python_flake8"}
-fine_python_mypy = {git = "ssh://git@github.com/finecode-dev/finecode.git", subdirectory = "extensions/fine_python_mypy"}
-finecode = {git = "ssh://git@github.com/finecode-dev/finecode.git"}
+fine_python_flake8 = {git = "https://github.com/finecode-dev/finecode.git", subdirectory = "extensions/fine_python_flake8"}
+fine_python_mypy = {git = "https://github.com/finecode-dev/finecode.git", subdirectory = "extensions/fine_python_mypy"}
 flake8-bugbear = ">=24.12.12,<25.0.0"
 
 [package.source]
 type = "git"
-url = "ssh://git@github.com/finecode-dev/finecode.git"
+url = "https://github.com/finecode-dev/finecode.git"
 reference = "HEAD"
-resolved_reference = "439891bbf166521a6063a6fdfd561c9afa992c74"
+resolved_reference = "51fa7a9bb80d21455dc89c8b1c6e7049177363da"
 subdirectory = "presets/fine_python_lint"
 
 [[package]]
@@ -306,14 +288,14 @@ files = []
 develop = false
 
 [package.dependencies]
-fine_python_ast = {git = "ssh://git@github.com/finecode-dev/finecode.git", subdirectory = "extensions/fine_python_ast"}
-finecode_extension_api = {git = "ssh://git@github.com/finecode-dev/finecode.git", subdirectory = "finecode_extension_api"}
+fine_python_ast = {git = "https://github.com/finecode-dev/finecode.git", subdirectory = "extensions/fine_python_ast"}
+finecode_extension_api = {git = "https://github.com/finecode-dev/finecode.git", subdirectory = "finecode_extension_api"}
 
 [package.source]
 type = "git"
-url = "ssh://git@github.com/finecode-dev/finecode.git"
+url = "https://github.com/finecode-dev/finecode.git"
 reference = "HEAD"
-resolved_reference = "439891bbf166521a6063a6fdfd561c9afa992c74"
+resolved_reference = "51fa7a9bb80d21455dc89c8b1c6e7049177363da"
 subdirectory = "extensions/fine_python_module_exports"
 
 [[package]]
@@ -327,14 +309,14 @@ files = []
 develop = false
 
 [package.dependencies]
-finecode_extension_api = {git = "ssh://git@github.com/finecode-dev/finecode.git", subdirectory = "finecode_extension_api"}
+finecode_extension_api = {git = "https://github.com/finecode-dev/finecode.git", subdirectory = "finecode_extension_api"}
 mypy = ">=1.15,<2.0"
 
 [package.source]
 type = "git"
-url = "ssh://git@github.com/finecode-dev/finecode.git"
+url = "https://github.com/finecode-dev/finecode.git"
 reference = "HEAD"
-resolved_reference = "439891bbf166521a6063a6fdfd561c9afa992c74"
+resolved_reference = "51fa7a9bb80d21455dc89c8b1c6e7049177363da"
 subdirectory = "extensions/fine_python_mypy"
 
 [[package]]
@@ -348,15 +330,14 @@ files = []
 develop = false
 
 [package.dependencies]
-fine_python_format = {git = "ssh://git@github.com/finecode-dev/finecode.git", subdirectory = "presets/fine_python_format"}
-fine_python_lint = {git = "ssh://git@github.com/finecode-dev/finecode.git", subdirectory = "presets/fine_python_lint"}
-finecode = {git = "ssh://git@github.com/finecode-dev/finecode.git"}
+fine_python_format = {git = "https://github.com/finecode-dev/finecode.git", subdirectory = "presets/fine_python_format"}
+fine_python_lint = {git = "https://github.com/finecode-dev/finecode.git", subdirectory = "presets/fine_python_lint"}
 
 [package.source]
 type = "git"
-url = "ssh://git@github.com/finecode-dev/finecode.git"
+url = "https://github.com/finecode-dev/finecode.git"
 reference = "HEAD"
-resolved_reference = "439891bbf166521a6063a6fdfd561c9afa992c74"
+resolved_reference = "51fa7a9bb80d21455dc89c8b1c6e7049177363da"
 subdirectory = "presets/fine_python_recommended"
 
 [[package]]
@@ -371,9 +352,9 @@ develop = false
 
 [package.dependencies]
 click = "==8.1.*"
-command_runner = "==1.7.*"
-finecode_extension_api = {git = "ssh://git@github.com/finecode-dev/finecode.git", subdirectory = "finecode_extension_api"}
+finecode_extension_api = {git = "https://github.com/finecode-dev/finecode.git", subdirectory = "finecode_extension_api"}
 loguru = "==0.7.*"
+ordered-set = "==4.1.*"
 platformdirs = "==4.3.*"
 pydantic = "==2.10.*"
 pygls = "2.0.0-a2"
@@ -382,9 +363,9 @@ watchdog = "==4.0.*"
 
 [package.source]
 type = "git"
-url = "ssh://git@github.com/finecode-dev/finecode.git"
+url = "https://github.com/finecode-dev/finecode.git"
 reference = "HEAD"
-resolved_reference = "439891bbf166521a6063a6fdfd561c9afa992c74"
+resolved_reference = "51fa7a9bb80d21455dc89c8b1c6e7049177363da"
 
 [[package]]
 name = "finecode-dev-common-preset"
@@ -397,8 +378,8 @@ files = []
 develop = true
 
 [package.dependencies]
-fine_python_aksem = {git = "ssh://git@github.com/Aksem/fine_python_aksem.git"}
-fine_python_recommended = {git = "ssh://git@github.com/finecode-dev/finecode.git", subdirectory = "presets/fine_python_recommended"}
+fine_python_aksem = {git = "https://github.com/Aksem/fine_python_aksem.git"}
+fine_python_recommended = {git = "https://github.com/finecode-dev/finecode.git", subdirectory = "presets/fine_python_recommended"}
 
 [package.source]
 type = "directory"
@@ -568,6 +549,21 @@ files = [
 ]
 
 [[package]]
+name = "ordered-set"
+version = "4.1.0"
+description = "An OrderedSet is a custom MutableSet that remembers its order, so that every"
+optional = false
+python-versions = ">=3.7"
+groups = ["dev"]
+files = [
+    {file = "ordered-set-4.1.0.tar.gz", hash = "sha256:694a8e44c87657c59292ede72891eb91d34131f6531463aab3009191c77364a8"},
+    {file = "ordered_set-4.1.0-py3-none-any.whl", hash = "sha256:046e1132c71fcf3330438a539928932caf51ddbc582496833e23de611de14562"},
+]
+
+[package.extras]
+dev = ["black", "mypy", "pytest"]
+
+[[package]]
 name = "packaging"
 version = "25.0"
 description = "Core utilities for Python packages"
@@ -607,30 +603,6 @@ files = [
 docs = ["furo (>=2024.8.6)", "proselint (>=0.14)", "sphinx (>=8.1.3)", "sphinx-autodoc-typehints (>=3)"]
 test = ["appdirs (==1.4.4)", "covdefaults (>=2.3)", "pytest (>=8.3.4)", "pytest-cov (>=6)", "pytest-mock (>=3.14)"]
 type = ["mypy (>=1.14.1)"]
-
-[[package]]
-name = "psutil"
-version = "7.0.0"
-description = "Cross-platform lib for process and system monitoring in Python.  NOTE: the syntax of this script MUST be kept compatible with Python 2.7."
-optional = false
-python-versions = ">=3.6"
-groups = ["dev"]
-files = [
-    {file = "psutil-7.0.0-cp36-abi3-macosx_10_9_x86_64.whl", hash = "sha256:101d71dc322e3cffd7cea0650b09b3d08b8e7c4109dd6809fe452dfd00e58b25"},
-    {file = "psutil-7.0.0-cp36-abi3-macosx_11_0_arm64.whl", hash = "sha256:39db632f6bb862eeccf56660871433e111b6ea58f2caea825571951d4b6aa3da"},
-    {file = "psutil-7.0.0-cp36-abi3-manylinux_2_12_i686.manylinux2010_i686.manylinux_2_17_i686.manylinux2014_i686.whl", hash = "sha256:1fcee592b4c6f146991ca55919ea3d1f8926497a713ed7faaf8225e174581e91"},
-    {file = "psutil-7.0.0-cp36-abi3-manylinux_2_12_x86_64.manylinux2010_x86_64.manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:4b1388a4f6875d7e2aff5c4ca1cc16c545ed41dd8bb596cefea80111db353a34"},
-    {file = "psutil-7.0.0-cp36-abi3-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:a5f098451abc2828f7dc6b58d44b532b22f2088f4999a937557b603ce72b1993"},
-    {file = "psutil-7.0.0-cp36-cp36m-win32.whl", hash = "sha256:84df4eb63e16849689f76b1ffcb36db7b8de703d1bc1fe41773db487621b6c17"},
-    {file = "psutil-7.0.0-cp36-cp36m-win_amd64.whl", hash = "sha256:1e744154a6580bc968a0195fd25e80432d3afec619daf145b9e5ba16cc1d688e"},
-    {file = "psutil-7.0.0-cp37-abi3-win32.whl", hash = "sha256:ba3fcef7523064a6c9da440fc4d6bd07da93ac726b5733c29027d7dc95b39d99"},
-    {file = "psutil-7.0.0-cp37-abi3-win_amd64.whl", hash = "sha256:4cf3d4eb1aa9b348dec30105c55cd9b7d4629285735a102beb4441e38db90553"},
-    {file = "psutil-7.0.0.tar.gz", hash = "sha256:7be9c3eba38beccb6495ea33afd982a44074b78f28c434a1f51cc07fd315c456"},
-]
-
-[package.extras]
-dev = ["abi3audit", "black (==24.10.0)", "check-manifest", "coverage", "packaging", "pylint", "pyperf", "pypinfo", "pytest", "pytest-cov", "pytest-xdist", "requests", "rstcheck", "ruff", "setuptools", "sphinx", "sphinx_rtd_theme", "toml-sort", "twine", "virtualenv", "vulture", "wheel"]
-test = ["pytest", "pytest-xdist", "setuptools"]
 
 [[package]]
 name = "pycodestyle"
@@ -838,14 +810,14 @@ types-pyflakes = "*"
 
 [[package]]
 name = "types-pyflakes"
-version = "3.3.2.20250402"
+version = "3.3.2.20250429"
 description = "Typing stubs for pyflakes"
 optional = false
 python-versions = ">=3.9"
 groups = ["dev"]
 files = [
-    {file = "types_pyflakes-3.3.2.20250402-py3-none-any.whl", hash = "sha256:a21b60d105508cf136315acbcd835334fe5eff804c75fb752ec3a12367eb42a3"},
-    {file = "types_pyflakes-3.3.2.20250402.tar.gz", hash = "sha256:d52feeb10fce617a17b823848594bd58c8896a1bbbe080e671cd1a652af0affc"},
+    {file = "types_pyflakes-3.3.2.20250429-py3-none-any.whl", hash = "sha256:f9ccc1968ddd1a18232c1e66cfcce8a9e8f4b2b85fbbf682bf87148a2b2d58a0"},
+    {file = "types_pyflakes-3.3.2.20250429.tar.gz", hash = "sha256:a81b0ee91e34d143f655d366bd4002730f0e342a5aa338779d2f995515ce1c5c"},
 ]
 
 [[package]]
@@ -927,4 +899,4 @@ dev = ["black (>=19.3b0) ; python_version >= \"3.6\"", "pytest (>=4.6.2)"]
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.11, < 3.14"
-content-hash = "148486b49c8fc29823593a426d6e0e508a6e8977ab9bdd8c7faf34b48faed7ef"
+content-hash = "ca4aedcc1b712706890117d8c59ed135f4fc11ee925c6237e126f8d891ee959c"
