@@ -38,10 +38,10 @@ async def run_actions(
     try:
         try:
             await runner_manager.update_runners(ws_context)
-        except runner_manager.RunnerFailedToStart:
+        except runner_manager.RunnerFailedToStart as exception:
             raise RunFailed(
                 f"One or more projects are misconfigured, runners for them didn't"
-                " start. Check logs for details."
+                f" start: {exception.message}. Check logs for details."
             )
 
         actions_by_projects: dict[pathlib.Path, list[str]] = {}

@@ -24,7 +24,9 @@ partial_results: iterable_subscribe.IterableSubscribe = (
 )
 
 
-class RunnerFailedToStart(Exception): ...
+class RunnerFailedToStart(Exception):
+    def __init__(self, message: str) -> None:
+        self.message = message
 
 
 async def notify_project_changed(project: domain.Project) -> None:
@@ -181,6 +183,9 @@ async def update_runners(ws_context: context.WorkspaceContext) -> None:
     #
     # during initialization of new runners it also reads their configurations and
     # actions
+    #
+    # this function should handle all possible statuses of projects and they either
+    # start of fail to start, only projects without finecode are ignored
     extension_runners = list(ws_context.ws_projects_extension_runners.values())
     new_dirs, deleted_dirs = dirs_utils.find_changed_dirs(
         [*ws_context.ws_projects.keys()],
@@ -198,20 +203,20 @@ async def update_runners(ws_context: context.WorkspaceContext) -> None:
         await stop_extension_runner(runner_to_delete)
         extension_runners.remove(runner_to_delete)
 
-    new_runners_coros = [
-        start_extension_runner(runner_dir=new_dir, ws_context=ws_context)
-        for new_dir in new_dirs
-        if ws_context.ws_projects[new_dir].status == domain.ProjectStatus.READY
-    ]
     new_runners_tasks: list[asyncio.Task] = []
     try:
         async with asyncio.TaskGroup() as tg:
-            for coro in new_runners_coros:
-                runner_task = tg.create_task(coro)
-                new_runners_tasks.append(runner_task)
+            for new_dir in new_dirs:
+                project = ws_context.ws_projects[new_dir]
+                project_status = project.status
+                if project_status == domain.ProjectStatus.READY:
+                    runner_task = tg.create_task(start_extension_runner(runner_dir=new_dir, ws_context=ws_context))
+                    new_runners_tasks.append(runner_task)
+                elif project_status != domain.ProjectStatus.NO_FINECODE:
+                    raise RunnerFailedToStart(f"Runner for project '{project.name}' failed to start, status: {project_status.name}")
     except ExceptionGroup as eg:
         for exception in eg.exceptions:
-            if isinstance(exception, runner_client.BaseRunnerRequestException):
+            if isinstance(exception, runner_client.BaseRunnerRequestException) or isinstance(exception, RunnerFailedToStart):
                 logger.error(exception.message)
             else:
                 logger.exception(exception)

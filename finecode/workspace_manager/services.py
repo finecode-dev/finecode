@@ -48,7 +48,7 @@ def on_shutdown(ws_context: context.WorkspaceContext):
         if ws_context.ws_projects[runner.working_dir_path].status
         == domain.ProjectStatus.RUNNING
     ]
-    logger.info(f"Stop all {len(running_runners)} running extension runners")
+    logger.trace(f"Stop all {len(running_runners)} running extension runners")
 
     for runner in running_runners:
         runner_manager.stop_extension_runner_sync(runner=runner)
