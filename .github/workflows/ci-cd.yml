@@ -44,22 +44,34 @@ jobs:
           # to dependencies, which we use
           poetry config system-git-client true
 
+          FINECODE_SH_TEMPLATE="poetry run python"
+
           poetry install
+          echo $FINECODE_SH_TEMPLATE > finecode.sh
 
           pushd tests/list_ws/backend
           poetry install
+          echo $FINECODE_SH_TEMPLATE > finecode.sh
           popd
 
           pushd tests/list_ws/cli_tool
           poetry install
+          echo $FINECODE_SH_TEMPLATE > finecode.sh
           popd
 
           pushd tests/list_ws/ui_app
           poetry install
+          echo $FINECODE_SH_TEMPLATE > finecode.sh
           popd
 
           pushd tests/nested_package/pyback
           poetry install
+          echo $FINECODE_SH_TEMPLATE > finecode.sh
+          popd
+
+          pushd finecode_extension_api
+          poetry install
+          echo $FINECODE_SH_TEMPLATE > finecode.sh
           popd
         shell: bash
 
