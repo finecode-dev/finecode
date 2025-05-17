@@ -87,6 +87,7 @@ jobs:
       
       - name: Store the distribution packages
         uses: actions/upload-artifact@v4
+        if: runner.os == 'Linux'
         with:
           name: python-package-distributions
           path: dist/
