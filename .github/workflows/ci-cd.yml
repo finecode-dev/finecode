@@ -82,7 +82,7 @@ jobs:
       
       - name: Build
         run: |
-          python -m build
+          poetry build
         shell: bash
       
       - name: Store the distribution packages
