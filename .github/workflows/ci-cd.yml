@@ -142,7 +142,7 @@ jobs:
           cp extensions/fine_python_ast/dist/* dist/
           cp extensions/fine_python_black/dist/* dist/
           cp extensions/fine_python_isort/dist/* dist/
-          # cp extensions/fine_python_mypy/dist/* dist/
+          cp extensions/fine_python_mypy/dist/* dist/
           # cp presets/fine_python_format/dist/* dist/
         shell: bash
 
