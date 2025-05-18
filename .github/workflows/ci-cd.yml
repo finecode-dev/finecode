@@ -152,6 +152,14 @@ jobs:
           popd
         shell: bash
 
+      - name: Build fine_python_recommended
+        if: runner.os == 'Linux'
+        run: |
+          pushd presets/fine_python_recommended
+          poetry build
+          popd
+        shell: bash
+
       - name: Build finecode
         if: runner.os == 'Linux'
         run: |
@@ -175,6 +183,7 @@ jobs:
           cp extensions/fine_python_mypy/dist/* dist/
           cp presets/fine_python_format/dist/* dist/
           cp presets/fine_python_lint/dist/* dist/
+          cp presets/fine_python_recommended/dist/* dist/
         shell: bash
 
       - name: Store the distribution packages
