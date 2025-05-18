@@ -119,6 +119,7 @@ jobs:
       #   shell: bash
       
       - name: Collect all distribution packages
+        if: runner.os == 'Linux'
         run: |
           mkdir -p dist
           cp finecode_extension_api/dist/* dist/
