@@ -17,41 +17,31 @@ name = "fine-python-ast"
 version = "0.1.0"
 description = ""
 optional = false
-python-versions = ">=3.11, < 3.14"
+python-versions = "<3.14,>=3.11"
 groups = ["main"]
-files = []
-develop = false
+files = [
+    {file = "fine_python_ast-0.1.0-py3-none-any.whl", hash = "sha256:3dcdcdc40ed89e0b90686f2ad5d358d8edba622a5de4c1f52f2f0787dcc4e07d"},
+    {file = "fine_python_ast-0.1.0.tar.gz", hash = "sha256:ebc68aef7d0379f8771f610e436f6075b7c299a8895f1b9b7769fd038f95397e"},
+]
 
 [package.dependencies]
-finecode_extension_api = {git = "https://github.com/finecode-dev/finecode.git", subdirectory = "finecode_extension_api"}
-
-[package.source]
-type = "git"
-url = "https://github.com/finecode-dev/finecode.git"
-reference = "HEAD"
-resolved_reference = "15d15f75b7938dadceeb2e74e50f3d1239301b7c"
-subdirectory = "extensions/fine_python_ast"
+finecode_extension_api = "0.1.0"
 
 [[package]]
 name = "finecode-extension-api"
 version = "0.1.0"
 description = ""
 optional = false
-python-versions = ">=3.11, < 3.14"
+python-versions = "<3.14,>=3.11"
 groups = ["main"]
-files = []
-develop = false
+files = [
+    {file = "finecode_extension_api-0.1.0-py3-none-any.whl", hash = "sha256:55d4448a1a2f7224c3fdf05879fa9782246c0a85dc1dfb17543374fd808c2b5b"},
+    {file = "finecode_extension_api-0.1.0.tar.gz", hash = "sha256:dee16c180e4cd318f71bf7a94b6ae425667153f8fb62630ab60db9b034f45595"},
+]
 
 [package.dependencies]
 pydantic = ">=2.10.6,<3.0.0"
 typing-extensions = ">=4.12.2,<5.0.0"
-
-[package.source]
-type = "git"
-url = "https://github.com/finecode-dev/finecode.git"
-reference = "HEAD"
-resolved_reference = "15d15f75b7938dadceeb2e74e50f3d1239301b7c"
-subdirectory = "finecode_extension_api"
 
 [[package]]
 name = "flake8"
@@ -257,14 +247,14 @@ types-pyflakes = "*"
 
 [[package]]
 name = "types-pyflakes"
-version = "3.3.2.20250429"
+version = "3.3.2.20250511"
 description = "Typing stubs for pyflakes"
 optional = false
 python-versions = ">=3.9"
 groups = ["main"]
 files = [
-    {file = "types_pyflakes-3.3.2.20250429-py3-none-any.whl", hash = "sha256:f9ccc1968ddd1a18232c1e66cfcce8a9e8f4b2b85fbbf682bf87148a2b2d58a0"},
-    {file = "types_pyflakes-3.3.2.20250429.tar.gz", hash = "sha256:a81b0ee91e34d143f655d366bd4002730f0e342a5aa338779d2f995515ce1c5c"},
+    {file = "types_pyflakes-3.3.2.20250511-py3-none-any.whl", hash = "sha256:85802fdd0b64d3553ef12ac0ba02d85c4bbd38747579c544e6bb005ec455becf"},
+    {file = "types_pyflakes-3.3.2.20250511.tar.gz", hash = "sha256:d0ef58f9ec15eab2a9e427814f48587be4eb2752a8ae7dec201d65086f50ace2"},
 ]
 
 [[package]]
@@ -297,4 +287,4 @@ typing-extensions = ">=4.12.0"
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.11, < 3.14"
-content-hash = "f46f4e4e64503421c30dd723f88ff812f06c727f3cca830a92f295dc4a15b929"
+content-hash = "261b27c50864ea7935982f6a86aa5fcd65dc20e213fc2c0745e4ae4757f779ea"

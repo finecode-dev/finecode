@@ -103,11 +103,27 @@ jobs:
           poetry build
           popd
         shell: bash
+      
+      - name: Build fine_python_flake8
+        if: runner.os == 'Linux'
+        run: |
+          pushd extensions/fine_python_flake8
+          poetry build
+          popd
+        shell: bash
 
       - name: Build fine_python_isort
         if: runner.os == 'Linux'
         run: |
           pushd extensions/fine_python_isort
+          poetry build
+          popd
+        shell: bash
+
+      - name: Build fine_python_module_exports
+        if: runner.os == 'Linux'
+        run: |
+          pushd extensions/fine_python_module_exports
           poetry build
           popd
         shell: bash
@@ -145,9 +161,11 @@ jobs:
           cp finecode_extension_api/dist/* dist/
           cp extensions/fine_python_ast/dist/* dist/
           cp extensions/fine_python_black/dist/* dist/
+          cp extensions/fine_python_flake8/dist/* dist/
           cp extensions/fine_python_isort/dist/* dist/
+          cp extensions/fine_python_module_exports/dist/* dist/
           cp extensions/fine_python_mypy/dist/* dist/
-          # cp presets/fine_python_format/dist/* dist/
+          cp presets/fine_python_format/dist/* dist/
         shell: bash
 
       - name: Store the distribution packages
