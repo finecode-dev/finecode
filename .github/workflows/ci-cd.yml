@@ -133,6 +133,7 @@ jobs:
         run: |
           python -m venv .dev_workspace_venv
           source .dev_workspace_venv/bin/activate
+          python -m pip install --upgrade pip==25.1.1
           python -m pip install --group="dev_workspace"
           python -m build
         shell: bash
@@ -146,7 +147,7 @@ jobs:
           cp extensions/fine_python_black/dist/* dist/
           cp extensions/fine_python_isort/dist/* dist/
           cp extensions/fine_python_mypy/dist/* dist/
-          cp presets/fine_python_format/dist/* dist/
+          # cp presets/fine_python_format/dist/* dist/
         shell: bash
 
       - name: Store the distribution packages
