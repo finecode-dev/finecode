@@ -17,21 +17,16 @@ name = "finecode-extension-api"
 version = "0.1.0"
 description = ""
 optional = false
-python-versions = ">=3.11, < 3.14"
+python-versions = "<3.14,>=3.11"
 groups = ["main"]
-files = []
-develop = false
+files = [
+    {file = "finecode_extension_api-0.1.0-py3-none-any.whl", hash = "sha256:55d4448a1a2f7224c3fdf05879fa9782246c0a85dc1dfb17543374fd808c2b5b"},
+    {file = "finecode_extension_api-0.1.0.tar.gz", hash = "sha256:dee16c180e4cd318f71bf7a94b6ae425667153f8fb62630ab60db9b034f45595"},
+]
 
 [package.dependencies]
 pydantic = ">=2.10.6,<3.0.0"
 typing-extensions = ">=4.12.2,<5.0.0"
-
-[package.source]
-type = "git"
-url = "https://github.com/finecode-dev/finecode.git"
-reference = "HEAD"
-resolved_reference = "80b8f9322334128d30248231175d5154fc1c90f1"
-subdirectory = "finecode_extension_api"
 
 [[package]]
 name = "isort"
@@ -212,4 +207,4 @@ typing-extensions = ">=4.12.0"
 [metadata]
 lock-version = "2.1"
 python-versions = ">= 3.11, < 3.14"
-content-hash = "2b8e535ac1813e7b3498d7ff06adbdc5102cd21ec96a8abd6438d87d5f5df694"
+content-hash = "672ef3c1264ef102e64a40d92c5889fce13566cd0db5680064d7ae3e5ead2f43"

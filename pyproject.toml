@@ -13,7 +13,7 @@ dependencies = [
     "pydantic==2.10.*",
     "platformdirs==4.3.*",
     "pygls==2.0.0-a2",
-    "finecode_extension_api @ git+https://github.com/finecode-dev/finecode.git#subdirectory=finecode_extension_api",
+    "finecode_extension_api==0.1.0",
     "ordered-set==4.1.*",
 ]
 

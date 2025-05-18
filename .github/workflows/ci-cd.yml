@@ -88,6 +88,14 @@ jobs:
           popd
         shell: bash
       
+      - name: Build fine_python_ast
+        if: runner.os == 'Linux'
+        run: |
+          pushd extensions/fine_python_ast
+          poetry build
+          popd
+        shell: bash
+
       - name: Build fine_python_black
         if: runner.os == 'Linux'
         run: |
@@ -95,7 +103,7 @@ jobs:
           poetry build
           popd
         shell: bash
-      
+
       - name: Build fine_python_isort
         if: runner.os == 'Linux'
         run: |
@@ -103,7 +111,15 @@ jobs:
           poetry build
           popd
         shell: bash
-      
+
+      - name: Build fine_python_mypy
+        if: runner.os == 'Linux'
+        run: |
+          pushd extensions/fine_python_mypy
+          poetry build
+          popd
+        shell: bash
+
       - name: Build fine_python_format
         if: runner.os == 'Linux'
         run: |
@@ -112,22 +128,23 @@ jobs:
           popd
         shell: bash
 
-      # - name: Build finecode
-      #   if: runner.os == 'Linux'
-      #   run: |
-      #     poetry build
-      #   shell: bash
-      
+      - name: Build finecode
+        if: runner.os == 'Linux'
+        run: |
+          poetry build
+        shell: bash
+
       - name: Collect all distribution packages
         if: runner.os == 'Linux'
         run: |
           mkdir -p dist
           cp finecode_extension_api/dist/* dist/
-          # cp extensions/fine_python_black/dist/* dist/
+          cp extensions/fine_python_ast/dist/* dist/
+          cp extensions/fine_python_black/dist/* dist/
           # cp extensions/fine_python_isort/dist/* dist/
+          # cp extensions/fine_python_mypy/dist/* dist/
           # cp presets/fine_python_format/dist/* dist/
         shell: bash
-      
 
       - name: Store the distribution packages
         uses: actions/upload-artifact@v4
