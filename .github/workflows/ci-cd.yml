@@ -202,6 +202,11 @@ jobs:
         path: dist/
     - name: Publish distribution 📦 to PyPI
       uses: pypa/gh-action-pypi-publish@release/v1
+      with:
+        # temporary skip existing packages, because not always all packages at once
+        # are updated.
+        # TODO: implement publishing only of changed in finecode
+        skip-existing: true
 
   publish-to-testpypi:
     name: Publish Python 🐍 distribution 📦 to TestPyPI
