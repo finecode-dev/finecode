@@ -209,3 +209,7 @@ jobs:
       with:
         repository-url: https://test.pypi.org/legacy/
         verbose: true
+        # temporary skip existing packages, because not always all packages at once
+        # are updated.
+        # TODO: implement publishing only of changed in finecode
+        skip-existing: true

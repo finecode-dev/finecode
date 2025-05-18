@@ -6,4 +6,4 @@ __pycache__
 dist
 
 src/finecode/_version.py
-src/finecode.egg-info/
+src/finecode.egg-info
