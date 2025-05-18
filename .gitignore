@@ -2,10 +2,8 @@ __pycache__
 .coverage
 .pytest_cache
 .mypy_cache
+.import_linter_cache
 dist
 
-# folder with locally built apps
-apps
-
-generator_runner.build
-generator_runner.dist
+src/finecode/_version.py
+src/finecode.egg-info/

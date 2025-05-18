@@ -131,7 +131,10 @@ jobs:
       - name: Build finecode
         if: runner.os == 'Linux'
         run: |
-          poetry build
+          python -m venv .dev_workspace_venv
+          source .dev_workspace_venv/bin/activate
+          python -m pip install --group="dev_workspace"
+          python -m build
         shell: bash
 
       - name: Collect all distribution packages
