@@ -17,21 +17,16 @@ name = "finecode-extension-api"
 version = "0.1.0"
 description = ""
 optional = false
-python-versions = ">=3.11, < 3.14"
+python-versions = "<3.14,>=3.11"
 groups = ["main"]
-files = []
-develop = false
+files = [
+    {file = "finecode_extension_api-0.1.0-py3-none-any.whl", hash = "sha256:55d4448a1a2f7224c3fdf05879fa9782246c0a85dc1dfb17543374fd808c2b5b"},
+    {file = "finecode_extension_api-0.1.0.tar.gz", hash = "sha256:dee16c180e4cd318f71bf7a94b6ae425667153f8fb62630ab60db9b034f45595"},
+]
 
 [package.dependencies]
 pydantic = ">=2.10.6,<3.0.0"
 typing-extensions = ">=4.12.2,<5.0.0"
-
-[package.source]
-type = "git"
-url = "https://github.com/finecode-dev/finecode.git"
-reference = "HEAD"
-resolved_reference = "80b8f9322334128d30248231175d5154fc1c90f1"
-subdirectory = "finecode_extension_api"
 
 [[package]]
 name = "mypy"
@@ -262,4 +257,4 @@ typing-extensions = ">=4.12.0"
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.11, < 3.14"
-content-hash = "64c0aaf27c78def3360c538ac8894d2ddfeca108d2ae178b7ae521838c030f4d"
+content-hash = "7aecd7613778317287f8fe4e4b589373d685ccbc3ca56a47fa8cef66ce1a5149"
