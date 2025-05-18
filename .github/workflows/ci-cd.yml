@@ -79,18 +79,29 @@ jobs:
       #   run: |
       #     poetry run python -m finecode run lint
       #   shell: bash
-      
-      - name: Build
+
+      - name: Build finecode_extension_api
+        if: runner.os == 'Linux'
         run: |
+          pushd finecode_extension_api
           poetry build
+          popd
         shell: bash
+
+      # - name: Build finecode
+      #   if: runner.os == 'Linux'
+      #   run: |
+      #     poetry build
+      #   shell: bash
       
       - name: Store the distribution packages
         uses: actions/upload-artifact@v4
         if: runner.os == 'Linux'
         with:
-          name: python-package-distributions
-          path: dist/
+          name: finecode-distributions
+          path: |
+            dist/
+            finecode_extension_api/dist/
 
       # - name: Run unit tests
       #   if: ${{ !cancelled() }}
