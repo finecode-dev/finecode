@@ -87,6 +87,30 @@ jobs:
           poetry build
           popd
         shell: bash
+      
+      - name: Build fine_python_black
+        if: runner.os == 'Linux'
+        run: |
+          pushd extensions/fine_python_black
+          poetry build
+          popd
+        shell: bash
+      
+      - name: Build fine_python_isort
+        if: runner.os == 'Linux'
+        run: |
+          pushd extensions/fine_python_isort
+          poetry build
+          popd
+        shell: bash
+      
+      - name: Build fine_python_format
+        if: runner.os == 'Linux'
+        run: |
+          pushd presets/fine_python_format
+          poetry build
+          popd
+        shell: bash
 
       # - name: Build finecode
       #   if: runner.os == 'Linux'
@@ -94,14 +118,22 @@ jobs:
       #     poetry build
       #   shell: bash
       
+      - name: Collect all distribution packages
+        run: |
+          mkdir -p dist
+          cp finecode_extension_api/dist/* dist/
+          cp extensions/fine_python_black/dist/* dist/
+          cp extensions/fine_python_isort/dist/* dist/
+          cp presets/fine_python_format/dist/* dist/
+        shell: bash
+      
+
       - name: Store the distribution packages
         uses: actions/upload-artifact@v4
         if: runner.os == 'Linux'
         with:
           name: python-package-distributions
-          path: |
-            dist/
-            finecode_extension_api/dist/
+          path: dist/
 
       # - name: Run unit tests
       #   if: ${{ !cancelled() }}
