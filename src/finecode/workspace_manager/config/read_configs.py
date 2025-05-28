@@ -18,6 +18,16 @@ async def read_projects_in_dir(
     new_projects: list[domain.Project] = []
     def_files_generator = dir_path.rglob("pyproject.toml")
     for def_file in def_files_generator:
+        # ignore definition files in `__testdata__` directory, projects in test data
+        # can be started only in tests, not from outside
+        # TODO: make configurable?
+        # path to definition file relative to workspace directory in which this
+        # definition was found
+        def_file_rel_dir_path = def_file.relative_to(dir_path)
+        if '__testdata__' in def_file_rel_dir_path.parts:
+            logger.debug(f"Skip '{def_file}' because it is in test data and it is not a test session")
+            continue
+
         status = domain.ProjectStatus.READY
         actions: list[domain.Action] | None = None
 
