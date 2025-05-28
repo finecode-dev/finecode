@@ -1,4 +1,0 @@
-print("a")
-
-
-print('b')

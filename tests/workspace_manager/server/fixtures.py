@@ -8,8 +8,7 @@ from modapp.transports.inmemory_config import InMemoryTransportConfig
 
 import finecode.workspace_manager.main as workspace_manager_main
 from finecode.workspace_manager.server.api_routes import router
-from finecode.workspace_manager.server.api_routes import \
-    ws_context as global_ws_context
+from finecode.workspace_manager.server.api_routes import ws_context as global_ws_context
 
 pytestmark = pytest.mark.anyio
 
@@ -36,7 +35,9 @@ async def client_channel():
     json_converter = JsonConverter()
     try:
         inmemory_transport = next(
-            transport for transport in app.transports if isinstance(transport, InMemoryTransport)
+            transport
+            for transport in app.transports
+            if isinstance(transport, InMemoryTransport)
         )
     except StopIteration:
         raise Exception("App configuration error. InMemory transport not found")

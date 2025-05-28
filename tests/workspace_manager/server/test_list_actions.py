@@ -1,9 +1,11 @@
 from pathlib import Path
 
-from .client.finecode.workspace_manager import (AddWorkspaceDirRequest,
-                                                ListActionsRequest,
-                                                ListActionsResponse,
-                                                WorkspaceManagerService)
+from .client.finecode.workspace_manager import (
+    AddWorkspaceDirRequest,
+    ListActionsRequest,
+    ListActionsResponse,
+    WorkspaceManagerService,
+)
 
 
 async def test__returns_correct_list(client_channel):
@@ -23,6 +25,8 @@ async def test__returns_correct_list(client_channel):
     await WorkspaceManagerService.add_workspace_dir(client_channel, add_ws_dir_request)
     request = ListActionsRequest(parent_node_id="")
 
-    response = await WorkspaceManagerService.list_actions(channel=client_channel, request=request)
+    response = await WorkspaceManagerService.list_actions(
+        channel=client_channel, request=request
+    )
 
     assert response == ListActionsResponse(nodes=[])
