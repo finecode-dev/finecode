@@ -203,7 +203,7 @@ async def reload_action(runner: ExtensionRunnerInfo, action_name: str) -> None:
     )
 
 
-async def resolve_package_path(runner: ExtensionRunnerInfo, package_name: str) -> None:
+async def resolve_package_path(runner: ExtensionRunnerInfo, package_name: str) -> dict[str, str]:
     # resolving package path is used directly after initialization of runner to get full
     # config, which is then registered in runner. In this time runner is not available
     # for any other actions, so `runner.started_event` stays not set and should not be

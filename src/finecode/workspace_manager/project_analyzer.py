@@ -8,6 +8,8 @@ def get_files_by_projects(projects_dirs_paths: list[Path]) -> dict[Path, list[Pa
         project_dir = projects_dirs_paths[0]
         files_by_projects_dirs[project_dir] = [
             path for path in project_dir.rglob("*.py")
+            # TODO: make configurable?
+            if '__testdata__' not in path.relative_to(project_dir).parts and '.venvs' not in path.relative_to(project_dir).parts
         ]
     else:
         # copy to avoid modifying of argument values
@@ -54,6 +56,8 @@ def get_files_by_projects(projects_dirs_paths: list[Path]) -> dict[Path, list[Pa
                 # if there are no children with subprojects, we can just rglob
                 files_by_projects_dirs[project_dir_path].extend(
                     path for path in project_dir_path.rglob("*.py")
+                    # TODO: make configurable?
+                    if '__testdata__' not in path.relative_to(project_dir_path).parts and '.venvs' not in path.relative_to(project_dir_path).parts
                 )
             else:
                 # process all dir items which don't have child projects
@@ -66,6 +70,8 @@ def get_files_by_projects(projects_dirs_paths: list[Path]) -> dict[Path, list[Pa
                         elif dir_item.is_dir():
                             files_by_projects_dirs[project_dir_path].extend(
                                 path for path in dir_item.rglob("*.py")
+                                # TODO: make configurable?
+                                if '__testdata__' not in path.relative_to(project_dir_path).parts and '.venvs' not in path.relative_to(project_dir_path).parts
                             )
 
                 # process all dir items which have child projects
@@ -103,6 +109,8 @@ def get_files_by_projects(projects_dirs_paths: list[Path]) -> dict[Path, list[Pa
                                     # subdirectory without child projects, rglob it
                                     files_by_projects_dirs[project_dir_path].extend(
                                         path for path in dir_item.rglob("*.py")
+                                        # TODO: make configurable?
+                                        if '__testdata__' not in path.relative_to(project_dir_path).parts and '.venvs' not in path.relative_to(project_dir_path).parts
                                     )
 
     return files_by_projects_dirs
