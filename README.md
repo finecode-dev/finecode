@@ -45,7 +45,7 @@ presets = [
 
 ## CLI
 
-In virtualenv of your project you can use the following command:
+1. In virtualenv of your project you can use the following command:
 
 `python -m finecode run [run_options] <list_of_actions> [actions_payload]`
 
@@ -67,6 +67,17 @@ Examples:
 - `python -m finecode run --concurrently lint check_formatting` ... run `lint` and `check_formatting` actions concurrently in all projects in the workspace, root of which is in current working directory
 - `python -m finecode --workdir="./finecode_extension_api" run lint check_formatting` ... run `lint` and `check_formatting` sequentially in `finecode_extension_api` directory (project is there)
 - `python -m finecode --project="fine_python_mypy" --project="fine_python_ruff" run lint` ... run `lint` action in projects `fine_python_mypy` and `fine_python_ruff`. They should be discoverable from the working directory.
+
+2. You can dump project config with fully resolved configuration using following command:
+
+`python -m finecode dump-config [--trace] [--project="<project_name>"]`
+
+The result will be saved in `<cwd>/finecode_config_dump/` directory.
+
+Options:
+
+- `--trace` ... activate trace(more detailed) logging
+- `--project` ... by default config of project in current working directory is dumped. If current working directory contains multiple projects and you want to dump config of particular one, provide its name using this option
 
 ## Extensions from FineCode authors
 

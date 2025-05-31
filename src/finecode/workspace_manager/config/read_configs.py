@@ -27,6 +27,9 @@ async def read_projects_in_dir(
         if '__testdata__' in def_file_rel_dir_path.parts:
             logger.debug(f"Skip '{def_file}' because it is in test data and it is not a test session")
             continue
+        if def_file.parent.name == 'finecode_config_dump':
+            logger.debug(f"Skip '{def_file}' because it is config dump, not real project config")
+            continue
 
         status = domain.ProjectStatus.READY
         actions: list[domain.Action] | None = None
@@ -63,6 +66,7 @@ async def read_project_config(
     # from it
     if project.def_path.name == "pyproject.toml":
         with open(project.def_path, "rb") as pyproject_file:
+            # TODO: handle error if toml is invalid
             project_def = toml_loads(pyproject_file.read()).value
         # TODO: validate that finecode is installed?
 

@@ -10,6 +10,7 @@ import finecode.workspace_manager.main as workspace_manager
 from finecode import communication_utils
 from finecode.workspace_manager import logger_utils, user_messages
 from finecode.workspace_manager.cli_app import run as run_cmd
+from finecode.workspace_manager.cli_app import dump_config as dump_config_cmd
 
 
 @click.group()
@@ -165,6 +166,37 @@ def run(ctx) -> None:
     except Exception as exception:
         logger.exception(exception)
         click.echo("Unexpected error, see logs in file for more details", err=True)
+        sys.exit(1)
+
+
+@cli.command()
+@click.option("--trace", "trace", is_flag=True, default=False)
+@click.option("--debug", "debug", is_flag=True, default=False)
+@click.option("--project", "project", type=str)
+def dump_config(
+    trace: bool,
+    debug: bool,
+    project: str | None
+):
+    if debug is True:
+        import debugpy
+
+        try:
+            debugpy.listen(5680)
+            debugpy.wait_for_client()
+        except Exception as e:
+            logger.info(e)
+
+    if project is None:
+        click.echo("--project parameter is required", err=True)
+        return
+    
+    logger_utils.init_logger(trace=trace, stdout=True)
+
+    try:
+        asyncio.run(dump_config_cmd.dump_config(workdir_path=pathlib.Path(os.getcwd()), project_name=project))
+    except dump_config_cmd.DumpFailed as exception:
+        click.echo(exception.message, err=True)
         sys.exit(1)
 
 
