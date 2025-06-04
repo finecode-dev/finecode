@@ -1,8 +1,6 @@
 # FineCode
 
-NOT INTENDED FOR EXTERNAL USE YET. CONFIGURATION AND API ARE UNSTABLE AND IN ACTIVE DEVELOPMENT.
-
-The first beta release indended for public testing is planned in May 2025.
+**Status Update (04.06.2025):** FineCode is available for use, but the current version is intended only for personal testing, not for production use, as we actively work on improving execution environments, which will undergo significant changes. Initial release with new execution environments is expected in July 2025.
 
 ## Personalize and improve your development experience
 
