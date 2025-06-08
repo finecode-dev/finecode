@@ -14,23 +14,44 @@ With FineCode you can:
 
 ## Getting started: example how to setup linting and formatting in your project
 
-1.1 Install FineCode. The exact command depends on the package manager you are using.
+1.1 Install FineCode. We recommend using dependency groups ([PEP-735](https://peps.python.org/pep-0735/)) but not all package managers support them. We will show a recommended way with which you don't need package manager at all, only `pip`, but you can adapt it also for package manager used in your project.
 
-    `pip install finecode`
+1.1.1 Add `dev_workspace` dependency group to `pyproject.toml`:
 
-1.2 Create `finecode.sh` in root of your project with path to python executable from virtualenv of the project. We recommend also to add it to .gitignore. Example:
+  ```toml
+  [dependency-groups]
+  dev_workspace = ["finecode==0.2.*"]
+  ```
 
-    `.venv/bin/python`
+1.1.2 Create dev_workspace venv: `python -m venv .venvs/dev_workspace` (https://docs.python.org/3/library/venv.html#creating-virtual-environments )
 
-1.3 Using existing preset
+1.1.3 Activate this venv and install dependencies from `dev_workspace` group:
+  ```
+  source .venvs/dev_workspace/bin/activate
+  python -m pip install --group="dev_workspace"
+  ```
 
-Install package with the preset, for example:
+NOTE: `pip install` supports `--group` parameter since pip 25.1. Make sure you have new enough version, otherwise update it: `python -m pip install --upgrade pip`.
 
-`pip install fine_python_recommended`
+1.2 Using existing preset
+
+1.2.1 Add `dev_no_runtime` dependency group and put `fine_python_recommended` dependency in it:
+
+  ```toml
+  [dependency-groups]
+  dev_workspace = ["finecode==0.2.*"]
+  dev_no_runtime = ["fine_python_recommended==0.1.*"]
+  ```
 
 For list of presets from FineCode authors see 'Presets' section below.
 
-1.4 Enable finecode and preset
+1.2.1 Run `prepare_env` finecode action:
+
+  ```bash
+  python -m finecode run prepare_env
+  ```
+
+1.3 Enable finecode and preset
 
 ```toml
 [tool.finecode]
@@ -39,7 +60,15 @@ presets = [
 ]
 ```
 
-1.5 For integration with VSCode, install [FineCode extension](https://github.com/finecode-dev/finecode-vscode)
+1.4 That's it! Now you can lint and format your codebase by running `lint` and `format` actions(see 'IDE Integration' and 'CLI' sections for more details).
+
+You can customize preset, create your own, implement own actions, action handlers and more. All these possibilities are explained in details below.
+
+## IDE Integration
+
+### VSCode
+
+For integration with VSCode, install [FineCode extension](https://github.com/finecode-dev/finecode-vscode)
 
 ## CLI
 
