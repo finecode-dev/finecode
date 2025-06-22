@@ -2,6 +2,7 @@ import asyncio
 from pathlib import Path
 
 from loguru import logger
+import ordered_set
 from pygls.lsp.server import LanguageServer
 
 from finecode.workspace_manager import context, domain
@@ -37,7 +38,7 @@ def get_project_action_tree(
     project: domain.Project, ws_context: context.WorkspaceContext
 ) -> list[schemas.ActionTreeNode]:
     actions_nodes: list[schemas.ActionTreeNode] = []
-    if project.status == domain.ProjectStatus.RUNNING:
+    if project.status == domain.ProjectStatus.CONFIG_VALID:
         assert project.actions is not None
         for action in project.actions:
             node_id = f"{project.dir_path.as_posix()}::{action.name}"
@@ -67,7 +68,7 @@ def get_project_action_tree(
             )
     else:
         logger.info(
-            f"Project is not running: {project.dir_path}, no actions will be shown"
+            f"Project has no valid config and finecode: {project.dir_path}, no actions will be shown"
         )
 
     return actions_nodes
@@ -175,10 +176,11 @@ async def __list_actions(
     # list ws dirs and first level
 
     # wait for start of all runners, this is required to be able to resolve presets
-    all_started_coros = [
-        runner.initialized_event.wait()
-        for runner in ws_context.ws_projects_extension_runners.values()
-    ]
+    all_started_coros = []
+    for envs in ws_context.ws_projects_extension_runners.values():
+        # all presets are expected to be in `dev_no_runtime` env
+        dev_no_runtime_runner = envs['dev_no_runtime']
+        all_started_coros.append(dev_no_runtime_runner.initialized_event.wait())
     await asyncio.gather(*all_started_coros)
 
     nodes: list[schemas.ActionTreeNode] = create_node_list_for_ws(ws_context)
@@ -279,19 +281,22 @@ async def __reload_action(action_node_id: str) -> None:
 
     action_name = splitted_action_id[1]
     try:
-        next(action for action in project.actions if action.name == action_name)
+        action = next(action for action in project.actions if action.name == action_name)
     except StopIteration as error:
         logger.error(f"Unexpected error, project or action not found: {error}")
         raise InternalError()
 
-    runner = global_state.ws_context.ws_projects_extension_runners[project_path]
+    all_handlers_envs = ordered_set.OrderedSet([handler.env for handler in action.handlers])
+    for env in all_handlers_envs:
+        # parallel to speed up?
+        runner = global_state.ws_context.ws_projects_extension_runners[project_path][env]
 
-    try:
-        await runner_client.reload_action(runner, action_name)
-    except runner_client.BaseRunnerRequestException as error:
-        await user_messages.error(
-            f"Action {action_name} reload failed: {error.message}"
-        )
+        try:
+            await runner_client.reload_action(runner, action_name)
+        except runner_client.BaseRunnerRequestException as error:
+            await user_messages.error(
+                f"Action {action_name} reload failed: {error.message}"
+            )
 
 
 async def run_action(

@@ -1,3 +1,4 @@
+import dataclasses
 import sys
 from pathlib import Path
 from typing import NamedTuple
@@ -12,6 +13,7 @@ else:
 from finecode_extension_api import code_action, textstyler
 
 
+@dataclasses.dataclass
 class FormatRunPayload(code_action.RunActionPayload):
     file_paths: list[Path]
     save: bool
@@ -20,6 +22,7 @@ class FormatRunPayload(code_action.RunActionPayload):
 class FileInfo(NamedTuple):
     file_content: str
     file_version: str
+
 
 
 class FormatRunContext(code_action.RunActionContext):
@@ -42,12 +45,14 @@ class FormatRunContext(code_action.RunActionContext):
             )
 
 
-class FormatRunFileResult(code_action.RunActionResult):
+@dataclasses.dataclass
+class FormatRunFileResult:
     changed: bool
     # changed code or empty string if code was not changed
     code: str
 
 
+@dataclasses.dataclass
 class FormatRunResult(code_action.RunActionResult):
     result_by_file_path: dict[Path, FormatRunFileResult]
 
@@ -79,11 +84,13 @@ class FormatRunResult(code_action.RunActionResult):
         return text
 
 
-type FormatAction = code_action.Action[
-    FormatRunPayload, FormatRunContext, FormatRunResult
-]
+class FormatAction(code_action.Action):
+    PAYLOAD_TYPE = FormatRunPayload
+    RUN_CONTEXT_TYPE = FormatRunContext
+    RESULT_TYPE = FormatRunResult
 
 
+@dataclasses.dataclass
 class SaveFormatHandlerConfig(code_action.ActionHandlerConfig): ...
 
 

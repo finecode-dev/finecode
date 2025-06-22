@@ -18,7 +18,8 @@ from finecode.extension_runner import global_state
     type=click.Path(exists=True, file_okay=False, resolve_path=True, path_type=Path),
     required=True,
 )
-def main(trace: bool, debug: bool, debug_port: int, project_path: Path):
+@click.option("--env-name", "env_name", type=str, default="unknown")
+def main(trace: bool, debug: bool, debug_port: int, project_path: Path, env_name: str):
     if debug is True:
         import debugpy
 
@@ -36,7 +37,7 @@ def main(trace: bool, debug: bool, debug_port: int, project_path: Path):
 
     # extension runner doesn't stop with async start after closing LS client(WM). Use
     # sync start until this problem is solved
-    runner_start.start_runner_sync()
+    runner_start.start_runner_sync(env_name)
 
 
 if __name__ == "__main__":

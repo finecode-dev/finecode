@@ -263,14 +263,14 @@ async def reset(ls: LanguageServer, params):
 
 
 async def restart_extension_runner(ls: LanguageServer, params):
-    logger.info(f"restart extension runner {params}")
+    logger.info(f"restart extension runners {params}")
     await global_state.server_initialized.wait()
 
     params_dict = params[0]
     runner_working_dir_str = params_dict["projectPath"]
     runner_working_dir_path = Path(runner_working_dir_str)
 
-    await wm_services.restart_extension_runner(
+    await wm_services.restart_extension_runners(
         runner_working_dir_path, global_state.ws_context
     )
 

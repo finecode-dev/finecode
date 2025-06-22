@@ -1,8 +1,13 @@
 [tool.finecode.action.lint]
 source = "finecode_extension_api.actions.lint.LintAction"
 handlers = [
-    { name = "flake8", source = "fine_python_flake8.Flake8LintHandler" },
-    { name = "mypy", source = "fine_python_mypy.MypyLintHandler" },
+    { name = "flake8", source = "fine_python_flake8.Flake8LintHandler", env = "dev_no_runtime", dependencies = [
+        "fine_python_flake8==0.1.0",
+        "flake8-bugbear (>=24.12.12,<25.0.0)",
+    ] },
+    { name = "mypy", source = "fine_python_mypy.MypyLintHandler", env = "dev_no_runtime", dependencies = [
+        "fine_python_mypy==0.1.0",
+    ] },
 ]
 
 [tool.finecode.action_handler.flake8.config]

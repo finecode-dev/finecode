@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 
 from loguru import logger
 from lsprotocol import types
+import ordered_set
 
 from finecode import pygls_types_utils
 from finecode.workspace_manager import domain, project_analyzer, proxy_utils
@@ -332,10 +333,15 @@ async def _workspace_diagnostic(
     exec_info_by_project_dir_path: dict[Path, LintActionExecInfo] = {}
 
     for project_dir_path in relevant_projects_paths:
-        runner = global_state.ws_context.ws_projects_extension_runners[project_dir_path]
-        exec_info_by_project_dir_path[project_dir_path] = LintActionExecInfo(
-            runner=runner, action_name="lint"
-        )
+        project = global_state.ws_context.ws_projects[project_dir_path]
+        action = next(action for action in project.actions if action.name == 'lint')
+        action_envs = ordered_set.OrderedSet([handler.env for handler in action.handlers])
+        runners_by_env = global_state.ws_context.ws_projects_extension_runners[project_dir_path]
+        for env in action_envs:
+            runner = runners_by_env[env]
+            exec_info_by_project_dir_path[project_dir_path] = LintActionExecInfo(
+                runner=runner, action_name="lint"
+            )
 
     # find which runner is responsible for which files
     # currently FineCode supports only raw python files, find them in each ws project
@@ -351,9 +357,9 @@ async def _workspace_diagnostic(
 
     for project_dir_path, files_for_runner in files_by_projects.items():
         project = global_state.ws_context.ws_projects[project_dir_path]
-        if project.status != domain.ProjectStatus.RUNNING:
+        if project.status != domain.ProjectStatus.CONFIG_VALID:
             logger.warning(
-                f"Runner of project {project_dir_path} is not running,"
+                f"Project {project_dir_path} has not valid configuration and finecode,"
                 " lint in it will not be executed"
             )
             continue

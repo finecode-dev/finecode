@@ -31,7 +31,7 @@ async def read_projects_in_dir(
             logger.debug(f"Skip '{def_file}' because it is config dump, not real project config")
             continue
 
-        status = domain.ProjectStatus.READY
+        status = domain.ProjectStatus.CONFIG_VALID
         actions: list[domain.Action] | None = None
 
         with open(def_file, "rb") as pyproject_file:
@@ -40,12 +40,6 @@ async def read_projects_in_dir(
         if project_def.get("tool", {}).get("finecode", None) is None:
             status = domain.ProjectStatus.NO_FINECODE
             actions = []
-        else:
-            # finecode config exists, check also finecode.sh
-            finecode_sh_path = def_file.parent / "finecode.sh"
-
-            if not finecode_sh_path.exists():
-                status = domain.ProjectStatus.NO_FINECODE_SH
 
         new_project = domain.Project(
             name=def_file.parent.name,
@@ -73,12 +67,25 @@ async def read_project_config(
         finecode_raw_config = project_def.get("tool", {}).get("finecode", None)
         if finecode_raw_config:
             finecode_config = config_models.FinecodeConfig(**finecode_raw_config)
+            # all presets expected to be in `dev_no_runtime` environment
+            project_runners = ws_context.ws_projects_extension_runners[project.dir_path]
+            # TODO: can it be the case that there is no such runner?
+            dev_no_runtime_runner = project_runners['dev_no_runtime']
             new_config = await collect_config_from_py_presets(
                 presets_sources=[preset.source for preset in finecode_config.presets],
                 def_path=project.def_path,
-                runner=ws_context.ws_projects_extension_runners[project.dir_path],
+                runner=dev_no_runtime_runner,
             )
             _merge_projects_configs(project_def, new_config)
+
+        # add builtins if they are not overwritten
+        prepare_envs_action = domain.Action(name='prepare_envs', source='finecode_extension_api.actions.prepare_envs.PrepareEnvsAction', handlers=[domain.ActionHandler(name='prepare_venvs', source='fine_python_virtualenv.VirtualenvPrepareEnvHandler', config={}, env='dev_workspace', dependencies=['fine_python_venv==0.1.*'])], config={})
+        add_action_to_config_if_new(project_def, prepare_envs_action)
+        
+        # add runtime dependency group if it's not explicitly declared
+        add_runtime_dependency_group_if_new(project_def)
+        
+        merge_handlers_dependencies_into_groups(project_def)
 
         ws_context.ws_projects_raw_configs[project.dir_path] = project_def
     else:
@@ -294,3 +301,78 @@ def _merge_preset_configs(config1: dict[str, Any], config2: dict[str, Any]) -> N
         del config2["tool"]["finecode"]["action_handler"]
 
     del config2["tool"]["finecode"]
+
+
+def add_action_to_config_if_new(raw_config: dict[str, Any], action: domain.Action) -> None:
+    # adds action to raw config if it is not defined yet. Existing action will be not
+    # overwritten
+    tool_config = add_or_get_dict_key_value(raw_config, 'tool', {})
+    finecode_config = add_or_get_dict_key_value(tool_config, 'finecode', {})
+    action_config = add_or_get_dict_key_value(finecode_config, 'action', {})
+    if action.name not in action_config:
+        action_raw_dict = {
+            "source": action.source,
+            "handlers": [handler_to_dict(handler) for handler in action.handlers]
+        }
+        action_config[action.name] = action_raw_dict
+
+    # example of action definition:
+    # [tool.finecode.action.text_document_inlay_hint]
+    # source = "finecode_extension_api.actions.ide.text_document_inlay_hint.TextDocumentInlayHintAction"
+    # handlers = [
+    #     { name = 'module_exports_inlay_hint', source = 'fine_python_module_exports.extension.get_document_inlay_hints', env = "dev_no_runtime", dependencies = [
+    #         "fine_python_module_exports @ git+https://github.com/finecode-dev/finecode.git#subdirectory=extensions/fine_python_module_exports",
+    #     ] },
+    # ]
+
+
+def add_or_get_dict_key_value(dict_obj: dict[str, Any], key: str, default_value: Any) -> Any:
+    if key not in dict_obj:
+        value = default_value
+        dict_obj[key] = value
+    else:
+        value = dict_obj[key]
+    
+    return value
+
+
+def handler_to_dict(handler: domain.ActionHandler) -> dict[str, str | list[str]]:
+    return {
+        "name": handler.name,
+        "source": handler.source,
+        "env": handler.env,
+        "dependencies": handler.dependencies
+    }
+
+
+def add_runtime_dependency_group_if_new(project_config: dict[str, Any]) -> None:
+    runtime_dependencies = project_config.get('project', {}).get('dependencies', [])
+    
+    deps_groups = add_or_get_dict_key_value(project_config, 'dependency-groups', {})
+    if 'runtime' not in deps_groups:
+        deps_groups['runtime'] = runtime_dependencies
+
+
+def merge_handlers_dependencies_into_groups(project_config: dict[str, Any]) -> None:
+    # tool.finecode.action.<action_name>.handlers[x].dependencies
+    actions_dict = project_config.get('tool', {}).get('finecode', {}).get('action', {})
+    if 'dependency-groups' not in project_config:
+        project_config['dependency-groups'] = {}
+    deps_groups = project_config['dependency-groups']
+    
+    for action_info in actions_dict.values():
+        action_handlers = action_info.get('handlers', [])
+        
+        for handler in action_handlers:
+            handler_env = handler.get('env', None)
+            if handler_env is None:
+                logger.warning(f'Handler {handler} has no env, skip it')
+                continue
+            deps = handler.get('dependencies', [])
+            
+            if handler_env not in deps_groups:
+                deps_groups[handler_env] = []
+            
+            env_deps = deps_groups[handler_env]
+            # should we remove duplicates here?
+            env_deps += deps

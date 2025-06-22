@@ -9,6 +9,7 @@ import typing
 from pathlib import Path
 
 from loguru import logger
+from pydantic.dataclasses import dataclass as pydantic_dataclass
 
 from finecode.extension_runner import bootstrap, context, domain, global_state
 from finecode.extension_runner import (
@@ -120,42 +121,12 @@ def create_action_exec_info(action: domain.Action) -> domain.ActionExecInfo:
         logger.error(f"Error importing action type: {e}")
         raise e
 
-    # typing.TypeAliasType is available in Python 3.12+
-    if hasattr(typing, "TypeAliasType") and not isinstance(
-        action_type_def, typing.TypeAliasType
-    ):
-        raise Exception("Action definition expected to be a type")
+    if not issubclass(action_type_def, code_action.Action):
+        raise Exception("Action class expected to be a subclass of finecode_extension_api.code_action.Action")
 
-    action_type_alias = action_type_def.__value__
-
-    if not isinstance(action_type_alias, typing._GenericAlias):
-        raise Exception(
-            "Action definition expected to be an instantiation of"
-            " finecode_extension_api.code_action.Action type"
-        )
-
-    try:
-        unpack_with_action = next(iter(action_type_alias))
-    except StopIteration:
-        raise Exception("Action type definition is invalid: no action type alias?")
-
-    # typing.Unpack cannot used in isinstance:
-    # TypeError: typing.Unpack cannot be used with isinstance()
-    # if not isinstance(unpack_with_action,typing.Unpack):
-    #     raise Exception("Action type definition is invalid: type alias is not unpack")
-
-    if len(unpack_with_action.__args__) != 1:
-        raise Exception("Action type definition is invalid: expected 1 Action instance")
-
-    action_generic_alias = unpack_with_action.__args__[0]
-    action_args = action_generic_alias.__args__
-
-    if len(action_args) != 3:
-        raise Exception(
-            "Action type definition is invalid: Action type expects 3 arguments"
-        )
-
-    payload_type, run_context_type, _ = action_args
+    payload_type = action_type_def.PAYLOAD_TYPE
+    run_context_type = action_type_def.RUN_CONTEXT_TYPE
+    
 
     # TODO: validate that classes and correct subclasses?
 
@@ -288,7 +259,8 @@ async def run_action(
     # TODO: catch validation errors
     payload: code_action.RunActionPayload | None = None
     if action_exec_info.payload_type is not None:
-        payload = action_exec_info.payload_type(**request.params)
+        payload_type_with_validation = pydantic_dataclass(action_exec_info.payload_type)
+        payload = payload_type_with_validation(**request.params)
 
     run_context: code_action.RunActionContext | None = None
     if action_exec_info.run_context_type is not None:
@@ -297,6 +269,7 @@ async def run_action(
             known_args={"run_id": lambda _: run_id},
             params_to_ignore=["self"],
         )
+        
         run_context = action_exec_info.run_context_type(**constructor_args)
         # TODO: handler errors
         await run_context.init(initial_payload=payload)

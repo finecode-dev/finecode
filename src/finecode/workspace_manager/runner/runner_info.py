@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import enum
 import logging
 import shlex
 from dataclasses import dataclass
@@ -65,14 +66,25 @@ class CustomJsonRpcClient(JsonRPCClient):
 @dataclass
 class ExtensionRunnerInfo:
     working_dir_path: Path
+    env_name: str
+    status: RunnerStatus
     # NOTE: initialized doesn't mean the runner is running, check its status
     initialized_event: asyncio.Event
-    client: CustomJsonRpcClient
+    # e.g. if there is no venv for env, client can be None
+    client: CustomJsonRpcClient | None = None
     keep_running_request_task: asyncio.Task | None = None
 
     @property
     def process_id(self) -> int:
-        if self.client._server is not None:
+        if self.client is not None and self.client._server is not None:
             return self.client._server.pid
         else:
             return 0
+
+
+class RunnerStatus(enum.Enum):
+    READY_TO_START = enum.auto()
+    NO_VENV = enum.auto()
+    FAILED = enum.auto()
+    RUNNING = enum.auto()
+    EXITED = enum.auto()

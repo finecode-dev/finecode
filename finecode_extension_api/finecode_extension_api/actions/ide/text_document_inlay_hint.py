@@ -1,8 +1,10 @@
+import dataclasses
 import enum
 
 from finecode_extension_api import code_action, common_types
 
 
+@dataclasses.dataclass
 class InlayHintPayload(code_action.RunActionPayload):
     text_document: common_types.TextDocumentIdentifier
     range: common_types.Range
@@ -13,7 +15,8 @@ class InlayHintKind(enum.IntEnum):
     PARAM = 2
 
 
-class InlayHint(code_action.BaseModel):
+@dataclasses.dataclass
+class InlayHint:
     position: common_types.Position
     label: str
     kind: InlayHintKind
@@ -21,10 +24,11 @@ class InlayHint(code_action.BaseModel):
     padding_right: bool = False
 
 
+@dataclasses.dataclass
 class InlayHintResult(code_action.RunActionResult):
     hints: list[InlayHint] | None
 
 
-type TextDocumentInlayHintAction = code_action.Action[
-    InlayHintPayload, code_action.RunActionContext, InlayHintResult
-]
+class TextDocumentInlayHintAction(code_action.Action):
+    PAYLOAD_TYPE = InlayHintPayload
+    RESULT_TYPE = InlayHintResult

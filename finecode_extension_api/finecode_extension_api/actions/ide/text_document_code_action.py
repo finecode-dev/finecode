@@ -1,8 +1,10 @@
+import dataclasses
 import enum
 
 from finecode_extension_api import code_action, common_types
 
 
+@dataclasses.dataclass
 class CodeActionPayload(code_action.RunActionPayload):
     text_document: common_types.TextDocumentIdentifier
     range: common_types.Range
@@ -27,10 +29,11 @@ class CodeActionTriggerKind(enum.IntEnum):
     AUTOMATIC = 2
 
 
-class Diagnostic(code_action.BaseModel): ...
+@dataclasses.dataclass
+class Diagnostic: ...
 
 
-class CodeActionContext(code_action.BaseModel):
+class CodeActionContext:
     diagnostics: list[Diagnostic]
     only: CodeActionKind | None
     trigger_kind: CodeActionTriggerKind

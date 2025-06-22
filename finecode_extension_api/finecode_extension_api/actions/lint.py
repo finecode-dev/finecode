@@ -1,16 +1,19 @@
 import collections.abc
+import dataclasses
 import enum
 from pathlib import Path
 
 from finecode_extension_api import code_action, textstyler
 
 
-class Position(code_action.BaseModel):
+@dataclasses.dataclass
+class Position:
     line: int
     character: int
 
 
-class Range(code_action.BaseModel):
+@dataclasses.dataclass
+class Range:
     start: Position
     end: Position
 
@@ -23,7 +26,8 @@ class LintMessageSeverity(enum.IntEnum):
     HINT = 4
 
 
-class LintMessage(code_action.BaseModel):
+@dataclasses.dataclass
+class LintMessage:
     range: Range
     message: str
     code: str | None = None
@@ -32,6 +36,7 @@ class LintMessage(code_action.BaseModel):
     severity: LintMessageSeverity | None = None
 
 
+@dataclasses.dataclass
 class LintRunPayload(code_action.RunActionPayload, collections.abc.AsyncIterable):
     file_paths: list[Path]
 
@@ -39,6 +44,7 @@ class LintRunPayload(code_action.RunActionPayload, collections.abc.AsyncIterable
         return LintRunPayloadIterator(self)
 
 
+@dataclasses.dataclass
 class LintRunPayloadIterator(collections.abc.AsyncIterator):
     def __init__(self, lint_run_payload: LintRunPayload):
         self.lint_run_payload = lint_run_payload
@@ -54,6 +60,7 @@ class LintRunPayloadIterator(collections.abc.AsyncIterator):
         return self.lint_run_payload.file_paths[self.current_file_path_index - 1]
 
 
+@dataclasses.dataclass
 class LintRunResult(code_action.RunActionResult):
     # messages is a dict to support messages for multiple files because it could be the
     # case that linter checks given file and its dependencies.
@@ -100,6 +107,7 @@ class LintRunResult(code_action.RunActionResult):
         return code_action.RunReturnCode.SUCCESS
 
 
-type LintAction = code_action.Action[
-    LintRunPayload, code_action.RunActionWithPartialResultsContext, LintRunResult
-]
+class LintAction(code_action.Action):
+    PAYLOAD_TYPE = LintRunPayload
+    RUN_CONTEXT_TYPE = code_action.RunActionWithPartialResultsContext
+    RESULT_TYPE = LintRunResult

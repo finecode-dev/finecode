@@ -1,9 +1,15 @@
 [tool.finecode.action.format]
 source = "finecode_extension_api.actions.format.FormatAction"
 handlers = [
-    { name = "isort", source = "fine_python_isort.IsortFormatHandler" },
-    { name = "black", source = "fine_python_black.BlackFormatHandler" },
-    { name = "save", source = "finecode_extension_api.actions.format.SaveFormatHandler" },
+    { name = "isort", source = "fine_python_isort.IsortFormatHandler", env = "dev_no_runtime", dependencies = [
+        "fine_python_black==0.1.0",
+    ] },
+    { name = "black", source = "fine_python_black.BlackFormatHandler", env = "dev_no_runtime", dependencies = [
+        "fine_python_isort==0.1.0",
+    ] },
+    { name = "save", source = "finecode_extension_api.actions.format.SaveFormatHandler", env = "dev_no_runtime", dependencies = [
+        "finecode_extension_api==0.1.0",
+    ] },
 ]
 
 [tool.finecode.action_handler.isort.config]

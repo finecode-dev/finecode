@@ -1,21 +1,25 @@
-from finecode_extension_api.code_action import BaseModel
+import dataclasses
 
 
-class Position(BaseModel):
+@dataclasses.dataclass
+class Position:
     line: int
     character: int
 
 
-class Range(BaseModel):
+@dataclasses.dataclass
+class Range:
     start: Position
     end: Position
 
 
-class TextDocumentIdentifier(BaseModel):
+@dataclasses.dataclass
+class TextDocumentIdentifier:
     uri: str
 
 
-class TextDocumentItem(BaseModel):
+@dataclasses.dataclass
+class TextDocumentItem:
     uri: str
     language_id: str
     version: int

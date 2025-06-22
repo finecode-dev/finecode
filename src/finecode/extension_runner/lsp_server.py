@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import atexit
+import dataclasses
 import json
 import time
 
@@ -113,8 +114,10 @@ def create_lsp_server() -> lsp_server.LanguageServer:
         token: int | str, partial_result: code_action.RunActionResult
     ) -> None:
         logger.debug(f"Send partial result for {token}")
+        partial_result_dict = dataclasses.asdict(partial_result)
+        partial_result_json = json.dumps(partial_result_dict)
         server.progress(
-            types.ProgressParams(token=token, value=partial_result.model_dump_json())
+            types.ProgressParams(token=token, value=partial_result_json)
         )
 
     services.document_requester = document_requester
