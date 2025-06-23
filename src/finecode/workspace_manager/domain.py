@@ -4,6 +4,8 @@ import typing
 from enum import Enum, auto
 from pathlib import Path
 
+import ordered_set
+
 
 class Preset:
     def __init__(self, source: str) -> None:
@@ -11,10 +13,12 @@ class Preset:
 
 
 class ActionHandler:
-    def __init__(self, name: str, source: str, config: dict[str, typing.Any]):
+    def __init__(self, name: str, source: str, config: dict[str, typing.Any], env: str, dependencies: list[str]):
         self.name: str = name
         self.source: str = source
         self.config: dict[str, typing.Any] = config
+        self.env: str = env
+        self.dependencies: list[str] = dependencies
 
 
 class Action:
@@ -55,15 +59,26 @@ class Project:
 
     def __repr__(self) -> str:
         return str(self)
+    
+    @property
+    def envs(self) -> list[str]:
+        if self.actions is None:
+            raise ValueError("Actions are not collected yet")
+        
+        all_envs_set = ordered_set.OrderedSet([])
+        for action in self.actions:
+            action_envs = [handler.env for handler in action.handlers]
+            all_envs_set |= ordered_set.OrderedSet(action_envs)
+        
+        return list(all_envs_set)
 
 
 class ProjectStatus(Enum):
-    READY = auto()
+    CONFIG_INVALID = auto()
+    # config valid, but no finecode in project
     NO_FINECODE = auto()
-    NO_FINECODE_SH = auto()
-    RUNNER_FAILED = auto()
-    RUNNING = auto()
-    EXITED = auto()
+    # config valid and finecode is used in project
+    CONFIG_VALID = auto()
 
 
 RootActions = list[str]

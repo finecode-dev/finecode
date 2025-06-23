@@ -54,7 +54,7 @@ from finecode import logs
 #     await pygls_server_utils.start_io_async(server)
 
 
-def start_runner_sync():
+def start_runner_sync(env_name: str) -> None:
     project_log_dir_path = project_dirs.get_project_dir(global_state.project_dir_path)
     logger.remove()
     # disable logging raw messages
@@ -63,7 +63,7 @@ def start_runner_sync():
     # ~~extension runner communicates with workspace manager with tcp, we can print logs
     # to stdout as well~~. See README.md
     logs.save_logs_to_file(
-        file_path=project_log_dir_path / "execution.log",
+        file_path=project_log_dir_path / f"execution_{env_name}.log",
         log_level=global_state.log_level,
         stdout=False,
     )

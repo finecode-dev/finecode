@@ -2,19 +2,22 @@ from __future__ import annotations
 
 import asyncio
 import collections.abc
+import dataclasses
 import enum
 from pathlib import Path
 from typing import Generic, Protocol, TypeVar
-
-from pydantic import BaseModel
-
-from finecode_extension_api import partialresultscheduler
+import typing
 
 
-class ActionHandlerConfig(BaseModel): ...
+from finecode_extension_api import partialresultscheduler, textstyler
 
 
-class RunActionPayload(BaseModel): ...
+@dataclasses.dataclass
+class ActionHandlerConfig: ...
+
+
+@dataclasses.dataclass
+class RunActionPayload: ...
 
 
 class RunReturnCode(enum.IntEnum):
@@ -22,11 +25,12 @@ class RunReturnCode(enum.IntEnum):
     ERROR = 1
 
 
-class RunActionResult(BaseModel):
+@dataclasses.dataclass
+class RunActionResult:
     def update(self, other: RunActionResult) -> None:
         raise NotImplementedError()
 
-    def to_text(self) -> str:
+    def to_text(self) -> str | textstyler.StyledText:
         return str(self)
 
     @property
@@ -77,7 +81,16 @@ class ActionContext:
         self.cache_dir = cache_dir
 
 
-class Action(Generic[RunPayloadType, RunContextType, RunResultType]): ...
+@dataclasses.dataclass
+class ActionConfig:
+    run_handlers_concurrently: bool = False
+
+
+class Action(Generic[RunPayloadType, RunContextType, RunResultType]):
+    PAYLOAD_TYPE: typing.Type[RunActionPayload] = RunActionPayload
+    RUN_CONTEXT_TYPE: typing.Type[RunActionContext] = RunActionContext
+    RESULT_TYPE: typing.Type[RunActionResult] = RunActionResult
+    CONFIG: typing.Type[ActionConfig] = ActionConfig
 
 
 InitializeCallable = collections.abc.Callable[[], None]

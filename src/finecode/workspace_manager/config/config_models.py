@@ -32,6 +32,8 @@ class PresetDefinition(BaseModel):
 class ActionHandlerDefinition(BaseModel):
     name: str
     source: str
+    env: str
+    dependencies: list[str]
 
 
 class ActionDefinition(BaseModel):

@@ -19,7 +19,8 @@ class WorkspaceContext:
     ws_projects: dict[Path, domain.Project] = field(default_factory=dict)
     # <project_path:config>
     ws_projects_raw_configs: dict[Path, dict[str, Any]] = field(default_factory=dict)
-    ws_projects_extension_runners: dict[Path, ExtensionRunnerInfo] = field(
+    # <project_path:<env_name:runner_info>>
+    ws_projects_extension_runners: dict[Path, dict[str, ExtensionRunnerInfo]] = field(
         default_factory=dict
     )
     ignore_watch_paths: set[Path] = field(default_factory=set)

@@ -1,22 +1,21 @@
 import asyncio
 import collections.abc
 import contextlib
-from pathlib import Path
+import pathlib
 from typing import Any
 
 from loguru import logger
+import ordered_set
 
-from finecode.workspace_manager import context, domain, find_project
+from finecode.workspace_manager import context, domain, find_project, services
+from finecode.workspace_manager.services import ActionRunFailed
 from finecode.workspace_manager.runner import manager as runner_manager
 from finecode.workspace_manager.runner import runner_client, runner_info
 
 
-class ActionRunFailed(Exception): ...
-
-
-def find_action_project_runner(
-    file_path: Path, action_name: str, ws_context: context.WorkspaceContext
-) -> runner_info.ExtensionRunnerInfo:
+def find_action_project(
+    file_path: pathlib.Path, action_name: str, ws_context: context.WorkspaceContext
+) -> pathlib.Path:
     try:
         project_path = find_project.find_project_with_action_for_file(
             file_path=file_path,
@@ -32,36 +31,34 @@ def find_action_project_runner(
         raise ActionRunFailed(error)
 
     project_status = ws_context.ws_projects[project_path].status
-    if project_status != domain.ProjectStatus.RUNNING:
+    if project_status != domain.ProjectStatus.CONFIG_VALID:
         logger.info(
-            f"Extension runner {project_path} is not running, "
+            f"Extension runner {project_path} has no valid config with finecode, "
             f"status: {project_status.name}"
         )
         raise ActionRunFailed(
-            f"Extension runner {project_path} is not running, "
+            f"Project {project_path} has no valid config with finecode,"
             f"status: {project_status.name}"
         )
 
-    runner = ws_context.ws_projects_extension_runners[project_path]
-    return runner
+    return project_path
 
 
 async def find_action_project_and_run(
-    file_path: Path,
+    file_path: pathlib.Path,
     action_name: str,
     params: dict[str, Any],
     ws_context: context.WorkspaceContext,
 ) -> runner_client.RunActionResponse:
-    runner = find_action_project_runner(
+    project_path = find_action_project(
         file_path=file_path, action_name=action_name, ws_context=ws_context
     )
+    project = ws_context.ws_projects[project_path]
+
     try:
-        response = await runner_client.run_action(
-            runner=runner, action_name=action_name, params=params
-        )
-    except runner_client.BaseRunnerRequestException as error:
-        logger.error(f"Error on running action {action_name} on {file_path}: {error.message}")
-        raise ActionRunFailed(error.message)
+        response = await services.run_action(action_name=action_name, params=params, project_def=project, ws_context=ws_context, preprocess_payload=False)
+    except services.ActionRunFailed as exception:
+        raise exception
 
     return response
 
@@ -133,7 +130,7 @@ async def run_action_and_notify(
     runner: runner_info.ExtensionRunnerInfo,
     result_list: AsyncList,
     partial_results_task: asyncio.Task,
-) -> None:
+) -> runner_client.RunActionResponse:
     try:
         return await run_action_in_runner(
             action_name=action_name,
@@ -163,11 +160,12 @@ async def run_with_partial_results(
     action_name: str,
     params: dict[str, Any],
     partial_result_token: int | str,
-    runner: runner_info.ExtensionRunnerInfo,
+    project_dir_path: pathlib.Path,
+    ws_context: context.WorkspaceContext
 ) -> collections.abc.AsyncIterator[
     collections.abc.AsyncIterable[domain.PartialResultRawValue]
 ]:
-    logger.trace(f"Run {action_name} in runner {runner.working_dir_path}")
+    logger.trace(f"Run {action_name} in project {project_dir_path}")
 
     result: AsyncList[domain.PartialResultRawValue] = AsyncList()
     try:
@@ -177,16 +175,22 @@ async def run_with_partial_results(
                     result_list=result, partial_result_token=partial_result_token
                 )
             )
-            tg.create_task(
-                run_action_and_notify(
-                    action_name=action_name,
-                    params=params,
-                    partial_result_token=partial_result_token,
-                    runner=runner,
-                    result_list=result,
-                    partial_results_task=partial_results_task,
+            project = ws_context.ws_projects[project_dir_path]
+            action = next(action for action in project.actions if action.name == 'lint')
+            action_envs = ordered_set.OrderedSet([handler.env for handler in action.handlers])
+            runners_by_env = ws_context.ws_projects_extension_runners[project_dir_path]
+            for env in action_envs:
+                runner = runners_by_env[env]
+                tg.create_task(
+                    run_action_and_notify(
+                        action_name=action_name,
+                        params=params,
+                        partial_result_token=partial_result_token,
+                        runner=runner,
+                        result_list=result,
+                        partial_results_task=partial_results_task,
+                    )
                 )
-            )
 
             yield result
     except ExceptionGroup as eg:
@@ -197,39 +201,39 @@ async def run_with_partial_results(
 
 @contextlib.asynccontextmanager
 async def find_action_project_and_run_with_partial_results(
-    file_path: Path,
+    file_path: pathlib.Path,
     action_name: str,
     params: dict[str, Any],
     partial_result_token: int | str,
     ws_context: context.WorkspaceContext,
 ) -> collections.abc.AsyncIterator[runner_client.RunActionRawResult]:
     logger.trace(f"Run {action_name} on {file_path}")
-    runner = find_action_project_runner(
+    project_path = find_action_project(
         file_path=file_path, action_name=action_name, ws_context=ws_context
     )
-
     return run_with_partial_results(
         action_name=action_name,
         params=params,
         partial_result_token=partial_result_token,
-        runner=runner,
+        project_dir_path=project_path,
+        ws_context=ws_context
     )
 
 
 def find_all_projects_with_action(
     action_name: str, ws_context: context.WorkspaceContext
-) -> list[Path]:
+) -> list[pathlib.Path]:
     projects = ws_context.ws_projects
-    relevant_projects: dict[Path, domain.Project] = {
+    relevant_projects: dict[pathlib.Path, domain.Project] = {
         path: project
         for path, project in projects.items()
         if project.status != domain.ProjectStatus.NO_FINECODE
     }
 
-    # exclude not running projects and projects without requested action
+    # exclude projects without valid config and projects without requested action
     for project_dir_path, project_def in relevant_projects.copy().items():
-        if project_def.status != domain.ProjectStatus.RUNNING:
-            # projects that are not running, have no actions. Files of those projects
+        if project_def.status != domain.ProjectStatus.CONFIG_VALID:
+            # projects without valid config have no actions. Files of those projects
             # will be not processed because we don't know whether it has one of expected
             # actions
             continue
@@ -243,7 +247,7 @@ def find_all_projects_with_action(
             del relevant_projects[project_dir_path]
             continue
 
-    relevant_projects_paths: list[Path] = list(relevant_projects.keys())
+    relevant_projects_paths: list[pathlib.Path] = list(relevant_projects.keys())
     return relevant_projects_paths
 
 
@@ -251,4 +255,6 @@ __all__ = [
     "find_action_project_and_run",
     "find_action_project_and_run_with_partial_results",
     "run_with_partial_results",
+    # reexport for easier use of proxy helpers
+    "ActionRunFailed"
 ]

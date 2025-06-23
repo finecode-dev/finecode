@@ -5,7 +5,7 @@ description = ""
 authors = [{ name = "Vladyslav Hnatiuk", email = "aders1234@gmail.com" }]
 readme = "README.md"
 requires-python = ">=3.11, < 3.14"
-dependencies = ["fine_python_black==0.1.0", "fine_python_isort==0.1.0"]
+dependencies = ["fine_extension_api==0.1.*"]
 
 [tool.poetry.group.dev.dependencies]
 finecode = { version = "0.2.0" }

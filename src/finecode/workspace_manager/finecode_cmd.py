@@ -1,13 +1,10 @@
 from pathlib import Path
 
 
-def get_finecode_cmd(project_path: Path) -> str:
-    sh_path = project_path / "finecode.sh"
+def get_python_cmd(project_path: Path, env_name: str) -> str:
+    venv_python_path = project_path / ".venvs" / env_name / "bin" / "python"
 
-    if not sh_path.exists():
-        raise ValueError(f"finecode.sh not found in project {project_path}")
+    if not venv_python_path.exists():
+        raise ValueError(f"{env_name} venv not found in project {project_path}")
 
-    with open(sh_path, "r") as sh_file:
-        sh_cmd = sh_file.readline()
-
-    return sh_cmd
+    return venv_python_path.as_posix()

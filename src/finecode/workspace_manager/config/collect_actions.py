@@ -52,6 +52,8 @@ def _collect_actions_in_config(
                     .get("action_handler", {})
                     .get(handler.name, {})
                     .get("config", {}),
+                    env=handler.env,
+                    dependencies=handler.dependencies
                 )
                 for handler in action_def.handlers
             ],

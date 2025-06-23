@@ -215,9 +215,9 @@ async def run_actions_in_running_project(
                     )
                     run_tasks.append(run_task)
         except ExceptionGroup as eg:
-            for error in eg:
+            for error in eg.exceptions:
                 logger.exception(error)
-            raise RunFailed(f"Running of action {action_name} failed")
+            raise RunFailed(f"Running of actions {actions} failed")
 
         for idx, run_task in enumerate(run_tasks):
             run_result = run_task.result()

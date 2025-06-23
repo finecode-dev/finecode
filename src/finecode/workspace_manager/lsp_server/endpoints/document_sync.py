@@ -7,7 +7,7 @@ from pygls.lsp.server import LanguageServer
 
 from finecode.workspace_manager import domain
 from finecode.workspace_manager.lsp_server import global_state
-from finecode.workspace_manager.runner import runner_client
+from finecode.workspace_manager.runner import runner_client, runner_info
 
 
 async def document_did_open(
@@ -34,14 +34,15 @@ async def document_did_open(
     try:
         async with asyncio.TaskGroup() as tg:
             for project_path in projects_paths:
-                runner = global_state.ws_context.ws_projects_extension_runners[
+                runners_by_env = global_state.ws_context.ws_projects_extension_runners[
                     project_path
                 ]
-                tg.create_task(
-                    runner_client.notify_document_did_open(
-                        runner=runner, document_info=document_info
+                for runner in runners_by_env.values():
+                    tg.create_task(
+                        runner_client.notify_document_did_open(
+                            runner=runner, document_info=document_info
+                        )
                     )
-                )
     except ExceptionGroup as e:
         logger.error(f"Error while sending opened document: {e}")
 
@@ -62,21 +63,26 @@ async def document_did_close(
     projects_paths = [
         project_path
         for project_path, project in global_state.ws_context.ws_projects.items()
-        if project.status == domain.ProjectStatus.RUNNING
+        if project.status == domain.ProjectStatus.CONFIG_VALID
         and file_path.is_relative_to(project_path)
     ]
 
     try:
         async with asyncio.TaskGroup() as tg:
             for project_path in projects_paths:
-                runner = global_state.ws_context.ws_projects_extension_runners[
+                runners_by_env = global_state.ws_context.ws_projects_extension_runners[
                     project_path
                 ]
-                tg.create_task(
-                    runner_client.notify_document_did_close(
-                        runner=runner, document_uri=params.text_document.uri
+                for runner in runners_by_env.values():
+                    if runner.status != runner_info.RunnerStatus.RUNNING:
+                        logger.trace(f"Runner {runner.working_dir_path} is not running, skip it")
+                        continue
+
+                    tg.create_task(
+                        runner_client.notify_document_did_close(
+                            runner=runner, document_uri=params.text_document.uri
+                        )
                     )
-                )
     except ExceptionGroup as e:
         logger.error(f"Error while sending closed document: {e}")
 

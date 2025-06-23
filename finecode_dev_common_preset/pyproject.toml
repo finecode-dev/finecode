@@ -7,7 +7,7 @@ readme = "README.md"
 requires-python = ">=3.11, < 3.14"
 dependencies = [
     "fine_python_aksem @ git+https://github.com/Aksem/fine_python_aksem.git",
-    "fine_python_recommended @ git+https://github.com/finecode-dev/finecode.git#subdirectory=presets/fine_python_recommended",
+    "fine_python_recommended==0.1.0",
 ]
 
 [tool.poetry]
