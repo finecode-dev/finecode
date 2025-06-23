@@ -317,13 +317,19 @@ async def run_action(
 
     action_name = splitted_action_id[1]
 
-    response = await wm_services.run_action(
-        action_name=action_name,
-        params=request.params,
-        project_def=project_def,
-        ws_context=global_state.ws_context,
-    )
-    return schemas.RunActionResponse(result=response.result)
+    try:
+        response = await wm_services.run_action(
+            action_name=action_name,
+            params=request.params,
+            project_def=project_def,
+            ws_context=global_state.ws_context,
+        )
+        result = response.result
+    except wm_services.ActionRunFailed as exception:
+        logger.error(exception.message)
+        result = {}
+
+    return schemas.RunActionResponse(result=result)
 
 
 async def notify_changed_action_node(

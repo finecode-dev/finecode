@@ -5,6 +5,7 @@ import pathlib
 from typing import Any
 
 from loguru import logger
+import ordered_set
 
 from finecode.workspace_manager import context, domain, find_project, services
 from finecode.workspace_manager.services import ActionRunFailed
@@ -159,11 +160,12 @@ async def run_with_partial_results(
     action_name: str,
     params: dict[str, Any],
     partial_result_token: int | str,
-    runner: runner_info.ExtensionRunnerInfo,
+    project_dir_path: pathlib.Path,
+    ws_context: context.WorkspaceContext
 ) -> collections.abc.AsyncIterator[
     collections.abc.AsyncIterable[domain.PartialResultRawValue]
 ]:
-    logger.trace(f"Run {action_name} in runner {runner.working_dir_path}")
+    logger.trace(f"Run {action_name} in project {project_dir_path}")
 
     result: AsyncList[domain.PartialResultRawValue] = AsyncList()
     try:
@@ -173,16 +175,22 @@ async def run_with_partial_results(
                     result_list=result, partial_result_token=partial_result_token
                 )
             )
-            tg.create_task(
-                run_action_and_notify(
-                    action_name=action_name,
-                    params=params,
-                    partial_result_token=partial_result_token,
-                    runner=runner,
-                    result_list=result,
-                    partial_results_task=partial_results_task,
+            project = ws_context.ws_projects[project_dir_path]
+            action = next(action for action in project.actions if action.name == 'lint')
+            action_envs = ordered_set.OrderedSet([handler.env for handler in action.handlers])
+            runners_by_env = ws_context.ws_projects_extension_runners[project_dir_path]
+            for env in action_envs:
+                runner = runners_by_env[env]
+                tg.create_task(
+                    run_action_and_notify(
+                        action_name=action_name,
+                        params=params,
+                        partial_result_token=partial_result_token,
+                        runner=runner,
+                        result_list=result,
+                        partial_results_task=partial_results_task,
+                    )
                 )
-            )
 
             yield result
     except ExceptionGroup as eg:
@@ -203,12 +211,12 @@ async def find_action_project_and_run_with_partial_results(
     project_path = find_action_project(
         file_path=file_path, action_name=action_name, ws_context=ws_context
     )
-    # TODO
     return run_with_partial_results(
         action_name=action_name,
         params=params,
         partial_result_token=partial_result_token,
-        runner=runner,
+        project_dir_path=project_path,
+        ws_context=ws_context
     )
 
 
