@@ -9,6 +9,11 @@ defaults:
   run:
     shell: bash
 
+env:
+  # python version for dev workspace
+  DEV_WORKSPACE_PYTHON_VERSION: '3.13'
+
+
 jobs:
   build:
     runs-on: ${{ matrix.os }}
@@ -17,7 +22,6 @@ jobs:
       max-parallel: 1
       matrix:
         os: [ubuntu-24.04, macos-13, windows-2022]
-        python-version: ["3.13"]
         include:
           - os: ubuntu-24.04
             name: Linux
@@ -29,150 +33,39 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install poetry
-        run: pipx install poetry==2.1.2
-
-      - name: Set up Python ${{ matrix.python-version }}
+      - name: Set up Python ${{ env.DEV_WORKSPACE_PYTHON_VERSION }}
         uses: actions/setup-python@v5
         with:
-          python-version: ${{ matrix.python-version }}
-          cache: "poetry"
+          python-version: ${{ env.DEV_WORKSPACE_PYTHON_VERSION }}
 
       - name: Install dependencies
         run: |
-          # poetry default git client `dulwich` doesn't work properly with git urls
-          # to dependencies, which we use
-          poetry config system-git-client true
+          python -m venv .venvs/dev_workspace
+          source .venvs/dev_workspace/bin/activate
+          python -m pip install --upgrade pip==25.1.1
+          python -m pip install --group="dev_workspace"
 
-          FINECODE_SH_TEMPLATE="poetry run python"
-
-          poetry install
-          echo $FINECODE_SH_TEMPLATE > finecode.sh
-
-          pushd tests/list_ws/backend
-          poetry install
-          echo $FINECODE_SH_TEMPLATE > finecode.sh
-          popd
-
-          pushd tests/list_ws/cli_tool
-          poetry install
-          echo $FINECODE_SH_TEMPLATE > finecode.sh
-          popd
-
-          pushd tests/list_ws/ui_app
-          poetry install
-          echo $FINECODE_SH_TEMPLATE > finecode.sh
-          popd
-
-          pushd tests/nested_package/pyback
-          poetry install
-          echo $FINECODE_SH_TEMPLATE > finecode.sh
-          popd
-
-          pushd finecode_extension_api
-          poetry install
-          echo $FINECODE_SH_TEMPLATE > finecode.sh
-          popd
+          python -m finecode prepare_envs
         shell: bash
+
+      # TODO: install all other supported python versions. Version can be extracted from finecode
 
       # - name: Lint
       #   run: |
       #     poetry run python -m finecode run lint
       #   shell: bash
 
-      - name: Build finecode_extension_api
+      - name: Build all packages
         if: runner.os == 'Linux'
         run: |
-          pushd finecode_extension_api
-          poetry build
-          popd
-        shell: bash
-      
-      - name: Build fine_python_ast
-        if: runner.os == 'Linux'
-        run: |
-          pushd extensions/fine_python_ast
-          poetry build
-          popd
-        shell: bash
-
-      - name: Build fine_python_black
-        if: runner.os == 'Linux'
-        run: |
-          pushd extensions/fine_python_black
-          poetry build
-          popd
-        shell: bash
-      
-      - name: Build fine_python_flake8
-        if: runner.os == 'Linux'
-        run: |
-          pushd extensions/fine_python_flake8
-          poetry build
-          popd
-        shell: bash
-
-      - name: Build fine_python_isort
-        if: runner.os == 'Linux'
-        run: |
-          pushd extensions/fine_python_isort
-          poetry build
-          popd
-        shell: bash
-
-      - name: Build fine_python_module_exports
-        if: runner.os == 'Linux'
-        run: |
-          pushd extensions/fine_python_module_exports
-          poetry build
-          popd
-        shell: bash
-
-      - name: Build fine_python_mypy
-        if: runner.os == 'Linux'
-        run: |
-          pushd extensions/fine_python_mypy
-          poetry build
-          popd
-        shell: bash
-
-      - name: Build fine_python_format
-        if: runner.os == 'Linux'
-        run: |
-          pushd presets/fine_python_format
-          poetry build
-          popd
-        shell: bash
-      
-      - name: Build fine_python_lint
-        if: runner.os == 'Linux'
-        run: |
-          pushd presets/fine_python_lint
-          poetry build
-          popd
-        shell: bash
-
-      - name: Build fine_python_recommended
-        if: runner.os == 'Linux'
-        run: |
-          pushd presets/fine_python_recommended
-          poetry build
-          popd
-        shell: bash
-
-      - name: Build finecode
-        if: runner.os == 'Linux'
-        run: |
-          python -m venv .dev_workspace_venv
-          source .dev_workspace_venv/bin/activate
-          python -m pip install --upgrade pip==25.1.1
-          python -m pip install --group="dev_workspace"
-          python -m build
+          source .venvs/dev_workspace/bin/activate
+          python -m finecode run build
         shell: bash
 
       - name: Collect all distribution packages
         if: runner.os == 'Linux'
         run: |
+          # TODO: finecode action to copy only updated packages in dist
           mkdir -p dist
           cp finecode_extension_api/dist/* dist/
           cp extensions/fine_python_ast/dist/* dist/

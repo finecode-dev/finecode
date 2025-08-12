@@ -16,6 +16,8 @@ from lsprotocol import types
 from pygls.lsp import server as lsp_server
 
 from finecode.extension_runner import domain, schemas, services
+from finecode.extension_runner._services import run_action as run_action_service
+from finecode.extension_runner.impls import project_info_provider
 from finecode_extension_api import code_action
 
 
@@ -122,7 +124,19 @@ def create_lsp_server() -> lsp_server.LanguageServer:
 
     services.document_requester = document_requester
     services.document_saver = document_saver
-    services.set_partial_result_sender(send_partial_result)
+    run_action_service.set_partial_result_sender(send_partial_result)
+    
+    async def get_project_raw_config():
+        try:
+            raw_config = await server.protocol.send_request_async(
+                "projects/getRawConfig", params={}
+            )
+        except pygls_exceptions.JsonRpcInternalError as error:
+                raise error
+
+        return json.loads(raw_config.config)
+    
+    project_info_provider.project_raw_config_getter = get_project_raw_config
 
     return server
 

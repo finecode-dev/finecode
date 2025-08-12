@@ -43,14 +43,17 @@ async def dump_config(workdir_path: pathlib.Path, project_name: str):
         project_dir_path = list(ws_context.ws_projects.keys())[0]
         dump_dir_path = project_dir_path / 'finecode_config_dump'
         dump_file_path = dump_dir_path / 'pyproject.toml'
-        
         project_raw_config = ws_context.ws_projects_raw_configs[project_dir_path]
-        raw_config_str = dump_configs.dump_config(project_raw_config)
-
-        os.makedirs(dump_dir_path, exist_ok=True)
-        with open(dump_file_path, 'w') as dump_file:
-            dump_file.write(raw_config_str)
+        project_def = ws_context.ws_projects[project_dir_path]
         
+        await services.run_action(
+            action_name='dump_config',
+            params={"source_file_path": project_def.def_path, "project_raw_config": project_raw_config, "target_file_path": dump_file_path },
+            project_def=project_def,
+            ws_context=ws_context,
+            result_format=services.RunResultFormat.STRING,
+            preprocess_payload=False
+        )
         logger.info(f"Dumped config into {dump_file_path}")
     finally:
         services.on_shutdown(ws_context)

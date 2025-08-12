@@ -6,7 +6,6 @@ from loguru import logger
 
 import finecode.extension_runner.global_state as global_state
 import finecode.extension_runner.lsp_server as extension_runner_lsp
-import finecode.extension_runner.project_dirs as project_dirs
 from finecode import logs
 
 # import finecode.pygls_server_utils as pygls_server_utils
@@ -55,15 +54,15 @@ from finecode import logs
 
 
 def start_runner_sync(env_name: str) -> None:
-    project_log_dir_path = project_dirs.get_project_dir(global_state.project_dir_path)
     logger.remove()
     # disable logging raw messages
     # TODO: make configurable
     logger.configure(activation=[("pygls.protocol.json_rpc", False)])
     # ~~extension runner communicates with workspace manager with tcp, we can print logs
     # to stdout as well~~. See README.md
+    assert global_state.project_dir_path is not None
     logs.save_logs_to_file(
-        file_path=project_log_dir_path / f"execution_{env_name}.log",
+        file_path=global_state.project_dir_path / '.venvs' / env_name / 'logs' / "runner.log",
         log_level=global_state.log_level,
         stdout=False,
     )

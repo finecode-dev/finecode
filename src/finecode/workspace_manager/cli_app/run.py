@@ -7,11 +7,49 @@ import ordered_set
 from loguru import logger
 
 from finecode.workspace_manager import context, domain, services
-from finecode.workspace_manager.config import read_configs
+from finecode.workspace_manager.config import read_configs, collect_actions
 from finecode.workspace_manager.runner import manager as runner_manager
 
 
-class RunFailed(Exception): ...
+class RunFailed(Exception):
+    def __init__(self, message: str) -> None:
+        self.message = message
+
+
+async def start_required_environments(
+    actions_by_projects: dict[pathlib.Path, list[str]], 
+    ws_context: context.WorkspaceContext
+) -> None:
+    """Collect all required envs from actions that will be run and start them."""
+    required_envs_by_project: dict[pathlib.Path, set[str]] = {}
+    for project_dir_path, action_names in actions_by_projects.items():
+        project = ws_context.ws_projects[project_dir_path]
+        if project.actions is not None:
+            project_required_envs = set()
+            for action_name in action_names:
+                # find the action and collect envs from its handlers
+                action = next((a for a in project.actions if a.name == action_name), None)
+                if action is not None:
+                    for handler in action.handlers:
+                        project_required_envs.add(handler.env)
+            required_envs_by_project[project_dir_path] = project_required_envs
+    
+    # start runners for required environments that aren't already running
+    for project_dir_path, required_envs in required_envs_by_project.items():
+        project = ws_context.ws_projects[project_dir_path]
+        existing_runners = ws_context.ws_projects_extension_runners.get(project_dir_path, {})
+        
+        for env_name in required_envs:
+            if env_name not in existing_runners:
+                try:
+                    runner = await runner_manager.start_runner(
+                        project_def=project, 
+                        env_name=env_name, 
+                        ws_context=ws_context
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to start runner for env '{env_name}' in project '{project.name}': {e}")
+                    # TODO: raise error
 
 
 async def run_actions(
@@ -35,20 +73,32 @@ async def run_actions(
             if project.name in projects_names
         }
 
+    projects: list[domain.Project] = []
+    if projects_names is not None:
+        projects = get_projects_by_names(
+            projects_names, ws_context, workdir_path
+        )
+    else:
+        projects = list(ws_context.ws_projects.values())
+
     try:
+        # 1. Start runners with presets to be able to resolve presets. Presets are
+        # required to be able to collect all actions, actions handlers and configs.
         try:
-            await runner_manager.update_runners(ws_context)
+            await runner_manager.start_runners_with_presets(projects, ws_context)
         except runner_manager.RunnerFailedToStart as exception:
             raise RunFailed(
                 f"One or more projects are misconfigured, runners for them didn't"
                 f" start: {exception.message}. Check logs for details."
             )
 
+        # 2. Collect actions in relevant projects
+        for project in projects:
+            await read_configs.read_project_config(project=project, ws_context=ws_context)
+            collect_actions.collect_actions(project_path=project.dir_path, ws_context=ws_context)
+
         actions_by_projects: dict[pathlib.Path, list[str]] = {}
         if projects_names is not None:
-            projects: list[domain.Project] = get_projects_by_names(
-                projects_names, ws_context, workdir_path
-            )
             # check that all projects have all actions to detect problem and provide
             # feedback as early as possible
             actions_set: ordered_set.OrderedSet[str] = ordered_set.OrderedSet(actions)
@@ -66,6 +116,8 @@ async def run_actions(
             # no explicit project, run in `workdir`, it's expected to be a ws dir and
             # actions will be run in all projects inside
             actions_by_projects = find_projects_with_actions(ws_context, actions)
+
+        await start_required_environments(actions_by_projects, ws_context)
 
         return await run_actions_in_all_projects(
             actions_by_projects, action_payload, ws_context, concurrently
@@ -215,8 +267,12 @@ async def run_actions_in_running_project(
                     )
                     run_tasks.append(run_task)
         except ExceptionGroup as eg:
-            for error in eg.exceptions:
-                logger.exception(error)
+            for exception in eg.exceptions:
+                if isinstance(exception, services.ActionRunFailed):
+                    logger.error(exception.message)
+                else:
+                    logger.error("Unexpected exception:")
+                    logger.exception(exception)
             raise RunFailed(f"Running of actions {actions} failed")
 
         for idx, run_task in enumerate(run_tasks):
@@ -271,6 +327,7 @@ async def run_actions_in_all_projects(
                 project_handler_tasks.append(project_task)
     except ExceptionGroup as eg:
         for exception in eg.exceptions:
+            # TODO: merge all in one?
             raise exception
 
     result_output: str = ""

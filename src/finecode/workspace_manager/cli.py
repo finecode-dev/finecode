@@ -11,6 +11,7 @@ from finecode import communication_utils
 from finecode.workspace_manager import logger_utils, user_messages
 from finecode.workspace_manager.cli_app import run as run_cmd
 from finecode.workspace_manager.cli_app import dump_config as dump_config_cmd
+from finecode.workspace_manager.cli_app import prepare_envs as prepare_envs_cmd
 
 
 @click.group()
@@ -31,6 +32,8 @@ def cli(): ...
 @click.option(
     "--port", "port", default=None, type=int, help="Port for TCP and WS server"
 )
+@click.option("--mcp", "mcp", is_flag=True, default=False)
+@click.option("--mcp-port", "mcp_port", default=None, type=int, help="Port for MCP server")
 def start_api(
     trace: bool,
     debug: bool,
@@ -39,6 +42,8 @@ def start_api(
     stdio: bool,
     host: str | None,
     port: int | None,
+    mcp: bool,
+    mcp_port: int | None
 ):
     if debug is True:
         import debugpy
@@ -166,6 +171,34 @@ def run(ctx) -> None:
     except Exception as exception:
         logger.exception(exception)
         click.echo("Unexpected error, see logs in file for more details", err=True)
+        sys.exit(2)
+
+
+@cli.command()
+@click.option("--trace", "trace", is_flag=True, default=False)
+@click.option("--debug", "debug", is_flag=True, default=False)
+def prepare_envs(trace: bool,
+    debug: bool) -> None:
+    """
+    `prepare-envs` should be called from workspace/project root directory.
+    """
+    # idea: project parameter to allow to run from other directories?
+    if debug is True:
+        import debugpy
+
+        try:
+            debugpy.listen(5680)
+            debugpy.wait_for_client()
+        except Exception as e:
+            logger.info(e)
+    
+    logger_utils.init_logger(trace=trace, stdout=True)
+
+    try:
+        asyncio.run(prepare_envs_cmd.prepare_envs(workdir_path=pathlib.Path(os.getcwd())))
+    except Exception as exception: # TODO
+        logger.exception(exception)
+        click.echo(exception, err=True)
         sys.exit(1)
 
 

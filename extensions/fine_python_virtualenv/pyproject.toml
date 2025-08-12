@@ -1,0 +1,24 @@
+[project]
+name = "fine-python-virtualenv"
+version = "0.1.0"
+description = ""
+authors = [{ name = "Vladyslav Hnatiuk", email = "aders1234@gmail.com" }]
+readme = "README.md"
+requires-python = ">=3.11, < 3.14"
+dependencies = [
+    "finecode_extension_api==0.1.0",
+    "virtualenv (>=20.0.0,<21.0.0)",
+]
+
+[dependency-groups]
+dev_workspace = ["finecode==0.2.0"]
+dev_no_runtime = ["finecode_dev_common_preset==0.1.*"]
+
+[tool.finecode]
+presets = [{ source = "finecode_dev_common_preset" }]
+
+[tool.finecode.env.runtime.dependencies]
+finecode_extension_api = { path = "../../finecode_extension_api", editable = true }
+
+[tool.finecode.env.dev_no_runtime.dependencies]
+finecode_dev_common_preset = { path = "../../finecode_dev_common_preset", editable = true }

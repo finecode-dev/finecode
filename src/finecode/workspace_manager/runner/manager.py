@@ -127,6 +127,16 @@ async def start_extension_runner(
 
     register_progress_feature = runner_info_instance.client.feature(types.PROGRESS)
     register_progress_feature(on_progress)
+    
+    async def get_project_raw_config(params):
+        # assume raw config exists, because if runner is running, there is always a
+        # raw config
+        return { "config": json.dumps(ws_context.ws_projects_raw_configs[runner_dir]) }
+
+    register_get_project_raw_config_feature = runner_info_instance.client.feature(
+        "projects/getRawConfig"
+    )
+    register_get_project_raw_config_feature(get_project_raw_config)
 
     return runner_info_instance
 
@@ -199,29 +209,19 @@ async def update_runners(ws_context: context.WorkspaceContext) -> None:
             await stop_extension_runner(runner)
         del ws_context.ws_projects_extension_runners[deleted_dir]
 
+    projects = [ws_context.ws_projects[new_dir] for new_dir in new_dirs]
+    # first start runners with presets to be able to resolve presets
+    await start_runners_with_presets(projects, ws_context)
+
     new_runners_tasks: list[asyncio.Task] = []
     try:
-        # first start runner in 'dev_no_runtime' env to be able to resolve presets for
-        # other envs
-        async with asyncio.TaskGroup() as tg:
-            for new_dir in new_dirs:
-                project = ws_context.ws_projects[new_dir]
-                project_status = project.status
-                if project_status == domain.ProjectStatus.CONFIG_VALID:
-                    task = tg.create_task(_start_dev_no_runtime_runner(project_def=project, ws_context=ws_context))
-                    new_runners_tasks.append(task)
-                elif project_status != domain.ProjectStatus.NO_FINECODE:
-                    raise RunnerFailedToStart(f"Project '{project.name}' has invalid configuration, status: {project_status.name}")
-
-        save_runners_from_tasks_in_context(tasks=new_runners_tasks, ws_context=ws_context)
-
         # only then start runners for all other envs
         new_runners_tasks = []
         async with asyncio.TaskGroup() as tg:
             for new_dir in new_dirs:
                 project = ws_context.ws_projects[new_dir]
                 project_status = project.status
-                if ws_context.ws_projects_extension_runners.get(new_dir, {}).get('dev_no_runtime', None) is None:
+                if ws_context.ws_projects_extension_runners.get(new_dir, {}).get('dev_no_runtime', None) is not None:
                     # start only if dev_no_runtime started successfully
                     for env in project.envs:
                         if env == 'dev_no_runtime':
@@ -263,11 +263,35 @@ async def update_runners(ws_context: context.WorkspaceContext) -> None:
         raise RunnerFailedToStart("Failed to initialize runner")
 
 
-async def _start_dev_no_runtime_runner(project_def: domain.Project, ws_context: context.WorkspaceContext) -> runner_info.ExtensionRunnerInfo:
-    runner = await start_extension_runner(runner_dir=project_def.dir_path, env_name='dev_no_runtime', ws_context=ws_context)
+async def start_runners_with_presets(projects: list[domain.Project], ws_context: context.WorkspaceContext) -> None:
+    new_runners_tasks: list[asyncio.Task] = []
+    try:
+        # first start runner in 'dev_no_runtime' env to be able to resolve presets for
+        # other envs (presets can be currently only in `dev_no_runtime` env)
+        async with asyncio.TaskGroup() as tg:
+            for project in projects:
+                project_status = project.status
+                if project_status == domain.ProjectStatus.CONFIG_VALID:
+                    task = tg.create_task(_start_dev_no_runtime_runner(project_def=project, ws_context=ws_context))
+                    new_runners_tasks.append(task)
+                elif project_status != domain.ProjectStatus.NO_FINECODE:
+                    raise RunnerFailedToStart(f"Project '{project.name}' has invalid configuration, status: {project_status.name}")
+
+        save_runners_from_tasks_in_context(tasks=new_runners_tasks, ws_context=ws_context)
+    except ExceptionGroup as eg:
+        for exception in eg.exceptions:
+            if isinstance(exception, runner_client.BaseRunnerRequestException):
+                logger.error(exception.message)
+            else:
+                logger.exception(exception)
+        raise RunnerFailedToStart("Failed to initialize runner")
+
+
+async def start_runner(project_def: domain.Project, env_name: str, ws_context: context.WorkspaceContext) -> runner_info.ExtensionRunnerInfo:
+    runner = await start_extension_runner(runner_dir=project_def.dir_path, env_name=env_name, ws_context=ws_context)
     
     if runner is None:
-        raise Exception("Runner failed to start")
+        raise RunnerFailedToStart("Runner failed to start")
 
     save_runner_in_context(runner=runner, ws_context=ws_context)
 
@@ -276,16 +300,20 @@ async def _start_dev_no_runtime_runner(project_def: domain.Project, ws_context: 
     # because this requires resolved project config with presets
     await _init_lsp_client(runner=runner, project=project_def)
 
-    
-    await read_configs.read_project_config(project=project_def, ws_context=ws_context)
-    collect_actions.collect_actions(
-        project_path=project_def.dir_path, ws_context=ws_context
-    )
-    
+    if project_def.dir_path not in ws_context.ws_projects_raw_configs or project_def.actions is None:
+        await read_configs.read_project_config(project=project_def, ws_context=ws_context)
+        collect_actions.collect_actions(
+            project_path=project_def.dir_path, ws_context=ws_context
+        )
+        
     await _update_runner_config(runner=runner, project=project_def)
     await _finish_runner_init(runner=runner, project=project_def, ws_context=ws_context)
 
     return runner
+
+
+async def _start_dev_no_runtime_runner(project_def: domain.Project, ws_context: context.WorkspaceContext) -> runner_info.ExtensionRunnerInfo:
+    return await start_runner(project_def=project_def, env_name='dev_no_runtime', ws_context=ws_context)
 
 
 async def _init_runner(

@@ -1,6 +1,7 @@
 from pathlib import Path
 from typing import Any, NamedTuple
 
+import ordered_set
 from loguru import logger
 from tomlkit import loads as toml_loads
 
@@ -54,7 +55,7 @@ async def read_projects_in_dir(
 
 
 async def read_project_config(
-    project: domain.Project, ws_context: context.WorkspaceContext
+    project: domain.Project, ws_context: context.WorkspaceContext, resolve_presets: bool = True
 ) -> None:
     # this function requires running project extension runner to get configuration
     # from it
@@ -65,7 +66,7 @@ async def read_project_config(
         # TODO: validate that finecode is installed?
 
         finecode_raw_config = project_def.get("tool", {}).get("finecode", None)
-        if finecode_raw_config:
+        if finecode_raw_config and resolve_presets:
             finecode_config = config_models.FinecodeConfig(**finecode_raw_config)
             # all presets expected to be in `dev_no_runtime` environment
             project_runners = ws_context.ws_projects_extension_runners[project.dir_path]
@@ -79,8 +80,45 @@ async def read_project_config(
             _merge_projects_configs(project_def, new_config)
 
         # add builtins if they are not overwritten
-        prepare_envs_action = domain.Action(name='prepare_envs', source='finecode_extension_api.actions.prepare_envs.PrepareEnvsAction', handlers=[domain.ActionHandler(name='prepare_venvs', source='fine_python_virtualenv.VirtualenvPrepareEnvHandler', config={}, env='dev_workspace', dependencies=['fine_python_venv==0.1.*'])], config={})
+        prepare_envs_action = domain.Action(
+            name='prepare_envs',
+            source='finecode_extension_api.actions.prepare_envs.PrepareEnvsAction',
+            handlers=[
+                domain.ActionHandler(name='prepare_envs_venvs', source='fine_python_virtualenv.VirtualenvPrepareEnvHandler', config={}, env='dev_workspace', dependencies=['fine_python_virtualenv==0.1.*']),
+                domain.ActionHandler(name='prepare_envs_dump_configs', source='finecode.extension_runner.action_handlers.PrepareEnvsDumpConfigsHandler', config={}, env='dev_workspace', dependencies=[]),
+                domain.ActionHandler(name='prepare_envs_pip', source='fine_python_pip.PipPrepareEnvHandler', config={}, env='dev_workspace', dependencies=['fine_python_pip==0.1.*'])
+            ],
+            config={}
+        )
         add_action_to_config_if_new(project_def, prepare_envs_action)
+        
+        # preparing dev workspaces doesn't need dumping config for two reasons:
+        # - depedencies in `dev_workspace` are expected to be simple and installable
+        #   without dump
+        # - dumping is modifiable as action, so it can be correctly done only in
+        #   dev_workspace env of the project and we just create it here, it doesn't
+        #   exist yet
+        prepare_dev_workspaces_envs_action = domain.Action(
+            name='prepare_dev_workspaces_envs',
+            source='finecode_extension_api.actions.prepare_envs.PrepareEnvsAction',
+            handlers=[
+                domain.ActionHandler(name='prepare_venvs', source='fine_python_virtualenv.VirtualenvPrepareEnvHandler', config={}, env='dev_workspace', dependencies=['fine_python_virtualenv==0.1.*']),
+                domain.ActionHandler(name='prepare_venvs_pip', source='fine_python_pip.PipPrepareEnvHandler', config={}, env='dev_workspace', dependencies=['fine_python_pip==0.1.*'])
+            ],
+            config={}
+        )
+        add_action_to_config_if_new(project_def, prepare_dev_workspaces_envs_action)
+
+        dump_config_action = domain.Action(
+            name='dump_config',
+            source='finecode_extension_api.actions.dump_config.DumpConfigAction',
+            handlers=[
+                domain.ActionHandler(name='dump_config', source='finecode.extension_runner.action_handlers.DumpConfigHandler', config={}, env='dev_workspace', dependencies=[]),
+                domain.ActionHandler(name='dump_config_save', source='finecode.extension_runner.action_handlers.DumpConfigSaveHandler', config={}, env='dev_workspace', dependencies=[])
+            ],
+            config={}
+        )
+        add_action_to_config_if_new(project_def, dump_config_action)
         
         # add runtime dependency group if it's not explicitly declared
         add_runtime_dependency_group_if_new(project_def)
@@ -376,3 +414,11 @@ def merge_handlers_dependencies_into_groups(project_config: dict[str, Any]) -> N
             env_deps = deps_groups[handler_env]
             # should we remove duplicates here?
             env_deps += deps
+
+    # remove duplicates in dependencies because multiple handlers can have the same
+    # dependencies / be from the same package
+    for group_name in deps_groups.keys():
+        deps_list = deps_groups[group_name]
+        deps_set = ordered_set.OrderedSet(deps_list)
+        new_deps_list = list(deps_set)
+        deps_groups[group_name] = new_deps_list
