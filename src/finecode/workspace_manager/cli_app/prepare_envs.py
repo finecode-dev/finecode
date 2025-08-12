@@ -24,7 +24,12 @@ async def prepare_envs(workdir_path: pathlib.Path) -> None:
         # TODO: better exception
         raise Exception("prepare_env can be run only from workspace/project root")
 
-    projects = list(ws_context.ws_projects.values())
+    invalid_projects = [project for project in ws_context.ws_projects.values() if project.status == domain.ProjectStatus.CONFIG_INVALID]
+    if len(invalid_projects) > 0:
+        raise Exception(f"Projects have invalid configuration: {invalid_projects}")
+
+    # prepare envs only in projects with valid configurations and which use finecode
+    projects = [project for project in ws_context.ws_projects.values() if project.status == domain.ProjectStatus.CONFIG_VALID]
     
     # Collect actions in relevant projects
     for project in projects:
@@ -86,9 +91,9 @@ async def start_or_recreate_all_dev_workspace_envs(projects: list[domain.Project
         
         # remove existing invalid envs
         for env_info in envs:
-            if env_info.venv_dir_path.exists():
-                logger.trace(f"{env_info.venv_dir_path} was invalid, remove it")
-                shutil.rmtree(env_info.venv_dir_path)
+            if env_info["venv_dir_path"].exists():
+                logger.trace(f"{env_info['venv_dir_path']} was invalid, remove it")
+                shutil.rmtree(env_info["venv_dir_path"])
 
         try:
             # TODO: check result

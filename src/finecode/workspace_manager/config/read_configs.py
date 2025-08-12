@@ -1,7 +1,6 @@
 from pathlib import Path
 from typing import Any, NamedTuple
 
-import ordered_set
 from loguru import logger
 from tomlkit import loads as toml_loads
 
@@ -419,6 +418,13 @@ def merge_handlers_dependencies_into_groups(project_config: dict[str, Any]) -> N
     # dependencies / be from the same package
     for group_name in deps_groups.keys():
         deps_list = deps_groups[group_name]
-        deps_set = ordered_set.OrderedSet(deps_list)
-        new_deps_list = list(deps_set)
-        deps_groups[group_name] = new_deps_list
+
+        # another possibility would be to use `ordered_set.OrderedSet`, but dependency
+        # list can contain not only strings, but also dictionaries like
+        # `{ 'include-group': 'runtime' }` which are not hashable
+        unique_deps = []
+        for dep in deps_list:
+            if dep not in unique_deps:
+                unique_deps.append(dep)
+
+        deps_groups[group_name] = unique_deps
