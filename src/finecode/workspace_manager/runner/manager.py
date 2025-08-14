@@ -94,7 +94,7 @@ async def start_extension_runner(
     process_args_str: str = " ".join(process_args)
     client = await create_lsp_client_io(
         runner_info.CustomJsonRpcClient,
-        f"{python_cmd} -m finecode.extension_runner.cli {process_args_str}",
+        f"{python_cmd} -m finecode.extension_runner.cli start {process_args_str}",
         runner_dir,
     )
     runner_info_instance.client = client
@@ -427,3 +427,37 @@ async def send_opened_files(
                 )
     except ExceptionGroup as eg:
         logger.error(f"Error while sending opened document: {eg.exceptions}")
+
+
+async def check_runner(runner_dir: Path, env_name: str) -> bool:
+    try:
+        python_cmd = finecode_cmd.get_python_cmd(runner_dir, env_name)
+    except ValueError:
+        logger.debug(f"No venv for {env_name} of {runner_dir}")
+        # no venv
+        return False
+
+    # get version of extension runner. If it works and we get valid
+    # value, assume extension runner works correctly
+    cmd = f'{python_cmd} -m finecode.extension_runner.cli version'
+    logger.debug(f"Run '{cmd}' in {runner_dir}")
+    async_subprocess = await asyncio.create_subprocess_shell(
+        cmd,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+        cwd=runner_dir,
+    )
+    try:
+        raw_stdout, raw_stderr = await asyncio.wait_for(
+            async_subprocess.communicate(), timeout=5
+        )
+    except asyncio.TimeoutError:
+        logger.debug(f"Timeout 5 sec({runner_dir})")
+        return False
+
+    if async_subprocess.returncode != 0:
+        logger.debug(f"Return code: {async_subprocess.returncode}, stderr: {raw_stderr.decode()}")
+        return False
+    
+    stdout = raw_stdout.decode()
+    return 'FineCode Extension Runner ' in stdout

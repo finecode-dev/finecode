@@ -43,7 +43,7 @@ async def prepare_envs(workdir_path: pathlib.Path) -> None:
     try:
         # try to start runner in 'dev_workspace' env of each project. If venv doesn't
         # exist or doesn't work, recreate it by running actions in the current env.
-        await start_or_recreate_all_dev_workspace_envs(projects=projects, ws_context=ws_context)
+        await start_or_recreate_all_dev_workspace_envs(projects=projects, workdir_path=workdir_path, ws_context=ws_context)
         
         # now all 'dev_workspace' envs are valid, run 'prepare_envs' in them to create
         # envs in each subproject.
@@ -59,51 +59,75 @@ async def prepare_envs(workdir_path: pathlib.Path) -> None:
         services.on_shutdown(ws_context)
 
 
-async def start_or_recreate_all_dev_workspace_envs(projects: list[domain.Project], ws_context: context.WorkspaceContext) -> None:
+async def start_or_recreate_all_dev_workspace_envs(projects: list[domain.Project], workdir_path: pathlib.Path, ws_context: context.WorkspaceContext) -> None:
+    projects_dirs_with_valid_envs: list[pathlib.Path] = []
     projects_dirs_with_invalid_envs: list[pathlib.Path] = []
     
     for project in projects:
-        try:
-            runner = await runner_manager.start_runner(
-                project_def=project,
-                env_name='dev_workspace', 
-                ws_context=ws_context
-            )
-        except runner_manager.RunnerFailedToStart as e:
-            logger.warning(f"Failed to start runner for env 'dev_workspace' in project '{project.name}': {e}, recreate it")
+        if project.dir_path == workdir_path:
+            # skip checking `dev_workspace` env of the current project, because user
+            # is responsible for keeping it correct
+            continue
+        
+        runner_is_valid = await runner_manager.check_runner(
+            runner_dir=project.dir_path,
+            env_name='dev_workspace'
+        )
+        if runner_is_valid:
+            projects_dirs_with_valid_envs.append(project.dir_path)
+        else:
+            logger.warning(f"Runner for env 'dev_workspace' in project '{project.name}' is invalid, recreate it")
             projects_dirs_with_invalid_envs.append(project.dir_path)
 
-    if len(projects_dirs_with_invalid_envs) > 0:
-        # to recreate dev_workspace env, run `prepare_envs` in runner of current project
-        current_project_dir_path = ws_context.ws_dirs_paths[0]
-        current_project = ws_context.ws_projects[current_project_dir_path]
-        try:
-            runner = await runner_manager.start_runner(project_def=current_project, env_name='dev_workspace', ws_context=ws_context)
-        except runner_manager.RunnerFailedToStart as exception:
-            # TODO
-            raise exception
+    # to recreate dev_workspace env, run `prepare_envs` in runner of current project
+    current_project_dir_path = ws_context.ws_dirs_paths[0]
+    current_project = ws_context.ws_projects[current_project_dir_path]
+    try:
+        runner = await runner_manager.start_runner(project_def=current_project, env_name='dev_workspace', ws_context=ws_context)
+    except runner_manager.RunnerFailedToStart as exception:
+        # TODO
+        raise exception
 
+    try:
         envs = []
-        for project_dir_path in projects_dirs_with_invalid_envs:
+        
+        # run pip install in dev_workspace even if env exists to make sure that correct
+        # dependencies are installed
+        for project_dir_path in projects_dirs_with_valid_envs:
+            if project_dir_path == workdir_path:
+                # skip installation of dependencies in `dev_workspace` env of the
+                # current project, because user is responsible for keeping them
+                # up-to-date
+                continue
+            
             # dependencies in `dev_workspace` should be simple and installable without
             # dumping
             envs.append({"name": "dev_workspace", "venv_dir_path": project_dir_path / '.venvs' / 'dev_workspace', "project_def_path": project_dir_path / 'pyproject.toml' })
-        
-        # remove existing invalid envs
-        for env_info in envs:
-            if env_info["venv_dir_path"].exists():
-                logger.trace(f"{env_info['venv_dir_path']} was invalid, remove it")
-                shutil.rmtree(env_info["venv_dir_path"])
 
-        try:
-            # TODO: check result
-            await services.run_action(
-                action_name='prepare_dev_workspaces_envs',
-                params={ "envs": envs, },
-                project_def=current_project,
-                ws_context=ws_context,
-                result_format=services.RunResultFormat.STRING,
-                preprocess_payload=False
-            )
-        finally:
-            runner_manager.stop_extension_runner_sync(runner)
+        if len(projects_dirs_with_invalid_envs) > 0:
+            invalid_envs = []
+
+            for project_dir_path in projects_dirs_with_invalid_envs:
+                # dependencies in `dev_workspace` should be simple and installable without
+                # dumping
+                invalid_envs.append({"name": "dev_workspace", "venv_dir_path": project_dir_path / '.venvs' / 'dev_workspace', "project_def_path": project_dir_path / 'pyproject.toml' })
+            
+            # remove existing invalid envs
+            for env_info in invalid_envs:
+                if env_info["venv_dir_path"].exists():
+                    logger.trace(f"{env_info['venv_dir_path']} was invalid, remove it")
+                    shutil.rmtree(env_info["venv_dir_path"])
+            
+            envs += invalid_envs
+
+        # TODO: check result
+        await services.run_action(
+            action_name='prepare_dev_workspaces_envs',
+            params={ "envs": envs, },
+            project_def=current_project,
+            ws_context=ws_context,
+            result_format=services.RunResultFormat.STRING,
+            preprocess_payload=False
+        )
+    finally:
+        runner_manager.stop_extension_runner_sync(runner)

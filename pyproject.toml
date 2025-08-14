@@ -1,8 +1,6 @@
 [project]
 name = "finecode"
-version = "0.2.0"
-# dynamic version from setuptools-scm is not compatible with poetry, because it requires explicit version in pyproject.toml. Will be used after migration from poetry.
-# dynamic = ["version"]
+dynamic = ["version"]
 description = ""
 authors = [{ name = "Vladyslav Hnatiuk", email = "aders1234@gmail.com" }]
 readme = "README.md"
@@ -17,10 +15,17 @@ dependencies = [
     "pygls==2.0.0-a2",
     "finecode_extension_api==0.1.0",
     "ordered-set==4.1.*",
+    "mcp==1.9.*",
+    "fine_python_virtualenv @ git+https://github.com/finecode-dev/finecode.git#subdirectory=extensions/fine_python_virtualenv",
+    "fine_python_pip @ git+https://github.com/finecode-dev/finecode.git#subdirectory=extensions/fine_python_pip",
 ]
 
 [dependency-groups]
-dev_workspace = ["build==1.2.2.post1"]
+dev_workspace = ["build==1.2.2.post1", "finecode==0.2.*"]
+dev = [{ include-group = "runtime" }, "pytest==7.4.*", "debugpy==1.8.*"]
+dev_no_runtime = [
+    "fine_python_import_linter @ git+https://github.com/finecode-dev/finecode.git#subdirectory=extensions/fine_python_import_linter",
+]
 
 [build-system]
 requires = ["setuptools>=64", "setuptools-scm>=8"]
@@ -29,13 +34,8 @@ build-backend = "setuptools.build_meta"
 [tool.poetry]
 packages = [{ include = "finecode", from = "src" }]
 
-[tool.poetry.group.dev.dependencies]
-pytest = "^7.4.3"
-finecode_dev_common_preset = { path = "./finecode_dev_common_preset", develop = true }
-fine_python_import_linter = { git = "https://github.com/finecode-dev/finecode.git", subdirectory = "extensions/fine_python_import_linter" }
-anyio = "^4.4.0"
-debugpy = "^1.8.9"
-
+# TODO: intall finecode_dev_common_preset as a dependency from local path using finecode?
+# TODO: add import linter handler to lint action
 
 [tool.finecode]
 presets = [{ source = "finecode_dev_common_preset" }]

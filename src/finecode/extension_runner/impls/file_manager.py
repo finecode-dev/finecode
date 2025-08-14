@@ -75,6 +75,10 @@ class FileManager(ifilemanager.IFileManager):
             with open(file_path, "w") as f:
                 f.write(file_content)
 
+    async def create_dir(self, dir_path: Path, create_parents: bool = True, exist_ok: bool = True):
+        # currently only local file system is supported
+        dir_path.mkdir(parents=create_parents, exist_ok=exist_ok)
+
     # helper methods
     def read_content_file_from_fs(self, file_path: Path) -> str:
         # don't use this method directly, use `get_content` instead

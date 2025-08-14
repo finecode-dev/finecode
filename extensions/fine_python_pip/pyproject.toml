@@ -8,7 +8,7 @@ requires-python = ">=3.11, < 3.14"
 dependencies = ["finecode_extension_api==0.1.0"]
 
 [dependency-groups]
-dev_workspace = ["finecode==0.2.0"]
+dev_workspace = ["finecode==0.2.*"]
 dev_no_runtime = ["finecode_dev_common_preset==0.1.*"]
 
 [tool.finecode]

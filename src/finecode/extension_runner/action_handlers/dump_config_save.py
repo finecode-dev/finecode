@@ -24,7 +24,9 @@ class DumpConfigSaveHandler(
         self, payload: dump_config_action.DumpConfigRunPayload, run_context: dump_config_action.DumpConfigRunContext
     ) -> dump_config_action.DumpConfigRunResult:
         raw_config_str = tomlkit.dumps(run_context.raw_config_dump)
+        target_file_dir_path = payload.target_file_path.parent
 
+        await self.file_manager.create_dir(dir_path=target_file_dir_path)
         await self.file_manager.save_file(
             file_path=payload.target_file_path, file_content=raw_config_str
         )

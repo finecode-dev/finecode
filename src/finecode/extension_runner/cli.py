@@ -1,5 +1,6 @@
 import os
 from pathlib import Path
+from importlib import metadata
 
 import click
 from loguru import logger
@@ -8,7 +9,13 @@ import finecode.extension_runner.start as runner_start
 from finecode.extension_runner import global_state
 
 
-@click.command()
+@click.group()
+def main():
+    """FineCode Extension Runner CLI"""
+    pass
+
+
+@main.command()
 @click.option("--trace", "trace", is_flag=True, default=False)
 @click.option("--debug", "debug", is_flag=True, default=False)
 @click.option("--debug-port", "debug_port", type=int, default=5680)
@@ -19,7 +26,7 @@ from finecode.extension_runner import global_state
     required=True,
 )
 @click.option("--env-name", "env_name", type=str, default="unknown")
-def main(trace: bool, debug: bool, debug_port: int, project_path: Path, env_name: str):
+def start(trace: bool, debug: bool, debug_port: int, project_path: Path, env_name: str):
     if debug is True:
         import debugpy
 
@@ -38,6 +45,13 @@ def main(trace: bool, debug: bool, debug_port: int, project_path: Path, env_name
     # extension runner doesn't stop with async start after closing LS client(WM). Use
     # sync start until this problem is solved
     runner_start.start_runner_sync(env_name)
+
+
+@main.command()
+def version():
+    """Show version information"""
+    package_version = metadata.version('finecode')
+    click.echo(f'FineCode Extension Runner {package_version}')
 
 
 if __name__ == "__main__":
