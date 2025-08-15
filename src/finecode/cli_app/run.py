@@ -8,7 +8,7 @@ from loguru import logger
 
 from finecode import context, domain, services
 from finecode.config import read_configs, collect_actions
-from finecode.runner import manager as runner_manager
+from finecode.runner import manager as runner_manager, runner_info
 
 
 class RunFailed(Exception):
@@ -40,7 +40,13 @@ async def start_required_environments(
         existing_runners = ws_context.ws_projects_extension_runners.get(project_dir_path, {})
         
         for env_name in required_envs:
-            if env_name not in existing_runners:
+            runner_exist = env_name in existing_runners
+            start_runner = True
+            if runner_exist:
+                runner_is_running = existing_runners[env_name].status == runner_info.RunnerStatus.RUNNING
+                start_runner = not runner_is_running
+
+            if start_runner:
                 try:
                     runner = await runner_manager.start_runner(
                         project_def=project, 

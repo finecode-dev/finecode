@@ -43,7 +43,7 @@ async def prepare_envs(workdir_path: pathlib.Path) -> None:
     try:
         # try to start runner in 'dev_workspace' env of each project. If venv doesn't
         # exist or doesn't work, recreate it by running actions in the current env.
-        await start_or_recreate_all_dev_workspace_envs(projects=projects, workdir_path=workdir_path, ws_context=ws_context)
+        await check_or_recreate_all_dev_workspace_envs(projects=projects, workdir_path=workdir_path, ws_context=ws_context)
         
         # now all 'dev_workspace' envs are valid, run 'prepare_envs' in them to create
         # envs in each subproject.
@@ -59,7 +59,9 @@ async def prepare_envs(workdir_path: pathlib.Path) -> None:
         services.on_shutdown(ws_context)
 
 
-async def start_or_recreate_all_dev_workspace_envs(projects: list[domain.Project], workdir_path: pathlib.Path, ws_context: context.WorkspaceContext) -> None:
+async def check_or_recreate_all_dev_workspace_envs(projects: list[domain.Project], workdir_path: pathlib.Path, ws_context: context.WorkspaceContext) -> None:
+    # NOTE: this function can start new extensions runner, don't forget to call
+    #       on_shutdown if you use it
     projects_dirs_with_valid_envs: list[pathlib.Path] = []
     projects_dirs_with_invalid_envs: list[pathlib.Path] = []
     
@@ -88,46 +90,43 @@ async def start_or_recreate_all_dev_workspace_envs(projects: list[domain.Project
         # TODO
         raise exception
 
-    try:
-        envs = []
+    envs = []
+    
+    # run pip install in dev_workspace even if env exists to make sure that correct
+    # dependencies are installed
+    for project_dir_path in projects_dirs_with_valid_envs:
+        if project_dir_path == workdir_path:
+            # skip installation of dependencies in `dev_workspace` env of the
+            # current project, because user is responsible for keeping them
+            # up-to-date
+            continue
         
-        # run pip install in dev_workspace even if env exists to make sure that correct
-        # dependencies are installed
-        for project_dir_path in projects_dirs_with_valid_envs:
-            if project_dir_path == workdir_path:
-                # skip installation of dependencies in `dev_workspace` env of the
-                # current project, because user is responsible for keeping them
-                # up-to-date
-                continue
-            
+        # dependencies in `dev_workspace` should be simple and installable without
+        # dumping
+        envs.append({"name": "dev_workspace", "venv_dir_path": project_dir_path / '.venvs' / 'dev_workspace', "project_def_path": project_dir_path / 'pyproject.toml' })
+
+    if len(projects_dirs_with_invalid_envs) > 0:
+        invalid_envs = []
+
+        for project_dir_path in projects_dirs_with_invalid_envs:
             # dependencies in `dev_workspace` should be simple and installable without
             # dumping
-            envs.append({"name": "dev_workspace", "venv_dir_path": project_dir_path / '.venvs' / 'dev_workspace', "project_def_path": project_dir_path / 'pyproject.toml' })
+            invalid_envs.append({"name": "dev_workspace", "venv_dir_path": project_dir_path / '.venvs' / 'dev_workspace', "project_def_path": project_dir_path / 'pyproject.toml' })
+        
+        # remove existing invalid envs
+        for env_info in invalid_envs:
+            if env_info["venv_dir_path"].exists():
+                logger.trace(f"{env_info['venv_dir_path']} was invalid, remove it")
+                shutil.rmtree(env_info["venv_dir_path"])
+        
+        envs += invalid_envs
 
-        if len(projects_dirs_with_invalid_envs) > 0:
-            invalid_envs = []
-
-            for project_dir_path in projects_dirs_with_invalid_envs:
-                # dependencies in `dev_workspace` should be simple and installable without
-                # dumping
-                invalid_envs.append({"name": "dev_workspace", "venv_dir_path": project_dir_path / '.venvs' / 'dev_workspace', "project_def_path": project_dir_path / 'pyproject.toml' })
-            
-            # remove existing invalid envs
-            for env_info in invalid_envs:
-                if env_info["venv_dir_path"].exists():
-                    logger.trace(f"{env_info['venv_dir_path']} was invalid, remove it")
-                    shutil.rmtree(env_info["venv_dir_path"])
-            
-            envs += invalid_envs
-
-        # TODO: check result
-        await services.run_action(
-            action_name='prepare_dev_workspaces_envs',
-            params={ "envs": envs, },
-            project_def=current_project,
-            ws_context=ws_context,
-            result_format=services.RunResultFormat.STRING,
-            preprocess_payload=False
-        )
-    finally:
-        runner_manager.stop_extension_runner_sync(runner)
+    # TODO: check result
+    await services.run_action(
+        action_name='prepare_dev_workspaces_envs',
+        params={ "envs": envs, },
+        project_def=current_project,
+        ws_context=ws_context,
+        result_format=services.RunResultFormat.STRING,
+        preprocess_payload=False
+    )
