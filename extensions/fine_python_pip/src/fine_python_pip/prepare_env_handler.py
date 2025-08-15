@@ -38,10 +38,11 @@ class PipPrepareEnvHandler(
             for process in install_processes:
                 tg.create_task(process.wait_for_end())
 
+        errors: list[str] = []
         for idx, process in enumerate(install_processes):
             if process.get_exit_code() != 0:
                 env_info = payload.envs[idx]
                 project_def_path = run_context.project_def_path_by_venv_dir_path[env_info.venv_dir_path]
-                self.logger.error(f'Installation of dependencies in env {env_info.name} from {project_def_path} failed:\nstdout: {process.get_output()}\nstderr: {process.get_error_output()}')
-        # TODO: return code, return logs?
-        return prepare_envs_action.PrepareEnvsRunResult(results=[env_info.venv_dir_path for env_info in payload.envs])
+                errors.append(f'Installation of dependencies in env {env_info.name} from {project_def_path} failed:\nstdout: {process.get_output()}\nstderr: {process.get_error_output()}')
+
+        return prepare_envs_action.PrepareEnvsRunResult(errors=errors)

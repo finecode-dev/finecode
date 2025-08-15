@@ -73,4 +73,4 @@ class PrepareEnvsDumpConfigsHandler(
                     new_item_path.unlink()
             new_item_path.symlink_to(item, target_is_directory=item.is_dir())
 
-        return prepare_envs_action.PrepareEnvsRunResult(results=[]) # TODO
+        return prepare_envs_action.PrepareEnvsRunResult(errors=[])

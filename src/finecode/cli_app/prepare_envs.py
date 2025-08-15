@@ -8,7 +8,7 @@ from finecode.cli_app import run as run_cli
 from finecode.runner import manager as runner_manager
 
 
-async def prepare_envs(workdir_path: pathlib.Path) -> None:
+async def prepare_envs(workdir_path: pathlib.Path, recreate: bool) -> None:
     # similar to `run_actions`, but with certain differences:
     # - prepare_envs doesn't support presets because `dev_no_runtime` env most
     #   probably doesn't exist yet
@@ -38,7 +38,7 @@ async def prepare_envs(workdir_path: pathlib.Path) -> None:
 
     actions_by_projects: dict[pathlib.Path, list[str]] = {project.dir_path: ['prepare_envs'] for project in projects}
     # action payload can be kept empty because it will be filled in payload preprocessor
-    action_payload: dict[str, str] = {}
+    action_payload: dict[str, str | bool] = {"recreate": recreate}
 
     try:
         # try to start runner in 'dev_workspace' env of each project. If venv doesn't

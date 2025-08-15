@@ -177,8 +177,9 @@ def run(ctx) -> None:
 @cli.command()
 @click.option("--trace", "trace", is_flag=True, default=False)
 @click.option("--debug", "debug", is_flag=True, default=False)
+@click.option("--recreate", "recreate", is_flag=True, default=False)
 def prepare_envs(trace: bool,
-    debug: bool) -> None:
+    debug: bool, recreate: bool) -> None:
     """
     `prepare-envs` should be called from workspace/project root directory.
     """

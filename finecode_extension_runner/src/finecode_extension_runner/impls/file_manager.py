@@ -1,4 +1,5 @@
 import hashlib
+import shutil
 from pathlib import Path
 from typing import Callable
 
@@ -77,6 +78,9 @@ class FileManager(ifilemanager.IFileManager):
     async def create_dir(self, dir_path: Path, create_parents: bool = True, exist_ok: bool = True):
         # currently only local file system is supported
         dir_path.mkdir(parents=create_parents, exist_ok=exist_ok)
+
+    async def remove_dir(self, dir_path: Path) -> None:
+        shutil.rmtree(dir_path)
 
     # helper methods
     def read_content_file_from_fs(self, file_path: Path) -> str:

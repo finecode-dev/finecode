@@ -20,6 +20,11 @@ class EnvInfo:
 @dataclasses.dataclass
 class PrepareEnvsRunPayload(code_action.RunActionPayload):
     envs: list[EnvInfo]
+    # remove old env and create a new one from scratch even if the current one is valid.
+    # Useful for example if you changed something in venv manually and want to revert
+    # changes (just by running prepare it would be not solved because version of the
+    # packages are the same and they are already installed)
+    recreate: bool = False
 
 
 class PrepareEnvsRunContext(code_action.RunActionContext):
@@ -43,17 +48,24 @@ class PrepareEnvsRunContext(code_action.RunActionContext):
 
 @dataclasses.dataclass
 class PrepareEnvsRunResult(code_action.RunActionResult):
-    # TODO: statuses, errors, logs?
-    # TODO: return code property
-    results: list[pathlib.Path]
+    # `PrepareEnvs` action is general, so make result general as well
+    errors: list[str]
 
     @override
     def update(self, other: code_action.RunActionResult) -> None:
         if not isinstance(other, PrepareEnvsRunResult):
             return
+        self.errors += other.errors
 
     def to_text(self) -> str | textstyler.StyledText:
-        return ''
+        return '\n'.join(self.errors)
+
+    @property
+    def return_code(self) -> code_action.RunReturnCode:
+        if len(self.errors) == 0:
+            return code_action.RunReturnCode.SUCCESS
+        else:
+            return code_action.RunReturnCode.ERROR
 
 
 class PrepareEnvsAction(code_action.Action):
