@@ -1,0 +1,61 @@
+[project]
+name = "finecode_extension_runner"
+dynamic = ["version"]
+description = "Extension runner component for FineCode"
+authors = [{ name = "Vladyslav Hnatiuk", email = "aders1234@gmail.com" }]
+readme = "README.md"
+requires-python = ">=3.11, < 3.14"
+dependencies = [
+    "loguru==0.7.*",
+    "tomlkit==0.11.*",
+    "click==8.1.*",
+    "pydantic==2.10.*",
+    "platformdirs==4.3.*",
+    "pygls==2.0.0-a2",
+    "finecode_extension_api @ file:///home/user/Development/FineCode/finecode/finecode_extension_api/dist/finecode_extension_api-0.1.1-py3-none-any.whl",
+    "ordered-set==4.1.*",
+    "fine_python_virtualenv @ file:///home/user/Development/FineCode/finecode/extensions/fine_python_virtualenv/dist/fine_python_virtualenv-0.1.0-py3-none-any.whl",
+    "fine_python_pip @ file:///home/user/Development/FineCode/finecode/extensions/fine_python_pip/dist/fine_python_pip-0.1.0-py3-none-any.whl",
+]
+
+[dependency-groups]
+dev_workspace = [
+    "build==1.2.2.post1",
+    "finecode_extension_runner @ file:///home/user/Development/FineCode/finecode/finecode_extension_runner",
+]
+dev = [{ include-group = "runtime" }, "pytest==7.4.*", "debugpy==1.8.*"]
+dev_no_runtime = [
+    "fine_python_import_linter @ git+https://github.com/finecode-dev/finecode.git#subdirectory=extensions/fine_python_import_linter",
+]
+
+[build-system]
+requires = [
+    "setuptools>=64",
+    "setuptools-scm>=8",
+    "finecode_build_backend @ file:///home/user/Development/FineCode/finecode/finecode_build_backend",
+]
+build-backend = "finecode_build_backend.backend"
+
+[tool.poetry]
+packages = [{ include = "finecode_extension_runner", from = "src" }]
+
+[tool.finecode]
+presets = [{ source = "finecode_dev_common_preset" }]
+
+[tool.importlinter]
+root_package = "finecode_extension_runner"
+include_external_packages = true
+
+[[tool.importlinter.contracts]]
+id = "er-layered"
+name = "ER layered architecture"
+type = "layers"
+layers = [
+    "finecode_extension_runner.lsp_server",
+    "finecode_extension_runner.services",
+    "finecode_extension_runner.domain",
+]
+
+[tool.setuptools_scm]
+version_file = "src/finecode_extension_runner/_version.py"
+root = ".."

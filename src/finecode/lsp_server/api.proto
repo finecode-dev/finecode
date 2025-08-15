@@ -1,0 +1,64 @@
+syntax = "proto3";
+
+package finecode;
+
+message AddWorkspaceDirRequest {
+    string dir_path = 1;
+}
+
+message AddWorkspaceDirResponse {
+}
+
+message DeleteWorkspaceDirRequest {
+    string dir_path = 1;
+}
+
+message DeleteWorkspaceDirResponse {
+    
+}
+
+message ListActionsRequest {
+    string parent_node_id = 1;
+}
+
+message ActionTreeNode {
+    string node_id = 1;
+    string name = 2;
+    NodeType node_type = 3;
+    repeated ActionTreeNode subnodes = 4;
+
+    enum NodeType {
+        DIRECTORY = 0;
+        PACKAGE = 1;
+        ACTION = 2;
+        PRESET = 3;
+    }
+}
+
+message ListActionsResponse {
+    repeated ActionTreeNode nodes = 1;
+}
+
+message RunActionRequest {
+    string action_node_id = 1;
+    // following cases are possible:
+    // 1. Running action on existing file:
+    // 1.1 Unsaved: both apply_on and apply_on_text are passed
+    // 1.2 Saved: either apply_on or both are passed
+    // 2. Running action on a new unsaved yet file: only apply_on_text is passed.
+    string apply_on = 2;
+    string apply_on_text = 3;
+}
+
+message RunActionResponse {
+    // if target was passed as text and was changed, result is returned in this parameter
+    string result_text = 1;
+}
+
+service WorkspaceManagerService {
+    rpc AddWorkspaceDir(AddWorkspaceDirRequest) returns (AddWorkspaceDirResponse);
+    rpc DeleteWorkspaceDir(DeleteWorkspaceDirRequest) returns (DeleteWorkspaceDirResponse);
+
+    rpc ListActions(ListActionsRequest) returns (ListActionsResponse);
+    rpc RunAction(RunActionRequest) returns (RunActionResponse);
+}
