@@ -1,6 +1,6 @@
 from typing import Any
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 
 class FinecodePresetDefinition(BaseModel):
@@ -45,3 +45,8 @@ class ActionDefinition(BaseModel):
 class ViewDefinition(BaseModel):
     name: str
     source: str
+
+
+class ConfigurationError(Exception):
+    def __init__(self, message: str) -> None:
+        self.message = message

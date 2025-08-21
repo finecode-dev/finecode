@@ -38,7 +38,10 @@ async def read_projects_in_dir(
         with open(def_file, "rb") as pyproject_file:
             project_def = toml_loads(pyproject_file.read()).value
 
-        if project_def.get("tool", {}).get("finecode", None) is None:
+        dependency_groups = project_def.get('dependency-groups', {})
+        dev_workspace_group = dependency_groups.get('dev_workspace', [])
+        finecode_in_dev_workspace = any(dep for dep in dev_workspace_group if get_dependency_name(dep) == 'finecode')
+        if not finecode_in_dev_workspace:
             status = domain.ProjectStatus.NO_FINECODE
             actions = []
 
@@ -54,6 +57,17 @@ async def read_projects_in_dir(
     return new_projects
 
 
+def get_dependency_name(dependency_str: str) -> str:
+    # simplified way for now: find the first character which is not allowed in package
+    # name
+    for idx, ch in enumerate(dependency_str):
+        if not ch.isalnum() and ch not in "-_":
+            return dependency_str[:idx]
+
+    # dependency can consist also just of package name without version
+    return dependency_str
+
+
 async def read_project_config(
     project: domain.Project, ws_context: context.WorkspaceContext, resolve_presets: bool = True
 ) -> None:
@@ -64,6 +78,13 @@ async def read_project_config(
             # TODO: handle error if toml is invalid
             project_def = toml_loads(pyproject_file.read()).value
         # TODO: validate that finecode is installed?
+        
+        base_config_path = Path(__file__).parent.parent / 'base_config.toml'
+        # TODO: cache instead of reading each time
+        with open(base_config_path, 'r') as base_config_file:
+            base_config = toml_loads(base_config_file.read()).value
+        _merge_projects_configs(base_config, base_config_path, project_def, project.def_path)
+        project_def = base_config
 
         finecode_raw_config = project_def.get("tool", {}).get("finecode", None)
         if finecode_raw_config and resolve_presets:
@@ -77,49 +98,9 @@ async def read_project_config(
                 def_path=project.def_path,
                 runner=dev_no_runtime_runner,
             )
-            _merge_projects_configs(project_def, new_config)
+            if new_config is not None:
+                _merge_projects_configs(project_def, project.def_path, new_config, project.def_path)
 
-        # add builtins if they are not overwritten
-        prepare_envs_action = domain.Action(
-            name='prepare_envs',
-            source='finecode_extension_api.actions.prepare_envs.PrepareEnvsAction',
-            handlers=[
-                domain.ActionHandler(name='prepare_envs_venvs', source='fine_python_virtualenv.VirtualenvPrepareEnvHandler', config={}, env='dev_workspace', dependencies=['fine_python_virtualenv==0.1.*']),
-                domain.ActionHandler(name='prepare_envs_dump_configs', source='finecode_extension_runner.action_handlers.PrepareEnvsDumpConfigsHandler', config={}, env='dev_workspace', dependencies=[]),
-                domain.ActionHandler(name='prepare_envs_pip', source='fine_python_pip.PipPrepareEnvHandler', config={}, env='dev_workspace', dependencies=['fine_python_pip==0.1.*'])
-            ],
-            config={}
-        )
-        add_action_to_config_if_new(project_def, prepare_envs_action)
-        
-        # preparing dev workspaces doesn't need dumping config for two reasons:
-        # - depedencies in `dev_workspace` are expected to be simple and installable
-        #   without dump
-        # - dumping is modifiable as action, so it can be correctly done only in
-        #   dev_workspace env of the project and we just create it here, it doesn't
-        #   exist yet
-        prepare_dev_workspaces_envs_action = domain.Action(
-            name='prepare_dev_workspaces_envs',
-            source='finecode_extension_api.actions.prepare_envs.PrepareEnvsAction',
-            handlers=[
-                domain.ActionHandler(name='prepare_venvs', source='fine_python_virtualenv.VirtualenvPrepareEnvHandler', config={}, env='dev_workspace', dependencies=['fine_python_virtualenv==0.1.*']),
-                domain.ActionHandler(name='prepare_venvs_pip', source='fine_python_pip.PipPrepareEnvHandler', config={}, env='dev_workspace', dependencies=['fine_python_pip==0.1.*'])
-            ],
-            config={}
-        )
-        add_action_to_config_if_new(project_def, prepare_dev_workspaces_envs_action)
-
-        dump_config_action = domain.Action(
-            name='dump_config',
-            source='finecode_extension_api.actions.dump_config.DumpConfigAction',
-            handlers=[
-                domain.ActionHandler(name='dump_config', source='finecode_extension_runner.action_handlers.DumpConfigHandler', config={}, env='dev_workspace', dependencies=[]),
-                domain.ActionHandler(name='dump_config_save', source='finecode_extension_runner.action_handlers.DumpConfigSaveHandler', config={}, env='dev_workspace', dependencies=[])
-            ],
-            config={}
-        )
-        add_action_to_config_if_new(project_def, dump_config_action)
-        
         # add runtime dependency group if it's not explicitly declared
         add_runtime_dependency_group_if_new(project_def)
         
@@ -162,12 +143,11 @@ async def get_preset_project_path(
 
 def read_preset_config(
     config_path: Path, preset_id: str
-) -> tuple[dict[str, Any] | None, config_models.PresetDefinition | None]:
+) -> tuple[dict[str, Any], config_models.PresetDefinition]:
     # preset_id is used only for logs to make them more useful
     logger.trace(f"Read preset config: {preset_id}")
     if not config_path.exists():
-        logger.error(f"preset.toml not found in project '{preset_id}'")
-        return (None, None)
+        raise config_models.ConfigurationError(f"preset.toml not found in project '{preset_id}'")
 
     with open(config_path, "rb") as preset_toml_file:
         preset_toml = toml_loads(preset_toml_file.read()).value
@@ -185,8 +165,8 @@ def read_preset_config(
 
 async def collect_config_from_py_presets(
     presets_sources: list[str], def_path: Path, runner: runner_info.ExtensionRunnerInfo
-) -> dict[str, Any]:
-    config: dict[str, Any] = {}
+) -> dict[str, Any] | None:
+    config: dict[str, Any] | None = None
     processed_presets: set[str] = set()
     presets_to_process: set[PresetToProcess] = set(
         [
@@ -203,14 +183,14 @@ async def collect_config_from_py_presets(
         )
         if preset_project_path is None:
             logger.trace(f"Path of preset {preset.source} not found")
-            continue
+            raise config_models.ConfigurationError(f"Path of preset {preset.source} in project {def_path.parent} not found")
 
         preset_toml_path = preset_project_path / "preset.toml"
         preset_toml, preset_config = read_preset_config(preset_toml_path, preset.source)
-        if preset_toml is None or preset_config is None:
-            continue
-
-        _merge_preset_configs(config, preset_toml)
+        if config is None:
+            config = preset_toml
+        else:
+            _merge_projects_configs(config, def_path, preset_toml, preset_project_path)
         new_presets_sources = (
             set([extend.source for extend in preset_config.extends]) - processed_presets
         )
@@ -225,7 +205,7 @@ async def collect_config_from_py_presets(
     return config
 
 
-def _merge_projects_configs(config1: dict[str, Any], config2: dict[str, Any]) -> None:
+def _merge_projects_configs(config1: dict[str, Any], config1_filepath: Path, config2: dict[str, Any], config2_filepath: Path) -> None:
     # merge config2 in config1 without overwriting
     if "tool" not in config1:
         config1["tool"] = {}
@@ -255,92 +235,41 @@ def _merge_projects_configs(config1: dict[str, Any], config2: dict[str, Any]) ->
                             "config"
                         ]
                         action_config.update(action_info["config"])
+        elif key == "env":
+            if 'env' not in tool_finecode_config1:
+                tool_finecode_config1['env'] = {}
+
+            all_envs_config1 = tool_finecode_config1['env']
+
+            for env_name, env_config2 in value.items():
+                if env_name not in all_envs_config1:
+                    all_envs_config1[env_name] = env_config2
+                else:
+                    # merge env configs
+                    env_config1 = all_envs_config1[env_name]
+                    if 'dependencies' in env_config2:
+                        if 'dependencies' not in env_config1:
+                            env_config1['dependencies'] = env_config2['dependencies']
+                        else:
+                            # merge dependencies
+                            env_config1_deps = env_config1['dependencies']
+                            for dependency_name, dependency in env_config2['dependencies'].items():
+                                if dependency_name not in env_config1_deps:
+                                    env_config1_deps[dependency_name] = dependency
+                                else:
+                                    if 'path' in dependency:
+                                        new_path = dependency['path']
+                                        if new_path.startswith('.'):
+                                            abs_path = config2_filepath.parent / new_path
+                                            new_rel_path = abs_path.relative_to(config1_filepath.parent)
+                                            new_path = new_rel_path.as_posix()
+                                        env_config1_deps[dependency_name]['path'] = new_path
+                                    if 'editable' in dependency:
+                                        env_config1_deps[dependency_name]['editable'] = dependency['editable']
         elif key in config1:
             tool_finecode_config1[key].update(value)
         else:
             tool_finecode_config1[key] = value
-
-
-def _merge_preset_configs(config1: dict[str, Any], config2: dict[str, Any]) -> None:
-    # merge config2 in config1 (in-place)
-    # config1 is not overwritten by config2
-    new_views = config2.get("tool", {}).get("finecode", {}).get("views", None)
-    new_actions_defs_and_configs = (
-        config2.get("tool", {}).get("finecode", {}).get("action", None)
-    )
-    new_actions_handlers_configs = (
-        config2.get("tool", {}).get("finecode", {}).get("action_handler", None)
-    )
-    if (
-        new_views is not None
-        or new_actions_defs_and_configs is not None
-        or new_actions_handlers_configs is not None
-    ):
-        if "tool" not in config1:
-            config1["tool"] = {}
-        if "finecode" not in config1["tool"]:
-            config1["tool"]["finecode"] = {}
-
-        if new_views is not None:
-            if "views" not in config1["tool"]["finecode"]:
-                config1["tool"]["finecode"]["views"] = []
-            config1["tool"]["finecode"]["views"].extend(new_views)
-            del config2["tool"]["finecode"]["views"]
-
-        if new_actions_defs_and_configs is not None:
-            if "action" not in config1["tool"]["finecode"]:
-                config1["tool"]["finecode"]["action"] = {}
-
-            for handler_name, handler_info in new_actions_defs_and_configs.items():
-                if handler_name not in config1["tool"]["finecode"]["action"]:
-                    config1["tool"]["finecode"]["action"][handler_name] = {}
-
-                action_def = {
-                    key: value for key, value in handler_info.items() if key != "config"
-                }
-                config1["tool"]["finecode"]["action"][handler_name].update(action_def)
-
-                try:
-                    handler_config = handler_info["config"]
-                except KeyError:
-                    continue
-
-                handler_config.update(
-                    config1["tool"]["finecode"]["action"][handler_name].get(
-                        "config", {}
-                    )
-                )
-                config1["tool"]["finecode"]["action"][handler_name][
-                    "config"
-                ] = handler_config
-
-            del config2["tool"]["finecode"]["action"]
-
-    if new_actions_handlers_configs is not None:
-        if "action_handler" not in config1["tool"]["finecode"]:
-            config1["tool"]["finecode"]["action_handler"] = {}
-
-        for handler_name, handler_info in new_actions_handlers_configs.items():
-            if handler_name not in config1["tool"]["finecode"]["action_handler"]:
-                config1["tool"]["finecode"]["action_handler"][handler_name] = {}
-
-            try:
-                handler_config = handler_info["config"]
-            except KeyError:
-                continue
-
-            handler_config.update(
-                config1["tool"]["finecode"]["action_handler"][handler_name].get(
-                    "config", {}
-                )
-            )
-            config1["tool"]["finecode"]["action_handler"][handler_name][
-                "config"
-            ] = handler_config
-
-        del config2["tool"]["finecode"]["action_handler"]
-
-    del config2["tool"]["finecode"]
 
 
 def add_action_to_config_if_new(raw_config: dict[str, Any], action: domain.Action) -> None:

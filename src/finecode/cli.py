@@ -196,11 +196,14 @@ def prepare_envs(trace: bool,
     logger_utils.init_logger(trace=trace, stdout=True)
 
     try:
-        asyncio.run(prepare_envs_cmd.prepare_envs(workdir_path=pathlib.Path(os.getcwd())))
-    except Exception as exception: # TODO
-        logger.exception(exception)
-        click.echo(exception, err=True)
+        asyncio.run(prepare_envs_cmd.prepare_envs(workdir_path=pathlib.Path(os.getcwd()), recreate=recreate))
+    except prepare_envs_cmd.PrepareEnvsFailed as exception:
+        click.echo(exception.args[0], err=True)
         sys.exit(1)
+    except Exception as exception:
+        logger.exception(exception)
+        click.echo("Unexpected error, see logs in file for more details", err=True)
+        sys.exit(2)
 
 
 @cli.command()

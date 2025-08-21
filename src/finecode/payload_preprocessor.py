@@ -18,7 +18,7 @@ def preprocess_for_project(
         
         if action_name == "format" and "save" not in processed_payload:
             processed_payload["save"] = True
-    elif action_name == "prepare_envs":
+    elif action_name == "prepare_envs" or action_name == "prepare_runners":
         runtime_venv_path = project_dir_path / '.venvs' / 'runtime'
         project_def_path = project_dir_path / 'pyproject.toml'
         envs = [{"name": "runtime", "venv_dir_path": runtime_venv_path, "project_def_path": project_def_path}]

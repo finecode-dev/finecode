@@ -3,9 +3,13 @@ import shutil
 from loguru import logger
 
 from finecode import context, services, domain
-from finecode.config import read_configs, collect_actions
+from finecode.config import read_configs, collect_actions, config_models
 from finecode.cli_app import run as run_cli
 from finecode.runner import manager as runner_manager
+
+
+class PrepareEnvsFailed(Exception):
+    ...
 
 
 async def prepare_envs(workdir_path: pathlib.Path, recreate: bool) -> None:
@@ -21,42 +25,95 @@ async def prepare_envs(workdir_path: pathlib.Path, recreate: bool) -> None:
     
     # `prepare_envs` can be run only from workspace/project root. Validate this
     if workdir_path not in ws_context.ws_projects:
-        # TODO: better exception
-        raise Exception("prepare_env can be run only from workspace/project root")
+        raise PrepareEnvsFailed("prepare_env can be run only from workspace/project root")
 
     invalid_projects = [project for project in ws_context.ws_projects.values() if project.status == domain.ProjectStatus.CONFIG_INVALID]
     if len(invalid_projects) > 0:
-        raise Exception(f"Projects have invalid configuration: {invalid_projects}")
+        raise PrepareEnvsFailed(f"Projects have invalid configuration: {invalid_projects}")
 
     # prepare envs only in projects with valid configurations and which use finecode
     projects = [project for project in ws_context.ws_projects.values() if project.status == domain.ProjectStatus.CONFIG_VALID]
     
     # Collect actions in relevant projects
     for project in projects:
-        await read_configs.read_project_config(project=project, ws_context=ws_context, resolve_presets=False)
-        collect_actions.collect_actions(project_path=project.dir_path, ws_context=ws_context)
-
-    actions_by_projects: dict[pathlib.Path, list[str]] = {project.dir_path: ['prepare_envs'] for project in projects}
-    # action payload can be kept empty because it will be filled in payload preprocessor
-    action_payload: dict[str, str | bool] = {"recreate": recreate}
+        try:
+            await read_configs.read_project_config(project=project, ws_context=ws_context, resolve_presets=False)
+            collect_actions.collect_actions(project_path=project.dir_path, ws_context=ws_context)
+        except config_models.ConfigurationError as exception:
+            raise PrepareEnvsFailed(f"Reading project config and collecting actions in {project.dir_path} failed: {exception.message}")
 
     try:
         # try to start runner in 'dev_workspace' env of each project. If venv doesn't
         # exist or doesn't work, recreate it by running actions in the current env.
+        if recreate:
+            remove_dev_workspace_envs(projects=projects, workdir_path=workdir_path)
+
         await check_or_recreate_all_dev_workspace_envs(projects=projects, workdir_path=workdir_path, ws_context=ws_context)
         
-        # now all 'dev_workspace' envs are valid, run 'prepare_envs' in them to create
-        # envs in each subproject.
+        # now all 'dev_workspace' envs are valid, run 'prepare_runners' in them to create
+        # venvs and install runners and presets in them. This is required to be able to
+        # resolve presets which can contain additional dependency configurations.
+        # Only then run `prepare_envs` to install dependencies in each subproject.
+
+        actions_by_projects: dict[pathlib.Path, list[str]] = {project.dir_path: ['prepare_runners'] for project in projects}
+        # action payload can be kept empty because it will be filled in payload preprocessor
+        action_payload: dict[str, str | bool] = {"recreate": recreate}
+        
         await run_cli.start_required_environments(actions_by_projects, ws_context)
         
         try:
-            await run_cli.run_actions_in_all_projects(
+            (result_output, result_return_code) = await run_cli.run_actions_in_all_projects(
                 actions_by_projects, action_payload, ws_context, concurrently=True
             )
         except run_cli.RunFailed as error:
             logger.error(error.message)
+            result_output = error.message
+            result_return_code = 1
+
+        if result_return_code != 0:
+            raise PrepareEnvsFailed(result_output)
+        
+        # reread projects configs, now with resolved presets
+        # to be able to resolve presets, start dev_no_runtime runners first
+        try:
+            await runner_manager.start_runners_with_presets(projects=projects, ws_context=ws_context)
+        except runner_manager.RunnerFailedToStart as exception:
+            raise PrepareEnvsFailed(f"Starting runners with presets failed: {exception.message}")
+        
+        for project in projects:
+            try:
+                await read_configs.read_project_config(project=project, ws_context=ws_context)
+                collect_actions.collect_actions(project_path=project.dir_path, ws_context=ws_context)
+            except config_models.ConfigurationError as exception:
+                raise PrepareEnvsFailed(f"Rereading project config with presets and collecting actions in {project.dir_path} failed: {exception.message}")
+        
+        actions_by_projects: dict[pathlib.Path, list[str]] = {project.dir_path: ['prepare_envs'] for project in projects}
+        # action payload can be kept empty because it will be filled in payload preprocessor
+        action_payload: dict[str, str | bool] = {"recreate": recreate}
+
+        try:
+            (result_output, result_return_code) = await run_cli.run_actions_in_all_projects(
+                actions_by_projects, action_payload, ws_context, concurrently=True
+            )
+        except run_cli.RunFailed as error:
+            logger.error(error.message)
+            result_output = error.message
+            result_return_code = 1
+
+        if result_return_code != 0:
+            raise PrepareEnvsFailed(result_output)
     finally:
         services.on_shutdown(ws_context)
+
+
+def remove_dev_workspace_envs(projects: list[domain.Project], workdir_path: pathlib.Path) -> None:
+    for project in projects:
+        if project.dir_path == workdir_path:
+            # skip removing `dev_workspace` env of the current project, because user
+            # is responsible for keeping it correct
+            continue
+        
+        runner_manager.remove_runner_venv(runner_dir=project.dir_path, env_name='dev_workspace')
 
 
 async def check_or_recreate_all_dev_workspace_envs(projects: list[domain.Project], workdir_path: pathlib.Path, ws_context: context.WorkspaceContext) -> None:
@@ -122,11 +179,14 @@ async def check_or_recreate_all_dev_workspace_envs(projects: list[domain.Project
         envs += invalid_envs
 
     # TODO: check result
-    await services.run_action(
-        action_name='prepare_dev_workspaces_envs',
-        params={ "envs": envs, },
-        project_def=current_project,
-        ws_context=ws_context,
-        result_format=services.RunResultFormat.STRING,
-        preprocess_payload=False
-    )
+    try:
+        await services.run_action(
+            action_name='prepare_dev_workspaces_envs',
+            params={ "envs": envs, },
+            project_def=current_project,
+            ws_context=ws_context,
+            result_format=services.RunResultFormat.STRING,
+            preprocess_payload=False
+        )
+    except services.ActionRunFailed as exception:
+        raise PrepareEnvsFailed(f"'prepare_dev_workspaces_env' failed in {current_project.name}: {exception.message}")

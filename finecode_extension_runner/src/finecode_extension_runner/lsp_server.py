@@ -202,12 +202,22 @@ async def run_action(ls: lsp_server.LanguageServer, params):
     logger.trace(f"Run action: {params[0]}")
     request = schemas.RunActionRequest(action_name=params[0], params=params[1])
     options = schemas.RunActionOptions(**params[2] if params[2] is not None else {})
-    # pygls sends uncatched exceptions(e.g. internal errors) to client. Log them as well
+
     try:
         response = await services.run_action(request=request, options=options)
-    except Exception as e:
-        logger.exception(f"Run action error: {e}")
-        raise e
+    except Exception as exception:
+        error_msg = ""
+        if isinstance(exception, services.ActionFailedException):
+            logger.error(f"Run action failed: {exception.message}")
+            error_msg = exception.message
+        else:
+            logger.error("Unhandled exception in action run:")
+            logger.exception(exception)
+            error_msg = f'{type(exception)}: {str(exception)}'
+        return {
+            "error": error_msg
+        }
+
     # dict key can be path, but pygls fails to handle slashes in dict keys, use strings
     # representation of result instead until the problem is properly solved
     result_str = json.dumps(response.to_dict()["result"])
@@ -226,5 +236,7 @@ async def reload_action(ls: lsp_server.LanguageServer, params):
 
 async def resolve_package_path(ls: lsp_server.LanguageServer, params):
     logger.trace(f"Resolve package path: {params}")
+    # TODO: handle properly ValueError
     result = services.resolve_package_path(params[0])
+    logger.trace(f"Resolved {params[0]} to {result}")
     return {"packagePath": result}

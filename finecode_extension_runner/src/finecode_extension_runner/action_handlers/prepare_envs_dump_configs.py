@@ -1,8 +1,6 @@
 import dataclasses
 import shutil
 
-import tomlkit
-
 from finecode_extension_api import code_action
 from finecode_extension_api.actions import prepare_envs as prepare_envs_action
 from finecode_extension_api.interfaces import iactionrunner, iprojectinfoprovider, ilogger
@@ -25,7 +23,7 @@ class PrepareEnvsDumpConfigsHandler(
     ) -> prepare_envs_action.PrepareEnvsRunResult:
         project_defs_pathes = set([env_info.project_def_path for env_info in payload.envs])
         if len(project_defs_pathes) != 1:
-            ... # TODO: error
+            raise code_action.ActionFailedException("prepare_envs action currently supports only preparing environments in the same project where it is running(dump_configs handler)")
         
         project_raw_config = await self.project_info_provider.get_project_raw_config()
         
@@ -34,7 +32,7 @@ class PrepareEnvsDumpConfigsHandler(
         # TODO: unify with call of dump_config in CLI
         dump_dir_path = project_dir_path / 'finecode_config_dump'
         try:
-            await self.action_runner.run_action(name='dump_config', payload={
+            dump_config_result = await self.action_runner.run_action(name='dump_config', payload={
                 "source_file_path": project_def_path,
                 "project_raw_config": project_raw_config,
                 "target_file_path": dump_dir_path / 'pyproject.toml'
@@ -42,9 +40,10 @@ class PrepareEnvsDumpConfigsHandler(
             new_project_def_path = dump_dir_path / 'pyproject.toml'
             for env_info in payload.envs:
                 run_context.project_def_path_by_venv_dir_path[env_info.venv_dir_path] = new_project_def_path
+                run_context.project_def_by_venv_dir_path[env_info.venv_dir_path] = dump_config_result['config_dump']
         except iactionrunner.BaseRunActionException as exception:
-            self.logger.exception(exception) # TODO
-            
+            raise code_action.ActionFailedException(f"Running 'dump_config' action as part of 'prepare_envs' failed: {type(exception)}, {exception.message}")
+
         # after dumping config in another directory, pathes to project files like
         # readme and source files are wrong. We cannot just change the pathes to the new
         # one in project configuration, because they would be outside of the project(in
@@ -56,21 +55,21 @@ class PrepareEnvsDumpConfigsHandler(
         #   to original source files, not to temporary symlinks
         #
         # question: filemanager should be used here?
-        for item in project_dir_path.iterdir():
-            if item.name == 'finecode_config_dump' or item.name == 'pyproject.toml':
-                # ignore:
-                # - dir with dumped config
-                # - dumped config
-                continue
+        # for item in project_dir_path.iterdir():
+        #     if item.name == 'finecode_config_dump' or item.name == 'pyproject.toml':
+        #         # ignore:
+        #         # - dir with dumped config
+        #         # - dumped config
+        #         continue
             
-            new_item_path = dump_dir_path / item.name
-            if new_item_path.exists():
-                if new_item_path.is_symlink():
-                    new_item_path.unlink()
-                elif new_item_path.is_dir():
-                    shutil.rmtree(new_item_path)
-                else:
-                    new_item_path.unlink()
-            new_item_path.symlink_to(item, target_is_directory=item.is_dir())
+        #     new_item_path = dump_dir_path / item.name
+        #     if new_item_path.exists():
+        #         if new_item_path.is_symlink():
+        #             new_item_path.unlink()
+        #         elif new_item_path.is_dir():
+        #             shutil.rmtree(new_item_path)
+        #         else:
+        #             new_item_path.unlink()
+        #     new_item_path.symlink_to(item, target_is_directory=item.is_dir())
 
         return prepare_envs_action.PrepareEnvsRunResult(errors=[])

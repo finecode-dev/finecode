@@ -10,6 +10,7 @@ from pydantic.dataclasses import dataclass as pydantic_dataclass
 
 from finecode_extension_runner import project_dirs, run_utils, schemas, global_state, domain, context
 from finecode_extension_api import code_action, textstyler
+from finecode_extension_api.interfaces import iactionrunner
 from finecode_extension_runner import (
     partial_result_sender as partial_result_sender_module,
 )
@@ -20,7 +21,9 @@ last_run_id: int = 0
 partial_result_sender: partial_result_sender_module.PartialResultSender
 
 
-class ActionFailedException(Exception): ...
+class ActionFailedException(Exception):
+    def __init__(self, message: str) -> None:
+        self.message = message
 
 
 def set_partial_result_sender(send_func: typing.Callable) -> None:
@@ -167,11 +170,15 @@ async def run_action(
                         subresult_task = tg.create_task(coro)
                         subresults_tasks.append(subresult_task)
             except ExceptionGroup as eg:
-                logger.error(eg)
+                errors: list[str] = []
                 for exc in eg.exceptions:
-                    logger.exception(exc)
+                    if not isinstance(exc, ActionFailedException):
+                        logger.error("Unexpected exception:")
+                        logger.exception(exc)
+                    else:
+                        errors.append(exc.message)
                 raise ActionFailedException(
-                    f"Running action handlers of '{action.name}' failed(Run {run_id})."
+                    f"Running action handlers of '{action.name}' failed(Run {run_id}): {errors}."
                     " See ER logs for more details"
                 )
 
@@ -207,8 +214,8 @@ async def run_action(
                             )
                             handlers_tasks.append(handler_task)
                 except ExceptionGroup as eg:
-                    logger.error(eg)
                     for exc in eg.exceptions:
+                        # TODO: expected / unexpected?
                         logger.exception(exc)
                     raise ActionFailedException(
                         f"Running action handlers of '{action.name}' failed"
@@ -224,15 +231,18 @@ async def run_action(
                             action_result.update(coro_result)
             else:
                 for handler in action.handlers:
-                    handler_result = await execute_action_handler(
-                        handler=handler,
-                        payload=payload,
-                        run_context=run_context,
-                        run_id=run_id,
-                        action_context=action_context,
-                        action_exec_info=action_exec_info,
-                        runner_context=runner_context,
-                    )
+                    try:
+                        handler_result = await execute_action_handler(
+                            handler=handler,
+                            payload=payload,
+                            run_context=run_context,
+                            run_id=run_id,
+                            action_context=action_context,
+                            action_exec_info=action_exec_info,
+                            runner_context=runner_context,
+                        )
+                    except ActionFailedException as exception:
+                        raise exception
 
                     if handler_result is not None:
                         if action_result is None:
@@ -453,10 +463,15 @@ async def execute_action_handler(
             execution_result = await call_result
         else:
             execution_result = call_result
-    except Exception as e:
-        logger.exception(e)
+    except Exception as exception:
+        if isinstance(exception, iactionrunner.BaseRunActionException) or isinstance(exception, code_action.ActionFailedException):
+            error_str = exception.message
+        else:
+            logger.error("Unhandled exception in action handler:")
+            logger.exception(exception)
+            error_str = str(exception)
         raise ActionFailedException(
-            f"Running action handler '{handler.name}' failed(Run {run_id}): {e}"
+            f"Running action handler '{handler.name}' failed(Run {run_id}): {error_str}"
         )
 
     end_time = time.time_ns()

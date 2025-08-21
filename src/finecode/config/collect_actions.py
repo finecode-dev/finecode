@@ -40,8 +40,12 @@ def _collect_actions_in_config(
     for action_name, action_def_raw in (
         config["tool"]["finecode"].get("action", {}).items()
     ):
-        # TODO: handle validation errors
-        action_def = config_models.ActionDefinition(**action_def_raw)
+
+        try:
+            action_def = config_models.ActionDefinition(**action_def_raw)
+        except config_models.ValidationError as exception:
+            raise config_models.ConfigurationError(str(exception))
+
         new_action = domain.Action(
             name=action_name,
             handlers=[

@@ -36,13 +36,14 @@ class DumpConfigRunContext(code_action.RunActionContext):
 
 @dataclasses.dataclass
 class DumpConfigRunResult(code_action.RunActionResult):
-    # TODO: return dumped config as result, not only save in file
-    ...
+    config_dump: dict[str, typing.Any]
 
     @override
     def update(self, other: code_action.RunActionResult) -> None:
         if not isinstance(other, DumpConfigRunResult):
             return
+
+        self.config_dump = other.config_dump
 
     def to_text(self) -> str | textstyler.StyledText:
         return ''

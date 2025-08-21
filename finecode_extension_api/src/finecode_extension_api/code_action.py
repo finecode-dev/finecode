@@ -93,6 +93,16 @@ class Action(Generic[RunPayloadType, RunContextType, RunResultType]):
     CONFIG: typing.Type[ActionConfig] = ActionConfig
 
 
+class StopActionRunWithResult(Exception):
+    def __init__(self, result: RunActionResult) -> None:
+        self.result = result
+
+
+class ActionFailedException(Exception):
+    def __init__(self, message: str) -> None:
+        self.message = message
+
+
 InitializeCallable = collections.abc.Callable[[], None]
 ShutdownCallable = collections.abc.Callable[[], None]
 ExitCallable = collections.abc.Callable[[], None]

@@ -1,4 +1,5 @@
 import os
+import sys
 from pathlib import Path
 from importlib import metadata
 
@@ -25,8 +26,8 @@ def main():
     type=click.Path(exists=True, file_okay=False, resolve_path=True, path_type=Path),
     required=True,
 )
-@click.option("--env-name", "env_name", type=str, default="unknown")
-def start(trace: bool, debug: bool, debug_port: int, project_path: Path, env_name: str):
+@click.option("--env-name", "env_name", type=str)
+def start(trace: bool, debug: bool, debug_port: int, project_path: Path, env_name: str | None):
     if debug is True:
         import debugpy
 
@@ -37,6 +38,10 @@ def start(trace: bool, debug: bool, debug_port: int, project_path: Path, env_nam
             debugpy.wait_for_client()
         except Exception as e:
             logger.info(e)
+
+    if env_name is None:
+        click.echo("Environment name(--env-name) is required", err=True)
+        sys.exit(1)
 
     global_state.log_level = "INFO" if trace is False else "TRACE"
     global_state.project_dir_path = project_path

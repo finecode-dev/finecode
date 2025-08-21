@@ -1,14 +1,14 @@
 [project]
 name = "fine-python-pip"
-version = "0.1.0"
+version = "0.1.1"
 description = ""
 authors = [{ name = "Vladyslav Hnatiuk", email = "aders1234@gmail.com" }]
 readme = "README.md"
 requires-python = ">=3.11, < 3.14"
-dependencies = ["finecode_extension_api==0.1.0"]
+dependencies = ["finecode_extension_api==0.1.3"]
 
 [dependency-groups]
-dev_workspace = ["finecode==0.2.*"]
+dev_workspace = ["finecode==0.2.6.dev14+g790c37afd.d20250821"]
 dev_no_runtime = ["finecode_dev_common_preset==0.1.*"]
 
 [tool.finecode]

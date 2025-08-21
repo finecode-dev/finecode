@@ -5,12 +5,16 @@ description = ""
 authors = [{ name = "Vladyslav Hnatiuk", email = "aders1234@gmail.com" }]
 readme = "README.md"
 requires-python = ">=3.11, < 3.14"
-dependencies = ["fine_extension_api==0.1.*"]
+dependencies = ["finecode_extension_api==0.1.*"]
 
-[tool.poetry.group.dev.dependencies]
-finecode = { version = "0.2.0" }
-finecode_dev_common_preset = { path = "../../finecode_dev_common_preset", develop = true }
+# TODO: rework
+# [tool.poetry.group.dev.dependencies]
+# finecode = { version = "0.2.0" }
+# finecode_dev_common_preset = { path = "../../finecode_dev_common_preset", develop = true }
 
 [build-system]
-requires = ["poetry-core>=2.0.0,<3.0.0"]
-build-backend = "poetry.core.masonry.api"
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.package-data]
+fine_python_format = ["preset.toml"]

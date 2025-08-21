@@ -7,7 +7,7 @@ import ordered_set
 from loguru import logger
 
 from finecode import context, domain, services
-from finecode.config import read_configs, collect_actions
+from finecode.config import read_configs, collect_actions, config_models
 from finecode.runner import manager as runner_manager, runner_info
 
 
@@ -78,6 +78,45 @@ async def run_actions(
             for project_dir_path, project in ws_context.ws_projects.items()
             if project.name in projects_names
         }
+        
+        # make sure all projects use finecode
+        config_problem_found = False
+        for project in ws_context.ws_projects.values():
+            if project.status != domain.ProjectStatus.CONFIG_VALID:
+                if project.status == domain.ProjectStatus.NO_FINECODE:
+                    logger.error(f"You asked to run action in project '{project.name}', but finecode is not used in it(=there is no 'dev_workspace' environment with 'finecode' package in it)")
+                    config_problem_found = True
+                elif project.status == domain.ProjectStatus.CONFIG_INVALID:
+                    logger.error(f"You asked to run action in project '{project.name}', but its configuration is invalid(see logs above for more details)")
+                    config_problem_found = True
+                else:
+                    logger.error(f"You asked to run action in project '{project.name}', but it has unexpected status: {project.status}")
+                    config_problem_found = True
+        
+        if config_problem_found:
+            raise RunFailed("There is a problem with configuration. See previous messages for more details")
+    else:
+        # filter out packages that don't use finecode
+        ws_context.ws_projects = {
+            project_dir_path: project
+            for project_dir_path, project in ws_context.ws_projects.items()
+            if project.status != domain.ProjectStatus.NO_FINECODE
+        }
+        
+        # check that configuration of packages that use finecode is valid
+        config_problem_found = False
+        for project in ws_context.ws_projects.values():
+            if project.status == domain.ProjectStatus.CONFIG_VALID:
+                continue
+            elif project.status == domain.ProjectStatus.CONFIG_INVALID:
+                logger.error(f"Project '{project.name}' has invalid config, see messages above for more details")
+                config_problem_found = True
+            else:
+                logger.error(f"Project '{project.name}' has unexpected status: {project.status}")
+                config_problem_found = True
+        
+        if config_problem_found:
+            raise RunFailed("There is a problem with configuration. See previous messages for more details")
 
     projects: list[domain.Project] = []
     if projects_names is not None:
@@ -97,11 +136,17 @@ async def run_actions(
                 f"One or more projects are misconfigured, runners for them didn't"
                 f" start: {exception.message}. Check logs for details."
             )
+        except Exception as exception:
+            logger.error("Unexpected exception:")
+            logger.exception(exception)
 
         # 2. Collect actions in relevant projects
         for project in projects:
-            await read_configs.read_project_config(project=project, ws_context=ws_context)
-            collect_actions.collect_actions(project_path=project.dir_path, ws_context=ws_context)
+            try:
+                await read_configs.read_project_config(project=project, ws_context=ws_context)
+                collect_actions.collect_actions(project_path=project.dir_path, ws_context=ws_context)
+            except config_models.ConfigurationError as exception:
+                raise RunFailed(f"Found configuration problem: {exception.message}")
 
         actions_by_projects: dict[pathlib.Path, list[str]] = {}
         if projects_names is not None:
@@ -275,7 +320,7 @@ async def run_actions_in_running_project(
         except ExceptionGroup as eg:
             for exception in eg.exceptions:
                 if isinstance(exception, services.ActionRunFailed):
-                    logger.error(exception.message)
+                    logger.error(f'{exception.message} in {project.name}')
                 else:
                     logger.error("Unexpected exception:")
                     logger.exception(exception)
@@ -299,6 +344,8 @@ async def run_actions_in_running_project(
                     result_format=services.RunResultFormat.STRING,
                 )
             except Exception as error:
+                # TODO: which are expected here?
+                logger.error("Unexpected exception")
                 logger.exception(error)
                 raise RunFailed(f"Running of action {action_name} failed")
 

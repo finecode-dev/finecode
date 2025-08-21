@@ -9,7 +9,8 @@ class IActionRunner(Protocol):
 
 
 class BaseRunActionException(Exception):
-    ...
+    def __init__(self, message: str) -> None:
+        self.message = message
 
 
 class ActionNotFound(BaseRunActionException):

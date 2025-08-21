@@ -26,7 +26,6 @@ class ProcessExecutor(iprocessexecutor.IProcessExecutor):
         try:
             yield
         except Exception as exc:
-            logger.exception(exc)
             raise exc
         finally:
             if self._py_process_executor is not None:

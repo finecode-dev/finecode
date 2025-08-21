@@ -67,8 +67,9 @@ async def run_action_wrapper(action_name: str, payload: dict[str, Any]) -> dict[
     options = schemas.RunActionOptions(result_format='json')
     response = await run_action.run_action(request=request, options=options)
     if response.return_code != 0:
+        loguru_logger.get_logger().error(response.result)
         # TODO: pass details
-        raise iactionrunner.ActionRunFailed()
+        raise iactionrunner.ActionRunFailed(str(response.return_code))
 
     return response.result
 

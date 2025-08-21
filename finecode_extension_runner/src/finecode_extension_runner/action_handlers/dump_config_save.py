@@ -31,4 +31,4 @@ class DumpConfigSaveHandler(
             file_path=payload.target_file_path, file_content=raw_config_str
         )
 
-        return dump_config_action.DumpConfigRunResult()
+        return dump_config_action.DumpConfigRunResult(config_dump=run_context.raw_config_dump)

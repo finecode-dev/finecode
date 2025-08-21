@@ -31,6 +31,9 @@ class NoResponse(BaseRunnerRequestException): ...
 class ResponseTimeout(BaseRunnerRequestException): ...
 
 
+class ActionRunFailed(BaseRunnerRequestException): ...
+
+
 async def log_process_log_streams(process: asyncio.subprocess.Process) -> None:
     stdout, stderr = await process.communicate()
 
@@ -175,6 +178,9 @@ async def run_action(
         ),
         timeout=None,
     )
+    
+    if hasattr(response, 'error'):
+        raise ActionRunFailed(response.error)
 
     return_code = response.return_code
     raw_result = ""

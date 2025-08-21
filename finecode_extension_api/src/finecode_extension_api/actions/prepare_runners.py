@@ -19,7 +19,7 @@ class EnvInfo:
 
 
 @dataclasses.dataclass
-class PrepareEnvsRunPayload(code_action.RunActionPayload):
+class PrepareRunnersRunPayload(code_action.RunActionPayload):
     envs: list[EnvInfo]
     # remove old env and create a new one from scratch even if the current one is valid.
     # Useful for example if you changed something in venv manually and want to revert
@@ -28,7 +28,7 @@ class PrepareEnvsRunPayload(code_action.RunActionPayload):
     recreate: bool = False
 
 
-class PrepareEnvsRunContext(code_action.RunActionContext):
+class PrepareRunnersRunContext(code_action.RunActionContext):
     def __init__(
         self,
         run_id: int,
@@ -48,19 +48,19 @@ class PrepareEnvsRunContext(code_action.RunActionContext):
         # handler
         self.project_def_by_venv_dir_path: dict[pathlib.Path,  dict[str, typing.Any]] = {}
         
-    async def init(self, initial_payload: PrepareEnvsRunPayload) -> None:
+    async def init(self, initial_payload: PrepareRunnersRunPayload) -> None:
         for env_info in initial_payload.envs:
             self.project_def_path_by_venv_dir_path[env_info.venv_dir_path] = env_info.project_def_path
 
 
 @dataclasses.dataclass
-class PrepareEnvsRunResult(code_action.RunActionResult):
-    # `PrepareEnvs` action is general, so make result general as well
+class PrepareRunnersRunResult(code_action.RunActionResult):
+    # `PrepareRunners` action is general, so make result general as well
     errors: list[str]
 
     @override
     def update(self, other: code_action.RunActionResult) -> None:
-        if not isinstance(other, PrepareEnvsRunResult):
+        if not isinstance(other, PrepareRunnersRunResult):
             return
         self.errors += other.errors
 
@@ -75,7 +75,7 @@ class PrepareEnvsRunResult(code_action.RunActionResult):
             return code_action.RunReturnCode.ERROR
 
 
-class PrepareEnvsAction(code_action.Action):
-    PAYLOAD_TYPE = PrepareEnvsRunPayload
-    RUN_CONTEXT_TYPE = PrepareEnvsRunContext
-    RESULT_TYPE = PrepareEnvsRunResult
+class PrepareRunnersAction(code_action.Action):
+    PAYLOAD_TYPE = PrepareRunnersRunPayload
+    RUN_CONTEXT_TYPE = PrepareRunnersRunContext
+    RESULT_TYPE = PrepareRunnersRunResult
