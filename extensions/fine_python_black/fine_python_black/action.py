@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import dataclasses
 import sys
 
 # import asyncio
@@ -41,6 +42,7 @@ def get_black_mode(config: BlackFormatHandlerConfig) -> Mode:
     )
 
 
+@dataclasses.dataclass
 class BlackFormatHandlerConfig(code_action.ActionHandlerConfig):
     # TODO: should be set
     target_versions: list[

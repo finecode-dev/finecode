@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import dataclasses
 from io import StringIO
 from pathlib import Path
 
@@ -11,6 +12,7 @@ from finecode_extension_api.actions import format as format_action
 from finecode_extension_api.interfaces import icache, ilogger, iprocessexecutor
 
 
+@dataclasses.dataclass
 class IsortFormatHandlerConfig(code_action.ActionHandlerConfig):
     profile: str = ""
 

@@ -1,3 +1,5 @@
+import dataclasses
+
 from finecode_extension_api.interfaces import ilogger, ifilemanager
 import virtualenv
 
@@ -5,6 +7,7 @@ from finecode_extension_api import code_action
 from finecode_extension_api.actions import prepare_runners as prepare_runners_action
 
 
+@dataclasses.dataclass
 class VirtualenvPrepareRunnersHandlerConfig(code_action.ActionHandlerConfig):
     ...
 
