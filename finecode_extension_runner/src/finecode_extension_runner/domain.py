@@ -35,10 +35,12 @@ class Project:
         name: str,
         path: Path,
         actions: dict[str, Action],
+        action_handler_configs: dict[str, dict[str, typing.Any]]
     ) -> None:
         self.name = name
         self.path = path
         self.actions = actions
+        self.action_handler_configs = action_handler_configs
 
     def __str__(self) -> str:
         return f'Project(name="{self.name}", path="{self.path}")'

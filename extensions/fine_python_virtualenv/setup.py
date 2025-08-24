@@ -48,7 +48,7 @@ class CustomEggInfo(TempDirEggInfoMixin, egg_info):
             super().initialize_options()
 
 setup(
-    name="finecode_extension_runner",
+    name="fine_python_virtualenv",
     cmdclass={
         'build': CustomBuild,
         'build_py': CustomBuildPy,

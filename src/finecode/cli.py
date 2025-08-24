@@ -81,7 +81,8 @@ def start_api(
 async def show_user_message(
     message: str, message_type: str
 ) -> None:
-    logger.log(message_type, message)
+    # user messages in CLI are not needed because CLI outputs own messages
+    ...
 
 
 @cli.command(context_settings=dict(ignore_unknown_options=True, allow_extra_args=True))
@@ -194,6 +195,7 @@ def prepare_envs(trace: bool,
             logger.info(e)
     
     logger_utils.init_logger(trace=trace, stdout=True)
+    user_messages._notification_sender = show_user_message
 
     try:
         asyncio.run(prepare_envs_cmd.prepare_envs(workdir_path=pathlib.Path(os.getcwd()), recreate=recreate))
@@ -229,6 +231,7 @@ def dump_config(
         return
     
     logger_utils.init_logger(trace=trace, stdout=True)
+    user_messages._notification_sender = show_user_message
 
     try:
         asyncio.run(dump_config_cmd.dump_config(workdir_path=pathlib.Path(os.getcwd()), project_name=project))

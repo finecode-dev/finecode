@@ -48,7 +48,7 @@ class CustomEggInfo(TempDirEggInfoMixin, egg_info):
             super().initialize_options()
 
 setup(
-    name="fine_python_pip",
+    name="fine_python_module_exports",
     cmdclass={
         'build': CustomBuild,
         'build_py': CustomBuildPy,

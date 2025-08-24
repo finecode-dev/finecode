@@ -26,6 +26,11 @@ class ActionFailedException(Exception):
         self.message = message
 
 
+class StopWithResponse(Exception):
+    def __init__(self, response: schemas.RunActionResponse) -> None:
+        self.response = response
+
+
 def set_partial_result_sender(send_func: typing.Callable) -> None:
     global partial_result_sender
     partial_result_sender = partial_result_sender_module.PartialResultSender(
@@ -250,15 +255,34 @@ async def run_action(
                         else:
                             action_result.update(handler_result)
 
+    end_time = time.time_ns()
+    duration = (end_time - start_time) / 1_000_000
+    logger.trace(
+        f"R{run_id} | Run action end '{request.action_name}', duration: {duration}ms"
+    )
+    
+    if not isinstance(action_result, code_action.RunActionResult):
+        logger.error(
+            f"R{run_id} | Unexpected result type: {type(action_result).__name__}"
+        )
+        raise ActionFailedException(
+            f"Unexpected result type: {type(action_result).__name__}"
+        )
+    
+    response = action_result_to_run_action_response(action_result, options.result_format)
+    return response
+
+
+def action_result_to_run_action_response(action_result: code_action.RunActionResult, asked_result_format: typing.Literal['json'] | typing.Literal['string']) -> schemas.RunActionResponse:
     serialized_result: dict[str, typing.Any] | str | None = None
     result_format = "string"
     run_return_code = code_action.RunReturnCode.SUCCESS
     if isinstance(action_result, code_action.RunActionResult):
         run_return_code = action_result.return_code
-        if options.result_format == "json":
+        if asked_result_format == "json":
             serialized_result = dataclasses.asdict(action_result)
             result_format = "json"
-        elif options.result_format == "string":
+        elif asked_result_format == "string":
             result_text = action_result.to_text()
             if isinstance(result_text, textstyler.StyledText):
                 serialized_result = result_text.to_json()
@@ -268,27 +292,13 @@ async def run_action(
                 result_format = "string"
         else:
             raise ActionFailedException(
-                f"Unsupported result format: {options.result_format}"
+                f"Unsupported result format: {asked_result_format}"
             )
-    elif action_result is not None:
-        logger.error(
-            f"R{run_id} | Unexpected result type: {type(action_result).__name__}"
-        )
-        raise ActionFailedException(
-            f"Unexpected result type: {type(action_result).__name__}"
-        )
-
-    end_time = time.time_ns()
-    duration = (end_time - start_time) / 1_000_000
-    logger.trace(
-        f"R{run_id} | Run action end '{request.action_name}', duration: {duration}ms"
-    )
     return schemas.RunActionResponse(
         result=serialized_result,
         format=result_format,
         return_code=run_return_code.value,
     )
-
 
 
 def create_action_exec_info(action: domain.Action) -> domain.ActionExecInfo:
@@ -382,7 +392,12 @@ async def execute_action_handler(
                 f"Import of action handler '{handler.name}' failed(Run {run_id}): {handler.source}"
             )
 
-        handler_raw_config = handler.config
+        handler_global_config = runner_context.project.action_handler_configs.get(handler.source, None)
+        handler_raw_config = {}
+        # TODO: deep merge instead?
+        if handler_global_config is not None:
+            handler_raw_config.update(handler_global_config)
+        handler_raw_config.update(handler.config)
 
         def get_handler_config(param_type):
             # TODO: validation errors
@@ -464,7 +479,11 @@ async def execute_action_handler(
         else:
             execution_result = call_result
     except Exception as exception:
-        if isinstance(exception, iactionrunner.BaseRunActionException) or isinstance(exception, code_action.ActionFailedException):
+        if isinstance(exception, code_action.StopActionRunWithResult):
+            action_result = exception.result
+            response = action_result_to_run_action_response(action_result, 'string')
+            raise StopWithResponse(response=response)
+        elif isinstance(exception, iactionrunner.BaseRunActionException) or isinstance(exception, code_action.ActionFailedException):
             error_str = exception.message
         else:
             logger.error("Unhandled exception in action handler:")

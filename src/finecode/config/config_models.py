@@ -17,14 +17,6 @@ class FinecodeViewDefinition(BaseModel):
     source: str
 
 
-class FinecodeConfig(BaseModel):
-    presets: list[FinecodePresetDefinition] = []
-    actions: list[FinecodeActionDefinition] = []
-    views: list[FinecodeViewDefinition] = []
-    action: dict[str, dict[str, Any]] = {}
-    action_handler: dict[str, dict[str, Any]] = {}
-
-
 class PresetDefinition(BaseModel):
     extends: list[FinecodePresetDefinition] = []
 
@@ -33,11 +25,12 @@ class ActionHandlerDefinition(BaseModel):
     name: str
     source: str
     env: str
-    dependencies: list[str]
+    dependencies: list[str] = []
+    config: dict[str, Any] | None = None
 
 
 class ActionDefinition(BaseModel):
-    source: str | None = None
+    source: str
     handlers: list[ActionHandlerDefinition] = []
     config: dict[str, Any] | None = None
 

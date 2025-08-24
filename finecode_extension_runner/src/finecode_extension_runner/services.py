@@ -15,7 +15,7 @@ from finecode_extension_runner import context, domain, global_state
 from finecode_extension_runner import project_dirs, run_utils, schemas
 from finecode_extension_api import code_action, textstyler
 from finecode_extension_runner._services import run_action as run_action_module
-from finecode_extension_runner._services.run_action import run_action, ActionFailedException
+from finecode_extension_runner._services.run_action import run_action, ActionFailedException, StopWithResponse
 from finecode_extension_runner.di import bootstrap as di_bootstrap
 
 
@@ -61,6 +61,7 @@ async def update_config(
             name=request.project_name,
             path=project_path,
             actions=actions,
+            action_handler_configs=request.action_handler_configs
         ),
     )
 

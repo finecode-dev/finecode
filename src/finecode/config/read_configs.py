@@ -51,6 +51,7 @@ async def read_projects_in_dir(
             def_path=def_file,
             status=status,
             actions=actions,
+            env_configs={}
         )
         ws_context.ws_projects[def_file.parent] = new_project
         new_projects.append(new_project)
@@ -68,6 +69,29 @@ def get_dependency_name(dependency_str: str) -> str:
     return dependency_str
 
 
+def read_env_configs(project_config: dict[str, Any]) -> dict[str, domain.EnvConfig]:
+    env_configs = {}
+    env_config_section = project_config.get('tool', {}).get('finecode', {}).get('env', {})
+    for env_name, env_raw_config in env_config_section.items():
+        if 'runner' in env_raw_config:
+            runner_raw_config = env_raw_config['runner']
+            if 'debug' in runner_raw_config:
+                debug = runner_raw_config['debug']
+                runner_config = domain.RunnerConfig(debug=debug)
+                env_config = domain.EnvConfig(runner_config=runner_config)
+                env_configs[env_name] = env_config
+    
+    # add default configs
+    deps_groups = project_config.get('dependency-groups', {})
+    for group_name in deps_groups.keys():
+        if group_name not in env_configs:
+            runner_config = domain.RunnerConfig(debug=False)
+            env_config = domain.EnvConfig(runner_config=runner_config)
+            env_configs[group_name] = env_config
+
+    return env_configs
+
+
 async def read_project_config(
     project: domain.Project, ws_context: context.WorkspaceContext, resolve_presets: bool = True
 ) -> None:
@@ -83,32 +107,54 @@ async def read_project_config(
         # TODO: cache instead of reading each time
         with open(base_config_path, 'r') as base_config_file:
             base_config = toml_loads(base_config_file.read()).value
-        _merge_projects_configs(base_config, base_config_path, project_def, project.def_path)
-        project_def = base_config
+        project_config = {}
+        _merge_projects_configs(project_config, project.def_path, base_config, base_config_path)
 
         finecode_raw_config = project_def.get("tool", {}).get("finecode", None)
         if finecode_raw_config and resolve_presets:
-            finecode_config = config_models.FinecodeConfig(**finecode_raw_config)
+            try:
+                presets = [config_models.FinecodePresetDefinition(**raw_preset) for raw_preset in finecode_raw_config.get('presets', [])]
+            except config_models.ValidationError as exception:
+                raise config_models.ConfigurationError(str(exception))
+
             # all presets expected to be in `dev_no_runtime` environment
             project_runners = ws_context.ws_projects_extension_runners[project.dir_path]
             # TODO: can it be the case that there is no such runner?
             dev_no_runtime_runner = project_runners['dev_no_runtime']
             new_config = await collect_config_from_py_presets(
-                presets_sources=[preset.source for preset in finecode_config.presets],
+                presets_sources=[preset.source for preset in presets],
                 def_path=project.def_path,
                 runner=dev_no_runtime_runner,
             )
             if new_config is not None:
-                _merge_projects_configs(project_def, project.def_path, new_config, project.def_path)
+                _merge_projects_configs(project_config, project.def_path, new_config, project.def_path)
+
+        _merge_projects_configs(project_config, project.def_path, project_def, project.def_path)
+        # `_merge_projects_configs` merges only finecode config. Copy all other keys as
+        # is
+        for key, value in project_def.items():
+            if key != 'tool':
+                project_config[key] = value
+        tool_raw_config = project_def.get('tool', None)
+        if tool_raw_config is not None:
+            if 'tool' not in project_config:
+                project_config['tool'] = {}
+            project_tool_config = project_config['tool']
+            for key, value in tool_raw_config.items():
+                if key != 'finecode':
+                    project_tool_config[key] = value
 
         # add runtime dependency group if it's not explicitly declared
-        add_runtime_dependency_group_if_new(project_def)
+        add_runtime_dependency_group_if_new(project_config)
         
-        add_extension_runner_to_dependencies(project_def)
+        add_extension_runner_to_dependencies(project_config)
         
-        merge_handlers_dependencies_into_groups(project_def)
+        merge_handlers_dependencies_into_groups(project_config)
 
-        ws_context.ws_projects_raw_configs[project.dir_path] = project_def
+        ws_context.ws_projects_raw_configs[project.dir_path] = project_config
+        
+        env_configs = read_env_configs(project_config=project_config)
+        project.env_configs = env_configs
     else:
         logger.info(
             f"Project definition of type {project.def_path.name} is not supported yet"
@@ -147,7 +193,19 @@ def read_preset_config(
     # preset_id is used only for logs to make them more useful
     logger.trace(f"Read preset config: {preset_id}")
     if not config_path.exists():
-        raise config_models.ConfigurationError(f"preset.toml not found in project '{preset_id}'")
+        # if package is installed in editable mode, we will get path to root directory
+        # of the package, not to source directory. In such case check both flat and
+        # src layouts of the package
+        config_dir_path = config_path.parent
+        flat_path_to_src = config_dir_path / preset_id
+        if flat_path_to_src.exists():
+            config_path = flat_path_to_src / 'preset.toml'
+        else:
+            src_path_to_src = config_dir_path / 'src' / preset_id
+            if src_path_to_src.exists():
+                config_path = src_path_to_src / 'preset.toml'
+            else:
+                raise config_models.ConfigurationError(f"preset.toml not found in project '{preset_id}'")
 
     with open(config_path, "rb") as preset_toml_file:
         preset_toml = toml_loads(preset_toml_file.read()).value
@@ -205,6 +263,55 @@ async def collect_config_from_py_presets(
     return config
 
 
+def _merge_object_array_by_key(existing_array: list[dict[str, Any]], new_array: list[dict[str, Any]], key_field: str) -> None:
+    """
+    Merges object arrays by a specified key field.
+    
+    For each object in new_array:
+    - If an object with the same key_field value exists in existing_array, deep merge them
+    - If no object with that key_field value exists, append the new object
+    
+    Args:
+        existing_array: The array to merge into
+        new_array: The array to merge from
+        key_field: The field name to use as the merge key (e.g., 'name', 'source')
+    """
+    # Create a lookup map for existing objects by the key field
+    existing_by_key = {}
+    for i, obj in enumerate(existing_array):
+        if isinstance(obj, dict) and key_field in obj:
+            existing_by_key[obj[key_field]] = i
+    
+    # Process each new object
+    for new_obj in new_array:
+        if not isinstance(new_obj, dict) or key_field not in new_obj:
+            # If the object doesn't have the key field, just append it
+            existing_array.append(new_obj)
+            continue
+        
+        obj_key = new_obj[key_field]
+        if obj_key in existing_by_key:
+            # Merge with existing object
+            existing_index = existing_by_key[obj_key]
+            existing_obj = existing_array[existing_index]
+            _deep_merge_dicts(existing_obj, new_obj)
+        else:
+            # Add new object
+            existing_array.append(new_obj)
+
+
+def _deep_merge_dicts(target: dict[str, Any], source: dict[str, Any]) -> None:
+    """
+    Deep merge source dict into target dict.
+    Arrays are replaced entirely (not merged), following TOML semantics.
+    """
+    for key, value in source.items():
+        if key in target and isinstance(target[key], dict) and isinstance(value, dict):
+            _deep_merge_dicts(target[key], value)
+        else:
+            target[key] = value
+
+
 def _merge_projects_configs(config1: dict[str, Any], config1_filepath: Path, config2: dict[str, Any], config2_filepath: Path) -> None:
     # merge config2 in config1 without overwriting
     if "tool" not in config1:
@@ -216,7 +323,7 @@ def _merge_projects_configs(config1: dict[str, Any], config1_filepath: Path, con
     tool_finecode_config2 = config2.get("tool", {}).get("finecode", {})
 
     for key, value in tool_finecode_config2.items():
-        if key == "action" or key == "action_handler":
+        if key == "action":
             # first process actions explicitly to merge correct configs
             assert isinstance(value, dict)
             if key not in tool_finecode_config1:
@@ -235,6 +342,31 @@ def _merge_projects_configs(config1: dict[str, Any], config1_filepath: Path, con
                             "config"
                         ]
                         action_config.update(action_info["config"])
+                    
+                    # Handle handlers array merge by name
+                    if "handlers" in action_info:
+                        if "handlers" not in tool_finecode_config1[key][action_name]:
+                            tool_finecode_config1[key][action_name]["handlers"] = []
+                        
+                        existing_handlers = tool_finecode_config1[key][action_name]["handlers"]
+                        new_handlers = action_info["handlers"]
+                        
+                        # Merge handlers by name
+                        _merge_object_array_by_key(existing_handlers, new_handlers, 'name')
+        elif key == "action_handler":
+            # Handle action_handler array merge by source
+            if key not in tool_finecode_config1:
+                tool_finecode_config1[key] = []
+            
+            existing_action_handlers = tool_finecode_config1[key]
+            # Ensure value is a list
+            if isinstance(value, list):
+                new_action_handlers = value
+                # Merge action_handlers by source
+                _merge_object_array_by_key(existing_action_handlers, new_action_handlers, 'source')
+            else:
+                # If it's not a list, just set it directly (shouldn't happen with TOML arrays but be safe)
+                tool_finecode_config1[key] = value
         elif key == "env":
             if 'env' not in tool_finecode_config1:
                 tool_finecode_config1['env'] = {}
@@ -266,6 +398,14 @@ def _merge_projects_configs(config1: dict[str, Any], config1_filepath: Path, con
                                         env_config1_deps[dependency_name]['path'] = new_path
                                     if 'editable' in dependency:
                                         env_config1_deps[dependency_name]['editable'] = dependency['editable']
+                    if 'runner' in env_config2:
+                        if 'runner' not in env_config1:
+                            env_config1['runner'] = {}
+                        env_config1_runner = env_config1['runner']
+                        env_config2_runner = env_config2['runner']
+                        
+                        if 'debug' in env_config2_runner:
+                            env_config1_runner['debug'] = env_config2_runner['debug']
         elif key in config1:
             tool_finecode_config1[key].update(value)
         else:

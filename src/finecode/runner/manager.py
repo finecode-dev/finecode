@@ -88,10 +88,14 @@ async def start_extension_runner(
         f"--project-path={runner_dir.as_posix()}",
         f"--env-name={env_name}"
     ]
-    # TODO: config parameter for debug and debug port
-    # if runner_dir == Path("/home/user/Development/FineCode/finecode"):
-    #     process_args.append("--debug")
-    #     process_args.append("--debug-port=5681")
+    env_config = ws_context.ws_projects[runner_dir].env_configs[env_name]
+    runner_config = env_config.runner_config
+    # TODO: also check whether lsp server is available, without it doesn't make sense
+    # to start with debugger
+    if runner_config.debug:
+        process_args.append("--debug")
+        # TODO: find free port and pass it
+        process_args.append("--debug-port=5681")
 
     process_args_str: str = " ".join(process_args)
     client = await create_lsp_client_io(
@@ -100,6 +104,7 @@ async def start_extension_runner(
         runner_dir,
     )
     runner_info_instance.client = client
+    # TODO: recognize started debugger and send command to lsp server
 
     async def on_exit():
         logger.debug(f"Extension Runner {runner_info_instance.working_dir_path} exited")
@@ -150,8 +155,7 @@ async def stop_extension_runner(runner: runner_info.ExtensionRunnerInfo) -> None
         try:
             await runner_client.shutdown(runner=runner)
         except Exception as e:
-            # TODO: handle
-            logger.error(f"Failed to shutdown {e}")
+            logger.error(f"Failed to shutdown: {e}")
 
         await runner_client.exit(runner)
         logger.debug("Sent exit to server")
@@ -171,8 +175,10 @@ def stop_extension_runner_sync(runner: runner_info.ExtensionRunnerInfo) -> None:
         try:
             runner_client.shutdown_sync(runner=runner)
         except Exception as e:
-            # TODO: handle
-            logger.error(f"Failed to shutdown {e}")
+            # currently we get (almost?) always this error. TODO: Investigate why
+            # mute for now to make output less verbose
+            # logger.error(f"Failed to shutdown: {e}")
+            ...
 
         runner_client.exit_sync(runner)
         logger.debug("Sent exit to server")
@@ -314,7 +320,7 @@ async def start_runner(project_def: domain.Project, env_name: str, ws_context: c
         except config_models.ConfigurationError as exception:
             raise RunnerFailedToStart(f"Found problem in configuration of {project_def.dir_path}: {exception.message}")
 
-    await _update_runner_config(runner=runner, project=project_def)
+    await update_runner_config(runner=runner, project=project_def)
     await _finish_runner_init(runner=runner, project=project_def, ws_context=ws_context)
 
     return runner
@@ -335,7 +341,7 @@ async def _init_runner(
     
     await _init_lsp_client(runner=runner, project=project)
 
-    await _update_runner_config(runner=runner, project=project)
+    await update_runner_config(runner=runner, project=project)
     await _finish_runner_init(runner=runner, project=project, ws_context=ws_context)
 
 
@@ -368,10 +374,11 @@ async def _init_lsp_client(runner: runner_info.ExtensionRunnerInfo, project: dom
     logger.debug("LSP Client initialized")
 
 
-async def _update_runner_config(runner: runner_info.ExtensionRunnerInfo, project: domain.Project) -> None:
+async def update_runner_config(runner: runner_info.ExtensionRunnerInfo, project: domain.Project) -> None:
     assert project.actions is not None
+    config = runner_client.RunnerConfig(actions=project.actions, action_handler_configs=project.action_handler_configs)
     try:
-        await runner_client.update_config(runner, project.actions)
+        await runner_client.update_config(runner, config)
     except runner_client.BaseRunnerRequestException as exception:
         runner.status = runner_info.RunnerStatus.FAILED
         await notify_project_changed(project)

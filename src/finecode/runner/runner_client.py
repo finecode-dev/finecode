@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import asyncio
 import asyncio.subprocess
+import dataclasses
 import enum
 import json
 import typing
@@ -32,6 +33,9 @@ class ResponseTimeout(BaseRunnerRequestException): ...
 
 
 class ActionRunFailed(BaseRunnerRequestException): ...
+
+
+class ActionRunStopped(BaseRunnerRequestException): ...
 
 
 async def log_process_log_streams(process: asyncio.subprocess.Process) -> None:
@@ -74,7 +78,7 @@ async def send_request(
         #     await log_process_log_streams(process=runner.client._server)
         raise ResponseTimeout(
             f"Timeout {timeout}s for response on {method} to"
-            f" runner {runner.working_dir_path}"
+            f" runner {runner.working_dir_path} in env {runner.env_name}"
         )
     except pygls_exceptions.JsonRpcInternalError as error:
         logger.error(f"JsonRpcInternalError: {error.message}")
@@ -184,14 +188,22 @@ async def run_action(
 
     return_code = response.return_code
     raw_result = ""
+    stringified_result = response.result
+    # currently result is always dumped to json even if response format is expected to
+    # be a string. See docs of ER lsp server for more details.
+    raw_result = json.loads(stringified_result)
     if response.format == "string":
-        raw_result = response.result
+        result = raw_result
     elif response.format == "json" or response.format == "styled_text_json":
-        raw_result = json.loads(response.result)
+        # string was already converted to dict above
+        result = raw_result
     else:
         raise Exception(f"Not support result format: {response.format}")
 
-    return RunActionResponse(result=raw_result, return_code=return_code)
+    if response.status == 'stopped':
+        raise ActionRunStopped(message=result)
+
+    return RunActionResponse(result=result, return_code=return_code)
 
 
 async def reload_action(runner: ExtensionRunnerInfo, action_name: str) -> None:
@@ -228,9 +240,16 @@ async def resolve_package_path(runner: ExtensionRunnerInfo, package_name: str) -
     return {"packagePath": response.packagePath}
 
 
+@dataclasses.dataclass
+class RunnerConfig:
+    actions: list[domain.Action]
+    # config by handler source
+    action_handler_configs: dict[str, dict[str, Any]]
+
+
 async def update_config(
     runner: ExtensionRunnerInfo,
-    actions: list[domain.Action],
+    config: RunnerConfig
 ) -> None:
     await send_request(
         runner=runner,
@@ -240,7 +259,7 @@ async def update_config(
             arguments=[
                 runner.working_dir_path.as_posix(),
                 runner.working_dir_path.stem,
-                actions,
+                config,
             ],
         ),
     )

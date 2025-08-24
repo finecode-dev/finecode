@@ -29,6 +29,7 @@ class UpdateConfigRequest(BaseSchema):
     working_dir: Path
     project_name: str
     actions: dict[str, Action]
+    action_handler_configs: dict[str, dict[str, Any]]
 
 
 @dataclass

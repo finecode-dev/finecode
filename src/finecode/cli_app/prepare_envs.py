@@ -48,7 +48,7 @@ async def prepare_envs(workdir_path: pathlib.Path, recreate: bool) -> None:
         if recreate:
             remove_dev_workspace_envs(projects=projects, workdir_path=workdir_path)
 
-        await check_or_recreate_all_dev_workspace_envs(projects=projects, workdir_path=workdir_path, ws_context=ws_context)
+        await check_or_recreate_all_dev_workspace_envs(projects=projects, workdir_path=workdir_path, recreate=recreate, ws_context=ws_context)
         
         # now all 'dev_workspace' envs are valid, run 'prepare_runners' in them to create
         # venvs and install runners and presets in them. This is required to be able to
@@ -72,7 +72,7 @@ async def prepare_envs(workdir_path: pathlib.Path, recreate: bool) -> None:
 
         if result_return_code != 0:
             raise PrepareEnvsFailed(result_output)
-        
+
         # reread projects configs, now with resolved presets
         # to be able to resolve presets, start dev_no_runtime runners first
         try:
@@ -116,7 +116,7 @@ def remove_dev_workspace_envs(projects: list[domain.Project], workdir_path: path
         runner_manager.remove_runner_venv(runner_dir=project.dir_path, env_name='dev_workspace')
 
 
-async def check_or_recreate_all_dev_workspace_envs(projects: list[domain.Project], workdir_path: pathlib.Path, ws_context: context.WorkspaceContext) -> None:
+async def check_or_recreate_all_dev_workspace_envs(projects: list[domain.Project], workdir_path: pathlib.Path, recreate: bool, ws_context: context.WorkspaceContext) -> None:
     # NOTE: this function can start new extensions runner, don't forget to call
     #       on_shutdown if you use it
     projects_dirs_with_valid_envs: list[pathlib.Path] = []
@@ -135,7 +135,10 @@ async def check_or_recreate_all_dev_workspace_envs(projects: list[domain.Project
         if runner_is_valid:
             projects_dirs_with_valid_envs.append(project.dir_path)
         else:
-            logger.warning(f"Runner for env 'dev_workspace' in project '{project.name}' is invalid, recreate it")
+            if recreate:
+                logger.trace(f"Recreate runner for env 'dev_workspace' in project '{project.name}'")
+            else:
+                logger.warning(f"Runner for env 'dev_workspace' in project '{project.name}' is invalid, recreate it")
             projects_dirs_with_invalid_envs.append(project.dir_path)
 
     # to recreate dev_workspace env, run `prepare_envs` in runner of current project

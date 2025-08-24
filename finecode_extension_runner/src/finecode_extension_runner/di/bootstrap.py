@@ -65,11 +65,8 @@ def bootstrap(get_document_func: Callable, save_document_func: Callable):
 async def run_action_wrapper(action_name: str, payload: dict[str, Any]) -> dict[str, Any]:
     request = schemas.RunActionRequest(action_name=action_name, params=payload)
     options = schemas.RunActionOptions(result_format='json')
+    # TODO: map exceptions to iactionrunner
     response = await run_action.run_action(request=request, options=options)
-    if response.return_code != 0:
-        loguru_logger.get_logger().error(response.result)
-        # TODO: pass details
-        raise iactionrunner.ActionRunFailed(str(response.return_code))
 
     return response.result
 

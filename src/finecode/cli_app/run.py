@@ -17,8 +17,9 @@ class RunFailed(Exception):
 
 
 async def start_required_environments(
-    actions_by_projects: dict[pathlib.Path, list[str]], 
-    ws_context: context.WorkspaceContext
+    actions_by_projects: dict[pathlib.Path, list[str]],
+    ws_context: context.WorkspaceContext,
+    update_config_in_running_runners: bool = False
 ) -> None:
     """Collect all required envs from actions that will be run and start them."""
     required_envs_by_project: dict[pathlib.Path, set[str]] = {}
@@ -56,6 +57,12 @@ async def start_required_environments(
                 except Exception as e:
                     logger.warning(f"Failed to start runner for env '{env_name}' in project '{project.name}': {e}")
                     # TODO: raise error
+            else:
+                if update_config_in_running_runners:
+                    runner = existing_runners[env_name]
+                    logger.trace(f"Runner {runner.working_dir_path} {runner.env_name} is running already, update config")
+                    # TODO: handle errors
+                    await runner_manager.update_runner_config(runner=runner, project=project)
 
 
 async def run_actions(
@@ -126,6 +133,15 @@ async def run_actions(
     else:
         projects = list(ws_context.ws_projects.values())
 
+    # first read configs without presets to be able to start runners with presets
+    for project in projects:
+        try:
+            await read_configs.read_project_config(project=project, ws_context=ws_context, resolve_presets=False)
+            collect_actions.collect_actions(project_path=project.dir_path, ws_context=ws_context)
+        except config_models.ConfigurationError as exception:
+            raise RunFailed(f"Reading project config and collecting actions in {project.dir_path} failed: {exception.message}")
+
+
     try:
         # 1. Start runners with presets to be able to resolve presets. Presets are
         # required to be able to collect all actions, actions handlers and configs.
@@ -168,7 +184,7 @@ async def run_actions(
             # actions will be run in all projects inside
             actions_by_projects = find_projects_with_actions(ws_context, actions)
 
-        await start_required_environments(actions_by_projects, ws_context)
+        await start_required_environments(actions_by_projects, ws_context, update_config_in_running_runners=True)
 
         return await run_actions_in_all_projects(
             actions_by_projects, action_payload, ws_context, concurrently

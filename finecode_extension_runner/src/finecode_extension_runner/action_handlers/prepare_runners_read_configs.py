@@ -1,22 +1,18 @@
 import dataclasses
 import shutil
 
-import tomlkit
-
 from finecode_extension_api import code_action
-from finecode_extension_api.actions import prepare_envs as prepare_envs_action
+from finecode_extension_api.actions import prepare_runners as prepare_runners_action
 from finecode_extension_api.interfaces import iactionrunner, iprojectinfoprovider, ilogger
-
 
 from finecode_extension_runner.action_handlers import dependency_config_utils
 
-
 @dataclasses.dataclass
-class PrepareEnvsReadConfigsHandlerConfig(code_action.ActionHandlerConfig): ...
+class PrepareRunnersReadConfigsHandlerConfig(code_action.ActionHandlerConfig): ...
 
 
-class PrepareEnvsReadConfigsHandler(
-    code_action.ActionHandler[prepare_envs_action.PrepareEnvsAction, PrepareEnvsReadConfigsHandlerConfig]
+class PrepareRunnersReadConfigsHandler(
+    code_action.ActionHandler[prepare_runners_action.PrepareRunnersAction, PrepareRunnersReadConfigsHandlerConfig]
 ):
     def __init__(self, action_runner: iactionrunner.IActionRunner, project_info_provider: iprojectinfoprovider.IProjectInfoProvider, logger: ilogger.ILogger) -> None:
         self.action_runner = action_runner
@@ -24,8 +20,8 @@ class PrepareEnvsReadConfigsHandler(
         self.logger = logger
     
     async def run(
-        self, payload: prepare_envs_action.PrepareEnvsRunPayload, run_context: prepare_envs_action.PrepareEnvsRunContext
-    ) -> prepare_envs_action.PrepareEnvsRunResult:
+        self, payload: prepare_runners_action.PrepareRunnersRunPayload, run_context: prepare_runners_action.PrepareRunnersRunContext
+    ) -> prepare_runners_action.PrepareRunnersRunResult:
         project_defs_pathes = set([env_info.project_def_path for env_info in payload.envs])
         if len(project_defs_pathes) != 1:
             ... # TODO: error
@@ -41,4 +37,4 @@ class PrepareEnvsReadConfigsHandler(
             run_context.project_def_path_by_venv_dir_path[env_info.venv_dir_path] = project_def_path
             run_context.project_def_by_venv_dir_path[env_info.venv_dir_path] = project_raw_config
             
-        return prepare_envs_action.PrepareEnvsRunResult(errors=[])
+        return prepare_runners_action.PrepareRunnersRunResult(errors=[])

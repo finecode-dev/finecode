@@ -1,13 +1,8 @@
 [project]
 name = "fine-python-module-exports"
-version = "0.1.0"
+version = "0.1.1"
 description = ""
 authors = [{ name = "Vladyslav Hnatiuk", email = "aders1234@gmail.com" }]
 readme = "README.md"
 requires-python = ">= 3.11, < 3.14"
-dependencies = ["finecode_extension_api==0.1.0", "fine_python_ast==0.1.0"]
-
-
-[build-system]
-requires = ["poetry-core>=2.0.0,<3.0.0"]
-build-backend = "poetry.core.masonry.api"
+dependencies = ["finecode_extension_api==0.1.3", "fine_python_ast==0.1.1"]

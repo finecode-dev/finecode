@@ -169,7 +169,9 @@ async def update_config(ls: lsp_server.LanguageServer, params):
     try:
         working_dir = params[0]
         project_name = params[1]
-        actions = params[2]
+        config = params[2]
+        actions = config['actions']
+        action_handler_configs = config['action_handler_configs']
 
         request = schemas.UpdateConfigRequest(
             working_dir=working_dir,
@@ -190,6 +192,7 @@ async def update_config(ls: lsp_server.LanguageServer, params):
                 )
                 for action in actions
             },
+            action_handler_configs=action_handler_configs
         )
         response = await services.update_config(request=request)
         return response.to_dict()
@@ -202,26 +205,32 @@ async def run_action(ls: lsp_server.LanguageServer, params):
     logger.trace(f"Run action: {params[0]}")
     request = schemas.RunActionRequest(action_name=params[0], params=params[1])
     options = schemas.RunActionOptions(**params[2] if params[2] is not None else {})
+    status: str = 'success'
 
     try:
         response = await services.run_action(request=request, options=options)
     except Exception as exception:
-        error_msg = ""
-        if isinstance(exception, services.ActionFailedException):
-            logger.error(f"Run action failed: {exception.message}")
-            error_msg = exception.message
+        if isinstance(exception, services.StopWithResponse):
+            status = 'stopped'
+            response = exception.response
         else:
-            logger.error("Unhandled exception in action run:")
-            logger.exception(exception)
-            error_msg = f'{type(exception)}: {str(exception)}'
-        return {
-            "error": error_msg
-        }
+            error_msg = ""
+            if isinstance(exception, services.ActionFailedException):
+                logger.error(f"Run action failed: {exception.message}")
+                error_msg = exception.message
+            else:
+                logger.error("Unhandled exception in action run:")
+                logger.exception(exception)
+                error_msg = f'{type(exception)}: {str(exception)}'
+            return {
+                "error": error_msg
+            }
 
     # dict key can be path, but pygls fails to handle slashes in dict keys, use strings
     # representation of result instead until the problem is properly solved
     result_str = json.dumps(response.to_dict()["result"])
     return {
+        "status": status,
         "result": result_str,
         "format": response.format,
         "return_code": response.return_code,

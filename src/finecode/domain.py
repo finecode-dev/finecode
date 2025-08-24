@@ -42,7 +42,8 @@ class Project:
         dir_path: Path,
         def_path: Path,
         status: ProjectStatus,
-        actions: list[Action] | None = None,
+        env_configs: dict[str, EnvConfig],
+        actions: list[Action] | None = None
     ) -> None:
         self.name = name
         self.dir_path = dir_path
@@ -51,6 +52,12 @@ class Project:
         # None means actions were not collected yet
         # if project.status is RUNNING, then actions are not None
         self.actions = actions
+        # config by handler source
+        self.action_handler_configs: dict[str, dict[str, typing.Any]] = {}
+        # config by env name
+        # it always contains configs for all environments, even if user hasn't provided
+        # one explicitly(=there is a default config)
+        self.env_configs: dict[str, EnvConfig] = env_configs
 
     def __str__(self) -> str:
         return (
@@ -79,6 +86,16 @@ class ProjectStatus(Enum):
     NO_FINECODE = auto()
     # config valid and finecode is used in project
     CONFIG_VALID = auto()
+
+
+class RunnerConfig:
+    def __init__(self, debug: bool) -> None:
+        self.debug = debug
+
+
+class EnvConfig:
+    def __init__(self, runner_config: RunnerConfig) -> None:
+        self.runner_config = runner_config
 
 
 RootActions = list[str]
@@ -117,4 +134,6 @@ __all__ = [
     "Action",
     "Project",
     "TextDocumentInfo",
+    "RunnerConfig",
+    "EnvConfig"
 ]

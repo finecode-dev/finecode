@@ -1,5 +1,5 @@
-from .iast_provider import IPythonSingleAstProvider
 from .ast_provider import PythonSingleAstProvider
+from .iast_provider import IPythonSingleAstProvider
 
 __all__ = [
     "IPythonSingleAstProvider",

@@ -6,7 +6,7 @@ import shutil
 from finecode_extension_api import code_action
 from finecode_extension_api.actions import prepare_envs as prepare_envs_action
 from finecode_extension_api.interfaces import iactionrunner, iprojectinfoprovider, ilogger
-from .dump_config import get_dependency_name
+from finecode_extension_runner.action_handlers import dependency_config_utils
 
 
 @dataclasses.dataclass
@@ -59,18 +59,10 @@ class PrepareEnvsInstallDepsHandler(
 def process_raw_deps(raw_deps: list, env_deps_config, dependencies, deps_groups) -> None:
     for raw_dep in raw_deps:
         if isinstance(raw_dep, str):
-            name = get_dependency_name(raw_dep)
+            name = dependency_config_utils.get_dependency_name(raw_dep)
             version_or_source = raw_dep[len(name):]
             editable = env_deps_config.get(name, {}).get('editable', False)
             dependencies.append({"name": name, "version_or_source": version_or_source, "editable": editable})
         elif isinstance(raw_dep, dict) and 'include-group' in raw_dep:
             included_group_deps = deps_groups.get(raw_dep['include-group'], [])
             process_raw_deps(included_group_deps, env_deps_config, dependencies, deps_groups)
-
-
-def raw_dep_to_dep_dict(raw_dep: str, env_deps_config: dict) -> dict[str, str | bool]:
-    name = get_dependency_name(raw_dep)
-    version_or_source = raw_dep[len(name):]
-    editable = env_deps_config.get(name, {}).get('editable', False)
-    dep_dict = {"name": name, "version_or_source": version_or_source, "editable": editable}
-    return dep_dict

@@ -5,9 +5,4 @@ description = ""
 authors = [{ name = "Vladyslav Hnatiuk", email = "aders1234@gmail.com" }]
 readme = "README.md"
 requires-python = ">= 3.11, < 3.14"
-dependencies = ["finecode_extension_api==0.1.0", "isort (>=5.13, <6)"]
-
-
-[build-system]
-requires = ["poetry-core>=2.0.0,<3.0.0"]
-build-backend = "poetry.core.masonry.api"
+dependencies = ["finecode_extension_api==0.1.*", "isort (>=5.13, <6)"]
