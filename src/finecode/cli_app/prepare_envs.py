@@ -248,9 +248,8 @@ async def check_or_recreate_all_dev_workspace_envs(
 
         envs += invalid_envs
 
-    # TODO: check result
     try:
-        await services.run_action(
+        action_result = await services.run_action(
             action_name="prepare_dev_workspaces_envs",
             params={
                 "envs": envs,
@@ -263,4 +262,9 @@ async def check_or_recreate_all_dev_workspace_envs(
     except services.ActionRunFailed as exception:
         raise PrepareEnvsFailed(
             f"'prepare_dev_workspaces_env' failed in {current_project.name}: {exception.message}"
+        )
+    
+    if action_result.return_code != 0:
+        raise PrepareEnvsFailed(
+            f"'prepare_dev_workspaces_env' ended in {current_project.name} with return code {action_result.return_code}: {action_result.result}"
         )
