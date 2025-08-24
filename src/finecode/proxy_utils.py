@@ -4,13 +4,13 @@ import contextlib
 import pathlib
 from typing import Any
 
-from loguru import logger
 import ordered_set
+from loguru import logger
 
 from finecode import context, domain, find_project, services
-from finecode.services import ActionRunFailed
 from finecode.runner import manager as runner_manager
 from finecode.runner import runner_client, runner_info
+from finecode.services import ActionRunFailed
 
 
 def find_action_project(
@@ -56,7 +56,13 @@ async def find_action_project_and_run(
     project = ws_context.ws_projects[project_path]
 
     try:
-        response = await services.run_action(action_name=action_name, params=params, project_def=project, ws_context=ws_context, preprocess_payload=False)
+        response = await services.run_action(
+            action_name=action_name,
+            params=params,
+            project_def=project,
+            ws_context=ws_context,
+            preprocess_payload=False,
+        )
     except services.ActionRunFailed as exception:
         raise exception
 
@@ -161,7 +167,7 @@ async def run_with_partial_results(
     params: dict[str, Any],
     partial_result_token: int | str,
     project_dir_path: pathlib.Path,
-    ws_context: context.WorkspaceContext
+    ws_context: context.WorkspaceContext,
 ) -> collections.abc.AsyncIterator[
     collections.abc.AsyncIterable[domain.PartialResultRawValue]
 ]:
@@ -176,8 +182,10 @@ async def run_with_partial_results(
                 )
             )
             project = ws_context.ws_projects[project_dir_path]
-            action = next(action for action in project.actions if action.name == 'lint')
-            action_envs = ordered_set.OrderedSet([handler.env for handler in action.handlers])
+            action = next(action for action in project.actions if action.name == "lint")
+            action_envs = ordered_set.OrderedSet(
+                [handler.env for handler in action.handlers]
+            )
             runners_by_env = ws_context.ws_projects_extension_runners[project_dir_path]
             for env in action_envs:
                 runner = runners_by_env[env]
@@ -216,7 +224,7 @@ async def find_action_project_and_run_with_partial_results(
         params=params,
         partial_result_token=partial_result_token,
         project_dir_path=project_path,
-        ws_context=ws_context
+        ws_context=ws_context,
     )
 
 
@@ -256,5 +264,5 @@ __all__ = [
     "find_action_project_and_run_with_partial_results",
     "run_with_partial_results",
     # reexport for easier use of proxy helpers
-    "ActionRunFailed"
+    "ActionRunFailed",
 ]

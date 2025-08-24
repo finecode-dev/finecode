@@ -34,7 +34,7 @@ class PrepareEnvsRunContext(code_action.RunActionContext):
         run_id: int,
     ) -> None:
         super().__init__(run_id=run_id)
-        
+
         # project def pathes are stored also in context, because prepare envs can run
         # tools like pip which expected 'normalized' project definition(=without
         # additional features which finecode provides). So the usual workflow looks like
@@ -46,11 +46,15 @@ class PrepareEnvsRunContext(code_action.RunActionContext):
         # for example additional dependencies should be installed by adding handler
         # which inserts them into project definition instead of modying `install_deps`
         # handler
-        self.project_def_by_venv_dir_path: dict[pathlib.Path,  dict[str, typing.Any]] = {}
-        
+        self.project_def_by_venv_dir_path: dict[pathlib.Path, dict[str, typing.Any]] = (
+            {}
+        )
+
     async def init(self, initial_payload: PrepareEnvsRunPayload) -> None:
         for env_info in initial_payload.envs:
-            self.project_def_path_by_venv_dir_path[env_info.venv_dir_path] = env_info.project_def_path
+            self.project_def_path_by_venv_dir_path[env_info.venv_dir_path] = (
+                env_info.project_def_path
+            )
 
 
 @dataclasses.dataclass
@@ -65,7 +69,7 @@ class PrepareEnvsRunResult(code_action.RunActionResult):
         self.errors += other.errors
 
     def to_text(self) -> str | textstyler.StyledText:
-        return '\n'.join(self.errors)
+        return "\n".join(self.errors)
 
     @property
     def return_code(self) -> code_action.RunReturnCode:

@@ -46,7 +46,7 @@ class DumpConfigRunResult(code_action.RunActionResult):
         self.config_dump = other.config_dump
 
     def to_text(self) -> str | textstyler.StyledText:
-        return ''
+        return ""
 
 
 class DumpConfigAction(code_action.Action):

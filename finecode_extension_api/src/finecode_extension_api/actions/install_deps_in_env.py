@@ -44,7 +44,7 @@ class InstallDepsInEnvRunResult(code_action.RunActionResult):
         self.errors += other.errors
 
     def to_text(self) -> str | textstyler.StyledText:
-        return '\n'.join(self.errors)
+        return "\n".join(self.errors)
 
     @property
     def return_code(self) -> code_action.RunReturnCode:

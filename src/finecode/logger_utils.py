@@ -4,8 +4,8 @@ from pathlib import Path
 
 from loguru import logger
 
-from finecode_extension_runner import logs
 from finecode import app_dirs
+from finecode_extension_runner import logs
 
 
 def init_logger(trace: bool, stdout: bool = False):

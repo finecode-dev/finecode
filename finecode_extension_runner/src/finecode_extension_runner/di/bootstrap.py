@@ -1,4 +1,3 @@
-
 from typing import Any, Callable, Type, TypeVar
 
 try:
@@ -11,15 +10,6 @@ try:
 except ImportError:
     fine_python_mypy = None
 
-from finecode_extension_runner import global_state
-from finecode_extension_runner.impls import (
-    action_runner,
-    command_runner,
-    file_manager,
-    inmemory_cache,
-    loguru_logger,
-    project_info_provider
-)
 from finecode_extension_api import code_action
 from finecode_extension_api.interfaces import (
     iactionrunner,
@@ -27,11 +17,20 @@ from finecode_extension_api.interfaces import (
     icommandrunner,
     ifilemanager,
     ilogger,
-    iprojectinfoprovider
+    iprojectinfoprovider,
 )
-from ._state import container, factories
-from finecode_extension_runner import schemas
+from finecode_extension_runner import global_state, schemas
 from finecode_extension_runner._services import run_action
+from finecode_extension_runner.impls import (
+    action_runner,
+    command_runner,
+    file_manager,
+    inmemory_cache,
+    loguru_logger,
+    project_info_provider,
+)
+
+from ._state import container, factories
 
 
 def bootstrap(get_document_func: Callable, save_document_func: Callable):
@@ -47,24 +46,33 @@ def bootstrap(get_document_func: Callable, save_document_func: Callable):
     cache_instance = inmemory_cache.InMemoryCache(
         file_manager=file_manager_instance, logger=logger_instance
     )
-    action_runner_instance = action_runner.ActionRunner(internal_service_func=run_action_wrapper)
+    action_runner_instance = action_runner.ActionRunner(
+        internal_service_func=run_action_wrapper
+    )
     container[ilogger.ILogger] = logger_instance
     container[icommandrunner.ICommandRunner] = command_runner_instance
     container[ifilemanager.IFileManager] = file_manager_instance
     container[icache.ICache] = cache_instance
     container[iactionrunner.IActionRunner] = action_runner_instance
-    
+
     if fine_python_ast is not None:
-        factories[fine_python_ast.IPythonSingleAstProvider] = python_single_ast_provider_factory
+        factories[fine_python_ast.IPythonSingleAstProvider] = (
+            python_single_ast_provider_factory
+        )
     if fine_python_mypy is not None:
-        factories[fine_python_mypy.IMypySingleAstProvider] = mypy_single_ast_provider_factory
+        factories[fine_python_mypy.IMypySingleAstProvider] = (
+            mypy_single_ast_provider_factory
+        )
     factories[iprojectinfoprovider.IProjectInfoProvider] = project_info_provider_factory
 
     # TODO: parameters from config
 
-async def run_action_wrapper(action_name: str, payload: dict[str, Any]) -> dict[str, Any]:
+
+async def run_action_wrapper(
+    action_name: str, payload: dict[str, Any]
+) -> dict[str, Any]:
     request = schemas.RunActionRequest(action_name=action_name, params=payload)
-    options = schemas.RunActionOptions(result_format='json')
+    options = schemas.RunActionOptions(result_format="json")
     # TODO: map exceptions to iactionrunner
     response = await run_action.run_action(request=request, options=options)
 
@@ -77,7 +85,8 @@ def python_single_ast_provider_factory(container):
         cache=container[icache.ICache],
         logger=container[ilogger.ILogger],
     )
-    
+
+
 def mypy_single_ast_provider_factory(container):
     return fine_python_mypy.MypySingleAstProvider(
         file_manager=container[ifilemanager.IFileManager],

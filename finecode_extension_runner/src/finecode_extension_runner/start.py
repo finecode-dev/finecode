@@ -62,7 +62,11 @@ def start_runner_sync(env_name: str) -> None:
     # to stdout as well~~. See README.md
     assert global_state.project_dir_path is not None
     logs.save_logs_to_file(
-        file_path=global_state.project_dir_path / '.venvs' / env_name / 'logs' / "runner.log",
+        file_path=global_state.project_dir_path
+        / ".venvs"
+        / env_name
+        / "logs"
+        / "runner.log",
         log_level=global_state.log_level,
         stdout=False,
     )

@@ -35,14 +35,16 @@ def collect_actions(
     return actions
 
 
-def _collect_action_handler_configs_in_config(config: dict[str, Any]) -> dict[str, dict[str, Any]]:
+def _collect_action_handler_configs_in_config(
+    config: dict[str, Any],
+) -> dict[str, dict[str, Any]]:
     action_handlers_configs = config["tool"]["finecode"].get("action_handler", [])
     action_handler_config_by_source: dict[str, dict[str, Any]] = {}
     for handler_def in action_handlers_configs:
         # TODO: validate that source  field exist?
-        handler_config = handler_def.get('config', None)
+        handler_config = handler_def.get("config", None)
         if handler_config is not None:
-            action_handler_config_by_source[handler_def['source']] = handler_config
+            action_handler_config_by_source[handler_def["source"]] = handler_config
 
     return action_handler_config_by_source
 
@@ -68,7 +70,7 @@ def _collect_actions_in_config(
                     source=handler.source,
                     config=handler.config or {},
                     env=handler.env,
-                    dependencies=handler.dependencies
+                    dependencies=handler.dependencies,
                 )
                 for handler in action_def.handlers
             ],

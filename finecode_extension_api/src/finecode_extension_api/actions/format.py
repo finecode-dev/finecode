@@ -24,7 +24,6 @@ class FileInfo(NamedTuple):
     file_version: str
 
 
-
 class FormatRunContext(code_action.RunActionContext):
     def __init__(
         self,

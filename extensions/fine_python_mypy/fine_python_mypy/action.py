@@ -250,7 +250,7 @@ class MypyLintHandler(
             "run",
             "--",
             *self.DMYPY_ARGS,
-            *file_paths_strs
+            *file_paths_strs,
         ]
         cmd = " ".join(cmd_parts)
         dmypy_run_process = await self.command_runner.run(

@@ -1,21 +1,21 @@
 import asyncio
 import collections.abc
 import dataclasses
-import time
 import inspect
+import time
 import typing
 
 from loguru import logger
 from pydantic.dataclasses import dataclass as pydantic_dataclass
 
-from finecode_extension_runner import project_dirs, run_utils, schemas, global_state, domain, context
 from finecode_extension_api import code_action, textstyler
 from finecode_extension_api.interfaces import iactionrunner
+from finecode_extension_runner import context, domain, global_state
 from finecode_extension_runner import (
     partial_result_sender as partial_result_sender_module,
 )
+from finecode_extension_runner import project_dirs, run_utils, schemas
 from finecode_extension_runner.di import resolver as di_resolver
-
 
 last_run_id: int = 0
 partial_result_sender: partial_result_sender_module.PartialResultSender
@@ -95,7 +95,7 @@ async def run_action(
             known_args={"run_id": lambda _: run_id},
             params_to_ignore=["self"],
         )
-        
+
         run_context = action_exec_info.run_context_type(**constructor_args)
         # TODO: handler errors
         await run_context.init(initial_payload=payload)
@@ -260,7 +260,7 @@ async def run_action(
     logger.trace(
         f"R{run_id} | Run action end '{request.action_name}', duration: {duration}ms"
     )
-    
+
     if not isinstance(action_result, code_action.RunActionResult):
         logger.error(
             f"R{run_id} | Unexpected result type: {type(action_result).__name__}"
@@ -268,12 +268,17 @@ async def run_action(
         raise ActionFailedException(
             f"Unexpected result type: {type(action_result).__name__}"
         )
-    
-    response = action_result_to_run_action_response(action_result, options.result_format)
+
+    response = action_result_to_run_action_response(
+        action_result, options.result_format
+    )
     return response
 
 
-def action_result_to_run_action_response(action_result: code_action.RunActionResult, asked_result_format: typing.Literal['json'] | typing.Literal['string']) -> schemas.RunActionResponse:
+def action_result_to_run_action_response(
+    action_result: code_action.RunActionResult,
+    asked_result_format: typing.Literal["json"] | typing.Literal["string"],
+) -> schemas.RunActionResponse:
     serialized_result: dict[str, typing.Any] | str | None = None
     result_format = "string"
     run_return_code = code_action.RunReturnCode.SUCCESS
@@ -309,11 +314,12 @@ def create_action_exec_info(action: domain.Action) -> domain.ActionExecInfo:
         raise e
 
     if not issubclass(action_type_def, code_action.Action):
-        raise Exception("Action class expected to be a subclass of finecode_extension_api.code_action.Action")
+        raise Exception(
+            "Action class expected to be a subclass of finecode_extension_api.code_action.Action"
+        )
 
     payload_type = action_type_def.PAYLOAD_TYPE
     run_context_type = action_type_def.RUN_CONTEXT_TYPE
-    
 
     # TODO: validate that classes and correct subclasses?
 
@@ -321,7 +327,6 @@ def create_action_exec_info(action: domain.Action) -> domain.ActionExecInfo:
         payload_type=payload_type, run_context_type=run_context_type
     )
     return action_exec_info
-
 
 
 def resolve_func_args_with_di(
@@ -392,7 +397,9 @@ async def execute_action_handler(
                 f"Import of action handler '{handler.name}' failed(Run {run_id}): {handler.source}"
             )
 
-        handler_global_config = runner_context.project.action_handler_configs.get(handler.source, None)
+        handler_global_config = runner_context.project.action_handler_configs.get(
+            handler.source, None
+        )
         handler_raw_config = {}
         # TODO: deep merge instead?
         if handler_global_config is not None:
@@ -453,7 +460,7 @@ async def execute_action_handler(
                 raise ActionFailedException(
                     f"Initialisation of action handler '{handler.name}' failed(Run {run_id}): {e}"
                 )
-            
+
         exec_info.status = domain.ActionHandlerExecInfoStatus.INITIALIZED
 
     def get_run_payload(param_type):
@@ -481,9 +488,11 @@ async def execute_action_handler(
     except Exception as exception:
         if isinstance(exception, code_action.StopActionRunWithResult):
             action_result = exception.result
-            response = action_result_to_run_action_response(action_result, 'string')
+            response = action_result_to_run_action_response(action_result, "string")
             raise StopWithResponse(response=response)
-        elif isinstance(exception, iactionrunner.BaseRunActionException) or isinstance(exception, code_action.ActionFailedException):
+        elif isinstance(exception, iactionrunner.BaseRunActionException) or isinstance(
+            exception, code_action.ActionFailedException
+        ):
             error_str = exception.message
         else:
             logger.error("Unhandled exception in action handler:")
@@ -500,7 +509,6 @@ async def execute_action_handler(
         f" on {str(payload)[:100]}..., duration: {duration}ms"
     )
     return execution_result
-
 
 
 async def run_subresult_coros_concurrently(

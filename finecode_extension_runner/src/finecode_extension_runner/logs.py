@@ -70,8 +70,4 @@ def reset_log_level_for_group(group: str):
         del log_level_by_group[group]
 
 
-__all__ = [
-    'save_logs_to_file',
-    'set_log_level_for_group',
-    'reset_log_level_for_group'
-]
+__all__ = ["save_logs_to_file", "set_log_level_for_group", "reset_log_level_for_group"]

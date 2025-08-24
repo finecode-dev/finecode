@@ -57,7 +57,7 @@ class CustomEggInfo(TempDirEggInfoMixin, egg_info):
 
 
 setup(
-    name="fine_python_isort",
+    name="fine_python_mypy",
     cmdclass={
         "build": CustomBuild,
         "build_py": CustomBuildPy,

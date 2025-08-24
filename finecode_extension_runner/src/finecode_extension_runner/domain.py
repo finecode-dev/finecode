@@ -4,8 +4,8 @@ import enum
 import typing
 from pathlib import Path
 
-from finecode_extension_runner.impls import process_executor as process_executor_impl
 from finecode_extension_api import code_action
+from finecode_extension_runner.impls import process_executor as process_executor_impl
 
 
 class Action:
@@ -35,7 +35,7 @@ class Project:
         name: str,
         path: Path,
         actions: dict[str, Action],
-        action_handler_configs: dict[str, dict[str, typing.Any]]
+        action_handler_configs: dict[str, dict[str, typing.Any]],
     ) -> None:
         self.name = name
         self.path = path

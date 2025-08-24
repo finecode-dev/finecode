@@ -3,8 +3,8 @@ import shutil
 from pathlib import Path
 from typing import Callable
 
-from finecode_extension_runner import domain
 from finecode_extension_api.interfaces import ifilemanager, ilogger
+from finecode_extension_runner import domain
 
 
 class FileManager(ifilemanager.IFileManager):
@@ -75,7 +75,9 @@ class FileManager(ifilemanager.IFileManager):
             with open(file_path, "w") as f:
                 f.write(file_content)
 
-    async def create_dir(self, dir_path: Path, create_parents: bool = True, exist_ok: bool = True):
+    async def create_dir(
+        self, dir_path: Path, create_parents: bool = True, exist_ok: bool = True
+    ):
         # currently only local file system is supported
         dir_path.mkdir(parents=create_parents, exist_ok=exist_ok)
 

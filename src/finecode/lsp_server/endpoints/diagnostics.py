@@ -9,8 +9,14 @@ from typing import TYPE_CHECKING
 from loguru import logger
 from lsprotocol import types
 
-from finecode import pygls_types_utils
-from finecode import domain, project_analyzer, proxy_utils, services, context
+from finecode import (
+    context,
+    domain,
+    project_analyzer,
+    proxy_utils,
+    pygls_types_utils,
+    services,
+)
 from finecode.lsp_server import global_state
 from finecode_extension_api.actions import lint as lint_action
 
@@ -236,7 +242,7 @@ async def run_workspace_diagnostic_with_partial_results(
             params=exec_info.request_data,
             partial_result_token=partial_result_token,
             project_dir_path=exec_info.project_dir_path,
-            ws_context=global_state.ws_context
+            ws_context=global_state.ws_context,
         ) as response:
             async for partial_response in response:
                 lint_subresult = lint_action.LintRunResult(**partial_response)
@@ -281,14 +287,22 @@ async def workspace_diagnostic_with_partial_results(
     return types.WorkspaceDiagnosticReport(items=[])
 
 
-async def workspace_diagnostic_with_full_result(exec_infos: list[LintActionExecInfo], ws_context: context.WorkspaceContext):
+async def workspace_diagnostic_with_full_result(
+    exec_infos: list[LintActionExecInfo], ws_context: context.WorkspaceContext
+):
     send_tasks: list[asyncio.Task] = []
     try:
         async with asyncio.TaskGroup() as tg:
             for exec_info in exec_infos:
                 project = ws_context.ws_projects[exec_info.project_dir_path]
                 task = tg.create_task(
-                    services.run_action(action_name=exec_info.action_name, params=exec_info.request_data, project_def=project, ws_context=ws_context, preprocess_payload=False)
+                    services.run_action(
+                        action_name=exec_info.action_name,
+                        params=exec_info.request_data,
+                        project_def=project,
+                        ws_context=ws_context,
+                        preprocess_payload=False,
+                    )
                 )
                 send_tasks.append(task)
     except ExceptionGroup as eg:
@@ -368,7 +382,9 @@ async def _workspace_diagnostic(
             exec_infos=exec_infos, partial_result_token=params.partial_result_token
         )
     else:
-        return await workspace_diagnostic_with_full_result(exec_infos=exec_infos, ws_context=global_state.ws_context)
+        return await workspace_diagnostic_with_full_result(
+            exec_infos=exec_infos, ws_context=global_state.ws_context
+        )
 
 
 async def workspace_diagnostic(

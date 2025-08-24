@@ -11,13 +11,22 @@ from pathlib import Path
 from loguru import logger
 from pydantic.dataclasses import dataclass as pydantic_dataclass
 
-from finecode_extension_runner import context, domain, global_state
-from finecode_extension_runner import project_dirs, run_utils, schemas
 from finecode_extension_api import code_action, textstyler
+from finecode_extension_runner import (
+    context,
+    domain,
+    global_state,
+    project_dirs,
+    run_utils,
+    schemas,
+)
 from finecode_extension_runner._services import run_action as run_action_module
-from finecode_extension_runner._services.run_action import run_action, ActionFailedException, StopWithResponse
+from finecode_extension_runner._services.run_action import (
+    ActionFailedException,
+    StopWithResponse,
+    run_action,
+)
 from finecode_extension_runner.di import bootstrap as di_bootstrap
-
 
 document_requester: typing.Callable
 document_saver: typing.Callable
@@ -61,7 +70,7 @@ async def update_config(
             name=request.project_name,
             path=project_path,
             actions=actions,
-            action_handler_configs=request.action_handler_configs
+            action_handler_configs=request.action_handler_configs,
         ),
     )
 

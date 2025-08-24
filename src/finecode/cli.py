@@ -7,11 +7,10 @@ import click
 from loguru import logger
 
 import finecode.main as workspace_manager
-from finecode import communication_utils
-from finecode import logger_utils, user_messages
-from finecode.cli_app import run as run_cmd
+from finecode import communication_utils, logger_utils, user_messages
 from finecode.cli_app import dump_config as dump_config_cmd
 from finecode.cli_app import prepare_envs as prepare_envs_cmd
+from finecode.cli_app import run as run_cmd
 
 
 @click.group()
@@ -33,7 +32,9 @@ def cli(): ...
     "--port", "port", default=None, type=int, help="Port for TCP and WS server"
 )
 @click.option("--mcp", "mcp", is_flag=True, default=False)
-@click.option("--mcp-port", "mcp_port", default=None, type=int, help="Port for MCP server")
+@click.option(
+    "--mcp-port", "mcp_port", default=None, type=int, help="Port for MCP server"
+)
 def start_api(
     trace: bool,
     debug: bool,
@@ -43,7 +44,7 @@ def start_api(
     host: str | None,
     port: int | None,
     mcp: bool,
-    mcp_port: int | None
+    mcp_port: int | None,
 ):
     if debug is True:
         import debugpy
@@ -78,9 +79,7 @@ def start_api(
     workspace_manager.start_sync(comm_type=comm_type, host=host, port=port, trace=trace)
 
 
-async def show_user_message(
-    message: str, message_type: str
-) -> None:
+async def show_user_message(message: str, message_type: str) -> None:
     # user messages in CLI are not needed because CLI outputs own messages
     ...
 
@@ -179,8 +178,7 @@ def run(ctx) -> None:
 @click.option("--trace", "trace", is_flag=True, default=False)
 @click.option("--debug", "debug", is_flag=True, default=False)
 @click.option("--recreate", "recreate", is_flag=True, default=False)
-def prepare_envs(trace: bool,
-    debug: bool, recreate: bool) -> None:
+def prepare_envs(trace: bool, debug: bool, recreate: bool) -> None:
     """
     `prepare-envs` should be called from workspace/project root directory.
     """
@@ -193,12 +191,16 @@ def prepare_envs(trace: bool,
             debugpy.wait_for_client()
         except Exception as e:
             logger.info(e)
-    
+
     logger_utils.init_logger(trace=trace, stdout=True)
     user_messages._notification_sender = show_user_message
 
     try:
-        asyncio.run(prepare_envs_cmd.prepare_envs(workdir_path=pathlib.Path(os.getcwd()), recreate=recreate))
+        asyncio.run(
+            prepare_envs_cmd.prepare_envs(
+                workdir_path=pathlib.Path(os.getcwd()), recreate=recreate
+            )
+        )
     except prepare_envs_cmd.PrepareEnvsFailed as exception:
         click.echo(exception.args[0], err=True)
         sys.exit(1)
@@ -212,11 +214,7 @@ def prepare_envs(trace: bool,
 @click.option("--trace", "trace", is_flag=True, default=False)
 @click.option("--debug", "debug", is_flag=True, default=False)
 @click.option("--project", "project", type=str)
-def dump_config(
-    trace: bool,
-    debug: bool,
-    project: str | None
-):
+def dump_config(trace: bool, debug: bool, project: str | None):
     if debug is True:
         import debugpy
 
@@ -229,12 +227,16 @@ def dump_config(
     if project is None:
         click.echo("--project parameter is required", err=True)
         return
-    
+
     logger_utils.init_logger(trace=trace, stdout=True)
     user_messages._notification_sender = show_user_message
 
     try:
-        asyncio.run(dump_config_cmd.dump_config(workdir_path=pathlib.Path(os.getcwd()), project_name=project))
+        asyncio.run(
+            dump_config_cmd.dump_config(
+                workdir_path=pathlib.Path(os.getcwd()), project_name=project
+            )
+        )
     except dump_config_cmd.DumpFailed as exception:
         click.echo(exception.message, err=True)
         sys.exit(1)

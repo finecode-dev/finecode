@@ -1,8 +1,8 @@
 import asyncio
 from pathlib import Path
 
-from loguru import logger
 import ordered_set
+from loguru import logger
 from pygls.lsp.server import LanguageServer
 
 from finecode import context, domain
@@ -179,7 +179,7 @@ async def __list_actions(
     all_started_coros = []
     for envs in ws_context.ws_projects_extension_runners.values():
         # all presets are expected to be in `dev_no_runtime` env
-        dev_no_runtime_runner = envs['dev_no_runtime']
+        dev_no_runtime_runner = envs["dev_no_runtime"]
         all_started_coros.append(dev_no_runtime_runner.initialized_event.wait())
     await asyncio.gather(*all_started_coros)
 
@@ -281,15 +281,21 @@ async def __reload_action(action_node_id: str) -> None:
 
     action_name = splitted_action_id[1]
     try:
-        action = next(action for action in project.actions if action.name == action_name)
+        action = next(
+            action for action in project.actions if action.name == action_name
+        )
     except StopIteration as error:
         logger.error(f"Unexpected error, project or action not found: {error}")
         raise InternalError()
 
-    all_handlers_envs = ordered_set.OrderedSet([handler.env for handler in action.handlers])
+    all_handlers_envs = ordered_set.OrderedSet(
+        [handler.env for handler in action.handlers]
+    )
     for env in all_handlers_envs:
         # parallel to speed up?
-        runner = global_state.ws_context.ws_projects_extension_runners[project_path][env]
+        runner = global_state.ws_context.ws_projects_extension_runners[project_path][
+            env
+        ]
 
         try:
             await runner_client.reload_action(runner, action_name)

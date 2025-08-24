@@ -9,27 +9,13 @@ from pygls.lsp.server import LanguageServer
 
 from finecode import services as wm_services
 from finecode.lsp_server import global_state, schemas, services
-from finecode.lsp_server.endpoints import (
-    action_tree as action_tree_endpoints,
-)
-from finecode.lsp_server.endpoints import (
-    code_actions as code_actions_endpoints,
-)
-from finecode.lsp_server.endpoints import (
-    code_lens as code_lens_endpoints,
-)
-from finecode.lsp_server.endpoints import (
-    diagnostics as diagnostics_endpoints,
-)
-from finecode.lsp_server.endpoints import (
-    document_sync as document_sync_endpoints,
-)
-from finecode.lsp_server.endpoints import (
-    formatting as formatting_endpoints,
-)
-from finecode.lsp_server.endpoints import (
-    inlay_hints as inlay_hints_endpoints,
-)
+from finecode.lsp_server.endpoints import action_tree as action_tree_endpoints
+from finecode.lsp_server.endpoints import code_actions as code_actions_endpoints
+from finecode.lsp_server.endpoints import code_lens as code_lens_endpoints
+from finecode.lsp_server.endpoints import diagnostics as diagnostics_endpoints
+from finecode.lsp_server.endpoints import document_sync as document_sync_endpoints
+from finecode.lsp_server.endpoints import formatting as formatting_endpoints
+from finecode.lsp_server.endpoints import inlay_hints as inlay_hints_endpoints
 
 
 def create_lsp_server() -> LanguageServer:

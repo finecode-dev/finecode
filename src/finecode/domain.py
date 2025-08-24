@@ -13,7 +13,14 @@ class Preset:
 
 
 class ActionHandler:
-    def __init__(self, name: str, source: str, config: dict[str, typing.Any], env: str, dependencies: list[str]):
+    def __init__(
+        self,
+        name: str,
+        source: str,
+        config: dict[str, typing.Any],
+        env: str,
+        dependencies: list[str],
+    ):
         self.name: str = name
         self.source: str = source
         self.config: dict[str, typing.Any] = config
@@ -43,7 +50,7 @@ class Project:
         def_path: Path,
         status: ProjectStatus,
         env_configs: dict[str, EnvConfig],
-        actions: list[Action] | None = None
+        actions: list[Action] | None = None,
     ) -> None:
         self.name = name
         self.dir_path = dir_path
@@ -66,17 +73,17 @@ class Project:
 
     def __repr__(self) -> str:
         return str(self)
-    
+
     @property
     def envs(self) -> list[str]:
         if self.actions is None:
             raise ValueError("Actions are not collected yet")
-        
+
         all_envs_set = ordered_set.OrderedSet([])
         for action in self.actions:
             action_envs = [handler.env for handler in action.handlers]
             all_envs_set |= ordered_set.OrderedSet(action_envs)
-        
+
         return list(all_envs_set)
 
 
@@ -135,5 +142,5 @@ __all__ = [
     "Project",
     "TextDocumentInfo",
     "RunnerConfig",
-    "EnvConfig"
+    "EnvConfig",
 ]

@@ -182,8 +182,8 @@ async def run_action(
         ),
         timeout=None,
     )
-    
-    if hasattr(response, 'error'):
+
+    if hasattr(response, "error"):
         raise ActionRunFailed(response.error)
 
     return_code = response.return_code
@@ -200,7 +200,7 @@ async def run_action(
     else:
         raise Exception(f"Not support result format: {response.format}")
 
-    if response.status == 'stopped':
+    if response.status == "stopped":
         raise ActionRunStopped(message=result)
 
     return RunActionResponse(result=result, return_code=return_code)
@@ -222,7 +222,9 @@ async def reload_action(runner: ExtensionRunnerInfo, action_name: str) -> None:
     )
 
 
-async def resolve_package_path(runner: ExtensionRunnerInfo, package_name: str) -> dict[str, str]:
+async def resolve_package_path(
+    runner: ExtensionRunnerInfo, package_name: str
+) -> dict[str, str]:
     # resolving package path is used directly after initialization of runner to get full
     # config, which is then registered in runner. In this time runner is not available
     # for any other actions, so `runner.started_event` stays not set and should not be
@@ -247,10 +249,7 @@ class RunnerConfig:
     action_handler_configs: dict[str, dict[str, Any]]
 
 
-async def update_config(
-    runner: ExtensionRunnerInfo,
-    config: RunnerConfig
-) -> None:
+async def update_config(runner: ExtensionRunnerInfo, config: RunnerConfig) -> None:
     await send_request(
         runner=runner,
         method=types.WORKSPACE_EXECUTE_COMMAND,

@@ -8,6 +8,7 @@ from __future__ import annotations
 import atexit
 import dataclasses
 import json
+import pathlib
 import time
 
 import pygls.exceptions as pygls_exceptions
@@ -15,10 +16,10 @@ from loguru import logger
 from lsprotocol import types
 from pygls.lsp import server as lsp_server
 
+from finecode_extension_api import code_action
 from finecode_extension_runner import domain, schemas, services
 from finecode_extension_runner._services import run_action as run_action_service
 from finecode_extension_runner.impls import project_info_provider
-from finecode_extension_api import code_action
 
 
 class CustomLanguageServer(lsp_server.LanguageServer):
@@ -118,24 +119,22 @@ def create_lsp_server() -> lsp_server.LanguageServer:
         logger.debug(f"Send partial result for {token}")
         partial_result_dict = dataclasses.asdict(partial_result)
         partial_result_json = json.dumps(partial_result_dict)
-        server.progress(
-            types.ProgressParams(token=token, value=partial_result_json)
-        )
+        server.progress(types.ProgressParams(token=token, value=partial_result_json))
 
     services.document_requester = document_requester
     services.document_saver = document_saver
     run_action_service.set_partial_result_sender(send_partial_result)
-    
+
     async def get_project_raw_config():
         try:
             raw_config = await server.protocol.send_request_async(
                 "projects/getRawConfig", params={}
             )
         except pygls_exceptions.JsonRpcInternalError as error:
-                raise error
+            raise error
 
         return json.loads(raw_config.config)
-    
+
     project_info_provider.project_raw_config_getter = get_project_raw_config
 
     return server
@@ -170,8 +169,8 @@ async def update_config(ls: lsp_server.LanguageServer, params):
         working_dir = params[0]
         project_name = params[1]
         config = params[2]
-        actions = config['actions']
-        action_handler_configs = config['action_handler_configs']
+        actions = config["actions"]
+        action_handler_configs = config["action_handler_configs"]
 
         request = schemas.UpdateConfigRequest(
             working_dir=working_dir,
@@ -192,7 +191,7 @@ async def update_config(ls: lsp_server.LanguageServer, params):
                 )
                 for action in actions
             },
-            action_handler_configs=action_handler_configs
+            action_handler_configs=action_handler_configs,
         )
         response = await services.update_config(request=request)
         return response.to_dict()
@@ -201,17 +200,25 @@ async def update_config(ls: lsp_server.LanguageServer, params):
         raise e
 
 
+class CustomJSONEncoder(json.JSONEncoder):
+    # add support of serializing pathes to json.dumps
+    def default(self, obj):
+        if isinstance(obj, (pathlib.Path, pathlib.PosixPath, pathlib.WindowsPath)):
+            return str(obj)
+        return super().default(obj)
+
+
 async def run_action(ls: lsp_server.LanguageServer, params):
     logger.trace(f"Run action: {params[0]}")
     request = schemas.RunActionRequest(action_name=params[0], params=params[1])
     options = schemas.RunActionOptions(**params[2] if params[2] is not None else {})
-    status: str = 'success'
+    status: str = "success"
 
     try:
         response = await services.run_action(request=request, options=options)
     except Exception as exception:
         if isinstance(exception, services.StopWithResponse):
-            status = 'stopped'
+            status = "stopped"
             response = exception.response
         else:
             error_msg = ""
@@ -221,14 +228,12 @@ async def run_action(ls: lsp_server.LanguageServer, params):
             else:
                 logger.error("Unhandled exception in action run:")
                 logger.exception(exception)
-                error_msg = f'{type(exception)}: {str(exception)}'
-            return {
-                "error": error_msg
-            }
+                error_msg = f"{type(exception)}: {str(exception)}"
+            return {"error": error_msg}
 
     # dict key can be path, but pygls fails to handle slashes in dict keys, use strings
     # representation of result instead until the problem is properly solved
-    result_str = json.dumps(response.to_dict()["result"])
+    result_str = json.dumps(response.to_dict()["result"], cls=CustomJSONEncoder)
     return {
         "status": status,
         "result": result_str,

@@ -4,10 +4,9 @@ import asyncio
 import collections.abc
 import dataclasses
 import enum
+import typing
 from pathlib import Path
 from typing import Generic, Protocol, TypeVar
-import typing
-
 
 from finecode_extension_api import partialresultscheduler, textstyler
 

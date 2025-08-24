@@ -7,8 +7,9 @@ import ordered_set
 from loguru import logger
 
 from finecode import context, domain, services
-from finecode.config import read_configs, collect_actions, config_models
-from finecode.runner import manager as runner_manager, runner_info
+from finecode.config import collect_actions, config_models, read_configs
+from finecode.runner import manager as runner_manager
+from finecode.runner import runner_info
 
 
 class RunFailed(Exception):
@@ -19,7 +20,7 @@ class RunFailed(Exception):
 async def start_required_environments(
     actions_by_projects: dict[pathlib.Path, list[str]],
     ws_context: context.WorkspaceContext,
-    update_config_in_running_runners: bool = False
+    update_config_in_running_runners: bool = False,
 ) -> None:
     """Collect all required envs from actions that will be run and start them."""
     required_envs_by_project: dict[pathlib.Path, set[str]] = {}
@@ -29,40 +30,51 @@ async def start_required_environments(
             project_required_envs = set()
             for action_name in action_names:
                 # find the action and collect envs from its handlers
-                action = next((a for a in project.actions if a.name == action_name), None)
+                action = next(
+                    (a for a in project.actions if a.name == action_name), None
+                )
                 if action is not None:
                     for handler in action.handlers:
                         project_required_envs.add(handler.env)
             required_envs_by_project[project_dir_path] = project_required_envs
-    
+
     # start runners for required environments that aren't already running
     for project_dir_path, required_envs in required_envs_by_project.items():
         project = ws_context.ws_projects[project_dir_path]
-        existing_runners = ws_context.ws_projects_extension_runners.get(project_dir_path, {})
-        
+        existing_runners = ws_context.ws_projects_extension_runners.get(
+            project_dir_path, {}
+        )
+
         for env_name in required_envs:
             runner_exist = env_name in existing_runners
             start_runner = True
             if runner_exist:
-                runner_is_running = existing_runners[env_name].status == runner_info.RunnerStatus.RUNNING
+                runner_is_running = (
+                    existing_runners[env_name].status
+                    == runner_info.RunnerStatus.RUNNING
+                )
                 start_runner = not runner_is_running
 
             if start_runner:
                 try:
                     runner = await runner_manager.start_runner(
-                        project_def=project, 
-                        env_name=env_name, 
-                        ws_context=ws_context
+                        project_def=project, env_name=env_name, ws_context=ws_context
                     )
                 except Exception as e:
-                    logger.warning(f"Failed to start runner for env '{env_name}' in project '{project.name}': {e}")
+                    logger.warning(
+                        f"Failed to start runner for env '{env_name}' in project '{project.name}': {e}"
+                    )
                     # TODO: raise error
             else:
                 if update_config_in_running_runners:
                     runner = existing_runners[env_name]
-                    logger.trace(f"Runner {runner.working_dir_path} {runner.env_name} is running already, update config")
+                    logger.trace(
+                        f"Runner {runner.working_dir_path} {runner.env_name} is running already, update config"
+                    )
                     # TODO: handle errors
-                    await runner_manager.update_runner_config(runner=runner, project=project)
+                    await runner_manager.update_runner_config(
+                        runner=runner, project=project
+                    )
 
 
 async def run_actions(
@@ -85,23 +97,31 @@ async def run_actions(
             for project_dir_path, project in ws_context.ws_projects.items()
             if project.name in projects_names
         }
-        
+
         # make sure all projects use finecode
         config_problem_found = False
         for project in ws_context.ws_projects.values():
             if project.status != domain.ProjectStatus.CONFIG_VALID:
                 if project.status == domain.ProjectStatus.NO_FINECODE:
-                    logger.error(f"You asked to run action in project '{project.name}', but finecode is not used in it(=there is no 'dev_workspace' environment with 'finecode' package in it)")
+                    logger.error(
+                        f"You asked to run action in project '{project.name}', but finecode is not used in it(=there is no 'dev_workspace' environment with 'finecode' package in it)"
+                    )
                     config_problem_found = True
                 elif project.status == domain.ProjectStatus.CONFIG_INVALID:
-                    logger.error(f"You asked to run action in project '{project.name}', but its configuration is invalid(see logs above for more details)")
+                    logger.error(
+                        f"You asked to run action in project '{project.name}', but its configuration is invalid(see logs above for more details)"
+                    )
                     config_problem_found = True
                 else:
-                    logger.error(f"You asked to run action in project '{project.name}', but it has unexpected status: {project.status}")
+                    logger.error(
+                        f"You asked to run action in project '{project.name}', but it has unexpected status: {project.status}"
+                    )
                     config_problem_found = True
-        
+
         if config_problem_found:
-            raise RunFailed("There is a problem with configuration. See previous messages for more details")
+            raise RunFailed(
+                "There is a problem with configuration. See previous messages for more details"
+            )
     else:
         # filter out packages that don't use finecode
         ws_context.ws_projects = {
@@ -109,38 +129,47 @@ async def run_actions(
             for project_dir_path, project in ws_context.ws_projects.items()
             if project.status != domain.ProjectStatus.NO_FINECODE
         }
-        
+
         # check that configuration of packages that use finecode is valid
         config_problem_found = False
         for project in ws_context.ws_projects.values():
             if project.status == domain.ProjectStatus.CONFIG_VALID:
                 continue
             elif project.status == domain.ProjectStatus.CONFIG_INVALID:
-                logger.error(f"Project '{project.name}' has invalid config, see messages above for more details")
+                logger.error(
+                    f"Project '{project.name}' has invalid config, see messages above for more details"
+                )
                 config_problem_found = True
             else:
-                logger.error(f"Project '{project.name}' has unexpected status: {project.status}")
+                logger.error(
+                    f"Project '{project.name}' has unexpected status: {project.status}"
+                )
                 config_problem_found = True
-        
+
         if config_problem_found:
-            raise RunFailed("There is a problem with configuration. See previous messages for more details")
+            raise RunFailed(
+                "There is a problem with configuration. See previous messages for more details"
+            )
 
     projects: list[domain.Project] = []
     if projects_names is not None:
-        projects = get_projects_by_names(
-            projects_names, ws_context, workdir_path
-        )
+        projects = get_projects_by_names(projects_names, ws_context, workdir_path)
     else:
         projects = list(ws_context.ws_projects.values())
 
     # first read configs without presets to be able to start runners with presets
     for project in projects:
         try:
-            await read_configs.read_project_config(project=project, ws_context=ws_context, resolve_presets=False)
-            collect_actions.collect_actions(project_path=project.dir_path, ws_context=ws_context)
+            await read_configs.read_project_config(
+                project=project, ws_context=ws_context, resolve_presets=False
+            )
+            collect_actions.collect_actions(
+                project_path=project.dir_path, ws_context=ws_context
+            )
         except config_models.ConfigurationError as exception:
-            raise RunFailed(f"Reading project config and collecting actions in {project.dir_path} failed: {exception.message}")
-
+            raise RunFailed(
+                f"Reading project config and collecting actions in {project.dir_path} failed: {exception.message}"
+            )
 
     try:
         # 1. Start runners with presets to be able to resolve presets. Presets are
@@ -159,8 +188,12 @@ async def run_actions(
         # 2. Collect actions in relevant projects
         for project in projects:
             try:
-                await read_configs.read_project_config(project=project, ws_context=ws_context)
-                collect_actions.collect_actions(project_path=project.dir_path, ws_context=ws_context)
+                await read_configs.read_project_config(
+                    project=project, ws_context=ws_context
+                )
+                collect_actions.collect_actions(
+                    project_path=project.dir_path, ws_context=ws_context
+                )
             except config_models.ConfigurationError as exception:
                 raise RunFailed(f"Found configuration problem: {exception.message}")
 
@@ -184,7 +217,9 @@ async def run_actions(
             # actions will be run in all projects inside
             actions_by_projects = find_projects_with_actions(ws_context, actions)
 
-        await start_required_environments(actions_by_projects, ws_context, update_config_in_running_runners=True)
+        await start_required_environments(
+            actions_by_projects, ws_context, update_config_in_running_runners=True
+        )
 
         return await run_actions_in_all_projects(
             actions_by_projects, action_payload, ws_context, concurrently
@@ -224,8 +259,8 @@ def find_projects_with_actions(
     for project in ws_context.ws_projects.values():
         project_actions_names = [action.name for action in project.actions]
         # find which of requested actions are available in the project
-        action_to_run_in_project = (
-            actions_set & ordered_set.OrderedSet(project_actions_names)
+        action_to_run_in_project = actions_set & ordered_set.OrderedSet(
+            project_actions_names
         )
         relevant_actions_in_project = list(action_to_run_in_project)
         if len(relevant_actions_in_project) > 0:
@@ -336,7 +371,7 @@ async def run_actions_in_running_project(
         except ExceptionGroup as eg:
             for exception in eg.exceptions:
                 if isinstance(exception, services.ActionRunFailed):
-                    logger.error(f'{exception.message} in {project.name}')
+                    logger.error(f"{exception.message} in {project.name}")
                 else:
                     logger.error("Unexpected exception:")
                     logger.exception(exception)
@@ -413,7 +448,9 @@ async def run_actions_in_all_projects(
             result_output += "\n"
 
         if run_in_many_projects:
-            result_output += f"{click.style(str(project_dir_path), bold=True, underline=True)}\n"
+            result_output += (
+                f"{click.style(str(project_dir_path), bold=True, underline=True)}\n"
+            )
 
         for action_name, action_result in result_by_action.items():
             if run_many_actions:

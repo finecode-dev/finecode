@@ -4,7 +4,7 @@ import pathlib
 from loguru import logger
 
 from finecode import context, services
-from finecode.config import read_configs, dump_configs
+from finecode.config import read_configs
 from finecode.runner import manager as runner_manager
 
 
@@ -27,7 +27,7 @@ async def dump_config(workdir_path: pathlib.Path, project_name: str):
         for project_dir_path, project in ws_context.ws_projects.items()
         if project.name == project_name
     }
-    
+
     # start runner to init project config
     try:
         try:
@@ -41,18 +41,22 @@ async def dump_config(workdir_path: pathlib.Path, project_name: str):
         # Some tools like IDE extensions for syntax highlighting rely on
         # file name. Keep file name of config the same and save in subdirectory
         project_dir_path = list(ws_context.ws_projects.keys())[0]
-        dump_dir_path = project_dir_path / 'finecode_config_dump'
-        dump_file_path = dump_dir_path / 'pyproject.toml'
+        dump_dir_path = project_dir_path / "finecode_config_dump"
+        dump_file_path = dump_dir_path / "pyproject.toml"
         project_raw_config = ws_context.ws_projects_raw_configs[project_dir_path]
         project_def = ws_context.ws_projects[project_dir_path]
-        
+
         await services.run_action(
-            action_name='dump_config',
-            params={"source_file_path": project_def.def_path, "project_raw_config": project_raw_config, "target_file_path": dump_file_path },
+            action_name="dump_config",
+            params={
+                "source_file_path": project_def.def_path,
+                "project_raw_config": project_raw_config,
+                "target_file_path": dump_file_path,
+            },
             project_def=project_def,
             ws_context=ws_context,
             result_format=services.RunResultFormat.STRING,
-            preprocess_payload=False
+            preprocess_payload=False,
         )
         logger.info(f"Dumped config into {dump_file_path}")
     finally:

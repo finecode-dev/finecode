@@ -5,8 +5,7 @@ from typing import TYPE_CHECKING
 from loguru import logger
 from lsprotocol import types
 
-from finecode import pygls_types_utils
-from finecode import proxy_utils
+from finecode import proxy_utils, pygls_types_utils
 from finecode.lsp_server import global_state
 
 if TYPE_CHECKING:

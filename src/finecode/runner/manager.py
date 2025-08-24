@@ -8,10 +8,9 @@ from typing import Callable, Coroutine
 from loguru import logger
 from lsprotocol import types
 
-from finecode import dirs_utils
+from finecode import context, dirs_utils, domain, finecode_cmd
+from finecode.config import collect_actions, config_models, read_configs
 from finecode.pygls_client_utils import create_lsp_client_io
-from finecode import context, domain, finecode_cmd
-from finecode.config import collect_actions, read_configs, config_models
 from finecode.runner import runner_client, runner_info
 from finecode.utils import iterable_subscribe
 
@@ -69,9 +68,13 @@ async def start_extension_runner(
     runner_dir: Path, env_name: str, ws_context: context.WorkspaceContext
 ) -> runner_info.ExtensionRunnerInfo | None:
     runner_info_instance = runner_info.ExtensionRunnerInfo(
-        working_dir_path=runner_dir, env_name=env_name, status=runner_info.RunnerStatus.READY_TO_START, initialized_event=asyncio.Event(), client=None
+        working_dir_path=runner_dir,
+        env_name=env_name,
+        status=runner_info.RunnerStatus.READY_TO_START,
+        initialized_event=asyncio.Event(),
+        client=None,
     )
-    
+
     try:
         python_cmd = finecode_cmd.get_python_cmd(runner_dir, env_name)
     except ValueError:
@@ -80,13 +83,15 @@ async def start_extension_runner(
             await notify_project_changed(ws_context.ws_projects[runner_dir])
         except KeyError:
             ...
-        logger.error(f"Project {runner_dir} uses finecode, but env (venv) doesn't exist yet. Run `prepare_env` command to create it")
+        logger.error(
+            f"Project {runner_dir} uses finecode, but env (venv) doesn't exist yet. Run `prepare_env` command to create it"
+        )
         return None
 
     process_args: list[str] = [
         "--trace",
         f"--project-path={runner_dir.as_posix()}",
-        f"--env-name={env_name}"
+        f"--env-name={env_name}",
     ]
     env_config = ws_context.ws_projects[runner_dir].env_configs[env_name]
     runner_config = env_config.runner_config
@@ -109,7 +114,7 @@ async def start_extension_runner(
     async def on_exit():
         logger.debug(f"Extension Runner {runner_info_instance.working_dir_path} exited")
         runner_info_instance.status = runner_info.RunnerStatus.EXITED
-        await notify_project_changed(ws_context.ws_projects[runner_dir]) # TODO: fix
+        await notify_project_changed(ws_context.ws_projects[runner_dir])  # TODO: fix
         # TODO: restart if WM is not stopping
 
     runner_info_instance.client.server_exit_callback = on_exit
@@ -134,11 +139,11 @@ async def start_extension_runner(
 
     register_progress_feature = runner_info_instance.client.feature(types.PROGRESS)
     register_progress_feature(on_progress)
-    
+
     async def get_project_raw_config(params):
         # assume raw config exists, because if runner is running, there is always a
         # raw config
-        return { "config": json.dumps(ws_context.ws_projects_raw_configs[runner_dir]) }
+        return {"config": json.dumps(ws_context.ws_projects_raw_configs[runner_dir])}
 
     register_get_project_raw_config_feature = runner_info_instance.client.feature(
         "projects/getRawConfig"
@@ -229,19 +234,30 @@ async def update_runners(ws_context: context.WorkspaceContext) -> None:
             for new_dir in new_dirs:
                 project = ws_context.ws_projects[new_dir]
                 project_status = project.status
-                if ws_context.ws_projects_extension_runners.get(new_dir, {}).get('dev_no_runtime', None) is not None:
+                if (
+                    ws_context.ws_projects_extension_runners.get(new_dir, {}).get(
+                        "dev_no_runtime", None
+                    )
+                    is not None
+                ):
                     # start only if dev_no_runtime started successfully
                     for env in project.envs:
-                        if env == 'dev_no_runtime':
+                        if env == "dev_no_runtime":
                             # this env has already started above
                             continue
 
-                        runner_task = tg.create_task(start_extension_runner(runner_dir=new_dir, env_name=env, ws_context=ws_context))
+                        runner_task = tg.create_task(
+                            start_extension_runner(
+                                runner_dir=new_dir, env_name=env, ws_context=ws_context
+                            )
+                        )
                         new_runners_tasks.append(runner_task)
-                
+
     except ExceptionGroup as eg:
         for exception in eg.exceptions:
-            if isinstance(exception, runner_client.BaseRunnerRequestException) or isinstance(exception, RunnerFailedToStart):
+            if isinstance(
+                exception, runner_client.BaseRunnerRequestException
+            ) or isinstance(exception, RunnerFailedToStart):
                 logger.error(exception.message)
             else:
                 logger.error("Unexpected exception:")
@@ -273,7 +289,9 @@ async def update_runners(ws_context: context.WorkspaceContext) -> None:
         raise RunnerFailedToStart("Failed to initialize runner")
 
 
-async def start_runners_with_presets(projects: list[domain.Project], ws_context: context.WorkspaceContext) -> None:
+async def start_runners_with_presets(
+    projects: list[domain.Project], ws_context: context.WorkspaceContext
+) -> None:
     new_runners_tasks: list[asyncio.Task] = []
     try:
         # first start runner in 'dev_no_runtime' env to be able to resolve presets for
@@ -282,27 +300,45 @@ async def start_runners_with_presets(projects: list[domain.Project], ws_context:
             for project in projects:
                 project_status = project.status
                 if project_status == domain.ProjectStatus.CONFIG_VALID:
-                    task = tg.create_task(_start_dev_no_runtime_runner(project_def=project, ws_context=ws_context))
+                    task = tg.create_task(
+                        _start_dev_no_runtime_runner(
+                            project_def=project, ws_context=ws_context
+                        )
+                    )
                     new_runners_tasks.append(task)
                 elif project_status != domain.ProjectStatus.NO_FINECODE:
-                    raise RunnerFailedToStart(f"Project '{project.name}' has invalid configuration, status: {project_status.name}")
+                    raise RunnerFailedToStart(
+                        f"Project '{project.name}' has invalid configuration, status: {project_status.name}"
+                    )
 
-        save_runners_from_tasks_in_context(tasks=new_runners_tasks, ws_context=ws_context)
+        save_runners_from_tasks_in_context(
+            tasks=new_runners_tasks, ws_context=ws_context
+        )
     except ExceptionGroup as eg:
         for exception in eg.exceptions:
-            if isinstance(exception, runner_client.BaseRunnerRequestException) or isinstance(exception, RunnerFailedToStart):
+            if isinstance(
+                exception, runner_client.BaseRunnerRequestException
+            ) or isinstance(exception, RunnerFailedToStart):
                 logger.error(exception.message)
             else:
                 logger.error("Unexpected exception:")
                 logger.exception(exception)
-        raise RunnerFailedToStart("Failed to initialize runner(s). See previous logs for more details")
+        raise RunnerFailedToStart(
+            "Failed to initialize runner(s). See previous logs for more details"
+        )
 
 
-async def start_runner(project_def: domain.Project, env_name: str, ws_context: context.WorkspaceContext) -> runner_info.ExtensionRunnerInfo:
-    runner = await start_extension_runner(runner_dir=project_def.dir_path, env_name=env_name, ws_context=ws_context)
-    
+async def start_runner(
+    project_def: domain.Project, env_name: str, ws_context: context.WorkspaceContext
+) -> runner_info.ExtensionRunnerInfo:
+    runner = await start_extension_runner(
+        runner_dir=project_def.dir_path, env_name=env_name, ws_context=ws_context
+    )
+
     if runner is None:
-        raise RunnerFailedToStart(f"Runner '{env_name}' in project {project_def.name} failed to start")
+        raise RunnerFailedToStart(
+            f"Runner '{env_name}' in project {project_def.name} failed to start"
+        )
 
     save_runner_in_context(runner=runner, ws_context=ws_context)
 
@@ -311,14 +347,21 @@ async def start_runner(project_def: domain.Project, env_name: str, ws_context: c
     # because this requires resolved project config with presets
     await _init_lsp_client(runner=runner, project=project_def)
 
-    if project_def.dir_path not in ws_context.ws_projects_raw_configs or project_def.actions is None:
+    if (
+        project_def.dir_path not in ws_context.ws_projects_raw_configs
+        or project_def.actions is None
+    ):
         try:
-            await read_configs.read_project_config(project=project_def, ws_context=ws_context)
+            await read_configs.read_project_config(
+                project=project_def, ws_context=ws_context
+            )
             collect_actions.collect_actions(
                 project_path=project_def.dir_path, ws_context=ws_context
             )
         except config_models.ConfigurationError as exception:
-            raise RunnerFailedToStart(f"Found problem in configuration of {project_def.dir_path}: {exception.message}")
+            raise RunnerFailedToStart(
+                f"Found problem in configuration of {project_def.dir_path}: {exception.message}"
+            )
 
     await update_runner_config(runner=runner, project=project_def)
     await _finish_runner_init(runner=runner, project=project_def, ws_context=ws_context)
@@ -326,8 +369,12 @@ async def start_runner(project_def: domain.Project, env_name: str, ws_context: c
     return runner
 
 
-async def _start_dev_no_runtime_runner(project_def: domain.Project, ws_context: context.WorkspaceContext) -> runner_info.ExtensionRunnerInfo:
-    return await start_runner(project_def=project_def, env_name='dev_no_runtime', ws_context=ws_context)
+async def _start_dev_no_runtime_runner(
+    project_def: domain.Project, ws_context: context.WorkspaceContext
+) -> runner_info.ExtensionRunnerInfo:
+    return await start_runner(
+        project_def=project_def, env_name="dev_no_runtime", ws_context=ws_context
+    )
 
 
 async def _init_runner(
@@ -338,14 +385,16 @@ async def _init_runner(
     # initialization is required to be able to perform other requests
     logger.trace(f"Init runner {runner.working_dir_path}")
     assert project.actions is not None
-    
+
     await _init_lsp_client(runner=runner, project=project)
 
     await update_runner_config(runner=runner, project=project)
     await _finish_runner_init(runner=runner, project=project, ws_context=ws_context)
 
 
-async def _init_lsp_client(runner: runner_info.ExtensionRunnerInfo, project: domain.Project) -> None:
+async def _init_lsp_client(
+    runner: runner_info.ExtensionRunnerInfo, project: domain.Project
+) -> None:
     try:
         await runner_client.initialize(
             runner,
@@ -374,16 +423,22 @@ async def _init_lsp_client(runner: runner_info.ExtensionRunnerInfo, project: dom
     logger.debug("LSP Client initialized")
 
 
-async def update_runner_config(runner: runner_info.ExtensionRunnerInfo, project: domain.Project) -> None:
+async def update_runner_config(
+    runner: runner_info.ExtensionRunnerInfo, project: domain.Project
+) -> None:
     assert project.actions is not None
-    config = runner_client.RunnerConfig(actions=project.actions, action_handler_configs=project.action_handler_configs)
+    config = runner_client.RunnerConfig(
+        actions=project.actions, action_handler_configs=project.action_handler_configs
+    )
     try:
         await runner_client.update_config(runner, config)
     except runner_client.BaseRunnerRequestException as exception:
         runner.status = runner_info.RunnerStatus.FAILED
         await notify_project_changed(project)
         runner.initialized_event.set()
-        raise RunnerFailedToStart(f"Runner failed to update config: {exception.message}")
+        raise RunnerFailedToStart(
+            f"Runner failed to update config: {exception.message}"
+        )
 
     logger.debug(
         f"Updated config of runner {runner.working_dir_path},"
@@ -391,7 +446,11 @@ async def update_runner_config(runner: runner_info.ExtensionRunnerInfo, project:
     )
 
 
-async def _finish_runner_init(runner: runner_info.ExtensionRunnerInfo, project: domain.Project, ws_context: context.WorkspaceContext) -> None:
+async def _finish_runner_init(
+    runner: runner_info.ExtensionRunnerInfo,
+    project: domain.Project,
+    ws_context: context.WorkspaceContext,
+) -> None:
     runner.status = runner_info.RunnerStatus.RUNNING
     await notify_project_changed(project)
 
@@ -402,7 +461,9 @@ async def _finish_runner_init(runner: runner_info.ExtensionRunnerInfo, project: 
     runner.initialized_event.set()
 
 
-def save_runners_from_tasks_in_context(tasks: list[asyncio.Task], ws_context: context.WorkspaceContext) -> None:
+def save_runners_from_tasks_in_context(
+    tasks: list[asyncio.Task], ws_context: context.WorkspaceContext
+) -> None:
     extension_runners: list[runner_info.ExtensionRunnerInfo] = [
         runner.result() for runner in tasks if runner is not None
     ]
@@ -411,11 +472,14 @@ def save_runners_from_tasks_in_context(tasks: list[asyncio.Task], ws_context: co
         save_runner_in_context(runner=new_runner, ws_context=ws_context)
 
 
-def save_runner_in_context(runner: runner_info.ExtensionRunnerInfo, ws_context: context.WorkspaceContext) -> None:
+def save_runner_in_context(
+    runner: runner_info.ExtensionRunnerInfo, ws_context: context.WorkspaceContext
+) -> None:
     if runner.working_dir_path not in ws_context.ws_projects_extension_runners:
         ws_context.ws_projects_extension_runners[runner.working_dir_path] = {}
-    ws_context.ws_projects_extension_runners[runner.working_dir_path][runner.env_name] = runner
-
+    ws_context.ws_projects_extension_runners[runner.working_dir_path][
+        runner.env_name
+    ] = runner
 
 
 async def send_opened_files(
@@ -454,7 +518,7 @@ async def check_runner(runner_dir: Path, env_name: str) -> bool:
 
     # get version of extension runner. If it works and we get valid
     # value, assume extension runner works correctly
-    cmd = f'{python_cmd} -m finecode_extension_runner.cli version'
+    cmd = f"{python_cmd} -m finecode_extension_runner.cli version"
     logger.debug(f"Run '{cmd}' in {runner_dir}")
     async_subprocess = await asyncio.create_subprocess_shell(
         cmd,
@@ -471,15 +535,19 @@ async def check_runner(runner_dir: Path, env_name: str) -> bool:
         return False
 
     if async_subprocess.returncode != 0:
-        logger.debug(f"Return code: {async_subprocess.returncode}, stderr: {raw_stderr.decode()}")
+        logger.debug(
+            f"Return code: {async_subprocess.returncode}, stderr: {raw_stderr.decode()}"
+        )
         return False
-    
+
     stdout = raw_stdout.decode()
-    return 'FineCode Extension Runner ' in stdout
+    return "FineCode Extension Runner " in stdout
 
 
 def remove_runner_venv(runner_dir: Path, env_name: str) -> None:
-    venv_dir_path = finecode_cmd.get_venv_dir_path(project_path=runner_dir, env_name=env_name)
+    venv_dir_path = finecode_cmd.get_venv_dir_path(
+        project_path=runner_dir, env_name=env_name
+    )
     if venv_dir_path.exists():
         logger.debug(f"Remove venv {venv_dir_path}")
         shutil.rmtree(venv_dir_path)

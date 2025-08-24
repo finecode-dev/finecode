@@ -1,7 +1,7 @@
 import os
 import sys
-from pathlib import Path
 from importlib import metadata
+from pathlib import Path
 
 import click
 from loguru import logger
@@ -27,7 +27,9 @@ def main():
     required=True,
 )
 @click.option("--env-name", "env_name", type=str)
-def start(trace: bool, debug: bool, debug_port: int, project_path: Path, env_name: str | None):
+def start(
+    trace: bool, debug: bool, debug_port: int, project_path: Path, env_name: str | None
+):
     if debug is True:
         import debugpy
 
@@ -55,8 +57,8 @@ def start(trace: bool, debug: bool, debug_port: int, project_path: Path, env_nam
 @main.command()
 def version():
     """Show version information"""
-    package_version = metadata.version('finecode_extension_runner')
-    click.echo(f'FineCode Extension Runner {package_version}')
+    package_version = metadata.version("finecode_extension_runner")
+    click.echo(f"FineCode Extension Runner {package_version}")
 
 
 if __name__ == "__main__":

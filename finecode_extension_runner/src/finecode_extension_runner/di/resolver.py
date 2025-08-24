@@ -1,6 +1,7 @@
 from typing import Any, Callable, Type, TypeVar
 
 from finecode_extension_api import code_action
+
 from ._state import container, factories
 
 T = TypeVar("T")

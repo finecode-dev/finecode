@@ -13,12 +13,10 @@ class BaseRunActionException(Exception):
         self.message = message
 
 
-class ActionNotFound(BaseRunActionException):
-    ...
+class ActionNotFound(BaseRunActionException): ...
 
 
-class InvalidActionRunPayload(BaseRunActionException):
-    ...
+class InvalidActionRunPayload(BaseRunActionException): ...
 
 
 class ActionRunFailed(BaseRunActionException):
