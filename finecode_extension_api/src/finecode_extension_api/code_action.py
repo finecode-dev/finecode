@@ -89,7 +89,7 @@ class Action(Generic[RunPayloadType, RunContextType, RunResultType]):
     PAYLOAD_TYPE: typing.Type[RunActionPayload] = RunActionPayload
     RUN_CONTEXT_TYPE: typing.Type[RunActionContext] = RunActionContext
     RESULT_TYPE: typing.Type[RunActionResult] = RunActionResult
-    CONFIG: typing.Type[ActionConfig] = ActionConfig
+    CONFIG_TYPE: typing.Type[ActionConfig] = ActionConfig
 
 
 class StopActionRunWithResult(Exception):
