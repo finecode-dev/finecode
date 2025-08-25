@@ -1,8 +1,6 @@
 import dataclasses
 import shutil
 
-import tomlkit
-
 from finecode_extension_api import code_action
 from finecode_extension_api.actions import prepare_envs as prepare_envs_action
 from finecode_extension_api.interfaces import (
@@ -41,7 +39,7 @@ class PrepareEnvsReadConfigsHandler(
             [env_info.project_def_path for env_info in payload.envs]
         )
         if len(project_defs_pathes) != 1:
-            ...  # TODO: error
+            raise code_action.ActionFailedException("PrepareEnvsReadConfigsHandler supports only reading config of envs from the current project")
 
         project_raw_config = await self.project_info_provider.get_project_raw_config()
 
