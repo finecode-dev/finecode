@@ -33,6 +33,7 @@ class CodeActionTriggerKind(enum.IntEnum):
 class Diagnostic: ...
 
 
+@dataclasses.dataclass
 class CodeActionContext:
     diagnostics: list[Diagnostic]
     only: CodeActionKind | None
