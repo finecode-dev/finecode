@@ -2,11 +2,9 @@ __pycache__
 .coverage
 .pytest_cache
 .mypy_cache
-.import_linter_cache
 dist
 
-src/finecode/_version.py
-src/finecode.egg-info
+src/*.egg-info
 
 .venvs
 finecode_config_dump/

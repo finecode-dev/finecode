@@ -1,2 +1,4 @@
 .venvs
-*.egg-info
+src/*.egg-info
+__pycache__
+finecode_config_dump/

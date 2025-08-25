@@ -6,9 +6,8 @@ __pycache__
 dist
 
 src/finecode_extension_runner/_version.py
-src/finecode_extension_runner.egg-info
+src/*.egg-info
 
 .venvs
-finecode_dump_config/*
-!finecode_dump_config/pyproject.toml
+finecode_config_dump/
 build/

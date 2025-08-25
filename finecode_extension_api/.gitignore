@@ -1,5 +1,4 @@
 .venvs/
 *.egg-info
 build/
-finecode_dump_config/*
-!finecode_dump_config/pyproject.toml
+finecode_config_dump/
