@@ -2,6 +2,7 @@ import dataclasses
 import pathlib
 import sys
 import typing
+import pprint
 
 if sys.version_info >= (3, 12):
     from typing import override
@@ -46,7 +47,8 @@ class DumpConfigRunResult(code_action.RunActionResult):
         self.config_dump = other.config_dump
 
     def to_text(self) -> str | textstyler.StyledText:
-        return ""
+        formatted_dump_str = pprint.pformat(self.config_dump)
+        return formatted_dump_str
 
 
 class DumpConfigAction(code_action.Action):
