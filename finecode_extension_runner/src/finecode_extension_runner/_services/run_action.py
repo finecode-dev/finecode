@@ -5,6 +5,7 @@ import inspect
 import time
 import typing
 
+import deepmerge
 from loguru import logger
 from pydantic.dataclasses import dataclass as pydantic_dataclass
 
@@ -19,7 +20,17 @@ from finecode_extension_runner.di import resolver as di_resolver
 
 last_run_id: int = 0
 partial_result_sender: partial_result_sender_module.PartialResultSender
-
+handler_config_merger = deepmerge.Merger(
+    [
+        (list, ["override"]),
+        (dict, ["merge"]),
+        (set, ["override"])
+    ],
+    #  all other types:
+    ["override"],
+    # strategies in the case where the types conflict:
+    ["override"]
+)
 
 class ActionFailedException(Exception):
     def __init__(self, message: str) -> None:
@@ -401,10 +412,14 @@ async def execute_action_handler(
             handler.source, None
         )
         handler_raw_config = {}
-        # TODO: deep merge instead?
         if handler_global_config is not None:
-            handler_raw_config.update(handler_global_config)
-        handler_raw_config.update(handler.config)
+            handler_raw_config = handler_global_config
+        if handler_raw_config == {}:
+            # still empty, just assign
+            handler_raw_config = handler.config
+        else:
+            # not empty anymore, deep merge
+            handler_config_merger.merge(handler_raw_config, handler.config)
 
         def get_handler_config(param_type):
             # TODO: validation errors
@@ -564,6 +579,7 @@ async def run_subresult_coros_sequentially(
         try:
             coro_result = await coro
         except Exception as e:
+            logger.error(f"Unhandled exception in subresult coroutine({action_name}, run {run_id}):")
             logger.exception(e)
             raise ActionFailedException(
                 f"Running action handlers of '{action_name}' failed(Run {run_id}): {e}"
