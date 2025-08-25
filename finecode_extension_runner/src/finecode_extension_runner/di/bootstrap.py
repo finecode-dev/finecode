@@ -29,8 +29,7 @@ from finecode_extension_runner.impls import (
     loguru_logger,
     project_info_provider,
 )
-
-from ._state import container, factories
+from finecode_extension_runner.di import _state
 
 
 def bootstrap(get_document_func: Callable, save_document_func: Callable):
@@ -49,21 +48,21 @@ def bootstrap(get_document_func: Callable, save_document_func: Callable):
     action_runner_instance = action_runner.ActionRunner(
         internal_service_func=run_action_wrapper
     )
-    container[ilogger.ILogger] = logger_instance
-    container[icommandrunner.ICommandRunner] = command_runner_instance
-    container[ifilemanager.IFileManager] = file_manager_instance
-    container[icache.ICache] = cache_instance
-    container[iactionrunner.IActionRunner] = action_runner_instance
+    _state.container[ilogger.ILogger] = logger_instance
+    _state.container[icommandrunner.ICommandRunner] = command_runner_instance
+    _state.container[ifilemanager.IFileManager] = file_manager_instance
+    _state.container[icache.ICache] = cache_instance
+    _state.container[iactionrunner.IActionRunner] = action_runner_instance
 
     if fine_python_ast is not None:
-        factories[fine_python_ast.IPythonSingleAstProvider] = (
+        _state.factories[fine_python_ast.IPythonSingleAstProvider] = (
             python_single_ast_provider_factory
         )
     if fine_python_mypy is not None:
-        factories[fine_python_mypy.IMypySingleAstProvider] = (
+        _state.factories[fine_python_mypy.IMypySingleAstProvider] = (
             mypy_single_ast_provider_factory
         )
-    factories[iprojectinfoprovider.IProjectInfoProvider] = project_info_provider_factory
+    _state.factories[iprojectinfoprovider.IProjectInfoProvider] = project_info_provider_factory
 
     # TODO: parameters from config
 
@@ -73,8 +72,11 @@ async def run_action_wrapper(
 ) -> dict[str, Any]:
     request = schemas.RunActionRequest(action_name=action_name, params=payload)
     options = schemas.RunActionOptions(result_format="json")
-    # TODO: map exceptions to iactionrunner
-    response = await run_action.run_action(request=request, options=options)
+
+    try:
+        response = await run_action.run_action(request=request, options=options)
+    except run_action.ActionFailedException as exception:
+        raise iactionrunner.ActionRunFailed(exception.message)
 
     return response.result
 
