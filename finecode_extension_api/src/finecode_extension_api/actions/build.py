@@ -17,7 +17,7 @@ class BuildRunPayload(code_action.RunActionPayload):
     # packages can have different layouts. Use service (TODO) to get package source
     # directory path and avoid need to handle all possible cases by yourself.
     package_root_path: pathlib.Path
-    build_type: typing.Literal['release'] | typing.Literal['debug'] = 'release'
+    build_type: typing.Literal["release"] | typing.Literal["debug"] = "release"
     # TODO: entrypoint
     # TODO: package type
     # TODO: target platform? (including version etc)
@@ -44,7 +44,7 @@ class BuildRunResult(code_action.RunActionResult):
             return
 
     def to_text(self) -> str | textstyler.StyledText:
-        return ''
+        return ""
 
 
 # general build action: any type of project should be built: library(pure and not pure python), application(both pure distributed as python package and application transformed to executable)
@@ -56,9 +56,7 @@ class BuildRunResult(code_action.RunActionResult):
 # 5. Application packaged to executable with pyinstaller or similar tool.
 #
 # Customization examples:
-# - Recognize constructs(syntax, imports) supported only by higher versions of python and replace them by alternatives from older python. One universal wheel will become version-specific wheel. 
+# - Recognize constructs(syntax, imports) supported only by higher versions of python and replace them by alternatives from older python. One universal wheel will become version-specific wheel.
 # - the same could be applied for platform-specific functionalities
 # - optimize implementation
-type BuildAction = code_action.Action[
-    BuildRunPayload, BuildRunContext, BuildRunResult
-]
+type BuildAction = code_action.Action[BuildRunPayload, BuildRunContext, BuildRunResult]
