@@ -141,9 +141,15 @@ async def start_extension_runner(
     register_progress_feature(on_progress)
 
     async def get_project_raw_config(params):
-        # assume raw config exists, because if runner is running, there is always a
-        # raw config
-        return {"config": json.dumps(ws_context.ws_projects_raw_configs[runner_dir])}
+        project_def_path_str = params.projectDefPath
+        project_def_path = Path(project_def_path_str)
+        try:
+            project_raw_config = ws_context.ws_projects_raw_configs[
+                project_def_path.parent
+            ]
+        except KeyError:
+            raise ValueError(f"Config of project '{project_def_path_str}' not found")
+        return {"config": json.dumps(project_raw_config)}
 
     register_get_project_raw_config_feature = runner_info_instance.client.feature(
         "projects/getRawConfig"

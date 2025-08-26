@@ -263,7 +263,7 @@ async def check_or_recreate_all_dev_workspace_envs(
         raise PrepareEnvsFailed(
             f"'prepare_dev_workspaces_env' failed in {current_project.name}: {exception.message}"
         )
-    
+
     if action_result.return_code != 0:
         raise PrepareEnvsFailed(
             f"'prepare_dev_workspaces_env' ended in {current_project.name} with return code {action_result.return_code}: {action_result.result}"

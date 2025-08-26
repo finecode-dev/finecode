@@ -1,4 +1,6 @@
-from typing import Any, Callable, Type, TypeVar
+import functools
+import pathlib
+from typing import Any, Awaitable, Callable, Type, TypeVar
 
 try:
     import fine_python_ast
@@ -21,6 +23,7 @@ from finecode_extension_api.interfaces import (
 )
 from finecode_extension_runner import global_state, schemas
 from finecode_extension_runner._services import run_action
+from finecode_extension_runner.di import _state
 from finecode_extension_runner.impls import (
     action_runner,
     command_runner,
@@ -29,10 +32,14 @@ from finecode_extension_runner.impls import (
     loguru_logger,
     project_info_provider,
 )
-from finecode_extension_runner.di import _state
 
 
-def bootstrap(get_document_func: Callable, save_document_func: Callable):
+def bootstrap(
+    get_document_func: Callable,
+    save_document_func: Callable,
+    project_def_path_getter: Callable[[], pathlib.Path],
+    project_raw_config_getter: Callable[[str], Awaitable[dict[str, Any]]],
+):
     # logger_instance = loguru_logger.LoguruLogger()
     logger_instance = loguru_logger.get_logger()
     command_runner_instance = command_runner.CommandRunner(logger=logger_instance)
@@ -62,7 +69,11 @@ def bootstrap(get_document_func: Callable, save_document_func: Callable):
         _state.factories[fine_python_mypy.IMypySingleAstProvider] = (
             mypy_single_ast_provider_factory
         )
-    _state.factories[iprojectinfoprovider.IProjectInfoProvider] = project_info_provider_factory
+    _state.factories[iprojectinfoprovider.IProjectInfoProvider] = functools.partial(
+        project_info_provider_factory,
+        project_def_path_getter=project_def_path_getter,
+        project_raw_config_getter=project_raw_config_getter,
+    )
 
     # TODO: parameters from config
 
@@ -97,5 +108,12 @@ def mypy_single_ast_provider_factory(container):
     )
 
 
-def project_info_provider_factory(container):
-    return project_info_provider.ProjectInfoProvider()
+def project_info_provider_factory(
+    container,
+    project_def_path_getter: Callable[[], pathlib.Path],
+    project_raw_config_getter: Callable[[str], Awaitable[dict[str, Any]]],
+):
+    return project_info_provider.ProjectInfoProvider(
+        project_def_path_getter=project_def_path_getter,
+        project_raw_config_getter=project_raw_config_getter,
+    )

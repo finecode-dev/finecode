@@ -21,16 +21,13 @@ from finecode_extension_runner.di import resolver as di_resolver
 last_run_id: int = 0
 partial_result_sender: partial_result_sender_module.PartialResultSender
 handler_config_merger = deepmerge.Merger(
-    [
-        (list, ["override"]),
-        (dict, ["merge"]),
-        (set, ["override"])
-    ],
+    [(list, ["override"]), (dict, ["merge"]), (set, ["override"])],
     #  all other types:
     ["override"],
     # strategies in the case where the types conflict:
-    ["override"]
+    ["override"],
 )
+
 
 class ActionFailedException(Exception):
     def __init__(self, message: str) -> None:
@@ -579,7 +576,9 @@ async def run_subresult_coros_sequentially(
         try:
             coro_result = await coro
         except Exception as e:
-            logger.error(f"Unhandled exception in subresult coroutine({action_name}, run {run_id}):")
+            logger.error(
+                f"Unhandled exception in subresult coroutine({action_name}, run {run_id}):"
+            )
             logger.exception(e)
             raise ActionFailedException(
                 f"Running action handlers of '{action_name}' failed(Run {run_id}): {e}"

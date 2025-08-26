@@ -4,7 +4,7 @@ import pathlib
 from loguru import logger
 
 from finecode import context, services
-from finecode.config import read_configs, config_models
+from finecode.config import config_models, read_configs
 from finecode.runner import manager as runner_manager
 
 
@@ -27,7 +27,7 @@ async def dump_config(workdir_path: pathlib.Path, project_name: str):
         for project_dir_path, project in ws_context.ws_projects.items()
         if project.name == project_name
     }
-    
+
     # read configs without presets, this is required to be able to start runners in
     # the next step
     for project in ws_context.ws_projects.values():
@@ -39,7 +39,6 @@ async def dump_config(workdir_path: pathlib.Path, project_name: str):
             raise DumpFailed(
                 f"Reading project configs(without presets) in {project.dir_path} failed: {exception.message}"
             )
-
 
     # start runner to init project config
     try:

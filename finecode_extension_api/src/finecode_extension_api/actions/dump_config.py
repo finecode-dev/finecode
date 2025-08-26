@@ -1,8 +1,8 @@
 import dataclasses
 import pathlib
+import pprint
 import sys
 import typing
-import pprint
 
 if sys.version_info >= (3, 12):
     from typing import override

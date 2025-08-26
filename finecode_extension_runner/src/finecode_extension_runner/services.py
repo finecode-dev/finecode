@@ -28,21 +28,14 @@ from finecode_extension_runner._services.run_action import (
 )
 from finecode_extension_runner.di import bootstrap as di_bootstrap
 
-document_requester: typing.Callable
-document_saver: typing.Callable
-
-
-async def get_document(uri: str):
-    doc = await document_requester(uri)
-    return doc
-
-
-async def save_document(uri: str, content: str):
-    await document_saver(uri, content)
-
 
 async def update_config(
     request: schemas.UpdateConfigRequest,
+    document_requester: typing.Callable,
+    document_saver: typing.Callable,
+    project_raw_config_getter: typing.Callable[
+        [str], typing.Awaitable[dict[str, typing.Any]]
+    ],
 ) -> schemas.UpdateConfigResponse:
     project_path = Path(request.working_dir)
 
@@ -76,8 +69,15 @@ async def update_config(
 
     # currently update_config is called only once directly after runner start. So we can
     # bootstrap here. Should be changed after adding updating configuration on the fly.
+    def project_def_path_getter() -> Path:
+        assert global_state.runner_context is not None
+        return global_state.runner_context.project.path
+
     di_bootstrap.bootstrap(
-        get_document_func=get_document, save_document_func=save_document
+        get_document_func=document_requester,
+        save_document_func=document_saver,
+        project_def_path_getter=project_def_path_getter,
+        project_raw_config_getter=project_raw_config_getter,
     )
 
     return schemas.UpdateConfigResponse()

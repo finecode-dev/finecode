@@ -41,8 +41,10 @@ def _collect_action_handler_configs_in_config(
     action_handlers_configs = config["tool"]["finecode"].get("action_handler", [])
     action_handler_config_by_source: dict[str, dict[str, Any]] = {}
     for handler_def in action_handlers_configs:
-        if "source" not in handler_def or not isinstance(handler_def['source'], str):
-            raise config_models.ConfigurationError("Action handler definition expected to have a 'source' field(to identify handler) and it should be a string")
+        if "source" not in handler_def or not isinstance(handler_def["source"], str):
+            raise config_models.ConfigurationError(
+                "Action handler definition expected to have a 'source' field(to identify handler) and it should be a string"
+            )
 
         handler_config = handler_def.get("config", None)
         if handler_config is not None:

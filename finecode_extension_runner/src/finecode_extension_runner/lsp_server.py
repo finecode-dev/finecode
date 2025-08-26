@@ -7,9 +7,11 @@ from __future__ import annotations
 
 import atexit
 import dataclasses
+import functools
 import json
 import pathlib
 import time
+import typing
 
 import pygls.exceptions as pygls_exceptions
 from loguru import logger
@@ -19,7 +21,6 @@ from pygls.lsp import server as lsp_server
 from finecode_extension_api import code_action
 from finecode_extension_runner import domain, schemas, services
 from finecode_extension_runner._services import run_action as run_action_service
-from finecode_extension_runner.impls import project_info_provider
 
 
 class CustomLanguageServer(lsp_server.LanguageServer):
@@ -66,53 +67,6 @@ def create_lsp_server() -> lsp_server.LanguageServer:
 
     atexit.register(on_process_exit)
 
-    async def document_requester(uri: str):
-        try:
-            document = await server.protocol.send_request_async(
-                "documents/get", params={"uri": uri}
-            )
-        except pygls_exceptions.JsonRpcInternalError as error:
-            if error.message == "Exception: Document is not opened":
-                raise domain.TextDocumentNotOpened()
-            else:
-                raise error
-
-        return domain.TextDocumentInfo(
-            uri=document.uri, version=document.version, text=document.text
-        )
-
-    async def document_saver(uri: str, content: str):
-        document = await server.protocol.send_request_async(
-            "documents/get", params={"uri": uri}
-        )
-        document_lines = document.text.split("\n")
-        params = types.ApplyWorkspaceEditParams(
-            edit=types.WorkspaceEdit(
-                # dict seems to be incorrectly unstructured on client(pygls issue?)
-                # use document_changes instead of changes
-                document_changes=[
-                    types.TextDocumentEdit(
-                        text_document=types.OptionalVersionedTextDocumentIdentifier(
-                            uri=uri
-                        ),
-                        edits=[
-                            types.TextEdit(
-                                range=types.Range(
-                                    start=types.Position(line=0, character=0),
-                                    end=types.Position(
-                                        line=len(document_lines),
-                                        character=len(document_lines[-1]),
-                                    ),
-                                ),
-                                new_text=content,
-                            )
-                        ],
-                    )
-                ]
-            )
-        )
-        await server.workspace_apply_edit_async(params)
-
     def send_partial_result(
         token: int | str, partial_result: code_action.RunActionResult
     ) -> None:
@@ -121,21 +75,7 @@ def create_lsp_server() -> lsp_server.LanguageServer:
         partial_result_json = json.dumps(partial_result_dict)
         server.progress(types.ProgressParams(token=token, value=partial_result_json))
 
-    services.document_requester = document_requester
-    services.document_saver = document_saver
     run_action_service.set_partial_result_sender(send_partial_result)
-
-    async def get_project_raw_config():
-        try:
-            raw_config = await server.protocol.send_request_async(
-                "projects/getRawConfig", params={}
-            )
-        except pygls_exceptions.JsonRpcInternalError as error:
-            raise error
-
-        return json.loads(raw_config.config)
-
-    project_info_provider.project_raw_config_getter = get_project_raw_config
 
     return server
 
@@ -161,6 +101,68 @@ def _document_did_close(
 ):
     logger.info(f"document did close: {params.text_document.uri}")
     services.document_did_close(params.text_document.uri)
+
+
+async def document_requester(server: lsp_server.LanguageServer, uri: str):
+    try:
+        document = await server.protocol.send_request_async(
+            "documents/get", params={"uri": uri}
+        )
+    except pygls_exceptions.JsonRpcInternalError as error:
+        if error.message == "Exception: Document is not opened":
+            raise domain.TextDocumentNotOpened()
+        else:
+            raise error
+
+    return domain.TextDocumentInfo(
+        uri=document.uri, version=document.version, text=document.text
+    )
+
+
+async def document_saver(server: lsp_server.LanguageServer, uri: str, content: str):
+    document = await server.protocol.send_request_async(
+        "documents/get", params={"uri": uri}
+    )
+    document_lines = document.text.split("\n")
+    params = types.ApplyWorkspaceEditParams(
+        edit=types.WorkspaceEdit(
+            # dict seems to be incorrectly unstructured on client(pygls issue?)
+            # use document_changes instead of changes
+            document_changes=[
+                types.TextDocumentEdit(
+                    text_document=types.OptionalVersionedTextDocumentIdentifier(
+                        uri=uri
+                    ),
+                    edits=[
+                        types.TextEdit(
+                            range=types.Range(
+                                start=types.Position(line=0, character=0),
+                                end=types.Position(
+                                    line=len(document_lines),
+                                    character=len(document_lines[-1]),
+                                ),
+                            ),
+                            new_text=content,
+                        )
+                    ],
+                )
+            ]
+        )
+    )
+    await server.workspace_apply_edit_async(params)
+
+
+async def get_project_raw_config(
+    server: lsp_server.LanguageServer, project_def_path: str
+) -> dict[str, typing.Any]:
+    try:
+        raw_config = await server.protocol.send_request_async(
+            "projects/getRawConfig", params={"projectDefPath": project_def_path}
+        )
+    except pygls_exceptions.JsonRpcInternalError as error:
+        raise error
+
+    return json.loads(raw_config.config)
 
 
 async def update_config(ls: lsp_server.LanguageServer, params):
@@ -193,7 +195,12 @@ async def update_config(ls: lsp_server.LanguageServer, params):
             },
             action_handler_configs=action_handler_configs,
         )
-        response = await services.update_config(request=request)
+        response = await services.update_config(
+            request=request,
+            document_requester=functools.partial(document_requester, ls),
+            document_saver=functools.partial(document_saver, ls),
+            project_raw_config_getter=functools.partial(get_project_raw_config, ls),
+        )
         return response.to_dict()
     except Exception as e:
         logger.exception(f"Update config error: {e}")
