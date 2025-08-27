@@ -3,7 +3,7 @@ import shutil
 
 from loguru import logger
 
-from finecode import context, domain, services
+from finecode import context, domain, proxy_utils, services
 from finecode.cli_app import run as run_cli
 from finecode.config import collect_actions, config_models, read_configs
 from finecode.runner import manager as runner_manager
@@ -84,7 +84,14 @@ async def prepare_envs(workdir_path: pathlib.Path, recreate: bool) -> None:
         # action payload can be kept empty because it will be filled in payload preprocessor
         action_payload: dict[str, str | bool] = {"recreate": recreate}
 
-        await run_cli.start_required_environments(actions_by_projects, ws_context)
+        try:
+            await proxy_utils.start_required_environments(
+                actions_by_projects, ws_context
+            )
+        except proxy_utils.StartingEnvironmentsFailed as exception:
+            raise PrepareEnvsFailed(
+                f"Failed to start environments for running 'prepare_runners': {exception.message}"
+            )
 
         try:
             (result_output, result_return_code) = (

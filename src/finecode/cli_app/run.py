@@ -6,7 +6,7 @@ import click
 import ordered_set
 from loguru import logger
 
-from finecode import context, domain, services
+from finecode import context, domain, proxy_utils, services
 from finecode.config import collect_actions, config_models, read_configs
 from finecode.runner import manager as runner_manager
 from finecode.runner import runner_info
@@ -15,66 +15,6 @@ from finecode.runner import runner_info
 class RunFailed(Exception):
     def __init__(self, message: str) -> None:
         self.message = message
-
-
-async def start_required_environments(
-    actions_by_projects: dict[pathlib.Path, list[str]],
-    ws_context: context.WorkspaceContext,
-    update_config_in_running_runners: bool = False,
-) -> None:
-    """Collect all required envs from actions that will be run and start them."""
-    required_envs_by_project: dict[pathlib.Path, set[str]] = {}
-    for project_dir_path, action_names in actions_by_projects.items():
-        project = ws_context.ws_projects[project_dir_path]
-        if project.actions is not None:
-            project_required_envs = set()
-            for action_name in action_names:
-                # find the action and collect envs from its handlers
-                action = next(
-                    (a for a in project.actions if a.name == action_name), None
-                )
-                if action is not None:
-                    for handler in action.handlers:
-                        project_required_envs.add(handler.env)
-            required_envs_by_project[project_dir_path] = project_required_envs
-
-    # start runners for required environments that aren't already running
-    for project_dir_path, required_envs in required_envs_by_project.items():
-        project = ws_context.ws_projects[project_dir_path]
-        existing_runners = ws_context.ws_projects_extension_runners.get(
-            project_dir_path, {}
-        )
-
-        for env_name in required_envs:
-            runner_exist = env_name in existing_runners
-            start_runner = True
-            if runner_exist:
-                runner_is_running = (
-                    existing_runners[env_name].status
-                    == runner_info.RunnerStatus.RUNNING
-                )
-                start_runner = not runner_is_running
-
-            if start_runner:
-                try:
-                    runner = await runner_manager.start_runner(
-                        project_def=project, env_name=env_name, ws_context=ws_context
-                    )
-                except Exception as e:
-                    logger.warning(
-                        f"Failed to start runner for env '{env_name}' in project '{project.name}': {e}"
-                    )
-                    # TODO: raise error
-            else:
-                if update_config_in_running_runners:
-                    runner = existing_runners[env_name]
-                    logger.trace(
-                        f"Runner {runner.working_dir_path} {runner.env_name} is running already, update config"
-                    )
-                    # TODO: handle errors
-                    await runner_manager.update_runner_config(
-                        runner=runner, project=project
-                    )
 
 
 async def run_actions(
@@ -217,9 +157,14 @@ async def run_actions(
             # actions will be run in all projects inside
             actions_by_projects = find_projects_with_actions(ws_context, actions)
 
-        await start_required_environments(
-            actions_by_projects, ws_context, update_config_in_running_runners=True
-        )
+        try:
+            await proxy_utils.start_required_environments(
+                actions_by_projects, ws_context, update_config_in_running_runners=True
+            )
+        except proxy_utils.StartingEnvironmentsFailed as exception:
+            raise RunFailed(
+                f"Failed to start environments for running actions: {exception.message}"
+            )
 
         return await run_actions_in_all_projects(
             actions_by_projects, action_payload, ws_context, concurrently

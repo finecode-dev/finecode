@@ -10,6 +10,7 @@ from loguru import logger
 from finecode import context, domain, find_project, services
 from finecode.runner import manager as runner_manager
 from finecode.runner import runner_client, runner_info
+from finecode.runner.manager import RunnerFailedToStart
 from finecode.services import ActionRunFailed
 
 
@@ -259,10 +260,81 @@ def find_all_projects_with_action(
     return relevant_projects_paths
 
 
+class StartingEnvironmentsFailed(Exception):
+    def __init__(self, message: str) -> None:
+        self.message = message
+
+
+async def start_required_environments(
+    actions_by_projects: dict[pathlib.Path, list[str]],
+    ws_context: context.WorkspaceContext,
+    update_config_in_running_runners: bool = False,
+) -> None:
+    """Collect all required envs from actions that will be run and start them."""
+    required_envs_by_project: dict[pathlib.Path, set[str]] = {}
+    for project_dir_path, action_names in actions_by_projects.items():
+        project = ws_context.ws_projects[project_dir_path]
+        if project.actions is not None:
+            project_required_envs = set()
+            for action_name in action_names:
+                # find the action and collect envs from its handlers
+                action = next(
+                    (a for a in project.actions if a.name == action_name), None
+                )
+                if action is not None:
+                    for handler in action.handlers:
+                        project_required_envs.add(handler.env)
+            required_envs_by_project[project_dir_path] = project_required_envs
+
+    # start runners for required environments that aren't already running
+    for project_dir_path, required_envs in required_envs_by_project.items():
+        project = ws_context.ws_projects[project_dir_path]
+        existing_runners = ws_context.ws_projects_extension_runners.get(
+            project_dir_path, {}
+        )
+
+        for env_name in required_envs:
+            runner_exist = env_name in existing_runners
+            start_runner = True
+            if runner_exist:
+                runner_is_running = (
+                    existing_runners[env_name].status
+                    == runner_info.RunnerStatus.RUNNING
+                )
+                start_runner = not runner_is_running
+
+            if start_runner:
+                try:
+                    runner = await runner_manager.start_runner(
+                        project_def=project, env_name=env_name, ws_context=ws_context
+                    )
+                except runner_manager.RunnerFailedToStart as e:
+                    raise StartingEnvironmentsFailed(
+                        f"Failed to start runner for env '{env_name}' in project '{project.name}': {e}"
+                    )
+            else:
+                if update_config_in_running_runners:
+                    runner = existing_runners[env_name]
+                    logger.trace(
+                        f"Runner {runner.working_dir_path} {runner.env_name} is running already, update config"
+                    )
+
+                    try:
+                        await runner_manager.update_runner_config(
+                            runner=runner, project=project
+                        )
+                    except RunnerFailedToStart as exception:
+                        raise StartingEnvironmentsFailed(
+                            f"Failed to update config of runner {runner.working_dir_path} {runner.env_name}"
+                        )
+
+
 __all__ = [
     "find_action_project_and_run",
     "find_action_project_and_run_with_partial_results",
     "run_with_partial_results",
     # reexport for easier use of proxy helpers
     "ActionRunFailed",
+    "start_required_environments",
+    "StartingEnvironmentsFailed",
 ]
