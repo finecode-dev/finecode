@@ -45,7 +45,7 @@ jobs:
           python -m pip install --upgrade pip==25.1.1
           python -m pip install --group="dev_workspace"
 
-          python -m finecode prepare_envs
+          python -m finecode prepare-envs
         shell: bash
 
       # TODO: install all other supported python versions. Version can be extracted from finecode
