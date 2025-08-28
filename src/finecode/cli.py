@@ -1,6 +1,8 @@
 import asyncio
+import json
 import os
 import pathlib
+import typing
 import sys
 
 import click
@@ -84,6 +86,20 @@ async def show_user_message(message: str, message_type: str) -> None:
     ...
 
 
+def deserialize_action_payload(raw_payload: dict[str, str]) -> dict[str, typing.Any]:
+    deserialized_payload = {}
+    for key, value in raw_payload.items():
+        if value.startswith('{') and value.endswith('}'):
+            try:
+                deserialized_value = json.loads(value)
+            except json.JSONDecodeError:
+                deserialized_value = value
+        else:
+            deserialized_value = value
+        deserialized_payload[key] = deserialized_value
+    return deserialized_payload
+
+
 @cli.command(context_settings=dict(ignore_unknown_options=True, allow_extra_args=True))
 @click.pass_context
 def run(ctx) -> None:
@@ -135,7 +151,7 @@ def run(ctx) -> None:
         sys.exit(1)
 
     # action payload
-    action_payload: dict[str, str] = {}
+    action_payload: dict[str, typing.Any] = {}
     for arg in args[processed_args_count:]:
         if not arg.startswith("--"):
             click.echo(
@@ -152,15 +168,17 @@ def run(ctx) -> None:
                 sys.exit(1)
             else:
                 arg_name, arg_value = arg[2:].split("=")
-                action_payload[arg_name] = arg_value
+                arg_name = arg_name.replace('-', '_')
+                action_payload[arg_name] = arg_value.strip('"').strip("'")
         processed_args_count += 1
 
     user_messages._notification_sender = show_user_message
 
+    deserialized_payload= deserialize_action_payload(action_payload)
     try:
         output, return_code = asyncio.run(
             run_cmd.run_actions(
-                workdir_path, projects, actions_to_run, action_payload, concurrently
+                workdir_path, projects, actions_to_run, deserialized_payload, concurrently
             )
         )
         click.echo(output)
