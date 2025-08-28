@@ -1,0 +1,25 @@
+syntax = "proto3";
+
+package finecode_extension_runner;
+
+message UpdateConfigRequest {
+    string working_dir = 1;
+    map<string, string> config = 2;
+}
+
+message UpdateConfigResponse {
+}
+
+message RunActionRequest {
+    string action_name = 1;
+    string apply_on = 2;
+}
+
+message RunActionResponse {
+    string result_text = 1;
+}
+
+service ExtensionRunnerService {
+    rpc UpdateConfig(UpdateConfigRequest) returns (UpdateConfigResponse);
+    rpc RunAction(RunActionRequest) returns (RunActionResponse);
+}

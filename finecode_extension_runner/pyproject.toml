@@ -1,0 +1,54 @@
+[project]
+name = "finecode_extension_runner"
+dynamic = ["version"]
+description = "Extension runner component for FineCode"
+authors = [{ name = "Vladyslav Hnatiuk", email = "aders1234@gmail.com" }]
+readme = "README.md"
+requires-python = ">=3.11, < 3.14"
+dependencies = [
+    "loguru==0.7.*",
+    "tomlkit==0.11.*",
+    "click==8.1.*",
+    "pydantic==2.10.*",
+    "platformdirs==4.3.*",
+    "pygls==2.0.0-a2",
+    "finecode_extension_api==0.3.*",
+    "deepmerge==2.0.*",
+]
+
+[dependency-groups]
+dev_workspace = ["build==1.2.2.post1", "finecode==0.3.0"]
+dev = [{ include-group = "runtime" }, "pytest==7.4.*", "debugpy==1.8.*"]
+dev_no_runtime = [
+    "finecode_dev_common_preset==0.2.*",
+    # file_python_import_linter is temporary disabled, because it isn't ported to the new finecode_extension_api yet
+    # "fine_python_import_linter @ git+https://github.com/finecode-dev/finecode.git#subdirectory=extensions/fine_python_import_linter",
+]
+
+[tool.finecode.env.dev_no_runtime.dependencies]
+finecode_dev_common_preset = { path = "../finecode_dev_common_preset", editable = true }
+
+[build-system]
+requires = ["setuptools>=64", "setuptools-scm>=8"]
+build-backend = "setuptools.build_meta"
+
+[tool.finecode]
+presets = [{ source = "finecode_dev_common_preset" }]
+
+[tool.importlinter]
+root_package = "finecode_extension_runner"
+include_external_packages = true
+
+[[tool.importlinter.contracts]]
+id = "er-layered"
+name = "ER layered architecture"
+type = "layers"
+layers = [
+    "finecode_extension_runner.lsp_server",
+    "finecode_extension_runner.services",
+    "finecode_extension_runner.domain",
+]
+
+[tool.setuptools_scm]
+version_file = "src/finecode_extension_runner/_version.py"
+root = ".."

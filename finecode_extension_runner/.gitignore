@@ -1,0 +1,13 @@
+__pycache__
+.coverage
+.pytest_cache
+.mypy_cache
+.import_linter_cache
+dist
+
+src/finecode_extension_runner/_version.py
+src/*.egg-info
+
+.venvs
+finecode_config_dump/
+build/

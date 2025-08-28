@@ -1,0 +1,55 @@
+import dataclasses
+
+import virtualenv
+
+from finecode_extension_api import code_action
+from finecode_extension_api.actions import prepare_runners as prepare_runners_action
+from finecode_extension_api.interfaces import ifilemanager, ilogger
+
+
+@dataclasses.dataclass
+class VirtualenvPrepareRunnersHandlerConfig(code_action.ActionHandlerConfig): ...
+
+
+class VirtualenvPrepareRunnersHandler(
+    code_action.ActionHandler[
+        prepare_runners_action.PrepareRunnersAction,
+        VirtualenvPrepareRunnersHandlerConfig,
+    ]
+):
+    def __init__(
+        self,
+        config: VirtualenvPrepareRunnersHandlerConfig,
+        logger: ilogger.ILogger,
+        file_manager: ifilemanager.IFileManager,
+    ) -> None:
+        self.config = config
+        self.logger = logger
+        self.file_manager = file_manager
+
+    async def run(
+        self,
+        payload: prepare_runners_action.PrepareRunnersRunPayload,
+        run_context: prepare_runners_action.PrepareRunnersRunContext,
+    ) -> prepare_runners_action.PrepareRunnersRunResult:
+        # create virtual envs
+
+        # would it be faster parallel?
+        for env_info in payload.envs:
+            if payload.recreate and env_info.venv_dir_path.exists():
+                self.logger.debug(f"Remove virtualenv dir {env_info.venv_dir_path}")
+                await self.file_manager.remove_dir(env_info.venv_dir_path)
+
+            self.logger.info(f"Creating virtualenv {env_info.venv_dir_path}")
+            if not env_info.venv_dir_path.exists():
+                # TODO: '-p <identifier>'
+                virtualenv.cli_run(
+                    [env_info.venv_dir_path.as_posix()],
+                    options=None,
+                    setup_logging=False,
+                    env=None,
+                )
+            else:
+                self.logger.info(f"Virtualenv in {env_info} exists already")
+
+        return prepare_runners_action.PrepareRunnersRunResult(errors=[])

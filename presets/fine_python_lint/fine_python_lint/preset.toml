@@ -1,13 +1,19 @@
 [tool.finecode.action.lint]
 source = "finecode_extension_api.actions.lint.LintAction"
 handlers = [
-    { name = "flake8", source = "fine_python_flake8.Flake8LintHandler" },
-    { name = "mypy", source = "fine_python_mypy.MypyLintHandler" },
+    { name = "flake8", source = "fine_python_flake8.Flake8LintHandler", env = "dev_no_runtime", dependencies = [
+        "fine_python_flake8==0.2.*",
+        "flake8-bugbear (>=24.12.12,<25.0.0)",
+    ] },
+    { name = "mypy", source = "fine_python_mypy.MypyLintHandler", env = "dev_no_runtime", dependencies = [
+        "fine_python_mypy==0.2.*",
+    ] },
 ]
 
-[tool.finecode.action_handler.flake8.config]
-max_line_length = 80
-extend_select = ["B950"]
+[[tool.finecode.action_handler]]
+source = "fine_python_flake8.Flake8LintHandler"
+config.max_line_length = 80
+config.extend_select = ["B950"]
 # W391 is not compatible with black, because black adds an empty line to the end of the file
 # TODO: move in recommended config once config merging is implemented
-extend_ignore = ["E203", "E501", "E701", "W391"]
+config.extend_ignore = ["E203", "E501", "E701", "W391"]

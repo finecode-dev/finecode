@@ -7,3 +7,7 @@ dist
 
 src/finecode/_version.py
 src/finecode.egg-info
+
+.venvs
+finecode_config_dump/
+build/

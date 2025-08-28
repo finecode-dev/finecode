@@ -1,22 +1,18 @@
 [project]
 name = "finecode-extension-api"
-version = "0.1.0"
+version = "0.3.0"
 description = ""
 authors = [{ name = "Vladyslav Hnatiuk", email = "aders1234@gmail.com" }]
 readme = "README.md"
 requires-python = ">=3.11, < 3.14"
-dependencies = [
-    "pydantic (>=2.10.6,<3.0.0)",
-    "typing-extensions (>=4.12.2,<5.0.0)",
-]
+dependencies = ["typing-extensions (>=4.12.2,<5.0.0)"]
 
-[build-system]
-requires = ["poetry-core>=2.0.0,<3.0.0"]
-build-backend = "poetry.core.masonry.api"
-
-[tool.poetry.group.dev.dependencies]
-finecode = { git = "https://github.com/finecode-dev/finecode.git" }
-finecode_dev_common_preset = { path = "../finecode_dev_common_preset", develop = true }
+[dependency-groups]
+dev_workspace = ["finecode==0.3.0"]
+dev_no_runtime = ["finecode_dev_common_preset==0.2.*"]
 
 [tool.finecode]
 presets = [{ source = "finecode_dev_common_preset" }]
+
+[tool.finecode.env.dev_no_runtime.dependencies]
+finecode_dev_common_preset = { path = "../finecode_dev_common_preset", editable = true }

@@ -1,7 +1,5 @@
 # FineCode
 
-**Status Update (04.06.2025):** FineCode is available for use, but the current version is intended only for personal testing, not for production use, as we actively work on improving execution environments, which will undergo significant changes. Initial release with new execution environments is expected in July 2025.
-
 ## Personalize and improve your development experience
 
 FineCode is a tool runner and set of utilities for creating tools for software developers.
@@ -23,7 +21,7 @@ With FineCode you can:
   dev_workspace = ["finecode==0.2.*"]
   ```
 
-1.1.2 Create dev_workspace venv: `python -m venv .venvs/dev_workspace` (https://docs.python.org/3/library/venv.html#creating-virtual-environments )
+1.1.2 Create dev_workspace venv: `python -m venv .venvs/dev_workspace` ([Python Docs](https://docs.python.org/3/library/venv.html#creating-virtual-environments ))
 
 1.1.3 Activate this venv and install dependencies from `dev_workspace` group:
   ```
@@ -45,10 +43,10 @@ NOTE: `pip install` supports `--group` parameter since pip 25.1. Make sure you h
 
 For list of presets from FineCode authors see 'Presets' section below.
 
-1.2.1 Run `prepare_env` finecode action:
+1.2.1 Run `prepare-envs` finecode command:
 
   ```bash
-  python -m finecode run prepare_env
+  python -m finecode prepare-envs
   ```
 
 1.3 Enable finecode and preset

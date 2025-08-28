@@ -4,5 +4,12 @@ presets = [
     { source = "fine_python_aksem" },
 ]
 
-[tool.finecode.action_handler.black.config]
-preview = true
+[[tool.finecode.action_handler]]
+source = "fine_python_black.BlackFormatHandler"
+config.preview = true
+
+# currently, all packages in finecode repository are pure python packages, reuse
+# setuptools build in all of them
+[build-system]
+requires = ["setuptools>=64", "setuptools-scm>=8"]
+build-backend = "setuptools.build_meta"

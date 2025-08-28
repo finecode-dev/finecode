@@ -1,0 +1,11 @@
+__pycache__
+.coverage
+.pytest_cache
+.mypy_cache
+dist
+
+src/*.egg-info
+
+.venvs
+finecode_config_dump/
+build/

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import dataclasses
 import sys
 
 # import asyncio
@@ -41,6 +42,7 @@ def get_black_mode(config: BlackFormatHandlerConfig) -> Mode:
     )
 
 
+@dataclasses.dataclass
 class BlackFormatHandlerConfig(code_action.ActionHandlerConfig):
     # TODO: should be set
     target_versions: list[
@@ -48,7 +50,7 @@ class BlackFormatHandlerConfig(code_action.ActionHandlerConfig):
         # Literal["PY33", "PY34", "PY35", "PY36", "PY37",
         # "PY38", "PY39", "PY310", "PY311", "PY312"]
         str
-    ] = []
+    ] = dataclasses.field(default_factory=list)
     # default black line length is 88:
     # https://black.readthedocs.io/en/stable/the_black_code_style/current_style.html#line-length
     line_length: int = 88

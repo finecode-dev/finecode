@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import ast
+import dataclasses
 import operator
 from pathlib import Path
 
@@ -106,6 +107,7 @@ def run_flake8_on_single_file(
     return lint_messages
 
 
+@dataclasses.dataclass
 class Flake8LintHandlerConfig(code_action.ActionHandlerConfig):
     max_line_length: int = 79
     extend_select: list[str] | None = None

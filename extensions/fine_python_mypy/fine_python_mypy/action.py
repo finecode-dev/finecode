@@ -1,6 +1,7 @@
 # TODO: what to do with file manager? Mypy would need ability to check module text,
 # not only module file
 import asyncio
+import dataclasses
 import hashlib
 import sys
 from pathlib import Path
@@ -20,6 +21,7 @@ from finecode_extension_api.interfaces import (
 class DmypyFailedError(Exception): ...
 
 
+@dataclasses.dataclass
 class MypyManyCodeActionConfig(code_action.ActionHandlerConfig): ...
 
 
@@ -239,7 +241,7 @@ class MypyLintHandler(
         self.logger.debug(f"run dmypy in {cwd}")
         status_file_path = self._get_status_file_path(dmypy_cwd=cwd)
         runner_python_executable = sys.executable
-        file_paths_str = " ".join([f"'{str(file_path)}'" for file_path in file_paths])
+        file_paths_strs = [str(file_path) for file_path in file_paths]
         cmd_parts = [
             f"{runner_python_executable}",
             "-m",
@@ -248,7 +250,7 @@ class MypyLintHandler(
             "run",
             "--",
             *self.DMYPY_ARGS,
-            f"{file_paths_str}",
+            *file_paths_strs,
         ]
         cmd = " ".join(cmd_parts)
         dmypy_run_process = await self.command_runner.run(

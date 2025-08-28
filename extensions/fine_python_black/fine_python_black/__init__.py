@@ -1,7 +1,4 @@
-from .action import (
-    BlackFormatHandler,
-    BlackFormatHandlerConfig,
-)
+from .action import BlackFormatHandler, BlackFormatHandlerConfig
 
 __all__ = [
     "BlackFormatHandler",

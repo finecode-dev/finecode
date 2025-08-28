@@ -1,0 +1,86 @@
+[tool.finecode.action.prepare_envs]
+source = "finecode_extension_api.actions.prepare_envs.PrepareEnvsAction"
+
+[[tool.finecode.action.prepare_envs.handlers]]
+name = "prepare_envs_dump_configs"
+source = "finecode_extension_runner.action_handlers.PrepareEnvsReadConfigsHandler"
+env = "dev_workspace"
+
+
+[[tool.finecode.action.prepare_envs.handlers]]
+name = "prepare_envs_install_deps"
+source = "finecode_extension_runner.action_handlers.PrepareEnvsInstallDepsHandler"
+env = "dev_workspace"
+
+
+# preparing dev workspaces doesn't need dumping config for two reasons:
+# - dependencies in `dev_workspace` are expected to be simple and installable
+#   without dump
+# - dumping is modifiable as action, so it can be correctly done only in
+#   dev_workspace env of the project and we just create it here, it doesn't
+#   exist yet
+[tool.finecode.action.prepare_dev_workspaces_envs]
+source = "finecode_extension_api.actions.prepare_envs.PrepareEnvsAction"
+
+[[tool.finecode.action.prepare_dev_workspaces_envs.handlers]]
+name = "prepare_venvs"
+source = "fine_python_virtualenv.VirtualenvPrepareEnvHandler"
+env = "dev_workspace"
+dependencies = ["fine_python_virtualenv==0.1.*"]
+
+[[tool.finecode.action.prepare_dev_workspaces_envs.handlers]]
+name = "prepare_envs_read_configs"
+source = "finecode_extension_runner.action_handlers.PrepareEnvsReadConfigsHandler"
+env = "dev_workspace"
+
+
+[[tool.finecode.action.prepare_dev_workspaces_envs.handlers]]
+name = "prepare_envs_install_deps"
+source = "finecode_extension_runner.action_handlers.PrepareEnvsInstallDepsHandler"
+env = "dev_workspace"
+
+
+[tool.finecode.action.prepare_runners]
+source = "finecode_extension_api.actions.prepare_runners.PrepareRunnersAction"
+
+[[tool.finecode.action.prepare_runners.handlers]]
+name = "prepare_runners_venvs"
+source = "fine_python_virtualenv.VirtualenvPrepareRunnersHandler"
+env = "dev_workspace"
+dependencies = ["fine_python_virtualenv==0.1.*"]
+
+[[tool.finecode.action.prepare_runners.handlers]]
+name = "prepare_runners_read_configs"
+source = "finecode_extension_runner.action_handlers.PrepareRunnersReadConfigsHandler"
+env = "dev_workspace"
+
+
+[[tool.finecode.action.prepare_runners.handlers]]
+name = "prepare_runners_install_runner_and_presets"
+source = "finecode_extension_runner.action_handlers.PrepareRunnersInstallRunnerAndPresetsHandler"
+env = "dev_workspace"
+
+
+[tool.finecode.action.dump_config]
+source = "finecode_extension_api.actions.dump_config.DumpConfigAction"
+
+[[tool.finecode.action.dump_config.handlers]]
+name = "dump_config"
+source = "finecode_extension_runner.action_handlers.DumpConfigHandler"
+env = "dev_workspace"
+
+
+[[tool.finecode.action.dump_config.handlers]]
+name = "dump_config_save"
+source = "finecode_extension_runner.action_handlers.DumpConfigSaveHandler"
+env = "dev_workspace"
+
+
+[tool.finecode.action.install_deps_in_env]
+source = "finecode_extension_api.actions.install_deps_in_env.InstallDepsInEnvAction"
+
+[[tool.finecode.action.install_deps_in_env.handlers]]
+name = "install_deps_with_pip"
+source = "fine_python_pip.PipInstallDepsInEnvHandler"
+env = "dev_workspace"
+dependencies = ["fine_python_pip==0.1.*"]

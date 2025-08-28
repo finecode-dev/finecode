@@ -1,0 +1,4 @@
+.venvs/
+*.egg-info
+build/
+finecode_config_dump/

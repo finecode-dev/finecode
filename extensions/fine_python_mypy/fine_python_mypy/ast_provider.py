@@ -1,13 +1,13 @@
 # import time
 from pathlib import Path
 
-import mypy.nodes as mypy_nodes
 import mypy.build as mypy_build
 import mypy.modulefinder as modulefinder
+import mypy.nodes as mypy_nodes
 import mypy.options as mypy_options
-from finecode_extension_api.interfaces import ifilemanager, icache, ilogger
-
 from fine_python_mypy import iast_provider
+
+from finecode_extension_api.interfaces import icache, ifilemanager, ilogger
 
 
 class MypySingleAstProvider(iast_provider.IMypySingleAstProvider):
