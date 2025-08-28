@@ -1,13 +1,13 @@
 [project]
 name = "fine-python-flake8"
-version = "0.1.0"
+version = "0.2.0"
 description = ""
 authors = [{ name = "Vladyslav Hnatiuk", email = "aders1234@gmail.com" }]
 readme = "README.md"
 requires-python = ">=3.11, < 3.14"
 dependencies = [
-    "finecode_extension_api==0.1.*",
-    "fine_python_ast==0.1.*",
+    "finecode_extension_api==0.3.*",
+    "fine_python_ast==0.2.*",
     "types-flake8 (>=7.1.0.20241020,<8.0.0.0)",
     "flake8 (>=7.1.2,<8.0.0)",
 ]
