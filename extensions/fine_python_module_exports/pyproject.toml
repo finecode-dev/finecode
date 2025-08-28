@@ -1,8 +1,8 @@
 [project]
 name = "fine-python-module-exports"
-version = "0.1.1"
+version = "0.2.0"
 description = ""
 authors = [{ name = "Vladyslav Hnatiuk", email = "aders1234@gmail.com" }]
 readme = "README.md"
 requires-python = ">= 3.11, < 3.14"
-dependencies = ["finecode_extension_api==0.1.3", "fine_python_ast==0.1.1"]
+dependencies = ["finecode_extension_api==0.3.*", "fine_python_ast==0.2.*"]
