@@ -9,7 +9,7 @@ dependencies = ["typing-extensions (>=4.12.2,<5.0.0)"]
 
 [dependency-groups]
 dev_workspace = ["finecode==0.3.0"]
-dev_no_runtime = ["finecode_dev_common_preset==0.1.*"]
+dev_no_runtime = ["finecode_dev_common_preset==0.2.*"]
 
 [tool.finecode]
 presets = [{ source = "finecode_dev_common_preset" }]

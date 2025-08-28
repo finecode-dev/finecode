@@ -26,7 +26,7 @@ source = "finecode_extension_api.actions.prepare_envs.PrepareEnvsAction"
 name = "prepare_venvs"
 source = "fine_python_virtualenv.VirtualenvPrepareEnvHandler"
 env = "dev_workspace"
-dependencies = ["fine_python_virtualenv==0.1.3"]
+dependencies = ["fine_python_virtualenv==0.1.*"]
 
 [[tool.finecode.action.prepare_dev_workspaces_envs.handlers]]
 name = "prepare_envs_read_configs"
@@ -47,7 +47,7 @@ source = "finecode_extension_api.actions.prepare_runners.PrepareRunnersAction"
 name = "prepare_runners_venvs"
 source = "fine_python_virtualenv.VirtualenvPrepareRunnersHandler"
 env = "dev_workspace"
-dependencies = ["fine_python_virtualenv==0.1.3"]
+dependencies = ["fine_python_virtualenv==0.1.*"]
 
 [[tool.finecode.action.prepare_runners.handlers]]
 name = "prepare_runners_read_configs"
@@ -83,4 +83,4 @@ source = "finecode_extension_api.actions.install_deps_in_env.InstallDepsInEnvAct
 name = "install_deps_with_pip"
 source = "fine_python_pip.PipInstallDepsInEnvHandler"
 env = "dev_workspace"
-dependencies = ["fine_python_pip==0.1.2"]
+dependencies = ["fine_python_pip==0.1.*"]
