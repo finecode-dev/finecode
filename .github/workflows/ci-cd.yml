@@ -43,7 +43,7 @@ jobs:
           python -m venv .venvs/dev_workspace
           source .venvs/dev_workspace/bin/activate
           python -m pip install --upgrade pip==25.1.1
-          python -m pip install --group="dev_workspace"
+          python -m pip install --group="dev_workspace" -e ./finecode_extension_runner/ -e .
 
           python -m finecode prepare-envs
         shell: bash
