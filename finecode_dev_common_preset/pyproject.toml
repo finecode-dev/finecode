@@ -1,5 +1,5 @@
 [project]
-name = "finecode-dev-common-preset"
+name = "finecode_dev_common_preset"
 version = "0.2.0"
 description = ""
 authors = [{ name = "Vladyslav Hnatiuk", email = "aders1234@gmail.com" }]

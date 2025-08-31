@@ -31,7 +31,12 @@ jobs:
             name: Windows
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
+        with:
+          # setuptools-scm uses tags to get the current version, fetch history and tags
+          # to get correct version
+          fetch-depth: 0
+          fetch-tags: 'true'
 
       - name: Set up Python ${{ env.DEV_WORKSPACE_PYTHON_VERSION }}
         uses: actions/setup-python@v5
@@ -43,7 +48,12 @@ jobs:
           python -m venv .venvs/dev_workspace
           source .venvs/dev_workspace/bin/activate
           python -m pip install --upgrade pip==25.1.1
-          python -m pip install --group="dev_workspace"
+
+          # split installation into 2 steps: first internal preset because it is not
+          # published as pypi package, so pip will fail to resolve it in dev_workspace
+          # group and only then other dependencies
+          python -m pip install -e ./finecode_dev_common_preset
+          python -m pip install --group="dev_workspace" -e . -e ./finecode_extension_runner
 
           python -m finecode prepare-envs
         shell: bash

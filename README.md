@@ -18,7 +18,7 @@ With FineCode you can:
 
   ```toml
   [dependency-groups]
-  dev_workspace = ["finecode==0.2.*"]
+  dev_workspace = ["finecode==0.3.*"]
   ```
 
 1.1.2 Create dev_workspace venv: `python -m venv .venvs/dev_workspace` ([Python Docs](https://docs.python.org/3/library/venv.html#creating-virtual-environments ))
@@ -33,12 +33,11 @@ NOTE: `pip install` supports `--group` parameter since pip 25.1. Make sure you h
 
 1.2 Using existing preset
 
-1.2.1 Add `dev_no_runtime` dependency group and put `fine_python_recommended` dependency in it:
+1.2.1 Put `fine_python_recommended` dependency in `dev_workspace` dependency group:
 
   ```toml
   [dependency-groups]
-  dev_workspace = ["finecode==0.2.*"]
-  dev_no_runtime = ["fine_python_recommended==0.1.*"]
+  dev_workspace = ["finecode==0.3.*", "fine_python_recommended==0.2.*"]
   ```
 
 For list of presets from FineCode authors see 'Presets' section below.

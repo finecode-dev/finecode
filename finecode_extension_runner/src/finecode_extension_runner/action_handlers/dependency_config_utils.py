@@ -41,6 +41,7 @@ def make_env_deps_pip_compatible(
             # check all dependencies because it can be duplicated: e.g. as explicit
             # dependency and as dependency of action handler.
             dep_indexes_in_group: list[int] = []
+            configured_dep_found_in_dep_group = False
             for idx, dep in enumerate(env_deps_group):
                 if isinstance(dep, dict):
                     if "include-group" in dep:
@@ -53,9 +54,7 @@ def make_env_deps_pip_compatible(
                 elif isinstance(dep, str):
                     if get_dependency_name(dep) == dep_name:
                         dep_indexes_in_group.append(idx)
-
-            if len(dep_indexes_in_group) == 0:
-                continue
+                        configured_dep_found_in_dep_group = True
 
             resolved_path_to_dep = pathlib.Path(dep_params["path"])
             if not resolved_path_to_dep.is_absolute():
@@ -66,6 +65,12 @@ def make_env_deps_pip_compatible(
             )
             for idx in dep_indexes_in_group:
                 env_deps_group[idx] = new_dep_str_in_group
+
+            if not configured_dep_found_in_dep_group:
+                # if dependency has configuration, but was not found in dependency
+                # group of environment, still add it, because it can be deeper in the
+                # dependency tree and user wants to overwrite it
+                env_deps_group.append(new_dep_str_in_group)
 
 
 def get_dependency_name(dependency_str: str) -> str:

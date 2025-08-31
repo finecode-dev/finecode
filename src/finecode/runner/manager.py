@@ -242,13 +242,13 @@ async def update_runners(ws_context: context.WorkspaceContext) -> None:
                 project_status = project.status
                 if (
                     ws_context.ws_projects_extension_runners.get(new_dir, {}).get(
-                        "dev_no_runtime", None
+                        "dev_workspace", None
                     )
                     is not None
                 ):
-                    # start only if dev_no_runtime started successfully
+                    # start only if dev_workspace started successfully
                     for env in project.envs:
-                        if env == "dev_no_runtime":
+                        if env == "dev_workspace":
                             # this env has already started above
                             continue
 
@@ -300,14 +300,14 @@ async def start_runners_with_presets(
 ) -> None:
     new_runners_tasks: list[asyncio.Task] = []
     try:
-        # first start runner in 'dev_no_runtime' env to be able to resolve presets for
-        # other envs (presets can be currently only in `dev_no_runtime` env)
+        # first start runner in 'dev_workspace' env to be able to resolve presets for
+        # other envs (presets can be currently only in `dev_workspace` env)
         async with asyncio.TaskGroup() as tg:
             for project in projects:
                 project_status = project.status
                 if project_status == domain.ProjectStatus.CONFIG_VALID:
                     task = tg.create_task(
-                        _start_dev_no_runtime_runner(
+                        _start_dev_workspace_runner(
                             project_def=project, ws_context=ws_context
                         )
                     )
@@ -375,11 +375,11 @@ async def start_runner(
     return runner
 
 
-async def _start_dev_no_runtime_runner(
+async def _start_dev_workspace_runner(
     project_def: domain.Project, ws_context: context.WorkspaceContext
 ) -> runner_info.ExtensionRunnerInfo:
     return await start_runner(
-        project_def=project_def, env_name="dev_no_runtime", ws_context=ws_context
+        project_def=project_def, env_name="dev_workspace", ws_context=ws_context
     )
 
 

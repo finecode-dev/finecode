@@ -9,7 +9,7 @@ dependencies = [
     "loguru==0.7.*",
     "tomlkit==0.11.*",
     "click==8.1.*",
-    "pydantic==2.10.*",
+    "pydantic==2.11.*",
     "platformdirs==4.3.*",
     "pygls==2.0.0-a2",
     "finecode_extension_api==0.3.*",
@@ -17,16 +17,19 @@ dependencies = [
 ]
 
 [dependency-groups]
-dev_workspace = ["build==1.2.2.post1", "finecode==0.3.0"]
-dev = [{ include-group = "runtime" }, "pytest==7.4.*", "debugpy==1.8.*"]
-dev_no_runtime = [
+# file_python_import_linter is temporary disabled, because it isn't ported to the new finecode_extension_api yet
+# "fine_python_import_linter @ git+https://github.com/finecode-dev/finecode.git#subdirectory=extensions/fine_python_import_linter"
+dev_workspace = [
+    "build==1.2.2.post1",
+    "finecode==0.3.*",
     "finecode_dev_common_preset==0.2.*",
-    # file_python_import_linter is temporary disabled, because it isn't ported to the new finecode_extension_api yet
-    # "fine_python_import_linter @ git+https://github.com/finecode-dev/finecode.git#subdirectory=extensions/fine_python_import_linter",
 ]
+dev = [{ include-group = "runtime" }, "pytest==7.4.*", "debugpy==1.8.*"]
 
-[tool.finecode.env.dev_no_runtime.dependencies]
+[tool.finecode.env.dev_workspace.dependencies]
 finecode_dev_common_preset = { path = "../finecode_dev_common_preset", editable = true }
+finecode = { path = "../", editable = true }
+finecode_extension_runner = { path = "../finecode_extension_runner", editable = true }
 
 [build-system]
 requires = ["setuptools>=64", "setuptools-scm>=8"]
