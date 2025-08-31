@@ -2,8 +2,8 @@ import asyncio
 import json
 import os
 import pathlib
-import typing
 import sys
+import typing
 
 import click
 from loguru import logger
@@ -89,7 +89,7 @@ async def show_user_message(message: str, message_type: str) -> None:
 def deserialize_action_payload(raw_payload: dict[str, str]) -> dict[str, typing.Any]:
     deserialized_payload = {}
     for key, value in raw_payload.items():
-        if value.startswith('{') and value.endswith('}'):
+        if value.startswith("{") and value.endswith("}"):
             try:
                 deserialized_value = json.loads(value)
             except json.JSONDecodeError:
@@ -168,17 +168,21 @@ def run(ctx) -> None:
                 sys.exit(1)
             else:
                 arg_name, arg_value = arg[2:].split("=")
-                arg_name = arg_name.replace('-', '_')
+                arg_name = arg_name.replace("-", "_")
                 action_payload[arg_name] = arg_value.strip('"').strip("'")
         processed_args_count += 1
 
     user_messages._notification_sender = show_user_message
 
-    deserialized_payload= deserialize_action_payload(action_payload)
+    deserialized_payload = deserialize_action_payload(action_payload)
     try:
         output, return_code = asyncio.run(
             run_cmd.run_actions(
-                workdir_path, projects, actions_to_run, deserialized_payload, concurrently
+                workdir_path,
+                projects,
+                actions_to_run,
+                deserialized_payload,
+                concurrently,
             )
         )
         click.echo(output)

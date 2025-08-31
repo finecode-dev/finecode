@@ -132,14 +132,14 @@ async def read_project_config(
             except config_models.ValidationError as exception:
                 raise config_models.ConfigurationError(str(exception))
 
-            # all presets expected to be in `dev_no_runtime` environment
+            # all presets expected to be in `dev_workspace` environment
             project_runners = ws_context.ws_projects_extension_runners[project.dir_path]
             # TODO: can it be the case that there is no such runner?
-            dev_no_runtime_runner = project_runners["dev_no_runtime"]
+            dev_workspace_runner = project_runners["dev_workspace"]
             new_config = await collect_config_from_py_presets(
                 presets_sources=[preset.source for preset in presets],
                 def_path=project.def_path,
-                runner=dev_no_runtime_runner,
+                runner=dev_workspace_runner,
             )
             if new_config is not None:
                 _merge_projects_configs(
@@ -269,9 +269,12 @@ async def collect_config_from_py_presets(
         preset_toml_path = preset_project_path / "preset.toml"
         preset_toml, preset_config = read_preset_config(preset_toml_path, preset.source)
         if config is None:
-            config = preset_toml
+            # use merge instead of just assigning config, because merge not only merges
+            # configs, but also adapts relative pathes etc.
+            config = {}
+            _merge_projects_configs(config, def_path, preset_toml, preset_toml_path)
         else:
-            _merge_projects_configs(config, def_path, preset_toml, preset_project_path)
+            _merge_projects_configs(config, def_path, preset_toml, preset_toml_path)
         new_presets_sources = (
             set([extend.source for extend in preset_config.extends]) - processed_presets
         )
@@ -430,22 +433,14 @@ def _merge_projects_configs(
                                     env_config1_deps[dependency_name] = dependency
                                 else:
                                     if "path" in dependency:
-                                        new_path = dependency["path"]
-                                        if new_path.startswith("."):
-                                            abs_path = (
-                                                config2_filepath.parent / new_path
-                                            )
-                                            new_rel_path = abs_path.relative_to(
-                                                config1_filepath.parent
-                                            )
-                                            new_path = new_rel_path.as_posix()
-                                        env_config1_deps[dependency_name][
-                                            "path"
-                                        ] = new_path
+                                        env_config1_deps[dependency_name]["path"] = (
+                                            dependency["path"]
+                                        )
                                     if "editable" in dependency:
                                         env_config1_deps[dependency_name][
                                             "editable"
                                         ] = dependency["editable"]
+
                     if "runner" in env_config2:
                         if "runner" not in env_config1:
                             env_config1["runner"] = {}
@@ -454,6 +449,29 @@ def _merge_projects_configs(
 
                         if "debug" in env_config2_runner:
                             env_config1_runner["debug"] = env_config2_runner["debug"]
+
+                for updated_dep_name, updated_dep_config in env_config2.get(
+                    "dependencies", {}
+                ).items():
+                    if "path" in updated_dep_config:
+                        # if path is provided in the config2 dependency,
+                        # it overwrites path in config1 and relative path
+                        # must be adjusted
+                        new_path = updated_dep_config["path"]
+                        if new_path.startswith("."):
+                            abs_path = (config2_filepath.parent / new_path).resolve()
+                            new_rel_path = abs_path.relative_to(
+                                config1_filepath.parent, walk_up=True
+                            )
+                            new_path = new_rel_path.as_posix()
+                            # .relative_to() doesn't add './' for items in the current
+                            # directory, but FineCode needs it to distinguish relative
+                            # path from absolute one
+                            if not new_path.startswith("."):
+                                new_path = "./" + new_path
+                            all_envs_config1[env_name]["dependencies"][
+                                updated_dep_name
+                            ]["path"] = new_path
         elif key in config1:
             tool_finecode_config1[key].update(value)
         else:

@@ -54,7 +54,7 @@ class PrepareRunnersInstallRunnerAndPresetsHandler(
                 )
             except FailedToGetDependencies as exception:
                 raise code_action.ActionFailedException(
-                    f"Failed to get dependencies of env {env.name} in {project_def_path} (install_runner_and_presets handler)"
+                    f"Failed to get dependencies of env {env.name} in {project_def_path}: {exception.message} (install_runner_and_presets handler)"
                 )
             dependencies_by_env[env.name] = dependencies
 
@@ -161,10 +161,10 @@ def get_dependencies_in_project_raw_config(
                 and dependency_config_utils.get_dependency_name(dep) == preset_package
             )
         except StopIteration:
-            if env_name == "dev_no_runtime":
-                # all preset packages must be in 'dev_no_runtime' env
+            if env_name == "dev_workspace":
+                # all preset packages must be in 'dev_workspace' env
                 raise FailedToGetDependencies(
-                    f"'{preset_package}' is used as preset source, but not declared in 'dev_no_runtime' dependency group"
+                    f"'{preset_package}' is used as preset source, but not declared in 'dev_workspace' dependency group"
                 )
             else:
                 continue

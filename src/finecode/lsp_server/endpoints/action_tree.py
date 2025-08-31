@@ -178,9 +178,9 @@ async def __list_actions(
     # wait for start of all runners, this is required to be able to resolve presets
     all_started_coros = []
     for envs in ws_context.ws_projects_extension_runners.values():
-        # all presets are expected to be in `dev_no_runtime` env
-        dev_no_runtime_runner = envs["dev_no_runtime"]
-        all_started_coros.append(dev_no_runtime_runner.initialized_event.wait())
+        # all presets are expected to be in `dev_workspace` env
+        dev_workspace_runner = envs["dev_workspace"]
+        all_started_coros.append(dev_workspace_runner.initialized_event.wait())
     await asyncio.gather(*all_started_coros)
 
     nodes: list[schemas.ActionTreeNode] = create_node_list_for_ws(ws_context)
