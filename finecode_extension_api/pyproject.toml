@@ -1,5 +1,5 @@
 [project]
-name = "finecode-extension-api"
+name = "finecode_extension_api"
 version = "0.3.0"
 description = ""
 authors = [{ name = "Vladyslav Hnatiuk", email = "aders1234@gmail.com" }]

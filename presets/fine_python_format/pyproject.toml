@@ -1,5 +1,5 @@
 [project]
-name = "fine-python-format"
+name = "fine_python_format"
 version = "0.2.0"
 description = ""
 authors = [{ name = "Vladyslav Hnatiuk", email = "aders1234@gmail.com" }]

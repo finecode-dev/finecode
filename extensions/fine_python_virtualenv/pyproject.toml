@@ -1,5 +1,5 @@
 [project]
-name = "fine-python-virtualenv"
+name = "fine_python_virtualenv"
 version = "0.1.0"
 description = ""
 authors = [{ name = "Vladyslav Hnatiuk", email = "aders1234@gmail.com" }]
