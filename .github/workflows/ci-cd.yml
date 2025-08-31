@@ -31,7 +31,11 @@ jobs:
             name: Windows
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
+        with:
+          # setuptools-scm uses tags to get the current version, fetch them to get
+          # correct version
+          fetch-tags: 'true'
 
       - name: Set up Python ${{ env.DEV_WORKSPACE_PYTHON_VERSION }}
         uses: actions/setup-python@v5
