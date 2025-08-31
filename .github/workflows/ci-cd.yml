@@ -48,9 +48,12 @@ jobs:
           python -m venv .venvs/dev_workspace
           source .venvs/dev_workspace/bin/activate
           python -m pip install --upgrade pip==25.1.1
-          # finecode_dev_common_preset must be installed as editable, because all
-          # relative pathes in it requires this
-          python -m pip install --group="dev_workspace" -e ./finecode_dev_common_preset file://$PWD file://$PWD/finecode_extension_runner
+
+          # split installation into 2 steps: first internal preset because it is not
+          # published as pypi package, so pip will fail to resolve it in dev_workspace
+          # group and only then other dependencies
+          python -m pip install -e ./finecode_dev_common_preset
+          python -m pip install --group="dev_workspace" -e . -e ./finecode_extension_runner
 
           python -m finecode prepare-envs
         shell: bash
