@@ -1,5 +1,6 @@
 import inspect
 import logging
+import sys
 from pathlib import Path
 
 from loguru import logger
@@ -9,7 +10,9 @@ from finecode_extension_runner import logs
 
 
 def init_logger(trace: bool, stdout: bool = False):
-    log_dir_path = Path(app_dirs.get_app_dirs().user_log_dir)
+    venv_dir_path = Path(sys.executable) / '..' / '..'
+    logs_dir_path = venv_dir_path / 'logs'
+
     logger.remove()
     # disable logging raw messages
     # TODO: make configurable
@@ -20,7 +23,7 @@ def init_logger(trace: bool, stdout: bool = False):
         ]
     )
     logs.save_logs_to_file(
-        file_path=log_dir_path / "execution.log",
+        file_path=logs_dir_path / "workspace_manager.log",
         log_level="TRACE" if trace else "INFO",
         stdout=stdout,
     )
