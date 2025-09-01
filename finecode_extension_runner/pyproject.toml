@@ -11,7 +11,7 @@ dependencies = [
     "click==8.1.*",
     "pydantic==2.11.*",
     "platformdirs==4.3.*",
-    "pygls==2.0.0-a2",
+    "pygls==2.0.0-a6",
     "finecode_extension_api==0.3.*",
     "deepmerge==2.0.*",
 ]
