@@ -3,8 +3,8 @@ import pathlib
 
 from loguru import logger
 
-from finecode import context, services, proxy_utils
-from finecode.config import config_models, read_configs, collect_actions
+from finecode import context, proxy_utils, services
+from finecode.config import collect_actions, config_models, read_configs
 from finecode.runner import manager as runner_manager
 
 
@@ -46,11 +46,11 @@ async def dump_config(workdir_path: pathlib.Path, project_name: str):
     dump_dir_path = project_dir_path / "finecode_config_dump"
     dump_file_path = dump_dir_path / "pyproject.toml"
     project_def = ws_context.ws_projects[project_dir_path]
-    actions_by_projects = {project_dir_path:["dump_config"]}
+    actions_by_projects = {project_dir_path: ["dump_config"]}
 
     # start runner to init project config
     try:
-         # reread projects configs, now with resolved presets
+        # reread projects configs, now with resolved presets
         # to be able to resolve presets, start runners with presets first
         try:
             await runner_manager.start_runners_with_presets(
@@ -72,7 +72,7 @@ async def dump_config(workdir_path: pathlib.Path, project_name: str):
             raise DumpFailed(
                 f"Rereading project config with presets and collecting actions in {project.dir_path} failed: {exception.message}"
             )
-        
+
         try:
             await proxy_utils.start_required_environments(
                 actions_by_projects, ws_context

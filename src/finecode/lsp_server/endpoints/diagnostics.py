@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 
 from loguru import logger
 from lsprotocol import types
+from pydantic.dataclasses import dataclass as pydantic_dataclass
 
 from finecode import (
     context,
@@ -78,9 +79,11 @@ async def document_diagnostic_with_full_result(
     if response is None:
         return None
 
-    lint_result: lint_action.LintRunResult = lint_action.LintRunResult(
-        **response.result
-    )
+    # use pydantic dataclass to convert dict to dataclass instance recursively
+    # (default dataclass constructor doesn't handle nested items, it stores them just
+    # as dict)
+    result_type = pydantic_dataclass(lint_action.LintRunResult)
+    lint_result: lint_action.LintRunResult = result_type(**response.result)
 
     try:
         requested_file_messages = lint_result.messages.pop(str(file_path))
@@ -142,8 +145,14 @@ async def document_diagnostic_with_partial_results(
             related_documents: dict[str, types.FullDocumentDiagnosticReport] = {}
             got_response_for_requested_file: bool = False
             requested_file_path_str = str(file_path)
+            # use pydantic dataclass to convert dict to dataclass instance recursively
+            # (default dataclass constructor doesn't handle nested items, it stores them just
+            # as dict)
+            result_type = pydantic_dataclass(lint_action.LintRunResult)
             async for partial_response in response:
-                lint_subresult = lint_action.LintRunResult(**partial_response)
+                lint_subresult: lint_action.LintRunResult = result_type(
+                    **partial_response
+                )
                 for file_path_str, lint_messages in lint_subresult.messages.items():
                     if requested_file_path_str == file_path_str:
                         if got_response_for_requested_file:
@@ -244,8 +253,14 @@ async def run_workspace_diagnostic_with_partial_results(
             project_dir_path=exec_info.project_dir_path,
             ws_context=global_state.ws_context,
         ) as response:
+            # use pydantic dataclass to convert dict to dataclass instance recursively
+            # (default dataclass constructor doesn't handle nested items, it stores them just
+            # as dict)
+            result_type = pydantic_dataclass(lint_action.LintRunResult)
             async for partial_response in response:
-                lint_subresult = lint_action.LintRunResult(**partial_response)
+                lint_subresult: lint_action.LintRunResult = result_type(
+                    **partial_response
+                )
                 lsp_subresult = types.WorkspaceDiagnosticReportPartialResult(
                     items=[
                         types.WorkspaceFullDocumentDiagnosticReport(
@@ -310,12 +325,16 @@ async def workspace_diagnostic_with_full_result(
 
     responses = [task.result().result for task in send_tasks]
 
+    # use pydantic dataclass to convert dict to dataclass instance recursively
+    # (default dataclass constructor doesn't handle nested items, it stores them just
+    # as dict)
+    result_type = pydantic_dataclass(lint_action.LintRunResult)
     items: list[types.WorkspaceDocumentDiagnosticReport] = []
     for response in responses:
         if response is None:
             continue
         else:
-            lint_result = lint_action.LintRunResult(**response)
+            lint_result: lint_action.LintRunResult = result_type(**response)
             for file_path_str, lint_messages in lint_result.messages.items():
                 new_report = types.WorkspaceFullDocumentDiagnosticReport(
                     uri=pygls_types_utils.path_to_uri_str(Path(file_path_str)),

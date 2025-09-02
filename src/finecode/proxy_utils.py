@@ -175,6 +175,7 @@ async def run_with_partial_results(
     logger.trace(f"Run {action_name} in project {project_dir_path}")
 
     result: AsyncList[domain.PartialResultRawValue] = AsyncList()
+    project = ws_context.ws_projects[project_dir_path]
     try:
         async with asyncio.TaskGroup() as tg:
             partial_results_task = tg.create_task(
@@ -182,14 +183,21 @@ async def run_with_partial_results(
                     result_list=result, partial_result_token=partial_result_token
                 )
             )
-            project = ws_context.ws_projects[project_dir_path]
             action = next(action for action in project.actions if action.name == "lint")
             action_envs = ordered_set.OrderedSet(
                 [handler.env for handler in action.handlers]
             )
             runners_by_env = ws_context.ws_projects_extension_runners[project_dir_path]
-            for env in action_envs:
-                runner = runners_by_env[env]
+            for env_name in action_envs:
+                try:
+                    runner = await runner_manager.get_or_start_runner(
+                        project_def=project, env_name=env_name, ws_context=ws_context
+                    )
+                except runner_manager.RunnerFailedToStart as exception:
+                    raise ActionRunFailed(
+                        f"Runner {env_name} in project {project.dir_path} failed: {exception.message}"
+                    )
+
                 tg.create_task(
                     run_action_and_notify(
                         action_name=action_name,
@@ -205,7 +213,9 @@ async def run_with_partial_results(
     except ExceptionGroup as eg:
         for exc in eg.exceptions:
             logger.exception(exc)
-        raise ActionRunFailed(eg)
+        raise ActionRunFailed(
+            f"Run of {action_name} in {project.dir_path} failed. See logs for more details"
+        )
 
 
 @contextlib.asynccontextmanager

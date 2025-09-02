@@ -269,7 +269,10 @@ async def run_action(
         f"R{run_id} | Run action end '{request.action_name}', duration: {duration}ms"
     )
 
-    if not isinstance(action_result, code_action.RunActionResult):
+    # if partial results were sent, `action_result` may be None
+    if action_result is not None and not isinstance(
+        action_result, code_action.RunActionResult
+    ):
         logger.error(
             f"R{run_id} | Unexpected result type: {type(action_result).__name__}"
         )
@@ -284,7 +287,7 @@ async def run_action(
 
 
 def action_result_to_run_action_response(
-    action_result: code_action.RunActionResult,
+    action_result: code_action.RunActionResult | None,
     asked_result_format: typing.Literal["json"] | typing.Literal["string"],
 ) -> schemas.RunActionResponse:
     serialized_result: dict[str, typing.Any] | str | None = None

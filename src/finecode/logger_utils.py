@@ -5,13 +5,12 @@ from pathlib import Path
 
 from loguru import logger
 
-from finecode import app_dirs
 from finecode_extension_runner import logs
 
 
 def init_logger(trace: bool, stdout: bool = False):
-    venv_dir_path = Path(sys.executable) / '..' / '..'
-    logs_dir_path = venv_dir_path / 'logs'
+    venv_dir_path = Path(sys.executable) / ".." / ".."
+    logs_dir_path = venv_dir_path / "logs"
 
     logger.remove()
     # disable logging raw messages

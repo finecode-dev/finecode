@@ -86,6 +86,7 @@ class ExtensionRunnerInfo:
 class RunnerStatus(enum.Enum):
     READY_TO_START = enum.auto()
     NO_VENV = enum.auto()
+    INITIALIZING = enum.auto()
     FAILED = enum.auto()
     RUNNING = enum.auto()
     EXITED = enum.auto()

@@ -21,30 +21,14 @@ async def restart_extension_runners(
         logger.error(f"Cannot find runner for {runner_working_dir_path}")
         return
 
-    new_runners_by_env: dict[str, runner_info.ExtensionRunnerInfo] = {}
     for runner in runners_by_env.values():
         await runner_manager.stop_extension_runner(runner)
 
-        new_runner = await runner_manager.start_extension_runner(
-            runner_dir=runner_working_dir_path,
+        project_def = ws_context.ws_projects[runner.working_dir_path]
+        new_runner = await runner_manager.start_runner(
+            project_def=project_def,
             env_name=runner.env_name,
             ws_context=ws_context,
-        )
-        if new_runner is None:
-            logger.error("Extension runner didn't start")
-            continue
-        new_runners_by_env[runner.env_name] = new_runner
-
-    ws_context.ws_projects_extension_runners[runner_working_dir_path] = (
-        new_runners_by_env
-    )
-
-    # parallel?
-    for runner in new_runners_by_env.values():
-        await runner_manager._init_runner(
-            runner,
-            ws_context.ws_projects[runner.working_dir_path],
-            ws_context,
         )
 
 
@@ -157,11 +141,13 @@ async def _run_action_in_env_runner(
     ws_context: context.WorkspaceContext,
     result_format: RunResultFormat = RunResultFormat.JSON,
 ):
-    runners_by_env = ws_context.ws_projects_extension_runners[project_def.dir_path]
-    runner = runners_by_env[env_name]
-    if runner.status != runner_info.RunnerStatus.RUNNING:
+    try:
+        runner = await runner_manager.get_or_start_runner(
+            project_def=project_def, env_name=env_name, ws_context=ws_context
+        )
+    except runner_manager.RunnerFailedToStart as exception:
         raise ActionRunFailed(
-            f"Runner {env_name} in project {project_def.dir_path} is not running. Status: {runner.status}"
+            f"Runner {env_name} in project {project_def.dir_path} failed: {exception.message}"
         )
 
     try:
