@@ -3,8 +3,8 @@ import pathlib
 
 from loguru import logger
 
-from finecode import context, services
-from finecode.config import config_models, read_configs
+from finecode import context, proxy_utils, services
+from finecode.config import collect_actions, config_models, read_configs
 from finecode.runner import manager as runner_manager
 
 
@@ -40,23 +40,49 @@ async def dump_config(workdir_path: pathlib.Path, project_name: str):
                 f"Reading project configs(without presets) in {project.dir_path} failed: {exception.message}"
             )
 
+    # Some tools like IDE extensions for syntax highlighting rely on
+    # file name. Keep file name of config the same and save in subdirectory
+    project_dir_path = list(ws_context.ws_projects.keys())[0]
+    dump_dir_path = project_dir_path / "finecode_config_dump"
+    dump_file_path = dump_dir_path / "pyproject.toml"
+    project_def = ws_context.ws_projects[project_dir_path]
+    actions_by_projects = {project_dir_path: ["dump_config"]}
+
     # start runner to init project config
     try:
+        # reread projects configs, now with resolved presets
+        # to be able to resolve presets, start runners with presets first
         try:
-            await runner_manager.update_runners(ws_context)
+            await runner_manager.start_runners_with_presets(
+                projects=[project_def], ws_context=ws_context
+            )
         except runner_manager.RunnerFailedToStart as exception:
             raise DumpFailed(
-                f"One or more projects are misconfigured, runners for them didn't"
-                f" start: {exception.message}. Check logs for details."
+                f"Starting runners with presets failed: {exception.message}"
             )
 
-        # Some tools like IDE extensions for syntax highlighting rely on
-        # file name. Keep file name of config the same and save in subdirectory
-        project_dir_path = list(ws_context.ws_projects.keys())[0]
-        dump_dir_path = project_dir_path / "finecode_config_dump"
-        dump_file_path = dump_dir_path / "pyproject.toml"
+        try:
+            await read_configs.read_project_config(
+                project=project, ws_context=ws_context
+            )
+            collect_actions.collect_actions(
+                project_path=project.dir_path, ws_context=ws_context
+            )
+        except config_models.ConfigurationError as exception:
+            raise DumpFailed(
+                f"Rereading project config with presets and collecting actions in {project.dir_path} failed: {exception.message}"
+            )
+
+        try:
+            await proxy_utils.start_required_environments(
+                actions_by_projects, ws_context
+            )
+        except proxy_utils.StartingEnvironmentsFailed as exception:
+            raise DumpFailed(
+                f"Failed to start environments for running 'dump_config': {exception.message}"
+            )
+
         project_raw_config = ws_context.ws_projects_raw_configs[project_dir_path]
-        project_def = ws_context.ws_projects[project_dir_path]
 
         await services.run_action(
             action_name="dump_config",

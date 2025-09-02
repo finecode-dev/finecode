@@ -81,7 +81,7 @@ async def send_request(
             f" runner {runner.working_dir_path} in env {runner.env_name}"
         )
     except pygls_exceptions.JsonRpcInternalError as error:
-        logger.error(f"JsonRpcInternalError: {error.message}")
+        logger.error(f"JsonRpcInternalError: {error.message} {error.data}")
         raise NoResponse(
             f"Extension runner {runner.working_dir_path} returned no response,"
             " check it logs"
@@ -119,7 +119,7 @@ def send_request_sync(
             f" to runner {runner.working_dir_path}"
         )
     except pygls_exceptions.JsonRpcInternalError as error:
-        logger.error(f"JsonRpcInternalError: {error.message}")
+        logger.error(f"JsonRpcInternalError: {error.message} {error.data}")
         raise NoResponse(
             f"Extension runner {runner.working_dir_path} returned no response,"
             " check it logs"

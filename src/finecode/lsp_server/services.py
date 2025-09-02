@@ -3,7 +3,7 @@ from pathlib import Path
 from loguru import logger
 
 from finecode import domain, user_messages
-from finecode.config import read_configs
+from finecode.config import collect_actions, config_models, read_configs
 from finecode.lsp_server import global_state, schemas
 from finecode.runner import manager as runner_manager
 
@@ -60,42 +60,85 @@ async def add_workspace_dir(
         raise ValueError("Directory is already added")
 
     global_state.ws_context.ws_dirs_paths.append(dir_path)
-    await read_configs.read_projects_in_dir(dir_path, global_state.ws_context)
+    new_projects = await read_configs.read_projects_in_dir(
+        dir_path, global_state.ws_context
+    )
+
+    for new_project in new_projects:
+        await read_configs.read_project_config(
+            project=new_project,
+            ws_context=global_state.ws_context,
+            resolve_presets=False,
+        )
+
     try:
-        await runner_manager.update_runners(global_state.ws_context)
-    except runner_manager.RunnerFailedToStart:
-        # user sees status in client(IDE), no need to raise explicit error
-        ...
+        await runner_manager.start_runners_with_presets(
+            projects=new_projects, ws_context=global_state.ws_context
+        )
+    except runner_manager.RunnerFailedToStart as exception:
+        raise ValueError(f"Starting runners with presets failed: {exception.message}")
+
+    for project in new_projects:
+        try:
+            await read_configs.read_project_config(
+                project=project, ws_context=global_state.ws_context
+            )
+            collect_actions.collect_actions(
+                project_path=project.dir_path, ws_context=global_state.ws_context
+            )
+        except config_models.ConfigurationError as exception:
+            raise ValueError(
+                f"Rereading project config with presets and collecting actions in {project.dir_path} failed: {exception.message}"
+            )
+
     return schemas.AddWorkspaceDirResponse()
 
 
 async def delete_workspace_dir(
     request: schemas.DeleteWorkspaceDirRequest,
 ) -> schemas.DeleteWorkspaceDirResponse:
-    global_state.ws_context.ws_dirs_paths.remove(Path(request.dir_path))
-    try:
-        await runner_manager.update_runners(global_state.ws_context)
-    except runner_manager.RunnerFailedToStart:
-        # user sees status in client(IDE), no need to raise explicit error
-        ...
+    ws_dir_path_to_remove = Path(request.dir_path)
+    global_state.ws_context.ws_dirs_paths.remove(ws_dir_path_to_remove)
+
+    # find all projects affected by removing of this ws dir
+    project_dir_pathes = global_state.ws_context.ws_projects.keys()
+    projects_to_remove: list[Path] = []
+    for project_dir_path in project_dir_pathes:
+        if not project_dir_path.is_relative_to(ws_dir_path_to_remove):
+            continue
+
+        # project_dir_path is now candidate to remove
+        remove_project_dir_path = True
+        for ws_dir_path in global_state.ws_context.ws_dirs_paths:
+            if project_dir_path.is_relative_to(ws_dir_path):
+                # project is also in another ws_dir, keep it
+                remove_project_dir_path = False
+                break
+
+        if remove_project_dir_path:
+            project_runners = global_state.ws_context.ws_projects_extension_runners[
+                project_dir_path
+            ].values()
+            for runner in project_runners:
+                await runner_manager.stop_extension_runner(runner=runner)
+            del global_state.ws_context.ws_projects[project_dir_path]
+            try:
+                del global_state.ws_context.ws_projects_raw_configs[project_dir_path]
+            except KeyError:
+                ...
+
     return schemas.DeleteWorkspaceDirResponse()
 
 
 async def handle_changed_ws_dirs(added: list[Path], removed: list[Path]) -> None:
-    for added_ws_dir_path in added:
-        global_state.ws_context.ws_dirs_paths.append(added_ws_dir_path)
-
     for removed_ws_dir_path in removed:
-        try:
-            global_state.ws_context.ws_dirs_paths.remove(removed_ws_dir_path)
-        except ValueError:
-            logger.warning(
-                f"Ws Directory {removed_ws_dir_path} was removed from ws,"
-                " but not found in ws context"
-            )
+        delete_request = schemas.DeleteWorkspaceDirRequest(
+            dir_path=removed_ws_dir_path.as_posix()
+        )
+        await delete_workspace_dir(request=delete_request)
 
-    try:
-        await runner_manager.update_runners(global_state.ws_context)
-    except runner_manager.RunnerFailedToStart:
-        # user sees status in client(IDE), no need to raise explicit error
-        ...
+    for added_ws_dir_path in added:
+        add_request = schemas.AddWorkspaceDirRequest(
+            dir_path=added_ws_dir_path.as_posix()
+        )
+        await add_workspace_dir(request=add_request)

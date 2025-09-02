@@ -293,9 +293,12 @@ async def __reload_action(action_node_id: str) -> None:
     )
     for env in all_handlers_envs:
         # parallel to speed up?
-        runner = global_state.ws_context.ws_projects_extension_runners[project_path][
-            env
-        ]
+        try:
+            runner = global_state.ws_context.ws_projects_extension_runners[
+                project_path
+            ][env]
+        except KeyError:
+            continue
 
         try:
             await runner_client.reload_action(runner, action_name)

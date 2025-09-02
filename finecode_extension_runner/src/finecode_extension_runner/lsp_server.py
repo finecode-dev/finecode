@@ -207,6 +207,16 @@ async def update_config(ls: lsp_server.LanguageServer, params):
         raise e
 
 
+def convert_path_keys(
+    obj: dict[str | pathlib.Path, typing.Any] | list[typing.Any],
+) -> dict[str, typing.Any] | list[typing.Any]:
+    if isinstance(obj, dict):
+        return {str(k): convert_path_keys(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [convert_path_keys(item) for item in obj]
+    return obj
+
+
 class CustomJSONEncoder(json.JSONEncoder):
     # add support of serializing pathes to json.dumps
     def default(self, obj):
@@ -240,7 +250,11 @@ async def run_action(ls: lsp_server.LanguageServer, params):
 
     # dict key can be path, but pygls fails to handle slashes in dict keys, use strings
     # representation of result instead until the problem is properly solved
-    result_str = json.dumps(response.to_dict()["result"], cls=CustomJSONEncoder)
+    #
+    # custom json encoder converts dict values and `convert_path_keys` is used to
+    # convert dict keys
+    result_dict = convert_path_keys(response.to_dict()["result"])
+    result_str = json.dumps(result_dict, cls=CustomJSONEncoder)
     return {
         "status": status,
         "result": result_str,
