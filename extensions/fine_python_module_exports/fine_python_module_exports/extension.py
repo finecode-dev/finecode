@@ -13,6 +13,7 @@ from finecode_extension_api.actions.ide import text_document_inlay_hint
 
 # from finecode.extension_runner.interfaces import icache
 
+
 def uri_str_to_path(uri_str: str) -> Path:
     return Path(uri_str.replace("file://", ""))
 
