@@ -206,8 +206,9 @@ async def check_or_recreate_all_dev_workspace_envs(
             project_def=current_project, env_name="dev_workspace", ws_context=ws_context
         )
     except runner_manager.RunnerFailedToStart as exception:
-        # TODO
-        raise exception
+        raise PrepareEnvsFailed(
+            f"Failed to start `dev_workspace` runner in {current_project.name}: {exception.message}"
+        )
 
     envs = []
 

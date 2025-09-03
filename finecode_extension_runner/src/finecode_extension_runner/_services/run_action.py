@@ -15,7 +15,7 @@ from finecode_extension_runner import context, domain, global_state
 from finecode_extension_runner import (
     partial_result_sender as partial_result_sender_module,
 )
-from finecode_extension_runner import project_dirs, run_utils, schemas
+from finecode_extension_runner import run_utils, schemas
 from finecode_extension_runner.di import resolver as di_resolver
 
 last_run_id: int = 0
@@ -113,7 +113,10 @@ async def run_action(
 
     # instantiate only on demand?
     project_path = project_def.path
-    project_cache_dir = project_dirs.get_project_dir(project_path=project_path)
+    project_cache_dir = project_path / ".venvs" / global_state.env_name / "cache"
+    if not project_cache_dir.exists():
+        project_cache_dir.mkdir()
+
     action_context = code_action.ActionContext(
         project_dir=project_path, cache_dir=project_cache_dir
     )

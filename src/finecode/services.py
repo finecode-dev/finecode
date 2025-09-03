@@ -158,14 +158,11 @@ async def _run_action_in_env_runner(
             options={"result_format": result_format},
         )
     except runner_client.BaseRunnerRequestException as error:
-        runner_log_path = (
-            runner.working_dir_path / ".venvs" / runner.env_name / "logs" / "runner.log"
-        )
         await user_messages.error(
-            f"Action {action_name} failed in {runner.env_name} of {runner.working_dir_path}: {error.message} . Log file: {runner_log_path}"
+            f"Action {action_name} failed in {runner.readable_id}: {error.message} . Log file: {runner.logs_path}"
         )
         raise ActionRunFailed(
-            f"Action {action_name} failed in {runner.env_name} of {runner.working_dir_path}: {error.message} . Log file: {runner_log_path}"
+            f"Action {action_name} failed in {runner.readable_id}: {error.message} . Log file: {runner.logs_path}"
         )
 
     return response

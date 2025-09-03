@@ -8,3 +8,4 @@ runner_context: context.RunnerContext | None = None
 # the runner, not from updating the config
 project_dir_path: Path | None = None
 log_level: Literal["TRACE", "INFO"] = "INFO"
+env_name: str = ""

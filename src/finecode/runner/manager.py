@@ -8,7 +8,7 @@ from typing import Callable, Coroutine
 from loguru import logger
 from lsprotocol import types
 
-from finecode import context, dirs_utils, domain, finecode_cmd
+from finecode import context, domain, finecode_cmd
 from finecode.config import collect_actions, config_models, read_configs
 from finecode.pygls_client_utils import create_lsp_client_io
 from finecode.runner import runner_client, runner_info
@@ -112,7 +112,7 @@ async def _start_extension_runner_process(
     # TODO: recognize started debugger and send command to lsp server
 
     async def on_exit():
-        logger.debug(f"Extension Runner {runner_info_instance.working_dir_path} exited")
+        logger.debug(f"Extension Runner {runner_info_instance.readable_id} exited")
         runner_info_instance.status = runner_info.RunnerStatus.EXITED
         await notify_project_changed(ws_context.ws_projects[runner_dir])  # TODO: fix
         # TODO: restart if WM is not stopping
@@ -160,7 +160,7 @@ async def _start_extension_runner_process(
 
 
 async def stop_extension_runner(runner: runner_info.ExtensionRunnerInfo) -> None:
-    logger.trace(f"Trying to stop extension runner {runner.working_dir_path}")
+    logger.trace(f"Trying to stop extension runner {runner.readable_id}")
     if not runner.client.stopped:
         logger.debug("Send shutdown to server")
         try:
@@ -173,14 +173,14 @@ async def stop_extension_runner(runner: runner_info.ExtensionRunnerInfo) -> None
         await runner.client.stop()
         logger.trace(
             f"Stop extension runner {runner.process_id}"
-            f" in {runner.working_dir_path}"
+            f" in {runner.readable_id}"
         )
     else:
         logger.trace("Extension runner was not running")
 
 
 def stop_extension_runner_sync(runner: runner_info.ExtensionRunnerInfo) -> None:
-    logger.trace(f"Trying to stop extension runner {runner.working_dir_path}")
+    logger.trace(f"Trying to stop extension runner {runner.readable_id}")
     if not runner.client.stopped:
         logger.debug("Send shutdown to server")
         try:
@@ -195,7 +195,7 @@ def stop_extension_runner_sync(runner: runner_info.ExtensionRunnerInfo) -> None:
         logger.debug("Sent exit to server")
         logger.trace(
             f"Stop extension runner {runner.process_id}"
-            f" in {runner.working_dir_path}"
+            f" in {runner.readable_id}"
         )
     else:
         logger.trace("Extension runner was not running")
@@ -372,7 +372,7 @@ async def update_runner_config(
         )
 
     logger.debug(
-        f"Updated config of runner {runner.working_dir_path},"
+        f"Updated config of runner {runner.readable_id},"
         f" process id {runner.process_id}"
     )
 

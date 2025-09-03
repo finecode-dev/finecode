@@ -16,7 +16,6 @@ from finecode_extension_runner import (
     context,
     domain,
     global_state,
-    project_dirs,
     run_utils,
     schemas,
 )
