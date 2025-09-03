@@ -12,13 +12,7 @@ from loguru import logger
 from pydantic.dataclasses import dataclass as pydantic_dataclass
 
 from finecode_extension_api import code_action, textstyler
-from finecode_extension_runner import (
-    context,
-    domain,
-    global_state,
-    run_utils,
-    schemas,
-)
+from finecode_extension_runner import context, domain, global_state, run_utils, schemas
 from finecode_extension_runner._services import run_action as run_action_module
 from finecode_extension_runner._services.run_action import (
     ActionFailedException,

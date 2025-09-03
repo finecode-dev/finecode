@@ -165,8 +165,13 @@ async def get_project_raw_config(
     return json.loads(raw_config.config)
 
 
-async def update_config(ls: lsp_server.LanguageServer, working_dir: pathlib.Path, project_name: str, config: dict[str, typing.Any]):
-    logger.trace(f'Update config: {working_dir} {project_name} {config}')
+async def update_config(
+    ls: lsp_server.LanguageServer,
+    working_dir: pathlib.Path,
+    project_name: str,
+    config: dict[str, typing.Any],
+):
+    logger.trace(f"Update config: {working_dir} {project_name} {config}")
     try:
         actions = config["actions"]
         action_handler_configs = config["action_handler_configs"]
@@ -222,7 +227,12 @@ class CustomJSONEncoder(json.JSONEncoder):
         return super().default(obj)
 
 
-async def run_action(ls: lsp_server.LanguageServer, action_name: str, params: dict[str, typing.Any], options: dict[str, typing.Any] | None):
+async def run_action(
+    ls: lsp_server.LanguageServer,
+    action_name: str,
+    params: dict[str, typing.Any],
+    options: dict[str, typing.Any] | None,
+):
     logger.trace(f"Run action: {action_name}")
     request = schemas.RunActionRequest(action_name=action_name, params=params)
     options_schema = schemas.RunActionOptions(**options if options is not None else {})
