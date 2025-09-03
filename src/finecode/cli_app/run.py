@@ -340,11 +340,15 @@ async def run_actions_in_running_project(
                     result_format=services.RunResultFormat.STRING,
                 )
             except services.ActionRunFailed as exception:
-                raise RunFailed(f"Running of action {action_name} failed: {exception.message}")
+                raise RunFailed(
+                    f"Running of action {action_name} failed: {exception.message}"
+                )
             except Exception as error:
                 logger.error("Unexpected exception")
                 logger.exception(error)
-                raise RunFailed(f"Running of action {action_name} failed with unexpected exception")
+                raise RunFailed(
+                    f"Running of action {action_name} failed with unexpected exception"
+                )
 
             run_result_str = run_result_to_str(run_result.result, action_name)
             result_by_action[action_name] = ActionRunResult(

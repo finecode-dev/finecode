@@ -172,8 +172,7 @@ async def stop_extension_runner(runner: runner_info.ExtensionRunnerInfo) -> None
         logger.debug("Sent exit to server")
         await runner.client.stop()
         logger.trace(
-            f"Stop extension runner {runner.process_id}"
-            f" in {runner.readable_id}"
+            f"Stop extension runner {runner.process_id}" f" in {runner.readable_id}"
         )
     else:
         logger.trace("Extension runner was not running")
@@ -194,8 +193,7 @@ def stop_extension_runner_sync(runner: runner_info.ExtensionRunnerInfo) -> None:
         runner_client.exit_sync(runner)
         logger.debug("Sent exit to server")
         logger.trace(
-            f"Stop extension runner {runner.process_id}"
-            f" in {runner.readable_id}"
+            f"Stop extension runner {runner.process_id}" f" in {runner.readable_id}"
         )
     else:
         logger.trace("Extension runner was not running")

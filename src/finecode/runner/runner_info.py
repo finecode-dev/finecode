@@ -81,14 +81,14 @@ class ExtensionRunnerInfo:
             return self.client._server.pid
         else:
             return 0
-    
+
     @property
     def readable_id(self) -> str:
-        return f'{self.working_dir_path} ({self.env_name})'
-    
+        return f"{self.working_dir_path} ({self.env_name})"
+
     @property
     def logs_path(self) -> Path:
-        return self.working_dir_path / '.venvs' / self.env_name / 'logs' / 'runner.log'
+        return self.working_dir_path / ".venvs" / self.env_name / "logs" / "runner.log"
 
 
 class RunnerStatus(enum.Enum):

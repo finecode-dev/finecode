@@ -38,6 +38,18 @@ class AsyncProcess(icommandrunner.IAsyncProcess):
         else:
             return self._stderr
 
+    def write_to_stdin(self, value: str) -> None:
+        if self.async_subprocess.stdin is not None:
+            self.async_subprocess.stdin.write(value.encode())
+        else:
+            raise RuntimeError("Process was not created with stdin pipe")
+
+    def close_stdin(self) -> None:
+        if self.async_subprocess.stdin is not None:
+            self.async_subprocess.stdin.close()
+        else:
+            raise RuntimeError("Process was not created with stdin pipe")
+
 
 class SyncProcess(icommandrunner.ISyncProcess):
     def __init__(self, popen: subprocess.Popen):
@@ -67,6 +79,19 @@ class SyncProcess(icommandrunner.ISyncProcess):
         else:
             return self._stderr
 
+    def write_to_stdin(self, value: str) -> None:
+        if self.popen.stdin is not None:
+            self.popen.stdin.write(value.encode())
+            self.popen.stdin.flush()
+        else:
+            raise RuntimeError("Process was not created with stdin pipe")
+
+    def close_stdin(self) -> None:
+        if self.popen.stdin is not None:
+            self.popen.stdin.close()
+        else:
+            raise RuntimeError("Process was not created with stdin pipe")
+
 
 class CommandRunner(icommandrunner.ICommandRunner):
     def __init__(self, logger: ilogger.ILogger):
@@ -79,6 +104,7 @@ class CommandRunner(icommandrunner.ICommandRunner):
         # TODO: investigate why it works only with shell, not exec
         async_subprocess = await asyncio.create_subprocess_shell(
             cmd,
+            stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             cwd=cwd,
@@ -93,6 +119,7 @@ class CommandRunner(icommandrunner.ICommandRunner):
         self.logger.debug(f"Sync subprocess run: {cmd_parts}")
         async_subprocess = subprocess.Popen(
             cmd_parts,
+            stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             cwd=cwd,
