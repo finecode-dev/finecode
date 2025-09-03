@@ -109,10 +109,7 @@ class RuffFormatHandler(
         ruff_process.write_to_stdin(file_content)
         ruff_process.close_stdin()  # Signal EOF
 
-        try:
-            await ruff_process.wait_for_end()
-        except Exception:
-            ...  # TODO
+        await ruff_process.wait_for_end()
 
         if ruff_process.get_exit_code() == 0:
             new_file_content = ruff_process.get_output()
