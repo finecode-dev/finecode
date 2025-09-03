@@ -326,7 +326,7 @@ async def start_required_environments(
                 if update_config_in_running_runners:
                     runner = existing_runners[env_name]
                     logger.trace(
-                        f"Runner {runner.working_dir_path} {runner.env_name} is running already, update config"
+                        f"Runner {runner.readable_id} is running already, update config"
                     )
 
                     try:
@@ -335,7 +335,7 @@ async def start_required_environments(
                         )
                     except RunnerFailedToStart as exception:
                         raise StartingEnvironmentsFailed(
-                            f"Failed to update config of runner {runner.working_dir_path} {runner.env_name}"
+                            f"Failed to update config of runner {runner.readable_id}"
                         )
 
 

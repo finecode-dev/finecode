@@ -41,11 +41,11 @@ class ActionRunStopped(BaseRunnerRequestException): ...
 async def log_process_log_streams(process: asyncio.subprocess.Process) -> None:
     stdout, stderr = await process.communicate()
 
-    logger.debug(f"[Runner exited with {process.returncode}]")
+    logger.info(f"[Runner exited with {process.returncode}]")
     if stdout:
-        logger.debug(f"[stdout]\n{stdout.decode()}")
+        logger.info(f"[stdout]\n{stdout.decode()}")
     if stderr:
-        logger.debug(f"[stderr]\n{stderr.decode()}")
+        logger.error(f"[stderr]\n{stderr.decode()}")
 
 
 async def send_request(
@@ -54,7 +54,7 @@ async def send_request(
     params: Any | None,
     timeout: int | None = 10,
 ) -> Any:
-    logger.debug(f"Send {method} to {runner.working_dir_path}")
+    logger.debug(f"Send {method} to {runner.readable_id}")
     try:
         response = await asyncio.wait_for(
             runner.client.protocol.send_request_async(
@@ -63,13 +63,13 @@ async def send_request(
             ),
             timeout,
         )
-        logger.debug(f"Got response on {method} from {runner.working_dir_path}")
+        logger.debug(f"Got response on {method} from {runner.readable_id}")
         return response
     except RuntimeError as error:
         logger.error(f"Extension runner crashed: {error}")
         await log_process_log_streams(process=runner.client._server)
         raise NoResponse(
-            f"Extension runner {runner.working_dir_path} crashed,"
+            f"Extension runner {runner.readable_id} crashed,"
             f" no response on {method}"
         )
     except TimeoutError:
@@ -78,13 +78,13 @@ async def send_request(
         #     await log_process_log_streams(process=runner.client._server)
         raise ResponseTimeout(
             f"Timeout {timeout}s for response on {method} to"
-            f" runner {runner.working_dir_path} in env {runner.env_name}"
+            f" runner {runner.readable_id}"
         )
     except pygls_exceptions.JsonRpcInternalError as error:
         logger.error(f"JsonRpcInternalError: {error.message} {error.data}")
         raise NoResponse(
-            f"Extension runner {runner.working_dir_path} returned no response,"
-            " check it logs"
+            f"Extension runner {runner.readable_id} returned no response,"
+            f" check it logs: {runner.logs_path}"
         )
 
 
@@ -100,12 +100,12 @@ def send_request_sync(
             params=params,
         )
         response = response_future.result(timeout)
-        logger.debug(f"Got response on {method} from {runner.working_dir_path}")
+        logger.debug(f"Got response on {method} from {runner.readable_id}")
         return response
     except RuntimeError as error:
         logger.error(f"Extension runner crashed? {error}")
         raise NoResponse(
-            f"Extension runner {runner.working_dir_path} crashed,"
+            f"Extension runner {runner.readable_id} crashed,"
             f" no response on {method}"
         )
     except TimeoutError:
@@ -116,13 +116,13 @@ def send_request_sync(
             )
         raise ResponseTimeout(
             f"Timeout {timeout}s for response on {method}"
-            f" to runner {runner.working_dir_path}"
+            f" to runner {runner.readable_id}"
         )
     except pygls_exceptions.JsonRpcInternalError as error:
         logger.error(f"JsonRpcInternalError: {error.message} {error.data}")
         raise NoResponse(
-            f"Extension runner {runner.working_dir_path} returned no response,"
-            " check it logs"
+            f"Extension runner {runner.readable_id} returned no response,"
+            f" check it logs: {runner.logs_path}"
         )
 
 

@@ -76,7 +76,7 @@ async def document_did_close(
                 for runner in runners_by_env.values():
                     if runner.status != runner_info.RunnerStatus.RUNNING:
                         logger.trace(
-                            f"Runner {runner.working_dir_path} is not running, skip it"
+                            f"Runner {runner.readable_id} is not running, skip it"
                         )
                         continue
 

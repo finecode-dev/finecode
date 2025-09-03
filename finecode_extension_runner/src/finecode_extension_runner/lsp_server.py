@@ -165,12 +165,9 @@ async def get_project_raw_config(
     return json.loads(raw_config.config)
 
 
-async def update_config(ls: lsp_server.LanguageServer, params):
-    logger.trace(f"Update config: {params}")
+async def update_config(ls: lsp_server.LanguageServer, working_dir: pathlib.Path, project_name: str, config: dict[str, typing.Any]):
+    logger.trace(f'Update config: {working_dir} {project_name} {config}')
     try:
-        working_dir = params[0]
-        project_name = params[1]
-        config = params[2]
         actions = config["actions"]
         action_handler_configs = config["action_handler_configs"]
 
@@ -225,14 +222,14 @@ class CustomJSONEncoder(json.JSONEncoder):
         return super().default(obj)
 
 
-async def run_action(ls: lsp_server.LanguageServer, params):
-    logger.trace(f"Run action: {params[0]}")
-    request = schemas.RunActionRequest(action_name=params[0], params=params[1])
-    options = schemas.RunActionOptions(**params[2] if params[2] is not None else {})
+async def run_action(ls: lsp_server.LanguageServer, action_name: str, params: dict[str, typing.Any], options: dict[str, typing.Any] | None):
+    logger.trace(f"Run action: {action_name}")
+    request = schemas.RunActionRequest(action_name=action_name, params=params)
+    options_schema = schemas.RunActionOptions(**options if options is not None else {})
     status: str = "success"
 
     try:
-        response = await services.run_action(request=request, options=options)
+        response = await services.run_action(request=request, options=options_schema)
     except Exception as exception:
         if isinstance(exception, services.StopWithResponse):
             status = "stopped"
@@ -263,15 +260,15 @@ async def run_action(ls: lsp_server.LanguageServer, params):
     }
 
 
-async def reload_action(ls: lsp_server.LanguageServer, params):
-    logger.trace(f"Reload action: {params}")
-    services.reload_action(params[0])
+async def reload_action(ls: lsp_server.LanguageServer, action_name: str):
+    logger.trace(f"Reload action: {action_name}")
+    services.reload_action(action_name)
     return {}
 
 
-async def resolve_package_path(ls: lsp_server.LanguageServer, params):
-    logger.trace(f"Resolve package path: {params}")
+async def resolve_package_path(ls: lsp_server.LanguageServer, package_name: str):
+    logger.trace(f"Resolve package path: {package_name}")
     # TODO: handle properly ValueError
-    result = services.resolve_package_path(params[0])
-    logger.trace(f"Resolved {params[0]} to {result}")
+    result = services.resolve_package_path(package_name)
+    logger.trace(f"Resolved {package_name} to {result}")
     return {"packagePath": result}
