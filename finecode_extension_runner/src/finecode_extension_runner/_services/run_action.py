@@ -544,11 +544,16 @@ async def run_subresult_coros_concurrently(
                 coro_task = tg.create_task(coro)
                 coros_tasks.append(coro_task)
     except ExceptionGroup as eg:
-        logger.error(f"R{run_id} | {eg}")
+        errors_str = ""
         for exc in eg.exceptions:
-            logger.exception(exc)
+            if isinstance(exc, code_action.ActionFailedException):
+                errors_str += exc.message + '.'
+            else:
+                logger.error("Unhandled exception:")
+                logger.exception(exc)
+                errors_str += str(exc) + '.'
         raise ActionFailedException(
-            f"Concurrent running action handlers of '{action_name}' failed(Run {run_id}). See logs for more details"
+            f"Concurrent running action handlers of '{action_name}' failed(Run {run_id}): {errors_str}"
         )
 
     action_subresult: code_action.RunActionResult | None = None
