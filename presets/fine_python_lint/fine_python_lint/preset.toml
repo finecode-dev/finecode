@@ -1,19 +1,26 @@
 [tool.finecode.action.lint]
 source = "finecode_extension_api.actions.lint.LintAction"
 handlers = [
+    { name = "ruff", source = "fine_python_ruff.RuffLintHandler", env = "dev_no_runtime", dependencies = [
+        "fine_python_ruff==0.1.*",
+    ] },
     { name = "flake8", source = "fine_python_flake8.Flake8LintHandler", env = "dev_no_runtime", dependencies = [
         "fine_python_flake8==0.2.*",
-        "flake8-bugbear (>=24.12.12,<25.0.0)",
     ] },
     { name = "mypy", source = "fine_python_mypy.MypyLintHandler", env = "dev_no_runtime", dependencies = [
         "fine_python_mypy==0.2.*",
     ] },
 ]
 
+# flake8 is used only for custom rules, all standard rules are checked by ruff, but
+# keep flake8 configuration if someone activates some rules or uses flake8 config
+# parameters in their own rules
 [[tool.finecode.action_handler]]
 source = "fine_python_flake8.Flake8LintHandler"
 config.max_line_length = 80
-config.extend_select = ["B950"]
-# W391 is not compatible with black, because black adds an empty line to the end of the file
+# W391 is not compatible with black(and ruff formatter, which is compatible with black),
+# because black adds an empty line to the end of the file
 # TODO: move in recommended config once config merging is implemented
 config.extend_ignore = ["E203", "E501", "E701", "W391"]
+# disable all standard rules
+config.select = []
