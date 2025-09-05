@@ -1,6 +1,6 @@
 [project]
 name = "fine_python_ruff"
-version = "0.2.0"
+version = "0.1.0"
 description = ""
 authors = [{ name = "Vladyslav Hnatiuk", email = "aders1234@gmail.com" }]
 readme = "README.md"

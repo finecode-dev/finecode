@@ -37,7 +37,7 @@ NOTE: `pip install` supports `--group` parameter since pip 25.1. Make sure you h
 
   ```toml
   [dependency-groups]
-  dev_workspace = ["finecode==0.3.*", "fine_python_recommended==0.2.*"]
+  dev_workspace = ["finecode==0.3.*", "fine_python_recommended==0.3.*"]
   ```
 
 For list of presets from FineCode authors see 'Presets' section below.
