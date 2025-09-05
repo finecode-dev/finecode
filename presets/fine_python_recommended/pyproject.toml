@@ -1,11 +1,11 @@
 [project]
 name = "fine_python_recommended"
-version = "0.3.0"
+version = "0.4.0"
 description = ""
 authors = [{ name = "Vladyslav Hnatiuk", email = "aders1234@gmail.com" }]
 readme = "README.md"
 requires-python = ">=3.11, < 3.14"
-dependencies = ["fine_python_format==0.3.*", "fine_python_lint==0.3.*"]
+dependencies = ["fine_python_format==0.3.*", "fine_python_lint==0.4.*"]
 
 [build-system]
 requires = ["setuptools>=64"]

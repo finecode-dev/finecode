@@ -7,8 +7,8 @@ handlers = [
     { name = "flake8", source = "fine_python_flake8.Flake8LintHandler", env = "dev_no_runtime", dependencies = [
         "fine_python_flake8==0.2.*",
     ] },
-    { name = "mypy", source = "fine_python_mypy.MypyLintHandler", env = "dev_no_runtime", dependencies = [
-        "fine_python_mypy==0.2.*",
+    { name = "pyrefly", source = "fine_python_pyrefly.PyreflyLintHandler", env = "dev_no_runtime", dependencies = [
+        "fine_python_pyrefly==0.1.*",
     ] },
 ]
 
