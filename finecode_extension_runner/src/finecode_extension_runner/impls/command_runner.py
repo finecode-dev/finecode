@@ -100,7 +100,10 @@ class CommandRunner(icommandrunner.ICommandRunner):
     async def run(
         self, cmd: str, cwd: Path | None = None, env: dict[str, str] | None = None
     ) -> icommandrunner.IAsyncProcess:
-        self.logger.debug(f"Async subprocess run: {cmd} in {cwd}")
+        log_msg = f"Async subprocess run: {cmd}"
+        if cwd is not None:
+            log_msg += f" in {cwd}"
+        self.logger.debug(log_msg)
         # TODO: investigate why it works only with shell, not exec
         async_subprocess = await asyncio.create_subprocess_shell(
             cmd,
@@ -116,7 +119,10 @@ class CommandRunner(icommandrunner.ICommandRunner):
         self, cmd: str, cwd: Path | None = None, env: dict[str, str] | None = None
     ) -> icommandrunner.ISyncProcess:
         cmd_parts = shlex.split(cmd)
-        self.logger.debug(f"Sync subprocess run: {cmd_parts}")
+        log_msg = f"Sync subprocess run: {cmd_parts}"
+        if cwd is not None:
+            log_msg += f' {cwd}'
+        self.logger.debug(log_msg)
         async_subprocess = subprocess.Popen(
             cmd_parts,
             stdin=subprocess.PIPE,

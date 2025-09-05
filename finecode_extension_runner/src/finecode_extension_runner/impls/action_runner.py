@@ -1,5 +1,4 @@
-from pathlib import Path
-from typing import Any, TypeAlias
+from typing import Any
 
 from finecode_extension_api.interfaces import iactionrunner
 
