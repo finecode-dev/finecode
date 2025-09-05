@@ -1,6 +1,6 @@
 [project]
 name = "fine_python_lint"
-version = "0.3.0"
+version = "0.4.0"
 description = ""
 authors = [{ name = "Vladyslav Hnatiuk", email = "aders1234@gmail.com" }]
 readme = "README.md"
