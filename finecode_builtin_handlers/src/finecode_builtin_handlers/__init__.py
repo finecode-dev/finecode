@@ -1,3 +1,5 @@
+"""FineCode Built-in handlers."""
+
 from .dump_config import DumpConfigHandler
 from .dump_config_save import DumpConfigSaveHandler
 from .prepare_envs_install_deps import PrepareEnvsInstallDepsHandler

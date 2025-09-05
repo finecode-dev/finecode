@@ -1,9 +1,7 @@
 import dataclasses
-import pathlib
 
 from finecode_extension_api import code_action
 from finecode_extension_api.actions import dump_config as dump_config_action
-from finecode_extension_api.interfaces import ifilemanager
 
 
 @dataclasses.dataclass

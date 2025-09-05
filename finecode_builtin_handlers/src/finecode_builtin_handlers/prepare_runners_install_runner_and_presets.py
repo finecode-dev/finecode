@@ -11,7 +11,7 @@ from finecode_extension_api.interfaces import (
     ilogger,
     iprojectinfoprovider,
 )
-from finecode_extension_runner.action_handlers import dependency_config_utils
+from finecode_builtin_handlers import dependency_config_utils
 
 
 @dataclasses.dataclass
