@@ -55,8 +55,7 @@ class PyreflyLintHandler(
             pass
 
         file_version = await self.file_manager.get_file_version(file_path)
-        file_content = await self.file_manager.get_content(file_path)
-        lint_messages = await self.run_pyrefly_lint_on_single_file(file_path, file_content)
+        lint_messages = await self.run_pyrefly_lint_on_single_file(file_path)
         messages[str(file_path)] = lint_messages
         await self.cache.save_file_cache(
             file_path, file_version, self.CACHE_KEY, lint_messages
@@ -80,7 +79,6 @@ class PyreflyLintHandler(
     async def run_pyrefly_lint_on_single_file(
         self,
         file_path: Path,
-        file_content: str,
     ) -> list[lint_action.LintMessage]:
         """Run pyrefly type checking on a single file"""
         lint_messages: list[lint_action.LintMessage] = []
@@ -101,7 +99,6 @@ class PyreflyLintHandler(
         output = pyrefly_process.get_output()
         try:
             pyrefly_results = json.loads(output)
-            self.logger.info(pyrefly_results)
             for error in pyrefly_results['errors']:
                 lint_message = map_pyrefly_error_to_lint_message(error)
                 lint_messages.append(lint_message)
