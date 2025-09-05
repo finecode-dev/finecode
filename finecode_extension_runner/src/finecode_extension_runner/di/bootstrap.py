@@ -1,6 +1,6 @@
 import functools
 import pathlib
-from typing import Any, Awaitable, Callable, Type, TypeVar
+from typing import Any, Awaitable, Callable
 
 try:
     import fine_python_ast
@@ -12,7 +12,6 @@ try:
 except ImportError:
     fine_python_mypy = None
 
-from finecode_extension_api import code_action
 from finecode_extension_api.interfaces import (
     iactionrunner,
     icache,

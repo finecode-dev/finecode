@@ -3,13 +3,13 @@ source = "finecode_extension_api.actions.prepare_envs.PrepareEnvsAction"
 
 [[tool.finecode.action.prepare_envs.handlers]]
 name = "prepare_envs_dump_configs"
-source = "finecode_extension_runner.action_handlers.PrepareEnvsReadConfigsHandler"
+source = "finecode_builtin_handlers.PrepareEnvsReadConfigsHandler"
 env = "dev_workspace"
 
 
 [[tool.finecode.action.prepare_envs.handlers]]
 name = "prepare_envs_install_deps"
-source = "finecode_extension_runner.action_handlers.PrepareEnvsInstallDepsHandler"
+source = "finecode_builtin_handlers.PrepareEnvsInstallDepsHandler"
 env = "dev_workspace"
 
 
@@ -30,13 +30,13 @@ dependencies = ["fine_python_virtualenv==0.1.*"]
 
 [[tool.finecode.action.prepare_dev_workspaces_envs.handlers]]
 name = "prepare_envs_read_configs"
-source = "finecode_extension_runner.action_handlers.PrepareEnvsReadConfigsHandler"
+source = "finecode_builtin_handlers.PrepareEnvsReadConfigsHandler"
 env = "dev_workspace"
 
 
 [[tool.finecode.action.prepare_dev_workspaces_envs.handlers]]
 name = "prepare_envs_install_deps"
-source = "finecode_extension_runner.action_handlers.PrepareEnvsInstallDepsHandler"
+source = "finecode_builtin_handlers.PrepareEnvsInstallDepsHandler"
 env = "dev_workspace"
 
 
@@ -51,13 +51,13 @@ dependencies = ["fine_python_virtualenv==0.1.*"]
 
 [[tool.finecode.action.prepare_runners.handlers]]
 name = "prepare_runners_read_configs"
-source = "finecode_extension_runner.action_handlers.PrepareRunnersReadConfigsHandler"
+source = "finecode_builtin_handlers.PrepareRunnersReadConfigsHandler"
 env = "dev_workspace"
 
 
 [[tool.finecode.action.prepare_runners.handlers]]
 name = "prepare_runners_install_runner_and_presets"
-source = "finecode_extension_runner.action_handlers.PrepareRunnersInstallRunnerAndPresetsHandler"
+source = "finecode_builtin_handlers.PrepareRunnersInstallRunnerAndPresetsHandler"
 env = "dev_workspace"
 
 
@@ -66,13 +66,13 @@ source = "finecode_extension_api.actions.dump_config.DumpConfigAction"
 
 [[tool.finecode.action.dump_config.handlers]]
 name = "dump_config"
-source = "finecode_extension_runner.action_handlers.DumpConfigHandler"
+source = "finecode_builtin_handlers.DumpConfigHandler"
 env = "dev_workspace"
 
 
 [[tool.finecode.action.dump_config.handlers]]
 name = "dump_config_save"
-source = "finecode_extension_runner.action_handlers.DumpConfigSaveHandler"
+source = "finecode_builtin_handlers.DumpConfigSaveHandler"
 env = "dev_workspace"
 
 

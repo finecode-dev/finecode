@@ -37,7 +37,7 @@ class VirtualenvPrepareEnvHandler(
         for env_info in payload.envs:
             if payload.recreate and env_info.venv_dir_path.exists():
                 self.logger.debug(f"Remove virtualenv dir {env_info.venv_dir_path}")
-                self.file_manager.remove_dir(env_info.venv_dir_path)
+                await self.file_manager.remove_dir(env_info.venv_dir_path)
 
             self.logger.info(f"Creating virtualenv {env_info.venv_dir_path}")
             if not env_info.venv_dir_path.exists():

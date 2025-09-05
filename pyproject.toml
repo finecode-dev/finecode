@@ -14,6 +14,7 @@ dependencies = [
     "pygls==2.0.0-a6",
     "finecode_extension_api==0.3.*",
     "finecode_extension_runner==0.3.*",
+    "finecode_builtin_handlers==0.1.*",
     "ordered-set==4.1.*",
     "mcp==1.13.*",
     "fine_python_virtualenv==0.1.*",
