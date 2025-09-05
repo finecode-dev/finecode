@@ -18,6 +18,11 @@ class PyreflyLintHandlerConfig(code_action.ActionHandlerConfig):
 class PyreflyLintHandler(
     code_action.ActionHandler[lint_action.LintAction, PyreflyLintHandlerConfig]
 ):
+    """
+    NOTE: pyrefly currently can check only saved files, not file content provided by
+    FineCode. In environments like IDE, messages from pyrefly will be updated only after
+    save of a file.
+    """
     CACHE_KEY = "PyreflyLinter"
 
     def __init__(
@@ -90,10 +95,7 @@ class PyreflyLintHandler(
 
         cmd_str = " ".join(cmd)
         pyrefly_process = await self.command_runner.run(cmd_str)
-        
-        pyrefly_process.write_to_stdin(file_content)
-        pyrefly_process.close_stdin()  # Signal EOF
-        
+
         await pyrefly_process.wait_for_end()
         
         output = pyrefly_process.get_output()
