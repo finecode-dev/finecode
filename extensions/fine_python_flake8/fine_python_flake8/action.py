@@ -58,6 +58,7 @@ def run_flake8_on_single_file(
         max_line_length=config.max_line_length,
         extend_select=config.extend_select,
         extend_ignore=config.extend_ignore,
+        select=config.select
     )
     decider = style_guide.DecisionEngine(guide.options)
 
@@ -110,6 +111,7 @@ def run_flake8_on_single_file(
 @dataclasses.dataclass
 class Flake8LintHandlerConfig(code_action.ActionHandlerConfig):
     max_line_length: int = 79
+    select: list[str] | None = None
     extend_select: list[str] | None = None
     extend_ignore: list[str] | None = None
 

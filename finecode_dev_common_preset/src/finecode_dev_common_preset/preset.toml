@@ -4,10 +4,6 @@ presets = [
     { source = "fine_python_aksem" },
 ]
 
-[[tool.finecode.action_handler]]
-source = "fine_python_black.BlackFormatHandler"
-config.preview = true
-
 # in development finecode can only be started with local version of finecode_extension_runner,
 # otherwise version conflict occurs, because versions of finecode and
 # finecode_extension_runner must match
