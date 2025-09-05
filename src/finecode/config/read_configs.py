@@ -583,8 +583,10 @@ def add_extension_runner_to_dependencies(project_config: dict[str, Any]) -> None
     finecode_version = metadata.version("finecode")
 
     for group_name, group_packages in deps_groups.items():
-        if group_name == "dev_workspace":
-            # skip `dev_workspace` because it contains finecode already
+        if group_name == "dev_workspace" or group_name == "runtime":
+            # - skip `dev_workspace` because it contains finecode already
+            # - skip `runtime` because FineCode doesn't start runner in runtime env, all
+            # development-related processes happen in `dev` env.
             continue
 
         group_packages.append(f"finecode_extension_runner == {finecode_version}")
