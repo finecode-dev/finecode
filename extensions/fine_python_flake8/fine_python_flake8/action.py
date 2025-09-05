@@ -182,6 +182,10 @@ class Flake8LintHandler(
         payload: lint_action.LintRunPayload,
         run_context: code_action.RunActionWithPartialResultsContext,
     ) -> None:
+        if self.config.select is not None and len(self.config.select) == 0:
+            # empty set of rules is selected, no need to run flake8
+            return None
+        
         file_paths = [file_path async for file_path in payload]
 
         for file_path in file_paths:
