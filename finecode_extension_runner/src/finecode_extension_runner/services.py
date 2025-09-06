@@ -1,19 +1,12 @@
-import asyncio
-import collections.abc
 import importlib
-import inspect
 import sys
-import time
 import types
 import typing
 from pathlib import Path
 
 from loguru import logger
-from pydantic.dataclasses import dataclass as pydantic_dataclass
 
-from finecode_extension_api import code_action, textstyler
-from finecode_extension_runner import context, domain, global_state, run_utils, schemas
-from finecode_extension_runner._services import run_action as run_action_module
+from finecode_extension_runner import context, domain, global_state, schemas
 from finecode_extension_runner._services.run_action import (
     ActionFailedException,
     StopWithResponse,
@@ -96,49 +89,37 @@ def reload_action(action_name: str) -> None:
         # TODO: raise error
         return
 
-    actions_to_remove: list[str] = [
-        action_name,
-        *[handler.name for handler in action_obj.handlers],
-    ]
+    if action_name in global_state.runner_context.action_cache_by_name:
+        action_cache = global_state.runner_context.action_cache_by_name[action_name]
 
-    for _action_name in actions_to_remove:
-        try:
-            del global_state.runner_context.action_handlers_instances_by_name[
-                _action_name
-            ]
-            logger.trace(f"Removed '{_action_name}' instance from cache")
-        except KeyError:
-            logger.info(
-                f"Tried to reload action '{_action_name}', but it was not found"
-            )
+        for handler_name, handler_cache in action_cache.handler_cache_by_name.items():
+            if handler_cache.exec_info is not None:
+                shutdown_action_handler(
+                    action_handler_name=handler_name,
+                    exec_info=handler_cache.exec_info,
+                )
 
-        if (
-            _action_name
-            in global_state.runner_context.action_handlers_exec_info_by_name
-        ):
-            shutdown_action_handler(
-                action_handler_name=_action_name,
-                exec_info=global_state.runner_context.action_handlers_exec_info_by_name[
-                    _action_name
-                ],
-            )
+        del global_state.runner_context.action_cache_by_name[action_name]
+        logger.trace(f"Removed '{action_name}' instance from cache")
 
-        try:
-            action_obj = project_def.actions[action_name]
-        except KeyError:
-            logger.warning(f"Definition of action {action_name} not found")
-            continue
+    try:
+        action_obj = project_def.actions[action_name]
+    except KeyError:
+        logger.warning(f"Definition of action {action_name} not found")
+        return
 
-        action_source = action_obj.source
-        if action_source is None:
-            continue
-        action_package = action_source.split(".")[0]
+    sources_to_remove = [action_obj.source]
+    for handler in action_obj.handlers:
+        sources_to_remove.append(handler.source)
+
+    for source_to_remove in sources_to_remove:
+        source_package = source_to_remove.split(".")[0]
 
         loaded_package_modules = dict(
             [
                 (key, value)
                 for key, value in sys.modules.items()
-                if key.startswith(action_package)
+                if key.startswith(source_package)
                 and isinstance(value, types.ModuleType)
             ]
         )
@@ -147,7 +128,7 @@ def reload_action(action_name: str) -> None:
         for key in loaded_package_modules:
             del sys.modules[key]
 
-        logger.trace(f"Remove modules of package '{action_package}' from cache")
+        logger.trace(f"Remove modules of package '{source_package}' from cache")
 
 
 def resolve_package_path(package_name: str) -> str:
@@ -162,11 +143,13 @@ def resolve_package_path(package_name: str) -> str:
 
 
 def document_did_open(document_uri: str) -> None:
-    global_state.runner_context.docs_owned_by_client.append(document_uri)
+    if global_state.runner_context is not None:
+        global_state.runner_context.docs_owned_by_client.append(document_uri)
 
 
 def document_did_close(document_uri: str) -> None:
-    global_state.runner_context.docs_owned_by_client.remove(document_uri)
+    if global_state.runner_context is not None:
+        global_state.runner_context.docs_owned_by_client.remove(document_uri)
 
 
 def shutdown_action_handler(
@@ -190,19 +173,17 @@ def shutdown_action_handler(
 
 def shutdown_all_action_handlers() -> None:
     logger.trace("Shutdown all action handlers")
-    for (
-        action_handler_name,
-        exec_info,
-    ) in global_state.runner_context.action_handlers_exec_info_by_name.items():
-        shutdown_action_handler(
-            action_handler_name=action_handler_name, exec_info=exec_info
-        )
+    for action_cache in global_state.action_cache_by_name.values():
+        for handler_name, handler_cache in action_cache.handler_cache_by_name.items():
+            if handler_cache.exec_info is not None:
+                shutdown_action_handler(
+                    action_handler_name=handler_name, exec_info=handler_cache.exec_info
+                )
 
 
 def exit_action_handler(
     action_handler_name: str, exec_info: domain.ActionHandlerExecInfo
 ) -> None:
-    # action handler exec info expected to exist in runner_context
     if (
         exec_info.lifecycle is not None
         and exec_info.lifecycle.on_exit_callable is not None
@@ -216,11 +197,11 @@ def exit_action_handler(
 
 def exit_all_action_handlers() -> None:
     logger.trace("Exit all action handlers")
-    for (
-        action_handler_name,
-        exec_info,
-    ) in global_state.runner_context.action_handlers_exec_info_by_name.items():
-        exit_action_handler(
-            action_handler_name=action_handler_name, exec_info=exec_info
-        )
-    global_state.runner_context.action_handlers_exec_info_by_name = {}
+    for action_cache in global_state.action_cache_by_name.values():
+        for handler_name, handler_cache in action_cache.handler_cache_by_name.items():
+            if handler_cache.exec_info is not None:
+                exec_info = handler_cache.exec_info
+                exit_action_handler(
+                    action_handler_name=handler_name, exec_info=exec_info
+                )
+        action_cache.handler_cache_by_name = {}

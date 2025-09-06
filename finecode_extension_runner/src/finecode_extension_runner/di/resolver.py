@@ -1,4 +1,4 @@
-from typing import Any, Callable, Type, TypeVar
+from typing import Type, TypeVar
 
 from finecode_extension_api import code_action
 

@@ -79,16 +79,19 @@ async def run_action(
     #   returned. (experimental)
     # - execution of handlers can be concurrent or sequential. But executions of handler
     #   on iterable payloads(single parts) are always concurrent.
+    action_name = request.action_name
 
     try:
-        action_exec_info = global_state.runner_context.action_exec_info_by_name[
-            request.action_name
-        ]
+        action_cache = global_state.runner_context.action_cache_by_name[action_name]
     except KeyError:
+        action_cache = domain.ActionCache()
+        global_state.runner_context.action_cache_by_name[action_name] = action_cache
+
+    if action_cache.exec_info is not None:
+        action_exec_info = action_cache.exec_info
+    else:
         action_exec_info = create_action_exec_info(action)
-        global_state.runner_context.action_exec_info_by_name[request.action_name] = (
-            action_exec_info
-        )
+        action_cache.exec_info = action_exec_info
 
     # TODO: catch validation errors
     payload: code_action.RunActionPayload | None = None
@@ -140,6 +143,7 @@ async def run_action(
                     payload=payload,
                     run_context=run_context,
                     run_id=run_id,
+                    action_cache=action_cache,
                     action_context=action_context,
                     action_exec_info=action_exec_info,
                     runner_context=runner_context,
@@ -223,6 +227,7 @@ async def run_action(
                                     payload=payload,
                                     run_context=run_context,
                                     run_id=run_id,
+                                    action_cache=action_cache,
                                     action_context=action_context,
                                     action_exec_info=action_exec_info,
                                     runner_context=runner_context,
@@ -253,6 +258,7 @@ async def run_action(
                             payload=payload,
                             run_context=run_context,
                             run_id=run_id,
+                            action_cache=action_cache,
                             action_context=action_context,
                             action_exec_info=action_exec_info,
                             runner_context=runner_context,
@@ -379,19 +385,37 @@ async def execute_action_handler(
     run_context: code_action.RunActionContext | None,
     run_id: int,
     action_exec_info: domain.ActionExecInfo,
+    action_cache: domain.ActionCache,
     action_context: code_action.ActionContext,
     runner_context: context.RunnerContext,
 ) -> code_action.RunActionResult:
     logger.trace(f"R{run_id} | Run {handler.name} on {str(payload)[:100]}...")
+    if handler.name in action_cache.handler_cache_by_name:
+        handler_cache = action_cache.handler_cache_by_name[handler.name]
+    else:
+        handler_cache = domain.ActionHandlerCache()
+        action_cache.handler_cache_by_name[handler.name] = handler_cache
+    
     start_time = time.time_ns()
     execution_result: code_action.RunActionResult | None = None
+    
+    handler_global_config = runner_context.project.action_handler_configs.get(
+        handler.source, None
+    )
+    handler_raw_config = {}
+    if handler_global_config is not None:
+        handler_raw_config = handler_global_config
+    if handler_raw_config == {}:
+        # still empty, just assign
+        handler_raw_config = handler.config
+    else:
+        # not empty anymore, deep merge
+        handler_config_merger.merge(handler_raw_config, handler.config)
 
-    if handler.name in runner_context.action_handlers_instances_by_name:
-        handler_instance = runner_context.action_handlers_instances_by_name[
-            handler.name
-        ]
+    if handler_cache.instance is not None:
+        handler_instance = handler_cache.instance
         handler_run_func = handler_instance.run
-        exec_info = runner_context.action_handlers_exec_info_by_name[handler.name]
+        exec_info = handler_cache.exec_info
         logger.trace(
             f"R{run_id} | Instance of action handler {handler.name} found in cache"
         )
@@ -411,19 +435,6 @@ async def execute_action_handler(
                 f"Import of action handler '{handler.name}' failed(Run {run_id}): {handler.source}"
             )
 
-        handler_global_config = runner_context.project.action_handler_configs.get(
-            handler.source, None
-        )
-        handler_raw_config = {}
-        if handler_global_config is not None:
-            handler_raw_config = handler_global_config
-        if handler_raw_config == {}:
-            # still empty, just assign
-            handler_raw_config = handler.config
-        else:
-            # not empty anymore, deep merge
-            handler_config_merger.merge(handler_raw_config, handler.config)
-
         def get_handler_config(param_type):
             # TODO: validation errors
             return param_type(**handler_raw_config)
@@ -437,7 +448,7 @@ async def execute_action_handler(
         exec_info = domain.ActionHandlerExecInfo()
         # save immediately in context to be able to shutdown it if the first execution
         # is interrupted by stopping ER
-        runner_context.action_handlers_exec_info_by_name[handler.name] = exec_info
+        handler_cache.exec_info = exec_info
         if inspect.isclass(action_handler):
             args = resolve_func_args_with_di(
                 func=action_handler.__init__,
@@ -453,9 +464,7 @@ async def execute_action_handler(
                 exec_info.lifecycle = args["lifecycle"]
 
             handler_instance = action_handler(**args)
-            runner_context.action_handlers_instances_by_name[handler.name] = (
-                handler_instance
-            )
+            handler_cache.instance = handler_instance
             handler_run_func = handler_instance.run
         else:
             handler_run_func = action_handler
