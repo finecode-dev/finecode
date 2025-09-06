@@ -14,11 +14,11 @@ from finecode.runner.manager import RunnerFailedToStart
 from finecode.services import ActionRunFailed
 
 
-def find_action_project(
+async def find_action_project(
     file_path: pathlib.Path, action_name: str, ws_context: context.WorkspaceContext
 ) -> pathlib.Path:
     try:
-        project_path = find_project.find_project_with_action_for_file(
+        project_path = await find_project.find_project_with_action_for_file(
             file_path=file_path,
             action_name=action_name,
             ws_context=ws_context,
@@ -51,7 +51,7 @@ async def find_action_project_and_run(
     params: dict[str, Any],
     ws_context: context.WorkspaceContext,
 ) -> runner_client.RunActionResponse:
-    project_path = find_action_project(
+    project_path = await find_action_project(
         file_path=file_path, action_name=action_name, ws_context=ws_context
     )
     project = ws_context.ws_projects[project_path]
@@ -227,7 +227,7 @@ async def find_action_project_and_run_with_partial_results(
     ws_context: context.WorkspaceContext,
 ) -> collections.abc.AsyncIterator[runner_client.RunActionRawResult]:
     logger.trace(f"Run {action_name} on {file_path}")
-    project_path = find_action_project(
+    project_path = await find_action_project(
         file_path=file_path, action_name=action_name, ws_context=ws_context
     )
     return run_with_partial_results(

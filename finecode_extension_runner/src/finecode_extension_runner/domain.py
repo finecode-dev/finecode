@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import enum
+import dataclasses
 import typing
 from pathlib import Path
 
@@ -74,6 +75,18 @@ class ActionHandlerExecInfoStatus(enum.Enum):
     CREATED = enum.auto()
     INITIALIZED = enum.auto()
     SHUTDOWN = enum.auto()
+
+
+@dataclasses.dataclass
+class ActionCache:
+    exec_info: ActionExecInfo | None = None
+    handler_cache_by_name: dict[str, ActionHandlerCache] = dataclasses.field(default_factory=dict)
+
+
+@dataclasses.dataclass
+class ActionHandlerCache:
+    instance: code_action.ActionHandler | None = None
+    exec_info: ActionHandlerExecInfo | None = None
 
 
 class TextDocumentInfo:

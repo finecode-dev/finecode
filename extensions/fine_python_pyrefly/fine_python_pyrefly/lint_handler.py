@@ -117,7 +117,7 @@ def map_pyrefly_error_to_lint_message(error: dict) -> lint_action.LintMessage:
     end_column = error['stop_column']
 
     # Determine severity based on error type
-    error_code = error.get('code', '')
+    error_code = str(error.get('code', ''))
     code_description = error.get("name", "")
     severity = lint_action.LintMessageSeverity.ERROR
 

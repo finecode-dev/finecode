@@ -24,7 +24,7 @@ async def document_did_open(
     projects_paths = [
         project_path
         for project_path, project in global_state.ws_context.ws_projects.items()
-        if project.status == domain.ProjectStatus.RUNNING
+        if project.status == domain.ProjectStatus.CONFIG_VALID
         and file_path.is_relative_to(project_path)
     ]
 
@@ -34,17 +34,17 @@ async def document_did_open(
     try:
         async with asyncio.TaskGroup() as tg:
             for project_path in projects_paths:
-                runners_by_env = global_state.ws_context.ws_projects_extension_runners[
-                    project_path
-                ]
+                runners_by_env = global_state.ws_context.ws_projects_extension_runners.get(project_path, {})
                 for runner in runners_by_env.values():
                     tg.create_task(
                         runner_client.notify_document_did_open(
                             runner=runner, document_info=document_info
                         )
                     )
-    except ExceptionGroup as e:
-        logger.error(f"Error while sending opened document: {e}")
+    except ExceptionGroup as eg:
+        for exception in eg.exceptions:
+            logger.exception(exception)
+        logger.error(f"Error while sending opened document: {eg}")
 
 
 async def document_did_close(

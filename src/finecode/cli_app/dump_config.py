@@ -62,18 +62,6 @@ async def dump_config(workdir_path: pathlib.Path, project_name: str):
             )
 
         try:
-            await read_configs.read_project_config(
-                project=project, ws_context=ws_context
-            )
-            collect_actions.collect_actions(
-                project_path=project.dir_path, ws_context=ws_context
-            )
-        except config_models.ConfigurationError as exception:
-            raise DumpFailed(
-                f"Rereading project config with presets and collecting actions in {project.dir_path} failed: {exception.message}"
-            )
-
-        try:
             await proxy_utils.start_required_environments(
                 actions_by_projects, ws_context
             )

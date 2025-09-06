@@ -135,7 +135,7 @@ def map_ruff_violation_to_lint_message(violation: dict) -> lint_action.LintMessa
     # Extract line/column info (ruff uses 1-based indexing)
     start_line = max(1, location.get("row", 1))
     start_column = max(0, location.get("column", 0))
-    end_line = max(1, end_location.get("row", start_line + 1)) - 1  # Convert to 0-based
+    end_line = max(1, end_location.get("row", start_line + 1))
     end_column = max(0, end_location.get("column", start_column))
 
     # Determine severity based on rule code
