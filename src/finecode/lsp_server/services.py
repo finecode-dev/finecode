@@ -78,19 +78,6 @@ async def add_workspace_dir(
     except runner_manager.RunnerFailedToStart as exception:
         raise ValueError(f"Starting runners with presets failed: {exception.message}")
 
-    for project in new_projects:
-        try:
-            await read_configs.read_project_config(
-                project=project, ws_context=global_state.ws_context
-            )
-            collect_actions.collect_actions(
-                project_path=project.dir_path, ws_context=global_state.ws_context
-            )
-        except config_models.ConfigurationError as exception:
-            raise ValueError(
-                f"Rereading project config with presets and collecting actions in {project.dir_path} failed: {exception.message}"
-            )
-
     return schemas.AddWorkspaceDirResponse()
 
 

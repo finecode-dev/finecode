@@ -202,6 +202,7 @@ def stop_extension_runner_sync(runner: runner_info.ExtensionRunnerInfo) -> None:
 async def start_runners_with_presets(
     projects: list[domain.Project], ws_context: context.WorkspaceContext
 ) -> None:
+    # start runners with presets in projects, resolve presets and read project actions
     new_runners_tasks: list[asyncio.Task] = []
     try:
         # first start runner in 'dev_workspace' env to be able to resolve presets for
@@ -236,6 +237,35 @@ async def start_runners_with_presets(
         raise RunnerFailedToStart(
             "Failed to initialize runner(s). See previous logs for more details"
         )
+    
+    for project in projects:
+        try:
+            await read_configs.read_project_config(
+                project=project, ws_context=ws_context
+            )
+            collect_actions.collect_actions(
+                project_path=project.dir_path, ws_context=ws_context
+            )
+        except config_models.ConfigurationError as exception:
+            raise RunnerFailedToStart(
+                f"Reading project config with presets and collecting actions in {project.dir_path} failed: {exception.message}"
+            )
+
+
+async def get_or_start_runners_with_presets(project_dir_path: Path, ws_context: context.WorkspaceContext) -> runner_info.ExtensionRunnerInfo:
+    # project is expected to have status `ProjectStatus.CONFIG_VALID`
+    has_dev_workspace_runner = 'dev_workspace' in ws_context.ws_projects_extension_runners[project_dir_path]
+    if not has_dev_workspace_runner:
+        project = ws_context.ws_projects[project_dir_path]
+        await start_runners_with_presets([project], ws_context)
+    dev_workspace_runner = ws_context.ws_projects_extension_runners[project_dir_path]['dev_workspace']
+    if dev_workspace_runner.status == runner_info.RunnerStatus.RUNNING:
+        return dev_workspace_runner
+    elif dev_workspace_runner.status == runner_info.RunnerStatus.INITIALIZING:
+        await dev_workspace_runner.initialized_event.wait()
+        return dev_workspace_runner
+    else:
+        raise RunnerFailedToStart(f'Status of dev_workspace runner: {dev_workspace_runner.status}, logs: {dev_workspace_runner.logs_path}')
 
 
 async def start_runner(

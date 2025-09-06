@@ -84,19 +84,6 @@ async def prepare_envs(workdir_path: pathlib.Path, recreate: bool) -> None:
                 f"Starting runners with presets failed: {exception.message}"
             )
 
-        for project in projects:
-            try:
-                await read_configs.read_project_config(
-                    project=project, ws_context=ws_context
-                )
-                collect_actions.collect_actions(
-                    project_path=project.dir_path, ws_context=ws_context
-                )
-            except config_models.ConfigurationError as exception:
-                raise PrepareEnvsFailed(
-                    f"Rereading project config with presets and collecting actions in {project.dir_path} failed: {exception.message}"
-                )
-
         # now all 'dev_workspace' envs are valid, run 'prepare_runners' in them to create
         # venvs and install runners and presets in them
         actions_by_projects: dict[pathlib.Path, list[str]] = {

@@ -125,18 +125,6 @@ async def run_actions(
             logger.error("Unexpected exception:")
             logger.exception(exception)
 
-        # 2. Collect actions in relevant projects
-        for project in projects:
-            try:
-                await read_configs.read_project_config(
-                    project=project, ws_context=ws_context
-                )
-                collect_actions.collect_actions(
-                    project_path=project.dir_path, ws_context=ws_context
-                )
-            except config_models.ConfigurationError as exception:
-                raise RunFailed(f"Found configuration problem: {exception.message}")
-
         actions_by_projects: dict[pathlib.Path, list[str]] = {}
         if projects_names is not None:
             # check that all projects have all actions to detect problem and provide
