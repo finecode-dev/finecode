@@ -141,6 +141,7 @@ async def _start_extension_runner_process(
     register_progress_feature(on_progress)
 
     async def get_project_raw_config(params):
+        logger.debug(f"Get project raw config: {params}")
         project_def_path_str = params.projectDefPath
         project_def_path = Path(project_def_path_str)
         try:
@@ -379,7 +380,7 @@ async def _init_lsp_client(
             f"Runner failed to notify about initialization: {error}"
         )
 
-    logger.debug("LSP Client initialized")
+    logger.debug(f"LSP Client for initialized: {runner.readable_id}")
 
 
 async def update_runner_config(
@@ -390,7 +391,7 @@ async def update_runner_config(
         actions=project.actions, action_handler_configs=project.action_handler_configs
     )
     try:
-        await runner_client.update_config(runner, config)
+        await runner_client.update_config(runner, project.def_path, config)
     except runner_client.BaseRunnerRequestException as exception:
         runner.status = runner_info.RunnerStatus.FAILED
         await notify_project_changed(project)

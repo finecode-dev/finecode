@@ -1,0 +1,3 @@
+class Service:
+    async def init(self) -> None:
+        ...

@@ -9,6 +9,7 @@ import dataclasses
 import enum
 import json
 import typing
+import pathlib
 from typing import TYPE_CHECKING, Any
 
 from loguru import logger
@@ -73,9 +74,6 @@ async def send_request(
             f" no response on {method}"
         )
     except TimeoutError:
-        # can this happen?
-        # if runner.client._server.returncode != None:
-        #     await log_process_log_streams(process=runner.client._server)
         raise ResponseTimeout(
             f"Timeout {timeout}s for response on {method} to"
             f" runner {runner.readable_id}"
@@ -141,6 +139,7 @@ async def initialize(
             client_info=types.ClientInfo(name=client_name, version=client_version),
             trace=types.TraceValue.Verbose,
         ),
+        timeout=20
     )
 
 
@@ -249,7 +248,7 @@ class RunnerConfig:
     action_handler_configs: dict[str, dict[str, Any]]
 
 
-async def update_config(runner: ExtensionRunnerInfo, config: RunnerConfig) -> None:
+async def update_config(runner: ExtensionRunnerInfo, project_def_path: pathlib.Path, config: RunnerConfig) -> None:
     await send_request(
         runner=runner,
         method=types.WORKSPACE_EXECUTE_COMMAND,
@@ -258,6 +257,7 @@ async def update_config(runner: ExtensionRunnerInfo, config: RunnerConfig) -> No
             arguments=[
                 runner.working_dir_path.as_posix(),
                 runner.working_dir_path.stem,
+                project_def_path.as_posix(),
                 config,
             ],
         ),

@@ -1,7 +1,6 @@
 import asyncio
 import dataclasses
 import itertools
-import shutil
 import typing
 
 from finecode_extension_api import code_action
@@ -9,7 +8,6 @@ from finecode_extension_api.actions import prepare_runners as prepare_runners_ac
 from finecode_extension_api.interfaces import (
     iactionrunner,
     ilogger,
-    iprojectinfoprovider,
 )
 from finecode_builtin_handlers import dependency_config_utils
 

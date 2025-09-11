@@ -23,7 +23,7 @@ async def update_config(
         [str], typing.Awaitable[dict[str, typing.Any]]
     ],
 ) -> schemas.UpdateConfigResponse:
-    project_path = Path(request.working_dir)
+    project_dir_path = Path(request.working_dir)
 
     actions: dict[str, domain.Action] = {}
     for action_name, action_schema_obj in request.actions.items():
@@ -47,7 +47,8 @@ async def update_config(
     global_state.runner_context = context.RunnerContext(
         project=domain.Project(
             name=request.project_name,
-            path=project_path,
+            dir_path=project_dir_path,
+            def_path=request.project_def_path,
             actions=actions,
             action_handler_configs=request.action_handler_configs,
         ),
@@ -57,13 +58,23 @@ async def update_config(
     # bootstrap here. Should be changed after adding updating configuration on the fly.
     def project_def_path_getter() -> Path:
         assert global_state.runner_context is not None
-        return global_state.runner_context.project.path
+        return global_state.runner_context.project.def_path
+
+    def cache_dir_path_getter() -> Path:
+        assert global_state.runner_context is not None
+        project_dir_path = global_state.runner_context.project.dir_path
+        project_cache_dir = project_dir_path / ".venvs" / global_state.env_name / "cache"
+        if not project_cache_dir.exists():
+            project_cache_dir.mkdir()
+        
+        return project_cache_dir
 
     di_bootstrap.bootstrap(
         get_document_func=document_requester,
         save_document_func=document_saver,
         project_def_path_getter=project_def_path_getter,
         project_raw_config_getter=project_raw_config_getter,
+        cache_dir_path_getter=cache_dir_path_getter
     )
 
     return schemas.UpdateConfigResponse()
@@ -173,7 +184,7 @@ def shutdown_action_handler(
 
 def shutdown_all_action_handlers() -> None:
     logger.trace("Shutdown all action handlers")
-    for action_cache in global_state.action_cache_by_name.values():
+    for action_cache in global_state.runner_context.action_cache_by_name.values():
         for handler_name, handler_cache in action_cache.handler_cache_by_name.items():
             if handler_cache.exec_info is not None:
                 shutdown_action_handler(
@@ -197,7 +208,7 @@ def exit_action_handler(
 
 def exit_all_action_handlers() -> None:
     logger.trace("Exit all action handlers")
-    for action_cache in global_state.action_cache_by_name.values():
+    for action_cache in global_state.runner_context.action_cache_by_name.values():
         for handler_name, handler_cache in action_cache.handler_cache_by_name.items():
             if handler_cache.exec_info is not None:
                 exec_info = handler_cache.exec_info

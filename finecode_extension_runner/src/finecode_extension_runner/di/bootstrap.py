@@ -19,10 +19,12 @@ from finecode_extension_api.interfaces import (
     ifilemanager,
     ilogger,
     iprojectinfoprovider,
+    iextensionrunnerinfoprovider,
+    iprojectfileclassifier
 )
 from finecode_extension_runner import global_state, schemas
 from finecode_extension_runner._services import run_action
-from finecode_extension_runner.di import _state
+from finecode_extension_runner.di import _state, resolver
 from finecode_extension_runner.impls import (
     action_runner,
     command_runner,
@@ -30,6 +32,8 @@ from finecode_extension_runner.impls import (
     inmemory_cache,
     loguru_logger,
     project_info_provider,
+    extension_runner_info_provider,
+    project_file_classifier
 )
 
 
@@ -38,6 +42,7 @@ def bootstrap(
     save_document_func: Callable,
     project_def_path_getter: Callable[[], pathlib.Path],
     project_raw_config_getter: Callable[[str], Awaitable[dict[str, Any]]],
+    cache_dir_path_getter: Callable[[], pathlib.Path],
 ):
     # logger_instance = loguru_logger.LoguruLogger()
     logger_instance = loguru_logger.get_logger()
@@ -73,6 +78,11 @@ def bootstrap(
         project_def_path_getter=project_def_path_getter,
         project_raw_config_getter=project_raw_config_getter,
     )
+    _state.factories[iextensionrunnerinfoprovider.IExtensionRunnerInfoProvider] = functools.partial(
+        extension_runner_info_provider_factory,
+        cache_dir_path_getter=cache_dir_path_getter
+    )
+    _state.factories[iprojectfileclassifier.IProjectFileClassifier] = project_file_classifier_factory
 
     # TODO: parameters from config
 
@@ -116,3 +126,21 @@ def project_info_provider_factory(
         project_def_path_getter=project_def_path_getter,
         project_raw_config_getter=project_raw_config_getter,
     )
+
+
+async def extension_runner_info_provider_factory(
+    container,
+    cache_dir_path_getter: Callable[[], pathlib.Path],
+):
+    logger = await resolver.get_service_instance(ilogger.ILogger)
+    return extension_runner_info_provider.ExtensionRunnerInfoProvider(
+        cache_dir_path_getter=cache_dir_path_getter,
+        logger=logger
+    )
+
+
+async def project_file_classifier_factory(
+    container,
+):
+    project_info_provider = await resolver.get_service_instance(iprojectinfoprovider.IProjectInfoProvider)
+    return project_file_classifier.ProjectFileClassifier(project_info_provider=project_info_provider)

@@ -169,6 +169,7 @@ async def update_config(
     ls: lsp_server.LanguageServer,
     working_dir: pathlib.Path,
     project_name: str,
+    project_def_path: pathlib.Path,
     config: dict[str, typing.Any],
 ):
     logger.trace(f"Update config: {working_dir} {project_name} {config}")
@@ -179,6 +180,7 @@ async def update_config(
         request = schemas.UpdateConfigRequest(
             working_dir=working_dir,
             project_name=project_name,
+            project_def_path=project_def_path,
             actions={
                 action["name"]: schemas.Action(
                     name=action["name"],

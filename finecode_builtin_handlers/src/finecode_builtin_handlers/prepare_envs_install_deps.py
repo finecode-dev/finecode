@@ -1,14 +1,12 @@
 import asyncio
 import dataclasses
 import itertools
-import shutil
 
 from finecode_extension_api import code_action
 from finecode_extension_api.actions import prepare_envs as prepare_envs_action
 from finecode_extension_api.interfaces import (
     iactionrunner,
     ilogger,
-    iprojectinfoprovider,
 )
 from finecode_builtin_handlers import dependency_config_utils
 

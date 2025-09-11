@@ -59,7 +59,7 @@ async def read_projects_in_dir(
             actions=actions,
             env_configs={},
         )
-        is_new_project = not def_file.parent in ws_context.ws_projects
+        is_new_project = def_file.parent not in ws_context.ws_projects
         ws_context.ws_projects[def_file.parent] = new_project
         if is_new_project:
             new_projects.append(new_project)

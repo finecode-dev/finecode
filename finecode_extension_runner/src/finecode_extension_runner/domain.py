@@ -34,17 +34,19 @@ class Project:
     def __init__(
         self,
         name: str,
-        path: Path,
+        dir_path: Path,
+        def_path: Path,
         actions: dict[str, Action],
         action_handler_configs: dict[str, dict[str, typing.Any]],
     ) -> None:
         self.name = name
-        self.path = path
+        self.dir_path = dir_path
+        self.def_path = def_path
         self.actions = actions
         self.action_handler_configs = action_handler_configs
 
     def __str__(self) -> str:
-        return f'Project(name="{self.name}", path="{self.path}")'
+        return f'Project(name="{self.name}", dir_path="{self.dir_path}")'
 
 
 class ActionExecInfo:
