@@ -12,7 +12,7 @@ from finecode_extension_api.interfaces import icache, icommandrunner, ilogger, i
 
 @dataclasses.dataclass
 class PyreflyLintHandlerConfig(code_action.ActionHandlerConfig):
-    ...
+    python_version: str | None = None
 
 
 class PyreflyLintHandler(
@@ -104,8 +104,10 @@ class PyreflyLintHandler(
             "--output-format=json",
             "--disable-search-path-heuristics=true",
             "--skip-interpreter-query",
-            "--python-version='3.11'" # TODO
         ]
+
+        if self.config.python_version is not None:
+            cmd.append(f"--python-version='{self.config.python_version}'")
 
         for path in site_package_pathes:
             cmd.append(f'--site-package-path={str(path)}')
