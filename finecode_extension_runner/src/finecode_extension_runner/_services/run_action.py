@@ -556,8 +556,11 @@ async def run_subresult_coros_concurrently(
                 # in it and result from action handler must stay immutable (e.g. it can
                 # reference to cache)
                 action_subresult_type = type(coro_result)
+                # use pydantic dataclass as constructor because it instantiates classes
+                # recursively, normal dataclass only on the first level
+                action_subresult_type_pydantic = pydantic_dataclass(action_subresult_type)
                 action_subresult_dict = dataclasses.asdict(coro_result)
-                action_subresult = action_subresult_type(**action_subresult_dict)
+                action_subresult = action_subresult_type_pydantic(**action_subresult_dict)
             else:
                 action_subresult.update(coro_result)
 

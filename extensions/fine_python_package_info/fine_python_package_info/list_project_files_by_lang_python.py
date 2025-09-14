@@ -1,4 +1,4 @@
-from finecode_extension_api.interfaces import iprojectinfoprovider, ipypackagelayoutinfoprovider
+from finecode_extension_api.interfaces import iprojectinfoprovider, ipypackagelayoutinfoprovider, ilogger
 import dataclasses
 import pathlib
 
@@ -7,8 +7,10 @@ from finecode_extension_api.actions import list_project_files_by_lang as list_pr
 
 
 @dataclasses.dataclass
-class ListProjectFilesByLangPythonHandlerConfig(code_action.ActionHandlerConfig): ...
-# TODO: parameter for additional dirs
+class ListProjectFilesByLangPythonHandlerConfig(code_action.ActionHandlerConfig):
+    # list of relative pathes relative to project directory with additional python
+    # sources if they are not in one of default pathes
+    additional_dirs: list[pathlib.Path] | None = None
 
 
 class ListProjectFilesByLangPythonHandler(
@@ -16,9 +18,17 @@ class ListProjectFilesByLangPythonHandler(
         list_project_files_by_lang_action.ListProjectFilesByLangAction, ListProjectFilesByLangPythonHandlerConfig
     ]
 ):
-    def __init__(self, project_info_provider: iprojectinfoprovider.IProjectInfoProvider, py_package_layout_info_provider: ipypackagelayoutinfoprovider.IPyPackageLayoutInfoProvider) -> None:
+    def __init__(
+        self,
+        config: ListProjectFilesByLangPythonHandlerConfig,
+        project_info_provider: iprojectinfoprovider.IProjectInfoProvider,
+        py_package_layout_info_provider: ipypackagelayoutinfoprovider.IPyPackageLayoutInfoProvider,
+        logger: ilogger.ILogger
+    ) -> None:
+        self.config = config
         self.project_info_provider = project_info_provider
         self.py_package_layout_info_provider = py_package_layout_info_provider
+        self.logger = logger
 
         self.current_project_dir_path = self.project_info_provider.get_current_project_dir_path()
         self.tests_dir_path = self.current_project_dir_path / 'tests'
@@ -42,6 +52,15 @@ class ListProjectFilesByLangPythonHandler(
 
         if self.setup_py_path.exists():
             py_files.append(self.setup_py_path)
+            
+        if self.config.additional_dirs is not None:
+            for dir_path in self.config.additional_dirs:
+                dir_absolute_path = self.current_project_dir_path / dir_path
+                if not dir_absolute_path.exists():
+                    self.logger.warning(f"Skip {dir_path} because {dir_absolute_path} doesn't exist")
+                    continue
+
+                py_files += list(dir_absolute_path.rglob('*.py'))
 
         return list_project_files_by_lang_action.ListProjectFilesByLangRunResult(
             files_by_lang={"python": py_files}

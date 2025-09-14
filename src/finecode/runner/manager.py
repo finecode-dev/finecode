@@ -185,7 +185,7 @@ def stop_extension_runner_sync(runner: runner_info.ExtensionRunnerInfo) -> None:
         logger.debug("Send shutdown to server")
         try:
             runner_client.shutdown_sync(runner=runner)
-        except Exception as e:
+        except Exception:
             # currently we get (almost?) always this error. TODO: Investigate why
             # mute for now to make output less verbose
             # logger.error(f"Failed to shutdown: {e}")
@@ -240,6 +240,9 @@ async def start_runners_with_presets(
         )
 
     for project in projects:
+        if project_status != domain.ProjectStatus.CONFIG_VALID:
+            continue
+
         try:
             await read_configs.read_project_config(
                 project=project, ws_context=ws_context
@@ -251,6 +254,10 @@ async def start_runners_with_presets(
             raise RunnerFailedToStart(
                 f"Reading project config with presets and collecting actions in {project.dir_path} failed: {exception.message}"
             )
+        
+        # update config of dev_workspace runner, the new config contains resolved presets
+        dev_workspace_runner = ws_context.ws_projects_extension_runners[project.dir_path]['dev_workspace']
+        await update_runner_config(runner=dev_workspace_runner, project=project)
 
 
 async def get_or_start_runners_with_presets(

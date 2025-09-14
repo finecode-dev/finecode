@@ -528,6 +528,39 @@ def handler_to_dict(handler: domain.ActionHandler) -> dict[str, str | list[str]]
 
 def add_runtime_dependency_group_if_new(project_config: dict[str, Any]) -> None:
     runtime_dependencies = project_config.get("project", {}).get("dependencies", [])
+    
+    # add root package to runtime env if it is not there yet. It is done here and not
+    # in package installer, because runtime deps group can be included in other groups
+    # and root package should be installed in them as well
+    root_package_name = project_config.get("project", {}).get("name", None)
+    if root_package_name is None:
+        raise config_models.ConfigurationError("project.name not found in config")
+    root_package_in_runtime_deps = any(
+        dep for dep in runtime_dependencies if get_dependency_name(dep) == root_package_name
+    )
+    if not root_package_in_runtime_deps:
+        runtime_dependencies.insert(0, root_package_name)
+        
+        # make editable. Example:
+        # [tool.finecode.env.runtime.dependencies]
+        # package_name = { path = "./", editable = true }
+        if 'tool' not in project_config:
+            project_config['tool'] = {}
+        tool_config = project_config['tool']
+        if 'finecode' not in tool_config:
+            tool_config['finecode'] = {}
+        finecode_config = tool_config['finecode']
+        if 'env' not in finecode_config:
+            finecode_config['env'] = {}
+        finecode_env_config = finecode_config['env']
+        if 'runtime' not in finecode_env_config:
+            finecode_env_config['runtime'] = {}
+        runtime_env_config = finecode_env_config['runtime']
+        if 'dependencies' not in runtime_env_config:
+            runtime_env_config['dependencies'] = {}
+        runtime_env_deps = runtime_env_config['dependencies']
+        if root_package_name not in runtime_env_deps:
+            runtime_env_deps[root_package_name] = { "path": "./", "editable": True}
 
     deps_groups = add_or_get_dict_key_value(project_config, "dependency-groups", {})
     if "runtime" not in deps_groups:
