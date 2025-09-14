@@ -1,10 +1,10 @@
-import os
 import pathlib
 
 from loguru import logger
 
-from finecode import context, proxy_utils, services
-from finecode.config import collect_actions, config_models, read_configs
+from finecode import context, services
+from finecode.services import run_service
+from finecode.config import config_models, read_configs
 from finecode.runner import manager as runner_manager
 
 
@@ -62,17 +62,17 @@ async def dump_config(workdir_path: pathlib.Path, project_name: str):
             )
 
         try:
-            await proxy_utils.start_required_environments(
+            await run_service.start_required_environments(
                 actions_by_projects, ws_context
             )
-        except proxy_utils.StartingEnvironmentsFailed as exception:
+        except run_service.StartingEnvironmentsFailed as exception:
             raise DumpFailed(
                 f"Failed to start environments for running 'dump_config': {exception.message}"
             )
 
         project_raw_config = ws_context.ws_projects_raw_configs[project_dir_path]
 
-        await services.run_action(
+        await run_service.run_action(
             action_name="dump_config",
             params={
                 "source_file_path": project_def.def_path,
@@ -81,7 +81,7 @@ async def dump_config(workdir_path: pathlib.Path, project_name: str):
             },
             project_def=project_def,
             ws_context=ws_context,
-            result_format=services.RunResultFormat.STRING,
+            result_format=run_service.RunResultFormat.STRING,
             preprocess_payload=False,
         )
         logger.info(f"Dumped config into {dump_file_path}")

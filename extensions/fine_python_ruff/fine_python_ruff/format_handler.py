@@ -37,7 +37,6 @@ class RuffFormatHandler(
         command_runner: icommandrunner.ICommandRunner,
     ) -> None:
         self.config = config
-        self.context = context
         self.logger = logger
         self.cache = cache
         self.command_runner = command_runner

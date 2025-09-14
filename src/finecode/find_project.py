@@ -73,7 +73,9 @@ async def find_project_with_action_for_file(
             else:
                 if project.status == domain.ProjectStatus.CONFIG_VALID:
                     try:
-                        await runner_manager.get_or_start_runners_with_presets(project_dir_path=project_dir_path, ws_context=ws_context)
+                        await runner_manager.get_or_start_runners_with_presets(
+                            project_dir_path=project_dir_path, ws_context=ws_context
+                        )
                     except runner_manager.RunnerFailedToStart as exception:
                         raise ValueError(
                             f"Action is related to project {project_dir_path} but runner "
@@ -93,9 +95,9 @@ async def find_project_with_action_for_file(
         except StopIteration:
             continue
 
-        ws_context.project_path_by_dir_and_action[dir_path_str][
-            action_name
-        ] = project_dir_path
+        ws_context.project_path_by_dir_and_action[dir_path_str][action_name] = (
+            project_dir_path
+        )
         return project_dir_path
 
     raise FileHasNotActionException(

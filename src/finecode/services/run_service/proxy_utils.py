@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import asyncio
 import collections.abc
 import contextlib
@@ -7,11 +9,14 @@ from typing import Any
 import ordered_set
 from loguru import logger
 
-from finecode import context, domain, find_project, services
+from finecode import context, domain, find_project, user_messages
 from finecode.runner import manager as runner_manager
 from finecode.runner import runner_client, runner_info
 from finecode.runner.manager import RunnerFailedToStart
-from finecode.services import ActionRunFailed
+from finecode.runner.runner_client import RunResultFormat  # reexport
+
+from finecode.services.run_service import payload_preprocessor
+from .exceptions import ActionRunFailed, StartingEnvironmentsFailed
 
 
 async def find_action_project(
@@ -57,14 +62,14 @@ async def find_action_project_and_run(
     project = ws_context.ws_projects[project_path]
 
     try:
-        response = await services.run_action(
+        response = await run_action(
             action_name=action_name,
             params=params,
             project_def=project,
             ws_context=ws_context,
             preprocess_payload=False,
         )
-    except services.ActionRunFailed as exception:
+    except ActionRunFailed as exception:
         raise exception
 
     return response
@@ -87,7 +92,7 @@ async def run_action_in_runner(
     return response
 
 
-class AsyncList[T]():
+class AsyncList[T]:
     def __init__(self) -> None:
         self.data: list[T] = []
         self.change_event: asyncio.Event = asyncio.Event()
@@ -183,11 +188,10 @@ async def run_with_partial_results(
                     result_list=result, partial_result_token=partial_result_token
                 )
             )
-            action = next(action for action in project.actions if action.name == "lint")
+            action = next(action for action in project.actions if action.name == action_name)
             action_envs = ordered_set.OrderedSet(
                 [handler.env for handler in action.handlers]
             )
-            runners_by_env = ws_context.ws_projects_extension_runners[project_dir_path]
             for env_name in action_envs:
                 try:
                     runner = await runner_manager.get_or_start_runner(
@@ -211,10 +215,17 @@ async def run_with_partial_results(
 
             yield result
     except ExceptionGroup as eg:
-        for exc in eg.exceptions:
-            logger.exception(exc)
+        errors: list[str] = []
+        for exception in eg.exceptions:
+            if isinstance(exception, ActionRunFailed):
+                errors.append(exception.message)
+            else:
+                errors.append(str(exception))
+                logger.error("Unexpected exception:")
+                logger.exception(exception)
+        errors_str = ", ".join(errors)
         raise ActionRunFailed(
-            f"Run of {action_name} in {project.dir_path} failed. See logs for more details"
+            f"Run of {action_name} in {project.dir_path} failed: {errors_str}. See logs for more details"
         )
 
 
@@ -268,11 +279,6 @@ def find_all_projects_with_action(
 
     relevant_projects_paths: list[pathlib.Path] = list(relevant_projects.keys())
     return relevant_projects_paths
-
-
-class StartingEnvironmentsFailed(Exception):
-    def __init__(self, message: str) -> None:
-        self.message = message
 
 
 async def start_required_environments(
@@ -339,12 +345,247 @@ async def start_required_environments(
                         )
 
 
+async def run_actions_in_running_project(
+    actions: list[str],
+    action_payload: dict[str, str],
+    project: domain.Project,
+    ws_context: context.WorkspaceContext,
+    concurrently: bool,
+    result_format: RunResultFormat,
+) -> dict[str, RunActionResponse]:
+    result_by_action: dict[str, RunActionResponse] = {}
+
+    if concurrently:
+        run_tasks: list[asyncio.Task] = []
+        try:
+            async with asyncio.TaskGroup() as tg:
+                for action_name in actions:
+                    run_task = tg.create_task(
+                        run_action(
+                            action_name=action_name,
+                            params=action_payload,
+                            project_def=project,
+                            ws_context=ws_context,
+                            result_format=result_format,
+                        )
+                    )
+                    run_tasks.append(run_task)
+        except ExceptionGroup as eg:
+            for exception in eg.exceptions:
+                if isinstance(exception, ActionRunFailed):
+                    logger.error(f"{exception.message} in {project.name}")
+                else:
+                    logger.error("Unexpected exception:")
+                    logger.exception(exception)
+            raise ActionRunFailed(f"Running of actions {actions} failed")
+
+        for idx, run_task in enumerate(run_tasks):
+            run_result = run_task.result()
+            action_name = actions[idx]
+            result_by_action[action_name] = run_result
+    else:
+        for action_name in actions:
+            try:
+                run_result = await run_action(
+                    action_name=action_name,
+                    params=action_payload,
+                    project_def=project,
+                    ws_context=ws_context,
+                    result_format=result_format,
+                )
+            except ActionRunFailed as exception:
+                raise ActionRunFailed(
+                    f"Running of action {action_name} failed: {exception.message}"
+                )
+            except Exception as error:
+                logger.error("Unexpected exception")
+                logger.exception(error)
+                raise ActionRunFailed(
+                    f"Running of action {action_name} failed with unexpected exception"
+                )
+
+            result_by_action[action_name] = run_result
+
+    return result_by_action
+
+
+async def run_actions_in_projects(
+    actions_by_project: dict[pathlib.Path, list[str]],
+    action_payload: dict[str, str],
+    ws_context: context.WorkspaceContext,
+    concurrently: bool,
+    result_format: RunResultFormat,
+) -> dict[pathlib.Path, dict[str, RunActionResponse]]:
+    project_handler_tasks: list[asyncio.Task] = []
+    try:
+        async with asyncio.TaskGroup() as tg:
+            for project_dir_path, actions_to_run in actions_by_project.items():
+                project = ws_context.ws_projects[project_dir_path]
+                project_task = tg.create_task(
+                    run_actions_in_running_project(
+                        actions=actions_to_run,
+                        action_payload=action_payload,
+                        project=project,
+                        ws_context=ws_context,
+                        concurrently=concurrently,
+                        result_format=result_format,
+                    )
+                )
+                project_handler_tasks.append(project_task)
+    except ExceptionGroup as eg:
+        for exception in eg.exceptions:
+            # TODO: merge all in one?
+            raise exception
+
+    results = {}
+    projects_paths = list(actions_by_project.keys())
+    for idx, project_task in enumerate(project_handler_tasks):
+        project_dir_path = projects_paths[idx]
+        results[project_dir_path] = project_task.result()
+
+    return results
+
+
+def find_projects_with_actions(
+    ws_context: context.WorkspaceContext, actions: list[str]
+) -> dict[pathlib.Path, list[str]]:
+    actions_by_project: dict[pathlib.Path, list[str]] = {}
+    actions_set = ordered_set.OrderedSet(actions)
+
+    for project in ws_context.ws_projects.values():
+        project_actions_names = [action.name for action in project.actions]
+        # find which of requested actions are available in the project
+        action_to_run_in_project = actions_set & ordered_set.OrderedSet(
+            project_actions_names
+        )
+        relevant_actions_in_project = list(action_to_run_in_project)
+        if len(relevant_actions_in_project) > 0:
+            actions_by_project[project.dir_path] = relevant_actions_in_project
+
+    return actions_by_project
+
+
+RunResultFormat = runner_client.RunResultFormat
+RunActionResponse = runner_client.RunActionResponse
+
+
+async def run_action(
+    action_name: str,
+    params: dict[str, typing.Any],
+    project_def: domain.Project,
+    ws_context: context.WorkspaceContext,
+    result_format: RunResultFormat = RunResultFormat.JSON,
+    preprocess_payload: bool = True,
+) -> RunActionResponse:
+    formatted_params = str(params)
+    if len(formatted_params) > 100:
+        formatted_params = f"{formatted_params[:100]}..."
+    logger.trace(f"Execute action {action_name} with {formatted_params}")
+
+    if project_def.status != domain.ProjectStatus.CONFIG_VALID:
+        raise ActionRunFailed(
+            f"Project {project_def.dir_path} has no valid configuration and finecode."
+            " Please check logs."
+        )
+
+    if preprocess_payload:
+        payload = await payload_preprocessor.preprocess_for_project(
+            action_name=action_name,
+            payload=params,
+            project_dir_path=project_def.dir_path,
+            ws_context=ws_context,
+        )
+    else:
+        payload = params
+
+    # cases:
+    # - base: all action handlers are in one env
+    #   -> send `run_action` request to runner in env and let it handle concurrency etc.
+    #      It could be done also in workspace manager, but handlers share run context
+    # - mixed envs: action handlers are in different envs
+    # -- concurrent execution of handlers
+    # -- sequential execution of handlers
+    assert project_def.actions is not None
+    action = next(
+        action for action in project_def.actions if action.name == action_name
+    )
+    all_handlers_envs = ordered_set.OrderedSet(
+        [handler.env for handler in action.handlers]
+    )
+    all_handlers_are_in_one_env = len(all_handlers_envs) == 1
+
+    if all_handlers_are_in_one_env:
+        env_name = all_handlers_envs[0]
+        response = await _run_action_in_env_runner(
+            action_name=action_name,
+            payload=payload,
+            env_name=env_name,
+            project_def=project_def,
+            ws_context=ws_context,
+            result_format=result_format,
+        )
+    else:
+        # TODO: concurrent vs sequential, this value should be taken from action config
+        run_concurrently = False  # action_name == 'lint'
+        if run_concurrently:
+            ...
+            raise NotImplementedError()
+        else:
+            for handler in action.handlers:
+                # TODO: manage run context
+                response = await _run_action_in_env_runner(
+                    action_name=action_name,
+                    payload=payload,
+                    env_name=handler.env,
+                    project_def=project_def,
+                    ws_context=ws_context,
+                    result_format=result_format,
+                )
+
+    return response
+
+
+async def _run_action_in_env_runner(
+    action_name: str,
+    payload: dict[str, typing.Any],
+    env_name: str,
+    project_def: domain.Project,
+    ws_context: context.WorkspaceContext,
+    result_format: RunResultFormat = RunResultFormat.JSON,
+):
+    try:
+        runner = await runner_manager.get_or_start_runner(
+            project_def=project_def, env_name=env_name, ws_context=ws_context
+        )
+    except runner_manager.RunnerFailedToStart as exception:
+        raise ActionRunFailed(
+            f"Runner {env_name} in project {project_def.dir_path} failed: {exception.message}"
+        )
+
+    try:
+        response = await runner_client.run_action(
+            runner=runner,
+            action_name=action_name,
+            params=payload,
+            options={"result_format": result_format},
+        )
+    except runner_client.BaseRunnerRequestException as error:
+        await user_messages.error(
+            f"Action {action_name} failed in {runner.readable_id}: {error.message} . Log file: {runner.logs_path}"
+        )
+        raise ActionRunFailed(
+            f"Action {action_name} failed in {runner.readable_id}: {error.message} . Log file: {runner.logs_path}"
+        )
+
+    return response
+
+
 __all__ = [
     "find_action_project_and_run",
     "find_action_project_and_run_with_partial_results",
+    "find_projects_with_actions",
+    "find_all_projects_with_action",
     "run_with_partial_results",
-    # reexport for easier use of proxy helpers
-    "ActionRunFailed",
     "start_required_environments",
-    "StartingEnvironmentsFailed",
+    "run_actions_in_projects",
 ]

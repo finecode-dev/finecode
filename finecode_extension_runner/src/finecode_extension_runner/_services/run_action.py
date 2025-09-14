@@ -52,7 +52,7 @@ async def run_action(
     global last_run_id
     run_id = last_run_id
     last_run_id += 1
-    logger.trace(f"Run action '{request.action_name}', run id: {run_id}")
+    logger.trace(f"Run action '{request.action_name}', run id: {run_id}, partial result token: {options.partial_result_token}")
     # TODO: check whether config is set: this will be solved by passing initial
     # configuration as payload of initialize
     if global_state.runner_context is None:
@@ -195,14 +195,14 @@ async def run_action(
                 # all subresults are ready
                 logger.trace(f"R{run_id} | all subresults are ready, send them")
                 await partial_result_sender.send_all_immediately()
-
-            for subresult_task in subresults_tasks:
-                result = subresult_task.result()
-                if result is not None:
-                    if action_result is None:
-                        action_result = result
-                    else:
-                        action_result.update(result)
+            else:
+                for subresult_task in subresults_tasks:
+                    result = subresult_task.result()
+                    if result is not None:
+                        if action_result is None:
+                            action_result = result
+                        else:
+                            action_result.update(result)
         else:
             # action payload not iterable, just execute handlers on the whole payload
             if execute_handlers_concurrently:
@@ -381,10 +381,10 @@ async def execute_action_handler(
     else:
         handler_cache = domain.ActionHandlerCache()
         action_cache.handler_cache_by_name[handler.name] = handler_cache
-    
+
     start_time = time.time_ns()
     execution_result: code_action.RunActionResult | None = None
-    
+
     handler_global_config = runner_context.project.action_handler_configs.get(
         handler.source, None
     )
@@ -538,11 +538,11 @@ async def run_subresult_coros_concurrently(
         errors_str = ""
         for exc in eg.exceptions:
             if isinstance(exc, code_action.ActionFailedException):
-                errors_str += exc.message + '.'
+                errors_str += exc.message + "."
             else:
                 logger.error("Unhandled exception:")
                 logger.exception(exc)
-                errors_str += str(exc) + '.'
+                errors_str += str(exc) + "."
         raise ActionFailedException(
             f"Concurrent running action handlers of '{action_name}' failed(Run {run_id}): {errors_str}"
         )
@@ -552,7 +552,12 @@ async def run_subresult_coros_concurrently(
         coro_result = coro_task.result()
         if coro_result is not None:
             if action_subresult is None:
-                action_subresult = coro_result
+                # copy the first result because all further subresults will be merged
+                # in it and result from action handler must stay immutable (e.g. it can
+                # reference to cache)
+                action_subresult_type = type(coro_result)
+                action_subresult_dict = dataclasses.asdict(coro_result)
+                action_subresult = action_subresult_type(**action_subresult_dict)
             else:
                 action_subresult.update(coro_result)
 

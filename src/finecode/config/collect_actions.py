@@ -60,7 +60,6 @@ def _collect_actions_in_config(
     for action_name, action_def_raw in (
         config["tool"]["finecode"].get("action", {}).items()
     ):
-
         try:
             action_def = config_models.ActionDefinition(**action_def_raw)
         except config_models.ValidationError as exception:

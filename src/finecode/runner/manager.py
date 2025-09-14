@@ -173,7 +173,7 @@ async def stop_extension_runner(runner: runner_info.ExtensionRunnerInfo) -> None
         logger.debug("Sent exit to server")
         await runner.client.stop()
         logger.trace(
-            f"Stop extension runner {runner.process_id}" f" in {runner.readable_id}"
+            f"Stop extension runner {runner.process_id} in {runner.readable_id}"
         )
     else:
         logger.trace("Extension runner was not running")
@@ -194,7 +194,7 @@ def stop_extension_runner_sync(runner: runner_info.ExtensionRunnerInfo) -> None:
         runner_client.exit_sync(runner)
         logger.debug("Sent exit to server")
         logger.trace(
-            f"Stop extension runner {runner.process_id}" f" in {runner.readable_id}"
+            f"Stop extension runner {runner.process_id} in {runner.readable_id}"
         )
     else:
         logger.trace("Extension runner was not running")
@@ -238,7 +238,7 @@ async def start_runners_with_presets(
         raise RunnerFailedToStart(
             "Failed to initialize runner(s). See previous logs for more details"
         )
-    
+
     for project in projects:
         try:
             await read_configs.read_project_config(
@@ -253,20 +253,28 @@ async def start_runners_with_presets(
             )
 
 
-async def get_or_start_runners_with_presets(project_dir_path: Path, ws_context: context.WorkspaceContext) -> runner_info.ExtensionRunnerInfo:
+async def get_or_start_runners_with_presets(
+    project_dir_path: Path, ws_context: context.WorkspaceContext
+) -> runner_info.ExtensionRunnerInfo:
     # project is expected to have status `ProjectStatus.CONFIG_VALID`
-    has_dev_workspace_runner = 'dev_workspace' in ws_context.ws_projects_extension_runners[project_dir_path]
+    has_dev_workspace_runner = (
+        "dev_workspace" in ws_context.ws_projects_extension_runners[project_dir_path]
+    )
     if not has_dev_workspace_runner:
         project = ws_context.ws_projects[project_dir_path]
         await start_runners_with_presets([project], ws_context)
-    dev_workspace_runner = ws_context.ws_projects_extension_runners[project_dir_path]['dev_workspace']
+    dev_workspace_runner = ws_context.ws_projects_extension_runners[project_dir_path][
+        "dev_workspace"
+    ]
     if dev_workspace_runner.status == runner_info.RunnerStatus.RUNNING:
         return dev_workspace_runner
     elif dev_workspace_runner.status == runner_info.RunnerStatus.INITIALIZING:
         await dev_workspace_runner.initialized_event.wait()
         return dev_workspace_runner
     else:
-        raise RunnerFailedToStart(f'Status of dev_workspace runner: {dev_workspace_runner.status}, logs: {dev_workspace_runner.logs_path}')
+        raise RunnerFailedToStart(
+            f"Status of dev_workspace runner: {dev_workspace_runner.status}, logs: {dev_workspace_runner.logs_path}"
+        )
 
 
 async def start_runner(
@@ -401,8 +409,7 @@ async def update_runner_config(
         )
 
     logger.debug(
-        f"Updated config of runner {runner.readable_id},"
-        f" process id {runner.process_id}"
+        f"Updated config of runner {runner.readable_id}, process id {runner.process_id}"
     )
 
 
@@ -506,3 +513,26 @@ def remove_runner_venv(runner_dir: Path, env_name: str) -> None:
     if venv_dir_path.exists():
         logger.debug(f"Remove venv {venv_dir_path}")
         shutil.rmtree(venv_dir_path)
+
+
+async def restart_extension_runners(
+    runner_working_dir_path: Path, ws_context: context.WorkspaceContext
+) -> None:
+    # TODO: reload config?
+    try:
+        runners_by_env = ws_context.ws_projects_extension_runners[
+            runner_working_dir_path
+        ]
+    except KeyError:
+        logger.error(f"Cannot find runner for {runner_working_dir_path}")
+        return
+
+    for runner in runners_by_env.values():
+        await stop_extension_runner(runner)
+
+        project_def = ws_context.ws_projects[runner.working_dir_path]
+        await start_runner(
+            project_def=project_def,
+            env_name=runner.env_name,
+            ws_context=ws_context,
+        )

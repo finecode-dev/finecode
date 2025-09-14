@@ -12,6 +12,11 @@ try:
 except ImportError:
     fine_python_mypy = None
 
+try:
+    import fine_python_package_info
+except ImportError:
+    fine_python_package_info = None
+
 from finecode_extension_api.interfaces import (
     iactionrunner,
     icache,
@@ -20,7 +25,8 @@ from finecode_extension_api.interfaces import (
     ilogger,
     iprojectinfoprovider,
     iextensionrunnerinfoprovider,
-    iprojectfileclassifier
+    iprojectfileclassifier,
+    ipypackagelayoutinfoprovider,
 )
 from finecode_extension_runner import global_state, schemas
 from finecode_extension_runner._services import run_action
@@ -33,7 +39,7 @@ from finecode_extension_runner.impls import (
     loguru_logger,
     project_info_provider,
     extension_runner_info_provider,
-    project_file_classifier
+    project_file_classifier,
 )
 
 
@@ -78,11 +84,20 @@ def bootstrap(
         project_def_path_getter=project_def_path_getter,
         project_raw_config_getter=project_raw_config_getter,
     )
-    _state.factories[iextensionrunnerinfoprovider.IExtensionRunnerInfoProvider] = functools.partial(
-        extension_runner_info_provider_factory,
-        cache_dir_path_getter=cache_dir_path_getter
+    _state.factories[iextensionrunnerinfoprovider.IExtensionRunnerInfoProvider] = (
+        functools.partial(
+            extension_runner_info_provider_factory,
+            cache_dir_path_getter=cache_dir_path_getter,
+        )
     )
-    _state.factories[iprojectfileclassifier.IProjectFileClassifier] = project_file_classifier_factory
+    _state.factories[iprojectfileclassifier.IProjectFileClassifier] = (
+        project_file_classifier_factory
+    )
+
+    if fine_python_package_info is not None:
+        _state.factories[ipypackagelayoutinfoprovider.IPyPackageLayoutInfoProvider] = (
+            py_package_layout_info_provider_factory
+        )
 
     # TODO: parameters from config
 
@@ -134,13 +149,27 @@ async def extension_runner_info_provider_factory(
 ):
     logger = await resolver.get_service_instance(ilogger.ILogger)
     return extension_runner_info_provider.ExtensionRunnerInfoProvider(
-        cache_dir_path_getter=cache_dir_path_getter,
-        logger=logger
+        cache_dir_path_getter=cache_dir_path_getter, logger=logger
     )
 
 
 async def project_file_classifier_factory(
     container,
 ):
-    project_info_provider = await resolver.get_service_instance(iprojectinfoprovider.IProjectInfoProvider)
-    return project_file_classifier.ProjectFileClassifier(project_info_provider=project_info_provider)
+    project_info_provider = await resolver.get_service_instance(
+        iprojectinfoprovider.IProjectInfoProvider
+    )
+    py_package_layout_info_provider = await resolver.get_service_instance(
+        ipypackagelayoutinfoprovider.IPyPackageLayoutInfoProvider
+    )
+    return project_file_classifier.ProjectFileClassifier(
+        project_info_provider=project_info_provider,
+        py_package_layout_info_provider=py_package_layout_info_provider,
+    )
+
+
+async def py_package_layout_info_provider_factory(container):
+    file_manager = await resolver.get_service_instance(ifilemanager.IFileManager)
+    return fine_python_package_info.PyPackageLayoutInfoProvider(
+        file_manager=file_manager,
+    )

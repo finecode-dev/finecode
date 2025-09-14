@@ -63,10 +63,12 @@ async def update_config(
     def cache_dir_path_getter() -> Path:
         assert global_state.runner_context is not None
         project_dir_path = global_state.runner_context.project.dir_path
-        project_cache_dir = project_dir_path / ".venvs" / global_state.env_name / "cache"
+        project_cache_dir = (
+            project_dir_path / ".venvs" / global_state.env_name / "cache"
+        )
         if not project_cache_dir.exists():
             project_cache_dir.mkdir()
-        
+
         return project_cache_dir
 
     di_bootstrap.bootstrap(
@@ -74,7 +76,7 @@ async def update_config(
         save_document_func=document_saver,
         project_def_path_getter=project_def_path_getter,
         project_raw_config_getter=project_raw_config_getter,
-        cache_dir_path_getter=cache_dir_path_getter
+        cache_dir_path_getter=cache_dir_path_getter,
     )
 
     return schemas.UpdateConfigResponse()

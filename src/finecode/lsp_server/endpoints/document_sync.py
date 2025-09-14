@@ -34,7 +34,11 @@ async def document_did_open(
     try:
         async with asyncio.TaskGroup() as tg:
             for project_path in projects_paths:
-                runners_by_env = global_state.ws_context.ws_projects_extension_runners.get(project_path, {})
+                runners_by_env = (
+                    global_state.ws_context.ws_projects_extension_runners.get(
+                        project_path, {}
+                    )
+                )
                 for runner in runners_by_env.values():
                     tg.create_task(
                         runner_client.notify_document_did_open(
@@ -98,6 +102,6 @@ async def document_did_save(
 async def document_did_change(
     ls: LanguageServer, params: types.DidChangeTextDocumentParams
 ):
-    global_state.ws_context.opened_documents[params.text_document.uri].version = (
-        params.text_document.version
-    )
+    global_state.ws_context.opened_documents[
+        params.text_document.uri
+    ].version = params.text_document.version

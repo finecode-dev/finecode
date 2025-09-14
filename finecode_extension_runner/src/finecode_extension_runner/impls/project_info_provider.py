@@ -27,11 +27,11 @@ class ProjectInfoProvider(iprojectinfoprovider.IProjectInfoProvider):
 
     async def get_current_project_package_name(self) -> str:
         project_raw_config = await self.get_current_project_raw_config()
-        raw_name = project_raw_config.get('project', {}).get('name', None)
+        raw_name = project_raw_config.get("project", {}).get("name", None)
         if raw_name is None:
             raise InvalidProjectConfig("project.name not found in project config")
 
-        return raw_name.replace('-', '_')
+        return raw_name.replace("-", "_")
 
     async def get_project_raw_config(
         self, project_def_path: pathlib.Path

@@ -3,7 +3,7 @@ from pathlib import Path
 from loguru import logger
 
 from finecode import domain, user_messages
-from finecode.config import collect_actions, config_models, read_configs
+from finecode.config import read_configs
 from finecode.lsp_server import global_state, schemas
 from finecode.runner import manager as runner_manager
 
@@ -89,7 +89,6 @@ async def delete_workspace_dir(
 
     # find all projects affected by removing of this ws dir
     project_dir_pathes = global_state.ws_context.ws_projects.keys()
-    projects_to_remove: list[Path] = []
     for project_dir_path in project_dir_pathes:
         if not project_dir_path.is_relative_to(ws_dir_path_to_remove):
             continue

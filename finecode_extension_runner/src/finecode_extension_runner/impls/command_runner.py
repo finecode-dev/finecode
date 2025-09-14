@@ -121,7 +121,7 @@ class CommandRunner(icommandrunner.ICommandRunner):
         cmd_parts = shlex.split(cmd)
         log_msg = f"Sync subprocess run: {cmd_parts}"
         if cwd is not None:
-            log_msg += f' {cwd}'
+            log_msg += f" {cwd}"
         self.logger.debug(log_msg)
         async_subprocess = subprocess.Popen(
             cmd_parts,

@@ -82,7 +82,9 @@ class ActionHandlerExecInfoStatus(enum.Enum):
 @dataclasses.dataclass
 class ActionCache:
     exec_info: ActionExecInfo | None = None
-    handler_cache_by_name: dict[str, ActionHandlerCache] = dataclasses.field(default_factory=dict)
+    handler_cache_by_name: dict[str, ActionHandlerCache] = dataclasses.field(
+        default_factory=dict
+    )
 
 
 @dataclasses.dataclass

@@ -70,9 +70,9 @@ def create_lsp_server() -> lsp_server.LanguageServer:
     def send_partial_result(
         token: int | str, partial_result: code_action.RunActionResult
     ) -> None:
-        logger.debug(f"Send partial result for {token}")
         partial_result_dict = dataclasses.asdict(partial_result)
         partial_result_json = json.dumps(partial_result_dict)
+        logger.debug(f"Send partial result for {token}, length {len(partial_result_json)}")
         server.progress(types.ProgressParams(token=token, value=partial_result_json))
 
     run_action_service.set_partial_result_sender(send_partial_result)

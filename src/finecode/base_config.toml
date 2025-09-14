@@ -5,12 +5,14 @@ source = "finecode_extension_api.actions.prepare_envs.PrepareEnvsAction"
 name = "prepare_envs_dump_configs"
 source = "finecode_builtin_handlers.PrepareEnvsReadConfigsHandler"
 env = "dev_workspace"
+dependencies = ["finecode_builtin_handlers==0.1.*"]
 
 
 [[tool.finecode.action.prepare_envs.handlers]]
 name = "prepare_envs_install_deps"
 source = "finecode_builtin_handlers.PrepareEnvsInstallDepsHandler"
 env = "dev_workspace"
+dependencies = ["finecode_builtin_handlers==0.1.*"]
 
 
 # preparing dev workspaces doesn't need dumping config for two reasons:
@@ -32,13 +34,14 @@ dependencies = ["fine_python_virtualenv==0.1.*"]
 name = "prepare_envs_read_configs"
 source = "finecode_builtin_handlers.PrepareEnvsReadConfigsHandler"
 env = "dev_workspace"
+dependencies = ["finecode_builtin_handlers==0.1.*"]
 
 
 [[tool.finecode.action.prepare_dev_workspaces_envs.handlers]]
 name = "prepare_envs_install_deps"
 source = "finecode_builtin_handlers.PrepareEnvsInstallDepsHandler"
 env = "dev_workspace"
-
+dependencies = ["finecode_builtin_handlers==0.1.*"]
 
 [tool.finecode.action.prepare_runners]
 source = "finecode_extension_api.actions.prepare_runners.PrepareRunnersAction"
@@ -53,12 +56,14 @@ dependencies = ["fine_python_virtualenv==0.1.*"]
 name = "prepare_runners_read_configs"
 source = "finecode_builtin_handlers.PrepareRunnersReadConfigsHandler"
 env = "dev_workspace"
+dependencies = ["finecode_builtin_handlers==0.1.*"]
 
 
 [[tool.finecode.action.prepare_runners.handlers]]
 name = "prepare_runners_install_runner_and_presets"
 source = "finecode_builtin_handlers.PrepareRunnersInstallRunnerAndPresetsHandler"
 env = "dev_workspace"
+dependencies = ["finecode_builtin_handlers==0.1.*"]
 
 
 [tool.finecode.action.dump_config]
@@ -68,12 +73,14 @@ source = "finecode_extension_api.actions.dump_config.DumpConfigAction"
 name = "dump_config"
 source = "finecode_builtin_handlers.DumpConfigHandler"
 env = "dev_workspace"
+dependencies = ["finecode_builtin_handlers==0.1.*"]
 
 
 [[tool.finecode.action.dump_config.handlers]]
 name = "dump_config_save"
 source = "finecode_builtin_handlers.DumpConfigSaveHandler"
 env = "dev_workspace"
+dependencies = ["finecode_builtin_handlers==0.1.*"]
 
 
 [tool.finecode.action.install_deps_in_env]
@@ -84,3 +91,13 @@ name = "install_deps_with_pip"
 source = "fine_python_pip.PipInstallDepsInEnvHandler"
 env = "dev_workspace"
 dependencies = ["fine_python_pip==0.1.*"]
+
+
+[tool.finecode.action.list_project_files_by_lang]
+source = "finecode_extension_api.actions.list_project_files_by_lang.ListProjectFilesByLangAction"
+
+[[tool.finecode.action.list_project_files_by_lang.handlers]]
+name = "list_project_files_by_lang_python"
+source = "fine_python_package_info.ListProjectFilesByLangPythonHandler"
+env = "dev_no_runtime"
+dependencies = ["fine_python_package_info==0.1.*"]

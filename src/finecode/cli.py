@@ -10,9 +10,7 @@ from loguru import logger
 
 import finecode.main as workspace_manager
 from finecode import communication_utils, logger_utils, user_messages
-from finecode.cli_app import dump_config as dump_config_cmd
-from finecode.cli_app import prepare_envs as prepare_envs_cmd
-from finecode.cli_app import run as run_cmd
+from finecode.cli_app.commands import dump_config_cmd, prepare_envs_cmd, run_cmd
 
 
 @click.group()
