@@ -14,3 +14,8 @@ class IProjectInfoProvider(Protocol):
     ) -> dict[str, Any]: ...
 
     async def get_current_project_raw_config(self) -> dict[str, Any]: ...
+
+
+class InvalidProjectConfig(Exception):
+    def __init__(self, message: str) -> None:
+        self.message = message
