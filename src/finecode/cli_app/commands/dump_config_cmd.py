@@ -2,8 +2,8 @@ import pathlib
 
 from loguru import logger
 
-from finecode import context, services
-from finecode.services import run_service
+from finecode import context
+from finecode.services import run_service, shutdown_service
 from finecode.config import config_models, read_configs
 from finecode.runner import manager as runner_manager
 
@@ -86,4 +86,4 @@ async def dump_config(workdir_path: pathlib.Path, project_name: str):
         )
         logger.info(f"Dumped config into {dump_file_path}")
     finally:
-        services.on_shutdown(ws_context)
+        shutdown_service.on_shutdown(ws_context)

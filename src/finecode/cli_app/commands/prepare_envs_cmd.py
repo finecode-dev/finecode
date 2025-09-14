@@ -3,8 +3,8 @@ import shutil
 
 from loguru import logger
 
-from finecode import context, domain, services
-from finecode.services import run_service
+from finecode import context, domain
+from finecode.services import run_service, shutdown_service
 from finecode.cli_app import utils
 from finecode.config import collect_actions, config_models, read_configs
 from finecode.runner import manager as runner_manager
@@ -138,7 +138,7 @@ async def prepare_envs(workdir_path: pathlib.Path, recreate: bool) -> None:
         if result_return_code != 0:
             raise PrepareEnvsFailed(result_output)
     finally:
-        services.on_shutdown(ws_context)
+        shutdown_service.on_shutdown(ws_context)
 
 
 def remove_dev_workspace_envs(

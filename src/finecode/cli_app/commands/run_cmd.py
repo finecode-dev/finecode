@@ -6,8 +6,8 @@ import click
 import ordered_set
 from loguru import logger
 
-from finecode import context, domain, services
-from finecode.services import run_service
+from finecode import context, domain
+from finecode.services import run_service, shutdown_service
 from finecode.config import collect_actions, config_models, read_configs
 from finecode.runner import manager as runner_manager
 
@@ -165,7 +165,7 @@ async def run_actions(
         except run_service.ActionRunFailed as exception:
             raise RunFailed(f"Failed to run actions: {exception.message}")
     finally:
-        services.on_shutdown(ws_context)
+        shutdown_service.on_shutdown(ws_context)
 
 
 def get_projects_by_names(

@@ -7,7 +7,7 @@ from loguru import logger
 from lsprotocol import types
 from pygls.lsp.server import LanguageServer
 
-from finecode import services as wm_services
+from finecode.services import shutdown_service
 from finecode.runner import manager as runner_manager
 from finecode.lsp_server import global_state, schemas, services
 from finecode.lsp_server.endpoints import action_tree as action_tree_endpoints
@@ -242,7 +242,7 @@ async def _workspace_did_change_workspace_folders(
 
 def _on_shutdown(ls: LanguageServer, params):
     logger.info("on shutdown handler", params)
-    wm_services.on_shutdown(global_state.ws_context)
+    shutdown_service.on_shutdown(global_state.ws_context)
 
 
 async def reset(ls: LanguageServer, params):
