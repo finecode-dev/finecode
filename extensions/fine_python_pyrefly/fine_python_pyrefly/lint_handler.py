@@ -7,12 +7,12 @@ from pathlib import Path
 
 from finecode_extension_api import code_action
 from finecode_extension_api.actions import lint as lint_action
-from finecode_extension_api.interfaces import icache, icommandrunner, ilogger, ifilemanager
+from finecode_extension_api.interfaces import icache, icommandrunner, ilogger, ifilemanager, iprojectfileclassifier, iextensionrunnerinfoprovider
 
 
 @dataclasses.dataclass
 class PyreflyLintHandlerConfig(code_action.ActionHandlerConfig):
-    ...
+    python_version: str | None = None
 
 
 class PyreflyLintHandler(
@@ -32,12 +32,16 @@ class PyreflyLintHandler(
         logger: ilogger.ILogger,
         file_manager: ifilemanager.IFileManager,
         command_runner: icommandrunner.ICommandRunner,
+        project_file_classifier: iprojectfileclassifier.IProjectFileClassifier,
+        extension_runner_info_provider: iextensionrunnerinfoprovider.IExtensionRunnerInfoProvider
     ) -> None:
         self.config = config
         self.cache = cache
         self.logger = logger
         self.file_manager = file_manager
         self.command_runner = command_runner
+        self.project_file_classifier = project_file_classifier
+        self.extension_runner_info_provider = extension_runner_info_provider
         
         self.pyrefly_bin_path = Path(sys.executable).parent / "pyrefly"
 
@@ -82,14 +86,32 @@ class PyreflyLintHandler(
     ) -> list[lint_action.LintMessage]:
         """Run pyrefly type checking on a single file"""
         lint_messages: list[lint_action.LintMessage] = []
+        
+        try:
+            # project file classifier caches result, we can just get it each time again
+            file_type = self.project_file_classifier.get_project_file_type(file_path=file_path)
+            file_env = self.project_file_classifier.get_env_for_file_type(file_type=file_type)
+        except NotImplementedError:
+            self.logger.warning(f"Skip {file_path} because file type or env for it could be determined")
+            return lint_messages
+
+        venv_dir_path = self.extension_runner_info_provider.get_venv_dir_path_of_env(env_name=file_env)
+        site_package_pathes = self.extension_runner_info_provider.get_venv_site_packages(venv_dir_path=venv_dir_path)
 
         cmd = [
             str(self.pyrefly_bin_path),
             "check",
-            "--output-format",
-            "json",
-            str(file_path),
+            "--output-format=json",
+            "--disable-search-path-heuristics=true",
+            "--skip-interpreter-query",
         ]
+
+        if self.config.python_version is not None:
+            cmd.append(f"--python-version='{self.config.python_version}'")
+
+        for path in site_package_pathes:
+            cmd.append(f'--site-package-path={str(path)}')
+        cmd.append(str(file_path))
 
         cmd_str = " ".join(cmd)
         pyrefly_process = await self.command_runner.run(cmd_str)
@@ -117,7 +139,7 @@ def map_pyrefly_error_to_lint_message(error: dict) -> lint_action.LintMessage:
     end_column = error['stop_column']
 
     # Determine severity based on error type
-    error_code = error.get('code', '')
+    error_code = str(error.get('code', ''))
     code_description = error.get("name", "")
     severity = lint_action.LintMessageSeverity.ERROR
 

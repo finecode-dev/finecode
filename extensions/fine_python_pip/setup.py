@@ -9,6 +9,7 @@ from setuptools.command.build_ext import build_ext
 from setuptools.command.build_py import build_py
 from setuptools.command.egg_info import egg_info
 
+
 # Create a single temp directory for all build operations
 _TEMP_BUILD_DIR = None
 

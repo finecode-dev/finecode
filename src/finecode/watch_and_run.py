@@ -31,7 +31,7 @@ async def watch_and_run(
                 #       and lint?
                 for action in ["lint", "format"]:
                     # TODO: this can be cached
-                    project_root = find_project.find_project_with_action_for_file(
+                    project_root = await find_project.find_project_with_action_for_file(
                         file_path=path_to_apply_on,
                         action_name=action,
                         ws_context=ws_context,

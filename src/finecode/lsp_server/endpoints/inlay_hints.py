@@ -5,7 +5,8 @@ from typing import TYPE_CHECKING, Any
 from loguru import logger
 from lsprotocol import types
 
-from finecode import find_project, proxy_utils, pygls_types_utils
+from finecode import find_project, pygls_types_utils
+from finecode.services import run_service
 from finecode.lsp_server import global_state
 
 if TYPE_CHECKING:
@@ -48,7 +49,7 @@ async def document_inlay_hint(
     logger.trace(f"Document inlay hints requested: {params}")
     file_path = pygls_types_utils.uri_str_to_path(params.text_document.uri)
     try:
-        response = await proxy_utils.find_action_project_and_run(
+        response = await run_service.find_action_project_and_run(
             file_path=file_path,
             action_name="text_document_inlay_hint",
             params=inlay_hint_params_to_dict(params),

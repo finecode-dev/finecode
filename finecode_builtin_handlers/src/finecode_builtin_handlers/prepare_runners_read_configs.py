@@ -1,7 +1,6 @@
 import asyncio
 import dataclasses
 import pathlib
-import shutil
 import typing
 
 from finecode_extension_api import code_action

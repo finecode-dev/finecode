@@ -3,7 +3,7 @@ from pathlib import Path
 from loguru import logger
 
 from finecode import domain, user_messages
-from finecode.config import collect_actions, config_models, read_configs
+from finecode.config import read_configs
 from finecode.lsp_server import global_state, schemas
 from finecode.runner import manager as runner_manager
 
@@ -78,19 +78,6 @@ async def add_workspace_dir(
     except runner_manager.RunnerFailedToStart as exception:
         raise ValueError(f"Starting runners with presets failed: {exception.message}")
 
-    for project in new_projects:
-        try:
-            await read_configs.read_project_config(
-                project=project, ws_context=global_state.ws_context
-            )
-            collect_actions.collect_actions(
-                project_path=project.dir_path, ws_context=global_state.ws_context
-            )
-        except config_models.ConfigurationError as exception:
-            raise ValueError(
-                f"Rereading project config with presets and collecting actions in {project.dir_path} failed: {exception.message}"
-            )
-
     return schemas.AddWorkspaceDirResponse()
 
 
@@ -102,7 +89,6 @@ async def delete_workspace_dir(
 
     # find all projects affected by removing of this ws dir
     project_dir_pathes = global_state.ws_context.ws_projects.keys()
-    projects_to_remove: list[Path] = []
     for project_dir_path in project_dir_pathes:
         if not project_dir_path.is_relative_to(ws_dir_path_to_remove):
             continue

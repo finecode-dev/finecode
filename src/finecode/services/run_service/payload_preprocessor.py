@@ -4,7 +4,7 @@ import typing
 from finecode import context, project_analyzer
 
 
-def preprocess_for_project(
+async def preprocess_for_project(
     action_name: str,
     payload: dict[str, typing.Any],
     project_dir_path: pathlib.Path,
@@ -53,8 +53,8 @@ def preprocess_for_project(
 
     for param, value in processed_payload.items():
         if param == "file_paths" and value is None:
-            processed_payload["file_paths"] = project_analyzer.get_project_files(
-                project_dir_path
+            processed_payload["file_paths"] = await project_analyzer.get_project_files(
+                project_dir_path, ws_context=ws_context
             )
 
     return processed_payload

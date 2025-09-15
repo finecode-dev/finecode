@@ -7,7 +7,8 @@ from loguru import logger
 from lsprotocol import types
 from pygls.lsp.server import LanguageServer
 
-from finecode import services as wm_services
+from finecode.services import shutdown_service
+from finecode.runner import manager as runner_manager
 from finecode.lsp_server import global_state, schemas, services
 from finecode.lsp_server.endpoints import action_tree as action_tree_endpoints
 from finecode.lsp_server.endpoints import code_actions as code_actions_endpoints
@@ -22,7 +23,9 @@ def create_lsp_server() -> LanguageServer:
     # handle all requests explicitly because there are different types of requests:
     # project-specific, workspace-wide. Some Workspace-wide support partial responses,
     # some not.
-    server = LanguageServer("FineCode_Workspace_Manager_Server", "v1")
+    server = LanguageServer(
+        "FineCode_Workspace_Manager_Server", "v1"
+    )
 
     register_initialized_feature = server.feature(types.INITIALIZED)
     register_initialized_feature(_on_initialized)
@@ -239,7 +242,7 @@ async def _workspace_did_change_workspace_folders(
 
 def _on_shutdown(ls: LanguageServer, params):
     logger.info("on shutdown handler", params)
-    wm_services.on_shutdown(global_state.ws_context)
+    shutdown_service.on_shutdown(global_state.ws_context)
 
 
 async def reset(ls: LanguageServer, params):
@@ -256,7 +259,7 @@ async def restart_extension_runner(ls: LanguageServer, params):
     runner_working_dir_str = params_dict["projectPath"]
     runner_working_dir_path = Path(runner_working_dir_str)
 
-    await wm_services.restart_extension_runners(
+    await runner_manager.restart_extension_runners(
         runner_working_dir_path, global_state.ws_context
     )
 

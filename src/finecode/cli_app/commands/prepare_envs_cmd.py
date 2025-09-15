@@ -3,8 +3,9 @@ import shutil
 
 from loguru import logger
 
-from finecode import context, domain, proxy_utils, services
-from finecode.cli_app import run as run_cli
+from finecode import context, domain
+from finecode.services import run_service, shutdown_service
+from finecode.cli_app import utils
 from finecode.config import collect_actions, config_models, read_configs
 from finecode.runner import manager as runner_manager
 
@@ -84,19 +85,6 @@ async def prepare_envs(workdir_path: pathlib.Path, recreate: bool) -> None:
                 f"Starting runners with presets failed: {exception.message}"
             )
 
-        for project in projects:
-            try:
-                await read_configs.read_project_config(
-                    project=project, ws_context=ws_context
-                )
-                collect_actions.collect_actions(
-                    project_path=project.dir_path, ws_context=ws_context
-                )
-            except config_models.ConfigurationError as exception:
-                raise PrepareEnvsFailed(
-                    f"Rereading project config with presets and collecting actions in {project.dir_path} failed: {exception.message}"
-                )
-
         # now all 'dev_workspace' envs are valid, run 'prepare_runners' in them to create
         # venvs and install runners and presets in them
         actions_by_projects: dict[pathlib.Path, list[str]] = {
@@ -106,21 +94,22 @@ async def prepare_envs(workdir_path: pathlib.Path, recreate: bool) -> None:
         action_payload: dict[str, str | bool] = {"recreate": recreate}
 
         try:
-            await proxy_utils.start_required_environments(
+            await run_service.start_required_environments(
                 actions_by_projects, ws_context
             )
-        except proxy_utils.StartingEnvironmentsFailed as exception:
+        except run_service.StartingEnvironmentsFailed as exception:
             raise PrepareEnvsFailed(
                 f"Failed to start environments for running 'prepare_runners': {exception.message}"
             )
 
         try:
-            (result_output, result_return_code) = (
-                await run_cli.run_actions_in_all_projects(
-                    actions_by_projects, action_payload, ws_context, concurrently=True
-                )
+            (
+                result_output,
+                result_return_code,
+            ) = await utils.run_actions_in_projects_and_concat_results(
+                actions_by_projects, action_payload, ws_context, concurrently=True
             )
-        except run_cli.RunFailed as error:
+        except run_service.ActionRunFailed as error:
             logger.error(error.message)
             result_output = error.message
             result_return_code = 1
@@ -135,12 +124,13 @@ async def prepare_envs(workdir_path: pathlib.Path, recreate: bool) -> None:
         action_payload: dict[str, str | bool] = {"recreate": recreate}
 
         try:
-            (result_output, result_return_code) = (
-                await run_cli.run_actions_in_all_projects(
-                    actions_by_projects, action_payload, ws_context, concurrently=True
-                )
+            (
+                result_output,
+                result_return_code,
+            ) = await utils.run_actions_in_projects_and_concat_results(
+                actions_by_projects, action_payload, ws_context, concurrently=True
             )
-        except run_cli.RunFailed as error:
+        except run_service.ActionRunFailed as error:
             logger.error(error.message)
             result_output = error.message
             result_return_code = 1
@@ -148,7 +138,7 @@ async def prepare_envs(workdir_path: pathlib.Path, recreate: bool) -> None:
         if result_return_code != 0:
             raise PrepareEnvsFailed(result_output)
     finally:
-        services.on_shutdown(ws_context)
+        shutdown_service.on_shutdown(ws_context)
 
 
 def remove_dev_workspace_envs(
@@ -202,7 +192,7 @@ async def check_or_recreate_all_dev_workspace_envs(
     current_project_dir_path = ws_context.ws_dirs_paths[0]
     current_project = ws_context.ws_projects[current_project_dir_path]
     try:
-        runner = await runner_manager.start_runner(
+        await runner_manager.start_runner(
             project_def=current_project, env_name="dev_workspace", ws_context=ws_context
         )
     except runner_manager.RunnerFailedToStart as exception:
@@ -254,17 +244,17 @@ async def check_or_recreate_all_dev_workspace_envs(
         envs += invalid_envs
 
     try:
-        action_result = await services.run_action(
+        action_result = await run_service.run_action(
             action_name="prepare_dev_workspaces_envs",
             params={
                 "envs": envs,
             },
             project_def=current_project,
             ws_context=ws_context,
-            result_format=services.RunResultFormat.STRING,
+            result_format=run_service.RunResultFormat.STRING,
             preprocess_payload=False,
         )
-    except services.ActionRunFailed as exception:
+    except run_service.ActionRunFailed as exception:
         raise PrepareEnvsFailed(
             f"'prepare_dev_workspaces_env' failed in {current_project.name}: {exception.message}"
         )

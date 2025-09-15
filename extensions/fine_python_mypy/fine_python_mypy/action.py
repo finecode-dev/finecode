@@ -15,6 +15,8 @@ from finecode_extension_api.interfaces import (
     icommandrunner,
     ifilemanager,
     ilogger,
+    iextensionrunnerinfoprovider,
+    iprojectinfoprovider
 )
 
 
@@ -44,14 +46,16 @@ class MypyLintHandler(
 
     def __init__(
         self,
-        context: code_action.ActionContext,
+        extension_runner_info_provider: iextensionrunnerinfoprovider.IExtensionRunnerInfoProvider,
+        project_info_provider: iprojectinfoprovider.IProjectInfoProvider,
         cache: icache.ICache,
         logger: ilogger.ILogger,
         file_manager: ifilemanager.IFileManager,
         lifecycle: code_action.ActionHandlerLifecycle,
         command_runner: icommandrunner.ICommandRunner,
     ) -> None:
-        self.context = context
+        self.extension_runner_info_provider = extension_runner_info_provider
+        self.project_info_provider = project_info_provider
         self.cache = cache
         self.logger = logger
         self.file_manager = file_manager
@@ -189,7 +193,7 @@ class MypyLintHandler(
         file_paths = [file_path async for file_path in payload]
 
         files_by_projects: dict[Path, list[Path]] = self.group_files_by_projects(
-            file_paths, self.context.project_dir
+            file_paths, self.project_info_provider.get_current_project_dir_path()
         )
 
         for project_path, project_files in files_by_projects.items():
@@ -225,7 +229,7 @@ class MypyLintHandler(
                     self.logger.error(str(error))
 
     def _get_status_file_path(self, dmypy_cwd: Path) -> Path:
-        file_dir_path = self.context.cache_dir
+        file_dir_path = self.extension_runner_info_provider.get_cache_dir_path()
         # use hash to avoid name conflict if python packages have the same name
         file_dir_path_hash = hashlib.md5(str(dmypy_cwd).encode("utf-8")).hexdigest()
         file_path = (

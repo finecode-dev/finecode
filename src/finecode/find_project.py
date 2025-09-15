@@ -4,6 +4,7 @@ from loguru import logger
 
 from finecode import domain
 from finecode.context import WorkspaceContext
+from finecode.runner import manager as runner_manager
 
 
 class FileNotInWorkspaceException(BaseException): ...
@@ -12,7 +13,7 @@ class FileNotInWorkspaceException(BaseException): ...
 class FileHasNotActionException(BaseException): ...
 
 
-def find_project_with_action_for_file(
+async def find_project_with_action_for_file(
     file_path: Path,
     action_name: str,
     ws_context: WorkspaceContext,
@@ -70,19 +71,33 @@ def find_project_with_action_for_file(
             if project.status == domain.ProjectStatus.NO_FINECODE:
                 continue
             else:
-                raise ValueError(
-                    f"Action is related to project {project_dir_path} but its action "
-                    f"cannot be resolved({project.status})"
-                )
+                if project.status == domain.ProjectStatus.CONFIG_VALID:
+                    try:
+                        await runner_manager.get_or_start_runners_with_presets(
+                            project_dir_path=project_dir_path, ws_context=ws_context
+                        )
+                    except runner_manager.RunnerFailedToStart as exception:
+                        raise ValueError(
+                            f"Action is related to project {project_dir_path} but runner "
+                            f"with presets failed to start in it: {exception.message}"
+                        )
+
+                    assert project.actions is not None
+                    project_actions = project.actions
+                else:
+                    raise ValueError(
+                        f"Action is related to project {project_dir_path} but its action "
+                        f"cannot be resolved({project.status})"
+                    )
 
         try:
             next(action for action in project_actions if action.name == action_name)
         except StopIteration:
             continue
 
-        ws_context.project_path_by_dir_and_action[dir_path_str][
-            action_name
-        ] = project_dir_path
+        ws_context.project_path_by_dir_and_action[dir_path_str][action_name] = (
+            project_dir_path
+        )
         return project_dir_path
 
     raise FileHasNotActionException(

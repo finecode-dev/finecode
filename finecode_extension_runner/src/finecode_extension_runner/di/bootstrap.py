@@ -12,6 +12,11 @@ try:
 except ImportError:
     fine_python_mypy = None
 
+try:
+    import fine_python_package_info
+except ImportError:
+    fine_python_package_info = None
+
 from finecode_extension_api.interfaces import (
     iactionrunner,
     icache,
@@ -19,10 +24,13 @@ from finecode_extension_api.interfaces import (
     ifilemanager,
     ilogger,
     iprojectinfoprovider,
+    iextensionrunnerinfoprovider,
+    iprojectfileclassifier,
+    ipypackagelayoutinfoprovider,
 )
 from finecode_extension_runner import global_state, schemas
 from finecode_extension_runner._services import run_action
-from finecode_extension_runner.di import _state
+from finecode_extension_runner.di import _state, resolver
 from finecode_extension_runner.impls import (
     action_runner,
     command_runner,
@@ -30,6 +38,8 @@ from finecode_extension_runner.impls import (
     inmemory_cache,
     loguru_logger,
     project_info_provider,
+    extension_runner_info_provider,
+    project_file_classifier,
 )
 
 
@@ -38,6 +48,7 @@ def bootstrap(
     save_document_func: Callable,
     project_def_path_getter: Callable[[], pathlib.Path],
     project_raw_config_getter: Callable[[str], Awaitable[dict[str, Any]]],
+    cache_dir_path_getter: Callable[[], pathlib.Path],
 ):
     # logger_instance = loguru_logger.LoguruLogger()
     logger_instance = loguru_logger.get_logger()
@@ -73,6 +84,20 @@ def bootstrap(
         project_def_path_getter=project_def_path_getter,
         project_raw_config_getter=project_raw_config_getter,
     )
+    _state.factories[iextensionrunnerinfoprovider.IExtensionRunnerInfoProvider] = (
+        functools.partial(
+            extension_runner_info_provider_factory,
+            cache_dir_path_getter=cache_dir_path_getter,
+        )
+    )
+    _state.factories[iprojectfileclassifier.IProjectFileClassifier] = (
+        project_file_classifier_factory
+    )
+
+    if fine_python_package_info is not None:
+        _state.factories[ipypackagelayoutinfoprovider.IPyPackageLayoutInfoProvider] = (
+            py_package_layout_info_provider_factory
+        )
 
     # TODO: parameters from config
 
@@ -115,4 +140,37 @@ def project_info_provider_factory(
     return project_info_provider.ProjectInfoProvider(
         project_def_path_getter=project_def_path_getter,
         project_raw_config_getter=project_raw_config_getter,
+    )
+
+
+async def extension_runner_info_provider_factory(
+    container,
+    cache_dir_path_getter: Callable[[], pathlib.Path],
+):
+    logger = await resolver.get_service_instance(ilogger.ILogger)
+    return extension_runner_info_provider.ExtensionRunnerInfoProvider(
+        cache_dir_path_getter=cache_dir_path_getter, logger=logger
+    )
+
+
+async def project_file_classifier_factory(
+    container,
+):
+    project_info_provider = await resolver.get_service_instance(
+        iprojectinfoprovider.IProjectInfoProvider
+    )
+    py_package_layout_info_provider = await resolver.get_service_instance(
+        ipypackagelayoutinfoprovider.IPyPackageLayoutInfoProvider
+    )
+    return project_file_classifier.ProjectFileClassifier(
+        project_info_provider=project_info_provider,
+        py_package_layout_info_provider=py_package_layout_info_provider,
+    )
+
+
+async def py_package_layout_info_provider_factory(container):
+    file_manager = await resolver.get_service_instance(ifilemanager.IFileManager)
+    cache = await resolver.get_service_instance(icache.ICache)
+    return fine_python_package_info.PyPackageLayoutInfoProvider(
+        file_manager=file_manager, cache=cache
     )

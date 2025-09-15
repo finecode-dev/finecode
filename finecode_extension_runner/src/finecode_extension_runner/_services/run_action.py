@@ -52,7 +52,7 @@ async def run_action(
     global last_run_id
     run_id = last_run_id
     last_run_id += 1
-    logger.trace(f"Run action '{request.action_name}', run id: {run_id}")
+    logger.trace(f"Run action '{request.action_name}', run id: {run_id}, partial result token: {options.partial_result_token}")
     # TODO: check whether config is set: this will be solved by passing initial
     # configuration as payload of initialize
     if global_state.runner_context is None:
@@ -79,16 +79,19 @@ async def run_action(
     #   returned. (experimental)
     # - execution of handlers can be concurrent or sequential. But executions of handler
     #   on iterable payloads(single parts) are always concurrent.
+    action_name = request.action_name
 
     try:
-        action_exec_info = global_state.runner_context.action_exec_info_by_name[
-            request.action_name
-        ]
+        action_cache = global_state.runner_context.action_cache_by_name[action_name]
     except KeyError:
+        action_cache = domain.ActionCache()
+        global_state.runner_context.action_cache_by_name[action_name] = action_cache
+
+    if action_cache.exec_info is not None:
+        action_exec_info = action_cache.exec_info
+    else:
         action_exec_info = create_action_exec_info(action)
-        global_state.runner_context.action_exec_info_by_name[request.action_name] = (
-            action_exec_info
-        )
+        action_cache.exec_info = action_exec_info
 
     # TODO: catch validation errors
     payload: code_action.RunActionPayload | None = None
@@ -98,7 +101,7 @@ async def run_action(
 
     run_context: code_action.RunActionContext | None = None
     if action_exec_info.run_context_type is not None:
-        constructor_args = resolve_func_args_with_di(
+        constructor_args = await resolve_func_args_with_di(
             action_exec_info.run_context_type.__init__,
             known_args={"run_id": lambda _: run_id},
             params_to_ignore=["self"],
@@ -110,16 +113,6 @@ async def run_action(
 
     action_result: code_action.RunActionResult | None = None
     runner_context = global_state.runner_context
-
-    # instantiate only on demand?
-    project_path = project_def.path
-    project_cache_dir = project_path / ".venvs" / global_state.env_name / "cache"
-    if not project_cache_dir.exists():
-        project_cache_dir.mkdir()
-
-    action_context = code_action.ActionContext(
-        project_dir=project_path, cache_dir=project_cache_dir
-    )
 
     # TODO: take value from action config
     execute_handlers_concurrently = action.name == "lint"
@@ -140,7 +133,7 @@ async def run_action(
                     payload=payload,
                     run_context=run_context,
                     run_id=run_id,
-                    action_context=action_context,
+                    action_cache=action_cache,
                     action_exec_info=action_exec_info,
                     runner_context=runner_context,
                 )
@@ -202,14 +195,14 @@ async def run_action(
                 # all subresults are ready
                 logger.trace(f"R{run_id} | all subresults are ready, send them")
                 await partial_result_sender.send_all_immediately()
-
-            for subresult_task in subresults_tasks:
-                result = subresult_task.result()
-                if result is not None:
-                    if action_result is None:
-                        action_result = result
-                    else:
-                        action_result.update(result)
+            else:
+                for subresult_task in subresults_tasks:
+                    result = subresult_task.result()
+                    if result is not None:
+                        if action_result is None:
+                            action_result = result
+                        else:
+                            action_result.update(result)
         else:
             # action payload not iterable, just execute handlers on the whole payload
             if execute_handlers_concurrently:
@@ -223,7 +216,7 @@ async def run_action(
                                     payload=payload,
                                     run_context=run_context,
                                     run_id=run_id,
-                                    action_context=action_context,
+                                    action_cache=action_cache,
                                     action_exec_info=action_exec_info,
                                     runner_context=runner_context,
                                 )
@@ -253,7 +246,7 @@ async def run_action(
                             payload=payload,
                             run_context=run_context,
                             run_id=run_id,
-                            action_context=action_context,
+                            action_cache=action_cache,
                             action_exec_info=action_exec_info,
                             runner_context=runner_context,
                         )
@@ -343,7 +336,7 @@ def create_action_exec_info(action: domain.Action) -> domain.ActionExecInfo:
     return action_exec_info
 
 
-def resolve_func_args_with_di(
+async def resolve_func_args_with_di(
     func: typing.Callable,
     known_args: dict[str, typing.Callable[[typing.Any], typing.Any]] | None = None,
     params_to_ignore: list[str] | None = None,
@@ -367,7 +360,7 @@ def resolve_func_args_with_di(
         else:
             # TODO: handle errors
             param_type = func_annotations[param_name]
-            param_value = di_resolver.get_service_instance(param_type)
+            param_value = await di_resolver.get_service_instance(param_type)
             args[param_name] = param_value
 
     return args
@@ -379,19 +372,36 @@ async def execute_action_handler(
     run_context: code_action.RunActionContext | None,
     run_id: int,
     action_exec_info: domain.ActionExecInfo,
-    action_context: code_action.ActionContext,
+    action_cache: domain.ActionCache,
     runner_context: context.RunnerContext,
 ) -> code_action.RunActionResult:
     logger.trace(f"R{run_id} | Run {handler.name} on {str(payload)[:100]}...")
+    if handler.name in action_cache.handler_cache_by_name:
+        handler_cache = action_cache.handler_cache_by_name[handler.name]
+    else:
+        handler_cache = domain.ActionHandlerCache()
+        action_cache.handler_cache_by_name[handler.name] = handler_cache
+
     start_time = time.time_ns()
     execution_result: code_action.RunActionResult | None = None
 
-    if handler.name in runner_context.action_handlers_instances_by_name:
-        handler_instance = runner_context.action_handlers_instances_by_name[
-            handler.name
-        ]
+    handler_global_config = runner_context.project.action_handler_configs.get(
+        handler.source, None
+    )
+    handler_raw_config = {}
+    if handler_global_config is not None:
+        handler_raw_config = handler_global_config
+    if handler_raw_config == {}:
+        # still empty, just assign
+        handler_raw_config = handler.config
+    else:
+        # not empty anymore, deep merge
+        handler_config_merger.merge(handler_raw_config, handler.config)
+
+    if handler_cache.instance is not None:
+        handler_instance = handler_cache.instance
         handler_run_func = handler_instance.run
-        exec_info = runner_context.action_handlers_exec_info_by_name[handler.name]
+        exec_info = handler_cache.exec_info
         logger.trace(
             f"R{run_id} | Instance of action handler {handler.name} found in cache"
         )
@@ -411,25 +421,9 @@ async def execute_action_handler(
                 f"Import of action handler '{handler.name}' failed(Run {run_id}): {handler.source}"
             )
 
-        handler_global_config = runner_context.project.action_handler_configs.get(
-            handler.source, None
-        )
-        handler_raw_config = {}
-        if handler_global_config is not None:
-            handler_raw_config = handler_global_config
-        if handler_raw_config == {}:
-            # still empty, just assign
-            handler_raw_config = handler.config
-        else:
-            # not empty anymore, deep merge
-            handler_config_merger.merge(handler_raw_config, handler.config)
-
         def get_handler_config(param_type):
             # TODO: validation errors
             return param_type(**handler_raw_config)
-
-        def get_action_context(param_type):
-            return action_context
 
         def get_process_executor(param_type):
             return action_exec_info.process_executor
@@ -437,13 +431,12 @@ async def execute_action_handler(
         exec_info = domain.ActionHandlerExecInfo()
         # save immediately in context to be able to shutdown it if the first execution
         # is interrupted by stopping ER
-        runner_context.action_handlers_exec_info_by_name[handler.name] = exec_info
+        handler_cache.exec_info = exec_info
         if inspect.isclass(action_handler):
-            args = resolve_func_args_with_di(
+            args = await resolve_func_args_with_di(
                 func=action_handler.__init__,
                 known_args={
                     "config": get_handler_config,
-                    "context": get_action_context,
                     "process_executor": get_process_executor,
                 },
                 params_to_ignore=["self"],
@@ -453,9 +446,7 @@ async def execute_action_handler(
                 exec_info.lifecycle = args["lifecycle"]
 
             handler_instance = action_handler(**args)
-            runner_context.action_handlers_instances_by_name[handler.name] = (
-                handler_instance
-            )
+            handler_cache.instance = handler_instance
             handler_run_func = handler_instance.run
         else:
             handler_run_func = action_handler
@@ -490,7 +481,7 @@ async def execute_action_handler(
     # DI in `run` function is allowed only for action handlers in form of functions.
     # `run` in classes may not have additional parameters, constructor parameters should
     # be used instead. TODO: Validate?
-    args = resolve_func_args_with_di(
+    args = await resolve_func_args_with_di(
         func=handler_run_func,
         known_args={"payload": get_run_payload, "run_context": get_run_context},
     )
@@ -547,11 +538,11 @@ async def run_subresult_coros_concurrently(
         errors_str = ""
         for exc in eg.exceptions:
             if isinstance(exc, code_action.ActionFailedException):
-                errors_str += exc.message + '.'
+                errors_str += exc.message + "."
             else:
                 logger.error("Unhandled exception:")
                 logger.exception(exc)
-                errors_str += str(exc) + '.'
+                errors_str += str(exc) + "."
         raise ActionFailedException(
             f"Concurrent running action handlers of '{action_name}' failed(Run {run_id}): {errors_str}"
         )
@@ -561,7 +552,15 @@ async def run_subresult_coros_concurrently(
         coro_result = coro_task.result()
         if coro_result is not None:
             if action_subresult is None:
-                action_subresult = coro_result
+                # copy the first result because all further subresults will be merged
+                # in it and result from action handler must stay immutable (e.g. it can
+                # reference to cache)
+                action_subresult_type = type(coro_result)
+                # use pydantic dataclass as constructor because it instantiates classes
+                # recursively, normal dataclass only on the first level
+                action_subresult_type_pydantic = pydantic_dataclass(action_subresult_type)
+                action_subresult_dict = dataclasses.asdict(coro_result)
+                action_subresult = action_subresult_type_pydantic(**action_subresult_dict)
             else:
                 action_subresult.update(coro_result)
 

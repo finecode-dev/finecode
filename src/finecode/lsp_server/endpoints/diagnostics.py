@@ -14,10 +14,10 @@ from finecode import (
     context,
     domain,
     project_analyzer,
-    proxy_utils,
     pygls_types_utils,
     services,
 )
+from finecode.services import run_service
 from finecode.lsp_server import global_state
 from finecode_extension_api.actions import lint as lint_action
 
@@ -61,7 +61,7 @@ async def document_diagnostic_with_full_result(
 ) -> types.DocumentDiagnosticReport | None:
     logger.trace(f"Document diagnostic with full result: {file_path}")
     try:
-        response = await proxy_utils.find_action_project_and_run(
+        response = await run_service.find_action_project_and_run(
             file_path=file_path,
             action_name="lint",
             # TODO: use payload class
@@ -70,7 +70,7 @@ async def document_diagnostic_with_full_result(
             },
             ws_context=global_state.ws_context,
         )
-    except proxy_utils.ActionRunFailed as error:
+    except run_service.ActionRunFailed as error:
         # don't throw error because vscode after a few sequential errors will stop
         # requesting diagnostics until restart. Show user message instead
         logger.error(str(error))  # TODO: user message
@@ -125,7 +125,7 @@ async def document_diagnostic_with_partial_results(
     )
 
     try:
-        async with proxy_utils.find_action_project_and_run_with_partial_results(
+        async with run_service.find_action_project_and_run_with_partial_results(
             file_path=file_path,
             action_name="lint",
             # TODO: use payload class
@@ -191,7 +191,7 @@ async def document_diagnostic_with_partial_results(
                     global_state.progress_reporter(
                         partial_result_token, related_doc_diagnostics
                     )
-    except proxy_utils.ActionRunFailed as error:
+    except run_service.ActionRunFailed as error:
         # don't throw error because vscode after a few sequential errors will stop
         # requesting diagnostics until restart. Show user message instead
         logger.error(str(error))  # TODO: user message
@@ -246,7 +246,7 @@ async def run_workspace_diagnostic_with_partial_results(
     assert global_state.progress_reporter is not None
 
     try:
-        async with proxy_utils.run_with_partial_results(
+        async with run_service.run_with_partial_results(
             action_name="lint",
             params=exec_info.request_data,
             partial_result_token=partial_result_token,
@@ -277,7 +277,7 @@ async def run_workspace_diagnostic_with_partial_results(
                     ]
                 )
                 global_state.progress_reporter(partial_result_token, lsp_subresult)
-    except proxy_utils.ActionRunFailed as error:
+    except run_service.ActionRunFailed as error:
         # don't throw error because vscode after a few sequential errors will stop
         # requesting diagnostics until restart. Show user message instead
         logger.error(str(error))  # TODO: user message
@@ -285,7 +285,7 @@ async def run_workspace_diagnostic_with_partial_results(
 
 async def workspace_diagnostic_with_partial_results(
     exec_infos: list[LintActionExecInfo], partial_result_token: str | int
-):
+) -> WorkspaceDiagnosticReport:
     try:
         async with asyncio.TaskGroup() as tg:
             for exec_info in exec_infos:
@@ -353,8 +353,7 @@ async def workspace_diagnostic_with_full_result(
 async def _workspace_diagnostic(
     params: types.WorkspaceDiagnosticParams,
 ) -> types.WorkspaceDiagnosticReport | None:
-
-    relevant_projects_paths: list[Path] = proxy_utils.find_all_projects_with_action(
+    relevant_projects_paths: list[Path] = run_service.find_all_projects_with_action(
         action_name="lint", ws_context=global_state.ws_context
     )
     exec_info_by_project_dir_path: dict[Path, LintActionExecInfo] = {}
@@ -373,8 +372,10 @@ async def _workspace_diagnostic(
     # check which runners are active and run in them
     #
     # assign files to projects
-    files_by_projects: dict[Path, list[Path]] = project_analyzer.get_files_by_projects(
-        projects_dirs_paths=relevant_projects_paths
+    files_by_projects: dict[
+        Path, list[Path]
+    ] = await project_analyzer.get_files_by_projects(
+        projects_dirs_paths=relevant_projects_paths, ws_context=global_state.ws_context
     )
 
     for project_dir_path, files_for_runner in files_by_projects.items():
@@ -388,7 +389,6 @@ async def _workspace_diagnostic(
 
         exec_info = exec_info_by_project_dir_path[project_dir_path]
         if exec_info.action_name == "lint":
-            # TODO: use payload class
             exec_info.request_data = {
                 "file_paths": [file_path.as_posix() for file_path in files_for_runner],
             }
@@ -418,10 +418,13 @@ async def workspace_diagnostic(
     # - pygls will cut information about exception in logs and it will be hard to
     #   understand it
     try:
-        return await _workspace_diagnostic(params)
+        result = await _workspace_diagnostic(params)
     except Exception as exception:
         # TODO: user message
         logger.exception(exception)
         # lsprotocol allows None as return value, but then vscode throws error
         # 'cannot read items of null'. keep empty report instead
         return types.WorkspaceDiagnosticReport(items=[])
+
+    logger.trace(f"Workspace diagnostic ended: {params}")
+    return result

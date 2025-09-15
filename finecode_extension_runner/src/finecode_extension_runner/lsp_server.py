@@ -70,9 +70,9 @@ def create_lsp_server() -> lsp_server.LanguageServer:
     def send_partial_result(
         token: int | str, partial_result: code_action.RunActionResult
     ) -> None:
-        logger.debug(f"Send partial result for {token}")
         partial_result_dict = dataclasses.asdict(partial_result)
         partial_result_json = json.dumps(partial_result_dict)
+        logger.debug(f"Send partial result for {token}, length {len(partial_result_json)}")
         server.progress(types.ProgressParams(token=token, value=partial_result_json))
 
     run_action_service.set_partial_result_sender(send_partial_result)
@@ -169,6 +169,7 @@ async def update_config(
     ls: lsp_server.LanguageServer,
     working_dir: pathlib.Path,
     project_name: str,
+    project_def_path: pathlib.Path,
     config: dict[str, typing.Any],
 ):
     logger.trace(f"Update config: {working_dir} {project_name} {config}")
@@ -179,6 +180,7 @@ async def update_config(
         request = schemas.UpdateConfigRequest(
             working_dir=working_dir,
             project_name=project_name,
+            project_def_path=project_def_path,
             actions={
                 action["name"]: schemas.Action(
                     name=action["name"],

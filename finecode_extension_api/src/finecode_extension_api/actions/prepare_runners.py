@@ -46,9 +46,9 @@ class PrepareRunnersRunContext(code_action.RunActionContext):
         # for example additional dependencies should be installed by adding handler
         # which inserts them into project definition instead of modying `install_deps`
         # handler
-        self.project_def_by_venv_dir_path: dict[pathlib.Path, dict[str, typing.Any]] = (
-            {}
-        )
+        self.project_def_by_venv_dir_path: dict[
+            pathlib.Path, dict[str, typing.Any]
+        ] = {}
 
     async def init(self, initial_payload: PrepareRunnersRunPayload) -> None:
         for env_info in initial_payload.envs:

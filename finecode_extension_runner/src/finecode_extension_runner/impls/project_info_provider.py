@@ -13,8 +13,20 @@ class ProjectInfoProvider(iprojectinfoprovider.IProjectInfoProvider):
         self.project_def_path_getter = project_def_path_getter
         self.project_raw_config_getter = project_raw_config_getter
 
+    def get_current_project_dir_path(self) -> pathlib.Path:
+        project_def_path = self.project_def_path_getter()
+        return project_def_path.parent
+
     def get_current_project_def_path(self) -> pathlib.Path:
         return self.project_def_path_getter()
+
+    async def get_current_project_package_name(self) -> str:
+        project_raw_config = await self.get_current_project_raw_config()
+        raw_name = project_raw_config.get("project", {}).get("name", None)
+        if raw_name is None:
+            raise iprojectinfoprovider.InvalidProjectConfig("project.name not found in project config")
+
+        return raw_name.replace("-", "_")
 
     async def get_project_raw_config(
         self, project_def_path: pathlib.Path

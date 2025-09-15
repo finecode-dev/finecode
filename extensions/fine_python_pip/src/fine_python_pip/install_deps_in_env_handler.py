@@ -11,6 +11,7 @@ from finecode_extension_api.interfaces import icommandrunner, ilogger
 @dataclasses.dataclass
 class PipInstallDepsInEnvHandlerConfig(code_action.ActionHandlerConfig):
     find_links: list[str] | None = None
+    editable_mode: str | None = None
 
 
 class PipInstallDepsInEnvHandler(
@@ -62,7 +63,10 @@ class PipInstallDepsInEnvHandler(
 
         if self.config.find_links is not None:
             for link in self.config.find_links:
-                install_params += f' --find-links="{link}" '
+                install_params += f'--find-links="{link}" '
+
+        if self.config.editable_mode is not None:
+            install_params += f"--config-settings editable_mode='{self.config.editable_mode}' "
 
         for dependency in dependencies:
             if dependency.editable:

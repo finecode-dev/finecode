@@ -5,7 +5,6 @@ import collections.abc
 import dataclasses
 import enum
 import typing
-from pathlib import Path
 from typing import Generic, Protocol, TypeVar
 
 from finecode_extension_api import partialresultscheduler, textstyler
@@ -71,13 +70,6 @@ class RunActionWithPartialResultsContext(RunActionContext):
     def __init__(self, run_id: int) -> None:
         super().__init__(run_id=run_id)
         self.partial_result_scheduler = partialresultscheduler.PartialResultScheduler()
-
-
-class ActionContext:
-    def __init__(self, project_dir: Path, cache_dir: Path) -> None:
-        self.project_dir = project_dir
-        # runner-specific cache dir
-        self.cache_dir = cache_dir
 
 
 @dataclasses.dataclass

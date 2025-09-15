@@ -11,7 +11,7 @@ else:
 
 from finecode_extension_api import code_action
 from finecode_extension_api.actions import format as format_action
-from finecode_extension_api.interfaces import icache, icommandrunner, ilogger
+from finecode_extension_api.interfaces import icache, icommandrunner, ilogger, iextensionrunnerinfoprovider
 
 
 @dataclasses.dataclass
@@ -31,16 +31,16 @@ class RuffFormatHandler(
     def __init__(
         self,
         config: RuffFormatHandlerConfig,
-        context: code_action.ActionContext,
+        extension_runner_info_provider: iextensionrunnerinfoprovider.IExtensionRunnerInfoProvider,
         logger: ilogger.ILogger,
         cache: icache.ICache,
         command_runner: icommandrunner.ICommandRunner,
     ) -> None:
         self.config = config
-        self.context = context
         self.logger = logger
         self.cache = cache
         self.command_runner = command_runner
+        self.extension_runner_info_provider = extension_runner_info_provider
 
         self.ruff_bin_path = Path(sys.executable).parent / "ruff"
 
@@ -89,7 +89,7 @@ class RuffFormatHandler(
             str(self.ruff_bin_path),
             "format",
             "--cache-dir",
-            str(self.context.cache_dir / ".ruff_cache"),
+            str(self.extension_runner_info_provider.get_cache_dir_path() / ".ruff_cache"),
             "--line-length",
             str(self.config.line_length),
             f'--config="indent-width={str(self.config.indent_width)}"',
