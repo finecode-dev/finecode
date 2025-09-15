@@ -21,3 +21,13 @@ class IPyPackageLayoutInfoProvider(Protocol):
         # if you need path to directory which is added to sys.path during execution, take
         # parent of this directory.
         ...
+
+
+class FailedToGetPackageLayout(Exception):
+    def __init__(self, message: str) -> None:
+        self.message = message
+
+
+class FailedToGetPackageSrcRootDirPath(Exception):
+    def __init__(self, message: str) -> None:
+        self.message = message

@@ -1,7 +1,6 @@
 import dataclasses
 import pathlib
 import sys
-import typing
 
 if sys.version_info >= (3, 12):
     from typing import override

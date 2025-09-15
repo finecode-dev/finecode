@@ -170,6 +170,7 @@ async def project_file_classifier_factory(
 
 async def py_package_layout_info_provider_factory(container):
     file_manager = await resolver.get_service_instance(ifilemanager.IFileManager)
+    cache = await resolver.get_service_instance(icache.ICache)
     return fine_python_package_info.PyPackageLayoutInfoProvider(
-        file_manager=file_manager,
+        file_manager=file_manager, cache=cache
     )
