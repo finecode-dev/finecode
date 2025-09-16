@@ -44,6 +44,7 @@ presets = [{ source = "finecode_dev_common_preset" }]
 [tool.finecode.env.dev_workspace.dependencies]
 finecode_dev_common_preset = { path = "./finecode_dev_common_preset", editable = true }
 finecode_extension_runner = { path = "./finecode_extension_runner", editable = true }
+finecode_extension_api = { path = "./finecode_extension_api", editable = true }
 
 [tool.importlinter]
 root_package = "finecode"
