@@ -12,6 +12,10 @@ handlers = [
     ] },
 ]
 
+[[tool.finecode.action_handler]]
+source = "fine_python_ruff.RuffLintHandler"
+config.extend_select = ["B", "I"]
+
 # flake8 is used only for custom rules, all standard rules are checked by ruff, but
 # keep flake8 configuration if someone activates some rules or uses flake8 config
 # parameters in their own rules
@@ -24,3 +28,14 @@ config.max_line_length = 80
 config.extend_ignore = ["E203", "E501", "E701", "W391"]
 # disable all standard rules
 config.select = []
+
+[[tool.finecode.action_handler]]
+source = "fine_python_pip.PipInstallDepsInEnvHandler"
+# use compat editable mode because some static analysis tools like pyrefly support
+# only .pth files with pathes, not with executable code lines:
+# https://pyrefly.org/en/docs/import-resolution/#editable-installs
+# another possibility is strict mode, but it doesn't work in this case, because it
+# creates editable directory directly in the package and if the package is installed
+# as editable in multiple packages, there are concurrency problems and it would require
+# sequential installation of dependencies in all envs.
+config.editable_mode = 'compat'

@@ -97,13 +97,20 @@ class PyreflyLintHandler(
 
         venv_dir_path = self.extension_runner_info_provider.get_venv_dir_path_of_env(env_name=file_env)
         site_package_pathes = self.extension_runner_info_provider.get_venv_site_packages(venv_dir_path=venv_dir_path)
+        interpreter_path = self.extension_runner_info_provider.get_venv_python_interpreter(venv_dir_path=venv_dir_path)
 
+        # --skip-interpreter-query isn't used because it is not compatible
+        # with --python-interpreter parameter
+        # --disable-search-path-heuristics=true isn't used because pyrefly doesn't
+        # recognize some imports without it. For example, it cannot resolve relative
+        # imports in root __init__.py . Needs to be investigated
         cmd = [
             str(self.pyrefly_bin_path),
             "check",
             "--output-format=json",
-            "--disable-search-path-heuristics=true",
-            "--skip-interpreter-query",
+            # path to python interpreter because pyrefly resolves .pth files only if
+            # it is provided
+            f"--python-interpreter='{str(interpreter_path)}'"
         ]
 
         if self.config.python_version is not None:

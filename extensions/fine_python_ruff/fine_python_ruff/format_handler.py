@@ -1,3 +1,5 @@
+# note: ruff formatter cannot sort imports, only ruff linter with fixes:
+# https://docs.astral.sh/ruff/formatter/#sorting-imports
 from __future__ import annotations
 
 import dataclasses

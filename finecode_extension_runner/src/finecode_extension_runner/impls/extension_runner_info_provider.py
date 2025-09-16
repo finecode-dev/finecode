@@ -55,3 +55,10 @@ class ExtensionRunnerInfoProvider(
 
         self._site_packages_cache[venv_dir_path] = site_packages
         return site_packages
+
+    def get_venv_python_interpreter(
+        self, venv_dir_path: pathlib.Path
+    ) -> pathlib.Path:
+        bin_dir_path = venv_dir_path / 'bin'
+        interpreter_exe = bin_dir_path / 'python'
+        return interpreter_exe
