@@ -1,7 +1,7 @@
-import enum
 import pathlib
 
 import tomlkit
+import tomlkit.exceptions
 
 from finecode_extension_api.interfaces import ifilemanager, ipypackagelayoutinfoprovider, icache
 from finecode_extension_api import service
@@ -36,7 +36,7 @@ class PyPackageLayoutInfoProvider(ipypackagelayoutinfoprovider.IPyPackageLayoutI
         try:
             package_def_dict = tomlkit.loads(package_def_file_content)
         except tomlkit.exceptions.ParseError as exception:
-            raise ConfigParseError(f"Failed to parse package config {package_def_file}: {exception.message} at {exception.line}:{exception.col}")
+            raise ConfigParseError(f"Failed to parse package config {package_def_file}: toml parsing failed at {exception.line}:{exception.col}") from exception
 
         package_raw_name = package_def_dict.get('project', {}).get('name', None)
         if package_raw_name is None:

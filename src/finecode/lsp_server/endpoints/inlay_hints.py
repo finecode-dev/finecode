@@ -73,4 +73,6 @@ async def document_inlay_hint(
 
 async def inlay_hint_resolve(
     ls: LanguageServer, params: types.InlayHint
-) -> types.InlayHint | None: ...
+) -> types.InlayHint | None:
+    # TODO
+    ...

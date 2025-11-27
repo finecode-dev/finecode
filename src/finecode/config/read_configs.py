@@ -7,7 +7,7 @@ from tomlkit import loads as toml_loads
 
 from finecode import context, domain, user_messages
 from finecode.config import config_models
-from finecode.runner import runner_client, runner_info
+from finecode.runner import runner_client
 
 
 async def read_projects_in_dir(
@@ -40,7 +40,7 @@ async def read_projects_in_dir(
         actions: list[domain.Action] | None = None
 
         with open(def_file, "rb") as pyproject_file:
-            project_def = toml_loads(pyproject_file.read()).value
+            project_def = toml_loads(pyproject_file.read()).unwrap()
 
         dependency_groups = project_def.get("dependency-groups", {})
         dev_workspace_group = dependency_groups.get("dev_workspace", [])
@@ -112,13 +112,13 @@ async def read_project_config(
     if project.def_path.name == "pyproject.toml":
         with open(project.def_path, "rb") as pyproject_file:
             # TODO: handle error if toml is invalid
-            project_def = toml_loads(pyproject_file.read()).value
+            project_def = toml_loads(pyproject_file.read()).unwrap()
         # TODO: validate that finecode is installed?
 
         base_config_path = Path(__file__).parent.parent / "base_config.toml"
         # TODO: cache instead of reading each time
         with open(base_config_path, "r") as base_config_file:
-            base_config = toml_loads(base_config_file.read()).value
+            base_config = toml_loads(base_config_file.read()).unwrap()
         project_config = {}
         _merge_projects_configs(
             project_config, project.def_path, base_config, base_config_path
@@ -188,7 +188,7 @@ class PresetToProcess(NamedTuple):
 
 
 async def get_preset_project_path(
-    preset: PresetToProcess, def_path: Path, runner: runner_info.ExtensionRunnerInfo
+    preset: PresetToProcess, def_path: Path, runner: runner_client.ExtensionRunnerInfo
 ) -> Path | None:
     logger.trace(f"Get preset project path: {preset.source}")
 
@@ -231,7 +231,7 @@ def read_preset_config(
                 )
 
     with open(config_path, "rb") as preset_toml_file:
-        preset_toml = toml_loads(preset_toml_file.read()).value
+        preset_toml = toml_loads(preset_toml_file.read()).unwrap()
 
     try:
         presets = preset_toml["tool"]["finecode"]["presets"]
@@ -245,7 +245,9 @@ def read_preset_config(
 
 
 async def collect_config_from_py_presets(
-    presets_sources: list[str], def_path: Path, runner: runner_info.ExtensionRunnerInfo
+    presets_sources: list[str],
+    def_path: Path,
+    runner: runner_client.ExtensionRunnerInfo,
 ) -> dict[str, Any] | None:
     config: dict[str, Any] | None = None
     processed_presets: set[str] = set()
@@ -528,7 +530,7 @@ def handler_to_dict(handler: domain.ActionHandler) -> dict[str, str | list[str]]
 
 def add_runtime_dependency_group_if_new(project_config: dict[str, Any]) -> None:
     runtime_dependencies = project_config.get("project", {}).get("dependencies", [])
-    
+
     # add root package to runtime env if it is not there yet. It is done here and not
     # in package installer, because runtime deps group can be included in other groups
     # and root package should be installed in them as well
@@ -536,31 +538,33 @@ def add_runtime_dependency_group_if_new(project_config: dict[str, Any]) -> None:
     if root_package_name is None:
         raise config_models.ConfigurationError("project.name not found in config")
     root_package_in_runtime_deps = any(
-        dep for dep in runtime_dependencies if get_dependency_name(dep) == root_package_name
+        dep
+        for dep in runtime_dependencies
+        if get_dependency_name(dep) == root_package_name
     )
     if not root_package_in_runtime_deps:
         runtime_dependencies.insert(0, root_package_name)
-        
+
         # make editable. Example:
         # [tool.finecode.env.runtime.dependencies]
         # package_name = { path = "./", editable = true }
-        if 'tool' not in project_config:
-            project_config['tool'] = {}
-        tool_config = project_config['tool']
-        if 'finecode' not in tool_config:
-            tool_config['finecode'] = {}
-        finecode_config = tool_config['finecode']
-        if 'env' not in finecode_config:
-            finecode_config['env'] = {}
-        finecode_env_config = finecode_config['env']
-        if 'runtime' not in finecode_env_config:
-            finecode_env_config['runtime'] = {}
-        runtime_env_config = finecode_env_config['runtime']
-        if 'dependencies' not in runtime_env_config:
-            runtime_env_config['dependencies'] = {}
-        runtime_env_deps = runtime_env_config['dependencies']
+        if "tool" not in project_config:
+            project_config["tool"] = {}
+        tool_config = project_config["tool"]
+        if "finecode" not in tool_config:
+            tool_config["finecode"] = {}
+        finecode_config = tool_config["finecode"]
+        if "env" not in finecode_config:
+            finecode_config["env"] = {}
+        finecode_env_config = finecode_config["env"]
+        if "runtime" not in finecode_env_config:
+            finecode_env_config["runtime"] = {}
+        runtime_env_config = finecode_env_config["runtime"]
+        if "dependencies" not in runtime_env_config:
+            runtime_env_config["dependencies"] = {}
+        runtime_env_deps = runtime_env_config["dependencies"]
         if root_package_name not in runtime_env_deps:
-            runtime_env_deps[root_package_name] = { "path": "./", "editable": True}
+            runtime_env_deps[root_package_name] = {"path": "./", "editable": True}
 
     deps_groups = add_or_get_dict_key_value(project_config, "dependency-groups", {})
     if "runtime" not in deps_groups:

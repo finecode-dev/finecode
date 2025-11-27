@@ -4,7 +4,7 @@ from loguru import logger
 
 from finecode import domain
 from finecode.context import WorkspaceContext
-from finecode.runner import manager as runner_manager
+from finecode.runner import runner_manager
 
 
 class FileNotInWorkspaceException(BaseException): ...

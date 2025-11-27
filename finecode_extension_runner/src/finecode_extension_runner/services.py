@@ -185,13 +185,18 @@ def shutdown_action_handler(
 
 
 def shutdown_all_action_handlers() -> None:
-    logger.trace("Shutdown all action handlers")
-    for action_cache in global_state.runner_context.action_cache_by_name.values():
-        for handler_name, handler_cache in action_cache.handler_cache_by_name.items():
-            if handler_cache.exec_info is not None:
-                shutdown_action_handler(
-                    action_handler_name=handler_name, exec_info=handler_cache.exec_info
-                )
+    if global_state.runner_context is not None:
+        logger.trace("Shutdown all action handlers")
+        for action_cache in global_state.runner_context.action_cache_by_name.values():
+            for (
+                handler_name,
+                handler_cache,
+            ) in action_cache.handler_cache_by_name.items():
+                if handler_cache.exec_info is not None:
+                    shutdown_action_handler(
+                        action_handler_name=handler_name,
+                        exec_info=handler_cache.exec_info,
+                    )
 
 
 def exit_action_handler(
@@ -209,12 +214,16 @@ def exit_action_handler(
 
 
 def exit_all_action_handlers() -> None:
-    logger.trace("Exit all action handlers")
-    for action_cache in global_state.runner_context.action_cache_by_name.values():
-        for handler_name, handler_cache in action_cache.handler_cache_by_name.items():
-            if handler_cache.exec_info is not None:
-                exec_info = handler_cache.exec_info
-                exit_action_handler(
-                    action_handler_name=handler_name, exec_info=exec_info
-                )
-        action_cache.handler_cache_by_name = {}
+    if global_state.runner_context is not None:
+        logger.trace("Exit all action handlers")
+        for action_cache in global_state.runner_context.action_cache_by_name.values():
+            for (
+                handler_name,
+                handler_cache,
+            ) in action_cache.handler_cache_by_name.items():
+                if handler_cache.exec_info is not None:
+                    exec_info = handler_cache.exec_info
+                    exit_action_handler(
+                        action_handler_name=handler_name, exec_info=exec_info
+                    )
+            action_cache.handler_cache_by_name = {}

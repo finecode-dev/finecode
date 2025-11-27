@@ -7,7 +7,8 @@ from typing import TYPE_CHECKING, Any
 from finecode import domain
 
 if TYPE_CHECKING:
-    from finecode.runner.runner_info import ExtensionRunnerInfo
+    from finecode.runner.runner_client import ExtensionRunnerInfo
+    from finecode.runner._io_thread import AsyncIOThread
 
 
 @dataclass
@@ -23,6 +24,7 @@ class WorkspaceContext:
     ws_projects_extension_runners: dict[Path, dict[str, ExtensionRunnerInfo]] = field(
         default_factory=dict
     )
+    runner_io_thread: AsyncIOThread | None = None
     ignore_watch_paths: set[Path] = field(default_factory=set)
 
     # we save list of meta and pygls manages content of documents automatically.

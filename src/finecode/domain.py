@@ -27,6 +27,15 @@ class ActionHandler:
         self.env: str = env
         self.dependencies: list[str] = dependencies
 
+    def to_dict(self) -> dict[str, typing.Any]:
+        return {
+            "name": self.name,
+            "source": self.source,
+            "config": self.config,
+            "env": self.env,
+            "dependencies": self.dependencies,
+        }
+
 
 class Action:
     def __init__(
@@ -40,6 +49,14 @@ class Action:
         self.source: str = source
         self.handlers: list[ActionHandler] = handlers
         self.config = config
+
+    def to_dict(self) -> dict[str, typing.Any]:
+        return {
+            "name": self.name,
+            "source": self.source,
+            "handlers": [handler.to_dict() for handler in self.handlers],
+            "config": self.config,
+        }
 
 
 class Project:

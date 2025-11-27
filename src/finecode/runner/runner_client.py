@@ -1,150 +1,60 @@
-# TODO: pass not the whole runner, but only runner.client
-# TODO: autocheck, that runner.client.protocol is accessed only here
-# TODO: autocheck, that lsprotocol is imported only here
+"""
+API of ER client for "higher" layers like services, CLI.
+"""
+
 from __future__ import annotations
 
 import asyncio
-import asyncio.subprocess
 import dataclasses
 import enum
 import json
 import typing
 import pathlib
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from loguru import logger
-from lsprotocol import types
-from pygls import exceptions as pygls_exceptions
 
 import finecode.domain as domain
-
-if TYPE_CHECKING:
-    from finecode.runner.runner_info import ExtensionRunnerInfo
+from finecode.runner import jsonrpc_client, _internal_client_types, _internal_client_api
 
 
-class BaseRunnerRequestException(Exception):
-    def __init__(self, message: str) -> None:
-        self.message = message
+# reexport
+BaseRunnerRequestException = jsonrpc_client.BaseRunnerRequestException
+GetDocumentParams = _internal_client_types.GetDocumentParams
+GetDocumentResult = _internal_client_types.GetDocumentResult
 
 
-class NoResponse(BaseRunnerRequestException): ...
+class ActionRunFailed(jsonrpc_client.BaseRunnerRequestException): ...
 
 
-class ResponseTimeout(BaseRunnerRequestException): ...
+class ActionRunStopped(jsonrpc_client.BaseRunnerRequestException): ...
 
 
-class ActionRunFailed(BaseRunnerRequestException): ...
+@dataclasses.dataclass
+class ExtensionRunnerInfo:
+    working_dir_path: pathlib.Path
+    env_name: str
+    status: RunnerStatus
+    # NOTE: initialized doesn't mean the runner is running, check its status
+    initialized_event: asyncio.Event
+    # e.g. if there is no venv for env, client can be None
+    client: jsonrpc_client.JsonRpcClient | None = None
+
+    @property
+    def readable_id(self) -> str:
+        return f"{self.working_dir_path} ({self.env_name})"
+
+    @property
+    def logs_path(self) -> pathlib.Path:
+        return self.working_dir_path / ".venvs" / self.env_name / "logs" / "runner.log"
 
 
-class ActionRunStopped(BaseRunnerRequestException): ...
-
-
-async def log_process_log_streams(process: asyncio.subprocess.Process) -> None:
-    stdout, stderr = await process.communicate()
-
-    logger.info(f"[Runner exited with {process.returncode}]")
-    if stdout:
-        logger.info(f"[stdout]\n{stdout.decode()}")
-    if stderr:
-        logger.error(f"[stderr]\n{stderr.decode()}")
-
-
-async def send_request(
-    runner: ExtensionRunnerInfo,
-    method: str,
-    params: Any | None,
-    timeout: int | None = 10,
-) -> Any:
-    logger.debug(f"Send {method} to {runner.readable_id}")
-    try:
-        response = await asyncio.wait_for(
-            runner.client.protocol.send_request_async(
-                method=method,
-                params=params,
-            ),
-            timeout,
-        )
-        logger.debug(f"Got response on {method} from {runner.readable_id}")
-        return response
-    except RuntimeError as error:
-        logger.error(f"Extension runner crashed: {error}")
-        await log_process_log_streams(process=runner.client._server)
-        raise NoResponse(
-            f"Extension runner {runner.readable_id} crashed, no response on {method}"
-        )
-    except TimeoutError:
-        raise ResponseTimeout(
-            f"Timeout {timeout}s for response on {method} to"
-            f" runner {runner.readable_id}"
-        )
-    except pygls_exceptions.JsonRpcInternalError as error:
-        logger.error(f"JsonRpcInternalError: {error.message} {error.data}")
-        raise NoResponse(
-            f"Extension runner {runner.readable_id} returned no response,"
-            f" check it logs: {runner.logs_path}"
-        )
-
-
-def send_request_sync(
-    runner: ExtensionRunnerInfo,
-    method: str,
-    params: Any | None,
-    timeout: int | None = 10,
-) -> Any | None:
-    try:
-        response_future = runner.client.protocol.send_request(
-            method=method,
-            params=params,
-        )
-        response = response_future.result(timeout)
-        logger.debug(f"Got response on {method} from {runner.readable_id}")
-        return response
-    except RuntimeError as error:
-        logger.error(f"Extension runner crashed? {error}")
-        raise NoResponse(
-            f"Extension runner {runner.readable_id} crashed, no response on {method}"
-        )
-    except TimeoutError:
-        if runner.client._server.returncode is not None:
-            logger.error(
-                "Extension runner stopped with"
-                f" exit code {runner.client._server.returncode}"
-            )
-        raise ResponseTimeout(
-            f"Timeout {timeout}s for response on {method}"
-            f" to runner {runner.readable_id}"
-        )
-    except pygls_exceptions.JsonRpcInternalError as error:
-        logger.error(f"JsonRpcInternalError: {error.message} {error.data}")
-        raise NoResponse(
-            f"Extension runner {runner.readable_id} returned no response,"
-            f" check it logs: {runner.logs_path}"
-        )
-
-
-async def initialize(
-    runner: ExtensionRunnerInfo,
-    client_process_id,
-    client_name: str,
-    client_version: str,
-) -> None:
-    await send_request(
-        runner=runner,
-        method=types.INITIALIZE,
-        params=types.InitializeParams(
-            process_id=client_process_id,
-            capabilities=types.ClientCapabilities(),
-            client_info=types.ClientInfo(name=client_name, version=client_version),
-            trace=types.TraceValue.Verbose,
-        ),
-        timeout=20,
-    )
-
-
-async def notify_initialized(runner: ExtensionRunnerInfo) -> None:
-    runner.client.protocol.notify(
-        method=types.INITIALIZED, params=types.InitializedParams()
-    )
+class RunnerStatus(enum.Enum):
+    NO_VENV = enum.auto()
+    INITIALIZING = enum.auto()
+    FAILED = enum.auto()
+    RUNNING = enum.auto()
+    EXITED = enum.auto()
 
 
 # JSON object or text
@@ -170,34 +80,52 @@ async def run_action(
     if not runner.initialized_event.is_set():
         await runner.initialized_event.wait()
 
-    response = await send_request(
-        runner=runner,
-        method=types.WORKSPACE_EXECUTE_COMMAND,
-        params=types.ExecuteCommandParams(
-            command="actions/run",
-            arguments=[action_name, params, options],
-        ),
-        timeout=None,
-    )
+        if runner.status != RunnerStatus.RUNNING:
+            raise ActionRunFailed(
+                f"Runner {runner.readable_id} is not running: {runner.status}"
+            )
 
-    if hasattr(response, "error"):
-        raise ActionRunFailed(response.error)
+    try:
+        response = await runner.client.send_request(
+            method=_internal_client_types.WORKSPACE_EXECUTE_COMMAND,
+            params=_internal_client_types.ExecuteCommandParams(
+                command="actions/run",
+                arguments=[action_name, params, options],
+            ),
+            timeout=None,
+        )
+    except jsonrpc_client.RequestCancelledError as error:
+        logger.trace(
+            f"Request {error.request_id} to {runner.readable_id} was cancelled"
+        )
+        await _internal_client_api.cancel_request(
+            client=runner.client, request_id=error.request_id
+        )
+        raise error
 
-    return_code = response.return_code
+    command_result = response.result
+
+    if "error" in command_result:
+        raise ActionRunFailed(command_result["error"])
+
+    return_code = command_result["return_code"]
     raw_result = ""
-    stringified_result = response.result
+    stringified_result = command_result["result"]
     # currently result is always dumped to json even if response format is expected to
     # be a string. See docs of ER lsp server for more details.
     raw_result = json.loads(stringified_result)
-    if response.format == "string":
+    if command_result["format"] == "string":
         result = raw_result
-    elif response.format == "json" or response.format == "styled_text_json":
+    elif (
+        command_result["format"] == "json"
+        or command_result["format"] == "styled_text_json"
+    ):
         # string was already converted to dict above
         result = raw_result
     else:
-        raise Exception(f"Not support result format: {response.format}")
+        raise Exception(f"Not support result format: {command_result['format']}")
 
-    if response.status == "stopped":
+    if command_result["status"] == "stopped":
         raise ActionRunStopped(message=result)
 
     return RunActionResponse(result=result, return_code=return_code)
@@ -207,10 +135,9 @@ async def reload_action(runner: ExtensionRunnerInfo, action_name: str) -> None:
     if not runner.initialized_event.is_set():
         await runner.initialized_event.wait()
 
-    await send_request(
-        runner=runner,
-        method=types.WORKSPACE_EXECUTE_COMMAND,
-        params=types.ExecuteCommandParams(
+    await runner.client.send_request(
+        method=_internal_client_types.WORKSPACE_EXECUTE_COMMAND,
+        params=_internal_client_types.ExecuteCommandParams(
             command="actions/reload",
             arguments=[
                 action_name,
@@ -226,17 +153,16 @@ async def resolve_package_path(
     # config, which is then registered in runner. In this time runner is not available
     # for any other actions, so `runner.started_event` stays not set and should not be
     # checked here.
-    response = await send_request(
-        runner=runner,
-        method=types.WORKSPACE_EXECUTE_COMMAND,
-        params=types.ExecuteCommandParams(
+    response = await runner.client.send_request(
+        method=_internal_client_types.WORKSPACE_EXECUTE_COMMAND,
+        params=_internal_client_types.ExecuteCommandParams(
             command="packages/resolvePath",
             arguments=[
                 package_name,
             ],
         ),
     )
-    return {"packagePath": response.packagePath}
+    return {"packagePath": response.result["packagePath"]}
 
 
 @dataclasses.dataclass
@@ -245,52 +171,37 @@ class RunnerConfig:
     # config by handler source
     action_handler_configs: dict[str, dict[str, Any]]
 
+    def to_dict(self) -> dict[str, typing.Any]:
+        return {
+            "actions": [action.to_dict() for action in self.actions],
+            "action_handler_configs": self.action_handler_configs,
+        }
+
 
 async def update_config(
     runner: ExtensionRunnerInfo, project_def_path: pathlib.Path, config: RunnerConfig
 ) -> None:
-    await send_request(
-        runner=runner,
-        method=types.WORKSPACE_EXECUTE_COMMAND,
-        params=types.ExecuteCommandParams(
+    await runner.client.send_request(
+        method=_internal_client_types.WORKSPACE_EXECUTE_COMMAND,
+        params=_internal_client_types.ExecuteCommandParams(
             command="finecodeRunner/updateConfig",
             arguments=[
                 runner.working_dir_path.as_posix(),
                 runner.working_dir_path.stem,
                 project_def_path.as_posix(),
-                config,
+                config.to_dict(),
             ],
         ),
     )
 
 
-async def shutdown(
-    runner: ExtensionRunnerInfo,
-) -> None:
-    await send_request(runner=runner, method=types.SHUTDOWN, params=None)
-
-
-def shutdown_sync(
-    runner: ExtensionRunnerInfo,
-) -> None:
-    send_request_sync(runner=runner, method=types.SHUTDOWN, params=None)
-
-
-async def exit(runner: ExtensionRunnerInfo) -> None:
-    runner.client.protocol.notify(method=types.EXIT)
-
-
-def exit_sync(runner: ExtensionRunnerInfo) -> None:
-    runner.client.protocol.notify(method=types.EXIT)
-
-
 async def notify_document_did_open(
     runner: ExtensionRunnerInfo, document_info: domain.TextDocumentInfo
 ) -> None:
-    runner.client.protocol.notify(
-        method=types.TEXT_DOCUMENT_DID_OPEN,
-        params=types.DidOpenTextDocumentParams(
-            text_document=types.TextDocumentItem(
+    runner.client.notify(
+        method=_internal_client_types.TEXT_DOCUMENT_DID_OPEN,
+        params=_internal_client_types.DidOpenTextDocumentParams(
+            text_document=_internal_client_types.TextDocumentItem(
                 uri=document_info.uri,
                 language_id="",
                 version=int(document_info.version),
@@ -303,9 +214,27 @@ async def notify_document_did_open(
 async def notify_document_did_close(
     runner: ExtensionRunnerInfo, document_uri: str
 ) -> None:
-    runner.client.protocol.notify(
-        method=types.TEXT_DOCUMENT_DID_CLOSE,
-        params=types.DidCloseTextDocumentParams(
-            text_document=types.TextDocumentIdentifier(document_uri)
+    runner.client.notify(
+        method=_internal_client_types.TEXT_DOCUMENT_DID_CLOSE,
+        params=_internal_client_types.DidCloseTextDocumentParams(
+            text_document=_internal_client_types.TextDocumentIdentifier(document_uri)
         ),
     )
+
+
+__all__ = [
+    "ActionRunFailed",
+    "ActionRunStopped",
+    "ExtensionRunnerInfo",
+    "RunnerStatus",
+    "RunActionRawResult",
+    "RunActionResponse",
+    "RunResultFormat",
+    "run_action",
+    "reload_action",
+    "resolve_package_path",
+    "RunnerConfig",
+    "update_config",
+    "notify_document_did_open",
+    "notify_document_did_close",
+]

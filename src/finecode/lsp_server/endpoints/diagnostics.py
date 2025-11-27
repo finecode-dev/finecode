@@ -15,7 +15,6 @@ from finecode import (
     domain,
     project_analyzer,
     pygls_types_utils,
-    services,
 )
 from finecode.services import run_service
 from finecode.lsp_server import global_state
@@ -128,7 +127,6 @@ async def document_diagnostic_with_partial_results(
         async with run_service.find_action_project_and_run_with_partial_results(
             file_path=file_path,
             action_name="lint",
-            # TODO: use payload class
             params={
                 "file_paths": [file_path],
             },
@@ -285,7 +283,7 @@ async def run_workspace_diagnostic_with_partial_results(
 
 async def workspace_diagnostic_with_partial_results(
     exec_infos: list[LintActionExecInfo], partial_result_token: str | int
-) -> WorkspaceDiagnosticReport:
+) -> types.WorkspaceDiagnosticReport:
     try:
         async with asyncio.TaskGroup() as tg:
             for exec_info in exec_infos:
@@ -311,7 +309,7 @@ async def workspace_diagnostic_with_full_result(
             for exec_info in exec_infos:
                 project = ws_context.ws_projects[exec_info.project_dir_path]
                 task = tg.create_task(
-                    services.run_action(
+                    run_service.run_action(
                         action_name=exec_info.action_name,
                         params=exec_info.request_data,
                         project_def=project,

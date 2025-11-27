@@ -6,9 +6,10 @@ from typing import Any
 from loguru import logger
 from lsprotocol import types
 from pygls.lsp.server import LanguageServer
+from finecode_extension_runner.lsp_server import CustomLanguageServer
 
 from finecode.services import shutdown_service
-from finecode.runner import manager as runner_manager
+from finecode.runner import runner_manager, runner_client
 from finecode.lsp_server import global_state, schemas, services
 from finecode.lsp_server.endpoints import action_tree as action_tree_endpoints
 from finecode.lsp_server.endpoints import code_actions as code_actions_endpoints
@@ -19,13 +20,14 @@ from finecode.lsp_server.endpoints import formatting as formatting_endpoints
 from finecode.lsp_server.endpoints import inlay_hints as inlay_hints_endpoints
 
 
-def create_lsp_server() -> LanguageServer:
+def create_lsp_server() -> CustomLanguageServer:
     # handle all requests explicitly because there are different types of requests:
     # project-specific, workspace-wide. Some Workspace-wide support partial responses,
     # some not.
-    server = LanguageServer(
-        "FineCode_Workspace_Manager_Server", "v1"
-    )
+    #
+    # use CustomLanguageServer, because the problem with stopping the server with IO
+    # communication(stopping waiting on input) is solved in it
+    server = CustomLanguageServer("FineCode_Workspace_Manager_Server", "v1")
 
     register_initialized_feature = server.feature(types.INITIALIZED)
     register_initialized_feature(_on_initialized)
@@ -164,9 +166,13 @@ async def _on_initialized(ls: LanguageServer, params: types.InitializedParams):
 
     # loguru doesn't support passing partial with ls parameter, use nested function
     # instead
-    logger.add(sink=pass_log_to_ls_client)
+    #
+    # Disabled, because it is not thread-safe and it means not compatible with IO thread
+    # logger.add(sink=pass_log_to_ls_client)
 
-    async def get_document(params):
+    async def get_document(
+        params: runner_client.GetDocumentParams,
+    ) -> runner_client.GetDocumentResult:
         try:
             doc_info = global_state.ws_context.opened_documents[params.uri]
         except KeyError:
@@ -183,7 +189,9 @@ async def _on_initialized(ls: LanguageServer, params: types.InitializedParams):
             raise Exception("Document is not opened")
 
         text = ls.workspace.get_text_document(params.uri).source
-        return {"uri": params.uri, "version": doc_info.version, "text": text}
+        return runner_client.GetDocumentResult(
+            uri=params.uri, version=doc_info.version, text=text
+        )
 
     logger.info("initialized, adding workspace directories")
 
@@ -264,7 +272,7 @@ async def restart_extension_runner(ls: LanguageServer, params):
     )
 
 
-def send_user_message_notification(
+async def send_user_message_notification(
     ls: LanguageServer, message: str, message_type: str
 ) -> None:
     message_type_pascal = message_type[0] + message_type[1:].lower()

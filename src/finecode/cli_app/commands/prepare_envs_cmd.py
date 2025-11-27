@@ -7,7 +7,7 @@ from finecode import context, domain
 from finecode.services import run_service, shutdown_service
 from finecode.cli_app import utils
 from finecode.config import collect_actions, config_models, read_configs
-from finecode.runner import manager as runner_manager
+from finecode.runner import runner_manager
 
 
 class PrepareEnvsFailed(Exception): ...

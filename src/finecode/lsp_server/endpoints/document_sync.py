@@ -7,7 +7,7 @@ from pygls.lsp.server import LanguageServer
 
 from finecode import domain
 from finecode.lsp_server import global_state
-from finecode.runner import runner_client, runner_info
+from finecode.runner import runner_client
 
 
 async def document_did_open(
@@ -40,11 +40,12 @@ async def document_did_open(
                     )
                 )
                 for runner in runners_by_env.values():
-                    tg.create_task(
-                        runner_client.notify_document_did_open(
-                            runner=runner, document_info=document_info
+                    if runner.status == runner_client.RunnerStatus.RUNNING:
+                        tg.create_task(
+                            runner_client.notify_document_did_open(
+                                runner=runner, document_info=document_info
+                            )
                         )
-                    )
     except ExceptionGroup as eg:
         for exception in eg.exceptions:
             logger.exception(exception)
@@ -78,7 +79,7 @@ async def document_did_close(
                     project_path
                 ]
                 for runner in runners_by_env.values():
-                    if runner.status != runner_info.RunnerStatus.RUNNING:
+                    if runner.status != runner_client.RunnerStatus.RUNNING:
                         logger.trace(
                             f"Runner {runner.readable_id} is not running, skip it"
                         )

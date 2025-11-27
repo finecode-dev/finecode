@@ -52,7 +52,9 @@ async def run_action(
     global last_run_id
     run_id = last_run_id
     last_run_id += 1
-    logger.trace(f"Run action '{request.action_name}', run id: {run_id}, partial result token: {options.partial_result_token}")
+    logger.trace(
+        f"Run action '{request.action_name}', run id: {run_id}, partial result token: {options.partial_result_token}"
+    )
     # TODO: check whether config is set: this will be solved by passing initial
     # configuration as payload of initialize
     if global_state.runner_context is None:
@@ -558,9 +560,13 @@ async def run_subresult_coros_concurrently(
                 action_subresult_type = type(coro_result)
                 # use pydantic dataclass as constructor because it instantiates classes
                 # recursively, normal dataclass only on the first level
-                action_subresult_type_pydantic = pydantic_dataclass(action_subresult_type)
+                action_subresult_type_pydantic = pydantic_dataclass(
+                    action_subresult_type
+                )
                 action_subresult_dict = dataclasses.asdict(coro_result)
-                action_subresult = action_subresult_type_pydantic(**action_subresult_dict)
+                action_subresult = action_subresult_type_pydantic(
+                    **action_subresult_dict
+                )
             else:
                 action_subresult.update(coro_result)
 
