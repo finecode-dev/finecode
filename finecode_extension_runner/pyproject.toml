@@ -4,7 +4,7 @@ dynamic = ["version"]
 description = "Extension runner component for FineCode"
 authors = [{ name = "Vladyslav Hnatiuk", email = "aders1234@gmail.com" }]
 readme = "README.md"
-requires-python = ">=3.11, < 3.14"
+requires-python = ">=3.11, <= 3.14"
 dependencies = [
     "loguru==0.7.*",
     "click==8.1.*",

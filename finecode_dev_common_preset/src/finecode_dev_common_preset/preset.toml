@@ -9,15 +9,31 @@ presets = [
 # finecode_extension_runner must match
 [tool.finecode.env.runtime.dependencies]
 finecode_extension_runner = { path = "../../../finecode_extension_runner", editable = true }
+finecode_extension_api = { path = "../../../finecode_extension_api", editable = true }
 
 [tool.finecode.env.dev.dependencies]
 finecode_extension_runner = { path = "../../../finecode_extension_runner", editable = true }
 
 [tool.finecode.env.dev_no_runtime.dependencies]
+finecode_extension_api = { path = "../../../finecode_extension_api", editable = true }
 finecode_extension_runner = { path = "../../../finecode_extension_runner", editable = true }
+fine_python_mypy = { path = "../../../extensions/fine_python_mypy", editable = true }
+fine_python_ruff = { path = "../../../extensions/fine_python_ruff", editable = true }
+fine_python_flake8 = { path = "../../../extensions/fine_python_flake8", editable = true }
+fine_python_pyrefly = { path = "../../../extensions/fine_python_pyrefly", editable = true }
+fine_python_package_info = { path = "../../../extensions/fine_python_package_info", editable = true }
 
 # currently, all packages in finecode repository are pure python packages, reuse
 # setuptools build in all of them
 [build-system]
 requires = ["setuptools>=64", "setuptools-scm>=8"]
 build-backend = "setuptools.build_meta"
+
+# TODO: recognize minimal python version automatically
+[[tool.finecode.action_handler]]
+source = "fine_python_ruff.RuffLintHandler"
+config.target_version = 'py311'
+
+[[tool.finecode.action_handler]]
+source = "fine_python_pyrefly.PyreflyLintHandler"
+config.python_version = '3.11'

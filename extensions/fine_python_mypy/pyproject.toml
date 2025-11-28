@@ -4,7 +4,7 @@ version = "0.2.0"
 description = ""
 authors = [{ name = "Vladyslav Hnatiuk", email = "aders1234@gmail.com" }]
 readme = "README.md"
-requires-python = ">=3.11, < 3.14"
+requires-python = ">=3.11, <= 3.14"
 dependencies = ["finecode_extension_api==0.3.*", "mypy (>=1.15, <2.0)"]
 
 [dependency-groups]

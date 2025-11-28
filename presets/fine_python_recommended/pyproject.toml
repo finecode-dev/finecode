@@ -4,7 +4,7 @@ version = "0.4.0"
 description = ""
 authors = [{ name = "Vladyslav Hnatiuk", email = "aders1234@gmail.com" }]
 readme = "README.md"
-requires-python = ">=3.11, < 3.14"
+requires-python = ">=3.11, <= 3.14"
 dependencies = ["fine_python_format==0.3.*", "fine_python_lint==0.4.*"]
 
 [build-system]

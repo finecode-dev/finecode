@@ -66,7 +66,9 @@ class PipInstallDepsInEnvHandler(
                 install_params += f'--find-links="{link}" '
 
         if self.config.editable_mode is not None:
-            install_params += f"--config-settings editable_mode='{self.config.editable_mode}' "
+            install_params += (
+                f"--config-settings editable_mode='{self.config.editable_mode}' "
+            )
 
         for dependency in dependencies:
             if dependency.editable:

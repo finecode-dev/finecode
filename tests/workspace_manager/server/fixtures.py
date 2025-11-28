@@ -39,8 +39,10 @@ async def client_channel():
             for transport in app.transports
             if isinstance(transport, InMemoryTransport)
         )
-    except StopIteration:
-        raise Exception("App configuration error. InMemory transport not found")
+    except StopIteration as exception:
+        raise Exception(
+            "App configuration error. InMemory transport not found"
+        ) from exception
     channel = InMemoryChannel(transport=inmemory_transport, converter=json_converter)
     client = Client(channel=channel)
 

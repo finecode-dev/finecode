@@ -7,7 +7,12 @@ from pathlib import Path
 
 from finecode_extension_api import code_action
 from finecode_extension_api.actions import lint as lint_action
-from finecode_extension_api.interfaces import icache, icommandrunner, ilogger, ifilemanager
+from finecode_extension_api.interfaces import (
+    icache,
+    icommandrunner,
+    ilogger,
+    ifilemanager,
+)
 
 
 @dataclasses.dataclass
@@ -38,12 +43,10 @@ class RuffLintHandler(
         self.logger = logger
         self.file_manager = file_manager
         self.command_runner = command_runner
-        
+
         self.ruff_bin_path = Path(sys.executable).parent / "ruff"
 
-    async def run_on_single_file(
-        self, file_path: Path
-    ) -> lint_action.LintRunResult:
+    async def run_on_single_file(self, file_path: Path) -> lint_action.LintRunResult:
         messages = {}
         try:
             cached_lint_messages = await self.cache.get_file_cache(
@@ -112,12 +115,12 @@ class RuffLintHandler(
         ruff_process = await self.command_runner.run(
             cmd_str,
         )
-        
+
         ruff_process.write_to_stdin(file_content)
         ruff_process.close_stdin()  # Signal EOF
-        
+
         await ruff_process.wait_for_end()
-        
+
         output = ruff_process.get_output()
         try:
             ruff_results = json.loads(output)
@@ -125,7 +128,9 @@ class RuffLintHandler(
                 lint_message = map_ruff_violation_to_lint_message(violation)
                 lint_messages.append(lint_message)
         except json.JSONDecodeError:
-            raise code_action.ActionFailedException(f'Output of ruff is not json: {output}')
+            raise code_action.ActionFailedException(
+                f"Output of ruff is not json: {output}"
+            )
 
         return lint_messages
 
