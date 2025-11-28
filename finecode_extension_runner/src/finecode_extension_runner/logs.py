@@ -39,7 +39,7 @@ def save_logs_to_file(
     file_path: Path,
     log_level: str = "INFO",
     rotation: str = "10 MB",
-    retention=3,
+    retention: int = 3,
     stdout: bool = True,
 ):
     if stdout is True:

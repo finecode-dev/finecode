@@ -4,7 +4,7 @@ dynamic = ["version"]
 description = ""
 authors = [{ name = "Vladyslav Hnatiuk", email = "aders1234@gmail.com" }]
 readme = "README.md"
-requires-python = ">=3.11, < 3.14"
+requires-python = ">=3.11, <= 3.14"
 dependencies = [
     "loguru==0.7.*",
     "tomlkit==0.11.*",
@@ -19,6 +19,8 @@ dependencies = [
     "mcp==1.13.*",
     "fine_python_virtualenv==0.1.*",
     "fine_python_pip==0.1.*",
+    "culsans==0.9.*",
+    "apischema==0.19.*",
 ]
 
 [dependency-groups]
@@ -44,6 +46,7 @@ presets = [{ source = "finecode_dev_common_preset" }]
 [tool.finecode.env.dev_workspace.dependencies]
 finecode_dev_common_preset = { path = "./finecode_dev_common_preset", editable = true }
 finecode_extension_runner = { path = "./finecode_extension_runner", editable = true }
+finecode_extension_api = { path = "./finecode_extension_api", editable = true }
 
 [tool.importlinter]
 root_package = "finecode"
@@ -79,3 +82,6 @@ version_file = "src/finecode/_version.py"
 
 [tool.setuptools.package-data]
 finecode = ["base_config.toml"]
+
+[tool.pyright]
+reportUnusedCallResult = false

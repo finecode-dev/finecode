@@ -1,4 +1,3 @@
-import enum
 import pathlib
 
 from finecode_extension_api.interfaces import (

@@ -1,32 +1,40 @@
+"""
+API to manage ERs: start, stop, restart.
+"""
+
 import asyncio
+import collections.abc
 import json
 import os
 import shutil
 from pathlib import Path
-from typing import Callable, Coroutine
+import typing
 
 from loguru import logger
-from lsprotocol import types
 
 from finecode import context, domain, finecode_cmd
 from finecode.config import collect_actions, config_models, read_configs
-from finecode.pygls_client_utils import create_lsp_client_io
-from finecode.runner import runner_client, runner_info
+from finecode.runner import (
+    jsonrpc_client,
+    runner_client,
+    _internal_client_api,
+    _internal_client_types,
+)
+from finecode.runner.jsonrpc_client import _io_thread
 from finecode.utils import iterable_subscribe
 
 project_changed_callback: (
-    Callable[[domain.Project], Coroutine[None, None, None]] | None
+    typing.Callable[[domain.Project], collections.abc.Coroutine[None, None, None]]
+    | None
 ) = None
-get_document: Callable[[], Coroutine] | None = None
-apply_workspace_edit: Callable[[], Coroutine] | None = None
+get_document: typing.Callable[[], collections.abc.Coroutine] | None = None
+apply_workspace_edit: typing.Callable[[], collections.abc.Coroutine] | None = None
 partial_results: iterable_subscribe.IterableSubscribe = (
     iterable_subscribe.IterableSubscribe()
 )
 
-
-class RunnerFailedToStart(Exception):
-    def __init__(self, message: str) -> None:
-        self.message = message
+# reexport
+RunnerFailedToStart = jsonrpc_client.RunnerFailedToStart
 
 
 async def notify_project_changed(project: domain.Project) -> None:
@@ -34,30 +42,33 @@ async def notify_project_changed(project: domain.Project) -> None:
         await project_changed_callback(project)
 
 
-async def _apply_workspace_edit(params: types.ApplyWorkspaceEditParams):
+async def _apply_workspace_edit(
+    params: _internal_client_types.ApplyWorkspaceEditParams,
+):
     def map_change_object(change):
-        return types.TextEdit(
-            range=types.Range(
-                start=types.Position(
+        return _internal_client_types.TextEdit(
+            range=_internal_client_types.Range(
+                start=_internal_client_types.Position(
                     line=change.range.start.line, character=change.range.start.character
                 ),
-                end=types.Position(
+                end=_internal_client_types.Position(
                     change.range.end.line, character=change.range.end.character
                 ),
             ),
             new_text=change.newText,
         )
 
-    converted_params = types.ApplyWorkspaceEditParams(
-        edit=types.WorkspaceEdit(
+    converted_params = _internal_client_types.ApplyWorkspaceEditParams(
+        edit=_internal_client_types.WorkspaceEdit(
             document_changes=[
-                types.TextDocumentEdit(
-                    text_document=types.OptionalVersionedTextDocumentIdentifier(
-                        document_edit.textDocument.uri
+                _internal_client_types.TextDocumentEdit(
+                    text_document=_internal_client_types.OptionalVersionedTextDocumentIdentifier(
+                        document_edit.text_document.uri
                     ),
                     edits=[map_change_object(change) for change in document_edit.edits],
                 )
-                for document_edit in params.edit.documentChanges
+                for document_edit in params.edit.document_changes
+                if isinstance(document_edit, _internal_client_types.TextDocumentEdit)
             ]
         )
     )
@@ -65,35 +76,41 @@ async def _apply_workspace_edit(params: types.ApplyWorkspaceEditParams):
 
 
 async def _start_extension_runner_process(
-    runner_dir: Path, env_name: str, ws_context: context.WorkspaceContext
-) -> runner_info.ExtensionRunnerInfo | None:
-    runner_info_instance = runner_info.ExtensionRunnerInfo(
-        working_dir_path=runner_dir,
-        env_name=env_name,
-        status=runner_info.RunnerStatus.READY_TO_START,
-        initialized_event=asyncio.Event(),
-        client=None,
-    )
-
+    runner: runner_client.ExtensionRunnerInfo, ws_context: context.WorkspaceContext
+) -> None:
     try:
-        python_cmd = finecode_cmd.get_python_cmd(runner_dir, env_name)
+        python_cmd = finecode_cmd.get_python_cmd(
+            runner.working_dir_path, runner.env_name
+        )
     except ValueError:
         try:
-            runner_info_instance.status = runner_info.RunnerStatus.NO_VENV
-            await notify_project_changed(ws_context.ws_projects[runner_dir])
+            runner.status = runner_client.RunnerStatus.NO_VENV
+            await notify_project_changed(
+                ws_context.ws_projects[runner.working_dir_path]
+            )
         except KeyError:
             ...
         logger.error(
-            f"Project {runner_dir} uses finecode, but env (venv) doesn't exist yet. Run `prepare_env` command to create it"
+            f"Project {runner.working_dir_path} uses finecode, but env (venv) doesn't exist yet. Run `prepare_env` command to create it"
         )
-        return None
+
+        raise jsonrpc_client.RunnerFailedToStart(
+            f"Runner '{runner.readable_id}' failed to start"
+        )
+
+    if ws_context.runner_io_thread is None:
+        logger.trace("Starting IO Thread")
+        ws_context.runner_io_thread = _io_thread.AsyncIOThread()
+        ws_context.runner_io_thread.start()
 
     process_args: list[str] = [
         "--trace",
-        f"--project-path={runner_dir.as_posix()}",
-        f"--env-name={env_name}",
+        f"--project-path={runner.working_dir_path.as_posix()}",
+        f"--env-name={runner.env_name}",
     ]
-    env_config = ws_context.ws_projects[runner_dir].env_configs[env_name]
+    env_config = ws_context.ws_projects[runner.working_dir_path].env_configs[
+        runner.env_name
+    ]
     runner_config = env_config.runner_config
     # TODO: also check whether lsp server is available, without it doesn't make sense
     # to start with debugger
@@ -103,46 +120,50 @@ async def _start_extension_runner_process(
         process_args.append("--debug-port=5681")
 
     process_args_str: str = " ".join(process_args)
-    client = await create_lsp_client_io(
-        runner_info.CustomJsonRpcClient,
+    client = await jsonrpc_client.create_lsp_client_io(
         f"{python_cmd} -m finecode_extension_runner.cli start {process_args_str}",
-        runner_dir,
+        runner.working_dir_path,
+        message_types=_internal_client_types.METHOD_TO_TYPES,
+        io_thread=ws_context.runner_io_thread,
+        readable_id=runner.readable_id,
     )
-    runner_info_instance.client = client
+    runner.client = client
     # TODO: recognize started debugger and send command to lsp server
 
     async def on_exit():
-        logger.debug(f"Extension Runner {runner_info_instance.readable_id} exited")
-        runner_info_instance.status = runner_info.RunnerStatus.EXITED
-        await notify_project_changed(ws_context.ws_projects[runner_dir])  # TODO: fix
+        logger.debug(f"Extension Runner {runner.readable_id} exited")
+        runner.status = runner_client.RunnerStatus.EXITED
+        await notify_project_changed(
+            ws_context.ws_projects[runner.working_dir_path]
+        )  # TODO: fix
         # TODO: restart if WM is not stopping
 
-    runner_info_instance.client.server_exit_callback = on_exit
+    runner.client.server_exit_callback = on_exit
 
     if get_document is not None:
-        register_get_document_feature = runner_info_instance.client.feature(
-            "documents/get"
+        runner.client.feature(
+            _internal_client_types.DOCUMENT_GET,
+            get_document,
         )
-        register_get_document_feature(get_document)
 
-    register_workspace_apply_edit = runner_info_instance.client.feature(
-        types.WORKSPACE_APPLY_EDIT
+    runner.client.feature(
+        _internal_client_types.WORKSPACE_APPLY_EDIT, _apply_workspace_edit
     )
-    register_workspace_apply_edit(_apply_workspace_edit)
 
-    async def on_progress(params: types.ProgressParams):
+    async def on_progress(params: _internal_client_types.ProgressParams):
         logger.debug(f"Got progress from runner for token: {params.token}")
         partial_result = domain.PartialResult(
             token=params.token, value=json.loads(params.value)
         )
         partial_results.publish(partial_result)
 
-    register_progress_feature = runner_info_instance.client.feature(types.PROGRESS)
-    register_progress_feature(on_progress)
+    runner.client.feature(_internal_client_types.PROGRESS, on_progress)
 
-    async def get_project_raw_config(params):
+    async def get_project_raw_config(
+        params: _internal_client_types.GetProjectRawConfigParams,
+    ):
         logger.debug(f"Get project raw config: {params}")
-        project_def_path_str = params.projectDefPath
+        project_def_path_str = params.project_def_path
         project_def_path = Path(project_def_path_str)
         try:
             project_raw_config = ws_context.ws_projects_raw_configs[
@@ -150,52 +171,42 @@ async def _start_extension_runner_process(
             ]
         except KeyError:
             raise ValueError(f"Config of project '{project_def_path_str}' not found")
-        return {"config": json.dumps(project_raw_config)}
-
-    register_get_project_raw_config_feature = runner_info_instance.client.feature(
-        "projects/getRawConfig"
-    )
-    register_get_project_raw_config_feature(get_project_raw_config)
-
-    return runner_info_instance
-
-
-async def stop_extension_runner(runner: runner_info.ExtensionRunnerInfo) -> None:
-    logger.trace(f"Trying to stop extension runner {runner.readable_id}")
-    if not runner.client.stopped:
-        logger.debug("Send shutdown to server")
-        try:
-            await runner_client.shutdown(runner=runner)
-        except Exception as e:
-            logger.error(f"Failed to shutdown: {e}")
-
-        await runner_client.exit(runner)
-        logger.debug("Sent exit to server")
-        await runner.client.stop()
-        logger.trace(
-            f"Stop extension runner {runner.process_id} in {runner.readable_id}"
+        return _internal_client_types.GetProjectRawConfigResult(
+            config=json.dumps(project_raw_config)
         )
+
+    runner.client.feature(
+        _internal_client_types.PROJECT_RAW_CONFIG_GET,
+        get_project_raw_config,
+    )
+
+
+async def stop_extension_runner(runner: runner_client.ExtensionRunnerInfo) -> None:
+    logger.trace(f"Trying to stop extension runner {runner.readable_id}")
+    if runner.status == runner_client.RunnerStatus.RUNNING:
+        try:
+            await _internal_client_api.shutdown(client=runner.client)
+        except Exception as e:
+            logger.error(f"Failed to shutdown:")
+            logger.exception(e)
+
+        await _internal_client_api.exit(client=runner.client)
+        logger.trace(f"Stopped extension runner {runner.readable_id}")
     else:
         logger.trace("Extension runner was not running")
 
 
-def stop_extension_runner_sync(runner: runner_info.ExtensionRunnerInfo) -> None:
+def stop_extension_runner_sync(runner: runner_client.ExtensionRunnerInfo) -> None:
     logger.trace(f"Trying to stop extension runner {runner.readable_id}")
-    if not runner.client.stopped:
-        logger.debug("Send shutdown to server")
+    if runner.status == runner_client.RunnerStatus.RUNNING:
         try:
-            runner_client.shutdown_sync(runner=runner)
-        except Exception:
-            # currently we get (almost?) always this error. TODO: Investigate why
-            # mute for now to make output less verbose
-            # logger.error(f"Failed to shutdown: {e}")
-            ...
+            _internal_client_api.shutdown_sync(client=runner.client)
+        except Exception as e:
+            logger.error(f"Failed to shutdown:")
+            logger.exception(e)
 
-        runner_client.exit_sync(runner)
-        logger.debug("Sent exit to server")
-        logger.trace(
-            f"Stop extension runner {runner.process_id} in {runner.readable_id}"
-        )
+        _internal_client_api.exit_sync(runner.client)
+        logger.trace(f"Stopped extension runner {runner.readable_id}")
     else:
         logger.trace("Extension runner was not running")
 
@@ -212,14 +223,26 @@ async def start_runners_with_presets(
             for project in projects:
                 project_status = project.status
                 if project_status == domain.ProjectStatus.CONFIG_VALID:
-                    task = tg.create_task(
-                        _start_dev_workspace_runner(
-                            project_def=project, ws_context=ws_context
+                    # first check whether runner doesn't exist yet to avoid duplicates
+                    project_runners = ws_context.ws_projects_extension_runners.get(project.dir_path, {})
+                    project_dev_workspace_runner = project_runners.get('dev_workspace', None)
+                    start_new_runner = True
+                    if project_dev_workspace_runner is not None and project_dev_workspace_runner.status in [runner_client.RunnerStatus.INITIALIZING, runner_client.RunnerStatus.RUNNING]:
+                        # start a new one only if:
+                        # - either there is no runner yet
+                        # or venv exist(=exclude `runner_client.RunnerStatus.NO_VENV`)
+                        #    and runner is not initializing or running already
+                        start_new_runner = False
+                    
+                    if start_new_runner:
+                        task = tg.create_task(
+                            _start_dev_workspace_runner(
+                                project_def=project, ws_context=ws_context
+                            )
                         )
-                    )
-                    new_runners_tasks.append(task)
+                        new_runners_tasks.append(task)
                 elif project_status != domain.ProjectStatus.NO_FINECODE:
-                    raise RunnerFailedToStart(
+                    raise jsonrpc_client.RunnerFailedToStart(
                         f"Project '{project.name}' has invalid configuration, status: {project_status.name}"
                     )
 
@@ -229,18 +252,18 @@ async def start_runners_with_presets(
     except ExceptionGroup as eg:
         for exception in eg.exceptions:
             if isinstance(
-                exception, runner_client.BaseRunnerRequestException
-            ) or isinstance(exception, RunnerFailedToStart):
+                exception, jsonrpc_client.BaseRunnerRequestException
+            ) or isinstance(exception, jsonrpc_client.RunnerFailedToStart):
                 logger.error(exception.message)
             else:
                 logger.error("Unexpected exception:")
                 logger.exception(exception)
-        raise RunnerFailedToStart(
+        raise jsonrpc_client.RunnerFailedToStart(
             "Failed to initialize runner(s). See previous logs for more details"
         )
 
     for project in projects:
-        if project_status != domain.ProjectStatus.CONFIG_VALID:
+        if project.status != domain.ProjectStatus.CONFIG_VALID:
             continue
 
         try:
@@ -251,18 +274,20 @@ async def start_runners_with_presets(
                 project_path=project.dir_path, ws_context=ws_context
             )
         except config_models.ConfigurationError as exception:
-            raise RunnerFailedToStart(
+            raise jsonrpc_client.RunnerFailedToStart(
                 f"Reading project config with presets and collecting actions in {project.dir_path} failed: {exception.message}"
             )
-        
+
         # update config of dev_workspace runner, the new config contains resolved presets
-        dev_workspace_runner = ws_context.ws_projects_extension_runners[project.dir_path]['dev_workspace']
+        dev_workspace_runner = ws_context.ws_projects_extension_runners[
+            project.dir_path
+        ]["dev_workspace"]
         await update_runner_config(runner=dev_workspace_runner, project=project)
 
 
 async def get_or_start_runners_with_presets(
     project_dir_path: Path, ws_context: context.WorkspaceContext
-) -> runner_info.ExtensionRunnerInfo:
+) -> runner_client.ExtensionRunnerInfo:
     # project is expected to have status `ProjectStatus.CONFIG_VALID`
     has_dev_workspace_runner = (
         "dev_workspace" in ws_context.ws_projects_extension_runners[project_dir_path]
@@ -273,36 +298,35 @@ async def get_or_start_runners_with_presets(
     dev_workspace_runner = ws_context.ws_projects_extension_runners[project_dir_path][
         "dev_workspace"
     ]
-    if dev_workspace_runner.status == runner_info.RunnerStatus.RUNNING:
+    if dev_workspace_runner.status == runner_client.RunnerStatus.RUNNING:
         return dev_workspace_runner
-    elif dev_workspace_runner.status == runner_info.RunnerStatus.INITIALIZING:
+    elif dev_workspace_runner.status == runner_client.RunnerStatus.INITIALIZING:
         await dev_workspace_runner.initialized_event.wait()
         return dev_workspace_runner
     else:
-        raise RunnerFailedToStart(
+        raise jsonrpc_client.RunnerFailedToStart(
             f"Status of dev_workspace runner: {dev_workspace_runner.status}, logs: {dev_workspace_runner.logs_path}"
         )
 
 
 async def start_runner(
     project_def: domain.Project, env_name: str, ws_context: context.WorkspaceContext
-) -> runner_info.ExtensionRunnerInfo:
+) -> runner_client.ExtensionRunnerInfo:
     # this function manages status of the runner and initialized event
-    runner = await _start_extension_runner_process(
-        runner_dir=project_def.dir_path, env_name=env_name, ws_context=ws_context
+    runner = runner_client.ExtensionRunnerInfo(
+        working_dir_path=project_def.dir_path,
+        env_name=env_name,
+        status=runner_client.RunnerStatus.INITIALIZING,
+        initialized_event=asyncio.Event(),
+        client=None,
     )
-
-    if runner is None:
-        raise RunnerFailedToStart(
-            f"Runner '{env_name}' in project {project_def.name} failed to start"
-        )
-
-    runner.status = runner_info.RunnerStatus.INITIALIZING
     save_runner_in_context(runner=runner, ws_context=ws_context)
+    await _start_extension_runner_process(runner=runner, ws_context=ws_context)
+
     try:
         await _init_lsp_client(runner=runner, project=project_def)
-    except RunnerFailedToStart as exception:
-        runner.status = runner_info.RunnerStatus.FAILED
+    except jsonrpc_client.RunnerFailedToStart as exception:
+        runner.status = runner_client.RunnerStatus.FAILED
         await notify_project_changed(project_def)
         runner.initialized_event.set()
         raise exception
@@ -319,17 +343,17 @@ async def start_runner(
                 project_path=project_def.dir_path, ws_context=ws_context
             )
         except config_models.ConfigurationError as exception:
-            runner.status = runner_info.RunnerStatus.FAILED
+            runner.status = runner_client.RunnerStatus.FAILED
             runner.initialized_event.set()
             await notify_project_changed(project_def)
-            raise RunnerFailedToStart(
+            raise jsonrpc_client.RunnerFailedToStart(
                 f"Found problem in configuration of {project_def.dir_path}: {exception.message}"
             )
 
     await update_runner_config(runner=runner, project=project_def)
     await _finish_runner_init(runner=runner, project=project_def, ws_context=ws_context)
 
-    runner.status = runner_info.RunnerStatus.RUNNING
+    runner.status = runner_client.RunnerStatus.RUNNING
     await notify_project_changed(project_def)
     runner.initialized_event.set()
 
@@ -338,27 +362,32 @@ async def start_runner(
 
 async def get_or_start_runner(
     project_def: domain.Project, env_name: str, ws_context: context.WorkspaceContext
-) -> runner_info.ExtensionRunnerInfo:
+) -> runner_client.ExtensionRunnerInfo:
     runners_by_env = ws_context.ws_projects_extension_runners[project_def.dir_path]
 
     try:
         runner = runners_by_env[env_name]
+        logger.trace(f"Runner {runner.readable_id} found")
     except KeyError:
+        logger.trace(
+            f"Runner for env {env_name} in {project_def.dir_path} not found, start one"
+        )
         runner = await start_runner(
             project_def=project_def, env_name=env_name, ws_context=ws_context
         )
 
-    if runner.status != runner_info.RunnerStatus.RUNNING:
+    if runner.status != runner_client.RunnerStatus.RUNNING:
         runner_error = False
-        if runner.status == runner_info.RunnerStatus.INITIALIZING:
+        if runner.status == runner_client.RunnerStatus.INITIALIZING:
+            logger.trace(f"Runner {runner.readable_id} is initializing, wait for it")
             await runner.initialized_event.wait()
-            if runner.status != runner_info.RunnerStatus.RUNNING:
+            if runner.status != runner_client.RunnerStatus.RUNNING:
                 runner_error = True
         else:
             runner_error = True
 
         if runner_error:
-            raise RunnerFailedToStart(
+            raise jsonrpc_client.RunnerFailedToStart(
                 f"Runner {env_name} in project {project_def.dir_path} is not running. Status: {runner.status}"
             )
 
@@ -367,31 +396,33 @@ async def get_or_start_runner(
 
 async def _start_dev_workspace_runner(
     project_def: domain.Project, ws_context: context.WorkspaceContext
-) -> runner_info.ExtensionRunnerInfo:
+) -> runner_client.ExtensionRunnerInfo:
     return await start_runner(
         project_def=project_def, env_name="dev_workspace", ws_context=ws_context
     )
 
 
 async def _init_lsp_client(
-    runner: runner_info.ExtensionRunnerInfo, project: domain.Project
+    runner: runner_client.ExtensionRunnerInfo, project: domain.Project
 ) -> None:
     try:
-        await runner_client.initialize(
-            runner,
+        await _internal_client_api.initialize(
+            client=runner.client,
             client_process_id=os.getpid(),
             client_name="FineCode_WorkspaceManager",
             client_version="0.1.0",
         )
-    except runner_client.BaseRunnerRequestException as error:
-        raise RunnerFailedToStart(f"Runner failed to initialize: {error.message}")
+    except jsonrpc_client.BaseRunnerRequestException as error:
+        raise jsonrpc_client.RunnerFailedToStart(
+            f"Runner failed to initialize: {error.message}"
+        )
 
     try:
-        await runner_client.notify_initialized(runner)
+        await _internal_client_api.notify_initialized(runner.client)
     except Exception as error:
         logger.error(f"Failed to notify runner about initialization: {error}")
         logger.exception(error)
-        raise RunnerFailedToStart(
+        raise jsonrpc_client.RunnerFailedToStart(
             f"Runner failed to notify about initialization: {error}"
         )
 
@@ -399,7 +430,7 @@ async def _init_lsp_client(
 
 
 async def update_runner_config(
-    runner: runner_info.ExtensionRunnerInfo, project: domain.Project
+    runner: runner_client.ExtensionRunnerInfo, project: domain.Project
 ) -> None:
     assert project.actions is not None
     config = runner_client.RunnerConfig(
@@ -407,21 +438,19 @@ async def update_runner_config(
     )
     try:
         await runner_client.update_config(runner, project.def_path, config)
-    except runner_client.BaseRunnerRequestException as exception:
-        runner.status = runner_info.RunnerStatus.FAILED
+    except jsonrpc_client.BaseRunnerRequestException as exception:
+        runner.status = runner_client.RunnerStatus.FAILED
         await notify_project_changed(project)
         runner.initialized_event.set()
-        raise RunnerFailedToStart(
+        raise jsonrpc_client.RunnerFailedToStart(
             f"Runner failed to update config: {exception.message}"
         )
 
-    logger.debug(
-        f"Updated config of runner {runner.readable_id}, process id {runner.process_id}"
-    )
+    logger.debug(f"Updated config of runner {runner.readable_id}")
 
 
 async def _finish_runner_init(
-    runner: runner_info.ExtensionRunnerInfo,
+    runner: runner_client.ExtensionRunnerInfo,
     project: domain.Project,
     ws_context: context.WorkspaceContext,
 ) -> None:
@@ -433,7 +462,7 @@ async def _finish_runner_init(
 def save_runners_from_tasks_in_context(
     tasks: list[asyncio.Task], ws_context: context.WorkspaceContext
 ) -> None:
-    extension_runners: list[runner_info.ExtensionRunnerInfo] = [
+    extension_runners: list[runner_client.ExtensionRunnerInfo] = [
         runner.result() for runner in tasks if runner is not None
     ]
 
@@ -442,7 +471,7 @@ def save_runners_from_tasks_in_context(
 
 
 def save_runner_in_context(
-    runner: runner_info.ExtensionRunnerInfo, ws_context: context.WorkspaceContext
+    runner: runner_client.ExtensionRunnerInfo, ws_context: context.WorkspaceContext
 ) -> None:
     if runner.working_dir_path not in ws_context.ws_projects_extension_runners:
         ws_context.ws_projects_extension_runners[runner.working_dir_path] = {}
@@ -452,7 +481,8 @@ def save_runner_in_context(
 
 
 async def send_opened_files(
-    runner: runner_info.ExtensionRunnerInfo, opened_files: list[domain.TextDocumentInfo]
+    runner: runner_client.ExtensionRunnerInfo,
+    opened_files: list[domain.TextDocumentInfo],
 ):
     files_for_runner: list[domain.TextDocumentInfo] = []
     for opened_file_info in opened_files:
@@ -499,7 +529,7 @@ async def check_runner(runner_dir: Path, env_name: str) -> bool:
         raw_stdout, raw_stderr = await asyncio.wait_for(
             async_subprocess.communicate(), timeout=5
         )
-    except asyncio.TimeoutError:
+    except TimeoutError:
         logger.debug(f"Timeout 5 sec({runner_dir})")
         return False
 

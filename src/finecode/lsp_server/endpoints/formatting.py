@@ -57,7 +57,7 @@ async def format_document(ls: LanguageServer, params: types.DocumentFormattingPa
 async def format_range(ls: LanguageServer, params: types.DocumentRangeFormattingParams):
     logger.info(f"format range {params}")
     await global_state.server_initialized.wait()
-
+    # TODO
     return []
 
 
@@ -66,5 +66,5 @@ async def format_ranges(
 ):
     logger.info(f"format ranges {params}")
     await global_state.server_initialized.wait()
-
+    # TODO
     return []

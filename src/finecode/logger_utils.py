@@ -9,7 +9,7 @@ from finecode_extension_runner import logs
 
 
 def init_logger(trace: bool, stdout: bool = False):
-    venv_dir_path = Path(sys.executable) / ".." / ".."
+    venv_dir_path = Path(sys.executable).parent.parent
     logs_dir_path = venv_dir_path / "logs"
 
     logger.remove()
@@ -19,6 +19,7 @@ def init_logger(trace: bool, stdout: bool = False):
         activation=[
             ("pygls.protocol.json_rpc", False),
             ("pygls.feature_manager", False),
+            ("pygls.io_", False),
         ]
     )
     logs.save_logs_to_file(

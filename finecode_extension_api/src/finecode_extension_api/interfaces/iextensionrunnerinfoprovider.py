@@ -10,3 +10,7 @@ class IExtensionRunnerInfoProvider(Protocol):
     def get_venv_site_packages(
         self, venv_dir_path: pathlib.Path
     ) -> list[pathlib.Path]: ...
+
+    def get_venv_python_interpreter(
+        self, venv_dir_path: pathlib.Path
+    ) -> pathlib.Path: ...

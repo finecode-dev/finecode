@@ -24,7 +24,9 @@ class ProjectInfoProvider(iprojectinfoprovider.IProjectInfoProvider):
         project_raw_config = await self.get_current_project_raw_config()
         raw_name = project_raw_config.get("project", {}).get("name", None)
         if raw_name is None:
-            raise iprojectinfoprovider.InvalidProjectConfig("project.name not found in project config")
+            raise iprojectinfoprovider.InvalidProjectConfig(
+                "project.name not found in project config"
+            )
 
         return raw_name.replace("-", "_")
 

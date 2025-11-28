@@ -10,17 +10,81 @@ import dataclasses
 import functools
 import json
 import pathlib
-import time
 import typing
 
 import pygls.exceptions as pygls_exceptions
 from loguru import logger
 from lsprotocol import types
 from pygls.lsp import server as lsp_server
+from pygls.io_ import StdoutWriter, run_async
 
 from finecode_extension_api import code_action
 from finecode_extension_runner import domain, schemas, services
 from finecode_extension_runner._services import run_action as run_action_service
+
+import sys
+import io
+import threading
+import asyncio
+
+
+class StdinAsyncReader:
+    """Read from stdin asynchronously."""
+
+    def __init__(self, stdin: io.TextIO, stop_event: threading.Event | None = None):
+        self.stdin = stdin
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self._stop_event = stop_event
+
+        self.reader = asyncio.StreamReader()
+        self.transport: asyncio.ReadTransport | None = None
+        self.initialized = False
+
+    @property
+    def loop(self):
+        if self._loop is None:
+            self._loop = asyncio.get_running_loop()
+
+        return self._loop
+
+    async def readline(self) -> bytes:
+        if not self.initialized:
+            await self.initialize()
+
+        while not self._stop_event.is_set():
+            try:
+                line = await asyncio.wait_for(self.reader.readline(), timeout=0.1)
+                if not line:  # EOF
+                    break
+                return line
+            except TimeoutError:
+                ...
+        return bytes()
+
+    async def readexactly(self, n: int) -> bytes:
+        if not self.initialized:
+            await self.initialize()
+
+        while not self._stop_event.is_set():
+            try:
+                line = await asyncio.wait_for(self.reader.read(n), timeout=0.1)
+                if not line:  # EOF
+                    break
+                return line
+            except TimeoutError:
+                ...
+        return bytes()
+
+    async def initialize(self) -> None:
+        protocol = asyncio.StreamReaderProtocol(self.reader)
+        self.transport, _ = await self.loop.connect_read_pipe(
+            lambda: protocol, self.stdin
+        )
+        self.initialized = True
+
+    def stop(self) -> None:
+        if self.transport:
+            self.transport.close()
 
 
 class CustomLanguageServer(lsp_server.LanguageServer):
@@ -29,6 +93,35 @@ class CustomLanguageServer(lsp_server.LanguageServer):
         super(lsp_server.LanguageServer, self).report_server_error(error, source)
         # send to client
         super().report_server_error(error, source)
+
+    async def start_io_async(
+        self, stdin: io.BinaryIO | None = None, stdout: io.BinaryIO | None = None
+    ):
+        """Starts an asynchronous IO server."""
+        # overwrite this method to use custom StdinAsyncReader which handles stop event properly
+        logger.info("Starting async IO server")
+
+        self._stop_event = threading.Event()
+        reader = StdinAsyncReader(sys.stdin, self._stop_event)
+        writer = StdoutWriter(stdout or sys.stdout.buffer)
+        self.protocol.set_writer(writer)
+
+        try:
+            await run_async(
+                stop_event=self._stop_event,
+                reader=reader,
+                protocol=self.protocol,
+                logger=logger,
+                error_handler=self.report_server_error,
+            )
+        except BrokenPipeError:
+            logger.error("Connection to the client is lost! Shutting down the server.")
+        except (KeyboardInterrupt, SystemExit):
+            logger.info("exception handler in json rpc server")
+            pass
+        finally:
+            reader.stop()
+            self.shutdown()
 
 
 def create_lsp_server() -> lsp_server.LanguageServer:
@@ -39,6 +132,9 @@ def create_lsp_server() -> lsp_server.LanguageServer:
 
     register_shutdown_feature = server.feature(types.SHUTDOWN)
     register_shutdown_feature(_on_shutdown)
+
+    register_exit_feature = server.feature(types.EXIT)
+    register_exit_feature(_on_exit)
 
     register_document_did_open_feature = server.feature(types.TEXT_DOCUMENT_DID_OPEN)
     register_document_did_open_feature(_document_did_open)
@@ -61,8 +157,6 @@ def create_lsp_server() -> lsp_server.LanguageServer:
     def on_process_exit():
         logger.info("Exit extension runner")
         services.shutdown_all_action_handlers()
-        # wait for graceful shutdown of all subprocesses if such exist
-        time.sleep(2)
         services.exit_all_action_handlers()
 
     atexit.register(on_process_exit)
@@ -72,7 +166,9 @@ def create_lsp_server() -> lsp_server.LanguageServer:
     ) -> None:
         partial_result_dict = dataclasses.asdict(partial_result)
         partial_result_json = json.dumps(partial_result_dict)
-        logger.debug(f"Send partial result for {token}, length {len(partial_result_json)}")
+        logger.debug(
+            f"Send partial result for {token}, length {len(partial_result_json)}"
+        )
         server.progress(types.ProgressParams(token=token, value=partial_result_json))
 
     run_action_service.set_partial_result_sender(send_partial_result)
@@ -87,6 +183,12 @@ def _on_initialized(ls: lsp_server.LanguageServer, params: types.InitializedPara
 def _on_shutdown(ls: lsp_server.LanguageServer, params):
     logger.info("Shutdown extension runner")
     services.shutdown_all_action_handlers()
+    logger.info("Shutdown end")
+    return None
+
+
+def _on_exit(ls: lsp_server.LanguageServer, params):
+    logger.info("Exit extension runner")
 
 
 def _document_did_open(
@@ -105,9 +207,11 @@ def _document_did_close(
 
 async def document_requester(server: lsp_server.LanguageServer, uri: str):
     try:
-        document = await server.protocol.send_request_async(
-            "documents/get", params={"uri": uri}
+        document = await asyncio.wait_for(
+            server.protocol.send_request_async("documents/get", params={"uri": uri}), 10
         )
+    except TimeoutError as error:
+        raise error
     except pygls_exceptions.JsonRpcInternalError as error:
         if error.message == "Exception: Document is not opened":
             raise domain.TextDocumentNotOpened()
@@ -120,9 +224,13 @@ async def document_requester(server: lsp_server.LanguageServer, uri: str):
 
 
 async def document_saver(server: lsp_server.LanguageServer, uri: str, content: str):
-    document = await server.protocol.send_request_async(
-        "documents/get", params={"uri": uri}
-    )
+    try:
+        document = await asyncio.wait_for(
+            server.protocol.send_request_async("documents/get", params={"uri": uri}), 10
+        )
+    except TimeoutError as error:
+        raise error
+
     document_lines = document.text.split("\n")
     params = types.ApplyWorkspaceEditParams(
         edit=types.WorkspaceEdit(
@@ -156,9 +264,14 @@ async def get_project_raw_config(
     server: lsp_server.LanguageServer, project_def_path: str
 ) -> dict[str, typing.Any]:
     try:
-        raw_config = await server.protocol.send_request_async(
-            "projects/getRawConfig", params={"projectDefPath": project_def_path}
+        raw_config = await asyncio.wait_for(
+            server.protocol.send_request_async(
+                "projects/getRawConfig", params={"projectDefPath": project_def_path}
+            ),
+            10,
         )
+    except TimeoutError as error:
+        raise error
     except pygls_exceptions.JsonRpcInternalError as error:
         raise error
 

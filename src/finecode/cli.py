@@ -8,7 +8,7 @@ import typing
 import click
 from loguru import logger
 
-import finecode.main as workspace_manager
+import finecode.lsp_server.main as wm_lsp_server
 from finecode import communication_utils, logger_utils, user_messages
 from finecode.cli_app.commands import dump_config_cmd, prepare_envs_cmd, run_cmd
 
@@ -66,17 +66,9 @@ def start_api(
     else:
         raise ValueError("Specify either --tcp, --ws or --stdio")
 
-    # loop = asyncio.get_event_loop()
-    # loop.run_until_complete(
-    #     workspace_manager.start(
-    #         comm_type=comm_type, host=host, port=port, trace=trace
-    #     )
-    # )
-    # loop.run_forever()
-
-    # workspace manager doesn't stop with async start after closing LS client(IDE).
-    # Use sync start until this problem is solved
-    workspace_manager.start_sync(comm_type=comm_type, host=host, port=port, trace=trace)
+    asyncio.run(
+        wm_lsp_server.start(comm_type=comm_type, host=host, port=port, trace=trace)
+    )
 
 
 async def show_user_message(message: str, message_type: str) -> None:

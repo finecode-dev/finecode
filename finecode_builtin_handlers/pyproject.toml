@@ -14,6 +14,7 @@ dev_workspace = ["finecode==0.3.*", "finecode_dev_common_preset==0.2.*"]
 finecode_dev_common_preset = { path = "../finecode_dev_common_preset", editable = true }
 finecode = { path = "../", editable = true }
 finecode_extension_runner = { path = "../finecode_extension_runner", editable = true }
+finecode_extension_api = { path = "../finecode_extension_api", editable = true }
 
 [tool.finecode]
 presets = [{ source = "finecode_dev_common_preset" }]

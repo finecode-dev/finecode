@@ -5,7 +5,7 @@ from loguru import logger
 from finecode import domain, user_messages
 from finecode.config import read_configs
 from finecode.lsp_server import global_state, schemas
-from finecode.runner import manager as runner_manager
+from finecode.runner import runner_manager
 
 
 class ActionNotFound(Exception): ...

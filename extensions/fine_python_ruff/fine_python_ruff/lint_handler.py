@@ -16,6 +16,7 @@ class RuffLintHandlerConfig(code_action.ActionHandlerConfig):
     target_version: str = "py38"
     select: list[str] | None = None  # Rules to enable
     ignore: list[str] | None = None  # Rules to disable
+    extend_select: list[str] | None = None
     preview: bool = False
 
 
@@ -98,11 +99,13 @@ class RuffLintHandler(
             str(file_path),
         ]
 
-        if self.config.select:
-            cmd.extend(["--select", ",".join(self.config.select)])
-        if self.config.ignore:
-            cmd.extend(["--ignore", ",".join(self.config.ignore)])
-        if self.config.preview:
+        if self.config.select is not None:
+            cmd.append("--select=" + ",".join(self.config.select))
+        if self.config.extend_select is not None:
+            cmd.append("--extend-select=" + ",".join(self.config.extend_select))
+        if self.config.ignore is not None:
+            cmd.append("--ignore=" + ",".join(self.config.ignore))
+        if self.config.preview is True:
             cmd.append("--preview")
 
         cmd_str = " ".join(cmd)

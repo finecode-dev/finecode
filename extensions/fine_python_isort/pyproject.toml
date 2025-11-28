@@ -6,3 +6,15 @@ authors = [{ name = "Vladyslav Hnatiuk", email = "aders1234@gmail.com" }]
 readme = "README.md"
 requires-python = ">= 3.11, < 3.14"
 dependencies = ["finecode_extension_api==0.3.*", "isort (>=5.13, <6)"]
+
+[dependency-groups]
+dev_workspace = ["finecode==0.3.*", "finecode_dev_common_preset==0.2.*"]
+
+[tool.finecode]
+presets = [{ source = "finecode_dev_common_preset" }]
+
+[tool.finecode.env.dev_workspace.dependencies]
+finecode_dev_common_preset = { path = "../../finecode_dev_common_preset", editable = true }
+finecode = { path = "../../", editable = true }
+finecode_extension_runner = { path = "../../finecode_extension_runner", editable = true }
+finecode_extension_api = { path = "../../finecode_extension_api", editable = true }

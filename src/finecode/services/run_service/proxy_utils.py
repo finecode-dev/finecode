@@ -4,15 +4,15 @@ import asyncio
 import collections.abc
 import contextlib
 import pathlib
-from typing import Any
+import typing
 
 import ordered_set
 from loguru import logger
 
 from finecode import context, domain, find_project, user_messages
-from finecode.runner import manager as runner_manager
-from finecode.runner import runner_client, runner_info
-from finecode.runner.manager import RunnerFailedToStart
+from finecode.runner import runner_manager
+from finecode.runner import runner_client
+from finecode.runner.runner_manager import RunnerFailedToStart
 from finecode.runner.runner_client import RunResultFormat  # reexport
 
 from finecode.services.run_service import payload_preprocessor
@@ -34,7 +34,7 @@ async def find_action_project(
         raise error
     except ValueError as error:
         logger.warning(f"Skip {action_name} on {file_path}: {error}")
-        raise ActionRunFailed(error)
+        raise ActionRunFailed(error) from error
 
     project_status = ws_context.ws_projects[project_path].status
     if project_status != domain.ProjectStatus.CONFIG_VALID:
@@ -53,7 +53,7 @@ async def find_action_project(
 async def find_action_project_and_run(
     file_path: pathlib.Path,
     action_name: str,
-    params: dict[str, Any],
+    params: dict[str, typing.Any],
     ws_context: context.WorkspaceContext,
 ) -> runner_client.RunActionResponse:
     project_path = await find_action_project(
@@ -77,9 +77,9 @@ async def find_action_project_and_run(
 
 async def run_action_in_runner(
     action_name: str,
-    params: dict[str, Any],
-    runner: runner_info.ExtensionRunnerInfo,
-    options: dict[str, Any] | None = None,
+    params: dict[str, typing.Any],
+    runner: runner_client.ExtensionRunnerInfo,
+    options: dict[str, typing.Any] | None = None,
 ) -> runner_client.RunActionResponse:
     try:
         response = await runner_client.run_action(
@@ -137,9 +137,9 @@ class AsyncListIterator[T](collections.abc.AsyncIterator[T]):
 
 async def run_action_and_notify(
     action_name: str,
-    params: dict[str, Any],
+    params: dict[str, typing.Any],
     partial_result_token: int | str,
-    runner: runner_info.ExtensionRunnerInfo,
+    runner: runner_client.ExtensionRunnerInfo,
     result_list: AsyncList,
     partial_results_task: asyncio.Task,
 ) -> runner_client.RunActionResponse:
@@ -170,7 +170,7 @@ async def get_partial_results(
 @contextlib.asynccontextmanager
 async def run_with_partial_results(
     action_name: str,
-    params: dict[str, Any],
+    params: dict[str, typing.Any],
     partial_result_token: int | str,
     project_dir_path: pathlib.Path,
     ws_context: context.WorkspaceContext,
@@ -188,7 +188,9 @@ async def run_with_partial_results(
                     result_list=result, partial_result_token=partial_result_token
                 )
             )
-            action = next(action for action in project.actions if action.name == action_name)
+            action = next(
+                action for action in project.actions if action.name == action_name
+            )
             action_envs = ordered_set.OrderedSet(
                 [handler.env for handler in action.handlers]
             )
@@ -200,7 +202,7 @@ async def run_with_partial_results(
                 except runner_manager.RunnerFailedToStart as exception:
                     raise ActionRunFailed(
                         f"Runner {env_name} in project {project.dir_path} failed: {exception.message}"
-                    )
+                    ) from exception
 
                 tg.create_task(
                     run_action_and_notify(
@@ -233,7 +235,7 @@ async def run_with_partial_results(
 async def find_action_project_and_run_with_partial_results(
     file_path: pathlib.Path,
     action_name: str,
-    params: dict[str, Any],
+    params: dict[str, typing.Any],
     partial_result_token: int | str,
     ws_context: context.WorkspaceContext,
 ) -> collections.abc.AsyncIterator[runner_client.RunActionRawResult]:
@@ -302,47 +304,74 @@ async def start_required_environments(
                         project_required_envs.add(handler.env)
             required_envs_by_project[project_dir_path] = project_required_envs
 
-    # start runners for required environments that aren't already running
-    for project_dir_path, required_envs in required_envs_by_project.items():
-        project = ws_context.ws_projects[project_dir_path]
-        existing_runners = ws_context.ws_projects_extension_runners.get(
-            project_dir_path, {}
-        )
-
-        for env_name in required_envs:
-            runner_exist = env_name in existing_runners
-            start_runner = True
-            if runner_exist:
-                runner_is_running = (
-                    existing_runners[env_name].status
-                    == runner_info.RunnerStatus.RUNNING
+    try:
+        async with asyncio.TaskGroup() as tg:
+            # start runners for required environments that aren't already running
+            for project_dir_path, required_envs in required_envs_by_project.items():
+                project = ws_context.ws_projects[project_dir_path]
+                existing_runners = ws_context.ws_projects_extension_runners.get(
+                    project_dir_path, {}
                 )
-                start_runner = not runner_is_running
 
-            if start_runner:
-                try:
-                    runner = await runner_manager.start_runner(
-                        project_def=project, env_name=env_name, ws_context=ws_context
+                for env_name in required_envs:
+                    tg.create_task(
+                        _start_runner_or_update_config(
+                            env_name=env_name,
+                            existing_runners=existing_runners,
+                            project=project,
+                            update_config_in_running_runners=update_config_in_running_runners,
+                            ws_context=ws_context,
+                        )
                     )
-                except runner_manager.RunnerFailedToStart as e:
-                    raise StartingEnvironmentsFailed(
-                        f"Failed to start runner for env '{env_name}' in project '{project.name}': {e}"
-                    )
+    except ExceptionGroup as eg:
+        errors: list[str] = []
+        for exception in eg.exceptions:
+            if isinstance(exception, StartingEnvironmentsFailed):
+                errors.append(exception.message)
             else:
-                if update_config_in_running_runners:
-                    runner = existing_runners[env_name]
-                    logger.trace(
-                        f"Runner {runner.readable_id} is running already, update config"
-                    )
+                errors.append(str(exception))
+        raise StartingEnvironmentsFailed(".".join(errors))
 
-                    try:
-                        await runner_manager.update_runner_config(
-                            runner=runner, project=project
-                        )
-                    except RunnerFailedToStart as exception:
-                        raise StartingEnvironmentsFailed(
-                            f"Failed to update config of runner {runner.readable_id}"
-                        )
+
+async def _start_runner_or_update_config(
+    env_name: str,
+    existing_runners: dict[str, runner_client.ExtensionRunnerInfo],
+    project: domain.Project,
+    update_config_in_running_runners: bool,
+    ws_context: context.WorkspaceContext,
+):
+    runner_exist = env_name in existing_runners
+    start_runner = True
+    if runner_exist:
+        runner_is_running = (
+            existing_runners[env_name].status == runner_client.RunnerStatus.RUNNING
+        )
+        start_runner = not runner_is_running
+
+    if start_runner:
+        try:
+            await runner_manager.start_runner(
+                project_def=project, env_name=env_name, ws_context=ws_context
+            )
+        except runner_manager.RunnerFailedToStart as exception:
+            raise StartingEnvironmentsFailed(
+                f"Failed to start runner for env '{env_name}' in project '{project.name}': {exception.message}"
+            ) from exception
+    else:
+        if update_config_in_running_runners:
+            runner = existing_runners[env_name]
+            logger.trace(
+                f"Runner {runner.readable_id} is running already, update config"
+            )
+
+            try:
+                await runner_manager.update_runner_config(
+                    runner=runner, project=project
+                )
+            except RunnerFailedToStart as exception:
+                raise StartingEnvironmentsFailed(
+                    f"Failed to update config of runner {runner.readable_id}"
+                ) from exception
 
 
 async def run_actions_in_running_project(
@@ -575,7 +604,7 @@ async def _run_action_in_env_runner(
         )
         raise ActionRunFailed(
             f"Action {action_name} failed in {runner.readable_id}: {error.message} . Log file: {runner.logs_path}"
-        )
+        ) from error
 
     return response
 

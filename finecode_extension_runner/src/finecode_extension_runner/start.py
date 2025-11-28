@@ -1,5 +1,6 @@
 import inspect
 import logging
+import socket
 import sys
 
 from loguru import logger
@@ -8,56 +9,12 @@ import finecode_extension_runner.global_state as global_state
 import finecode_extension_runner.lsp_server as extension_runner_lsp
 from finecode_extension_runner import logs
 
-# import finecode.pygls_server_utils as pygls_server_utils
-
-
-# async def start_runner():
-#     project_log_dir_path = project_dirs.get_project_dir(global_state.project_dir_path)
-#     logger.remove()
-#     # ~~extension runner communicates with workspace manager with tcp, we can print
-#     # logs to stdout as well~~. See README.md
-#     logs.save_logs_to_file(
-#         file_path=project_log_dir_path / "execution.log",
-#         log_level=global_state.log_level,
-#         stdout=False,
-#     )
-
-#     # pygls uses standard python logger, intercept it and pass logs to loguru
-#     class InterceptHandler(logging.Handler):
-#         def emit(self, record: logging.LogRecord) -> None:
-#             # Get corresponding Loguru level if it exists.
-#             level: str | int
-#             try:
-#                 level = logger.level(record.levelname).name
-#             except ValueError:
-#                 level = record.levelno
-
-#             # Find caller from where originated the logged message.
-#             frame, depth = inspect.currentframe(), 0
-#             while frame and (
-#                 depth == 0 or frame.f_code.co_filename == logging.__file__
-#             ):
-#                 frame = frame.f_back
-#                 depth += 1
-
-#             logger.opt(depth=depth, exception=record.exc_info).log(
-#                 level, record.getMessage()
-#             )
-
-#     logging.basicConfig(handlers=[InterceptHandler()], level=0, force=True)
-
-#     logger.info(f"Python executable: {sys.executable}")
-#     logger.info(f"Project path: {global_state.project_dir_path}")
-
-#     server = extension_runner_lsp.create_lsp_server()
-#     await pygls_server_utils.start_io_async(server)
-
 
 def start_runner_sync(env_name: str) -> None:
     logger.remove()
     # disable logging raw messages
     # TODO: make configurable
-    logger.configure(activation=[("pygls.protocol.json_rpc", False)])
+    # logger.configure(activation=[("pygls.protocol.json_rpc", False)])
     # ~~extension runner communicates with workspace manager with tcp, we can print logs
     # to stdout as well~~. See README.md
     assert global_state.project_dir_path is not None
@@ -68,7 +25,7 @@ def start_runner_sync(env_name: str) -> None:
         / "logs"
         / "runner.log",
         log_level=global_state.log_level,
-        stdout=False,
+        stdout=True,
     )
 
     # pygls uses standard python logger, intercept it and pass logs to loguru
@@ -107,4 +64,15 @@ def start_runner_sync(env_name: str) -> None:
     logger.info(f"Project path: {global_state.project_dir_path}")
 
     server = extension_runner_lsp.create_lsp_server()
-    server.start_io()
+    # asyncio.run(server.start_io_async())
+    port = _find_free_port()
+    server.start_tcp(host="127.0.0.1", port=port)
+
+
+def _find_free_port() -> int:
+    """Find and return a free TCP port."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.bind(("", 0))
+        s.listen(1)
+        port = s.getsockname()[1]
+    return port
