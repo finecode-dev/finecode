@@ -16,7 +16,7 @@ from finecode_extension_api.interfaces import (
     ifilemanager,
     ilogger,
     iextensionrunnerinfoprovider,
-    iprojectinfoprovider
+    iprojectinfoprovider,
 )
 
 

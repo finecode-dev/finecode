@@ -131,7 +131,9 @@ def format_one(file_content: str, black_mode: Mode) -> tuple[str, bool]:
         # `fast` whether to validate code after formatting
         # `lines` is range to format
         new_file_content = black.format_file_contents(
-            file_content, fast=False, mode=black_mode  # , lines=lines
+            file_content,
+            fast=False,
+            mode=black_mode,  # , lines=lines
         )
         file_changed = True
     except black.NothingChanged:

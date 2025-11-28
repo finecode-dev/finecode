@@ -13,7 +13,12 @@ else:
 
 from finecode_extension_api import code_action
 from finecode_extension_api.actions import format as format_action
-from finecode_extension_api.interfaces import icache, icommandrunner, ilogger, iextensionrunnerinfoprovider
+from finecode_extension_api.interfaces import (
+    icache,
+    icommandrunner,
+    ilogger,
+    iextensionrunnerinfoprovider,
+)
 
 
 @dataclasses.dataclass
@@ -91,7 +96,9 @@ class RuffFormatHandler(
             str(self.ruff_bin_path),
             "format",
             "--cache-dir",
-            str(self.extension_runner_info_provider.get_cache_dir_path() / ".ruff_cache"),
+            str(
+                self.extension_runner_info_provider.get_cache_dir_path() / ".ruff_cache"
+            ),
             "--line-length",
             str(self.config.line_length),
             f'--config="indent-width={str(self.config.indent_width)}"',
