@@ -11,15 +11,18 @@ from finecode_extension_api import code_action, textstyler
 
 
 @dataclasses.dataclass
-class ListProjectFilesByLangRunPayload(code_action.RunActionPayload): ...
+class ListProjectFilesByLangRunPayload(code_action.RunActionPayload):
+    langs: list[str] | None = None
 
 
 class ListProjectFilesByLangRunContext(code_action.RunActionContext):
     def __init__(
         self,
         run_id: int,
+        initial_payload: ListProjectFilesByLangRunPayload,
+        meta: code_action.RunActionMeta
     ) -> None:
-        super().__init__(run_id=run_id)
+        super().__init__(run_id=run_id, initial_payload=initial_payload, meta=meta)
 
 
 @dataclasses.dataclass
@@ -46,7 +49,7 @@ class ListProjectFilesByLangRunResult(code_action.RunActionResult):
         return formatted_result
 
 
-class ListProjectFilesByLangAction(code_action.Action):
+class ListProjectFilesByLangAction(code_action.Action[ListProjectFilesByLangRunPayload, ListProjectFilesByLangRunContext, ListProjectFilesByLangRunResult]):
     PAYLOAD_TYPE = ListProjectFilesByLangRunPayload
     RUN_CONTEXT_TYPE = ListProjectFilesByLangRunContext
     RESULT_TYPE = ListProjectFilesByLangRunResult

@@ -7,20 +7,23 @@ import mypy.nodes as mypy_nodes
 import mypy.options as mypy_options
 from fine_python_mypy import iast_provider
 
-from finecode_extension_api.interfaces import icache, ifilemanager, ilogger
+from finecode_extension_api.interfaces import icache, ifileeditor, ilogger
 
 
 class MypySingleAstProvider(iast_provider.IMypySingleAstProvider):
     CACHE_KEY = "MypySingleAstProvider"
+    FILE_OPERATION_AUTHOR = ifileeditor.FileOperationAuthor(
+        id="MypySingleAstProvider"
+    )
 
     def __init__(
         self,
-        file_manager: ifilemanager.IFileManager,
+        file_editor: ifileeditor.IFileEditor,
         cache: icache.ICache,
         logger: ilogger.ILogger,
     ):
         self.cache = cache
-        self.file_manager = file_manager
+        self.file_editor = file_editor
         self.logger = logger
 
     async def get_file_ast(self, file_path: Path) -> mypy_nodes.MypyFile:
@@ -34,8 +37,13 @@ class MypySingleAstProvider(iast_provider.IMypySingleAstProvider):
         except icache.CacheMissException:
             ...
 
-        file_text: str = await self.file_manager.get_content(file_path)
-        file_version: str = await self.file_manager.get_file_version(file_path)
+        async with self.file_editor.session(
+            author=self.FILE_OPERATION_AUTHOR
+        ) as session:
+            async with session.read_file(file_path=file_path) as file_info:
+                file_text: str = file_info.content
+                file_version: str = file_info.version
+
         base_dir = self.get_file_package_parent_dir_path(file_path)
         module_program_path = self.get_file_program_path(
             file_path=file_path, root_package_parent_dir_path=base_dir

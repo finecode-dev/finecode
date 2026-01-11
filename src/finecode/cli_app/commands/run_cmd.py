@@ -108,7 +108,7 @@ async def run_actions(
         except config_models.ConfigurationError as exception:
             raise RunFailed(
                 f"Reading project config and collecting actions in {project.dir_path} failed: {exception.message}"
-            )
+            ) from exception
 
     try:
         # 1. Start runners with presets to be able to resolve presets. Presets are
@@ -118,8 +118,8 @@ async def run_actions(
         except runner_manager.RunnerFailedToStart as exception:
             raise RunFailed(
                 f"One or more projects are misconfigured, runners for them didn't"
-                f" start: {exception.message}. Check logs for details."
-            )
+                + f" start: {exception.message}. Check logs for details."
+            ) from exception
         except Exception as exception:
             logger.error("Unexpected exception:")
             logger.exception(exception)
@@ -153,14 +153,21 @@ async def run_actions(
         except run_service.StartingEnvironmentsFailed as exception:
             raise RunFailed(
                 f"Failed to start environments for running actions: {exception.message}"
-            )
+            ) from exception
 
         try:
             return await utils.run_actions_in_projects_and_concat_results(
-                actions_by_projects, action_payload, ws_context, concurrently
+                actions_by_projects,
+                action_payload,
+                ws_context,
+                concurrently,
+                run_trigger=run_service.RunActionTrigger.USER,
+                dev_env=run_service.DevEnv.CLI,
             )
         except run_service.ActionRunFailed as exception:
-            raise RunFailed(f"Failed to run actions: {exception.message}")
+            raise RunFailed(
+                f"Failed to run actions: {exception.message}"
+            ) from exception
     finally:
         shutdown_service.on_shutdown(ws_context)
 
@@ -178,10 +185,10 @@ def get_projects_by_names(
                 for project in ws_context.ws_projects.values()
                 if project.name == project_name
             )
-        except StopIteration:
+        except StopIteration as exception:
             raise RunFailed(
                 f"Project '{projects_names}' not found in working directory '{workdir_path}'"
-            )
+            ) from exception
 
         projects.append(project)
     return projects

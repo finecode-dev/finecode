@@ -1,0 +1,24 @@
+[project]
+name = "finecode_jsonrpc"
+version = "0.1.0"
+description = "JSON-RPC client implementation for FineCode"
+authors = [{ name = "Vladyslav Hnatiuk", email = "aders1234@gmail.com" }]
+readme = "README.md"
+requires-python = ">=3.11, <= 3.14"
+dependencies = ["loguru==0.7.*", "culsans==0.9.*", "apischema==0.19.*"]
+
+[dependency-groups]
+dev_workspace = ["finecode==0.3.*", "finecode_dev_common_preset==0.2.*"]
+
+[tool.finecode]
+presets = [{ source = "finecode_dev_common_preset" }]
+
+[tool.finecode.env.dev_workspace.dependencies]
+finecode_dev_common_preset = { path = "../finecode_dev_common_preset", editable = true }
+finecode = { path = "../", editable = true }
+finecode_extension_runner = { path = "../finecode_extension_runner", editable = true }
+finecode_extension_api = { path = "../finecode_extension_api", editable = true }
+finecode_jsonrpc = { path = "./", editable = true }
+finecode_builtin_handlers = { path = "../finecode_builtin_handlers", editable = true }
+fine_python_lint = { path = "../presets/fine_python_lint", editable = true }
+fine_python_format = { path = "../presets/fine_python_format", editable = true }

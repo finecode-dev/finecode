@@ -1,26 +1,26 @@
-[tool.finecode.action.lint]
-source = "finecode_extension_api.actions.lint.LintAction"
+[tool.finecode.action.lint_files_python]
+source = "finecode_extension_api.actions.lint_files.LintFilesAction"
 handlers = [
-    { name = "ruff", source = "fine_python_ruff.RuffLintHandler", env = "dev_no_runtime", dependencies = [
+    { name = "ruff", source = "fine_python_ruff.RuffLintFilesHandler", env = "dev_no_runtime", dependencies = [
         "fine_python_ruff==0.1.*",
     ] },
-    { name = "flake8", source = "fine_python_flake8.Flake8LintHandler", env = "dev_no_runtime", dependencies = [
+    { name = "flake8", source = "fine_python_flake8.Flake8LintFilesHandler", env = "dev_no_runtime", dependencies = [
         "fine_python_flake8==0.2.*",
     ] },
-    { name = "pyrefly", source = "fine_python_pyrefly.PyreflyLintHandler", env = "dev_no_runtime", dependencies = [
+    { name = "pyrefly", source = "fine_python_pyrefly.PyreflyLintFilesHandler", env = "dev_no_runtime", dependencies = [
         "fine_python_pyrefly==0.1.*",
     ] },
 ]
 
 [[tool.finecode.action_handler]]
-source = "fine_python_ruff.RuffLintHandler"
+source = "fine_python_ruff.RuffLintFilesHandler"
 config.extend_select = ["B", "I"]
 
 # flake8 is used only for custom rules, all standard rules are checked by ruff, but
 # keep flake8 configuration if someone activates some rules or uses flake8 config
 # parameters in their own rules
 [[tool.finecode.action_handler]]
-source = "fine_python_flake8.Flake8LintHandler"
+source = "fine_python_flake8.Flake8LintFilesHandler"
 config.max_line_length = 80
 # W391 is not compatible with black(and ruff formatter, which is compatible with black),
 # because black adds an empty line to the end of the file

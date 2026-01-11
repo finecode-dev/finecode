@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import traceback
 
+import enum
 import dataclasses
 import functools
 import os
-import shlex
 import subprocess
 import sys
 from pathlib import Path
@@ -20,7 +20,7 @@ import collections.abc
 
 import culsans
 import apischema
-from finecode.runner.jsonrpc_client import _io_thread
+from finecode_jsonrpc import _io_thread
 from loguru import logger
 
 
@@ -108,14 +108,23 @@ class ErrorOnRequest(BaseRunnerRequestException):
         self.error = error
 
 
+class CommunicationType(enum.Enum):
+    TCP = enum.auto()
+    STDIO = enum.auto()
+
+
 def task_done_log_callback(future: asyncio.Future[typing.Any], task_id: str = ""):
     if future.cancelled():
         logger.debug(f"task cancelled: {task_id}")
     else:
         exc = future.exception()
         if exc is not None:
-            logger.error(f"exception in task: {task_id}")
+            tb = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
+            logger.error(
+                f"exception in task: {task_id} {type(exc)} {exc.message if hasattr(exc, 'message') else ''}"
+            )
             logger.exception(exc)
+            logger.error(tb)
         else:
             logger.trace(f"{task_id} done")
 
@@ -131,7 +140,7 @@ class JsonRpcClient:
     CONTENT_TYPE: typing.Final[str] = "application/vscode-jsonrpc"
     VERSION: typing.Final[str] = "2.0"
 
-    def __init__(self, message_types: dict[str, typing.Any], readable_id: str) -> None:
+    def __init__(self, message_types: dict[str, typing.Any], readable_id: str, communication_type: CommunicationType = CommunicationType.TCP) -> None:
         self.server_process_stopped: typing.Final = threading.Event()
         self.server_exit_callback: (
             collections.abc.Callable[[], collections.abc.Coroutine] | None
@@ -141,6 +150,7 @@ class JsonRpcClient:
         self.writer = WriterFromQueue(out_queue=self.out_message_queue.sync_q)
         self.message_types = message_types
         self.readable_id: str = readable_id
+        self.communication_type = communication_type
 
         self._async_tasks: list[asyncio.Task[typing.Any]] = []
         self._stop_event: typing.Final = threading.Event()
@@ -149,27 +159,51 @@ class JsonRpcClient:
         self._expected_result_type_by_msg_id: dict[str, typing.Any] = {}
 
         self.feature_impls: dict[str, collections.abc.Callable] = {}
+        
+        # NOTE: reader and writer can be accessed only in IO thread
+        self._reader: asyncio.StreamReader | None = None
+        self._writer: asyncio.StreamWriter | None = None
+        self._async_tasks_in_io_thread: list[asyncio.Task[typing.Any]] = []
+        self._tcp_port_future: asyncio.Future[int] | None = None
 
     def feature(self, name: str, impl: collections.abc.Callable) -> None:
         self.feature_impls[name] = impl
 
-    async def start_io(
-        self, cmd: str, io_thread: _io_thread.AsyncIOThread, *args, **kwargs
-    ):
-        """Start the given server and communicate with it over stdio."""
-        full_cmd = shlex.join([cmd, *args])
+    async def start(
+        self,
+        server_cmd: str,
+        working_dir_path: Path,
+        io_thread: _io_thread.AsyncIOThread,
+        debug_port_future: concurrent.futures.Future[int] | None,
+        connect: bool = True
+    ) -> None:
+        old_working_dir = os.getcwd()
+        os.chdir(working_dir_path)
 
+        # temporary remove VIRTUAL_ENV env variable to avoid starting in wrong venv
+        old_virtual_env_var = os.environ.pop("VIRTUAL_ENV", None)
+
+        try:
+            await self._start_server(full_cmd=server_cmd, io_thread=io_thread, debug_port_future=debug_port_future)
+            if connect:
+                await self.connect_to_server(io_thread=io_thread)
+        finally:
+            if old_virtual_env_var is not None:
+                os.environ["VIRTUAL_ENV"] = old_virtual_env_var
+
+            os.chdir(old_working_dir)  # restore original working directory
+
+    async def _start_server(self, full_cmd: str, io_thread: _io_thread.AsyncIOThread, debug_port_future: concurrent.futures.Future[int] | None) -> None:
         server_future = io_thread.run_coroutine(
             start_server(
-                full_cmd,
-                kwargs,
-                self.in_message_queue,
-                self.out_message_queue,
-                request_futures=self._sync_request_futures,
-                result_types=self._expected_result_type_by_msg_id,
+                cmd=full_cmd,
+                communication_type=self.communication_type,
+                out_message_queue=self.out_message_queue,
                 stop_event=self._stop_event,
                 server_stopped_event=self.server_process_stopped,
                 server_id=self.readable_id,
+                async_tasks=self._async_tasks_in_io_thread,
+                debug_port_future=debug_port_future
             )
         )
 
@@ -186,7 +220,38 @@ class JsonRpcClient:
             # there are no active tasks yet, no need to stop, just interrupt starting
             # the server
             raise server_start_exception
+    
+        self._reader, self._writer, self._tcp_port_future = server_future.result()
+        
+        notify_exit = asyncio.create_task(self._server_process_stop_handler())
+        notify_exit.add_done_callback(
+            functools.partial(
+                task_done_log_callback, task_id=f"notify_exit|{self.readable_id}"
+            )
+        )
 
+        self._async_tasks.extend([notify_exit])
+        logger.debug(f"End of start for {full_cmd}")
+
+    async def connect_to_server(self, io_thread: _io_thread.AsyncIOThread, timeout: float | None = 30):
+        connect_to_server_future = io_thread.run_coroutine(
+            self._connect_to_server_io(timeout=timeout)
+        )
+
+        # add done callback to catch exceptions if coroutine fails
+        connect_to_server_future.add_done_callback(
+            functools.partial(
+                task_done_log_callback, task_id=f"connect_to_server_future|{self.readable_id}"
+            )
+        )
+
+        await asyncio.wrap_future(connect_to_server_future)
+        connect_to_server_future_exception = connect_to_server_future.exception()
+        if connect_to_server_future_exception is not None:
+            raise connect_to_server_future_exception
+
+        # message processor task ends automatically after getting QUEUE_END message,
+        # no need to save it in `_async_tasks` for explicit stop.
         message_processor_task = asyncio.create_task(self.process_incoming_messages())
         message_processor_task.add_done_callback(
             functools.partial(
@@ -195,17 +260,7 @@ class JsonRpcClient:
             )
         )
 
-        notify_exit = asyncio.create_task(self.server_process_stop_handler())
-        notify_exit.add_done_callback(
-            functools.partial(
-                task_done_log_callback, task_id=f"notify_exit|{self.readable_id}"
-            )
-        )
-
-        self._async_tasks.extend([message_processor_task, notify_exit])
-        logger.debug(f"End of start io for {cmd}")
-
-    async def server_process_stop_handler(self):
+    async def _server_process_stop_handler(self):
         """Cleanup handler that runs when the server process managed by the client exits"""
         # await asyncio.to_thread(self.server_process_stopped.wait)
 
@@ -307,7 +362,7 @@ class JsonRpcClient:
             raise InvalidResponse(
                 f"Failed to serialize notification: {error}"
             ) from error
-
+        logger.trace(notification_str)
         self._send_data(notification_str)
 
     def send_request_sync(
@@ -435,11 +490,13 @@ class JsonRpcClient:
     async def process_incoming_messages(self) -> None:
         logger.debug(f"Start processing messages from server {self.readable_id}")
         try:
-            while not self._stop_event.is_set():
+            while True:
                 raw_message = await self.in_message_queue.async_q.get()
                 if raw_message == QUEUE_END:
-                    logger.debug("Queue with messages from server was closed")
+                    # TODO: this message doesn't come, task is always cancelled
+                    logger.info("Queue with messages from server was closed")
                     self.in_message_queue.async_q.task_done()
+                    self.in_message_queue.async_q.shutdown()
                     break
 
                 try:
@@ -449,9 +506,10 @@ class JsonRpcClient:
                 finally:
                     self.in_message_queue.async_q.task_done()
         except asyncio.CancelledError:
+            # logger.warning("process_incoming_messages was cancelled")
             ...
 
-        self.in_message_queue.async_q.shutdown()
+        # self.in_message_queue.async_q.shutdown()
         logger.debug(f"End processing messages from server {self.readable_id}")
 
     async def handle_message(self, message: dict[str, typing.Any]) -> None:
@@ -698,94 +756,142 @@ class JsonRpcClient:
             except ValueError:
                 ...
 
+    async def _connect_to_server_io(self, timeout: float | None) -> None:
+        if self.communication_type == CommunicationType.TCP:
+            assert self._tcp_port_future is not None
+
+            try:
+                await asyncio.wait_for(self._tcp_port_future, timeout)
+            except TimeoutError as exception:
+                for task in self._async_tasks_in_io_thread:
+                    task.cancel()
+
+                raise RunnerFailedToStart("Didn't get port in 30 seconds") from exception
+
+            port = self._tcp_port_future.result()
+            logger.debug(f"Got port {port} | {self.readable_id}")
+
+            try:
+                self._reader, self._writer = await asyncio.open_connection("127.0.0.1", port)
+            except Exception as exception:
+                logger.exception(exception)
+
+                for task in self._async_tasks_in_io_thread:
+                    task.cancel()
+
+                raise RunnerFailedToStart(f"Failed to open connection: {exception}") from exception
+
+        assert self._reader is not None and self._writer is not None
+
+        task = asyncio.create_task(
+            read_messages_from_reader(
+                self._reader,
+                self.in_message_queue.sync_q,
+                self._sync_request_futures,
+                self._expected_result_type_by_msg_id,
+                self._stop_event,
+                server_id=self.readable_id,
+            )
+        )
+        task.add_done_callback(
+            functools.partial(
+                task_done_log_callback, task_id=f"read_messages_from_reader|{self.readable_id}"
+            )
+        )
+        self._async_tasks_in_io_thread.append(task)
+        
+        task = asyncio.create_task(
+            send_messages_from_queue(queue=self.out_message_queue.async_q, writer=self._writer)
+        )
+        task.add_done_callback(
+            functools.partial(
+                task_done_log_callback, task_id=f"send_messages_from_queue|{self.readable_id}"
+            )
+        )
+        self._async_tasks_in_io_thread.append(task)
+
 
 async def start_server(
     cmd: str,
-    subprocess_kwargs: dict[str, str],
-    in_message_queue: culsans.Queue[bytes],
+    communication_type: CommunicationType,
     out_message_queue: culsans.Queue[bytes],
-    request_futures: dict[str, concurrent.futures.Future[typing.Any]],
-    result_types: dict[str, typing.Any],
     stop_event: threading.Event,
     server_stopped_event: threading.Event,
     server_id: str,
-):
-    logger.debug(f"Starting server process: {' '.join([cmd, str(subprocess_kwargs)])}")
+    async_tasks: list[asyncio.Task[typing.Any]],
+    debug_port_future: concurrent.futures.Future[int] | None
+) -> tuple[asyncio.StreamReader | None, asyncio.StreamWriter | None, asyncio.Future[int] | None]:
+    logger.debug(f"Starting server process: {cmd}")
+    
+    creationflags = 0
+    # start_new_session = True .. process has parent id of real parent, but is not
+    #                             ended if parent was ended
+    start_new_session = True
+    if sys.platform == "win32":
+        # use creationflags because `start_new_session` doesn't work on Windows
+        # subprocess.CREATE_NO_WINDOW .. no console window on Windows. TODO: test
+        creationflags = subprocess.DETACHED_PROCESS | subprocess.CREATE_NO_WINDOW
+        start_new_session = False
 
-    server = await asyncio.create_subprocess_shell(
-        cmd,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-        **subprocess_kwargs,
-    )
+    subprocess_kwargs = {
+        "creationflags": creationflags,
+        "start_new_session": start_new_session,
+    }
+
+    # Start subprocess with appropriate stdio configuration
+    if communication_type == CommunicationType.STDIO:
+        server = await asyncio.create_subprocess_shell(
+            cmd,
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            # max length of line: in STDIO mode, the whole file can be sent as a single
+            # line, increase default limit 64 KBit to 10 MiB
+            limit = 1024 * 1024 * 10,  # 10 MiB,
+            **subprocess_kwargs,
+        )
+    elif communication_type == CommunicationType.TCP:
+        server = await asyncio.create_subprocess_shell(
+            cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            **subprocess_kwargs,
+        )
+    else:
+        raise ValueError(f"Unsupported communication type: {communication_type}")
+
     logger.debug(f"{server_id} - process id: {server.pid}")
 
-    tasks: list[asyncio.Task[typing.Any]] = []
     task = asyncio.create_task(log_stderr(server.stderr, stop_event))
     task.add_done_callback(
         functools.partial(task_done_log_callback, task_id=f"log_stderr|{server_id}")
     )
-    tasks.append(task)
+    async_tasks.append(task)
 
-    port_future: asyncio.Future[int] = asyncio.Future()
-    task = asyncio.create_task(
-        read_stdout(server.stdout, stop_event, port_future, server.pid)
-    )
-    task.add_done_callback(
-        functools.partial(task_done_log_callback, task_id=f"read_stdout|{server_id}")
-    )
-    tasks.append(task)
+    # Get reader and writer based on communication type
+    if communication_type == CommunicationType.STDIO:
+        reader = server.stdout
+        writer = server.stdin
+        tcp_port_future = None
+    else:  # CommunicationType.TCP
+        reader = None
+        writer = None
 
-    logger.debug(f"Wait for port of {server.pid} | {server_id}")
-
-    try:
-        await asyncio.wait_for(port_future, 15)
-    except TimeoutError:
-        raise RunnerFailedToStart("Didn't get port in 15 seconds")
-
-    port = port_future.result()
-    logger.debug(f"Got port {port} of {server.pid} | {server_id}")
-
-    try:
-        reader, writer = await asyncio.open_connection("127.0.0.1", port)
-    except Exception as exc:
-        logger.exception(exc)
-
-        for task in tasks:
-            task.cancel()
-
-        raise exc
-
-    task = asyncio.create_task(
-        read_messages_from_reader(
-            reader,
-            in_message_queue.sync_q,
-            request_futures,
-            result_types,
-            stop_event,
-            server.pid,
+        # TODO: read debug port also in stdio
+        tcp_port_future = asyncio.Future[int]()
+        task = asyncio.create_task(
+            read_stdout(server.stdout, stop_event, tcp_port_future, server.pid, debug_port_future)
         )
-    )
-    task.add_done_callback(
-        functools.partial(
-            task_done_log_callback, task_id=f"read_messages_from_reader|{server_id}"
+        task.add_done_callback(
+            functools.partial(task_done_log_callback, task_id=f"read_stdout|{server_id}")
         )
-    )
-    tasks.append(task)
+        async_tasks.append(task)
 
-    task = asyncio.create_task(
-        send_messages_from_queue(queue=out_message_queue.async_q, writer=writer)
-    )
-    task.add_done_callback(
-        functools.partial(
-            task_done_log_callback, task_id=f"send_messages_from_queue|{server_id}"
-        )
-    )
-    tasks.append(task)
+        logger.debug(f"Wait for port of {server.pid} | {server_id}")
 
     task = asyncio.create_task(
         wait_for_stop_event_and_clean(
-            stop_event, server, tasks, server_stopped_event, out_message_queue.async_q
+            stop_event, server, async_tasks, server_stopped_event, out_message_queue.async_q
         )
     )
     task.add_done_callback(
@@ -794,7 +900,9 @@ async def start_server(
         )
     )
 
-    logger.debug(f"Server {server.pid} started | {server_id}")
+    logger.debug(f"Server {server.pid} started with {communication_type.name} | {server_id}")
+    
+    return (reader, writer, tcp_port_future)
 
 
 async def wait_for_stop_event_and_clean(
@@ -855,6 +963,7 @@ async def read_stdout(
     stop_event: threading.Event,
     port_future: asyncio.Future[int],
     server_pid: int,
+    debug_port_future: concurrent.futures.Future[int] | None
 ) -> None:
     logger.debug(f"Start reading logs from stdout | {server_pid}")
     try:
@@ -871,12 +980,23 @@ async def read_stdout(
                 match = re.search(rb"Serving on \('[\d.]+', (\d+)\)", line)
                 if match:
                     port = int(match.group(1))
-                    port_future.set_result(port)
+                    if not port_future.done():
+                        port_future.set_result(port)
+            elif b"Debug session:" in line:
+                match = re.search(rb"Debug session: [\d.]+:(\d+)", line)
+                if match:
+                    port = int(match.group(1))
+                    if debug_port_future is not None and not debug_port_future.done():
+                        debug_port_future.set_result(port)
             # logger.debug(
             #     f"Server {server_pid} stdout: {line.decode('utf-8', errors='replace').rstrip()}"
             # )
     except asyncio.CancelledError:
         pass
+    # except Exception as exception:
+    #     # catch all unexpected exception to log them properly and to get explicit log
+    #     # about end of reading
+    #     logger.exception(exception)
 
     logger.debug(f"End reading logs from stdout | {server_pid}")
 
@@ -911,7 +1031,7 @@ async def read_messages_from_reader(
     request_futures: dict[str, concurrent.futures.Future[typing.Any]],
     result_types: dict[str, typing.Any],
     stop_event: threading.Event,
-    server_pid: int,
+    server_id: str,
 ) -> None:
     content_length = 0
 
@@ -921,18 +1041,18 @@ async def read_messages_from_reader(
                 try:
                     header = await reader.readline()
                 except ValueError:
-                    logger.error(f"Value error in readline of {server_pid}")
+                    logger.error(f"Value error in readline of {server_id}")
                     continue
                 except ConnectionResetError:
                     logger.warning(
-                        f"Server {server_pid} closed the connection(ConnectionResetError), stop the client"
+                        f"Server {server_id} closed the connection(ConnectionResetError), stop the client"
                     )
                     stop_event.set()
                     break
 
                 if not header:
                     if reader.at_eof():
-                        logger.debug(f"Reader reached EOF | {server_pid}")
+                        logger.debug(f"Reader reached EOF | {server_id}")
                         break
                     continue
 
@@ -941,10 +1061,10 @@ async def read_messages_from_reader(
                     match = CONTENT_LENGTH_PATTERN.fullmatch(header)
                     if match:
                         content_length = int(match.group(1))
-                        logger.debug(f"Content length | {server_pid}: {content_length}")
+                        logger.debug(f"Content length | {server_id}: {content_length}")
                     else:
                         logger.debug(
-                            f"Not matched content length: {header} | {server_pid}"
+                            f"Not matched content length: {header} | {server_id}"
                         )
 
                 # Check if all headers have been read (as indicated by an empty line \r\n)
@@ -955,13 +1075,13 @@ async def read_messages_from_reader(
                         body = await reader.readexactly(content_length)
                     except asyncio.IncompleteReadError as error:
                         logger.debug(
-                            f"Incomplete read error: {error} | {server_pid} : {error.partial}"
+                            f"Incomplete read error: {error} | {server_id} : {error.partial}"
                         )
                         content_length = 0
                         continue
                     except ConnectionResetError:
                         logger.warning(
-                            f"Server {server_pid} closed the connection(ConnectionResetError), stop the client"
+                            f"Server {server_id} closed the connection(ConnectionResetError), stop the client"
                         )
                         stop_event.set()
                         break
@@ -970,12 +1090,12 @@ async def read_messages_from_reader(
                         content_length = 0
                         continue
 
-                    logger.debug(f"Got content {server_pid}: {body}")
+                    logger.debug(f"Got content {server_id}: {body}")
                     try:
                         message = json.loads(body)
                     except json.JSONDecodeError as exc:
                         logger.error(
-                            f"Failed to parse JSON message: {exc} | {server_pid}"
+                            f"Failed to parse JSON message: {exc} | {server_id}"
                         )
                         continue
                     finally:
@@ -990,7 +1110,7 @@ async def read_messages_from_reader(
                         continue
 
                     if message["jsonrpc"] != JsonRpcClient.VERSION:
-                        logger.warning(f'Unknown message "{message}" | {server_pid}')
+                        logger.warning(f'Unknown message "{message}" | {server_id}')
                         continue
 
                     # error should be also handled here
@@ -1001,7 +1121,7 @@ async def read_messages_from_reader(
                     )
 
                     if is_response:
-                        logger.debug(f"Response message received. | {server_pid}")
+                        logger.debug(f"Response message received. | {server_id}")
                         msg_id = message["id"]
                         raw_result = message.get("result", None)
                         future = request_futures.pop(msg_id, None)
@@ -1028,7 +1148,7 @@ async def read_messages_from_reader(
                                 continue
 
                             logger.debug(
-                                f'Received result for message "{msg_id}" | {server_pid}'
+                                f'Received result for message "{msg_id}" | {server_id}'
                             )
                             if not future.cancelled():
                                 future.set_result(result)
@@ -1042,59 +1162,19 @@ async def read_messages_from_reader(
                         b"Content-Length:"
                     ) and not header.startswith(b"Content-Type:"):
                         logger.debug(
-                            f'Something is wrong: {content_length} "{header}" {not header.strip()} | {server_pid}'
+                            f'Something is wrong: {content_length} "{header}" {not header.strip()} | {server_id}'
                         )
             except Exception as exc:
                 logger.exception(
-                    f"Exception in message reader loop | {server_pid}: {exc}"
+                    f"Exception in message reader loop | {server_id}: {exc}"
                 )
                 # Reset state to avoid infinite loop on persistent errors
                 content_length = 0
     except asyncio.CancelledError:
         ...
 
-    logger.debug(f"End reading messages from reader | {server_pid}")
+    message_queue.put_nowait(QUEUE_END)
+    logger.debug(f"End reading messages from reader | {server_id}")
 
 
-async def create_lsp_client_io(
-    server_cmd: str,
-    working_dir_path: Path,
-    message_types: dict[str, typing.Any],
-    io_thread: _io_thread.AsyncIOThread,
-    readable_id: str,
-) -> JsonRpcClient:
-    ls = JsonRpcClient(message_types=message_types, readable_id=readable_id)
-    splitted_cmd = shlex.split(server_cmd)
-    executable, *args = splitted_cmd
-
-    old_working_dir = os.getcwd()
-    os.chdir(working_dir_path)
-
-    # temporary remove VIRTUAL_ENV env variable to avoid starting in wrong venv
-    old_virtual_env_var = os.environ.pop("VIRTUAL_ENV", None)
-
-    creationflags = 0
-    # start_new_session = True .. process has parent id of real parent, but is not
-    #                             ended if parent was ended
-    start_new_session = True
-    if sys.platform == "win32":
-        # use creationflags because `start_new_session` doesn't work on Windows
-        # subprocess.CREATE_NO_WINDOW .. no console window on Windows. TODO: test
-        creationflags = subprocess.DETACHED_PROCESS | subprocess.CREATE_NO_WINDOW
-        start_new_session = False
-
-    await ls.start_io(
-        executable,
-        io_thread,
-        *args,
-        start_new_session=start_new_session,
-        creationflags=creationflags,
-    )
-    if old_virtual_env_var is not None:
-        os.environ["VIRTUAL_ENV"] = old_virtual_env_var
-
-    os.chdir(old_working_dir)  # restore original working directory
-    return ls
-
-
-__all__ = ["create_lsp_client_io", "JsonRpcClient"]
+__all__ = ["JsonRpcClient"]

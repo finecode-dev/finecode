@@ -101,3 +101,31 @@ name = "list_project_files_by_lang_python"
 source = "fine_python_package_info.ListProjectFilesByLangPythonHandler"
 env = "dev_no_runtime"
 dependencies = ["fine_python_package_info==0.1.*"]
+
+[tool.finecode.action.group_project_files_by_lang]
+source = "finecode_extension_api.actions.group_project_files_by_lang.GroupProjectFilesByLangAction"
+
+[[tool.finecode.action.group_project_files_by_lang.handlers]]
+name = "group_project_files_by_lang_python"
+source = "fine_python_package_info.GroupProjectFilesByLangPythonHandler"
+env = "dev_no_runtime"
+dependencies = ["fine_python_package_info==0.1.*"]
+
+
+[tool.finecode.action.lint]
+source = "finecode_extension_api.actions.lint.LintAction"
+
+[[tool.finecode.action.lint.handlers]]
+name = "lint"
+source = "finecode_builtin_handlers.LintHandler"
+env = "dev_no_runtime"
+dependencies = ["finecode_builtin_handlers==0.1.*"]
+
+[tool.finecode.action.format]
+source = "finecode_extension_api.actions.format.FormatAction"
+
+[[tool.finecode.action.format.handlers]]
+name = "format"
+source = "finecode_builtin_handlers.FormatHandler"
+env = "dev_no_runtime"
+dependencies = ["finecode_builtin_handlers==0.1.*"]

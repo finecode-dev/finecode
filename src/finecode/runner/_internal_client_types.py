@@ -19,11 +19,11 @@ SHUTDOWN = "shutdown"
 CANCEL_REQUEST = "$/cancelRequest"
 PROGRESS = "$/progress"
 TEXT_DOCUMENT_DID_CLOSE = "textDocument/didClose"
+TEXT_DOCUMENT_DID_CHANGE = "textDocument/didChange"
 TEXT_DOCUMENT_DID_OPEN = "textDocument/didOpen"
 WORKSPACE_EXECUTE_COMMAND = "workspace/executeCommand"
 WORKSPACE_APPLY_EDIT = "workspace/applyEdit"
 
-DOCUMENT_GET = "documents/get"
 PROJECT_RAW_CONFIG_GET = "projects/getRawConfig"
 
 
@@ -160,6 +160,36 @@ class InitializedParams:
 
 
 @dataclasses.dataclass
+class GeneralClientCapabilities:
+    """General client capabilities.
+
+    @since 3.16.0"""
+
+    # Since: 3.16.0
+    
+    position_encodings: collections.abc.Sequence[PositionEncodingKind | str] | None = None
+    """The position encodings supported by the client. Client and server
+    have to agree on the same position encoding to ensure that offsets
+    (e.g. character position in a line) are interpreted the same on both
+    sides.
+    
+    To keep the protocol backwards compatible the following applies: if
+    the value 'utf-16' is missing from the array of position encodings
+    servers can assume that the client supports UTF-16. UTF-16 is
+    therefore a mandatory encoding.
+    
+    If omitted it defaults to ['utf-16'].
+    
+    Implementation considerations: since the conversion from one encoding
+    into another requires the content of the file / line the conversion
+    is best done where the file is read which is usually on the server
+    side.
+    
+    @since 3.17.0"""
+    # Since: 3.17.0
+
+
+@dataclasses.dataclass
 class ClientCapabilities:
     """Defines the capabilities provided by the client."""
 
@@ -178,7 +208,7 @@ class ClientCapabilities:
     # window: WindowClientCapabilities | None = None
     """Window specific client capabilities."""
 
-    # general: GeneralClientCapabilities | None = None
+    general: GeneralClientCapabilities | None = None
     """General client capabilities.
     
     @since 3.16.0"""
@@ -1339,29 +1369,6 @@ class StringValue:
 
 
 @dataclasses.dataclass
-class GetDocumentParams:
-    uri: str
-
-
-@dataclasses.dataclass
-class GetDocumentRequest(BaseRequest):
-    params: GetDocumentParams
-    method = "documents/get"
-
-
-@dataclasses.dataclass
-class GetDocumentResult(BaseResult):
-    uri: str
-    version: str
-    text: str
-
-
-@dataclasses.dataclass
-class GetDocumentResponse(BaseResponse):
-    result: GetDocumentResult
-
-
-@dataclasses.dataclass
 class GetProjectRawConfigParams:
     project_def_path: str
 
@@ -1381,6 +1388,74 @@ class GetProjectRawConfigResult(BaseResult):
 @dataclasses.dataclass
 class GetProjectRawConfigResponse(BaseResponse):
     result: GetProjectRawConfigResult
+
+
+@dataclasses.dataclass
+class VersionedTextDocumentIdentifier:
+    """A text document identifier to denote a specific version of a text document."""
+
+    version: int
+    """The version number of this document."""
+
+    uri: str
+    """The text document's uri."""
+
+
+@dataclasses.dataclass
+class TextDocumentContentChangePartial:
+    """@since 3.18.0"""
+
+    # Since: 3.18.0
+
+    range: Range
+    """The range of the document that changed."""
+
+    text: str
+    """The new text for the provided range."""
+
+    range_length: int | None
+    """The optional length of the range that got replaced.
+    
+    @deprecated use range instead."""
+
+
+@dataclasses.dataclass
+class TextDocumentContentChangeWholeDocument:
+    """@since 3.18.0"""
+
+    # Since: 3.18.0
+
+    text: str
+    """The new text of the whole document."""
+
+
+TextDocumentContentChangeEvent = TextDocumentContentChangePartial | TextDocumentContentChangeWholeDocument
+"""An event describing a change to a text document. If only a text is provided
+it is considered to be the full content of the document."""
+
+
+@dataclasses.dataclass
+class DidChangeTextDocumentParams:
+    """The change text document notification's parameters."""
+
+    text_document: VersionedTextDocumentIdentifier
+    """The document that did change. The version number points
+    to the version after all provided content changes have
+    been applied."""
+
+    content_changes: collections.abc.Sequence[TextDocumentContentChangeEvent]
+    """The actual content changes. The content changes describe single state changes
+    to the document. So if there are two content changes c1 (at array index 0) and
+    c2 (at array index 1) for a document in state S then c1 moves the document from
+    S to S' and c2 from S' to S''. So c1 is computed on the state S and c2 is computed
+    on the state S'.
+    
+    To mirror the content of a document using change events use the following approach:
+    - start with the same initial content
+    - apply the 'textDocument/didChange' notifications in the order you receive them.
+    - apply the `TextDocumentContentChangeEvent`s in a single notification in the order
+      you receive them."""
+
 
 
 @dataclasses.dataclass
@@ -1422,6 +1497,15 @@ class DidCloseTextDocumentNotification(BaseNotification):
 
     params: DidOpenTextDocumentParams
     method = "textDocument/didClose"
+
+
+@dataclasses.dataclass
+class DidChangeTextDocumentNotification(BaseNotification):
+    """The document change notification is sent from the client to the server to signal
+    changes to a text document."""
+
+    params: DidChangeTextDocumentParams
+    method = "textDocument/didChange"
 
 
 @dataclasses.dataclass
@@ -1481,13 +1565,12 @@ METHOD_TO_TYPES: dict[
         ApplyWorkspaceEditResponse,
         ApplyWorkspaceEditResult,
     ),
-    DOCUMENT_GET: (
-        GetDocumentRequest,
-        GetDocumentParams,
-        GetDocumentResponse,
-        GetDocumentResult,
+    PROJECT_RAW_CONFIG_GET: (
+        GetProjectRawConfigRequest,
+        GetProjectRawConfigParams,
+        GetProjectRawConfigResponse,
+        GetProjectRawConfigResult,
     ),
-    PROJECT_RAW_CONFIG_GET: (GetProjectRawConfigRequest, GetProjectRawConfigParams, GetProjectRawConfigResponse, GetProjectRawConfigResult),
     TEXT_DOCUMENT_DID_OPEN: (
         DidOpenTextDocumentNotification,
         DidOpenTextDocumentParams,
@@ -1497,6 +1580,12 @@ METHOD_TO_TYPES: dict[
     TEXT_DOCUMENT_DID_CLOSE: (
         DidCloseTextDocumentNotification,
         DidCloseTextDocumentParams,
+        None,
+        None,
+    ),
+    TEXT_DOCUMENT_DID_CHANGE: (
+        DidChangeTextDocumentNotification,
+        DidChangeTextDocumentParams,
         None,
         None,
     ),

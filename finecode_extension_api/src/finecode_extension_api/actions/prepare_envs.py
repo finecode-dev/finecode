@@ -28,12 +28,14 @@ class PrepareEnvsRunPayload(code_action.RunActionPayload):
     recreate: bool = False
 
 
-class PrepareEnvsRunContext(code_action.RunActionContext):
+class PrepareEnvsRunContext(code_action.RunActionContext[PrepareEnvsRunPayload]):
     def __init__(
         self,
         run_id: int,
+        initial_payload: PrepareEnvsRunPayload,
+        meta: code_action.RunActionMeta
     ) -> None:
-        super().__init__(run_id=run_id)
+        super().__init__(run_id=run_id, initial_payload=initial_payload, meta=meta)
 
         # project def pathes are stored also in context, because prepare envs can run
         # tools like pip which expected 'normalized' project definition(=without
@@ -50,8 +52,8 @@ class PrepareEnvsRunContext(code_action.RunActionContext):
             pathlib.Path, dict[str, typing.Any]
         ] = {}
 
-    async def init(self, initial_payload: PrepareEnvsRunPayload) -> None:
-        for env_info in initial_payload.envs:
+    async def init(self) -> None:
+        for env_info in self.initial_payload.envs:
             self.project_def_path_by_venv_dir_path[env_info.venv_dir_path] = (
                 env_info.project_def_path
             )
@@ -79,7 +81,7 @@ class PrepareEnvsRunResult(code_action.RunActionResult):
             return code_action.RunReturnCode.ERROR
 
 
-class PrepareEnvsAction(code_action.Action):
+class PrepareEnvsAction(code_action.Action[PrepareEnvsRunPayload, PrepareEnvsRunContext, PrepareEnvsRunResult]):
     PAYLOAD_TYPE = PrepareEnvsRunPayload
     RUN_CONTEXT_TYPE = PrepareEnvsRunContext
     RESULT_TYPE = PrepareEnvsRunResult

@@ -17,6 +17,8 @@ finecode_extension_runner = { path = "../../../finecode_extension_runner", edita
 [tool.finecode.env.dev_no_runtime.dependencies]
 finecode_extension_api = { path = "../../../finecode_extension_api", editable = true }
 finecode_extension_runner = { path = "../../../finecode_extension_runner", editable = true }
+finecode_builtin_handlers = { path = "../../../finecode_builtin_handlers", editable = true }
+fine_python_ast = { path = "../../../extensions/fine_python_ast", editable = true }
 fine_python_mypy = { path = "../../../extensions/fine_python_mypy", editable = true }
 fine_python_ruff = { path = "../../../extensions/fine_python_ruff", editable = true }
 fine_python_flake8 = { path = "../../../extensions/fine_python_flake8", editable = true }
@@ -31,9 +33,9 @@ build-backend = "setuptools.build_meta"
 
 # TODO: recognize minimal python version automatically
 [[tool.finecode.action_handler]]
-source = "fine_python_ruff.RuffLintHandler"
+source = "fine_python_ruff.RuffLintFilesHandler"
 config.target_version = 'py311'
 
 [[tool.finecode.action_handler]]
-source = "fine_python_pyrefly.PyreflyLintHandler"
+source = "fine_python_pyrefly.PyreflyLintFilesHandler"
 config.python_version = '3.11'

@@ -14,11 +14,11 @@ class IProcess(Protocol):
     def close_stdin(self) -> None: ...
 
 
-class ISyncProcess(IProcess):
+class ISyncProcess(IProcess, Protocol):
     def wait_for_end(self, timeout: float | None = None) -> None: ...
 
 
-class IAsyncProcess(IProcess):
+class IAsyncProcess(IProcess, Protocol):
     async def wait_for_end(self, timeout: float | None = None) -> None: ...
 
 

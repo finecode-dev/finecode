@@ -1,10 +1,19 @@
-from typing import Any, Protocol
+import typing
+
+from finecode_extension_api import code_action, service
 
 
-class IActionRunner(Protocol):
+
+class IActionRunner(service.Service, typing.Protocol):
     async def run_action(
-        self, name: str, payload: dict[str, Any]
-    ) -> dict[str, Any]: ...
+        self, action: type[code_action.Action[code_action.RunPayloadType, code_action.RunContextType, code_action.RunResultType]], payload: code_action.RunPayloadType, meta: code_action.RunActionMeta
+    ) -> code_action.RunResultType: ...
+
+    def get_actions_names(self) -> list[str]:
+        ...
+
+    def get_action_by_name(self, name: str) -> type[code_action.Action[code_action.RunPayloadType, code_action.RunContextType, code_action.RunResultType]]:
+        ...
 
 
 class BaseRunActionException(Exception):

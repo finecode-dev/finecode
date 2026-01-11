@@ -1,9 +1,8 @@
 import asyncio
 import dataclasses
-import itertools
 
 from finecode_extension_api import code_action
-from finecode_extension_api.actions import prepare_envs as prepare_envs_action
+from finecode_extension_api.actions import prepare_envs as prepare_envs_action, install_deps_in_env as install_deps_in_env_action
 from finecode_extension_api.interfaces import (
     iactionrunner,
     ilogger,
@@ -33,7 +32,9 @@ class PrepareEnvsInstallDepsHandler(
     ) -> prepare_envs_action.PrepareEnvsRunResult:
         envs = payload.envs
 
-        install_deps_tasks: list[asyncio.Task] = []
+        install_deps_in_env_action_instance = self.action_runner.get_action_by_name(name="install_deps_in_env")
+        install_deps_tasks: list[asyncio.Task[install_deps_in_env_action.InstallDepsInEnvRunResult]] = []
+        run_meta = run_context.meta
         try:
             async with asyncio.TaskGroup() as tg:
                 for env in envs:
@@ -56,16 +57,19 @@ class PrepareEnvsInstallDepsHandler(
                     process_raw_deps(
                         env_raw_deps, env_deps_config, dependencies, deps_groups
                     )
+                    
+                    install_deps_payload = install_deps_in_env_action.InstallDepsInEnvRunPayload(
+                        env_name=env.name,
+                        venv_dir_path=env.venv_dir_path,
+                        project_dir_path=env.project_def_path.parent,
+                        dependencies=[install_deps_in_env_action.Dependency(name=dep['name'], version_or_source=dep['version_or_source'], editable=dep['editable']) for dep in dependencies]
+                    )
 
                     task = tg.create_task(
                         self.action_runner.run_action(
-                            name="install_deps_in_env",
-                            payload={
-                                "env_name": env.name,
-                                "venv_dir_path": env.venv_dir_path,
-                                "project_dir_path": env.project_def_path.parent,
-                                "dependencies": dependencies,
-                            },
+                            action=install_deps_in_env_action_instance,
+                            payload=install_deps_payload,
+                            meta=run_meta
                         )
                     )
                     install_deps_tasks.append(task)
@@ -74,11 +78,9 @@ class PrepareEnvsInstallDepsHandler(
             raise code_action.ActionFailedException(error_str)
 
         install_deps_results = [task.result() for task in install_deps_tasks]
-        errors: list[str] = list(
-            itertools.chain.from_iterable(
-                [result["errors"] for result in install_deps_results]
-            )
-        )
+        errors: list[str] = []
+        for result in install_deps_results:
+            errors += result.errors
 
         return prepare_envs_action.PrepareEnvsRunResult(errors=errors)
 

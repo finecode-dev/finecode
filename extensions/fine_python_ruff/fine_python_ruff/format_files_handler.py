@@ -12,7 +12,7 @@ else:
     from typing import override
 
 from finecode_extension_api import code_action
-from finecode_extension_api.actions import format as format_action
+from finecode_extension_api.actions import format_files as format_files_action
 from finecode_extension_api.interfaces import (
     icache,
     icommandrunner,
@@ -22,7 +22,7 @@ from finecode_extension_api.interfaces import (
 
 
 @dataclasses.dataclass
-class RuffFormatHandlerConfig(code_action.ActionHandlerConfig):
+class RuffFormatFilesHandlerConfig(code_action.ActionHandlerConfig):
     line_length: int = 88
     indent_width: int = 4
     quote_style: str = "double"  # "double" or "single"
@@ -30,14 +30,14 @@ class RuffFormatHandlerConfig(code_action.ActionHandlerConfig):
     preview: bool = False
 
 
-class RuffFormatHandler(
-    code_action.ActionHandler[format_action.FormatAction, RuffFormatHandlerConfig]
+class RuffFormatFilesHandler(
+    code_action.ActionHandler[
+        format_files_action.FormatFilesAction, RuffFormatFilesHandlerConfig
+    ]
 ):
-    CACHE_KEY = "RuffFormatter"
-
     def __init__(
         self,
-        config: RuffFormatHandlerConfig,
+        config: RuffFormatFilesHandlerConfig,
         extension_runner_info_provider: iextensionrunnerinfoprovider.IExtensionRunnerInfoProvider,
         logger: ilogger.ILogger,
         cache: icache.ICache,
@@ -54,40 +54,29 @@ class RuffFormatHandler(
     @override
     async def run(
         self,
-        payload: format_action.FormatRunPayload,
-        run_context: format_action.FormatRunContext,
-    ) -> format_action.FormatRunResult:
-        result_by_file_path: dict[Path, format_action.FormatRunFileResult] = {}
+        payload: format_files_action.FormatFilesRunPayload,
+        run_context: format_files_action.FormatFilesRunContext,
+    ) -> format_files_action.FormatFilesRunResult:
+        result_by_file_path: dict[Path, format_files_action.FormatRunFileResult] = {}
         for file_path in payload.file_paths:
             file_content, file_version = run_context.file_info_by_path[file_path]
-            try:
-                new_file_content = await self.cache.get_file_cache(
-                    file_path, self.CACHE_KEY
-                )
-                result_by_file_path[file_path] = format_action.FormatRunFileResult(
-                    changed=False, code=new_file_content
-                )
-                continue
-            except icache.CacheMissException:
-                pass
 
             new_file_content, file_changed = await self.format_one(
                 file_path, file_content
             )
 
             # save for next handlers
-            run_context.file_info_by_path[file_path] = format_action.FileInfo(
+            run_context.file_info_by_path[file_path] = format_files_action.FileInfo(
                 new_file_content, file_version
             )
 
-            await self.cache.save_file_cache(
-                file_path, file_version, self.CACHE_KEY, new_file_content
-            )
-            result_by_file_path[file_path] = format_action.FormatRunFileResult(
+            result_by_file_path[file_path] = format_files_action.FormatRunFileResult(
                 changed=file_changed, code=new_file_content
             )
 
-        return format_action.FormatRunResult(result_by_file_path=result_by_file_path)
+        return format_files_action.FormatFilesRunResult(
+            result_by_file_path=result_by_file_path
+        )
 
     async def format_one(self, file_path: Path, file_content: str) -> tuple[str, bool]:
         """Format a single file using ruff format"""

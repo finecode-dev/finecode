@@ -24,6 +24,8 @@ async def format_document(ls: LanguageServer, params: types.DocumentFormattingPa
             file_path=file_path,
             action_name="format",
             params={"file_paths": [file_path], "save": False},
+            run_trigger=run_service.RunActionTrigger.USER,
+            dev_env=run_service.DevEnv.IDE,
             ws_context=global_state.ws_context,
         )
     except Exception as error:  # TODO

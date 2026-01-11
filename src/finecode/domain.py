@@ -134,7 +134,7 @@ AllActions = ActionsDict
 
 
 class TextDocumentInfo:
-    def __init__(self, uri: str, version: str) -> None:
+    def __init__(self, uri: str, version: str | int) -> None:
         self.uri = uri
         self.version = version
 

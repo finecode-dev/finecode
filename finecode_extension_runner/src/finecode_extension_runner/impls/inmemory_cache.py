@@ -1,16 +1,20 @@
 from pathlib import Path
 from typing import Any, TypeAlias
 
-from finecode_extension_api.interfaces import icache, ifilemanager, ilogger
+from finecode_extension_api.interfaces import icache, ifileeditor, ilogger
 
 CacheKeyType: TypeAlias = str
 
 
 class InMemoryCache(icache.ICache):
+    FILE_OPERATION_AUTHOR = ifileeditor.FileOperationAuthor(
+        id="InMemoryCache"
+    )
+
     def __init__(
-        self, file_manager: ifilemanager.IFileManager, logger: ilogger.ILogger
+        self, file_editor: ifileeditor.IFileEditor, logger: ilogger.ILogger
     ):
-        self.file_manager = file_manager
+        self.file_editor = file_editor
         self.logger = logger
 
         self.cache_by_file: dict[Path, dict[CacheKeyType, tuple[str, Any]]] = {}
@@ -20,7 +24,10 @@ class InMemoryCache(icache.ICache):
     async def save_file_cache(
         self, file_path: Path, file_version: str, key: CacheKeyType, value: Any
     ) -> None:
-        current_file_version = await self.file_manager.get_file_version(file_path)
+        async with self.file_editor.session(
+            author=self.FILE_OPERATION_AUTHOR
+        ) as session:
+            current_file_version = await session.read_file_version(file_path)
 
         if file_version != current_file_version:
             # `value` was created for older version of file, don't save it
@@ -35,9 +42,9 @@ class InMemoryCache(icache.ICache):
     async def get_file_cache(self, file_path: Path, key: CacheKeyType) -> Any:
         try:
             file_cache = self.cache_by_file[file_path]
-        except KeyError:
+        except KeyError as exception:
             self.logger.debug(f"No cache for file {file_path}, cache miss")
-            raise icache.CacheMissException()
+            raise icache.CacheMissException() from exception
 
         if key not in file_cache:
             self.logger.debug(
@@ -45,7 +52,11 @@ class InMemoryCache(icache.ICache):
             )
             raise icache.CacheMissException()
 
-        current_file_version = await self.file_manager.get_file_version(file_path)
+        async with self.file_editor.session(
+            author=self.FILE_OPERATION_AUTHOR
+        ) as session:
+            current_file_version = await session.read_file_version(file_path)
+
         cached_file_version = file_cache[key][0]
         if cached_file_version != current_file_version:
             self.logger.debug(

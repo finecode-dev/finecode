@@ -3,20 +3,23 @@ from pathlib import Path
 
 from fine_python_ast import iast_provider
 
-from finecode_extension_api.interfaces import icache, ifilemanager, ilogger
+from finecode_extension_api.interfaces import icache, ifileeditor, ilogger
 
 
 class PythonSingleAstProvider(iast_provider.IPythonSingleAstProvider):
     CACHE_KEY = "PythonSingleAstProvider"
+    FILE_OPERATION_AUTHOR = ifileeditor.FileOperationAuthor(
+        id="PythonSingleAstProvider"
+    )
 
     def __init__(
         self,
-        file_manager: ifilemanager.IFileManager,
+        file_editor: ifileeditor.IFileEditor,
         cache: icache.ICache,
         logger: ilogger.ILogger,
     ):
         self.cache = cache
-        self.file_manager = file_manager
+        self.file_editor = file_editor
         self.logger = logger
 
     async def get_file_ast(self, file_path: Path) -> ast.Module:
@@ -30,8 +33,12 @@ class PythonSingleAstProvider(iast_provider.IPythonSingleAstProvider):
         except icache.CacheMissException:
             ...
 
-        file_content: str = await self.file_manager.get_content(file_path)
-        file_version: str = await self.file_manager.get_file_version(file_path)
+        async with self.file_editor.session(
+            author=self.FILE_OPERATION_AUTHOR
+        ) as session:
+            async with session.read_file(file_path=file_path) as file_info:
+                file_content: str = file_info.content
+                file_version: str = file_info.version
 
         try:
             ast_instance = ast.parse(file_content)

@@ -1,6 +1,6 @@
-from .lint_handler import PyreflyLintHandler, PyreflyLintHandlerConfig
+from .lint_files_handler import PyreflyLintFilesHandler, PyreflyLintFilesHandlerConfig
 
 __all__ = [
-    "PyreflyLintHandler",
-    "PyreflyLintHandlerConfig",
+    "PyreflyLintFilesHandler",
+    "PyreflyLintFilesHandlerConfig",
 ]

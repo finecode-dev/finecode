@@ -1,5 +1,4 @@
 from .client import (
-    create_lsp_client_io,
     JsonRpcClient,
     BaseRunnerRequestException,
     NoResponse,
@@ -10,7 +9,6 @@ from .client import (
 
 
 __all__ = [
-    "create_lsp_client_io",
     "JsonRpcClient",
     "BaseRunnerRequestException",
     "NoResponse",

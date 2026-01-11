@@ -45,6 +45,8 @@ class ActionTreeNode(BaseModel):
         PROJECT = 1
         ACTION = 2
         PRESET = 3
+        ENV_GROUP = 4
+        ENV = 5
 
 
 class ListActionsResponse(BaseModel):

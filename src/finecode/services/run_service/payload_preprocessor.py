@@ -1,7 +1,7 @@
 import pathlib
 import typing
 
-from finecode import context, project_analyzer
+from finecode import context
 
 
 async def preprocess_for_project(
@@ -12,15 +12,7 @@ async def preprocess_for_project(
 ) -> dict[str, typing.Any]:
     processed_payload = payload.copy()
 
-    # temporary hardcore logic until we get the proper payload structure and defaults
-    # from extension runner
-    if action_name == "lint" or action_name == "format":
-        if "file_paths" not in processed_payload:
-            processed_payload["file_paths"] = None
-
-        if action_name == "format" and "save" not in processed_payload:
-            processed_payload["save"] = True
-    elif action_name == "prepare_envs" or action_name == "prepare_runners":
+    if action_name == "prepare_envs" or action_name == "prepare_runners":
         runtime_venv_path = project_dir_path / ".venvs" / "runtime"
         project_def_path = project_dir_path / "pyproject.toml"
         envs = [
@@ -50,11 +42,5 @@ async def preprocess_for_project(
                     }
                 )
         processed_payload["envs"] = envs
-
-    for param, value in processed_payload.items():
-        if param == "file_paths" and value is None:
-            processed_payload["file_paths"] = await project_analyzer.get_project_files(
-                project_dir_path, ws_context=ws_context
-            )
 
     return processed_payload

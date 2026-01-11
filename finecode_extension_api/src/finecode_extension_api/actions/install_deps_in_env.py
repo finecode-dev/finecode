@@ -29,8 +29,10 @@ class InstallDepsInEnvRunContext(code_action.RunActionContext):
     def __init__(
         self,
         run_id: int,
+        initial_payload: InstallDepsInEnvRunPayload,
+        meta: code_action.RunActionMeta
     ) -> None:
-        super().__init__(run_id=run_id)
+        super().__init__(run_id=run_id, initial_payload=initial_payload, meta=meta)
 
 
 @dataclasses.dataclass

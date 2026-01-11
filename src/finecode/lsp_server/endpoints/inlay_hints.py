@@ -53,6 +53,8 @@ async def document_inlay_hint(
             file_path=file_path,
             action_name="text_document_inlay_hint",
             params=inlay_hint_params_to_dict(params),
+            run_trigger=run_service.RunActionTrigger.SYSTEM,
+            dev_env=run_service.DevEnv.IDE,
             ws_context=global_state.ws_context,
         )
     except find_project.FileHasNotActionException:

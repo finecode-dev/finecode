@@ -13,7 +13,7 @@ from finecode_extension_api.actions import lint as lint_action
 from finecode_extension_api.interfaces import (
     icache,
     icommandrunner,
-    ifilemanager,
+    ifileeditor,
     ilogger,
     iextensionrunnerinfoprovider,
     iprojectinfoprovider,
@@ -31,6 +31,7 @@ class MypyLintHandler(
     code_action.ActionHandler[lint_action.LintAction, MypyManyCodeActionConfig]
 ):
     CACHE_KEY = "mypy"
+    FILE_OPERATION_AUTHOR = ifileeditor.FileOperationAuthor(erovid)
 
     DMYPY_ARGS = [
         "--no-color-output",
@@ -50,7 +51,7 @@ class MypyLintHandler(
         project_info_provider: iprojectinfoprovider.IProjectInfoProvider,
         cache: icache.ICache,
         logger: ilogger.ILogger,
-        file_manager: ifilemanager.IFileManager,
+        file_editor: ifileeditor.IFileEditor,
         lifecycle: code_action.ActionHandlerLifecycle,
         command_runner: icommandrunner.ICommandRunner,
     ) -> None:
@@ -58,7 +59,7 @@ class MypyLintHandler(
         self.project_info_provider = project_info_provider
         self.cache = cache
         self.logger = logger
-        self.file_manager = file_manager
+        self.file_editor = file_editor
         self.command_runner = command_runner
 
         lifecycle.on_shutdown(self.shutdown)
@@ -116,9 +117,12 @@ class MypyLintHandler(
             files_versions: dict[Path, str] = {}
             # can we exclude cached files here? Using the right cache(one that handles
             # dependencies as well) should be possible
-            for file_path in all_project_files:
-                file_version = await self.file_manager.get_file_version(file_path)
-                files_versions[file_path] = file_version
+            async with self.file_editor.session(
+                author=self.FILE_OPERATION_AUTHOR
+            ) as session:
+                for file_path in all_project_files:
+                    file_version = await session.read_file_version(file_path)
+                    files_versions[file_path] = file_version
 
             try:
                 all_processed_files_with_messages = await self._run_dmypy_on_project(
@@ -132,22 +136,25 @@ class MypyLintHandler(
                     ) in all_processed_files_with_messages.items()
                 }
 
-                for (
-                    file_path,
-                    lint_messages,
-                ) in all_processed_files_with_messages.items():
-                    try:
-                        file_version = files_versions[file_path]
-                    except KeyError:
-                        # mypy can resolve dependencies which are not in `files_to_lint`
-                        # and as result also not in `files_versions`
-                        file_version = await self.file_manager.get_file_version(
-                            file_path
-                        )
+                async with self.file_editor.session(
+                    author=self.FILE_OPERATION_AUTHOR
+                ) as session:
+                    for (
+                        file_path,
+                        lint_messages,
+                    ) in all_processed_files_with_messages.items():
+                        try:
+                            file_version = files_versions[file_path]
+                        except KeyError:
+                            # mypy can resolve dependencies which are not in `files_to_lint`
+                            # and as result also not in `files_versions`
+                            file_version = await session.read_file_version(
+                                file_path
+                            )
 
-                    await self.cache.save_file_cache(
-                        file_path, file_version, self.CACHE_KEY, lint_messages
-                    )
+                        await self.cache.save_file_cache(
+                            file_path, file_version, self.CACHE_KEY, lint_messages
+                        )
             finally:
                 project_checked_event.set()
                 del self._projects_being_checked_done_events[project_path]

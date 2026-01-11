@@ -9,9 +9,10 @@ dependencies = [
     "loguru==0.7.*",
     "click==8.1.*",
     "pydantic==2.11.*",
-    "pygls==2.0.0-a6",
+    "pygls==2.0.0",
     "finecode_extension_api==0.3.*",
     "deepmerge==2.0.*",
+    "debugpy==1.8.*",
 ]
 
 [dependency-groups]
@@ -29,6 +30,10 @@ finecode_dev_common_preset = { path = "../finecode_dev_common_preset", editable 
 finecode = { path = "../", editable = true }
 finecode_extension_runner = { path = "../finecode_extension_runner", editable = true }
 finecode_extension_api = { path = "../finecode_extension_api", editable = true }
+finecode_jsonrpc = { path = "../finecode_jsonrpc", editable = true }
+finecode_builtin_handlers = { path = "../finecode_builtin_handlers", editable = true }
+fine_python_lint = { path = "../presets/fine_python_lint", editable = true }
+fine_python_format = { path = "../presets/fine_python_format", editable = true }
 
 [build-system]
 requires = ["setuptools>=64", "setuptools-scm>=8"]
@@ -54,3 +59,6 @@ layers = [
 [tool.setuptools_scm]
 version_file = "src/finecode_extension_runner/_version.py"
 root = ".."
+
+[tool.finecode.env.dev_no_runtime]
+# runner.debug = true

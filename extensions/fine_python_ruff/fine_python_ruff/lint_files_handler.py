@@ -6,17 +6,17 @@ import sys
 from pathlib import Path
 
 from finecode_extension_api import code_action
-from finecode_extension_api.actions import lint as lint_action
+from finecode_extension_api.actions import lint_files as lint_files_action
 from finecode_extension_api.interfaces import (
     icache,
     icommandrunner,
     ilogger,
-    ifilemanager,
+    ifileeditor,
 )
 
 
 @dataclasses.dataclass
-class RuffLintHandlerConfig(code_action.ActionHandlerConfig):
+class RuffLintFilesHandlerConfig(code_action.ActionHandlerConfig):
     line_length: int = 88
     target_version: str = "py38"
     select: list[str] | None = None  # Rules to enable
@@ -25,51 +25,61 @@ class RuffLintHandlerConfig(code_action.ActionHandlerConfig):
     preview: bool = False
 
 
-class RuffLintHandler(
-    code_action.ActionHandler[lint_action.LintAction, RuffLintHandlerConfig]
+class RuffLintFilesHandler(
+    code_action.ActionHandler[
+        lint_files_action.LintFilesAction, RuffLintFilesHandlerConfig
+    ]
 ):
     CACHE_KEY = "RuffLinter"
+    FILE_OPERATION_AUTHOR = ifileeditor.FileOperationAuthor(id="RuffLinterAstProvider")
 
     def __init__(
         self,
-        config: RuffLintHandlerConfig,
+        config: RuffLintFilesHandlerConfig,
         cache: icache.ICache,
         logger: ilogger.ILogger,
-        file_manager: ifilemanager.IFileManager,
+        file_editor: ifileeditor.IFileEditor,
         command_runner: icommandrunner.ICommandRunner,
     ) -> None:
         self.config = config
         self.cache = cache
         self.logger = logger
-        self.file_manager = file_manager
+        self.file_editor = file_editor
         self.command_runner = command_runner
 
         self.ruff_bin_path = Path(sys.executable).parent / "ruff"
 
-    async def run_on_single_file(self, file_path: Path) -> lint_action.LintRunResult:
+    async def run_on_single_file(
+        self, file_path: Path
+    ) -> lint_files_action.LintFilesRunResult:
         messages = {}
         try:
             cached_lint_messages = await self.cache.get_file_cache(
                 file_path, self.CACHE_KEY
             )
             messages[str(file_path)] = cached_lint_messages
-            return lint_action.LintRunResult(messages=messages)
+            return lint_files_action.LintFilesRunResult(messages=messages)
         except icache.CacheMissException:
             pass
 
-        file_version = await self.file_manager.get_file_version(file_path)
-        file_content = await self.file_manager.get_content(file_path)
+        async with self.file_editor.session(
+            author=self.FILE_OPERATION_AUTHOR
+        ) as session:
+            async with session.read_file(file_path=file_path) as file_info:
+                file_content: str = file_info.content
+                file_version: str = file_info.version
+
         lint_messages = await self.run_ruff_lint_on_single_file(file_path, file_content)
         messages[str(file_path)] = lint_messages
         await self.cache.save_file_cache(
             file_path, file_version, self.CACHE_KEY, lint_messages
         )
 
-        return lint_action.LintRunResult(messages=messages)
+        return lint_files_action.LintFilesRunResult(messages=messages)
 
     async def run(
         self,
-        payload: lint_action.LintRunPayload,
+        payload: lint_files_action.LintFilesRunPayload,
         run_context: code_action.RunActionWithPartialResultsContext,
     ) -> None:
         file_paths = [file_path async for file_path in payload]
@@ -84,9 +94,9 @@ class RuffLintHandler(
         self,
         file_path: Path,
         file_content: str,
-    ) -> list[lint_action.LintMessage]:
+    ) -> list[lint_files_action.LintMessage]:
         """Run ruff linting on a single file"""
-        lint_messages: list[lint_action.LintMessage] = []
+        lint_messages: list[lint_files_action.LintMessage] = []
 
         # Build ruff check command
         cmd = [
@@ -135,7 +145,9 @@ class RuffLintHandler(
         return lint_messages
 
 
-def map_ruff_violation_to_lint_message(violation: dict) -> lint_action.LintMessage:
+def map_ruff_violation_to_lint_message(
+    violation: dict,
+) -> lint_files_action.LintMessage:
     """Map a ruff violation to a lint message"""
     location = violation.get("location", {})
     end_location = violation.get("end_location", {})
@@ -150,16 +162,16 @@ def map_ruff_violation_to_lint_message(violation: dict) -> lint_action.LintMessa
     code = violation.get("code", "")
     code_description = violation.get("url", "")
     if code.startswith(("E", "F")):  # Error codes
-        severity = lint_action.LintMessageSeverity.ERROR
+        severity = lint_files_action.LintMessageSeverity.ERROR
     elif code.startswith("W"):  # Warning codes
-        severity = lint_action.LintMessageSeverity.WARNING
+        severity = lint_files_action.LintMessageSeverity.WARNING
     else:
-        severity = lint_action.LintMessageSeverity.INFO
+        severity = lint_files_action.LintMessageSeverity.INFO
 
-    return lint_action.LintMessage(
-        range=lint_action.Range(
-            start=lint_action.Position(line=start_line, character=start_column),
-            end=lint_action.Position(line=end_line, character=end_column),
+    return lint_files_action.LintMessage(
+        range=lint_files_action.Range(
+            start=lint_files_action.Position(line=start_line, character=start_column),
+            end=lint_files_action.Position(line=end_line, character=end_column),
         ),
         message=violation.get("message", ""),
         code=code,

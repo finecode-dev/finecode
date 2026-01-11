@@ -15,13 +15,18 @@ from typing import Any
 from loguru import logger
 
 import finecode.domain as domain
-from finecode.runner import jsonrpc_client, _internal_client_types, _internal_client_api
+from finecode.runner import _internal_client_types, _internal_client_api
+import finecode_jsonrpc as jsonrpc_client
 
 
 # reexport
 BaseRunnerRequestException = jsonrpc_client.BaseRunnerRequestException
-GetDocumentParams = _internal_client_types.GetDocumentParams
-GetDocumentResult = _internal_client_types.GetDocumentResult
+DidChangeTextDocumentParams = _internal_client_types.DidChangeTextDocumentParams
+VersionedTextDocumentIdentifier = _internal_client_types.VersionedTextDocumentIdentifier
+TextDocumentContentChangeWholeDocument = _internal_client_types.TextDocumentContentChangeWholeDocument
+TextDocumentContentChangePartial = _internal_client_types.TextDocumentContentChangePartial
+Range = _internal_client_types.Range
+Position = _internal_client_types.Position
 
 
 class ActionRunFailed(jsonrpc_client.BaseRunnerRequestException): ...
@@ -71,6 +76,20 @@ class RunResultFormat(enum.Enum):
     STRING = "string"
 
 
+class RunActionTrigger(enum.StrEnum):
+    USER = 'user'
+    SYSTEM = 'system'
+    UNKNOWN = 'unknown'
+
+
+class DevEnv(enum.StrEnum):
+    IDE = 'ide'
+    CLI = 'cli'
+    AI = 'ai'
+    PRECOMMIT = 'precommit'
+    CI_CD = 'cicd'
+
+
 async def run_action(
     runner: ExtensionRunnerInfo,
     action_name: str,
@@ -113,7 +132,11 @@ async def run_action(
     stringified_result = command_result["result"]
     # currently result is always dumped to json even if response format is expected to
     # be a string. See docs of ER lsp server for more details.
-    raw_result = json.loads(stringified_result)
+    try:
+        raw_result = json.loads(stringified_result)
+    except json.JSONDecodeError as exception:
+        raise ActionRunFailed(f"Failed to decode result json: {exception}") from exception
+
     if command_result["format"] == "string":
         result = raw_result
     elif (
@@ -219,6 +242,12 @@ async def notify_document_did_close(
         params=_internal_client_types.DidCloseTextDocumentParams(
             text_document=_internal_client_types.TextDocumentIdentifier(document_uri)
         ),
+    )
+
+async def notify_document_did_change(runner: ExtensionRunnerInfo, change_params: _internal_client_types.DidChangeTextDocumentParams) -> None:
+    runner.client.notify(
+        method=_internal_client_types.TEXT_DOCUMENT_DID_CHANGE,
+        params=change_params,
     )
 
 

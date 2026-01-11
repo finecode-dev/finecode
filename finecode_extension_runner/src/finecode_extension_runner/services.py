@@ -1,3 +1,6 @@
+import json
+import collections.abc
+import hashlib
 import importlib
 import sys
 import types
@@ -5,22 +8,35 @@ import typing
 from pathlib import Path
 
 from loguru import logger
+from finecode_extension_api import service
 
 from finecode_extension_runner import context, domain, global_state, schemas
 from finecode_extension_runner._services.run_action import (
     ActionFailedException,
     StopWithResponse,
-    run_action,
+    run_action_raw,
 )
 from finecode_extension_runner.di import bootstrap as di_bootstrap
 
 
+def _compute_request_hash(request: schemas.UpdateConfigRequest) -> int:
+    """Compute a hash of the request object for version tracking."""
+    request_dict = request.to_dict()
+    # Convert Path objects to strings for JSON serialization
+    request_dict["working_dir"] = str(request_dict["working_dir"])
+    request_dict["project_def_path"] = str(request_dict["project_def_path"])
+
+    # Sort keys for consistent hashing
+    request_json = json.dumps(request_dict, sort_keys=True)
+    hash_bytes = hashlib.sha256(request_json.encode()).digest()
+    # Convert first 8 bytes to integer for version number
+    return int.from_bytes(hash_bytes[:8], byteorder="big")
+
+
 async def update_config(
     request: schemas.UpdateConfigRequest,
-    document_requester: typing.Callable,
-    document_saver: typing.Callable,
     project_raw_config_getter: typing.Callable[
-        [str], typing.Awaitable[dict[str, typing.Any]]
+        [str], collections.abc.Awaitable[dict[str, typing.Any]]
     ],
 ) -> schemas.UpdateConfigResponse:
     project_dir_path = Path(request.working_dir)
@@ -53,6 +69,7 @@ async def update_config(
             action_handler_configs=request.action_handler_configs,
         ),
     )
+    global_state.runner_context.project_config_version = _compute_request_hash(request)
 
     # currently update_config is called only once directly after runner start. So we can
     # bootstrap here. Should be changed after adding updating configuration on the fly.
@@ -71,12 +88,28 @@ async def update_config(
 
         return project_cache_dir
 
+    def current_project_raw_config_version_getter() -> int:
+        return global_state.runner_context.project_config_version
+
+    def actions_names_getter() -> list[str]:
+        assert global_state.runner_context is not None
+        return list(global_state.runner_context.project.actions.keys())
+
+    def action_by_name_getter(action_name: str) -> domain.Action:
+        assert global_state.runner_context is not None
+        return global_state.runner_context.project.actions[action_name]
+
+    def current_env_name_getter() -> str:
+        return global_state.env_name
+
     di_bootstrap.bootstrap(
-        get_document_func=document_requester,
-        save_document_func=document_saver,
         project_def_path_getter=project_def_path_getter,
         project_raw_config_getter=project_raw_config_getter,
         cache_dir_path_getter=cache_dir_path_getter,
+        current_project_raw_config_version_getter=current_project_raw_config_version_getter,
+        actions_names_getter=actions_names_getter,
+        action_by_name_getter=action_by_name_getter,
+        current_env_name_getter=current_env_name_getter,
     )
 
     return schemas.UpdateConfigResponse()
@@ -109,7 +142,10 @@ def reload_action(action_name: str) -> None:
             if handler_cache.exec_info is not None:
                 shutdown_action_handler(
                     action_handler_name=handler_name,
+                    handler_instance=handler_cache.instance,
                     exec_info=handler_cache.exec_info,
+                    used_services=handler_cache.used_services,
+                    runner_context=global_state.runner_context,
                 )
 
         del global_state.runner_context.action_cache_by_name[action_name]
@@ -155,18 +191,12 @@ def resolve_package_path(package_name: str) -> str:
     return package_path
 
 
-def document_did_open(document_uri: str) -> None:
-    if global_state.runner_context is not None:
-        global_state.runner_context.docs_owned_by_client.append(document_uri)
-
-
-def document_did_close(document_uri: str) -> None:
-    if global_state.runner_context is not None:
-        global_state.runner_context.docs_owned_by_client.remove(document_uri)
-
-
 def shutdown_action_handler(
-    action_handler_name: str, exec_info: domain.ActionHandlerExecInfo
+    action_handler_name: str,
+    handler_instance: domain.ActionHandler | None,
+    exec_info: domain.ActionHandlerExecInfo,
+    used_services: list[service.Service],
+    runner_context: context.RunnerContext,
 ) -> None:
     # action handler exec info expected to exist in runner_context
     if exec_info.status == domain.ActionHandlerExecInfoStatus.SHUTDOWN:
@@ -183,6 +213,18 @@ def shutdown_action_handler(
             logger.error(f"Failed to shutdown action {action_handler_name}: {e}")
     exec_info.status = domain.ActionHandlerExecInfoStatus.SHUTDOWN
 
+    if handler_instance is not None:
+        for used_service in used_services:
+            running_service_info = runner_context.running_services[used_service]
+            running_service_info.used_by.remove(handler_instance)
+            if len(running_service_info.used_by) == 0:
+                if isinstance(used_service, service.DisposableService):
+                    try:
+                        used_service.dispose()
+                    except Exception as exception:
+                        logger.error(f"Failed to dispose service: {used_service}")
+                        logger.exception(exception)
+
 
 def shutdown_all_action_handlers() -> None:
     if global_state.runner_context is not None:
@@ -195,7 +237,10 @@ def shutdown_all_action_handlers() -> None:
                 if handler_cache.exec_info is not None:
                     shutdown_action_handler(
                         action_handler_name=handler_name,
+                        handler_instance=handler_cache.instance,
                         exec_info=handler_cache.exec_info,
+                        used_services=handler_cache.used_services,
+                        runner_context=global_state.runner_context,
                     )
 
 

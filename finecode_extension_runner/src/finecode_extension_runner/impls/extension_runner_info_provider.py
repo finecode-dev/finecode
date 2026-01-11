@@ -8,12 +8,16 @@ class ExtensionRunnerInfoProvider(
     iextensionrunnerinfoprovider.IExtensionRunnerInfoProvider
 ):
     def __init__(
-        self, cache_dir_path_getter: Callable[[], pathlib.Path], logger: ilogger.ILogger
+        self, cache_dir_path_getter: Callable[[], pathlib.Path], logger: ilogger.ILogger, current_env_name_getter: Callable[[], str]
     ) -> None:
         self.cache_dir_path_getter = cache_dir_path_getter
         self.logger = logger
+        self.current_env_name_getter = current_env_name_getter
 
         self._site_packages_cache: dict[pathlib.Path, list[pathlib.Path]] = {}
+
+    def get_current_env_name(self) -> str:
+        return self.current_env_name_getter()
 
     def get_cache_dir_path(self) -> pathlib.Path:
         return self.cache_dir_path_getter()
@@ -24,6 +28,10 @@ class ExtensionRunnerInfoProvider(
         current_venv_dir_path = cache_dir_path.parent
         venvs_dir_path = current_venv_dir_path.parent
         return venvs_dir_path / env_name
+
+    def get_current_venv_dir_path(self) -> pathlib.Path:
+        current_env_name = self.get_current_env_name()
+        return self.get_venv_dir_path_of_env(env_name=current_env_name)
 
     def get_venv_site_packages(self, venv_dir_path: pathlib.Path) -> list[pathlib.Path]:
         # venv site packages can be cached because they don't change and if user runs

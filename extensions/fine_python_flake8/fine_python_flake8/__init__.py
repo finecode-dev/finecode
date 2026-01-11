@@ -1,6 +1,6 @@
-from .action import Flake8LintHandler, Flake8LintHandlerConfig
+from .action import Flake8LintFilesHandler, Flake8LintFilesHandlerConfig
 
 __all__ = [
-    "Flake8LintHandler",
-    "Flake8LintHandlerConfig",
+    "Flake8LintFilesHandler",
+    "Flake8LintFilesHandlerConfig",
 ]

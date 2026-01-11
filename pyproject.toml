@@ -11,10 +11,11 @@ dependencies = [
     "watchdog==4.0.*",
     "click==8.1.*",
     "pydantic==2.11.*",
-    "pygls==2.0.0-a6",
+    "pygls==2.0.0",
     "finecode_extension_api==0.3.*",
     "finecode_extension_runner==0.3.*",
     "finecode_builtin_handlers==0.1.*",
+    "finecode_jsonrpc==0.1.*",
     "ordered-set==4.1.*",
     "mcp==1.13.*",
     "fine_python_virtualenv==0.1.*",
@@ -47,6 +48,12 @@ presets = [{ source = "finecode_dev_common_preset" }]
 finecode_dev_common_preset = { path = "./finecode_dev_common_preset", editable = true }
 finecode_extension_runner = { path = "./finecode_extension_runner", editable = true }
 finecode_extension_api = { path = "./finecode_extension_api", editable = true }
+finecode_jsonrpc = { path = "./finecode_jsonrpc", editable = true }
+fine_python_lint = { path = "./presets/fine_python_lint", editable = true }
+fine_python_format = { path = "./presets/fine_python_format", editable = true }
+
+[tool.finecode.env.runtime.dependencies]
+finecode_jsonrpc = { path = "./finecode_jsonrpc", editable = true }
 
 [tool.importlinter]
 root_package = "finecode"

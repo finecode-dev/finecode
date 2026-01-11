@@ -106,3 +106,57 @@ async def document_did_change(
     global_state.ws_context.opened_documents[
         params.text_document.uri
     ].version = params.text_document.version
+    
+    logger.trace(f"Document did change: {params.text_document.uri}")
+    file_path = Path(params.text_document.uri.replace("file://", ""))
+    projects_paths = [
+        project_path
+        for project_path, project in global_state.ws_context.ws_projects.items()
+        if project.status == domain.ProjectStatus.CONFIG_VALID
+        and file_path.is_relative_to(project_path)
+    ]
+    
+    content_changes = []
+    for change in params.content_changes:
+        if isinstance(change, types.TextDocumentContentChangePartial):
+            mapped_change = runner_client.TextDocumentContentChangePartial(
+                range=runner_client.Range(
+                    start=runner_client.Position(line=change.range.start.line, character=change.range.start.character),
+                    end=runner_client.Position(line=change.range.end.line, character=change.range.end.character)
+                ),
+                text=change.text,
+                range_length=change.range_length
+            )
+            content_changes.append(mapped_change)
+        elif isinstance(change, types.TextDocumentContentChangeWholeDocument):
+            mapped_change = runner_client.TextDocumentContentChangeWholeDocument(text=change.text)
+            content_changes.append(mapped_change)
+        else:
+            logger.error(f"Got unsupported content change from LSP client: {type(change)}, skip it")
+            continue
+
+    change_params = runner_client.DidChangeTextDocumentParams(
+        text_document=runner_client.VersionedTextDocumentIdentifier(version=params.text_document.version, uri=params.text_document.uri),
+        content_changes=content_changes
+    )
+
+    try:
+        async with asyncio.TaskGroup() as tg:
+            for project_path in projects_paths:
+                runners_by_env = global_state.ws_context.ws_projects_extension_runners[
+                    project_path
+                ]
+                for runner in runners_by_env.values():
+                    if runner.status != runner_client.RunnerStatus.RUNNING:
+                        logger.trace(
+                            f"Runner {runner.readable_id} is not running, skip it"
+                        )
+                        continue
+
+                    tg.create_task(
+                        runner_client.notify_document_did_change(
+                            runner=runner, change_params=change_params
+                        )
+                    )
+    except ExceptionGroup as e:
+        logger.error(f"Error while sending changed document: {e}")

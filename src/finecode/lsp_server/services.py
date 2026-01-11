@@ -38,12 +38,12 @@ def register_send_user_message_request_callback(send_user_message_request_callba
     user_messages._lsp_message_send = send_user_message_request_callback
 
 
-def register_document_getter(get_document_func):
-    runner_manager.get_document = get_document_func
-
-
 def register_workspace_edit_applier(apply_workspace_edit_func):
     runner_manager.apply_workspace_edit = apply_workspace_edit_func
+
+
+def register_debug_session_starter(start_debug_session_func):
+    runner_manager.start_debug_session = start_debug_session_func
 
 
 def register_progress_reporter(report_progress_func):

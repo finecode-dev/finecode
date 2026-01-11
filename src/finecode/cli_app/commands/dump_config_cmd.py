@@ -38,7 +38,7 @@ async def dump_config(workdir_path: pathlib.Path, project_name: str):
         except config_models.ConfigurationError as exception:
             raise DumpFailed(
                 f"Reading project configs(without presets) in {project.dir_path} failed: {exception.message}"
-            )
+            ) from exception
 
     # Some tools like IDE extensions for syntax highlighting rely on
     # file name. Keep file name of config the same and save in subdirectory
@@ -59,7 +59,7 @@ async def dump_config(workdir_path: pathlib.Path, project_name: str):
         except runner_manager.RunnerFailedToStart as exception:
             raise DumpFailed(
                 f"Starting runners with presets failed: {exception.message}"
-            )
+            ) from exception
 
         try:
             await run_service.start_required_environments(
@@ -68,7 +68,7 @@ async def dump_config(workdir_path: pathlib.Path, project_name: str):
         except run_service.StartingEnvironmentsFailed as exception:
             raise DumpFailed(
                 f"Failed to start environments for running 'dump_config': {exception.message}"
-            )
+            ) from exception
 
         project_raw_config = ws_context.ws_projects_raw_configs[project_dir_path]
 
@@ -83,6 +83,8 @@ async def dump_config(workdir_path: pathlib.Path, project_name: str):
             ws_context=ws_context,
             result_format=run_service.RunResultFormat.STRING,
             preprocess_payload=False,
+            run_trigger=run_service.RunActionTrigger.USER,
+            dev_env=run_service.DevEnv.CLI,
         )
         logger.info(f"Dumped config into {dump_file_path}")
     finally:

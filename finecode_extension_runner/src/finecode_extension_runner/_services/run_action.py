@@ -9,7 +9,7 @@ import deepmerge
 from loguru import logger
 from pydantic.dataclasses import dataclass as pydantic_dataclass
 
-from finecode_extension_api import code_action, textstyler
+from finecode_extension_api import code_action, textstyler, service
 from finecode_extension_api.interfaces import iactionrunner
 from finecode_extension_runner import context, domain, global_state
 from finecode_extension_runner import (
@@ -46,33 +46,20 @@ def set_partial_result_sender(send_func: typing.Callable) -> None:
     )
 
 
+class AsyncPlaceholderContext:
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb): ...
+
+
 async def run_action(
-    request: schemas.RunActionRequest, options: schemas.RunActionOptions
-) -> schemas.RunActionResponse:
-    global last_run_id
-    run_id = last_run_id
-    last_run_id += 1
-    logger.trace(
-        f"Run action '{request.action_name}', run id: {run_id}, partial result token: {options.partial_result_token}"
-    )
-    # TODO: check whether config is set: this will be solved by passing initial
-    # configuration as payload of initialize
-    if global_state.runner_context is None:
-        raise ActionFailedException(
-            "Run of action failed because extension runner is not initialized yet"
-        )
-
-    start_time = time.time_ns()
-    project_def = global_state.runner_context.project
-
-    try:
-        action = project_def.actions[request.action_name]
-    except KeyError:
-        logger.error(f"R{run_id} | Action {request.action_name} not found")
-        raise ActionFailedException(
-            f"R{run_id} | Action {request.action_name} not found"
-        )
-
+    action_def: domain.Action,
+    payload: code_action.RunActionPayload | None,
+    meta: code_action.RunActionMeta,
+    partial_result_token: int | str | None = None,
+    run_id: int | None = None,
+) -> code_action.RunActionResult | None:
     # design decisions:
     # - keep payload unchanged between all subaction runs.
     #   For intermediate data use run_context
@@ -81,44 +68,66 @@ async def run_action(
     #   returned. (experimental)
     # - execution of handlers can be concurrent or sequential. But executions of handler
     #   on iterable payloads(single parts) are always concurrent.
-    action_name = request.action_name
+
+    if run_id is None:
+        global last_run_id
+        run_id = last_run_id
+        last_run_id += 1
+
+    logger.trace(
+        f"Run action '{action_def.name}', run id: {run_id}, partial result token: {partial_result_token}"
+    )
+
+    # TODO: check whether config is set: this will be solved by passing initial
+    # configuration as payload of initialize
+    if global_state.runner_context is None:
+        raise ActionFailedException(
+            "Run of action failed because extension runner is not initialized yet"
+        )
+
+    start_time = time.time_ns()
 
     try:
-        action_cache = global_state.runner_context.action_cache_by_name[action_name]
+        action_cache = global_state.runner_context.action_cache_by_name[action_def.name]
     except KeyError:
         action_cache = domain.ActionCache()
-        global_state.runner_context.action_cache_by_name[action_name] = action_cache
+        global_state.runner_context.action_cache_by_name[action_def.name] = action_cache
 
     if action_cache.exec_info is not None:
         action_exec_info = action_cache.exec_info
     else:
-        action_exec_info = create_action_exec_info(action)
+        action_exec_info = create_action_exec_info(action_def)
         action_cache.exec_info = action_exec_info
 
-    # TODO: catch validation errors
-    payload: code_action.RunActionPayload | None = None
-    if action_exec_info.payload_type is not None:
-        payload_type_with_validation = pydantic_dataclass(action_exec_info.payload_type)
-        payload = payload_type_with_validation(**request.params)
-
-    run_context: code_action.RunActionContext | None = None
+    run_context: code_action.RunActionContext | AsyncPlaceholderContext
     if action_exec_info.run_context_type is not None:
         constructor_args = await resolve_func_args_with_di(
             action_exec_info.run_context_type.__init__,
-            known_args={"run_id": lambda _: run_id},
+            known_args={
+                "run_id": lambda _: run_id,
+                "initial_payload": lambda _: payload,
+                "meta": lambda _: meta,
+            },
             params_to_ignore=["self"],
         )
 
-        run_context = action_exec_info.run_context_type(**constructor_args)
-        # TODO: handler errors
-        await run_context.init(initial_payload=payload)
+        # developers can change run context constructor, handle all exceptions
+        try:
+            run_context = action_exec_info.run_context_type(**constructor_args)
+        except Exception as exception:
+            raise ActionFailedException(
+                f"Failed to instantiate run context of action {action_def.name}(Run {run_id}): {str(exception)}."
+                + " See ER logs for more details"
+            ) from exception
+    else:
+        # TODO: check run_context below, whether AsyncPlaceholder can really be used
+        run_context = AsyncPlaceholderContext()
 
     action_result: code_action.RunActionResult | None = None
     runner_context = global_state.runner_context
 
     # TODO: take value from action config
-    execute_handlers_concurrently = action.name == "lint"
-    partial_result_token = options.partial_result_token
+    execute_handlers_concurrently = action_def.name.startswith("lint_files_")
     send_partial_results = partial_result_token is not None
     with action_exec_info.process_executor.activate():
         # action payload can be iterable or not
@@ -129,7 +138,7 @@ async def run_action(
             logger.trace(
                 f"R{run_id} | Iterable payload, execute all handlers to schedule coros"
             )
-            for handler in action.handlers:
+            for handler in action_def.handlers:
                 await execute_action_handler(
                     handler=handler,
                     payload=payload,
@@ -166,7 +175,7 @@ async def run_action(
                                 send_partial_results,
                                 partial_result_token,
                                 partial_result_sender,
-                                action.name,
+                                action_def.name,
                                 run_id,
                             )
                         else:
@@ -175,7 +184,7 @@ async def run_action(
                                 send_partial_results,
                                 partial_result_token,
                                 partial_result_sender,
-                                action.name,
+                                action_def.name,
                                 run_id,
                             )
                         subresult_task = tg.create_task(coro)
@@ -189,7 +198,7 @@ async def run_action(
                     else:
                         errors.append(exc.message)
                 raise ActionFailedException(
-                    f"Running action handlers of '{action.name}' failed(Run {run_id}): {errors}."
+                    f"Running action handlers of '{action_def.name}' failed(Run {run_id}): {errors}."
                     " See ER logs for more details"
                 )
 
@@ -211,7 +220,7 @@ async def run_action(
                 handlers_tasks: list[asyncio.Task] = []
                 try:
                     async with asyncio.TaskGroup() as tg:
-                        for handler in action.handlers:
+                        for handler in action_def.handlers:
                             handler_task = tg.create_task(
                                 execute_action_handler(
                                     handler=handler,
@@ -229,7 +238,7 @@ async def run_action(
                         # TODO: expected / unexpected?
                         logger.exception(exc)
                     raise ActionFailedException(
-                        f"Running action handlers of '{action.name}' failed"
+                        f"Running action handlers of '{action_def.name}' failed"
                         f"(Run {run_id}). See ER logs for more details"
                     )
 
@@ -241,7 +250,7 @@ async def run_action(
                         else:
                             action_result.update(coro_result)
             else:
-                for handler in action.handlers:
+                for handler in action_def.handlers:
                     try:
                         handler_result = await execute_action_handler(
                             handler=handler,
@@ -264,7 +273,7 @@ async def run_action(
     end_time = time.time_ns()
     duration = (end_time - start_time) / 1_000_000
     logger.trace(
-        f"R{run_id} | Run action end '{request.action_name}', duration: {duration}ms"
+        f"R{run_id} | Run action end '{action_def.name}', duration: {duration}ms"
     )
 
     # if partial results were sent, `action_result` may be None
@@ -277,6 +286,63 @@ async def run_action(
         raise ActionFailedException(
             f"Unexpected result type: {type(action_result).__name__}"
         )
+
+    return action_result
+
+
+async def run_action_raw(
+    request: schemas.RunActionRequest, options: schemas.RunActionOptions
+) -> schemas.RunActionResponse:
+    global last_run_id
+    run_id = last_run_id
+    last_run_id += 1
+    logger.trace(
+        f"Run action '{request.action_name}', run id: {run_id}, partial result token: {options.partial_result_token}"
+    )
+    # # TODO: check whether config is set: this will be solved by passing initial
+    # # configuration as payload of initialize
+    if global_state.runner_context is None:
+        raise ActionFailedException(
+            "Run of action failed because extension runner is not initialized yet"
+        )
+
+    project_def = global_state.runner_context.project
+
+    try:
+        action = project_def.actions[request.action_name]
+    except KeyError:
+        logger.error(f"R{run_id} | Action {request.action_name} not found")
+        raise ActionFailedException(
+            f"R{run_id} | Action {request.action_name} not found"
+        )
+
+    action_name = request.action_name
+
+    try:
+        action_cache = global_state.runner_context.action_cache_by_name[action_name]
+    except KeyError:
+        action_cache = domain.ActionCache()
+        global_state.runner_context.action_cache_by_name[action_name] = action_cache
+
+    if action_cache.exec_info is not None:
+        action_exec_info = action_cache.exec_info
+    else:
+        action_exec_info = create_action_exec_info(action)
+        action_cache.exec_info = action_exec_info
+
+    # TODO: catch validation errors
+    payload: code_action.RunActionPayload | None = None
+    if action_exec_info.payload_type is not None:
+        payload_type_with_validation = pydantic_dataclass(action_exec_info.payload_type)
+        payload = payload_type_with_validation(**request.params)
+
+    action_result = await run_action(
+        action_def=action,
+        payload=payload,
+        meta=options.meta,
+        partial_result_token=options.partial_result_token,
+        run_id=run_id,
+    )
 
     response = action_result_to_run_action_response(
         action_result, options.result_format
@@ -342,7 +408,7 @@ async def resolve_func_args_with_di(
     func: typing.Callable,
     known_args: dict[str, typing.Callable[[typing.Any], typing.Any]] | None = None,
     params_to_ignore: list[str] | None = None,
-):
+) -> dict[str, typing.Any]:
     func_parameters = inspect.signature(func).parameters
     func_annotations = inspect.get_annotations(func, eval_str=True)
     args: dict[str, typing.Any] = {}
@@ -371,7 +437,7 @@ async def resolve_func_args_with_di(
 async def execute_action_handler(
     handler: domain.ActionHandler,
     payload: code_action.RunActionPayload | None,
-    run_context: code_action.RunActionContext | None,
+    run_context: code_action.RunActionContext | AsyncPlaceholderContext,
     run_id: int,
     action_exec_info: domain.ActionExecInfo,
     action_cache: domain.ActionCache,
@@ -404,6 +470,7 @@ async def execute_action_handler(
         handler_instance = handler_cache.instance
         handler_run_func = handler_instance.run
         exec_info = handler_cache.exec_info
+        # TODO: check status of exec_info?
         logger.trace(
             f"R{run_id} | Instance of action handler {handler.name} found in cache"
         )
@@ -421,7 +488,7 @@ async def execute_action_handler(
             logger.error(error)
             raise ActionFailedException(
                 f"Import of action handler '{handler.name}' failed(Run {run_id}): {handler.source}"
-            )
+            ) from error
 
         def get_handler_config(param_type):
             # TODO: validation errors
@@ -450,6 +517,23 @@ async def execute_action_handler(
             handler_instance = action_handler(**args)
             handler_cache.instance = handler_instance
             handler_run_func = handler_instance.run
+
+            service_instances = [
+                instance
+                for instance in args.values()
+                if isinstance(instance, service.Service)
+            ]
+            handler_cache.used_services = service_instances
+            for service_instance in service_instances:
+                if service_instance not in runner_context.running_services:
+                    runner_context.running_services[service_instance] = (
+                        domain.RunningServiceInfo(used_by=[])
+                    )
+
+                runner_context.running_services[service_instance].used_by.append(
+                    handler_instance
+                )
+
         else:
             handler_run_func = action_handler
 
@@ -470,48 +554,70 @@ async def execute_action_handler(
                 )
                 raise ActionFailedException(
                     f"Initialisation of action handler '{handler.name}' failed(Run {run_id}): {e}"
-                )
+                ) from e
 
         exec_info.status = domain.ActionHandlerExecInfoStatus.INITIALIZED
 
     def get_run_payload(param_type):
         return payload
 
-    def get_run_context(param_type):
-        return run_context
-
-    # DI in `run` function is allowed only for action handlers in form of functions.
-    # `run` in classes may not have additional parameters, constructor parameters should
-    # be used instead. TODO: Validate?
-    args = await resolve_func_args_with_di(
-        func=handler_run_func,
-        known_args={"payload": get_run_payload, "run_context": get_run_context},
-    )
-    # TODO: cache parameters
+    # to be able to catch source of exceptions in user-accessible code more precisely,
+    # manually enter and exit run context
     try:
-        # there is also `inspect.iscoroutinefunction` but it cannot recognize coroutine
-        # functions which are class methods. Use `isawaitable` on result instead.
-        call_result = handler_run_func(**args)
-        if inspect.isawaitable(call_result):
-            execution_result = await call_result
-        else:
-            execution_result = call_result
+        run_context_instance = await run_context.__aenter__()
     except Exception as exception:
-        if isinstance(exception, code_action.StopActionRunWithResult):
-            action_result = exception.result
-            response = action_result_to_run_action_response(action_result, "string")
-            raise StopWithResponse(response=response)
-        elif isinstance(exception, iactionrunner.BaseRunActionException) or isinstance(
-            exception, code_action.ActionFailedException
-        ):
-            error_str = exception.message
-        else:
-            logger.error("Unhandled exception in action handler:")
-            logger.exception(exception)
-            error_str = str(exception)
         raise ActionFailedException(
-            f"Running action handler '{handler.name}' failed(Run {run_id}): {error_str}"
+            f"Failed to enter run context of handler {handler.name}(Run {run_id}): {str(exception)}."
+            + " See ER logs for more details"
+        ) from exception
+
+    try:
+
+        def get_run_context(param_type):
+            return run_context_instance
+
+        # DI in `run` function is allowed only for action handlers in form of functions.
+        # `run` in classes may not have additional parameters, constructor parameters should
+        # be used instead. TODO: Validate?
+        args = await resolve_func_args_with_di(
+            func=handler_run_func,
+            known_args={"payload": get_run_payload, "run_context": get_run_context},
         )
+        # TODO: cache parameters
+        try:
+            logger.trace(f"Call handler {handler.name}(run {run_id})")
+            # there is also `inspect.iscoroutinefunction` but it cannot recognize coroutine
+            # functions which are class methods. Use `isawaitable` on result instead.
+            call_result = handler_run_func(**args)
+            if inspect.isawaitable(call_result):
+                execution_result = await call_result
+            else:
+                execution_result = call_result
+        except Exception as exception:
+            if isinstance(exception, code_action.StopActionRunWithResult):
+                action_result = exception.result
+                response = action_result_to_run_action_response(action_result, "string")
+                raise StopWithResponse(response=response) from exception
+            elif isinstance(
+                exception, iactionrunner.BaseRunActionException
+            ) or isinstance(exception, code_action.ActionFailedException):
+                error_str = exception.message
+            else:
+                logger.error("Unhandled exception in action handler:")
+                logger.exception(exception)
+                error_str = str(exception)
+            raise ActionFailedException(
+                f"Running action handler '{handler.name}' failed(Run {run_id}): {error_str}"
+            ) from exception
+    finally:
+        # exit run context
+        try:
+            await run_context_instance.__aexit__(None, None, None)
+        except Exception as exception:
+            raise ActionFailedException(
+                f"Failed to exit run context of handler {handler.name}(Run {run_id}): {str(exception)}."
+                + " See ER logs for more details"
+            ) from exception
 
     end_time = time.time_ns()
     duration = (end_time - start_time) / 1_000_000

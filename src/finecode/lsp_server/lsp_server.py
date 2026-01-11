@@ -1,15 +1,17 @@
 import asyncio
+import collections.abc
 from functools import partial
 from pathlib import Path
 from typing import Any
 
 from loguru import logger
 from lsprotocol import types
+from pygls.workspace import position_codec
 from pygls.lsp.server import LanguageServer
 from finecode_extension_runner.lsp_server import CustomLanguageServer
 
 from finecode.services import shutdown_service
-from finecode.runner import runner_manager, runner_client
+from finecode.runner import runner_manager
 from finecode.lsp_server import global_state, schemas, services
 from finecode.lsp_server.endpoints import action_tree as action_tree_endpoints
 from finecode.lsp_server.endpoints import code_actions as code_actions_endpoints
@@ -20,7 +22,17 @@ from finecode.lsp_server.endpoints import formatting as formatting_endpoints
 from finecode.lsp_server.endpoints import inlay_hints as inlay_hints_endpoints
 
 
+def position_from_client_units(
+    self, lines: collections.abc.Sequence[str], position: types.Position
+) -> types.Position:
+    return position
+
+
 def create_lsp_server() -> CustomLanguageServer:
+    # avoid recalculating of positions by pygls
+    position_codec.PositionCodec.position_from_client_units = position_from_client_units
+    
+    
     # handle all requests explicitly because there are different types of requests:
     # project-specific, workspace-wide. Some Workspace-wide support partial responses,
     # some not.
@@ -127,6 +139,11 @@ def create_lsp_server() -> CustomLanguageServer:
         "finecode.restartExtensionRunner"
     )
     register_restart_extension_runner_cmd(restart_extension_runner)
+    
+    register_restart_and_debug_extension_runner_cmd = server.command(
+        "finecode.restartAndDebugExtensionRunner"
+    )
+    register_restart_and_debug_extension_runner_cmd(restart_and_debug_extension_runner)
 
     register_shutdown_feature = server.feature(types.SHUTDOWN)
     register_shutdown_feature(_on_shutdown)
@@ -134,35 +151,35 @@ def create_lsp_server() -> CustomLanguageServer:
     return server
 
 
-LOG_LEVEL_MAP = {
-    "DEBUG": types.MessageType.Debug,
-    "INFO": types.MessageType.Info,
-    "SUCCESS": types.MessageType.Info,
-    "WARNING": types.MessageType.Warning,
-    "ERROR": types.MessageType.Error,
-    "CRITICAL": types.MessageType.Error,
-}
+# LOG_LEVEL_MAP = {
+#     "DEBUG": types.MessageType.Debug,
+#     "INFO": types.MessageType.Info,
+#     "SUCCESS": types.MessageType.Info,
+#     "WARNING": types.MessageType.Warning,
+#     "ERROR": types.MessageType.Error,
+#     "CRITICAL": types.MessageType.Error,
+# }
 
 
 async def _on_initialized(ls: LanguageServer, params: types.InitializedParams):
-    def pass_log_to_ls_client(log) -> None:
-        # disabling and enabling logging of pygls package is required to avoid logging
-        # loop, because there are logs inside of log_trace and window_log_message
-        # functions
-        logger.disable("pygls")
-        if log.record["level"].no < 10:
-            # trace
-            ls.log_trace(types.LogTraceParams(message=log.record["message"]))
-        else:
-            level = LOG_LEVEL_MAP.get(log.record["level"].name, types.MessageType.Info)
-            ls.window_log_message(
-                types.LogMessageParams(type=level, message=log.record["message"])
-            )
-        logger.enable("pygls")
-        # module-specific config should be reapplied after disabling and enabling logger
-        # for the whole package
-        # TODO: unify with main
-        logger.configure(activation=[("pygls.protocol.json_rpc", False)])
+    # def pass_log_to_ls_client(log) -> None:
+    #     # disabling and enabling logging of pygls package is required to avoid logging
+    #     # loop, because there are logs inside of log_trace and window_log_message
+    #     # functions
+    #     logger.disable("pygls")
+    #     if log.record["level"].no < 10:
+    #         # trace
+    #         ls.log_trace(types.LogTraceParams(message=log.record["message"]))
+    #     else:
+    #         level = LOG_LEVEL_MAP.get(log.record["level"].name, types.MessageType.Info)
+    #         ls.window_log_message(
+    #             types.LogMessageParams(type=level, message=log.record["message"])
+    #         )
+    #     logger.enable("pygls")
+    #     # module-specific config should be reapplied after disabling and enabling logger
+    #     # for the whole package
+    #     # TODO: unify with main
+    #     logger.configure(activation=[("pygls.protocol.json_rpc", False)])
 
     # loguru doesn't support passing partial with ls parameter, use nested function
     # instead
@@ -170,32 +187,7 @@ async def _on_initialized(ls: LanguageServer, params: types.InitializedParams):
     # Disabled, because it is not thread-safe and it means not compatible with IO thread
     # logger.add(sink=pass_log_to_ls_client)
 
-    async def get_document(
-        params: runner_client.GetDocumentParams,
-    ) -> runner_client.GetDocumentResult:
-        try:
-            doc_info = global_state.ws_context.opened_documents[params.uri]
-        except KeyError:
-            # this error can happen even if ER processes documents correctly: document
-            # is opened, action execution starts, user closes the document, ER is busy
-            # at this moment, action execution comes to reading the file before new sync
-            # of opened documents -> error occurs. ER is expected to be always never
-            # blocked, but still avoid possible error.
-            #
-            # pygls makes all exceptions on server side JsonRpcInternalError and they
-            # should be matched by text.
-            # Example: https://github.com/openlawlibrary/pygls/blob/main/tests/
-            #           lsp/test_errors.py#L108C24-L108C44
-            raise Exception("Document is not opened")
-
-        text = ls.workspace.get_text_document(params.uri).source
-        return runner_client.GetDocumentResult(
-            uri=params.uri, version=doc_info.version, text=text
-        )
-
     logger.info("initialized, adding workspace directories")
-
-    services.register_document_getter(get_document)
 
     async def apply_workspace_edit(params):
         return await ls.workspace_apply_edit_async(params)
@@ -216,6 +208,7 @@ async def _on_initialized(ls: LanguageServer, params: types.InitializedParams):
         ls.progress(types.ProgressParams(token, value))
 
     services.register_progress_reporter(report_progress)
+    services.register_debug_session_starter(partial(start_debug_session, ls))
 
     try:
         async with asyncio.TaskGroup() as tg:
@@ -256,20 +249,33 @@ def _on_shutdown(ls: LanguageServer, params):
 async def reset(ls: LanguageServer, params):
     logger.info("Reset WM")
     await global_state.server_initialized.wait()
-    ...
 
 
-async def restart_extension_runner(ls: LanguageServer, params):
-    logger.info(f"restart extension runners {params}")
+async def restart_extension_runner(ls: LanguageServer, tree_node, param2):
+    logger.info(f"restart extension runner {tree_node}")
     await global_state.server_initialized.wait()
 
-    params_dict = params[0]
-    runner_working_dir_str = params_dict["projectPath"]
+    runner_id = tree_node['projectPath']
+    splitted_runner_id = runner_id.split('::')
+    runner_working_dir_str = splitted_runner_id[0]
     runner_working_dir_path = Path(runner_working_dir_str)
+    env_name = splitted_runner_id[-1]
 
-    await runner_manager.restart_extension_runners(
-        runner_working_dir_path, global_state.ws_context
-    )
+    await runner_manager.restart_extension_runner(runner_working_dir_path=runner_working_dir_path, env_name=env_name, ws_context=global_state.ws_context)
+
+
+async def restart_and_debug_extension_runner(ls: LanguageServer, tree_node, params2):
+    logger.info(f"restart and debug extension runner {tree_node} {params2}")
+    await global_state.server_initialized.wait()
+
+    runner_id = tree_node['projectPath']
+    splitted_runner_id = runner_id.split('::')
+    runner_working_dir_str = splitted_runner_id[0]
+    runner_working_dir_path = Path(runner_working_dir_str)
+    env_name = splitted_runner_id[-1]
+
+    logger.info(f'start debugging {runner_working_dir_path} {runner_id} {env_name}')
+    await runner_manager.restart_extension_runner(runner_working_dir_path=runner_working_dir_path, env_name=env_name, ws_context=global_state.ws_context, debug=True)
 
 
 async def send_user_message_notification(
@@ -292,6 +298,13 @@ async def send_user_message_request(
             type=types.MessageType[message_type_pascal], message=message
         )
     )
+
+
+async def start_debug_session(
+    ls: LanguageServer, params
+) -> None:
+    res = await ls.protocol.send_request_async('ide/startDebugging', params)
+    logger.info(f"started debugging: {res}")
 
 
 __all__ = ["create_lsp_server"]

@@ -2,6 +2,8 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Literal
 
+from finecode_extension_api import code_action
+
 
 @dataclass
 class BaseSchema:
@@ -45,6 +47,7 @@ class RunActionRequest(BaseSchema):
 
 @dataclass
 class RunActionOptions(BaseSchema):
+    meta: code_action.RunActionMeta
     partial_result_token: int | str | None = None
     result_format: Literal["json"] | Literal["string"] = "json"
 

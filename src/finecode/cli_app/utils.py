@@ -81,6 +81,8 @@ async def run_actions_in_projects_and_concat_results(
     action_payload: dict[str, str],
     ws_context: context.WorkspaceContext,
     concurrently: bool,
+    run_trigger: run_service.RunActionTrigger,
+    dev_env: run_service.DevEnv,
 ) -> tuple[str, int]:
     result_by_project = await run_service.run_actions_in_projects(
         actions_by_project=actions_by_project,
@@ -88,6 +90,8 @@ async def run_actions_in_projects_and_concat_results(
         ws_context=ws_context,
         concurrently=concurrently,
         result_format=run_service.RunResultFormat.STRING,
+        run_trigger=run_trigger,
+        dev_env=dev_env
     )
 
     result_output: str = ""

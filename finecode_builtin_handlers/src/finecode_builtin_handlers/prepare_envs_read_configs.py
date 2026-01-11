@@ -6,7 +6,6 @@ import typing
 from finecode_extension_api import code_action
 from finecode_extension_api.actions import prepare_envs as prepare_envs_action
 from finecode_extension_api.interfaces import (
-    iactionrunner,
     ilogger,
     iprojectinfoprovider,
 )
@@ -24,11 +23,9 @@ class PrepareEnvsReadConfigsHandler(
 ):
     def __init__(
         self,
-        action_runner: iactionrunner.IActionRunner,
         project_info_provider: iprojectinfoprovider.IProjectInfoProvider,
         logger: ilogger.ILogger,
     ) -> None:
-        self.action_runner = action_runner
         self.project_info_provider = project_info_provider
         self.logger = logger
 
