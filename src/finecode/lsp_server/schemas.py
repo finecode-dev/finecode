@@ -44,9 +44,10 @@ class ActionTreeNode(BaseModel):
         DIRECTORY = 0
         PROJECT = 1
         ACTION = 2
-        PRESET = 3
-        ENV_GROUP = 4
-        ENV = 5
+        ACTION_GROUP = 3
+        PRESET = 4
+        ENV_GROUP = 5
+        ENV = 6
 
 
 class ListActionsResponse(BaseModel):

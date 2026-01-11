@@ -42,6 +42,7 @@ def get_project_action_tree(
     actions_nodes: list[schemas.ActionTreeNode] = []
     if project.status == domain.ProjectStatus.CONFIG_VALID:
         assert project.actions is not None
+        action_nodes: list[schemas.ActionTreeNode] = []
         for action in project.actions:
             node_id = f"{project.dir_path.as_posix()}::{action.name}"
             handlers_nodes = [
@@ -54,7 +55,7 @@ def get_project_action_tree(
                 )
                 for handler in action.handlers
             ]
-            actions_nodes.append(
+            action_nodes.append(
                 schemas.ActionTreeNode(
                     node_id=node_id,
                     name=action.name,
@@ -69,7 +70,18 @@ def get_project_action_tree(
                 action_name=action.name,
             )
         
-        envs_nodes = []
+        node_id = f"{project.dir_path.as_posix()}::actions"
+        actions_nodes.append(
+            schemas.ActionTreeNode(
+                node_id=node_id,
+                name="Actions",
+                node_type=schemas.ActionTreeNode.NodeType.ACTION_GROUP,
+                subnodes=action_nodes,
+                status="",
+            )
+        )
+        
+        envs_nodes: list[schemas.ActionTreeNode] = []
         for env in project.envs:
             node_id = f"{project.dir_path.as_posix()}::envs::{env}"
             envs_nodes.append(
