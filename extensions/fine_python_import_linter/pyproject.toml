@@ -5,15 +5,10 @@ description = ""
 authors = [{ name = "Vladyslav Hnatiuk", email = "aders1234@gmail.com" }]
 readme = "README.md"
 requires-python = ">= 3.11, <= 3.14"
-dependencies = ["finecode_extension_api == 0.3.*", "import-linter (>=2.1,<3.0)"]
-
-
-[build-system]
-requires = ["poetry-core>=2.0.0,<3.0.0"]
-build-backend = "poetry.core.masonry.api"
+dependencies = ["finecode_extension_api == 0.4.*", "import-linter (>=2.1,<3.0)"]
 
 [dependency-groups]
-dev_workspace = ["finecode==0.3.*", "finecode_dev_common_preset==0.2.*"]
+dev_workspace = ["finecode==0.4.*", "finecode_dev_common_preset==0.3.*"]
 
 [tool.finecode]
 presets = [{ source = "finecode_dev_common_preset" }]

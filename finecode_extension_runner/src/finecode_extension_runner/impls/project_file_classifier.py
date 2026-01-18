@@ -9,6 +9,7 @@ from finecode_extension_api import service
 
 
 # TODO: it should be package file classifier?
+# TODO: is it specific to python?
 class ProjectFileClassifier(
     iprojectfileclassifier.IProjectFileClassifier, service.Service
 ):

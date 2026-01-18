@@ -1,14 +1,14 @@
 [project]
 name = "fine_python_black"
-version = "0.2.0"
+version = "0.3.0a1"
 description = ""
 authors = [{ name = "Vladyslav Hnatiuk", email = "aders1234@gmail.com" }]
 readme = "README.md"
 requires-python = ">=3.11, <= 3.14"
-dependencies = ["finecode_extension_api==0.3.*", "black (>=25.1.0,<26.0.0)"]
+dependencies = ["finecode_extension_api==0.4.*", "black (>=25.1.0,<26.0.0)"]
 
 [dependency-groups]
-dev_workspace = ["finecode==0.3.*", "finecode_dev_common_preset==0.2.*"]
+dev_workspace = ["finecode==0.4.*", "finecode_dev_common_preset==0.3.*"]
 
 [tool.finecode]
 presets = [{ source = "finecode_dev_common_preset" }]

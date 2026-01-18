@@ -10,6 +10,19 @@ from finecode_extension_api.interfaces import ifileeditor, ifilemanager, ilogger
 
 T = TypeVar("T")
 
+class QueueIterator:
+    def __init__(self, queue: asyncio.Queue[T]):
+        self._queue = queue
+    
+    def __aiter__(self):
+        return self
+    
+    async def __anext__(self):
+        item = await self._queue.get()
+        if item is None:  # Sentinel
+            raise StopAsyncIteration
+        return item
+
 
 class MultiQueueIterator(collections.abc.AsyncIterator[T]):
     """Merges multiple asyncio queues into a single async iterator.
@@ -110,6 +123,19 @@ class BlockedFileInfo:
     unblock_event: asyncio.Event
 
 
+class BaseSubscription: ...
+
+
+class SubscriptionToFileChanges(BaseSubscription):
+    def __init__(self) -> None:
+        self.event_queue: asyncio.Queue[ifileeditor.FileChangeEvent] = asyncio.Queue()
+
+
+class SubscriptionToAllEvents(BaseSubscription):
+    def __init__(self) -> None:
+        self.event_queue: asyncio.Queue[ifileeditor.FileEvent] = asyncio.Queue()
+
+
 class FileEditorSession(ifileeditor.IFileEditorSession):
     def __init__(
         self,
@@ -118,12 +144,16 @@ class FileEditorSession(ifileeditor.IFileEditorSession):
         file_manager: ifilemanager.IFileManager,
         opened_files: dict[pathlib.Path, OpenedFileInfo],
         blocked_files: dict[pathlib.Path, BlockedFileInfo],
-        subscriptions_by_session: dict[
+        file_change_subscriptions: dict[
             pathlib.Path,
             dict[
                 ifileeditor.IFileEditorSession,
-                asyncio.Queue[ifileeditor.FileChangeEvent],
+                SubscriptionToFileChanges,
             ],
+        ],
+        all_events_subscriptions: dict[
+            ifileeditor.IFileEditorSession,
+            SubscriptionToAllEvents,
         ],
     ) -> None:
         self.logger = logger
@@ -131,9 +161,9 @@ class FileEditorSession(ifileeditor.IFileEditorSession):
         self._file_manager = file_manager
         self._opened_files = opened_files
         self._blocked_files = blocked_files
-        self._subscriptions_by_session = subscriptions_by_session
+        self._file_change_subscriptions = file_change_subscriptions
+        self._all_events_subscriptions = all_events_subscriptions
 
-        # self._subscribed_to_opened_files = False
         self._opened_file_subscription: (
             MultiQueueIterator[ifileeditor.FileChangeEvent] | None
         ) = None
@@ -150,7 +180,7 @@ class FileEditorSession(ifileeditor.IFileEditorSession):
 
             # Clean up subscriptions
             files_to_unsubscribe: list[pathlib.Path] = []
-            for file_path, sessions_dict in self._subscriptions_by_session.items():
+            for file_path, sessions_dict in self._file_change_subscriptions.items():
                 if self in sessions_dict:
                     files_to_unsubscribe.append(file_path)
 
@@ -201,9 +231,12 @@ class FileEditorSession(ifileeditor.IFileEditorSession):
             new_file_content = FileEditorSession.apply_change_to_file_content(
                 change=change, file_content=file_content
             )
+            self.logger.info(str(change))
+            self.logger.info(f"||{file_content}||{new_file_content}||")
             self._update_opened_file_info(
                 file_path=file_path, new_file_content=new_file_content
             )
+            self.logger.trace(f"File {file_path} is opened, updated its content")
         else:
             file_content = await self._file_manager.get_content(file_path=file_path)
             new_file_content = FileEditorSession.apply_change_to_file_content(
@@ -212,9 +245,12 @@ class FileEditorSession(ifileeditor.IFileEditorSession):
             await self._file_manager.save_file(
                 file_path=file_path, file_content=new_file_content
             )
+            self.logger.trace(
+                f"File {file_path} is not opened, saved it in file system"
+            )
 
         # notify subscribers
-        if file_path in self._subscriptions_by_session:
+        if file_path in self._file_change_subscriptions or len(self._all_events_subscriptions) > 0:
             self._notify_subscribers_about_file_change(
                 file_path=file_path, change=change
             )
@@ -237,14 +273,12 @@ class FileEditorSession(ifileeditor.IFileEditorSession):
 
             # Validate range
             if start_line < 0 or end_line < 0:
-                raise ValueError(f"Invalid range: negative line numbers not allowed")
+                raise ValueError("Invalid range: negative line numbers not allowed")
 
             if end_line < start_line or (
                 end_line == start_line and end_char < start_char
             ):
-                raise ValueError(
-                    f"Invalid range: end position is before start position"
-                )
+                raise ValueError("Invalid range: end position is before start position")
 
             # For bounds checking: line indices beyond file length should be treated as
             # appending to the end. LSP spec allows this for insertions at end of file,
@@ -272,7 +306,8 @@ class FileEditorSession(ifileeditor.IFileEditorSession):
                     after_parts.append(lines[i])
             after = "".join(after_parts)
 
-            return before + change.text + after
+            new_file_content = before + change.text + after
+            return new_file_content
 
     @contextlib.asynccontextmanager
     async def subscribe_to_changes_of_opened_files(
@@ -294,7 +329,7 @@ class FileEditorSession(ifileeditor.IFileEditorSession):
         finally:
             # Unsubscribe from all files
             files_to_unsubscribe: list[pathlib.Path] = []
-            for file_path, sessions_dict in self._subscriptions_by_session.items():
+            for file_path, sessions_dict in self._file_change_subscriptions.items():
                 if self in sessions_dict:
                     files_to_unsubscribe.append(file_path)
 
@@ -307,35 +342,37 @@ class FileEditorSession(ifileeditor.IFileEditorSession):
     def _subscribe_to_file_changes(
         self, file_path: pathlib.Path
     ) -> asyncio.Queue[ifileeditor.FileChangeEvent]:
-        if file_path not in self._subscriptions_by_session:
-            self._subscriptions_by_session[file_path] = {}
+        if file_path not in self._file_change_subscriptions:
+            self._file_change_subscriptions[file_path] = {}
 
-        change_queue: asyncio.Queue[ifileeditor.FileChangeEvent] = asyncio.Queue()
-        self._subscriptions_by_session[file_path][self] = change_queue
+        new_subscription = SubscriptionToFileChanges()
+        self._file_change_subscriptions[file_path][self] = new_subscription
 
-        return change_queue
+        return new_subscription.event_queue
 
     def _unsubscribe_from_file_changes(
         self, file_path: pathlib.Path
     ) -> asyncio.Queue[ifileeditor.FileChangeEvent]:
-        change_queue = self._subscriptions_by_session[file_path][self]
+        subscription = self._file_change_subscriptions[file_path][self]
 
-        del self._subscriptions_by_session[file_path][self]
+        del self._file_change_subscriptions[file_path][self]
 
-        if len(self._subscriptions_by_session[file_path]) == 0:
-            del self._subscriptions_by_session[file_path]
+        if len(self._file_change_subscriptions[file_path]) == 0:
+            del self._file_change_subscriptions[file_path]
 
-        return change_queue
+        return subscription.event_queue
 
     def _notify_subscribers_about_file_change(
         self, file_path: pathlib.Path, change: ifileeditor.FileChange
     ) -> None:
-        # this method expects that there are subscriptions to this file
-        for change_queue in self._subscriptions_by_session[file_path].values():
-            file_change_event = ifileeditor.FileChangeEvent(
-                file_path=file_path, author=self.author, change=change
-            )
-            change_queue.put_nowait(file_change_event)
+        file_change_event = ifileeditor.FileChangeEvent(
+            file_path=file_path, author=self.author, change=change
+        )
+        for subscription in self._file_change_subscriptions[file_path].values():
+            subscription.event_queue.put_nowait(file_change_event)
+        
+        for subscription in self._all_events_subscriptions.values():
+            subscription.event_queue.put_nowait(file_change_event)
 
     async def open_file(self, file_path: pathlib.Path) -> None:
         if file_path in self._opened_files:
@@ -367,6 +404,11 @@ class FileEditorSession(ifileeditor.IFileEditorSession):
             assert self._opened_file_subscription is not None
             self._opened_file_subscription.add_queue(change_queue)
 
+        if len(self._all_events_subscriptions) > 0:
+            file_open_event = ifileeditor.FileOpenEvent(file_path=file_path)
+            for subscription in self._all_events_subscriptions.values():
+                subscription.event_queue.put_nowait(file_open_event)
+
     async def save_opened_file(self, file_path: pathlib.Path) -> None:
         if file_path not in self._opened_files:
             raise ValueError(f"{file_path} is not opened")
@@ -390,13 +432,20 @@ class FileEditorSession(ifileeditor.IFileEditorSession):
             opened_file_info = self._opened_files[file_path]
             try:
                 opened_file_info.opened_by.remove(self)
-            except ValueError:
-                raise ValueError(f"{file_path} is not opened in this session")
+            except ValueError as exception:
+                raise ValueError(
+                    f"{file_path} is not opened in this session"
+                ) from exception
 
             if len(opened_file_info.opened_by) == 0:
                 del self._opened_files[file_path]
-        except KeyError:
-            raise ValueError(f"{file_path} is not opened")
+        except KeyError as exception:
+            raise ValueError(f"{file_path} is not opened") from exception
+
+        if len(self._all_events_subscriptions) > 0:
+            file_close_event = ifileeditor.FileOpenEvent(file_path=file_path)
+            for subscription in self._all_events_subscriptions.values():
+                subscription.event_queue.put_nowait(file_close_event)
 
     def _update_opened_file_info(
         self, file_path: pathlib.Path, new_file_content: str
@@ -406,6 +455,20 @@ class FileEditorSession(ifileeditor.IFileEditorSession):
         opened_file_info.content = new_file_content
         new_version = hash(new_file_content)  # or just increase?
         opened_file_info.version = str(new_version)
+
+    @contextlib.asynccontextmanager
+    async def subscribe_to_all_events(
+        self,
+    ) -> collections.abc.AsyncIterator[ifileeditor.FileEvent]:
+        new_subscription = SubscriptionToAllEvents()
+        self._all_events_subscriptions[self] = new_subscription
+        iterator = QueueIterator(queue=new_subscription.event_queue)
+        
+        try:
+            yield iterator
+        finally:
+            del self._all_events_subscriptions[self]
+            await iterator._queue.put(None)
 
     @contextlib.asynccontextmanager
     async def read_file(
@@ -468,7 +531,7 @@ class FileEditorSession(ifileeditor.IFileEditorSession):
                 file_path=file_path, new_file_content=file_content
             )
 
-        if file_path in self._subscriptions_by_session:
+        if file_path in self._file_change_subscriptions or len(self._all_events_subscriptions) > 0:
             file_change = ifileeditor.FileChangeFull(text=file_content)
             self._notify_subscribers_about_file_change(
                 file_path=file_path, change=file_change
@@ -488,12 +551,16 @@ class FileEditor(ifileeditor.IFileEditor):
         self._author_by_session: dict[
             ifileeditor.IFileEditorSession, ifileeditor.FileOperationAuthor
         ] = {}
-        self._subscriptions_by_session: dict[
+        self._file_change_subscriptions: dict[
             pathlib.Path,
             dict[
                 ifileeditor.IFileEditorSession,
-                asyncio.Queue[ifileeditor.FileChangeEvent],
+                SubscriptionToFileChanges,
             ],
+        ] = {}
+        self._all_events_subscriptions: dict[
+            ifileeditor.IFileEditorSession,
+            SubscriptionToAllEvents,
         ] = {}
 
     @contextlib.asynccontextmanager
@@ -506,7 +573,8 @@ class FileEditor(ifileeditor.IFileEditor):
             file_manager=self.file_manager,
             opened_files=self._opened_files,
             blocked_files=self._blocked_files,
-            subscriptions_by_session=self._subscriptions_by_session,
+            file_change_subscriptions=self._file_change_subscriptions,
+            all_events_subscriptions=self._all_events_subscriptions,
         )
         self._sessions.append(new_session)
         self._author_by_session[new_session] = author

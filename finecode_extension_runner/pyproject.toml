@@ -8,9 +8,9 @@ requires-python = ">=3.11, <= 3.14"
 dependencies = [
     "loguru==0.7.*",
     "click==8.1.*",
-    "pydantic==2.11.*",
+    "pydantic==2.12.*",
     "pygls==2.0.0",
-    "finecode_extension_api==0.3.*",
+    "finecode_extension_api==0.4.*",
     "deepmerge==2.0.*",
     "debugpy==1.8.*",
 ]
@@ -20,8 +20,8 @@ dependencies = [
 # "fine_python_import_linter @ git+https://github.com/finecode-dev/finecode.git#subdirectory=extensions/fine_python_import_linter"
 dev_workspace = [
     "build==1.2.2.post1",
-    "finecode==0.3.*",
-    "finecode_dev_common_preset==0.2.*",
+    "finecode==0.4.*",
+    "finecode_dev_common_preset==0.3.*",
 ]
 dev = [{ include-group = "runtime" }, "pytest==7.4.*", "debugpy==1.8.*"]
 

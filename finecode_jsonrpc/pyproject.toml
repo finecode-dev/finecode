@@ -1,6 +1,6 @@
 [project]
 name = "finecode_jsonrpc"
-version = "0.1.0"
+version = "0.1.0a1"
 description = "JSON-RPC client implementation for FineCode"
 authors = [{ name = "Vladyslav Hnatiuk", email = "aders1234@gmail.com" }]
 readme = "README.md"
@@ -8,7 +8,7 @@ requires-python = ">=3.11, <= 3.14"
 dependencies = ["loguru==0.7.*", "culsans==0.9.*", "apischema==0.19.*"]
 
 [dependency-groups]
-dev_workspace = ["finecode==0.3.*", "finecode_dev_common_preset==0.2.*"]
+dev_workspace = ["finecode==0.4.*", "finecode_dev_common_preset==0.3.*"]
 
 [tool.finecode]
 presets = [{ source = "finecode_dev_common_preset" }]
