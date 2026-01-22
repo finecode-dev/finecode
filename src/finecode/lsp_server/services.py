@@ -57,7 +57,7 @@ async def add_workspace_dir(
     dir_path = Path(request.dir_path)
 
     if dir_path in global_state.ws_context.ws_dirs_paths:
-        raise ValueError("Directory is already added")
+        await user_messages.error(f"Directory {dir_path} is already added")
 
     global_state.ws_context.ws_dirs_paths.append(dir_path)
     new_projects = await read_configs.read_projects_in_dir(
@@ -76,7 +76,7 @@ async def add_workspace_dir(
             projects=new_projects, ws_context=global_state.ws_context
         )
     except runner_manager.RunnerFailedToStart as exception:
-        raise ValueError(f"Starting runners with presets failed: {exception.message}")
+        await user_messages.error(f"Starting runners with presets failed: {exception.message}. Did you run `finecode prepare-envs` ?")
 
     return schemas.AddWorkspaceDirResponse()
 
