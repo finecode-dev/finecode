@@ -126,149 +126,169 @@ async def run_action(
     action_result: code_action.RunActionResult | None = None
     runner_context = global_state.runner_context
 
-    # TODO: take value from action config
-    execute_handlers_concurrently = action_def.name.startswith("lint_files_")
-    send_partial_results = partial_result_token is not None
-    with action_exec_info.process_executor.activate():
-        # action payload can be iterable or not
-        if isinstance(payload, collections.abc.AsyncIterable):
-            # iterable: `run` method should not calculate results itself, but call
-            #           `partial_result_scheduler.schedule`. Then we execute provided
-            #           coroutines either concurrently or sequentially.
-            logger.trace(
-                f"R{run_id} | Iterable payload, execute all handlers to schedule coros"
-            )
-            for handler in action_def.handlers:
-                await execute_action_handler(
-                    handler=handler,
-                    payload=payload,
-                    run_context=run_context,
-                    run_id=run_id,
-                    action_cache=action_cache,
-                    action_exec_info=action_exec_info,
-                    runner_context=runner_context,
-                )
+    # to be able to catch source of exceptions in user-accessible code more precisely,
+    # manually enter and exit run context
+    try:
+        run_context_instance = await run_context.__aenter__()
+    except Exception as exception:
+        raise ActionFailedException(
+            f"Failed to enter run context of action {action_def.name}(Run {run_id}): {str(exception)}."
+            + " See ER logs for more details"
+        ) from exception
 
-            parts = [part async for part in payload]
-            subresults_tasks: list[asyncio.Task] = []
-            logger.trace(
-                "R{run_id} | Run subresult coros {exec_type} {partials} partial results".format(
-                    run_id=run_id,
-                    exec_type=(
-                        "concurrently"
-                        if execute_handlers_concurrently
-                        else "sequentially"
-                    ),
-                    partials="with" if send_partial_results else "without",
+    try:
+        # TODO: take value from action config
+        execute_handlers_concurrently = action_def.name.startswith("lint_files_")
+        send_partial_results = partial_result_token is not None
+        with action_exec_info.process_executor.activate():
+            # action payload can be iterable or not
+            if isinstance(payload, collections.abc.AsyncIterable):
+                # iterable: `run` method should not calculate results itself, but call
+                #           `partial_result_scheduler.schedule`. Then we execute provided
+                #           coroutines either concurrently or sequentially.
+                logger.trace(
+                    f"R{run_id} | Iterable payload, execute all handlers to schedule coros"
                 )
-            )
-            try:
-                async with asyncio.TaskGroup() as tg:
-                    for part in parts:
-                        part_coros = (
-                            run_context.partial_result_scheduler.coroutines_by_key[part]
-                        )
-                        del run_context.partial_result_scheduler.coroutines_by_key[part]
-                        if execute_handlers_concurrently:
-                            coro = run_subresult_coros_concurrently(
-                                part_coros,
-                                send_partial_results,
-                                partial_result_token,
-                                partial_result_sender,
-                                action_def.name,
-                                run_id,
-                            )
-                        else:
-                            coro = run_subresult_coros_sequentially(
-                                part_coros,
-                                send_partial_results,
-                                partial_result_token,
-                                partial_result_sender,
-                                action_def.name,
-                                run_id,
-                            )
-                        subresult_task = tg.create_task(coro)
-                        subresults_tasks.append(subresult_task)
-            except ExceptionGroup as eg:
-                errors: list[str] = []
-                for exc in eg.exceptions:
-                    if not isinstance(exc, ActionFailedException):
-                        logger.error("Unexpected exception:")
-                        logger.exception(exc)
-                    else:
-                        errors.append(exc.message)
-                raise ActionFailedException(
-                    f"Running action handlers of '{action_def.name}' failed(Run {run_id}): {errors}."
-                    " See ER logs for more details"
-                )
-
-            if send_partial_results:
-                # all subresults are ready
-                logger.trace(f"R{run_id} | all subresults are ready, send them")
-                await partial_result_sender.send_all_immediately()
-            else:
-                for subresult_task in subresults_tasks:
-                    result = subresult_task.result()
-                    if result is not None:
-                        if action_result is None:
-                            action_result = result
-                        else:
-                            action_result.update(result)
-        else:
-            # action payload not iterable, just execute handlers on the whole payload
-            if execute_handlers_concurrently:
-                handlers_tasks: list[asyncio.Task] = []
-                try:
-                    async with asyncio.TaskGroup() as tg:
-                        for handler in action_def.handlers:
-                            handler_task = tg.create_task(
-                                execute_action_handler(
-                                    handler=handler,
-                                    payload=payload,
-                                    run_context=run_context,
-                                    run_id=run_id,
-                                    action_cache=action_cache,
-                                    action_exec_info=action_exec_info,
-                                    runner_context=runner_context,
-                                )
-                            )
-                            handlers_tasks.append(handler_task)
-                except ExceptionGroup as eg:
-                    for exc in eg.exceptions:
-                        # TODO: expected / unexpected?
-                        logger.exception(exc)
-                    raise ActionFailedException(
-                        f"Running action handlers of '{action_def.name}' failed"
-                        f"(Run {run_id}). See ER logs for more details"
+                for handler in action_def.handlers:
+                    await execute_action_handler(
+                        handler=handler,
+                        payload=payload,
+                        run_context=run_context_instance,
+                        run_id=run_id,
+                        action_cache=action_cache,
+                        action_exec_info=action_exec_info,
+                        runner_context=runner_context,
                     )
 
-                for handler_task in handlers_tasks:
-                    coro_result = handler_task.result()
-                    if coro_result is not None:
-                        if action_result is None:
-                            action_result = coro_result
+                parts = [part async for part in payload]
+                subresults_tasks: list[asyncio.Task] = []
+                logger.trace(
+                    "R{run_id} | Run subresult coros {exec_type} {partials} partial results".format(
+                        run_id=run_id,
+                        exec_type=(
+                            "concurrently"
+                            if execute_handlers_concurrently
+                            else "sequentially"
+                        ),
+                        partials="with" if send_partial_results else "without",
+                    )
+                )
+                try:
+                    async with asyncio.TaskGroup() as tg:
+                        for part in parts:
+                            part_coros = (
+                                run_context.partial_result_scheduler.coroutines_by_key[part]
+                            )
+                            del run_context.partial_result_scheduler.coroutines_by_key[part]
+                            if execute_handlers_concurrently:
+                                coro = run_subresult_coros_concurrently(
+                                    part_coros,
+                                    send_partial_results,
+                                    partial_result_token,
+                                    partial_result_sender,
+                                    action_def.name,
+                                    run_id,
+                                )
+                            else:
+                                coro = run_subresult_coros_sequentially(
+                                    part_coros,
+                                    send_partial_results,
+                                    partial_result_token,
+                                    partial_result_sender,
+                                    action_def.name,
+                                    run_id,
+                                )
+                            subresult_task = tg.create_task(coro)
+                            subresults_tasks.append(subresult_task)
+                except ExceptionGroup as eg:
+                    errors: list[str] = []
+                    for exc in eg.exceptions:
+                        if not isinstance(exc, ActionFailedException):
+                            logger.error("Unexpected exception:")
+                            logger.exception(exc)
                         else:
-                            action_result.update(coro_result)
-            else:
-                for handler in action_def.handlers:
-                    try:
-                        handler_result = await execute_action_handler(
-                            handler=handler,
-                            payload=payload,
-                            run_context=run_context,
-                            run_id=run_id,
-                            action_cache=action_cache,
-                            action_exec_info=action_exec_info,
-                            runner_context=runner_context,
-                        )
-                    except ActionFailedException as exception:
-                        raise exception
+                            errors.append(exc.message)
+                    raise ActionFailedException(
+                        f"Running action handlers of '{action_def.name}' failed(Run {run_id}): {errors}."
+                        " See ER logs for more details"
+                    )
 
-                    if handler_result is not None:
-                        if action_result is None:
-                            action_result = handler_result
-                        else:
-                            action_result.update(handler_result)
+                if send_partial_results:
+                    # all subresults are ready
+                    logger.trace(f"R{run_id} | all subresults are ready, send them")
+                    await partial_result_sender.send_all_immediately()
+                else:
+                    for subresult_task in subresults_tasks:
+                        result = subresult_task.result()
+                        if result is not None:
+                            if action_result is None:
+                                action_result = result
+                            else:
+                                action_result.update(result)
+            else:
+                # action payload not iterable, just execute handlers on the whole payload
+                if execute_handlers_concurrently:
+                    handlers_tasks: list[asyncio.Task] = []
+                    try:
+                        async with asyncio.TaskGroup() as tg:
+                            for handler in action_def.handlers:
+                                handler_task = tg.create_task(
+                                    execute_action_handler(
+                                        handler=handler,
+                                        payload=payload,
+                                        run_context=run_context_instance,
+                                        run_id=run_id,
+                                        action_cache=action_cache,
+                                        action_exec_info=action_exec_info,
+                                        runner_context=runner_context,
+                                    )
+                                )
+                                handlers_tasks.append(handler_task)
+                    except ExceptionGroup as eg:
+                        for exc in eg.exceptions:
+                            # TODO: expected / unexpected?
+                            logger.exception(exc)
+                        raise ActionFailedException(
+                            f"Running action handlers of '{action_def.name}' failed"
+                            f"(Run {run_id}). See ER logs for more details"
+                        )
+
+                    for handler_task in handlers_tasks:
+                        coro_result = handler_task.result()
+                        if coro_result is not None:
+                            if action_result is None:
+                                action_result = coro_result
+                            else:
+                                action_result.update(coro_result)
+                else:
+                    for handler in action_def.handlers:
+                        try:
+                            handler_result = await execute_action_handler(
+                                handler=handler,
+                                payload=payload,
+                                run_context=run_context_instance,
+                                run_id=run_id,
+                                action_cache=action_cache,
+                                action_exec_info=action_exec_info,
+                                runner_context=runner_context,
+                            )
+                        except ActionFailedException as exception:
+                            raise exception
+
+                        if handler_result is not None:
+                            if action_result is None:
+                                action_result = handler_result
+                            else:
+                                action_result.update(handler_result)
+    finally:
+        # exit run context
+        try:
+            await run_context_instance.__aexit__(None, None, None)
+        except Exception as exception:
+            raise ActionFailedException(
+                f"Failed to exit run context of action {action_def.name}(Run {run_id}): {str(exception)}."
+                + " See ER logs for more details"
+            ) from exception
 
     end_time = time.time_ns()
     duration = (end_time - start_time) / 1_000_000
@@ -561,63 +581,42 @@ async def execute_action_handler(
     def get_run_payload(param_type):
         return payload
 
-    # to be able to catch source of exceptions in user-accessible code more precisely,
-    # manually enter and exit run context
+    def get_run_context(param_type):
+        return run_context
+
+    # DI in `run` function is allowed only for action handlers in form of functions.
+    # `run` in classes may not have additional parameters, constructor parameters should
+    # be used instead. TODO: Validate?
+    args = await resolve_func_args_with_di(
+        func=handler_run_func,
+        known_args={"payload": get_run_payload, "run_context": get_run_context},
+    )
+    # TODO: cache parameters
     try:
-        run_context_instance = await run_context.__aenter__()
+        logger.trace(f"Call handler {handler.name}(run {run_id})")
+        # there is also `inspect.iscoroutinefunction` but it cannot recognize coroutine
+        # functions which are class methods. Use `isawaitable` on result instead.
+        call_result = handler_run_func(**args)
+        if inspect.isawaitable(call_result):
+            execution_result = await call_result
+        else:
+            execution_result = call_result
     except Exception as exception:
+        if isinstance(exception, code_action.StopActionRunWithResult):
+            action_result = exception.result
+            response = action_result_to_run_action_response(action_result, "string")
+            raise StopWithResponse(response=response) from exception
+        elif isinstance(
+            exception, iactionrunner.BaseRunActionException
+        ) or isinstance(exception, code_action.ActionFailedException):
+            error_str = exception.message
+        else:
+            logger.error("Unhandled exception in action handler:")
+            logger.exception(exception)
+            error_str = str(exception)
         raise ActionFailedException(
-            f"Failed to enter run context of handler {handler.name}(Run {run_id}): {str(exception)}."
-            + " See ER logs for more details"
+            f"Running action handler '{handler.name}' failed(Run {run_id}): {error_str}"
         ) from exception
-
-    try:
-
-        def get_run_context(param_type):
-            return run_context_instance
-
-        # DI in `run` function is allowed only for action handlers in form of functions.
-        # `run` in classes may not have additional parameters, constructor parameters should
-        # be used instead. TODO: Validate?
-        args = await resolve_func_args_with_di(
-            func=handler_run_func,
-            known_args={"payload": get_run_payload, "run_context": get_run_context},
-        )
-        # TODO: cache parameters
-        try:
-            logger.trace(f"Call handler {handler.name}(run {run_id})")
-            # there is also `inspect.iscoroutinefunction` but it cannot recognize coroutine
-            # functions which are class methods. Use `isawaitable` on result instead.
-            call_result = handler_run_func(**args)
-            if inspect.isawaitable(call_result):
-                execution_result = await call_result
-            else:
-                execution_result = call_result
-        except Exception as exception:
-            if isinstance(exception, code_action.StopActionRunWithResult):
-                action_result = exception.result
-                response = action_result_to_run_action_response(action_result, "string")
-                raise StopWithResponse(response=response) from exception
-            elif isinstance(
-                exception, iactionrunner.BaseRunActionException
-            ) or isinstance(exception, code_action.ActionFailedException):
-                error_str = exception.message
-            else:
-                logger.error("Unhandled exception in action handler:")
-                logger.exception(exception)
-                error_str = str(exception)
-            raise ActionFailedException(
-                f"Running action handler '{handler.name}' failed(Run {run_id}): {error_str}"
-            ) from exception
-    finally:
-        # exit run context
-        try:
-            await run_context_instance.__aexit__(None, None, None)
-        except Exception as exception:
-            raise ActionFailedException(
-                f"Failed to exit run context of handler {handler.name}(Run {run_id}): {str(exception)}."
-                + " See ER logs for more details"
-            ) from exception
 
     end_time = time.time_ns()
     duration = (end_time - start_time) / 1_000_000
