@@ -522,6 +522,7 @@ class FileEditorSession(ifileeditor.IFileEditorSession):
         return file_version
 
     async def save_file(self, file_path: pathlib.Path, file_content: str) -> None:
+        self.logger.debug(f"Save file {file_path}")
         await self._file_manager.save_file(
             file_path=file_path, file_content=file_content
         )

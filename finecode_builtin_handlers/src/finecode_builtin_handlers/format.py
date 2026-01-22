@@ -43,19 +43,19 @@ class FormatHandler(
         # first get languages for which formatters are available, they change rarely
         # only on project config change
         all_actions = self.action_runner.get_actions_names()
-        lint_files_prefix = "format_files_"
-        lint_files_actions = [
+        format_files_prefix = "format_files_"
+        format_files_actions = [
             action_name
             for action_name in all_actions
-            if action_name.startswith(lint_files_prefix)
+            if action_name.startswith(format_files_prefix)
         ]
         # TODO: ordered set?
         # TODO: cache and update on project config change
-        langs_supported_by_lint = list(
+        langs_supported_by_format = list(
             set(
                 [
-                    action_name[len(lint_files_prefix) :]
-                    for action_name in lint_files_actions
+                    action_name[len(format_files_prefix) :]
+                    for action_name in format_files_actions
                 ]
             )
         )
@@ -67,16 +67,16 @@ class FormatHandler(
                 and run_meta.trigger == code_action.RunActionTrigger.SYSTEM
             ):
                 # performance optimization: if IDE automatically(=`trigger == SYSTEM`)
-                # tries to lint the whole project, lint only files owned by IDE(usually
+                # tries to format the whole project, format only files owned by IDE(usually
                 # these are opened files).
-                # In future it could be improved by linting opened files + dependencies
+                # In future it could be improved by formatting opened files + dependencies
                 # or e.g. files changed according to git + dependencies.
-                files_to_lint: list[pathlib.Path] = self.file_editor.get_opened_files()
+                files_to_format: list[pathlib.Path] = self.file_editor.get_opened_files()
                 group_project_files_action = self.action_runner.get_action_by_name(
                     "group_project_files_by_lang"
                 )
                 group_project_files_by_lang_payload = group_project_files_by_lang_action.GroupProjectFilesByLangRunPayload(
-                    file_paths=files_to_lint, langs=langs_supported_by_lint
+                    file_paths=files_to_format, langs=langs_supported_by_format
                 )
                 files_by_lang_result = await self.action_runner.run_action(
                     action=group_project_files_action,
@@ -85,7 +85,7 @@ class FormatHandler(
                 )
                 files_by_lang = files_by_lang_result.files_by_lang
             else:
-                # not automatic check of IDE, lint the whole project.
+                # not automatic check of IDE, format the whole project.
                 # Instead of getting all files in the project and then grouping them by
                 # language, use `list_project_files_by_lang_action` action which returns
                 # only files with supported languages
@@ -94,7 +94,7 @@ class FormatHandler(
                 )
                 list_project_files_by_lang_payload = (
                     list_project_files_by_lang_action.ListProjectFilesByLangRunPayload(
-                        langs=langs_supported_by_lint
+                        langs=langs_supported_by_format
                     )
                 )
                 files_by_lang_result = await self.action_runner.run_action(
@@ -105,14 +105,14 @@ class FormatHandler(
                 files_by_lang = files_by_lang_result.files_by_lang
 
         else:
-            # lint target are files, lint them
-            files_to_lint = payload.file_paths
+            # format target are files, format them
+            files_to_format = payload.file_paths
             group_project_files_by_lang_action_instance = (
                 self.action_runner.get_action_by_name("group_project_files_by_lang")
             )
             group_project_files_by_lang_payload = (
                 group_project_files_by_lang_action.GroupProjectFilesByLangRunPayload(
-                    file_paths=files_to_lint, langs=langs_supported_by_lint
+                    file_paths=files_to_format, langs=langs_supported_by_format
                 )
             )
             files_by_lang_result = await self.action_runner.run_action(
@@ -123,32 +123,32 @@ class FormatHandler(
             files_by_lang = files_by_lang_result.files_by_lang
 
         # TODO: handle errors
-        lint_tasks = []
+        format_tasks = []
         try:
             async with asyncio.TaskGroup() as tg:
                 for lang, lang_files in files_by_lang.items():
                     # TODO: handle errors
                     # TODO: handle KeyError?
                     action = self.action_runner.get_action_by_name(
-                        lint_files_prefix + lang
+                        format_files_prefix + lang
                     )
-                    lint_files_payload = format_files_action.FormatFilesRunPayload(
+                    format_files_payload = format_files_action.FormatFilesRunPayload(
                         file_paths=lang_files, save=payload.save
                     )
-                    lint_task = tg.create_task(
+                    format_task = tg.create_task(
                         self.action_runner.run_action(
-                            action=action, payload=lint_files_payload, meta=run_meta
+                            action=action, payload=format_files_payload, meta=run_meta
                         )
                     )
-                    lint_tasks.append(lint_task)
+                    format_tasks.append(format_task)
         except ExceptionGroup as eg:
             error_str = ". ".join([str(exception) for exception in eg.exceptions])
             raise code_action.ActionFailedException(error_str)
 
-        lint_results = [task.result() for task in lint_tasks]
-        if len(lint_results) > 0:
+        format_results = [task.result() for task in format_tasks]
+        if len(format_results) > 0:
             result = format_action.FormatRunResult(result_by_file_path={})
-            for subresult in lint_results:
+            for subresult in format_results:
                 result.update(subresult)
             return result
         else:

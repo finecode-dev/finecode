@@ -28,6 +28,7 @@ class FileManager(ifilemanager.IFileManager):
         return file_version
 
     async def save_file(self, file_path: Path, file_content: str) -> None:
+        self.logger.debug(f"Save file {file_path}")
         with open(file_path, "w") as f:
             f.write(file_content)
 
