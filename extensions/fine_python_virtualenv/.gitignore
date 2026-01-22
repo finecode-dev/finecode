@@ -1,5 +1,5 @@
 .venvs
 build/
-fine_python_virtualenv/*.egg-info/
+*.egg-info/
 __pycache__
 finecode_config_dump/

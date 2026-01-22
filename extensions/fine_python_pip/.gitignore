@@ -1,4 +1,4 @@
 .venvs
-fine_python_pip/*.egg-info
+*.egg-info/
 __pycache__
 finecode_config_dump/
