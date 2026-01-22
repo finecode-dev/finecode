@@ -3,7 +3,7 @@ import sys
 from pathlib import Path
 from typing import NamedTuple
 
-from finecode_extension_api.interfaces import ifileeditor
+from finecode_extension_api.interfaces import ifileeditor, ilogger
 
 if sys.version_info >= (3, 12):
     from typing import override
@@ -24,7 +24,8 @@ class FileInfo(NamedTuple):
     file_version: str
 
 
-FILE_OPERATION_AUTHOR = ifileeditor.FileOperationAuthor(id='FormatFilesAction')
+FILE_OPERATION_AUTHOR = ifileeditor.FileOperationAuthor(id="FormatFilesAction")
+
 
 class FormatFilesRunContext(code_action.RunActionContext[FormatFilesRunPayload]):
     def __init__(
@@ -32,7 +33,7 @@ class FormatFilesRunContext(code_action.RunActionContext[FormatFilesRunPayload])
         run_id: int,
         initial_payload: FormatFilesRunPayload,
         meta: code_action.RunActionMeta,
-        file_editor: ifileeditor.IFileEditor
+        file_editor: ifileeditor.IFileEditor,
     ) -> None:
         super().__init__(run_id=run_id, initial_payload=initial_payload, meta=meta)
         self.file_editor = file_editor
@@ -41,9 +42,13 @@ class FormatFilesRunContext(code_action.RunActionContext[FormatFilesRunPayload])
         self.file_editor_session: ifileeditor.IFileEditorSession
 
     async def init(self) -> None:
-        self.file_editor_session = await self.exit_stack.enter_async_context(self.file_editor.session(FILE_OPERATION_AUTHOR))
+        self.file_editor_session = await self.exit_stack.enter_async_context(
+            self.file_editor.session(FILE_OPERATION_AUTHOR)
+        )
         for file_path in self.initial_payload.file_paths:
-            file_info = await self.exit_stack.enter_async_context(self.file_editor_session.read_file(file_path, block=True))
+            file_info = await self.exit_stack.enter_async_context(
+                self.file_editor_session.read_file(file_path, block=True)
+            )
             file_content = file_info.content
             file_version = file_info.version
             self.file_info_by_path[file_path] = FileInfo(
@@ -90,12 +95,17 @@ class FormatFilesRunResult(code_action.RunActionResult):
         return text
 
 
-class FormatFilesAction(code_action.Action[FormatFilesRunPayload, FormatFilesRunContext, FormatFilesRunResult]):
+class FormatFilesAction(
+    code_action.Action[
+        FormatFilesRunPayload, FormatFilesRunContext, FormatFilesRunResult
+    ]
+):
     PAYLOAD_TYPE = FormatFilesRunPayload
     RUN_CONTEXT_TYPE = FormatFilesRunContext
     RESULT_TYPE = FormatFilesRunResult
 
 
+# TODO: move to builtin handlers
 @dataclasses.dataclass
 class SaveFormatFilesHandlerConfig(code_action.ActionHandlerConfig): ...
 
@@ -103,13 +113,13 @@ class SaveFormatFilesHandlerConfig(code_action.ActionHandlerConfig): ...
 class SaveFormatFilesHandler(
     code_action.ActionHandler[FormatFilesAction, SaveFormatFilesHandlerConfig]
 ):
-    FILE_OPERATION_AUTHOR = ifileeditor.FileOperationAuthor(id='SaveFormatFilesHandler')
-    
+    FILE_OPERATION_AUTHOR = ifileeditor.FileOperationAuthor(id="SaveFormatFilesHandler")
+
     def __init__(
-        self,
-        file_editor: ifileeditor.IFileEditor,
+        self, file_editor: ifileeditor.IFileEditor, logger: ilogger.ILogger
     ) -> None:
         self.file_editor = file_editor
+        self.logger = logger
 
     async def run(
         self, payload: FormatFilesRunPayload, run_context: FormatFilesRunContext
@@ -121,6 +131,7 @@ class SaveFormatFilesHandler(
             async with self.file_editor.session(self.FILE_OPERATION_AUTHOR) as session:
                 for file_path in file_paths:
                     file_content = run_context.file_info_by_path[file_path].file_content
+                    # TODO: only if changed?
                     await session.save_file(
                         file_path=file_path, file_content=file_content
                     )
@@ -128,7 +139,7 @@ class SaveFormatFilesHandler(
         result = FormatFilesRunResult(
             result_by_file_path={
                 file_path: FormatRunFileResult(
-                    changed=False,
+                    changed=False,  # this handler doesn't change files, only saves them
                     code=run_context.file_info_by_path[file_path].file_content,
                 )
                 for file_path in file_paths

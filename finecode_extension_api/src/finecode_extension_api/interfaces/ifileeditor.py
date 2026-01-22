@@ -1,8 +1,8 @@
-import typing
-import dataclasses
 import collections.abc
 import contextlib
+import dataclasses
 import pathlib
+import typing
 from typing import Protocol
 
 from finecode_extension_api import common_types
@@ -60,6 +60,7 @@ class FileCloseEvent:
 
 
 FileEvent = FileOpenEvent | FileCloseEvent | FileChangeEvent
+
 
 class FileAlreadyOpenError(Exception):
     """Raised when trying to open a file that's already open in the session."""

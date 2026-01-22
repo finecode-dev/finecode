@@ -16,12 +16,14 @@ class GroupProjectFilesByLangRunPayload(code_action.RunActionPayload):
     langs: list[str] | None = None
 
 
-class GroupProjectFilesByLangRunContext(code_action.RunActionContext[GroupProjectFilesByLangRunPayload]):
+class GroupProjectFilesByLangRunContext(
+    code_action.RunActionContext[GroupProjectFilesByLangRunPayload]
+):
     def __init__(
         self,
         run_id: int,
         initial_payload: GroupProjectFilesByLangRunPayload,
-        meta: code_action.RunActionMeta
+        meta: code_action.RunActionMeta,
     ) -> None:
         super().__init__(run_id=run_id, initial_payload=initial_payload, meta=meta)
 
@@ -50,7 +52,13 @@ class GroupProjectFilesByLangRunResult(code_action.RunActionResult):
         return formatted_result
 
 
-class GroupProjectFilesByLangAction(code_action.Action[GroupProjectFilesByLangRunPayload, GroupProjectFilesByLangRunContext, GroupProjectFilesByLangRunResult]):
+class GroupProjectFilesByLangAction(
+    code_action.Action[
+        GroupProjectFilesByLangRunPayload,
+        GroupProjectFilesByLangRunContext,
+        GroupProjectFilesByLangRunResult,
+    ]
+):
     PAYLOAD_TYPE = GroupProjectFilesByLangRunPayload
     RUN_CONTEXT_TYPE = GroupProjectFilesByLangRunContext
     RESULT_TYPE = GroupProjectFilesByLangRunResult

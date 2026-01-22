@@ -37,7 +37,9 @@ class LintMessage:
 
 
 @dataclasses.dataclass
-class LintFilesRunPayload(code_action.RunActionPayload, collections.abc.AsyncIterable[Path]):
+class LintFilesRunPayload(
+    code_action.RunActionPayload, collections.abc.AsyncIterable[Path]
+):
     file_paths: list[Path]
 
     def __aiter__(self) -> collections.abc.AsyncIterator[Path]:
@@ -92,7 +94,9 @@ class LintFilesRunResult(code_action.RunActionResult):
                     text.append(f":{message.range.start.line}")
                     text.append(f":{message.range.start.character}: ")
                     if message.code is not None:
-                        text.append_styled(message.code, foreground=textstyler.Color.RED)
+                        text.append_styled(
+                            message.code, foreground=textstyler.Color.RED
+                        )
                     text.append(f" {message.message}{source_str}\n")
             else:
                 text.append_styled(file_path_str, bold=True)
@@ -108,7 +112,13 @@ class LintFilesRunResult(code_action.RunActionResult):
         return code_action.RunReturnCode.SUCCESS
 
 
-class LintFilesAction(code_action.Action[LintFilesRunPayload, code_action.RunActionWithPartialResultsContext, LintFilesRunResult]):
+class LintFilesAction(
+    code_action.Action[
+        LintFilesRunPayload,
+        code_action.RunActionWithPartialResultsContext,
+        LintFilesRunResult,
+    ]
+):
     PAYLOAD_TYPE = LintFilesRunPayload
     RUN_CONTEXT_TYPE = code_action.RunActionWithPartialResultsContext
     RESULT_TYPE = LintFilesRunResult

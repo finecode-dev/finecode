@@ -20,17 +20,17 @@ class RunActionPayload: ...
 
 
 class RunActionTrigger(enum.StrEnum):
-    USER = 'user'
-    SYSTEM = 'system'
-    UNKNOWN = 'unknown'
+    USER = "user"
+    SYSTEM = "system"
+    UNKNOWN = "unknown"
 
 
 class DevEnv(enum.StrEnum):
-    IDE = 'ide'
-    CLI = 'cli'
-    AI = 'ai'
-    PRECOMMIT = 'precommit'
-    CI_CD = 'cicd'
+    IDE = "ide"
+    CLI = "cli"
+    AI = "ai"
+    PRECOMMIT = "precommit"
+    CI_CD = "cicd"
 
 
 @dataclasses.dataclass
@@ -78,32 +78,34 @@ class RunActionContext(typing.Generic[RunPayloadType]):
     # to avoid handling in action cases when run context is not initialized and is
     # initialized already.
 
-    def __init__(self, run_id: int, initial_payload: RunPayloadType, meta: RunActionMeta) -> None:
+    def __init__(
+        self, run_id: int, initial_payload: RunPayloadType, meta: RunActionMeta
+    ) -> None:
         self.run_id = run_id
         self.initial_payload = initial_payload
         self.meta = meta
         self.exit_stack = contextlib.AsyncExitStack()
 
-    async def init(self) -> None:
-        ...
+    async def init(self) -> None: ...
 
     async def __aenter__(self):
         await self.exit_stack.__aenter__()
-        
+
         await self.init()
-        
+
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         return await self.exit_stack.__aexit__(exc_type, exc_val, exc_tb)
 
 
-
 RunContextType = TypeVar("RunContextType", bound=RunActionContext)
 
 
 class RunActionWithPartialResultsContext(RunActionContext):
-    def __init__(self, run_id: int, initial_payload: RunPayloadType, meta: RunActionMeta) -> None:
+    def __init__(
+        self, run_id: int, initial_payload: RunPayloadType, meta: RunActionMeta
+    ) -> None:
         super().__init__(run_id=run_id, initial_payload=initial_payload, meta=meta)
         self.partial_result_scheduler = partialresultscheduler.PartialResultScheduler()
 

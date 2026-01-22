@@ -33,7 +33,7 @@ class PrepareRunnersRunContext(code_action.RunActionContext[PrepareRunnersRunPay
         self,
         run_id: int,
         initial_payload: PrepareRunnersRunPayload,
-        meta: code_action.RunActionMeta
+        meta: code_action.RunActionMeta,
     ) -> None:
         super().__init__(run_id=run_id, initial_payload=initial_payload, meta=meta)
 
@@ -81,7 +81,11 @@ class PrepareRunnersRunResult(code_action.RunActionResult):
             return code_action.RunReturnCode.ERROR
 
 
-class PrepareRunnersAction(code_action.Action[PrepareRunnersRunPayload, PrepareRunnersRunContext, PrepareRunnersRunResult]):
+class PrepareRunnersAction(
+    code_action.Action[
+        PrepareRunnersRunPayload, PrepareRunnersRunContext, PrepareRunnersRunResult
+    ]
+):
     PAYLOAD_TYPE = PrepareRunnersRunPayload
     RUN_CONTEXT_TYPE = PrepareRunnersRunContext
     RESULT_TYPE = PrepareRunnersRunResult

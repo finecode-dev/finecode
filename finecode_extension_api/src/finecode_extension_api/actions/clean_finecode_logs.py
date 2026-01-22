@@ -4,12 +4,12 @@ from finecode_extension_api import code_action, textstyler
 
 
 @dataclasses.dataclass
-class CleanFinecodeLogsRunPayload(code_action.RunActionPayload):
-    ...
+class CleanFinecodeLogsRunPayload(code_action.RunActionPayload): ...
 
 
-class CleanFinecodeLogsRunContext(code_action.RunActionContext[CleanFinecodeLogsRunPayload]):
-    ...
+class CleanFinecodeLogsRunContext(
+    code_action.RunActionContext[CleanFinecodeLogsRunPayload]
+): ...
 
 
 @dataclasses.dataclass
@@ -32,7 +32,13 @@ class CleanFinecodeLogsRunResult(code_action.RunActionResult):
             return code_action.RunReturnCode.ERROR
 
 
-class CleanFinecodeLogsAction(code_action.Action[CleanFinecodeLogsRunPayload, CleanFinecodeLogsRunContext, CleanFinecodeLogsRunResult]):
+class CleanFinecodeLogsAction(
+    code_action.Action[
+        CleanFinecodeLogsRunPayload,
+        CleanFinecodeLogsRunContext,
+        CleanFinecodeLogsRunResult,
+    ]
+):
     PAYLOAD_TYPE = CleanFinecodeLogsRunPayload
     RUN_CONTEXT_TYPE = CleanFinecodeLogsRunContext
     RESULT_TYPE = CleanFinecodeLogsRunResult

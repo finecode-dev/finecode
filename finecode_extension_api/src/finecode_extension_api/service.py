@@ -10,5 +10,5 @@ class Service(typing.Protocol):
 class DisposableService(Service, typing.Protocol):
     @typing.override
     async def init(self) -> None: ...
-    
+
     async def dispose(self) -> None: ...

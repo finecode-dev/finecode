@@ -27,7 +27,7 @@ class DumpConfigRunContext(code_action.RunActionContext[DumpConfigRunPayload]):
         self,
         run_id: int,
         initial_payload: DumpConfigRunPayload,
-        meta: code_action.RunActionMeta
+        meta: code_action.RunActionMeta,
     ) -> None:
         super().__init__(run_id=run_id, initial_payload=initial_payload, meta=meta)
 
@@ -53,7 +53,9 @@ class DumpConfigRunResult(code_action.RunActionResult):
         return formatted_dump_str
 
 
-class DumpConfigAction(code_action.Action[DumpConfigRunPayload, DumpConfigRunContext, DumpConfigRunResult]):
+class DumpConfigAction(
+    code_action.Action[DumpConfigRunPayload, DumpConfigRunContext, DumpConfigRunResult]
+):
     PAYLOAD_TYPE = DumpConfigRunPayload
     RUN_CONTEXT_TYPE = DumpConfigRunContext
     RESULT_TYPE = DumpConfigRunResult

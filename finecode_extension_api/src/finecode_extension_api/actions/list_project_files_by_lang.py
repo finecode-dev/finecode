@@ -20,7 +20,7 @@ class ListProjectFilesByLangRunContext(code_action.RunActionContext):
         self,
         run_id: int,
         initial_payload: ListProjectFilesByLangRunPayload,
-        meta: code_action.RunActionMeta
+        meta: code_action.RunActionMeta,
     ) -> None:
         super().__init__(run_id=run_id, initial_payload=initial_payload, meta=meta)
 
@@ -49,7 +49,13 @@ class ListProjectFilesByLangRunResult(code_action.RunActionResult):
         return formatted_result
 
 
-class ListProjectFilesByLangAction(code_action.Action[ListProjectFilesByLangRunPayload, ListProjectFilesByLangRunContext, ListProjectFilesByLangRunResult]):
+class ListProjectFilesByLangAction(
+    code_action.Action[
+        ListProjectFilesByLangRunPayload,
+        ListProjectFilesByLangRunContext,
+        ListProjectFilesByLangRunResult,
+    ]
+):
     PAYLOAD_TYPE = ListProjectFilesByLangRunPayload
     RUN_CONTEXT_TYPE = ListProjectFilesByLangRunContext
     RESULT_TYPE = ListProjectFilesByLangRunResult

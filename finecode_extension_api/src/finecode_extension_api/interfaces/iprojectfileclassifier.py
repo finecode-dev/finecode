@@ -1,6 +1,6 @@
 import enum
-import typing
 import pathlib
+import typing
 
 
 class ProjectFileType(enum.Enum):

@@ -33,7 +33,7 @@ class PrepareEnvsRunContext(code_action.RunActionContext[PrepareEnvsRunPayload])
         self,
         run_id: int,
         initial_payload: PrepareEnvsRunPayload,
-        meta: code_action.RunActionMeta
+        meta: code_action.RunActionMeta,
     ) -> None:
         super().__init__(run_id=run_id, initial_payload=initial_payload, meta=meta)
 
@@ -81,7 +81,11 @@ class PrepareEnvsRunResult(code_action.RunActionResult):
             return code_action.RunReturnCode.ERROR
 
 
-class PrepareEnvsAction(code_action.Action[PrepareEnvsRunPayload, PrepareEnvsRunContext, PrepareEnvsRunResult]):
+class PrepareEnvsAction(
+    code_action.Action[
+        PrepareEnvsRunPayload, PrepareEnvsRunContext, PrepareEnvsRunResult
+    ]
+):
     PAYLOAD_TYPE = PrepareEnvsRunPayload
     RUN_CONTEXT_TYPE = PrepareEnvsRunContext
     RESULT_TYPE = PrepareEnvsRunResult

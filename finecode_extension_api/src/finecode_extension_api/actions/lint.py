@@ -7,8 +7,8 @@ from finecode_extension_api.actions import lint_files
 
 
 class LintTarget(enum.StrEnum):
-    PROJECT = 'project'
-    FILES = 'files'
+    PROJECT = "project"
+    FILES = "files"
 
 
 @dataclasses.dataclass
@@ -19,11 +19,11 @@ class LintRunPayload(code_action.RunActionPayload):
 
 
 @dataclasses.dataclass
-class LintRunResult(lint_files.LintFilesRunResult):
-    ...
+class LintRunResult(lint_files.LintFilesRunResult): ...
 
 
 LintRunContext = code_action.RunActionWithPartialResultsContext
+
 
 class LintAction(code_action.Action[LintRunPayload, LintRunContext, LintRunResult]):
     PAYLOAD_TYPE = LintRunPayload
