@@ -1,6 +1,6 @@
-from .action import IsortFormatHandler, IsortFormatHandlerConfig
+from .action import IsortFormatFilesHandler, IsortFormatFilesHandlerConfig
 
 __all__ = [
-    "IsortFormatHandler",
-    "IsortFormatHandlerConfig",
+    "IsortFormatFilesHandler",
+    "IsortFormatFilesHandlerConfig",
 ]

@@ -21,6 +21,7 @@ finecode_builtin_handlers = { path = "../../../finecode_builtin_handlers", edita
 fine_python_ast = { path = "../../../extensions/fine_python_ast", editable = true }
 fine_python_mypy = { path = "../../../extensions/fine_python_mypy", editable = true }
 fine_python_ruff = { path = "../../../extensions/fine_python_ruff", editable = true }
+fine_python_isort = { path = "../../../extensions/fine_python_isort", editable = true }
 fine_python_flake8 = { path = "../../../extensions/fine_python_flake8", editable = true }
 fine_python_pyrefly = { path = "../../../extensions/fine_python_pyrefly", editable = true }
 fine_python_package_info = { path = "../../../extensions/fine_python_package_info", editable = true }
