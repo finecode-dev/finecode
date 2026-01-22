@@ -2,13 +2,13 @@
 source = "finecode_extension_api.actions.lint_files.LintFilesAction"
 handlers = [
     { name = "ruff", source = "fine_python_ruff.RuffLintFilesHandler", env = "dev_no_runtime", dependencies = [
-        "fine_python_ruff==0.2.*",
+        "fine_python_ruff~=0.2.0a0",
     ] },
     { name = "flake8", source = "fine_python_flake8.Flake8LintFilesHandler", env = "dev_no_runtime", dependencies = [
-        "fine_python_flake8==0.3.*",
+        "fine_python_flake8~=0.3.0a0",
     ] },
     { name = "pyrefly", source = "fine_python_pyrefly.PyreflyLintFilesHandler", env = "dev_no_runtime", dependencies = [
-        "fine_python_pyrefly==0.2.*",
+        "fine_python_pyrefly~=0.2.0a0",
     ] },
 ]
 

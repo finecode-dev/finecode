@@ -2,9 +2,9 @@
 source = "finecode_extension_api.actions.format_files.FormatFilesAction"
 handlers = [
     { name = "ruff", source = "fine_python_ruff.RuffFormatFilesHandler", env = "dev_no_runtime", dependencies = [
-        "fine_python_ruff==0.2.*",
+        "fine_python_ruff~=0.2.0a0",
     ] },
     { name = "save", source = "finecode_extension_api.actions.format_files.SaveFormatFilesHandler", env = "dev_no_runtime", dependencies = [
-        "finecode_extension_api==0.4.*",
+        "finecode_extension_api~=0.4.0a0",
     ] },
 ]

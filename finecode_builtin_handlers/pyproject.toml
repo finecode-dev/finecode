@@ -5,10 +5,10 @@ description = "FineCode built-in handlers"
 authors = [{ name = "Vladyslav Hnatiuk", email = "aders1234@gmail.com" }]
 readme = "README.md"
 requires-python = ">=3.11, <= 3.14"
-dependencies = ["finecode_extension_api==0.4.*", "tomlkit==0.11.*"]
+dependencies = ["finecode_extension_api~=0.4.0a0", "tomlkit==0.11.*"]
 
 [dependency-groups]
-dev_workspace = ["finecode==0.4.*", "finecode_dev_common_preset==0.3.*"]
+dev_workspace = ["finecode~=0.4.0a0", "finecode_dev_common_preset~=0.3.0a0"]
 
 [tool.finecode.env.dev_workspace.dependencies]
 finecode_dev_common_preset = { path = "../finecode_dev_common_preset", editable = true }
@@ -17,6 +17,7 @@ finecode_extension_runner = { path = "../finecode_extension_runner", editable = 
 finecode_extension_api = { path = "../finecode_extension_api", editable = true }
 finecode_jsonrpc = { path = "../finecode_jsonrpc", editable = true }
 finecode_builtin_handlers = { path = "../finecode_builtin_handlers", editable = true }
+fine_python_recommended = { path = "../presets/fine_python_recommended", editable = true }
 fine_python_lint = { path = "../presets/fine_python_lint", editable = true }
 fine_python_format = { path = "../presets/fine_python_format", editable = true }
 

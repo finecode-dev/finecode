@@ -6,8 +6,8 @@ authors = [{ name = "Vladyslav Hnatiuk", email = "aders1234@gmail.com" }]
 readme = "README.md"
 requires-python = ">=3.11, <= 3.14"
 dependencies = [
-    "finecode_extension_api==0.4.*",
-    "fine_python_ast==0.3.*",
+    "finecode_extension_api~=0.4.0a0",
+    "fine_python_ast~=0.3.0a0",
     "types-flake8 (>=7.1.0.20241020,<8.0.0.0)",
     "flake8 (>=7.1.2,<8.0.0)",
 ]

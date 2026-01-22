@@ -5,10 +5,10 @@ description = ""
 authors = [{ name = "Vladyslav Hnatiuk", email = "aders1234@gmail.com" }]
 readme = "README.md"
 requires-python = ">= 3.11, <= 3.14"
-dependencies = ["finecode_extension_api==0.4.*", "fine_python_ast==0.3.*"]
+dependencies = ["finecode_extension_api~=0.4.0a0", "fine_python_ast~=0.3.0a0"]
 
 [dependency-groups]
-dev_workspace = ["finecode==0.4.*", "finecode_dev_common_preset==0.3.*"]
+dev_workspace = ["finecode~=0.4.0a0", "finecode_dev_common_preset~=0.3.0a0"]
 
 [tool.finecode]
 presets = [{ source = "finecode_dev_common_preset" }]
@@ -20,5 +20,6 @@ finecode_extension_runner = { path = "../../finecode_extension_runner", editable
 finecode_extension_api = { path = "../../finecode_extension_api", editable = true }
 finecode_jsonrpc = { path = "../../finecode_jsonrpc", editable = true }
 finecode_builtin_handlers = { path = "../../finecode_builtin_handlers", editable = true }
+fine_python_recommended = { path = "../../presets/fine_python_recommended", editable = true }
 fine_python_lint = { path = "../../presets/fine_python_lint", editable = true }
 fine_python_format = { path = "../../presets/fine_python_format", editable = true }

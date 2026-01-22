@@ -22,7 +22,7 @@ from finecode_extension_api.interfaces import (
     iactionrunner,
     icache,
     icommandrunner,
-    idevenvinfoprovider,
+    # idevenvinfoprovider,
     ifileeditor,
     ifilemanager,
     ilogger,
@@ -37,7 +37,7 @@ from finecode_extension_runner.di import _state, resolver
 from finecode_extension_runner.impls import (
     action_runner,
     command_runner,
-    dev_env_info_provider,
+    # dev_env_info_provider,
     file_editor,
     file_manager,
     inmemory_cache,
@@ -61,7 +61,7 @@ def bootstrap(
     logger_instance = loguru_logger.get_logger()
     
     command_runner_instance = command_runner.CommandRunner(logger=logger_instance)
-    dev_env_info_provider_instance = dev_env_info_provider.DevEnvInfoProvider(logger=logger_instance)
+    # dev_env_info_provider_instance = dev_env_info_provider.DevEnvInfoProvider(logger=logger_instance)
     file_manager_instance = file_manager.FileManager(
         logger=logger_instance,
     )
@@ -80,7 +80,7 @@ def bootstrap(
     _state.container[ifileeditor.IFileEditor] = file_editor_instance
     _state.container[icache.ICache] = cache_instance
     _state.container[iactionrunner.IActionRunner] = action_runner_instance
-    _state.container[idevenvinfoprovider.IDevEnvInfoProvider] = dev_env_info_provider_instance
+    # _state.container[idevenvinfoprovider.IDevEnvInfoProvider] = dev_env_info_provider_instance
 
     if fine_python_ast is not None:
         _state.factories[fine_python_ast.IPythonSingleAstProvider] = (

@@ -12,14 +12,14 @@ dependencies = [
     "click==8.1.*",
     "pydantic==2.12.*",
     "pygls==2.0.0",
-    "finecode_extension_api==0.4.*",
-    "finecode_extension_runner==0.3.*",
-    "finecode_builtin_handlers==0.1.*",
-    "finecode_jsonrpc==0.1.*",
+    "finecode_extension_api~=0.4.0a0",
+    "finecode_extension_runner~=0.4.0a0",
+    "finecode_builtin_handlers~=0.2.0a0",
+    "finecode_jsonrpc~=0.1.0a0",
     "ordered-set==4.1.*",
     "mcp==1.13.*",
-    "fine_python_virtualenv==0.1.*",
-    "fine_python_pip==0.1.*",
+    "fine_python_virtualenv~=0.2.0a0",
+    "fine_python_pip~=0.2.0a0",
     "culsans==0.9.*",
     "apischema==0.19.*",
 ]
@@ -29,8 +29,8 @@ dependencies = [
 # "fine_python_import_linter @ git+https://github.com/finecode-dev/finecode.git#subdirectory=extensions/fine_python_import_linter",
 dev_workspace = [
     "build==1.2.2.post1",
-    "finecode==0.3.*",
-    "finecode_dev_common_preset==0.2.*",
+    "finecode~=0.3.0a0",
+    "finecode_dev_common_preset~=0.3.0a0",
     "debugpy==1.8.*",
 ]
 dev = [{ include-group = "runtime" }, "pytest==7.4.*", "debugpy==1.8.*"]
@@ -53,6 +53,7 @@ fine_python_lint = { path = "./presets/fine_python_lint", editable = true }
 fine_python_format = { path = "./presets/fine_python_format", editable = true }
 
 [tool.finecode.env.runtime.dependencies]
+finecode_extension_api = { path = "./finecode_extension_api", editable = true }
 finecode_jsonrpc = { path = "./finecode_jsonrpc", editable = true }
 
 [tool.importlinter]
