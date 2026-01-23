@@ -8,26 +8,26 @@ import pathlib
 
 from finecode_extension_api import code_action
 from finecode_extension_api.actions import (
-    group_project_files_by_lang as group_project_files_by_lang_action,
+    group_src_artifact_files_by_lang as group_src_artifact_files_by_lang_action,
 )
 
 
 @dataclasses.dataclass
-class GroupProjectFilesByLangPythonHandlerConfig(code_action.ActionHandlerConfig):
+class GroupSrcArtifactFilesByLangPythonHandlerConfig(code_action.ActionHandlerConfig):
     # list of relative pathes relative to project directory with additional python
     # sources if they are not in one of default pathes
     additional_dirs: list[pathlib.Path] | None = None
 
 
-class GroupProjectFilesByLangPythonHandler(
+class GroupSrcArtifactFilesByLangPythonHandler(
     code_action.ActionHandler[
-        group_project_files_by_lang_action.GroupProjectFilesByLangAction,
-        GroupProjectFilesByLangPythonHandlerConfig,
+        group_src_artifact_files_by_lang_action.GroupSrcArtifactFilesByLangAction,
+        GroupSrcArtifactFilesByLangPythonHandlerConfig,
     ]
 ):
     def __init__(
         self,
-        config: GroupProjectFilesByLangPythonHandlerConfig,
+        config: GroupSrcArtifactFilesByLangPythonHandlerConfig,
         project_info_provider: iprojectinfoprovider.IProjectInfoProvider,
         py_package_layout_info_provider: ipypackagelayoutinfoprovider.IPyPackageLayoutInfoProvider,
         logger: ilogger.ILogger,
@@ -46,9 +46,9 @@ class GroupProjectFilesByLangPythonHandler(
 
     async def run(
         self,
-        payload: group_project_files_by_lang_action.GroupProjectFilesByLangRunPayload,
-        run_context: group_project_files_by_lang_action.GroupProjectFilesByLangRunContext,
-    ) -> group_project_files_by_lang_action.GroupProjectFilesByLangRunResult:
+        payload: group_src_artifact_files_by_lang_action.GroupSrcArtifactFilesByLangRunPayload,
+        run_context: group_src_artifact_files_by_lang_action.GroupSrcArtifactFilesByLangRunContext,
+    ) -> group_src_artifact_files_by_lang_action.GroupSrcArtifactFilesByLangRunResult:
         # TODO
         py_files: list[pathlib.Path] = []
         project_package_src_root_dir_path = (
@@ -78,6 +78,6 @@ class GroupProjectFilesByLangPythonHandler(
 
                 py_files += list(dir_absolute_path.rglob("*.py"))
 
-        return group_project_files_by_lang_action.GroupProjectFilesByLangRunResult(
+        return group_src_artifact_files_by_lang_action.GroupSrcArtifactFilesByLangRunResult(
             files_by_lang={"python": py_files}
         )

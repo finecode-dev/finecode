@@ -7,7 +7,7 @@ from finecode_extension_api.actions import (
     format as format_action,
     format_files as format_files_action,
     list_project_files_by_lang as list_project_files_by_lang_action,
-    group_project_files_by_lang as group_project_files_by_lang_action,
+    group_src_artifact_files_by_lang as group_src_artifact_files_by_lang_action,
 )
 from finecode_extension_api.interfaces import (
     iactionrunner,
@@ -73,14 +73,14 @@ class FormatHandler(
                 # or e.g. files changed according to git + dependencies.
                 files_to_format: list[pathlib.Path] = self.file_editor.get_opened_files()
                 group_project_files_action = self.action_runner.get_action_by_name(
-                    "group_project_files_by_lang"
+                    "group_src_artifact_files_by_lang"
                 )
-                group_project_files_by_lang_payload = group_project_files_by_lang_action.GroupProjectFilesByLangRunPayload(
+                group_src_artifact_files_by_lang_payload = group_src_artifact_files_by_lang_action.GroupSrcArtifactFilesByLangRunPayload(
                     file_paths=files_to_format, langs=langs_supported_by_format
                 )
                 files_by_lang_result = await self.action_runner.run_action(
                     action=group_project_files_action,
-                    payload=group_project_files_by_lang_payload,
+                    payload=group_src_artifact_files_by_lang_payload,
                     meta=run_meta
                 )
                 files_by_lang = files_by_lang_result.files_by_lang
@@ -107,17 +107,17 @@ class FormatHandler(
         else:
             # format target are files, format them
             files_to_format = payload.file_paths
-            group_project_files_by_lang_action_instance = (
-                self.action_runner.get_action_by_name("group_project_files_by_lang")
+            group_src_artifact_files_by_lang_action_instance = (
+                self.action_runner.get_action_by_name("group_src_artifact_files_by_lang")
             )
-            group_project_files_by_lang_payload = (
-                group_project_files_by_lang_action.GroupProjectFilesByLangRunPayload(
+            group_src_artifact_files_by_lang_payload = (
+                group_src_artifact_files_by_lang_action.GroupSrcArtifactFilesByLangRunPayload(
                     file_paths=files_to_format, langs=langs_supported_by_format
                 )
             )
             files_by_lang_result = await self.action_runner.run_action(
-                action=group_project_files_by_lang_action_instance,
-                payload=group_project_files_by_lang_payload,
+                action=group_src_artifact_files_by_lang_action_instance,
+                payload=group_src_artifact_files_by_lang_payload,
                 meta=run_meta
             )
             files_by_lang = files_by_lang_result.files_by_lang

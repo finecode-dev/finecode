@@ -11,30 +11,30 @@ from finecode_extension_api import code_action, textstyler
 
 
 @dataclasses.dataclass
-class GroupProjectFilesByLangRunPayload(code_action.RunActionPayload):
+class GroupSrcArtifactFilesByLangRunPayload(code_action.RunActionPayload):
     file_paths: list[pathlib.Path]
     langs: list[str] | None = None
 
 
-class GroupProjectFilesByLangRunContext(
-    code_action.RunActionContext[GroupProjectFilesByLangRunPayload]
+class GroupSrcArtifactFilesByLangRunContext(
+    code_action.RunActionContext[GroupSrcArtifactFilesByLangRunPayload]
 ):
     def __init__(
         self,
         run_id: int,
-        initial_payload: GroupProjectFilesByLangRunPayload,
+        initial_payload: GroupSrcArtifactFilesByLangRunPayload,
         meta: code_action.RunActionMeta,
     ) -> None:
         super().__init__(run_id=run_id, initial_payload=initial_payload, meta=meta)
 
 
 @dataclasses.dataclass
-class GroupProjectFilesByLangRunResult(code_action.RunActionResult):
+class GroupSrcArtifactFilesByLangRunResult(code_action.RunActionResult):
     files_by_lang: dict[str, list[pathlib.Path]]
 
     @override
     def update(self, other: code_action.RunActionResult) -> None:
-        if not isinstance(other, GroupProjectFilesByLangRunResult):
+        if not isinstance(other, GroupSrcArtifactFilesByLangRunResult):
             return
 
         for lang, files in other.files_by_lang.items():
@@ -52,13 +52,13 @@ class GroupProjectFilesByLangRunResult(code_action.RunActionResult):
         return formatted_result
 
 
-class GroupProjectFilesByLangAction(
+class GroupSrcArtifactFilesByLangAction(
     code_action.Action[
-        GroupProjectFilesByLangRunPayload,
-        GroupProjectFilesByLangRunContext,
-        GroupProjectFilesByLangRunResult,
+        GroupSrcArtifactFilesByLangRunPayload,
+        GroupSrcArtifactFilesByLangRunContext,
+        GroupSrcArtifactFilesByLangRunResult,
     ]
 ):
-    PAYLOAD_TYPE = GroupProjectFilesByLangRunPayload
-    RUN_CONTEXT_TYPE = GroupProjectFilesByLangRunContext
-    RESULT_TYPE = GroupProjectFilesByLangRunResult
+    PAYLOAD_TYPE = GroupSrcArtifactFilesByLangRunPayload
+    RUN_CONTEXT_TYPE = GroupSrcArtifactFilesByLangRunContext
+    RESULT_TYPE = GroupSrcArtifactFilesByLangRunResult
