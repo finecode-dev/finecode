@@ -93,12 +93,12 @@ env = "dev_workspace"
 dependencies = ["fine_python_pip~=0.2.0a0"]
 
 
-[tool.finecode.action.list_project_files_by_lang]
-source = "finecode_extension_api.actions.list_project_files_by_lang.ListProjectFilesByLangAction"
+[tool.finecode.action.list_src_artifact_files_by_lang]
+source = "finecode_extension_api.actions.list_src_artifact_files_by_lang.ListSrcArtifactFilesByLangAction"
 
-[[tool.finecode.action.list_project_files_by_lang.handlers]]
-name = "list_project_files_by_lang_python"
-source = "fine_python_package_info.ListProjectFilesByLangPythonHandler"
+[[tool.finecode.action.list_src_artifact_files_by_lang.handlers]]
+name = "list_src_artifact_files_by_lang_python"
+source = "fine_python_package_info.ListSrcArtifactFilesByLangPythonHandler"
 env = "dev_no_runtime"
 dependencies = ["fine_python_package_info~=0.2.0a0"]
 

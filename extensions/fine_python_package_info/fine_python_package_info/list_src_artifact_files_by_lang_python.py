@@ -8,26 +8,26 @@ import pathlib
 
 from finecode_extension_api import code_action
 from finecode_extension_api.actions import (
-    list_project_files_by_lang as list_project_files_by_lang_action,
+    list_src_artifact_files_by_lang as list_src_artifact_files_by_lang_action,
 )
 
 
 @dataclasses.dataclass
-class ListProjectFilesByLangPythonHandlerConfig(code_action.ActionHandlerConfig):
+class ListSrcArtifactFilesByLangPythonHandlerConfig(code_action.ActionHandlerConfig):
     # list of relative pathes relative to project directory with additional python
     # sources if they are not in one of default pathes
     additional_dirs: list[pathlib.Path] | None = None
 
 
-class ListProjectFilesByLangPythonHandler(
+class ListSrcArtifactFilesByLangPythonHandler(
     code_action.ActionHandler[
-        list_project_files_by_lang_action.ListProjectFilesByLangAction,
-        ListProjectFilesByLangPythonHandlerConfig,
+        list_src_artifact_files_by_lang_action.ListSrcArtifactFilesByLangAction,
+        ListSrcArtifactFilesByLangPythonHandlerConfig,
     ]
 ):
     def __init__(
         self,
-        config: ListProjectFilesByLangPythonHandlerConfig,
+        config: ListSrcArtifactFilesByLangPythonHandlerConfig,
         project_info_provider: iprojectinfoprovider.IProjectInfoProvider,
         py_package_layout_info_provider: ipypackagelayoutinfoprovider.IPyPackageLayoutInfoProvider,
         logger: ilogger.ILogger,
@@ -46,9 +46,9 @@ class ListProjectFilesByLangPythonHandler(
 
     async def run(
         self,
-        payload: list_project_files_by_lang_action.ListProjectFilesByLangRunPayload,
-        run_context: list_project_files_by_lang_action.ListProjectFilesByLangRunContext,
-    ) -> list_project_files_by_lang_action.ListProjectFilesByLangRunResult:
+        payload: list_src_artifact_files_by_lang_action.ListSrcArtifactFilesByLangRunPayload,
+        run_context: list_src_artifact_files_by_lang_action.ListSrcArtifactFilesByLangRunContext,
+    ) -> list_src_artifact_files_by_lang_action.ListSrcArtifactFilesByLangRunResult:
         py_files: list[pathlib.Path] = []
         project_package_src_root_dir_path = (
             await self.py_package_layout_info_provider.get_package_src_root_dir_path(
@@ -77,6 +77,6 @@ class ListProjectFilesByLangPythonHandler(
 
                 py_files += list(dir_absolute_path.rglob("*.py"))
 
-        return list_project_files_by_lang_action.ListProjectFilesByLangRunResult(
+        return list_src_artifact_files_by_lang_action.ListSrcArtifactFilesByLangRunResult(
             files_by_lang={"python": py_files}
         )

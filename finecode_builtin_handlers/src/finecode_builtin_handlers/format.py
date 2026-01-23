@@ -6,7 +6,7 @@ from finecode_extension_api import code_action
 from finecode_extension_api.actions import (
     format as format_action,
     format_files as format_files_action,
-    list_project_files_by_lang as list_project_files_by_lang_action,
+    list_src_artifact_files_by_lang as list_src_artifact_files_by_lang_action,
     group_src_artifact_files_by_lang as group_src_artifact_files_by_lang_action,
 )
 from finecode_extension_api.interfaces import (
@@ -87,19 +87,19 @@ class FormatHandler(
             else:
                 # not automatic check of IDE, format the whole project.
                 # Instead of getting all files in the project and then grouping them by
-                # language, use `list_project_files_by_lang_action` action which returns
+                # language, use `list_src_artifact_files_by_lang_action` action which returns
                 # only files with supported languages
-                list_project_file_by_lang_action_instance = (
-                    self.action_runner.get_action_by_name("list_project_files_by_lang")
+                list_src_artifact_file_by_lang_action_instance = (
+                    self.action_runner.get_action_by_name("list_src_artifact_files_by_lang")
                 )
-                list_project_files_by_lang_payload = (
-                    list_project_files_by_lang_action.ListProjectFilesByLangRunPayload(
+                list_src_artifact_files_by_lang_payload = (
+                    list_src_artifact_files_by_lang_action.ListSrcArtifactFilesByLangRunPayload(
                         langs=langs_supported_by_format
                     )
                 )
                 files_by_lang_result = await self.action_runner.run_action(
-                    action=list_project_file_by_lang_action_instance,
-                    payload=list_project_files_by_lang_payload,
+                    action=list_src_artifact_file_by_lang_action_instance,
+                    payload=list_src_artifact_files_by_lang_payload,
                     meta=run_meta
                 )
                 files_by_lang = files_by_lang_result.files_by_lang

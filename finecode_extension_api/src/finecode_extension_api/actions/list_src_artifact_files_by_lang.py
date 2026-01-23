@@ -11,27 +11,27 @@ from finecode_extension_api import code_action, textstyler
 
 
 @dataclasses.dataclass
-class ListProjectFilesByLangRunPayload(code_action.RunActionPayload):
+class ListSrcArtifactFilesByLangRunPayload(code_action.RunActionPayload):
     langs: list[str] | None = None
 
 
-class ListProjectFilesByLangRunContext(code_action.RunActionContext):
+class ListSrcArtifactFilesByLangRunContext(code_action.RunActionContext):
     def __init__(
         self,
         run_id: int,
-        initial_payload: ListProjectFilesByLangRunPayload,
+        initial_payload: ListSrcArtifactFilesByLangRunPayload,
         meta: code_action.RunActionMeta,
     ) -> None:
         super().__init__(run_id=run_id, initial_payload=initial_payload, meta=meta)
 
 
 @dataclasses.dataclass
-class ListProjectFilesByLangRunResult(code_action.RunActionResult):
+class ListSrcArtifactFilesByLangRunResult(code_action.RunActionResult):
     files_by_lang: dict[str, list[pathlib.Path]]
 
     @override
     def update(self, other: code_action.RunActionResult) -> None:
-        if not isinstance(other, ListProjectFilesByLangRunResult):
+        if not isinstance(other, ListSrcArtifactFilesByLangRunResult):
             return
 
         for lang, files in other.files_by_lang.items():
@@ -49,13 +49,13 @@ class ListProjectFilesByLangRunResult(code_action.RunActionResult):
         return formatted_result
 
 
-class ListProjectFilesByLangAction(
+class ListSrcArtifactFilesByLangAction(
     code_action.Action[
-        ListProjectFilesByLangRunPayload,
-        ListProjectFilesByLangRunContext,
-        ListProjectFilesByLangRunResult,
+        ListSrcArtifactFilesByLangRunPayload,
+        ListSrcArtifactFilesByLangRunContext,
+        ListSrcArtifactFilesByLangRunResult,
     ]
 ):
-    PAYLOAD_TYPE = ListProjectFilesByLangRunPayload
-    RUN_CONTEXT_TYPE = ListProjectFilesByLangRunContext
-    RESULT_TYPE = ListProjectFilesByLangRunResult
+    PAYLOAD_TYPE = ListSrcArtifactFilesByLangRunPayload
+    RUN_CONTEXT_TYPE = ListSrcArtifactFilesByLangRunContext
+    RESULT_TYPE = ListSrcArtifactFilesByLangRunResult
