@@ -28,8 +28,7 @@ from finecode_extension_api.interfaces import (
     ilogger,
     iprojectinfoprovider,
     iextensionrunnerinfoprovider,
-    iprojectfileclassifier,
-    ipypackagelayoutinfoprovider,
+    isrcartifactfileclassifier,
 )
 from finecode_extension_runner import domain
 from finecode_extension_runner._services import run_action
@@ -44,7 +43,6 @@ from finecode_extension_runner.impls import (
     loguru_logger,
     project_info_provider,
     extension_runner_info_provider,
-    project_file_classifier,
 )
 
 
@@ -103,11 +101,12 @@ def bootstrap(
             current_env_name_getter=current_env_name_getter
         )
     )
-    _state.factories[iprojectfileclassifier.IProjectFileClassifier] = (
-        project_file_classifier_factory
+    _state.factories[isrcartifactfileclassifier.ISrcArtifactFileClassifier] = (
+        src_artifact_file_classifier_factory
     )
 
     if fine_python_package_info is not None:
+        from fine_python_package_info import ipypackagelayoutinfoprovider
         _state.factories[ipypackagelayoutinfoprovider.IPyPackageLayoutInfoProvider] = (
             py_package_layout_info_provider_factory
         )
@@ -155,16 +154,17 @@ async def extension_runner_info_provider_factory(
     )
 
 
-async def project_file_classifier_factory(
+async def src_artifact_file_classifier_factory(
     container,
 ):
     project_info_provider = await resolver.get_service_instance(
         iprojectinfoprovider.IProjectInfoProvider
     )
+    from fine_python_package_info import ipypackagelayoutinfoprovider, py_src_artifact_file_classifier
     py_package_layout_info_provider = await resolver.get_service_instance(
         ipypackagelayoutinfoprovider.IPyPackageLayoutInfoProvider
     )
-    return project_file_classifier.ProjectFileClassifier(
+    return py_src_artifact_file_classifier.PySrcArtifactFileClassifier(
         project_info_provider=project_info_provider,
         py_package_layout_info_provider=py_package_layout_info_provider,
     )

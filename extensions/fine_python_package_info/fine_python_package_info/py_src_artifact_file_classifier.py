@@ -1,17 +1,18 @@
 import pathlib
 
 from finecode_extension_api.interfaces import (
-    iprojectfileclassifier,
+    isrcartifactfileclassifier,
     iprojectinfoprovider,
-    ipypackagelayoutinfoprovider,
 )
 from finecode_extension_api import service
+
+from fine_python_package_info import ipypackagelayoutinfoprovider
 
 
 # TODO: it should be package file classifier?
 # TODO: is it specific to python?
-class ProjectFileClassifier(
-    iprojectfileclassifier.IProjectFileClassifier, service.Service
+class PySrcArtifactFileClassifier(
+    isrcartifactfileclassifier.ISrcArtifactFileClassifier, service.Service
 ):
     # requirements:
     # - all project sources should be in a single directory
@@ -27,10 +28,10 @@ class ProjectFileClassifier(
     ) -> None:
         self.project_info_provider = project_info_provider
         self.py_package_layout_info_provider = py_package_layout_info_provider
-        # ProjectFileClassifier is instantiated as singletone, cache can be stored in
+        # PySrcArtifactFileClassifier is instantiated as singletone, cache can be stored in
         # object
         self._file_type_by_path: dict[
-            pathlib.Path, iprojectfileclassifier.ProjectFileType
+            pathlib.Path, isrcartifactfileclassifier.SrcArtifactFileType
         ] = {}
 
         self.project_src_dir_path: pathlib.Path
@@ -44,11 +45,12 @@ class ProjectFileClassifier(
                 package_dir_path=project_dir_path
             )
         )
+        # TODO: move to layout provider?
         self.project_tests_dir_path: pathlib.Path = project_dir_path / "tests"
 
-    def get_project_file_type(
+    def get_src_artifact_file_type(
         self, file_path: pathlib.Path
-    ) -> iprojectfileclassifier.ProjectFileType:
+    ) -> isrcartifactfileclassifier.SrcArtifactFileType:
         if self.project_src_dir_path is None:
             raise NotImplementedError(
                 f"{self.project_layout} project layout is not supported"
@@ -66,15 +68,15 @@ class ProjectFileClassifier(
                 "__tests__" in file_path_relative_to_project.parts
                 or "tests" in file_path_relative_to_project.parts
             ):
-                file_type = iprojectfileclassifier.ProjectFileType.TEST
+                file_type = isrcartifactfileclassifier.SrcArtifactFileType.TEST
             else:
-                file_type = iprojectfileclassifier.ProjectFileType.SOURCE
+                file_type = isrcartifactfileclassifier.SrcArtifactFileType.SOURCE
         else:
             # not source, check whether test
             if file_path.is_relative_to(self.project_tests_dir_path):
-                file_type = iprojectfileclassifier.ProjectFileType.TEST
+                file_type = isrcartifactfileclassifier.SrcArtifactFileType.TEST
             else:
-                file_type = iprojectfileclassifier.ProjectFileType.UNKNOWN
+                file_type = isrcartifactfileclassifier.SrcArtifactFileType.UNKNOWN
 
         # cache
         self._file_type_by_path[file_path] = file_type
@@ -82,12 +84,12 @@ class ProjectFileClassifier(
         return file_type
 
     def get_env_for_file_type(
-        self, file_type: iprojectfileclassifier.ProjectFileType
+        self, file_type: isrcartifactfileclassifier.SrcArtifactFileType
     ) -> str:
         match file_type:
-            case iprojectfileclassifier.ProjectFileType.SOURCE:
+            case isrcartifactfileclassifier.SrcArtifactFileType.SOURCE:
                 return "runtime"
-            case iprojectfileclassifier.ProjectFileType.TEST:
+            case isrcartifactfileclassifier.SrcArtifactFileType.TEST:
                 # TODO: dynamic. In future test tool can be installed in any env, we
                 # need a way to define it in config and get it here
                 # TODO: there can be also e2e tests that don't use runtime and are in
@@ -95,5 +97,5 @@ class ProjectFileClassifier(
                 return "dev"
             case _:
                 raise NotImplementedError(
-                    f"Project file type {file_type} is not supported by ProjectFileClassifier"
+                    f"Source artifact file type {file_type} is not supported by PySrcArtifactFileClassifier"
                 )

@@ -12,7 +12,7 @@ from finecode_extension_api.interfaces import (
     icommandrunner,
     ilogger,
     ifileeditor,
-    iprojectfileclassifier,
+    isrcartifactfileclassifier,
     iextensionrunnerinfoprovider,
 )
 
@@ -45,7 +45,7 @@ class PyreflyLintFilesHandler(
         logger: ilogger.ILogger,
         file_editor: ifileeditor.IFileEditor,
         command_runner: icommandrunner.ICommandRunner,
-        project_file_classifier: iprojectfileclassifier.IProjectFileClassifier,
+        src_artifact_file_classifier: isrcartifactfileclassifier.ISrcArtifactFileClassifier,
         extension_runner_info_provider: iextensionrunnerinfoprovider.IExtensionRunnerInfoProvider,
     ) -> None:
         self.config = config
@@ -53,7 +53,7 @@ class PyreflyLintFilesHandler(
         self.logger = logger
         self.file_editor = file_editor
         self.command_runner = command_runner
-        self.project_file_classifier = project_file_classifier
+        self.src_artifact_file_classifier = src_artifact_file_classifier
         self.extension_runner_info_provider = extension_runner_info_provider
 
         self.pyrefly_bin_path = Path(sys.executable).parent / "pyrefly"
@@ -105,11 +105,11 @@ class PyreflyLintFilesHandler(
         lint_messages: list[lint_files_action.LintMessage] = []
 
         try:
-            # project file classifier caches result, we can just get it each time again
-            file_type = self.project_file_classifier.get_project_file_type(
+            # src artifact file classifier caches result, we can just get it each time again
+            file_type = self.src_artifact_file_classifier.get_src_artifact_file_type(
                 file_path=file_path
             )
-            file_env = self.project_file_classifier.get_env_for_file_type(
+            file_env = self.src_artifact_file_classifier.get_env_for_file_type(
                 file_type=file_type
             )
         except NotImplementedError:

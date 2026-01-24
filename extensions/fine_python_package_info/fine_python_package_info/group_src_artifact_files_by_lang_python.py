@@ -1,6 +1,5 @@
 from finecode_extension_api.interfaces import (
     iprojectinfoprovider,
-    ipypackagelayoutinfoprovider,
     ilogger,
 )
 import dataclasses
@@ -10,6 +9,8 @@ from finecode_extension_api import code_action
 from finecode_extension_api.actions import (
     group_src_artifact_files_by_lang as group_src_artifact_files_by_lang_action,
 )
+
+from fine_python_package_info import ipypackagelayoutinfoprovider
 
 
 @dataclasses.dataclass

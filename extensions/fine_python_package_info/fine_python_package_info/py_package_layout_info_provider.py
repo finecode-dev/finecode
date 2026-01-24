@@ -5,11 +5,11 @@ import tomlkit.exceptions
 
 from finecode_extension_api.interfaces import (
     ifileeditor,
-    ipypackagelayoutinfoprovider,
     icache,
 )
 from finecode_extension_api import service
 
+from fine_python_package_info import ipypackagelayoutinfoprovider
 
 class ConfigParseError(Exception):
     def __init__(self, message: str) -> None:
