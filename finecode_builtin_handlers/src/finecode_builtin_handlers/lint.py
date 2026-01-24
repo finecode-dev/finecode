@@ -109,7 +109,7 @@ class LintHandler(
                     lint_tasks.append(lint_task)
         except ExceptionGroup as eg:
             error_str = ". ".join([str(exception) for exception in eg.exceptions])
-            raise code_action.ActionFailedException(error_str)
+            raise code_action.ActionFailedException(error_str) from eg
 
         lint_results = [task.result() for task in lint_tasks]
         if len(lint_results) > 0:

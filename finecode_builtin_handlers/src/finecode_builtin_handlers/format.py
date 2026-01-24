@@ -143,7 +143,7 @@ class FormatHandler(
                     format_tasks.append(format_task)
         except ExceptionGroup as eg:
             error_str = ". ".join([str(exception) for exception in eg.exceptions])
-            raise code_action.ActionFailedException(error_str)
+            raise code_action.ActionFailedException(error_str) from eg
 
         format_results = [task.result() for task in format_tasks]
         if len(format_results) > 0:

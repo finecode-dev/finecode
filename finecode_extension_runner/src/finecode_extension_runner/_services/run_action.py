@@ -211,7 +211,7 @@ async def run_action(
                     raise ActionFailedException(
                         f"Running action handlers of '{action_def.name}' failed(Run {run_id}): {errors}."
                         " See ER logs for more details"
-                    )
+                    ) from eg
 
                 if send_partial_results:
                     # all subresults are ready
@@ -251,7 +251,7 @@ async def run_action(
                         raise ActionFailedException(
                             f"Running action handlers of '{action_def.name}' failed"
                             f"(Run {run_id}). See ER logs for more details"
-                        )
+                        ) from eg
 
                     for handler_task in handlers_tasks:
                         coro_result = handler_task.result()
@@ -652,7 +652,7 @@ async def run_subresult_coros_concurrently(
                 errors_str += str(exc) + "."
         raise ActionFailedException(
             f"Concurrent running action handlers of '{action_name}' failed(Run {run_id}): {errors_str}"
-        )
+        ) from eg
 
     action_subresult: code_action.RunActionResult | None = None
     for coro_task in coros_tasks:

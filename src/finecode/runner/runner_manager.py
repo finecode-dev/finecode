@@ -314,7 +314,7 @@ async def start_runners_with_presets(
                 logger.exception(exception)
         raise jsonrpc_client.RunnerFailedToStart(
             "Failed to initialize runner(s). See previous logs for more details"
-        )
+        ) from eg
 
     for project in projects:
         if project.status != domain.ProjectStatus.CONFIG_VALID:

@@ -20,7 +20,7 @@ class ActionRunner(iactionrunner.IActionRunner):
         try:
             return await self._run_action_func(action, payload, meta)
         except Exception as exception:
-            raise iactionrunner.ActionRunFailed(str(exception))
+            raise iactionrunner.ActionRunFailed(str(exception)) from exception
 
     def get_actions_names(self) -> list[str]:
         return self._actions_names_getter()
@@ -28,5 +28,5 @@ class ActionRunner(iactionrunner.IActionRunner):
     def get_action_by_name(self, name: str) -> type[code_action.Action[code_action.RunPayloadType, code_action.RunContextType, code_action.RunResultType]]:
         try:
             return self._action_by_name_getter(name)
-        except KeyError:
-            raise iactionrunner.ActionNotFound(f"Action '{name}' not found")
+        except KeyError as exception:
+            raise iactionrunner.ActionNotFound(f"Action '{name}' not found") from exception

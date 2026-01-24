@@ -219,7 +219,7 @@ async def _on_initialized(ls: LanguageServer, params: types.InitializedParams):
                 tg.create_task(services.add_workspace_dir(request=request))
     except ExceptionGroup as error:
         logger.exception(error)
-        raise error
+        raise error from eg
 
     global_state.server_initialized.set()
     logger.trace("Workspace directories added, end of initialized handler")

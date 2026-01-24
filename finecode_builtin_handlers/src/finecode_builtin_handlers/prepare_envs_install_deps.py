@@ -75,7 +75,7 @@ class PrepareEnvsInstallDepsHandler(
                     install_deps_tasks.append(task)
         except ExceptionGroup as eg:
             error_str = ". ".join([str(exception) for exception in eg.exceptions])
-            raise code_action.ActionFailedException(error_str)
+            raise code_action.ActionFailedException(error_str) from eg
 
         install_deps_results = [task.result() for task in install_deps_tasks]
         errors: list[str] = []

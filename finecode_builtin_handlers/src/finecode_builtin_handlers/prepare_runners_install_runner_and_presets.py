@@ -85,10 +85,10 @@ class PrepareRunnersInstallRunnerAndPresetsHandler(
                     error_str = ". ".join(
                         [str(exception) for exception in eg.exceptions]
                     )
-                    raise code_action.ActionFailedException(error_str)
+                    raise code_action.ActionFailedException(error_str) from eg
 
             result = prepare_runners_action.PrepareRunnersRunResult(errors=errors)
-            raise code_action.StopActionRunWithResult(result=result)
+            raise code_action.StopActionRunWithResult(result=result) from eg
 
         install_deps_results = [task.result() for task in install_deps_tasks]
         errors: list[str] = []

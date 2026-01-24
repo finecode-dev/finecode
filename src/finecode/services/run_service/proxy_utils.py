@@ -241,7 +241,7 @@ async def run_with_partial_results(
         errors_str = ", ".join(errors)
         raise ActionRunFailed(
             f"Run of {action_name} in {project.dir_path} failed: {errors_str}. See logs for more details"
-        )
+        ) from eg
 
 
 @contextlib.asynccontextmanager
@@ -347,7 +347,7 @@ async def start_required_environments(
                 errors.append(exception.message)
             else:
                 errors.append(str(exception))
-        raise StartingEnvironmentsFailed(".".join(errors))
+        raise StartingEnvironmentsFailed(".".join(errors)) from eg
 
 
 async def _start_runner_or_update_config(
@@ -431,7 +431,7 @@ async def run_actions_in_running_project(
                 else:
                     logger.error("Unexpected exception:")
                     logger.exception(exception)
-            raise ActionRunFailed(f"Running of actions {actions} failed")
+            raise ActionRunFailed(f"Running of actions {actions} failed") from eg
 
         for idx, run_task in enumerate(run_tasks):
             run_result = run_task.result()
@@ -495,7 +495,7 @@ async def run_actions_in_projects(
     except ExceptionGroup as eg:
         for exception in eg.exceptions:
             # TODO: merge all in one?
-            raise exception
+            raise exception from eg
 
     results = {}
     projects_paths = list(actions_by_project.keys())
