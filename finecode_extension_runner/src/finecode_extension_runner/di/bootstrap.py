@@ -18,6 +18,11 @@ try:
 except ImportError:
     fine_python_package_info = None
 
+try:
+    import finecode_httpclient
+except ImportError:
+    finecode_httpclient = None
+
 from finecode_extension_api.interfaces import (
     iactionrunner,
     icache,
@@ -26,6 +31,7 @@ from finecode_extension_api.interfaces import (
     ifileeditor,
     ifilemanager,
     ilogger,
+    ihttpclient,
     iprojectinfoprovider,
     iextensionrunnerinfoprovider,
     isrcartifactfileclassifier,
@@ -78,6 +84,10 @@ def bootstrap(
     _state.container[ifileeditor.IFileEditor] = file_editor_instance
     _state.container[icache.ICache] = cache_instance
     _state.container[iactionrunner.IActionRunner] = action_runner_instance
+
+    if finecode_httpclient is not None:
+        _state.container[ihttpclient.IHttpClient] = finecode_httpclient.HttpClient(logger=logger_instance)
+    
     # _state.container[idevenvinfoprovider.IDevEnvInfoProvider] = dev_env_info_provider_instance
 
     if fine_python_ast is not None:
