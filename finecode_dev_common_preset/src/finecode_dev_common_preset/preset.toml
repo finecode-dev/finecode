@@ -3,6 +3,11 @@ presets = [
     { source = "fine_python_recommended" },
     { source = "fine_python_aksem" },
 ]
+# TODO: move in base python preset?
+registries = [
+    { url = "https://test.pypi.org/simple/", name = "testpypi" },
+    { url = "https://pypi.org/simple/", name = "pypi" },
+]
 
 # in development finecode can only be started with local version of finecode_extension_runner,
 # otherwise version conflict occurs, because versions of finecode and
@@ -18,6 +23,7 @@ finecode_extension_runner = { path = "../../../finecode_extension_runner", edita
 finecode_extension_api = { path = "../../../finecode_extension_api", editable = true }
 finecode_extension_runner = { path = "../../../finecode_extension_runner", editable = true }
 finecode_builtin_handlers = { path = "../../../finecode_builtin_handlers", editable = true }
+finecode_httpclient = { path = "../../../finecode_httpclient", editable = true }
 fine_python_ast = { path = "../../../extensions/fine_python_ast", editable = true }
 fine_python_mypy = { path = "../../../extensions/fine_python_mypy", editable = true }
 fine_python_ruff = { path = "../../../extensions/fine_python_ruff", editable = true }
@@ -40,3 +46,51 @@ config.target_version = 'py311'
 [[tool.finecode.action_handler]]
 source = "fine_python_pyrefly.PyreflyLintFilesHandler"
 config.python_version = '3.11'
+
+[tool.finecode.action.publish_artifact]
+source = "finecode_extension_api.actions.publish_artifact.PublishArtifactAction"
+handlers = [
+    { name = 'publish_artifact', source = 'finecode_builtin_handlers.PublishArtifactHandler', env = "dev_no_runtime", dependencies = [
+        "finecode_builtin_handlers~=0.2.0a0",
+    ] },
+]
+
+[tool.finecode.action.get_src_artifact_version]
+source = "finecode_extension_api.actions.get_src_artifact_version.GetSrcArtifactVersionAction"
+handlers = [
+    { name = 'get_src_artifact_version_py', source = 'fine_python_package_info.GetSrcArtifactVersionPyHandler', env = "dev_no_runtime", dependencies = [
+        "fine_python_package_info~=0.2.0a1",
+    ] },
+]
+
+[tool.finecode.action.get_src_artifact_registries]
+source = "finecode_extension_api.actions.get_src_artifact_registries.GetSrcArtifactRegistriesAction"
+handlers = [
+    { name = 'get_src_artifact_registries_py', source = 'fine_python_package_info.GetSrcArtifactRegistriesPyHandler', env = "dev_no_runtime", dependencies = [
+        "fine_python_package_info~=0.2.0a1",
+    ] },
+]
+
+[tool.finecode.action.publish_artifact_to_registry]
+source = "finecode_extension_api.actions.publish_artifact_to_registry.PublishArtifactToRegistryAction"
+handlers = [
+    { name = 'publish_artifact_to_registry_py', source = 'fine_python_package_info.PublishArtifactToRegistryPyHandler', env = "dev_no_runtime", dependencies = [
+        "fine_python_package_info~=0.2.0a1",
+    ] },
+]
+
+[tool.finecode.action.is_artifact_published_to_registry]
+source = "finecode_extension_api.actions.is_artifact_published_to_registry.IsArtifactPublishedToRegistryAction"
+handlers = [
+    { name = 'is_artifact_published_to_registry_py', source = 'fine_python_package_info.IsArtifactPublishedToRegistryPyHandler', env = "dev_no_runtime", dependencies = [
+        "fine_python_package_info~=0.2.0a1",
+    ] },
+]
+
+[tool.finecode.action.build_artifact]
+source = "finecode_extension_api.actions.build_action.BuildArtifactAction"
+handlers = [
+    { name = 'build_artifact_py', source = 'fine_python_package_info.BuildArtifactPyHandler', env = "dev_no_runtime", dependencies = [
+        "fine_python_package_info~=0.2.0a1",
+    ] },
+]

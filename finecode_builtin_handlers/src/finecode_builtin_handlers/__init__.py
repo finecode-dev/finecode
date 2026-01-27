@@ -11,6 +11,7 @@ from .prepare_runners_install_runner_and_presets import (
     PrepareRunnersInstallRunnerAndPresetsHandler,
 )
 from .prepare_runners_read_configs import PrepareRunnersReadConfigsHandler
+from .publish_artifact import PublishArtifactHandler
 
 __all__ = [
     "CleanFinecodeLogsHandler",
@@ -22,4 +23,5 @@ __all__ = [
     "PrepareRunnersInstallRunnerAndPresetsHandler",
     "PrepareRunnersReadConfigsHandler",
     "DumpConfigSaveHandler",
+    "PublishArtifactHandler",
 ]

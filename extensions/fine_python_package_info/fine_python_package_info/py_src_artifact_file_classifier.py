@@ -1,16 +1,11 @@
 import pathlib
 
-from finecode_extension_api.interfaces import (
-    isrcartifactfileclassifier,
-    iprojectinfoprovider,
-)
-from finecode_extension_api import service
-
 from fine_python_package_info import ipypackagelayoutinfoprovider
+from finecode_extension_api import service
+from finecode_extension_api.interfaces import (iprojectinfoprovider,
+                                               isrcartifactfileclassifier)
 
 
-# TODO: it should be package file classifier?
-# TODO: is it specific to python?
 class PySrcArtifactFileClassifier(
     isrcartifactfileclassifier.ISrcArtifactFileClassifier, service.Service
 ):
@@ -53,7 +48,7 @@ class PySrcArtifactFileClassifier(
     ) -> isrcartifactfileclassifier.SrcArtifactFileType:
         if self.project_src_dir_path is None:
             raise NotImplementedError(
-                f"{self.project_layout} project layout is not supported"
+                f"Layout of python package {self.project_info_provider.get_current_project_dir_path()} is not supported"
             )
 
         if file_path in self._file_type_by_path:
