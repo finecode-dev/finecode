@@ -55,7 +55,7 @@ class PublishArtifactHandler(
         dist_artifact_paths = payload.dist_artifact_paths
 
         get_version_action = self.action_runner.get_action_by_name(
-            "get_src_artifact_version"
+            "get_src_artifact_version", get_src_artifact_version_action.GetSrcArtifactVersionAction
         )
         version_payload = (
             get_src_artifact_version_action.GetSrcArtifactVersionRunPayload(
@@ -68,7 +68,7 @@ class PublishArtifactHandler(
         version = version_result.version
 
         get_registries_action = self.action_runner.get_action_by_name(
-            "get_src_artifact_registries"
+            "get_src_artifact_registries", get_src_artifact_registries_action.GetSrcArtifactRegistriesAction
         )
         registries_payload = (
             get_src_artifact_registries_action.GetSrcArtifactRegistriesRunPayload(
@@ -93,7 +93,7 @@ class PublishArtifactHandler(
             }
         else:
             is_published_action = self.action_runner.get_action_by_name(
-                "is_artifact_published_to_registry"
+                "is_artifact_published_to_registry", is_artifact_published_to_registry_action.IsArtifactPublishedToRegistryAction
             )
 
             check_tasks: list[tuple[asyncio.Task[is_artifact_published_to_registry_action.IsArtifactPublishedToRegistryRunResult], get_src_artifact_registries_action.Registry]] = []
@@ -132,7 +132,7 @@ class PublishArtifactHandler(
 
         # Publish to registries with unpublished artifacts
         publish_to_registry_action = self.action_runner.get_action_by_name(
-            "publish_artifact_to_registry"
+            "publish_artifact_to_registry", publish_artifact_to_registry_action.PublishArtifactToRegistryAction
         )
 
         publish_tasks: list[asyncio.Task[publish_artifact_to_registry_action.PublishArtifactToRegistryRunResult]] = []

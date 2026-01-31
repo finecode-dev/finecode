@@ -59,7 +59,7 @@ class StyledText:
 
         changed_params: dict[str, str | bool] = {}
         for param_name, param_default, param_value in params:
-            if param_value != param_default:
+            if param_value != param_default and param_value is not None:
                 changed_params[param_name] = (
                     param_value
                     if not isinstance(param_value, enum.Enum)

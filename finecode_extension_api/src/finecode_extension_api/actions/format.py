@@ -1,12 +1,6 @@
 import dataclasses
 import enum
-import sys
 from pathlib import Path
-
-if sys.version_info >= (3, 12):
-    from typing import override
-else:
-    from typing_extensions import override
 
 from finecode_extension_api import code_action
 from finecode_extension_api.actions import format_files as format_files_action

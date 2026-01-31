@@ -28,8 +28,14 @@ class DumpConfigRunContext(code_action.RunActionContext[DumpConfigRunPayload]):
         run_id: int,
         initial_payload: DumpConfigRunPayload,
         meta: code_action.RunActionMeta,
+        info_provider: code_action.RunContextInfoProvider,
     ) -> None:
-        super().__init__(run_id=run_id, initial_payload=initial_payload, meta=meta)
+        super().__init__(
+            run_id=run_id,
+            initial_payload=initial_payload,
+            meta=meta,
+            info_provider=info_provider,
+        )
 
         self.raw_config_dump: dict[str, typing.Any] = {}
 

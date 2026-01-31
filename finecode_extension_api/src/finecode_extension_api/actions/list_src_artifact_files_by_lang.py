@@ -15,14 +15,22 @@ class ListSrcArtifactFilesByLangRunPayload(code_action.RunActionPayload):
     langs: list[str] | None = None
 
 
-class ListSrcArtifactFilesByLangRunContext(code_action.RunActionContext):
+class ListSrcArtifactFilesByLangRunContext(
+    code_action.RunActionContext[ListSrcArtifactFilesByLangRunPayload]
+):
     def __init__(
         self,
         run_id: int,
         initial_payload: ListSrcArtifactFilesByLangRunPayload,
         meta: code_action.RunActionMeta,
+        info_provider: code_action.RunContextInfoProvider,
     ) -> None:
-        super().__init__(run_id=run_id, initial_payload=initial_payload, meta=meta)
+        super().__init__(
+            run_id=run_id,
+            initial_payload=initial_payload,
+            meta=meta,
+            info_provider=info_provider,
+        )
 
 
 @dataclasses.dataclass

@@ -34,8 +34,14 @@ class PrepareEnvsRunContext(code_action.RunActionContext[PrepareEnvsRunPayload])
         run_id: int,
         initial_payload: PrepareEnvsRunPayload,
         meta: code_action.RunActionMeta,
+        info_provider: code_action.RunContextInfoProvider,
     ) -> None:
-        super().__init__(run_id=run_id, initial_payload=initial_payload, meta=meta)
+        super().__init__(
+            run_id=run_id,
+            initial_payload=initial_payload,
+            meta=meta,
+            info_provider=info_provider,
+        )
 
         # project def pathes are stored also in context, because prepare envs can run
         # tools like pip which expected 'normalized' project definition(=without

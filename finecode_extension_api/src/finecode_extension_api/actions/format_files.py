@@ -3,7 +3,7 @@ import sys
 from pathlib import Path
 from typing import NamedTuple
 
-from finecode_extension_api.interfaces import ifileeditor, ilogger
+from finecode_extension_api.interfaces import ifileeditor
 
 if sys.version_info >= (3, 12):
     from typing import override
@@ -34,13 +34,20 @@ class FormatFilesRunContext(code_action.RunActionContext[FormatFilesRunPayload])
         initial_payload: FormatFilesRunPayload,
         meta: code_action.RunActionMeta,
         file_editor: ifileeditor.IFileEditor,
+        info_provider: code_action.RunContextInfoProvider,
     ) -> None:
-        super().__init__(run_id=run_id, initial_payload=initial_payload, meta=meta)
+        super().__init__(
+            run_id=run_id,
+            initial_payload=initial_payload,
+            meta=meta,
+            info_provider=info_provider,
+        )
         self.file_editor = file_editor
 
         self.file_info_by_path: dict[Path, FileInfo] = {}
         self.file_editor_session: ifileeditor.IFileEditorSession
 
+    @override
     async def init(self) -> None:
         self.file_editor_session = await self.exit_stack.enter_async_context(
             self.file_editor.session(FILE_OPERATION_AUTHOR)
@@ -83,7 +90,7 @@ class FormatFilesRunResult(code_action.RunActionResult):
         for file_path, file_result in self.result_by_file_path.items():
             if file_result.changed:
                 text.append("reformatted ")
-                text.append_styled(file_path, bold=True)
+                text.append_styled(file_path.as_posix(), bold=True)
                 text.append("\n")
             else:
                 unchanged_counter += 1
@@ -103,46 +110,3 @@ class FormatFilesAction(
     PAYLOAD_TYPE = FormatFilesRunPayload
     RUN_CONTEXT_TYPE = FormatFilesRunContext
     RESULT_TYPE = FormatFilesRunResult
-
-
-# TODO: move to builtin handlers
-@dataclasses.dataclass
-class SaveFormatFilesHandlerConfig(code_action.ActionHandlerConfig): ...
-
-
-class SaveFormatFilesHandler(
-    code_action.ActionHandler[FormatFilesAction, SaveFormatFilesHandlerConfig]
-):
-    FILE_OPERATION_AUTHOR = ifileeditor.FileOperationAuthor(id="SaveFormatFilesHandler")
-
-    def __init__(
-        self, file_editor: ifileeditor.IFileEditor, logger: ilogger.ILogger
-    ) -> None:
-        self.file_editor = file_editor
-        self.logger = logger
-
-    async def run(
-        self, payload: FormatFilesRunPayload, run_context: FormatFilesRunContext
-    ) -> FormatFilesRunResult:
-        file_paths = payload.file_paths
-        save = payload.save
-
-        if save is True:
-            async with self.file_editor.session(self.FILE_OPERATION_AUTHOR) as session:
-                for file_path in file_paths:
-                    file_content = run_context.file_info_by_path[file_path].file_content
-                    # TODO: only if changed?
-                    await session.save_file(
-                        file_path=file_path, file_content=file_content
-                    )
-
-        result = FormatFilesRunResult(
-            result_by_file_path={
-                file_path: FormatRunFileResult(
-                    changed=False,  # this handler doesn't change files, only saves them
-                    code=run_context.file_info_by_path[file_path].file_content,
-                )
-                for file_path in file_paths
-            }
-        )
-        return result

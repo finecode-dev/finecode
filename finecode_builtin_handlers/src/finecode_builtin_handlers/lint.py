@@ -58,7 +58,7 @@ class LintHandler(
                 # In future it could be improved by linting opened files + dependencies
                 # or e.g. files changed according to git + dependencies.
                 files_to_lint: list[pathlib.Path] = self.file_editor.get_opened_files()
-                group_project_files_action = self.action_runner.get_action_by_name('group_src_artifact_files_by_lang')
+                group_project_files_action = self.action_runner.get_action_by_name('group_src_artifact_files_by_lang', group_src_artifact_files_by_lang_action.GroupSrcArtifactFilesByLangAction)
                 group_src_artifact_files_by_lang_payload = group_src_artifact_files_by_lang_action.GroupSrcArtifactFilesByLangRunPayload(file_paths=files_to_lint, langs=langs_supported_by_lint)
                 files_by_lang_result = await self.action_runner.run_action(
                     action=group_project_files_action,
@@ -71,7 +71,7 @@ class LintHandler(
                 # Instead of getting all files in the project and then grouping them by
                 # language, use `list_src_artifact_files_by_lang_action` action which returns
                 # only files with supported languages
-                list_src_artifact_file_by_lang_action_instance = self.action_runner.get_action_by_name('list_src_artifact_files_by_lang')
+                list_src_artifact_file_by_lang_action_instance = self.action_runner.get_action_by_name('list_src_artifact_files_by_lang', list_src_artifact_files_by_lang_action.ListSrcArtifactFilesByLangAction)
                 list_src_artifact_files_by_lang_payload = list_src_artifact_files_by_lang_action.ListSrcArtifactFilesByLangRunPayload(langs=langs_supported_by_lint)
                 files_by_lang_result = await self.action_runner.run_action(
                     action=list_src_artifact_file_by_lang_action_instance,
@@ -83,7 +83,7 @@ class LintHandler(
         else:
             # lint target are files, lint them
             files_to_lint = payload.file_paths
-            group_src_artifact_files_by_lang_action_instance = self.action_runner.get_action_by_name('group_src_artifact_files_by_lang')
+            group_src_artifact_files_by_lang_action_instance = self.action_runner.get_action_by_name('group_src_artifact_files_by_lang', group_src_artifact_files_by_lang_action.GroupSrcArtifactFilesByLangAction)
             group_src_artifact_files_by_lang_payload = group_src_artifact_files_by_lang_action.GroupSrcArtifactFilesByLangRunPayload(file_paths=files_to_lint, langs=langs_supported_by_lint)
             files_by_lang_result = await self.action_runner.run_action(
                 action=group_src_artifact_files_by_lang_action_instance,
@@ -99,14 +99,15 @@ class LintHandler(
                 for lang, lang_files in files_by_lang.items():
                     # TODO: handle errors
                     # TODO: handle KeyError?
-                    action = self.action_runner.get_action_by_name(lint_files_prefix + lang)
+                    actions = self.action_runner.get_actions_for_language(source="finecode_extension_api.actions.lint_files.LintFilesAction", language=lang, expected_type=lint_files_action.LintFilesAction)
                     lint_files_payload = lint_files_action.LintFilesRunPayload(file_paths=lang_files)
-                    lint_task = tg.create_task(self.action_runner.run_action(
-                        action=action,
-                        payload=lint_files_payload,
-                        meta=run_meta
-                    ))
-                    lint_tasks.append(lint_task)
+                    for action in actions:
+                        lint_task = tg.create_task(self.action_runner.run_action(
+                            action=action,
+                            payload=lint_files_payload,
+                            meta=run_meta
+                        ))
+                        lint_tasks.append(lint_task)
         except ExceptionGroup as eg:
             error_str = ". ".join([str(exception) for exception in eg.exceptions])
             raise code_action.ActionFailedException(error_str) from eg

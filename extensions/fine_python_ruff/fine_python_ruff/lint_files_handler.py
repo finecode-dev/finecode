@@ -80,7 +80,7 @@ class RuffLintFilesHandler(
     async def run(
         self,
         payload: lint_files_action.LintFilesRunPayload,
-        run_context: code_action.RunActionWithPartialResultsContext,
+        run_context: lint_files_action.LintFilesRunContext,
     ) -> None:
         file_paths = [file_path async for file_path in payload]
 

@@ -22,7 +22,9 @@ class LintRunPayload(code_action.RunActionPayload):
 class LintRunResult(lint_files.LintFilesRunResult): ...
 
 
-LintRunContext = code_action.RunActionWithPartialResultsContext
+class LintRunContext(
+    code_action.RunActionWithPartialResultsContext[LintRunPayload]
+): ...
 
 
 class LintAction(code_action.Action[LintRunPayload, LintRunContext, LintRunResult]):

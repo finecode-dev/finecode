@@ -34,7 +34,7 @@ class GetSrcArtifactRegistriesRunResult(code_action.RunActionResult):
         if not self.registries:
             return "No registries configured"
 
-        lines = []
+        lines: list[str] = []
         for registry in self.registries:
             lines.append(f"{registry.name}: {registry.url}")
         return "\n".join(lines)

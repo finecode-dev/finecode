@@ -4,6 +4,7 @@ from .clean_finecode_logs import CleanFinecodeLogsHandler
 from .dump_config import DumpConfigHandler
 from .dump_config_save import DumpConfigSaveHandler
 from .format import FormatHandler
+from .format_files_save_handler import SaveFormatFilesHandler
 from .lint import LintHandler
 from .prepare_envs_install_deps import PrepareEnvsInstallDepsHandler
 from .prepare_envs_read_configs import PrepareEnvsReadConfigsHandler
@@ -24,4 +25,5 @@ __all__ = [
     "PrepareRunnersReadConfigsHandler",
     "DumpConfigSaveHandler",
     "PublishArtifactHandler",
+    "SaveFormatFilesHandler"
 ]

@@ -21,8 +21,7 @@ class PublishArtifactToRegistryRunContext(
 class PublishArtifactToRegistryRunResult(code_action.RunActionResult):
     ...
 
-    def update(self, other: code_action.RunActionResult) -> None:
-        ...
+    def update(self, other: code_action.RunActionResult) -> None: ...
 
     def to_text(self) -> str | textstyler.StyledText:
         return "Published"

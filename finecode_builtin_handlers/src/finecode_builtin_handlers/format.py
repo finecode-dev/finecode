@@ -73,7 +73,7 @@ class FormatHandler(
                 # or e.g. files changed according to git + dependencies.
                 files_to_format: list[pathlib.Path] = self.file_editor.get_opened_files()
                 group_project_files_action = self.action_runner.get_action_by_name(
-                    "group_src_artifact_files_by_lang"
+                    "group_src_artifact_files_by_lang", group_src_artifact_files_by_lang_action.GroupSrcArtifactFilesByLangAction
                 )
                 group_src_artifact_files_by_lang_payload = group_src_artifact_files_by_lang_action.GroupSrcArtifactFilesByLangRunPayload(
                     file_paths=files_to_format, langs=langs_supported_by_format
@@ -90,7 +90,7 @@ class FormatHandler(
                 # language, use `list_src_artifact_files_by_lang_action` action which returns
                 # only files with supported languages
                 list_src_artifact_file_by_lang_action_instance = (
-                    self.action_runner.get_action_by_name("list_src_artifact_files_by_lang")
+                    self.action_runner.get_action_by_name("list_src_artifact_files_by_lang", list_src_artifact_files_by_lang_action.ListSrcArtifactFilesByLangAction)
                 )
                 list_src_artifact_files_by_lang_payload = (
                     list_src_artifact_files_by_lang_action.ListSrcArtifactFilesByLangRunPayload(
@@ -108,7 +108,7 @@ class FormatHandler(
             # format target are files, format them
             files_to_format = payload.file_paths
             group_src_artifact_files_by_lang_action_instance = (
-                self.action_runner.get_action_by_name("group_src_artifact_files_by_lang")
+                self.action_runner.get_action_by_name("group_src_artifact_files_by_lang", group_src_artifact_files_by_lang_action.GroupSrcArtifactFilesByLangAction)
             )
             group_src_artifact_files_by_lang_payload = (
                 group_src_artifact_files_by_lang_action.GroupSrcArtifactFilesByLangRunPayload(
@@ -130,7 +130,7 @@ class FormatHandler(
                     # TODO: handle errors
                     # TODO: handle KeyError?
                     action = self.action_runner.get_action_by_name(
-                        format_files_prefix + lang
+                        format_files_prefix + lang, format_files_action.FormatFilesAction
                     )
                     format_files_payload = format_files_action.FormatFilesRunPayload(
                         file_paths=lang_files, save=payload.save

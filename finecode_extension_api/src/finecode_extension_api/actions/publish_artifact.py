@@ -33,7 +33,7 @@ class PublishArtifactRunResult(code_action.RunActionResult):
             registries_str = ", ".join(self.published_registries)
             return f"Published version {self.version} to: {registries_str}"
         else:
-            return f'Version {self.version} is already published'
+            return f"Version {self.version} is already published"
 
     @property
     def return_code(self) -> code_action.RunReturnCode:

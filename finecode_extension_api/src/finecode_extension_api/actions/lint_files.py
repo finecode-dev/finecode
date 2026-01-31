@@ -112,13 +112,18 @@ class LintFilesRunResult(code_action.RunActionResult):
         return code_action.RunReturnCode.SUCCESS
 
 
+class LintFilesRunContext(
+    code_action.RunActionWithPartialResultsContext[LintFilesRunPayload]
+): ...
+
+
 class LintFilesAction(
     code_action.Action[
         LintFilesRunPayload,
-        code_action.RunActionWithPartialResultsContext,
+        LintFilesRunContext,
         LintFilesRunResult,
     ]
 ):
     PAYLOAD_TYPE = LintFilesRunPayload
-    RUN_CONTEXT_TYPE = code_action.RunActionWithPartialResultsContext
+    RUN_CONTEXT_TYPE = LintFilesRunContext
     RESULT_TYPE = LintFilesRunResult

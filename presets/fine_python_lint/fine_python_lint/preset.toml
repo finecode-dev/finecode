@@ -1,5 +1,6 @@
 [tool.finecode.action.lint_files_python]
 source = "finecode_extension_api.actions.lint_files.LintFilesAction"
+languages = ["python"]
 handlers = [
     { name = "ruff", source = "fine_python_ruff.RuffLintFilesHandler", env = "dev_no_runtime", dependencies = [
         "fine_python_ruff~=0.2.0a0",

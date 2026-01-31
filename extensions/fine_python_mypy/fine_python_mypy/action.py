@@ -195,7 +195,7 @@ class MypyLintHandler(
     async def run(
         self,
         payload: lint_action.LintRunPayload,
-        run_context: code_action.RunActionWithPartialResultsContext,
+        run_context: lint_action.LintRunContext,
     ) -> None:
         file_paths = [file_path async for file_path in payload]
 

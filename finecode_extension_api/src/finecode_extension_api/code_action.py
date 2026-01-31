@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import collections.abc
 import contextlib
 import dataclasses
@@ -57,18 +56,35 @@ class RunActionResult:
         return RunReturnCode.SUCCESS
 
 
-RunPayloadType = TypeVar(
-    "RunPayloadType", bound=RunActionPayload
-)  # | AsyncIterator[RunActionPayload]
-RunIterablePayloadType = TypeVar(
-    "RunIterablePayloadType", bound=collections.abc.AsyncIterator[RunPayloadType]
-)
-RunResultType = TypeVar(
-    "RunResultType", bound=RunActionResult
-)  # | AsyncIterator[RunActionResult]
-RunIterableResultType = TypeVar(
-    "RunResultType", bound=collections.abc.AsyncIterator[RunResultType]
-)
+RunPayloadType = TypeVar("RunPayloadType", bound=RunActionPayload, covariant=True)
+RunResultType = TypeVar("RunResultType", bound=RunActionResult, covariant=True)
+
+
+class RunContextInfoProvider:
+    """
+    Owned by the action runner, passed to RunActionContext.
+    """
+
+    def __init__(self, is_concurrent_execution: bool) -> None:
+        self._current_result: RunActionResult | None = None
+        self.is_concurrent_execution: bool = is_concurrent_execution
+
+    @property
+    def current_result(self) -> RunActionResult | None:
+        """
+        Access accumulated result from previously completed handlers.
+        Only available in sequential execution mode.
+
+        NOTE: it's highly discouraged to change the object, use it as readonly object.
+        """
+        return self._current_result
+
+    def update(self, result: RunActionResult) -> None:
+        """Called by action runner after each handler completes."""
+        if self._current_result is None:
+            self._current_result = result
+        else:
+            self._current_result.update(result)
 
 
 class RunActionContext(typing.Generic[RunPayloadType]):
@@ -79,12 +95,32 @@ class RunActionContext(typing.Generic[RunPayloadType]):
     # initialized already.
 
     def __init__(
-        self, run_id: int, initial_payload: RunPayloadType, meta: RunActionMeta
+        self,
+        run_id: int,
+        initial_payload: RunPayloadType,
+        meta: RunActionMeta,
+        info_provider: RunContextInfoProvider,
     ) -> None:
         self.run_id = run_id
         self.initial_payload = initial_payload
         self.meta = meta
         self.exit_stack = contextlib.AsyncExitStack()
+        self._info_provider = info_provider
+
+    @property
+    def current_result(self) -> RunActionResult | None:
+        """
+        Access accumulated result from previously completed handlers.
+        Only available in sequential execution mode.
+
+        NOTE: it's highly discouraged to change the object, use it as readonly object.
+        """
+        if self._info_provider.is_concurrent_execution:
+            raise RuntimeError(
+                "Cannot access current_result during concurrent handler execution. "
+                "Results from other handlers are not reliably available in concurrent mode."
+            )
+        return self._info_provider.current_result
 
     async def init(self) -> None: ...
 
@@ -99,14 +135,25 @@ class RunActionContext(typing.Generic[RunPayloadType]):
         return await self.exit_stack.__aexit__(exc_type, exc_val, exc_tb)
 
 
-RunContextType = TypeVar("RunContextType", bound=RunActionContext)
+RunContextType = TypeVar(
+    "RunContextType", bound=RunActionContext[RunActionPayload], covariant=True
+)
 
 
-class RunActionWithPartialResultsContext(RunActionContext):
+class RunActionWithPartialResultsContext(RunActionContext[RunPayloadType]):
     def __init__(
-        self, run_id: int, initial_payload: RunPayloadType, meta: RunActionMeta
+        self,
+        run_id: int,
+        initial_payload: RunPayloadType,
+        meta: RunActionMeta,
+        info_provider: RunContextInfoProvider,
     ) -> None:
-        super().__init__(run_id=run_id, initial_payload=initial_payload, meta=meta)
+        super().__init__(
+            run_id=run_id,
+            initial_payload=initial_payload,
+            meta=meta,
+            info_provider=info_provider,
+        )
         self.partial_result_scheduler = partialresultscheduler.PartialResultScheduler()
 
 
@@ -117,7 +164,7 @@ class ActionConfig:
 
 class Action(Generic[RunPayloadType, RunContextType, RunResultType]):
     PAYLOAD_TYPE: type[RunActionPayload] = RunActionPayload
-    RUN_CONTEXT_TYPE: type[RunActionContext] = RunActionContext
+    RUN_CONTEXT_TYPE: type[RunActionContext[RunPayloadType]] = RunActionContext
     RESULT_TYPE: type[RunActionResult] = RunActionResult
     CONFIG_TYPE: type[ActionConfig] = ActionConfig
 
@@ -158,16 +205,12 @@ ActionHandlerConfigType = TypeVar(
 )
 ActionType = TypeVar(
     "ActionType",
-    bound=Action[
-        RunPayloadType | RunIterablePayloadType,
-        RunContextType,
-        RunResultType | RunIterableResultType,
-    ],
+    bound=Action[RunActionPayload, RunActionContext[RunActionPayload], RunActionResult],
     covariant=True,
 )
 
 
-IterableType = TypeVar("IterableType")
+PayloadTypeVar = TypeVar("PayloadTypeVar", bound=RunActionPayload)
 
 
 class ActionHandler(Protocol[ActionType, ActionHandlerConfigType]):
@@ -183,9 +226,6 @@ class ActionHandler(Protocol[ActionType, ActionHandlerConfigType]):
     """
 
     async def run(
-        self, payload: RunPayloadType, run_context: RunContextType
-    ) -> (
-        RunResultType
-        | collections.abc.Mapping[IterableType, asyncio.Task[RunResultType]]
-    ):
+        self, payload: PayloadTypeVar, run_context: RunActionContext[PayloadTypeVar]
+    ) -> RunActionResult:
         raise NotImplementedError()

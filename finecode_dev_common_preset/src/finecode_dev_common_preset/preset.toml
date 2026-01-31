@@ -24,6 +24,7 @@ finecode_extension_api = { path = "../../../finecode_extension_api", editable = 
 finecode_extension_runner = { path = "../../../finecode_extension_runner", editable = true }
 finecode_builtin_handlers = { path = "../../../finecode_builtin_handlers", editable = true }
 finecode_httpclient = { path = "../../../finecode_httpclient", editable = true }
+finecode_dev_extensions = { path = "../../../finecode_dev_extensions", editable = true }
 fine_python_ast = { path = "../../../extensions/fine_python_ast", editable = true }
 fine_python_mypy = { path = "../../../extensions/fine_python_mypy", editable = true }
 fine_python_ruff = { path = "../../../extensions/fine_python_ruff", editable = true }
@@ -88,9 +89,17 @@ handlers = [
 ]
 
 [tool.finecode.action.build_artifact]
-source = "finecode_extension_api.actions.build_action.BuildArtifactAction"
+source = "finecode_extension_api.actions.build_artifact_action.BuildArtifactAction"
 handlers = [
     { name = 'build_artifact_py', source = 'fine_python_package_info.BuildArtifactPyHandler', env = "dev_no_runtime", dependencies = [
         "fine_python_package_info~=0.2.0a1",
+    ] },
+]
+
+[tool.finecode.action.build_and_publish_artifact]
+source = "finecode_dev_extensions.BuildAndPublishArtifactAction"
+handlers = [
+    { name = 'build_and_publish_artifact', source = 'finecode_dev_extensions.BuildAndPublishArtifactHandler', env = "dev_no_runtime", dependencies = [
+        "finecode_dev_extensions~=0.2.0a0",
     ] },
 ]

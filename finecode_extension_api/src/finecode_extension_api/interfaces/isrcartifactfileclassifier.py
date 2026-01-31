@@ -10,6 +10,8 @@ class SrcArtifactFileType(enum.Enum):
 
 
 class ISrcArtifactFileClassifier(typing.Protocol):
-    def get_src_artifact_file_type(self, file_path: pathlib.Path) -> SrcArtifactFileType: ...
+    def get_src_artifact_file_type(
+        self, file_path: pathlib.Path
+    ) -> SrcArtifactFileType: ...
 
     def get_env_for_file_type(self, file_type: SrcArtifactFileType) -> str: ...

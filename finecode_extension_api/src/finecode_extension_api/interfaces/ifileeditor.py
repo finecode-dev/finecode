@@ -1,4 +1,3 @@
-import collections.abc
 import contextlib
 import dataclasses
 import pathlib
@@ -78,10 +77,9 @@ class IFileEditorSession(Protocol):
         self, file_path: pathlib.Path, change: FileChange
     ) -> None: ...
 
-    @contextlib.asynccontextmanager
     async def subscribe_to_changes_of_opened_files(
         self,
-    ) -> collections.abc.AsyncIterator[FileChangeEvent]:
+    ) -> contextlib.AbstractAsyncContextManager[FileChangeEvent]:
         # TODO: bunch of change events at once?
         ...
 
@@ -91,17 +89,15 @@ class IFileEditorSession(Protocol):
 
     async def close_file(self, file_path: pathlib.Path) -> None: ...
 
-    @contextlib.asynccontextmanager
-    async def subscribe_to_all_events(
+    def subscribe_to_all_events(
         self,
-    ) -> collections.abc.AsyncIterator[FileEvent]:
+    ) -> contextlib.AbstractAsyncContextManager[FileEvent]:
         # TODO: bunch of change events at once?
         ...
 
-    @contextlib.asynccontextmanager
-    async def read_file(
+    def read_file(
         self, file_path: pathlib.Path, block: bool = False
-    ) -> collections.abc.AsyncIterator[FileInfo]: ...
+    ) -> contextlib.AbstractAsyncContextManager[FileInfo]: ...
 
     async def read_file_version(self, file_path: pathlib.Path) -> str:
         # in case only file version is needed without content
@@ -137,8 +133,7 @@ class IFileEditor(Protocol):
     'opened files' ... files user sees and works with, not files which tools read
     """
 
-    @contextlib.asynccontextmanager
-    async def session(
+    def session(
         self, author: FileOperationAuthor
     ) -> typing.AsyncContextManager[IFileEditorSession]:
         """Create a session for a specific author."""

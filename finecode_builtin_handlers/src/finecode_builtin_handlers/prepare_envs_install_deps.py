@@ -32,7 +32,7 @@ class PrepareEnvsInstallDepsHandler(
     ) -> prepare_envs_action.PrepareEnvsRunResult:
         envs = payload.envs
 
-        install_deps_in_env_action_instance = self.action_runner.get_action_by_name(name="install_deps_in_env")
+        install_deps_in_env_action_instance = self.action_runner.get_action_by_name(name="install_deps_in_env", expected_type=install_deps_in_env_action.InstallDepsInEnvAction)
         install_deps_tasks: list[asyncio.Task[install_deps_in_env_action.InstallDepsInEnvRunResult]] = []
         run_meta = run_context.meta
         try:

@@ -65,7 +65,7 @@ class IsArtifactPublishedToRegistryPyHandler(
 
         # Get registries using the action
         get_registries_action = self.action_runner.get_action_by_name(
-            "get_src_artifact_registries"
+            "get_src_artifact_registries", get_src_artifact_registries_action.GetSrcArtifactRegistriesAction
         )
         registries_payload = (
             get_src_artifact_registries_action.GetSrcArtifactRegistriesRunPayload(
@@ -127,7 +127,7 @@ class IsArtifactPublishedToRegistryPyHandler(
             except KeyError as exception:
                 raise code_action.ActionFailedException("File object has no 'filename' key") from exception
 
-            is_published_by_dist_path = {dist_path: dist_path in published_file_names for dist_path in dist_artifact_paths}
+            is_published_by_dist_path = {dist_path: dist_path.name in published_file_names for dist_path in dist_artifact_paths}
         else:
             is_published_by_dist_path = {dist_path: False for dist_path in dist_artifact_paths}
 

@@ -41,18 +41,18 @@ async def update_config(
 ) -> schemas.UpdateConfigResponse:
     project_dir_path = Path(request.working_dir)
 
-    actions: dict[str, domain.Action] = {}
+    actions: dict[str, domain.ActionDeclaration] = {}
     for action_name, action_schema_obj in request.actions.items():
-        handlers: list[domain.ActionHandler] = []
+        handlers: list[domain.ActionHandlerDeclaration] = []
         for handler_obj in action_schema_obj.handlers:
             handlers.append(
-                domain.ActionHandler(
+                domain.ActionHandlerDeclaration(
                     name=handler_obj.name,
                     source=handler_obj.source,
                     config=handler_obj.config,
                 )
             )
-        action = domain.Action(
+        action = domain.ActionDeclaration(
             name=action_name,
             config=action_schema_obj.config,
             handlers=handlers,
@@ -95,7 +95,7 @@ async def update_config(
         assert global_state.runner_context is not None
         return list(global_state.runner_context.project.actions.keys())
 
-    def action_by_name_getter(action_name: str) -> domain.Action:
+    def action_by_name_getter(action_name: str) -> domain.ActionDeclaration:
         assert global_state.runner_context is not None
         return global_state.runner_context.project.actions[action_name]
 
@@ -193,7 +193,7 @@ def resolve_package_path(package_name: str) -> str:
 
 def shutdown_action_handler(
     action_handler_name: str,
-    handler_instance: domain.ActionHandler | None,
+    handler_instance: domain.ActionHandlerDeclaration | None,
     exec_info: domain.ActionHandlerExecInfo,
     used_services: list[service.Service],
     runner_context: context.RunnerContext,

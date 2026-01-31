@@ -28,8 +28,12 @@ class IsArtifactPublishedToRegistryRunResult(code_action.RunActionResult):
         self.is_published_by_dist_path = other.is_published_by_dist_path
 
     def to_text(self) -> str | textstyler.StyledText:
-        published = [p for p, is_pub in self.is_published_by_dist_path.items() if is_pub]
-        not_published = [p for p, is_pub in self.is_published_by_dist_path.items() if not is_pub]
+        published = [
+            p for p, is_pub in self.is_published_by_dist_path.items() if is_pub
+        ]
+        not_published = [
+            p for p, is_pub in self.is_published_by_dist_path.items() if not is_pub
+        ]
         parts: list[str] = []
         if published:
             parts.append(f"published: {', '.join(str(p) for p in published)}")

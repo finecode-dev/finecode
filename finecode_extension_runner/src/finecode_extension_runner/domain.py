@@ -9,21 +9,21 @@ from finecode_extension_api import code_action, service
 from finecode_extension_runner.impls import process_executor as process_executor_impl
 
 
-class Action:
+class ActionDeclaration:
     def __init__(
         self,
         name: str,
         config: dict[str, typing.Any],
-        handlers: list[ActionHandler],
+        handlers: list[ActionHandlerDeclaration],
         source: str,
     ) -> None:
         self.name: str = name
         self.config: dict[str, typing.Any] = config
-        self.handlers: list[ActionHandler] = handlers
+        self.handlers: list[ActionHandlerDeclaration] = handlers
         self.source: str = source
 
 
-class ActionHandler:
+class ActionHandlerDeclaration:
     def __init__(self, name: str, source: str, config: dict[str, typing.Any]) -> None:
         self.name = name
         self.source = source
@@ -36,7 +36,7 @@ class Project:
         name: str,
         dir_path: Path,
         def_path: Path,
-        actions: dict[str, Action],
+        actions: dict[str, ActionDeclaration],
         action_handler_configs: dict[str, dict[str, typing.Any]],
     ) -> None:
         self.name = name

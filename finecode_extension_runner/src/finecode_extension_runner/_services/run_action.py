@@ -54,7 +54,7 @@ class AsyncPlaceholderContext:
 
 
 async def run_action(
-    action_def: domain.Action,
+    action_def: domain.ActionDeclaration,
     payload: code_action.RunActionPayload | None,
     meta: code_action.RunActionMeta,
     partial_result_token: int | str | None = None,
@@ -99,7 +99,11 @@ async def run_action(
         action_exec_info = create_action_exec_info(action_def)
         action_cache.exec_info = action_exec_info
 
+    # TODO: take value from action config
+    execute_handlers_concurrently = action_def.name.startswith("lint_files_")
+
     run_context: code_action.RunActionContext | AsyncPlaceholderContext
+    run_context_info = code_action.RunContextInfoProvider(is_concurrent_execution=execute_handlers_concurrently)
     if action_exec_info.run_context_type is not None:
         constructor_args = await resolve_func_args_with_di(
             action_exec_info.run_context_type.__init__,
@@ -107,6 +111,7 @@ async def run_action(
                 "run_id": lambda _: run_id,
                 "initial_payload": lambda _: payload,
                 "meta": lambda _: meta,
+                "info_provider": lambda _: run_context_info
             },
             params_to_ignore=["self"],
         )
@@ -137,8 +142,6 @@ async def run_action(
         ) from exception
 
     try:
-        # TODO: take value from action config
-        execute_handlers_concurrently = action_def.name.startswith("lint_files_")
         send_partial_results = partial_result_token is not None
         with action_exec_info.process_executor.activate():
             # action payload can be iterable or not
@@ -280,6 +283,8 @@ async def run_action(
                                 action_result = handler_result
                             else:
                                 action_result.update(handler_result)
+
+                            run_context_info.update(action_result)
     finally:
         # exit run context
         try:
@@ -401,7 +406,7 @@ def action_result_to_run_action_response(
     )
 
 
-def create_action_exec_info(action: domain.Action) -> domain.ActionExecInfo:
+def create_action_exec_info(action: domain.ActionDeclaration) -> domain.ActionExecInfo:
     try:
         action_type_def = run_utils.import_module_member_by_source_str(action.source)
     except Exception as e:
@@ -455,7 +460,7 @@ async def resolve_func_args_with_di(
 
 
 async def execute_action_handler(
-    handler: domain.ActionHandler,
+    handler: domain.ActionHandlerDeclaration,
     payload: code_action.RunActionPayload | None,
     run_context: code_action.RunActionContext | AsyncPlaceholderContext,
     run_id: int,
@@ -612,8 +617,8 @@ async def execute_action_handler(
             error_str = exception.message
         else:
             logger.error("Unhandled exception in action handler:")
-            logger.exception(exception)
             error_str = str(exception)
+        logger.exception(exception)
         raise ActionFailedException(
             f"Running action handler '{handler.name}' failed(Run {run_id}): {error_str}"
         ) from exception
