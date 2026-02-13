@@ -33,6 +33,13 @@ class WorkspaceContext:
     # TODO: move in LSP server
     opened_documents: dict[str, domain.TextDocumentInfo] = field(default_factory=dict)
 
+    # Handler config overrides from CLI env vars or options.
+    # Format: {action_name: {handler_name_or_empty: {param: value}}}
+    # Empty string key "" means action-level (applies to all handlers).
+    handler_config_overrides: dict[str, dict[str, dict[str, str]]] = field(
+        default_factory=dict
+    )
+
     # cache
     # <directory: <action_name: project_path>>
     project_path_by_dir_and_action: dict[str, dict[str, Path]] = field(

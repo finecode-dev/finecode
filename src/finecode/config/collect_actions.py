@@ -15,21 +15,48 @@ def collect_actions(
     # - project expected to include finecode
     try:
         project = ws_context.ws_projects[project_path]
-    except KeyError:
+    except KeyError as exception:
         raise ValueError(
             f"Project {project_path} doesn't exist."
-            f" Existing projects: {ws_context.ws_projects}"
-        )
+            + f" Existing projects: {ws_context.ws_projects}"
+        ) from exception
 
     try:
         config = ws_context.ws_projects_raw_configs[project_path]
-    except KeyError:
-        raise Exception("First you need to parse config of project")
+    except KeyError as exception:
+        raise Exception("First you need to parse config of project") from exception
 
     actions = _collect_actions_in_config(config)
     project.actions = actions
 
     action_handler_configs = _collect_action_handler_configs_in_config(config)
+
+    # Apply overrides
+    #
+    # Merge handler config overrides from ws_context if available
+    if ws_context.handler_config_overrides:
+        for action in project.actions:
+            action_overrides = ws_context.handler_config_overrides.get(action.name, {})
+            if not action_overrides:
+                continue
+
+            for handler in action.handlers:
+                # Check for action-level overrides (empty string key)
+                action_level_overrides = action_overrides.get("", {})
+                # Check for handler-specific overrides
+                handler_overrides = action_overrides.get(handler.name, {})
+
+                # Merge overrides if any exist
+                if action_level_overrides or handler_overrides:
+                    if handler.source not in action_handler_configs:
+                        action_handler_configs[handler.source] = {}
+                    # Action-level first, then handler-specific (handler takes precedence)
+                    action_handler_configs[handler.source] = {
+                        **action_handler_configs[handler.source],
+                        **action_level_overrides,
+                        **handler_overrides,
+                    }
+
     project.action_handler_configs = action_handler_configs
 
     return actions
@@ -63,7 +90,7 @@ def _collect_actions_in_config(
         try:
             action_def = config_models.ActionDefinition(**action_def_raw)
         except config_models.ValidationError as exception:
-            raise config_models.ConfigurationError(str(exception))
+            raise config_models.ConfigurationError(str(exception)) from exception
 
         new_action = domain.Action(
             name=action_name,
@@ -76,6 +103,7 @@ def _collect_actions_in_config(
                     dependencies=handler.dependencies,
                 )
                 for handler in action_def.handlers
+                if handler.enabled
             ],
             source=action_def.source,
             config=action_def.config or {},

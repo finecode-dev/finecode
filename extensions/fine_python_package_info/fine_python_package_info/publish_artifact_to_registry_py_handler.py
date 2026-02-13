@@ -16,7 +16,8 @@ from finecode_extension_api.interfaces import (
 
 @dataclasses.dataclass
 class PublishArtifactToRegistryPyHandlerConfig(code_action.ActionHandlerConfig):
-    ...
+    username: str | None = None
+    password: str | None = None
 
 
 class PublishArtifactToRegistryPyHandler(
@@ -69,6 +70,8 @@ class PublishArtifactToRegistryPyHandler(
             skip_existing=not payload.force,
             non_interactive=True,
             verbose=False,
+            username=self.config.username,
+            password=self.config.password
         )
 
         # Run twine upload in executor to avoid blocking

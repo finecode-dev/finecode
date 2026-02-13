@@ -22,8 +22,11 @@ async def run_actions(
     actions: list[str],
     action_payload: dict[str, str],
     concurrently: bool,
+    handler_config_overrides: dict[str, dict[str, dict[str, str]]] | None = None,
 ) -> tuple[str, int]:
     ws_context = context.WorkspaceContext([workdir_path])
+    if handler_config_overrides:
+        ws_context.handler_config_overrides = handler_config_overrides
     await read_configs.read_projects_in_dir(
         dir_path=workdir_path, ws_context=ws_context
     )
@@ -117,7 +120,7 @@ async def run_actions(
             await runner_manager.start_runners_with_presets(projects, ws_context)
         except runner_manager.RunnerFailedToStart as exception:
             raise RunFailed(
-                f"One or more projects are misconfigured, runners for them didn't"
+                "One or more projects are misconfigured, runners for them didn't"
                 + f" start: {exception.message}. Check logs for details."
             ) from exception
         except Exception as exception:

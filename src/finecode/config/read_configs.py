@@ -201,8 +201,8 @@ async def get_preset_project_path(
         return None
     try:
         preset_project_path = Path(resolve_path_result["packagePath"])
-    except KeyError:
-        raise ValueError(f"Preset source cannot be resolved: {preset.source}")
+    except KeyError as exception:
+        raise ValueError(f"Preset source cannot be resolved: {preset.source}") from exception
 
     logger.trace(f"Got: {preset.source} -> {preset_project_path}")
     return preset_project_path
@@ -384,18 +384,22 @@ def _merge_projects_configs(
 
                     # Handle handlers array merge by name
                     if "handlers" in action_info:
-                        if "handlers" not in tool_finecode_config1[key][action_name]:
-                            tool_finecode_config1[key][action_name]["handlers"] = []
+                        handlers_mode = action_info.get("handlers_mode", "merge")
+                        if handlers_mode == "replace":
+                            tool_finecode_config1[key][action_name]["handlers"] = action_info["handlers"]
+                        else:
+                            if "handlers" not in tool_finecode_config1[key][action_name]:
+                                tool_finecode_config1[key][action_name]["handlers"] = []
 
-                        existing_handlers = tool_finecode_config1[key][action_name][
-                            "handlers"
-                        ]
-                        new_handlers = action_info["handlers"]
+                            existing_handlers = tool_finecode_config1[key][action_name][
+                                "handlers"
+                            ]
+                            new_handlers = action_info["handlers"]
 
-                        # Merge handlers by name
-                        _merge_object_array_by_key(
-                            existing_handlers, new_handlers, "name"
-                        )
+                            # Merge handlers by name
+                            _merge_object_array_by_key(
+                                existing_handlers, new_handlers, "name"
+                            )
         elif key == "action_handler":
             # Handle action_handler array merge by source
             if key not in tool_finecode_config1:

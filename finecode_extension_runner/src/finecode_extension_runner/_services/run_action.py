@@ -7,6 +7,7 @@ import typing
 
 import deepmerge
 from loguru import logger
+import pydantic
 from pydantic.dataclasses import dataclass as pydantic_dataclass
 
 from finecode_extension_api import code_action, textstyler, service
@@ -516,8 +517,12 @@ async def execute_action_handler(
             ) from error
 
         def get_handler_config(param_type):
-            # TODO: validation errors
-            return param_type(**handler_raw_config)
+            # validate config using pydantic
+            try:
+                config_type = pydantic_dataclass(param_type)
+            except pydantic.ValidationError as exception:
+                raise ActionFailedException(exception.errors()) from exception
+            return config_type(**handler_raw_config)
 
         def get_process_executor(param_type):
             return action_exec_info.process_executor

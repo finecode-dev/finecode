@@ -11,6 +11,12 @@ class Preset:
     def __init__(self, source: str) -> None:
         self.source = source
 
+    def __str__(self) -> str:
+        return f'Preset(source="{self.source}")'
+
+    def __repr__(self) -> str:
+        return str(self)
+
 
 class ActionHandler:
     def __init__(
@@ -26,6 +32,12 @@ class ActionHandler:
         self.config: dict[str, typing.Any] = config
         self.env: str = env
         self.dependencies: list[str] = dependencies
+
+    def __str__(self) -> str:
+        return f'ActionHandler(name="{self.name}", source="{self.source}", env="{self.env}")'
+
+    def __repr__(self) -> str:
+        return str(self)
 
     def to_dict(self) -> dict[str, typing.Any]:
         return {
@@ -49,6 +61,13 @@ class Action:
         self.source: str = source
         self.handlers: list[ActionHandler] = handlers
         self.config = config
+
+    def __str__(self) -> str:
+        handler_names = [h.name for h in self.handlers]
+        return f'Action(name="{self.name}", handlers={handler_names})'
+
+    def __repr__(self) -> str:
+        return str(self)
 
     def to_dict(self) -> dict[str, typing.Any]:
         return {
@@ -116,10 +135,22 @@ class RunnerConfig:
     def __init__(self, debug: bool) -> None:
         self.debug = debug
 
+    def __str__(self) -> str:
+        return f"RunnerConfig(debug={self.debug})"
+
+    def __repr__(self) -> str:
+        return str(self)
+
 
 class EnvConfig:
     def __init__(self, runner_config: RunnerConfig) -> None:
         self.runner_config = runner_config
+
+    def __str__(self) -> str:
+        return f"EnvConfig(runner_config={self.runner_config})"
+
+    def __repr__(self) -> str:
+        return str(self)
 
 
 RootActions = list[str]

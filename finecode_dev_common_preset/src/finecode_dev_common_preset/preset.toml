@@ -102,4 +102,7 @@ handlers = [
     { name = 'build_and_publish_artifact', source = 'finecode_dev_extensions.BuildAndPublishArtifactHandler', env = "dev_no_runtime", dependencies = [
         "finecode_dev_extensions~=0.2.0a0",
     ] },
+    { name = 'copy_distributables', source = 'finecode_dev_extensions.BuildAndPublishArtifactCopyDistributablesHandler', env = "dev_no_runtime", dependencies = [
+        "finecode_dev_extensions~=0.2.0a0",
+    ] },
 ]

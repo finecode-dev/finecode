@@ -13,6 +13,147 @@ from finecode import communication_utils, logger_utils, user_messages
 from finecode.cli_app.commands import dump_config_cmd, prepare_envs_cmd, run_cmd
 
 
+FINECODE_CONFIG_ENV_PREFIX = "FINECODE_CONFIG_"
+
+
+def parse_handler_config_from_env() -> dict[str, dict[str, dict[str, str]]]:
+    """
+    Parse handler config overrides from environment variables.
+
+    Format:
+    - FINECODE_CONFIG_<ACTION>__<PARAM>=value
+      -> action-level config for all handlers of action
+    - FINECODE_CONFIG_<ACTION>__<HANDLER>__<PARAM>=value
+      -> handler-specific config
+
+    Returns nested dict: {action_name: {handler_name_or_empty: {param: value}}}
+    Empty string key "" means action-level (applies to all handlers).
+    """
+    config_overrides: dict[str, dict[str, dict[str, str]]] = {}
+
+    for env_name, env_value in os.environ.items():
+        if not env_name.startswith(FINECODE_CONFIG_ENV_PREFIX):
+            continue
+
+        # Remove prefix and split by double underscore
+        config_key = env_name[len(FINECODE_CONFIG_ENV_PREFIX) :]
+        parts = config_key.split("__")
+
+        if len(parts) < 2:
+            logger.warning(
+                f"Invalid config env var format: {env_name}. "
+                f"Expected FINECODE_CONFIG_<ACTION>__<PARAM> or "
+                f"FINECODE_CONFIG_<ACTION>__<HANDLER>__<PARAM>"
+            )
+            continue
+
+        # Convert to lowercase for matching
+        action_name = parts[0].lower()
+
+        if len(parts) == 2:
+            # Action-level config: FINECODE_CONFIG_ACTION__PARAM
+            handler_name = ""  # empty means all handlers
+            param_name = parts[1].lower()
+        else:
+            # Handler-specific config: FINECODE_CONFIG_ACTION__HANDLER__PARAM
+            handler_name = parts[1].lower()
+            param_name = "__".join(parts[2:]).lower()
+
+        if action_name not in config_overrides:
+            config_overrides[action_name] = {}
+        if handler_name not in config_overrides[action_name]:
+            config_overrides[action_name][handler_name] = {}
+
+        config_overrides[action_name][handler_name][param_name] = env_value
+
+    return config_overrides
+
+
+def parse_handler_config_from_cli(
+    config_args: list[str], actions: list[str]
+) -> dict[str, dict[str, dict[str, str]]]:
+    """
+    Parse handler config overrides from CLI arguments.
+
+    Format:
+    - --config.<param>=value
+      -> action-level config for all handlers of all specified actions
+    - --config.<handler>.<param>=value
+      -> handler-specific config for all specified actions
+
+    Returns nested dict: {action_name: {handler_name_or_empty: {param: value}}}
+    Empty string key "" means action-level (applies to all handlers).
+    """
+    config_overrides: dict[str, dict[str, dict[str, str]]] = {}
+
+    for arg in config_args:
+        if not arg.startswith("--config."):
+            continue
+
+        if "=" not in arg:
+            logger.warning(
+                f"Invalid config CLI arg format: {arg}. "
+                f"Expected --config.<param>=value or --config.<handler>.<param>=value"
+            )
+            continue
+
+        # Remove --config. prefix and split by =
+        config_part = arg[len("--config.") :]
+        key_part, value = config_part.split("=", 1)
+        value = value.strip('"').strip("'")
+
+        # Split by . to determine if it's action-level or handler-specific
+        parts = key_part.split(".")
+
+        if len(parts) == 1:
+            # Action-level config: --config.<param>=value
+            handler_name = ""  # empty means all handlers
+            param_name = parts[0].lower().replace("-", "_")
+        else:
+            # Handler-specific config: --config.<handler>.<param>=value
+            handler_name = parts[0].lower().replace("-", "_")
+            param_name = ".".join(parts[1:]).lower().replace("-", "_")
+
+        # Apply to all specified actions
+        for action_name in actions:
+            action_name_lower = action_name.lower()
+            if action_name_lower not in config_overrides:
+                config_overrides[action_name_lower] = {}
+            if handler_name not in config_overrides[action_name_lower]:
+                config_overrides[action_name_lower][handler_name] = {}
+
+            config_overrides[action_name_lower][handler_name][param_name] = value
+
+    return config_overrides
+
+
+def merge_config_overrides(
+    env_overrides: dict[str, dict[str, dict[str, str]]],
+    cli_overrides: dict[str, dict[str, dict[str, str]]],
+) -> dict[str, dict[str, dict[str, str]]]:
+    """
+    Merge env var and CLI config overrides. CLI takes precedence.
+    """
+    merged = {}
+
+    # Copy env overrides
+    for action, handlers in env_overrides.items():
+        merged[action] = {}
+        for handler, params in handlers.items():
+            merged[action][handler] = dict(params)
+
+    # Merge CLI overrides (takes precedence)
+    for action, handlers in cli_overrides.items():
+        if action not in merged:
+            merged[action] = {}
+        for handler, params in handlers.items():
+            if handler not in merged[action]:
+                merged[action][handler] = {}
+            merged[action][handler].update(params)
+
+    return merged
+
+
 @click.group()
 def cli(): ...
 
@@ -100,6 +241,7 @@ def run(ctx) -> None:
     processed_args_count: int = 0
     concurrently: bool = False
     trace: bool = False
+    no_env_config: bool = False
 
     # finecode run parameters
     for arg in args:
@@ -122,11 +264,20 @@ def run(ctx) -> None:
             concurrently = True
         elif arg == "--trace":
             trace = True
+        elif arg == "--no-env-config":
+            no_env_config = True
         elif not arg.startswith("--"):
             break
         processed_args_count += 1
 
     logger_utils.init_logger(trace=trace, stdout=True)
+
+    # Parse handler config from env vars
+    handler_config_overrides: dict[str, dict[str, dict[str, str]]] = {}
+    if not no_env_config:
+        handler_config_overrides = parse_handler_config_from_env()
+        if handler_config_overrides:
+            logger.trace(f"Handler config overrides from env: {handler_config_overrides}")
 
     # actions
     for arg in args[processed_args_count:]:
@@ -140,8 +291,9 @@ def run(ctx) -> None:
         click.echo("No actions to run", err=True)
         sys.exit(1)
 
-    # action payload
+    # action payload and config overrides
     action_payload: dict[str, typing.Any] = {}
+    config_args: list[str] = []
     for arg in args[processed_args_count:]:
         if not arg.startswith("--"):
             click.echo(
@@ -156,11 +308,22 @@ def run(ctx) -> None:
                     err=True,
                 )
                 sys.exit(1)
+            elif arg.startswith("--config."):
+                config_args.append(arg)
             else:
-                arg_name, arg_value = arg[2:].split("=")
+                arg_name, arg_value = arg[2:].split("=", 1)
                 arg_name = arg_name.replace("-", "_")
                 action_payload[arg_name] = arg_value.strip('"').strip("'")
         processed_args_count += 1
+
+    # Parse CLI config overrides and merge with env overrides
+    if config_args:
+        cli_config_overrides = parse_handler_config_from_cli(config_args, actions_to_run)
+        if cli_config_overrides:
+            logger.trace(f"Handler config overrides from CLI: {cli_config_overrides}")
+            handler_config_overrides = merge_config_overrides(
+                handler_config_overrides, cli_config_overrides
+            )
 
     user_messages._notification_sender = show_user_message
 
@@ -173,6 +336,7 @@ def run(ctx) -> None:
                 actions_to_run,
                 deserialized_payload,
                 concurrently,
+                handler_config_overrides,
             )
         )
         click.echo(output)
