@@ -34,6 +34,7 @@ from finecode_extension_api.interfaces import (
     ihttpclient,
     iprojectinfoprovider,
     iextensionrunnerinfoprovider,
+    irepositorycredentialsprovider,
     isrcartifactfileclassifier,
 )
 from finecode_extension_runner import domain
@@ -49,6 +50,7 @@ from finecode_extension_runner.impls import (
     loguru_logger,
     project_info_provider,
     extension_runner_info_provider,
+    repository_credentials_provider,
 )
 
 
@@ -58,7 +60,7 @@ def bootstrap(
     current_project_raw_config_version_getter: Callable[[], int],
     cache_dir_path_getter: Callable[[], pathlib.Path],
     actions_names_getter: Callable[[], list[str]],
-    action_by_name_getter: Callable[[str], domain.Action],
+    action_by_name_getter: Callable[[str], domain.ActionDeclaration],
     current_env_name_getter: Callable[[], str]
 ):
     # logger_instance = loguru_logger.LoguruLogger()
@@ -87,7 +89,11 @@ def bootstrap(
 
     if finecode_httpclient is not None:
         _state.container[ihttpclient.IHttpClient] = finecode_httpclient.HttpClient(logger=logger_instance)
-    
+
+    _state.container[irepositorycredentialsprovider.IRepositoryCredentialsProvider] = (
+        repository_credentials_provider.ConfigRepositoryCredentialsProvider()
+    )
+
     # _state.container[idevenvinfoprovider.IDevEnvInfoProvider] = dev_env_info_provider_instance
 
     if fine_python_ast is not None:

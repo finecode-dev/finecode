@@ -7,26 +7,43 @@ from finecode_extension_runner import domain
 
 
 class ActionRunner(iactionrunner.IActionRunner):
-    def __init__(self, run_action_func: typing.Callable[[domain.Action, code_action.RunActionPayload, code_action.RunActionMeta], collections.abc.Coroutine[None, None, code_action.RunActionResult]],
+    def __init__(self, run_action_func: typing.Callable[[domain.ActionDeclaration, code_action.RunActionPayload, code_action.RunActionMeta], collections.abc.Coroutine[None, None, code_action.RunActionResult]],
                  actions_names_getter: typing.Callable[[], list[str]],
-    action_by_name_getter: typing.Callable[[str], domain.Action]):
+    action_by_name_getter: typing.Callable[[str], domain.ActionDeclaration]):
         self._run_action_func = run_action_func
         self._actions_names_getter = actions_names_getter
         self._action_by_name_getter = action_by_name_getter
 
+    @typing.override
     async def run_action(
-        self, action: type[code_action.Action[code_action.RunPayloadType, code_action.RunContextType, code_action.RunResultType]], payload: code_action.RunActionPayload, meta: code_action.RunActionMeta
+        self, action: iactionrunner.ActionDeclaration[iactionrunner.ActionT], payload: code_action.RunActionPayload, meta: code_action.RunActionMeta
     ) -> code_action.RunActionResult:
         try:
             return await self._run_action_func(action, payload, meta)
         except Exception as exception:
             raise iactionrunner.ActionRunFailed(str(exception)) from exception
 
+    @typing.override
     def get_actions_names(self) -> list[str]:
         return self._actions_names_getter()
+    
+    @typing.override
+    def get_actions_by_source(self, source: str, expected_type: type[iactionrunner.ActionT]) -> list[iactionrunner.ActionDeclaration[iactionrunner.ActionT]]:
+        return [
+            action
+            for name in self._actions_names_getter()
+            if (action := self._action_by_name_getter(name)).source == source
+        ]
 
-    def get_action_by_name(self, name: str) -> type[code_action.Action[code_action.RunPayloadType, code_action.RunContextType, code_action.RunResultType]]:
+    @typing.override
+    def get_action_by_name(self, name: str, expected_type: type[iactionrunner.ActionT]) -> iactionrunner.ActionDeclaration[iactionrunner.ActionT]:
         try:
             return self._action_by_name_getter(name)
         except KeyError as exception:
             raise iactionrunner.ActionNotFound(f"Action '{name}' not found") from exception
+
+    @typing.override
+    def get_actions_for_language(self, source: str, language: str, expected_type: type[iactionrunner.ActionT]) -> list[iactionrunner.ActionDeclaration[iactionrunner.ActionT]]:
+        return [
+            action for action in self.get_actions_by_source(source=source, expected_type=expected_type) if action.name.endswith('_' + language)
+        ]

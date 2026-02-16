@@ -1,9 +1,17 @@
 import pathlib
+import typing
 
 import click
 
 from finecode import context
+from finecode.runner import runner_client
 from finecode.services import run_service
+
+
+class RunActionsResult(typing.NamedTuple):
+    output: str
+    return_code: int
+    result_by_project: dict[pathlib.Path, dict[str, runner_client.RunActionResponse]]
 
 
 def run_result_to_str(
@@ -83,15 +91,22 @@ async def run_actions_in_projects_and_concat_results(
     concurrently: bool,
     run_trigger: run_service.RunActionTrigger,
     dev_env: run_service.DevEnv,
-) -> tuple[str, int]:
+    output_json: bool = False,
+    payload_overrides_by_project: dict[str, dict[str, typing.Any]] | None = None,
+) -> RunActionsResult:
+    result_formats = [run_service.RunResultFormat.STRING]
+    if output_json:
+        result_formats.append(run_service.RunResultFormat.JSON)
+
     result_by_project = await run_service.run_actions_in_projects(
         actions_by_project=actions_by_project,
         action_payload=action_payload,
         ws_context=ws_context,
         concurrently=concurrently,
-        result_format=run_service.RunResultFormat.STRING,
+        result_formats=result_formats,
         run_trigger=run_trigger,
         dev_env=dev_env,
+        payload_overrides_by_project=payload_overrides_by_project or {},
     )
 
     result_output: str = ""
@@ -113,11 +128,16 @@ async def run_actions_in_projects_and_concat_results(
         for action_name, action_result in result_by_action.items():
             if run_many_actions:
                 result_output += f"{click.style(action_name, bold=True)}:"
-            action_result_str = run_result_to_str(action_result.result, action_name)
+
+            action_result_str = run_result_to_str(action_result.text(), action_name)
             result_output += action_result_str
             result_return_code |= action_result.return_code
 
         if is_first_project:
             is_first_project = False
 
-    return (result_output, result_return_code)
+    return RunActionsResult(
+        output=result_output,
+        return_code=result_return_code,
+        result_by_project=result_by_project,
+    )

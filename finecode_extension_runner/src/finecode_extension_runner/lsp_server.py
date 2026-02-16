@@ -493,12 +493,15 @@ async def run_action(
     #
     # custom json encoder converts dict values and `convert_path_keys` is used to
     # convert dict keys
-    result_dict = convert_path_keys(response.to_dict()["result"])
-    result_str = json.dumps(result_dict, cls=CustomJSONEncoder)
+    result_by_format = response.to_dict()["result_by_format"]
+    converted_result_by_format = {
+        fmt: convert_path_keys(result) if isinstance(result, dict) else result
+        for fmt, result in result_by_format.items()
+    }
+    result_str = json.dumps(converted_result_by_format, cls=CustomJSONEncoder)
     return {
         "status": status,
-        "result": result_str,
-        "format": response.format,
+        "result_by_format": result_str,
         "return_code": response.return_code,
     }
 

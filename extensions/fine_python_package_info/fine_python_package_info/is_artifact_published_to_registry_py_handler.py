@@ -88,8 +88,8 @@ class IsArtifactPublishedToRegistryPyHandler(
                 f"Registry '{payload.registry_name}' not found in configuration"
             )
 
-        # Check if package version exists using PyPI JSON API
-        check_url = f"{registry_url.rstrip('/')}/{package_name}/"
+        # Check if package version exists using PyPI Simple API
+        check_url = f"{registry_url.rstrip('/')}/simple/{package_name}/"
 
         self.logger.debug(
             f"Checking if {package_name} {payload.version} is published to {payload.registry_name} at {check_url}"
@@ -98,12 +98,19 @@ class IsArtifactPublishedToRegistryPyHandler(
         try:
             async with self.http_client.session() as session:
                 response = await session.get(check_url, headers={"Accept": "application/vnd.pypi.simple.v1+json"}, timeout=10.0)
-                response_json = response.json()
         except Exception as exception:
             raise code_action.ActionFailedException(
                 f"Error checking publication status: {str(exception)}"
             ) from exception
-        
+
+        if response.status_code == 404:
+            # Package does not exist in the registry yet
+            is_published_by_dist_path = {dist_path: False for dist_path in payload.dist_artifact_paths}
+            return is_artifact_published_to_registry_action.IsArtifactPublishedToRegistryRunResult(
+                is_published_by_dist_path=is_published_by_dist_path
+            )
+
+        response_json = response.json()
         version_list = response_json.get('versions', None)
         if version_list is None:
             raise code_action.ActionFailedException("No 'versions' key in response from registry")

@@ -401,7 +401,7 @@ async def run_actions_in_running_project(
     project: domain.Project,
     ws_context: context.WorkspaceContext,
     concurrently: bool,
-    result_format: RunResultFormat,
+    result_formats: list[RunResultFormat],
     run_trigger: runner_client.RunActionTrigger,
     dev_env: runner_client.DevEnv,
 ) -> dict[str, RunActionResponse]:
@@ -420,7 +420,7 @@ async def run_actions_in_running_project(
                             ws_context=ws_context,
                             run_trigger=run_trigger,
                             dev_env=dev_env,
-                            result_format=result_format,
+                            result_formats=result_formats,
                         )
                     )
                     run_tasks.append(run_task)
@@ -447,7 +447,7 @@ async def run_actions_in_running_project(
                     ws_context=ws_context,
                     run_trigger=run_trigger,
                     dev_env=dev_env,
-                    result_format=result_format,
+                    result_formats=result_formats,
                 )
             except ActionRunFailed as exception:
                 raise ActionRunFailed(
@@ -470,23 +470,29 @@ async def run_actions_in_projects(
     action_payload: dict[str, str],
     ws_context: context.WorkspaceContext,
     concurrently: bool,
-    result_format: RunResultFormat,
+    result_formats: list[RunResultFormat],
     run_trigger: runner_client.RunActionTrigger,
     dev_env: runner_client.DevEnv,
+    payload_overrides_by_project: dict[str, dict[str, typing.Any]] | None = None,
 ) -> dict[pathlib.Path, dict[str, RunActionResponse]]:
+    _payload_overrides_by_project = payload_overrides_by_project or {}
     project_handler_tasks: list[asyncio.Task] = []
     try:
         async with asyncio.TaskGroup() as tg:
             for project_dir_path, actions_to_run in actions_by_project.items():
                 project = ws_context.ws_projects[project_dir_path]
+                project_payload = {
+                    **action_payload,
+                    **_payload_overrides_by_project.get(str(project_dir_path), {}),
+                }
                 project_task = tg.create_task(
                     run_actions_in_running_project(
                         actions=actions_to_run,
-                        action_payload=action_payload,
+                        action_payload=project_payload,
                         project=project,
                         ws_context=ws_context,
                         concurrently=concurrently,
-                        result_format=result_format,
+                        result_formats=result_formats,
                         run_trigger=run_trigger,
                         dev_env=dev_env,
                     )
@@ -525,10 +531,10 @@ def find_projects_with_actions(
     return actions_by_project
 
 
-RunResultFormat = runner_client.RunResultFormat
-RunActionResponse = runner_client.RunActionResponse
-RunActionTrigger = runner_client.RunActionTrigger
-DevEnv = runner_client.DevEnv
+RunResultFormat: typing.TypeAlias = runner_client.RunResultFormat
+RunActionResponse: typing.TypeAlias = runner_client.RunActionResponse
+RunActionTrigger: typing.TypeAlias = runner_client.RunActionTrigger
+DevEnv: typing.TypeAlias = runner_client.DevEnv
 
 
 async def run_action(
@@ -538,13 +544,18 @@ async def run_action(
     ws_context: context.WorkspaceContext,
     run_trigger: runner_client.RunActionTrigger,
     dev_env: runner_client.DevEnv,
-    result_format: runner_client.RunResultFormat = RunResultFormat.JSON,
+    result_formats: list[runner_client.RunResultFormat] | None = None,
     preprocess_payload: bool = True,
 ) -> RunActionResponse:
     formatted_params = str(params)
     if len(formatted_params) > 100:
         formatted_params = f"{formatted_params[:100]}..."
     logger.trace(f"Execute action {action_name} with {formatted_params}")
+    
+    if result_formats is None:
+        _result_formats = [RunResultFormat.JSON]
+    else:
+        _result_formats = result_formats
 
     if project_def.status != domain.ProjectStatus.CONFIG_VALID:
         raise ActionRunFailed(
@@ -588,7 +599,7 @@ async def run_action(
             ws_context=ws_context,
             run_trigger=run_trigger,
             dev_env=dev_env,
-            result_format=result_format,
+            result_formats=_result_formats,
         )
     else:
         # TODO: concurrent vs sequential, this value should be taken from action config
@@ -607,7 +618,7 @@ async def run_action(
                     ws_context=ws_context,
                     run_trigger=run_trigger,
                     dev_env=dev_env,
-                    result_format=result_format,
+                    result_formats=_result_formats,
                 )
 
     return response
@@ -621,7 +632,7 @@ async def _run_action_in_env_runner(
     ws_context: context.WorkspaceContext,
     run_trigger: runner_client.RunActionTrigger,
     dev_env: runner_client.DevEnv,
-    result_format: runner_client.RunResultFormat = RunResultFormat.JSON,
+    result_formats: list[runner_client.RunResultFormat],
 ):
     try:
         runner = await runner_manager.get_or_start_runner(
@@ -638,7 +649,7 @@ async def _run_action_in_env_runner(
             action_name=action_name,
             params=payload,
             options={
-                "result_format": result_format,
+                "result_formats": result_formats,
                 "meta": {"trigger": run_trigger.value, "dev_env": dev_env.value},
             },
         )

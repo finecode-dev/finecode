@@ -1,4 +1,4 @@
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Literal
 
@@ -49,12 +49,11 @@ class RunActionRequest(BaseSchema):
 class RunActionOptions(BaseSchema):
     meta: code_action.RunActionMeta
     partial_result_token: int | str | None = None
-    result_format: Literal["json"] | Literal["string"] = "json"
+    result_formats: list[Literal["json"] | Literal["string"]] = field(default_factory=lambda: ["json"])
 
 
 @dataclass
 class RunActionResponse(BaseSchema):
     return_code: int
     # result can be empty(=None) e.g. if it was sent as a list of partial results
-    result: dict[str, Any] | str | None
-    format: Literal["json"] | Literal["string"] | Literal["styled_text_json"] = "json"
+    result_by_format: dict[str, dict[str, Any] | str] | None

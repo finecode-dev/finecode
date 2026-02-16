@@ -17,11 +17,15 @@ class BuildArtifactRunContext(
 
 @dataclasses.dataclass
 class BuildArtifactRunResult(code_action.RunActionResult):
+    src_artifact_def_path: pathlib.Path
     build_output_paths: list[pathlib.Path]
 
     def update(self, other: code_action.RunActionResult) -> None:
         if not isinstance(other, BuildArtifactRunResult):
             return
+
+        if self.src_artifact_def_path != other.src_artifact_def_path:
+            raise code_action.ActionFailedException(f"BuildArtifactRunResult can be updated only with result of the same src artifact: {self.src_artifact_def_path} != {other.src_artifact_def_path}")
 
         self.build_output_paths = other.build_output_paths
 

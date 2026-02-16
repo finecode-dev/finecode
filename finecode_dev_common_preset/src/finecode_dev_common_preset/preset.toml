@@ -3,11 +3,6 @@ presets = [
     { source = "fine_python_recommended" },
     { source = "fine_python_aksem" },
 ]
-# TODO: move in base python preset?
-registries = [
-    { url = "https://test.pypi.org/simple/", name = "testpypi" },
-    { url = "https://pypi.org/simple/", name = "pypi" },
-]
 
 # in development finecode can only be started with local version of finecode_extension_runner,
 # otherwise version conflict occurs, because versions of finecode and
@@ -32,6 +27,7 @@ fine_python_isort = { path = "../../../extensions/fine_python_isort", editable =
 fine_python_flake8 = { path = "../../../extensions/fine_python_flake8", editable = true }
 fine_python_pyrefly = { path = "../../../extensions/fine_python_pyrefly", editable = true }
 fine_python_package_info = { path = "../../../extensions/fine_python_package_info", editable = true }
+fine_python_setuptools_scm = { path = "../../../extensions/fine_python_setuptools_scm", editable = true }
 
 # currently, all packages in finecode repository are pure python packages, reuse
 # setuptools build in all of them
@@ -48,6 +44,14 @@ config.target_version = 'py311'
 source = "fine_python_pyrefly.PyreflyLintFilesHandler"
 config.python_version = '3.11'
 
+[tool.finecode.action.init_repository_provider]
+source = "finecode_extension_api.actions.init_repository_provider.InitRepositoryProviderAction"
+handlers = [
+    { name = 'init_repository_provider', source = 'finecode_builtin_handlers.InitRepositoryProviderHandler', env = "dev_no_runtime", dependencies = [
+        "finecode_builtin_handlers~=0.2.0a0",
+    ] },
+]
+
 [tool.finecode.action.publish_artifact]
 source = "finecode_extension_api.actions.publish_artifact.PublishArtifactAction"
 handlers = [
@@ -60,6 +64,14 @@ handlers = [
 source = "finecode_extension_api.actions.get_src_artifact_version.GetSrcArtifactVersionAction"
 handlers = [
     { name = 'get_src_artifact_version_py', source = 'fine_python_package_info.GetSrcArtifactVersionPyHandler', env = "dev_no_runtime", dependencies = [
+        "fine_python_package_info~=0.2.0a1",
+    ] },
+]
+
+[tool.finecode.action.get_dist_artifact_version]
+source = "finecode_extension_api.actions.get_dist_artifact_version.GetDistArtifactVersionAction"
+handlers = [
+    { name = 'get_dist_artifact_version_py', source = 'fine_python_package_info.GetDistArtifactVersionPyHandler', env = "dev_no_runtime", dependencies = [
         "fine_python_package_info~=0.2.0a1",
     ] },
 ]
@@ -96,13 +108,18 @@ handlers = [
     ] },
 ]
 
-[tool.finecode.action.build_and_publish_artifact]
-source = "finecode_dev_extensions.BuildAndPublishArtifactAction"
+[tool.finecode.action.verify_artifact_published_to_registry]
+source = "finecode_extension_api.actions.verify_artifact_published_to_registry.VerifyArtifactPublishedToRegistryAction"
+# TODO: install, try to import etc
+handlers = []
+
+[tool.finecode.action.publish_and_verify_artifact]
+source = "finecode_dev_extensions.publish_and_verify_artifact_action.PublishAndVerifyArtifactAction"
 handlers = [
-    { name = 'build_and_publish_artifact', source = 'finecode_dev_extensions.BuildAndPublishArtifactHandler', env = "dev_no_runtime", dependencies = [
+    { name = 'init_repository_provider', source = 'finecode_dev_extensions.PublishAndVerifyArtifactInitRepositoryProviderHandler', env = "dev_no_runtime", dependencies = [
         "finecode_dev_extensions~=0.2.0a0",
     ] },
-    { name = 'copy_distributables', source = 'finecode_dev_extensions.BuildAndPublishArtifactCopyDistributablesHandler', env = "dev_no_runtime", dependencies = [
+    { name = 'publish_and_verify_artifact', source = 'finecode_dev_extensions.PublishAndVerifyArtifactHandler', env = "dev_no_runtime", dependencies = [
         "finecode_dev_extensions~=0.2.0a0",
     ] },
 ]

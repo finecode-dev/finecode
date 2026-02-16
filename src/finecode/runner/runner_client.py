@@ -66,9 +66,22 @@ class RunnerStatus(enum.Enum):
 type RunActionRawResult = dict[str, Any] | str
 
 
-class RunActionResponse(typing.NamedTuple):
-    result: RunActionRawResult
+@dataclasses.dataclass
+class RunActionResponse:
+    result_by_format: dict[str, RunActionRawResult]
     return_code: int
+
+    def json(self) -> dict[str, Any]:
+        result = self.result_by_format.get("json")
+        if result is None:
+            raise ActionRunFailed("Expected json result format but it was not returned")
+        return result
+
+    def text(self) -> str:
+        result = self.result_by_format.get("styled_text_json") or self.result_by_format.get("string")
+        if result is None:
+            raise ActionRunFailed("Expected text result format but it was not returned")
+        return result
 
 
 class RunResultFormat(enum.Enum):
@@ -128,30 +141,18 @@ async def run_action(
         raise ActionRunFailed(command_result["error"])
 
     return_code = command_result["return_code"]
-    raw_result = ""
-    stringified_result = command_result["result"]
+    stringified_result = command_result["result_by_format"]
     # currently result is always dumped to json even if response format is expected to
     # be a string. See docs of ER lsp server for more details.
     try:
-        raw_result = json.loads(stringified_result)
+        result_by_format = json.loads(stringified_result)
     except json.JSONDecodeError as exception:
         raise ActionRunFailed(f"Failed to decode result json: {exception}") from exception
 
-    if command_result["format"] == "string":
-        result = raw_result
-    elif (
-        command_result["format"] == "json"
-        or command_result["format"] == "styled_text_json"
-    ):
-        # string was already converted to dict above
-        result = raw_result
-    else:
-        raise Exception(f"Not support result format: {command_result['format']}")
-
     if command_result["status"] == "stopped":
-        raise ActionRunStopped(message=result)
+        raise ActionRunStopped(message=result_by_format)
 
-    return RunActionResponse(result=result, return_code=return_code)
+    return RunActionResponse(result_by_format=result_by_format, return_code=return_code)
 
 
 async def reload_action(runner: ExtensionRunnerInfo, action_name: str) -> None:

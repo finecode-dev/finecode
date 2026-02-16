@@ -1,9 +1,19 @@
+# TODO: check formatting
+# TODO: lock files on all platforms
+# TODO: test with all supported python versions
 name: CI
 
 on:
   merge_group:
   push:
   pull_request:
+  workflow_dispatch:
+    inputs:
+      publish_testpypi:
+        description: 'Publish to TestPyPI'
+        required: true
+        type: boolean
+        default: false
 
 defaults:
   run:
@@ -58,102 +68,61 @@ jobs:
           python -m finecode prepare-envs
         shell: bash
 
-      # TODO: install all other supported python versions. Version can be extracted from finecode
+      - name: Lint
+        run: |
+          source .venvs/dev_workspace/bin/activate
+          python -m finecode run lint
+        shell: bash
 
-      # - name: Lint
-      #   run: |
-      #     poetry run python -m finecode run lint
-      #   shell: bash
-
-      - name: Build all packages
+      - name: Build artifacts
+        id: build
         if: runner.os == 'Linux'
         run: |
           source .venvs/dev_workspace/bin/activate
-          python -m finecode run build
+          python -m finecode run build_artifact
         shell: bash
 
-      - name: Collect all distribution packages
-        if: runner.os == 'Linux'
+      # - name: Run unit tests
+      #   if: ${{ !cancelled() }}
+      #   run: |
+      #     source .venvs/dev_workspace/bin/activate
+      #     python -m finecode run test
+      #   shell: bash
+
+      - name: Publish to TestPyPI and verify
+        if: runner.os == 'Linux' && github.event_name == 'workflow_dispatch' && inputs.publish_testpypi
+        env:
+          FINECODE_CONFIG_PUBLISH_AND_VERIFY_ARTIFACT__INIT_REPOSITORY_PROVIDER__REPOSITORIES: '[{"name": "testpypi", "url": "https://test.pypi.org/"}]'
+          FINECODE_CONFIG_PUBLISH_AND_VERIFY_ARTIFACT__INIT_REPOSITORY_PROVIDER__CREDENTIALS_BY_REPOSITORY: '{"testpypi": {"username": "${{ secrets.TESTPYPI_USERNAME }}", "password": "${{ secrets.TESTPYPI_PASSWORD }}"}}'
         run: |
-          # TODO: finecode action to copy only updated packages in dist
-          mkdir -p dist
-          cp finecode_extension_api/dist/* dist/
-          cp extensions/fine_python_ast/dist/* dist/
-          cp extensions/fine_python_black/dist/* dist/
-          cp extensions/fine_python_flake8/dist/* dist/
-          cp extensions/fine_python_isort/dist/* dist/
-          cp extensions/fine_python_module_exports/dist/* dist/
-          cp extensions/fine_python_mypy/dist/* dist/
-          cp presets/fine_python_format/dist/* dist/
-          cp presets/fine_python_lint/dist/* dist/
-          cp presets/fine_python_recommended/dist/* dist/
+          source .venvs/dev_workspace/bin/activate
+          python -m finecode run \
+            --map-payload-fields="src-artifact-def-path,dist-artifact-paths" \
+            publish_and_verify_artifact \
+            --src-artifact-def-path="build_artifact.src_artifact_def_path" \
+            --dist-artifact-paths="build_artifact.build_output_paths"
         shell: bash
 
+      - name: Publish to PyPI and verify
+        if: runner.os == 'Linux' && startsWith(github.ref, 'refs/tags/')
+        env:
+          FINECODE_CONFIG_PUBLISH_AND_VERIFY_ARTIFACT__INIT_REPOSITORY_PROVIDER__REPOSITORIES: '[{"name": "pypi", "url": "https://pypi.org/"}]'
+          FINECODE_CONFIG_PUBLISH_AND_VERIFY_ARTIFACT__INIT_REPOSITORY_PROVIDER__CREDENTIALS_BY_REPOSITORY: '{"pypi": {"username": "${{ secrets.PYPI_USERNAME }}", "password": "${{ secrets.PYPI_PASSWORD }}"}}'
+        run: |
+          # TODO: make sure git tag exists (for manual trigger)
+          source .venvs/dev_workspace/bin/activate
+          python -m finecode run \
+            --map-payload-fields="src-artifact-def-path,dist-artifact-paths" \
+            publish_and_verify_artifact \
+            --src-artifact-def-path="build_artifact.src_artifact_def_path" \
+            --dist-artifact-paths="build_artifact.build_output_paths"
+
+        shell: bash
+
+      # TODO: try to replace by finecode action
       - name: Store the distribution packages
         uses: actions/upload-artifact@v4
         if: runner.os == 'Linux'
         with:
           name: python-package-distributions
           path: dist/
-
-      # - name: Run unit tests
-      #   if: ${{ !cancelled() }}
-      #   run: |
-      #     poetry run python -m pytest tests/
-      #   shell: bash
-
-  publish-to-pypi:
-    name: >-
-      Publish Python 🐍 distribution 📦 to PyPI
-    if: startsWith(github.ref, 'refs/tags/')
-    needs:
-    - build
-    runs-on: ubuntu-24.04
-    environment:
-      name: pypi
-      url: https://pypi.org/p/finecode
-    permissions:
-      id-token: write  # IMPORTANT: mandatory for trusted publishing
-
-    steps:
-    - name: Download all the dists
-      uses: actions/download-artifact@v4
-      with:
-        name: python-package-distributions
-        path: dist/
-    - name: Publish distribution 📦 to PyPI
-      uses: pypa/gh-action-pypi-publish@release/v1
-      with:
-        # temporary skip existing packages, because not always all packages at once
-        # are updated.
-        # TODO: implement publishing only of changed in finecode
-        skip-existing: true
-
-  publish-to-testpypi:
-    name: Publish Python 🐍 distribution 📦 to TestPyPI
-    needs:
-    - build
-    runs-on: ubuntu-24.04
-
-    environment:
-      name: testpypi
-      url: https://test.pypi.org/p/finecode
-
-    permissions:
-      id-token: write  # IMPORTANT: mandatory for trusted publishing
-
-    steps:
-    - name: Download all the dists
-      uses: actions/download-artifact@v4
-      with:
-        name: python-package-distributions
-        path: dist/
-    - name: Publish distribution 📦 to TestPyPI
-      uses: pypa/gh-action-pypi-publish@release/v1
-      with:
-        repository-url: https://test.pypi.org/legacy/
-        verbose: true
-        # temporary skip existing packages, because not always all packages at once
-        # are updated.
-        # TODO: implement publishing only of changed in finecode
-        skip-existing: true

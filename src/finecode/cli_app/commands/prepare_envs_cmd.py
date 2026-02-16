@@ -259,7 +259,7 @@ async def check_or_recreate_all_dev_workspace_envs(
             },
             project_def=current_project,
             ws_context=ws_context,
-            result_format=run_service.RunResultFormat.STRING,
+            result_formats=[run_service.RunResultFormat.STRING],
             preprocess_payload=False,
             run_trigger=run_service.RunActionTrigger.USER,
             dev_env=run_service.DevEnv.CLI,
@@ -271,5 +271,5 @@ async def check_or_recreate_all_dev_workspace_envs(
 
     if action_result.return_code != 0:
         raise PrepareEnvsFailed(
-            f"'prepare_dev_workspaces_env' ended in {current_project.name} with return code {action_result.return_code}: {action_result.result}"
+            f"'prepare_dev_workspaces_env' ended in {current_project.name} with return code {action_result.return_code}: {action_result.result_by_format}"
         )

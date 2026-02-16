@@ -371,38 +371,34 @@ async def run_action_raw(
     )
 
     response = action_result_to_run_action_response(
-        action_result, options.result_format
+        action_result, options.result_formats
     )
     return response
 
 
 def action_result_to_run_action_response(
     action_result: code_action.RunActionResult | None,
-    asked_result_format: typing.Literal["json"] | typing.Literal["string"],
+    asked_result_formats: list[typing.Literal["json"] | typing.Literal["string"]],
 ) -> schemas.RunActionResponse:
-    serialized_result: dict[str, typing.Any] | str | None = None
-    result_format = "string"
+    result_by_format: dict[str, dict[str, typing.Any] | str | None] = {}
     run_return_code = code_action.RunReturnCode.SUCCESS
     if isinstance(action_result, code_action.RunActionResult):
         run_return_code = action_result.return_code
-        if asked_result_format == "json":
-            serialized_result = dataclasses.asdict(action_result)
-            result_format = "json"
-        elif asked_result_format == "string":
-            result_text = action_result.to_text()
-            if isinstance(result_text, textstyler.StyledText):
-                serialized_result = result_text.to_json()
-                result_format = "styled_text_json"
+        for asked_result_format in asked_result_formats:
+            if asked_result_format == "json":
+                result_by_format["json"] = dataclasses.asdict(action_result)
+            elif asked_result_format == "string":
+                result_text = action_result.to_text()
+                if isinstance(result_text, textstyler.StyledText):
+                    result_by_format["styled_text_json"] = result_text.to_json()
+                else:
+                    result_by_format["string"] = result_text
             else:
-                serialized_result = result_text
-                result_format = "string"
-        else:
-            raise ActionFailedException(
-                f"Unsupported result format: {asked_result_format}"
-            )
+                raise ActionFailedException(
+                    f"Unsupported result format: {asked_result_format}"
+                )
     return schemas.RunActionResponse(
-        result=serialized_result,
-        format=result_format,
+        result_by_format=result_by_format,
         return_code=run_return_code.value,
     )
 

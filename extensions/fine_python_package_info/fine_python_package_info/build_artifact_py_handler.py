@@ -91,5 +91,6 @@ class BuildArtifactPyHandler(
         self.logger.info(f"Build completed. Output: {build_output_paths}")
 
         return build_artifact_action.BuildArtifactRunResult(
-            build_output_paths=build_output_paths
+            src_artifact_def_path=src_artifact_def_path,
+            build_output_paths=build_output_paths,
         )

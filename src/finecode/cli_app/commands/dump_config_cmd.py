@@ -81,7 +81,7 @@ async def dump_config(workdir_path: pathlib.Path, project_name: str):
             },
             project_def=project_def,
             ws_context=ws_context,
-            result_format=run_service.RunResultFormat.STRING,
+            result_formats=[run_service.RunResultFormat.STRING],
             preprocess_payload=False,
             run_trigger=run_service.RunActionTrigger.USER,
             dev_env=run_service.DevEnv.CLI,

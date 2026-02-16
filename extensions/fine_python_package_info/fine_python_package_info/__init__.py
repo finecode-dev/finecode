@@ -1,4 +1,6 @@
 from .build_artifact_py_handler import BuildArtifactPyHandler
+from .get_dist_artifact_version_py_handler import \
+    GetDistArtifactVersionPyHandler
 from .get_src_artifact_registries_py_handler import \
     GetSrcArtifactRegistriesPyHandler
 from .get_src_artifact_version_py_handler import GetSrcArtifactVersionPyHandler
@@ -14,6 +16,7 @@ from .py_package_layout_info_provider import PyPackageLayoutInfoProvider
 
 __all__ = [
     "BuildArtifactPyHandler",
+    "GetDistArtifactVersionPyHandler",
     "GroupSrcArtifactFilesByLangPythonHandler",
     "ListSrcArtifactFilesByLangPythonHandler",
     "PyPackageLayoutInfoProvider",

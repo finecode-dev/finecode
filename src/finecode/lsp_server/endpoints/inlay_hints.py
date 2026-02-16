@@ -69,7 +69,7 @@ async def document_inlay_hint(
     if response is None:
         return []
 
-    hints = response.result.get("hints", None)
+    hints = response.json().get("hints", None)
     return [dict_to_inlay_hint(hint) for hint in hints] if hints is not None else None
 
 

@@ -11,11 +11,12 @@ from loguru import logger
 import finecode.lsp_server.main as wm_lsp_server
 from finecode import communication_utils, logger_utils, user_messages
 from finecode.cli_app.commands import dump_config_cmd, prepare_envs_cmd, run_cmd
+from finecode.config.config_models import ConfigurationError
 
 
 FINECODE_CONFIG_ENV_PREFIX = "FINECODE_CONFIG_"
 
-
+# TODO: unify possibilities of CLI options and env vars
 def parse_handler_config_from_env() -> dict[str, dict[str, dict[str, str]]]:
     """
     Parse handler config overrides from environment variables.
@@ -64,7 +65,14 @@ def parse_handler_config_from_env() -> dict[str, dict[str, dict[str, str]]]:
         if handler_name not in config_overrides[action_name]:
             config_overrides[action_name][handler_name] = {}
 
-        config_overrides[action_name][handler_name][param_name] = env_value
+        try:
+            parsed_value = json.loads(env_value)
+        except json.JSONDecodeError as e:
+            raise ConfigurationError(
+                f"Failed to parse JSON value for env var '{env_name}': {env_value!r}"
+            ) from e
+
+        config_overrides[action_name][handler_name][param_name] = parsed_value
 
     return config_overrides
 
@@ -242,6 +250,8 @@ def run(ctx) -> None:
     concurrently: bool = False
     trace: bool = False
     no_env_config: bool = False
+    save_results: bool = True
+    map_payload_fields: set[str] = set()
 
     # finecode run parameters
     for arg in args:
@@ -266,6 +276,11 @@ def run(ctx) -> None:
             trace = True
         elif arg == "--no-env-config":
             no_env_config = True
+        elif arg == "--no-save-results":
+            save_results = False
+        elif arg.startswith("--map-payload-fields"):
+            fields = arg.removeprefix("--map-payload-fields=")
+            map_payload_fields = {f.replace("-", "_") for f in fields.split(",")}
         elif not arg.startswith("--"):
             break
         processed_args_count += 1
@@ -275,9 +290,11 @@ def run(ctx) -> None:
     # Parse handler config from env vars
     handler_config_overrides: dict[str, dict[str, dict[str, str]]] = {}
     if not no_env_config:
-        handler_config_overrides = parse_handler_config_from_env()
-        if handler_config_overrides:
-            logger.trace(f"Handler config overrides from env: {handler_config_overrides}")
+        try:
+            handler_config_overrides = parse_handler_config_from_env()
+        except ConfigurationError as exception:
+            click.echo(exception.message, err=True)
+            sys.exit(1)
 
     # actions
     for arg in args[processed_args_count:]:
@@ -329,7 +346,7 @@ def run(ctx) -> None:
 
     deserialized_payload = deserialize_action_payload(action_payload)
     try:
-        output, return_code = asyncio.run(
+        result = asyncio.run(
             run_cmd.run_actions(
                 workdir_path,
                 projects,
@@ -337,10 +354,23 @@ def run(ctx) -> None:
                 deserialized_payload,
                 concurrently,
                 handler_config_overrides,
+                save_results,
+                map_payload_fields,
             )
         )
-        click.echo(output)
-        sys.exit(return_code)
+        click.echo(result.output)
+        if save_results:
+            results_dir = pathlib.Path(sys.executable).parent.parent / "cache" / "finecode" / "results"
+            results_dir.mkdir(parents=True, exist_ok=True)
+            for project_path, result_by_action in result.result_by_project.items():
+                for action_name, action_result in result_by_action.items():
+                    output_file = results_dir / f"{action_name}.json"
+                    json_result: dict[str, typing.Any] = {}
+                    if output_file.exists():
+                        json_result = json.loads(output_file.read_text())
+                    json_result[str(project_path)] = action_result.json()
+                    output_file.write_text(json.dumps(json_result, indent=2))
+        sys.exit(result.return_code)
     except run_cmd.RunFailed as exception:
         click.echo(exception.args[0], err=True)
         sys.exit(1)

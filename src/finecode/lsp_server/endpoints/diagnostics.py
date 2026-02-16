@@ -82,7 +82,7 @@ async def document_diagnostic_with_full_result(
     # (default dataclass constructor doesn't handle nested items, it stores them just
     # as dict)
     result_type = pydantic_dataclass(lint_action.LintRunResult)
-    lint_result: lint_action.LintRunResult = result_type(**response.result)
+    lint_result: lint_action.LintRunResult = result_type(**response.json())
 
     try:
         requested_file_messages = lint_result.messages.pop(str(file_path))
