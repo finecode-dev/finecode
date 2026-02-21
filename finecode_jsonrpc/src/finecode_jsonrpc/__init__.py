@@ -6,6 +6,7 @@ from .client import (
     RunnerFailedToStart,
     RequestCancelledError,
 )
+from .transports import StdioTransport
 
 
 __all__ = [
@@ -15,4 +16,5 @@ __all__ = [
     "ResponseTimeout",
     "RunnerFailedToStart",
     "RequestCancelledError",
+    "StdioTransport",
 ]
