@@ -32,6 +32,7 @@ dev_workspace = [
     "debugpy==1.8.*",
 ]
 dev = [{ include-group = "runtime" }, "pytest==7.4.*", "debugpy==1.8.*"]
+docs = ["mkdocs==1.6.*", "mkdocs-material==9.7.*", "mkdocstrings[python]==1.0.*"]
 
 [build-system]
 requires = ["setuptools>=64", "setuptools-scm>=8"]
