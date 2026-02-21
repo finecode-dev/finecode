@@ -126,6 +126,10 @@ FineCode exposes an [MCP server](ide-integration.md#mcp-server) that AI assistan
 
 No explanations needed. No wrong commands. The assistant just knows.
 
+## Community
+
+Have questions, ideas, or want to share what you've built? Join the FineCode community on [Discord](https://discord.gg/nwb3CRVN).
+
 ## Ready to try it?
 
 [Get started in 5 minutes →](getting-started.md)
