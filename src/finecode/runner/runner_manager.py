@@ -327,6 +327,9 @@ async def start_runners_with_presets(
             collect_actions.collect_actions(
                 project_path=project.dir_path, ws_context=ws_context
             )
+            collect_actions.collect_services(
+                project_path=project.dir_path, ws_context=ws_context
+            )
         except config_models.ConfigurationError as exception:
             raise jsonrpc_client.RunnerFailedToStart(
                 f"Reading project config with presets and collecting actions in {project.dir_path} failed: {exception.message}"
@@ -394,6 +397,9 @@ async def start_runner(
                 project=project_def, ws_context=ws_context
             )
             collect_actions.collect_actions(
+                project_path=project_def.dir_path, ws_context=ws_context
+            )
+            collect_actions.collect_services(
                 project_path=project_def.dir_path, ws_context=ws_context
             )
         except config_models.ConfigurationError as exception:
@@ -488,7 +494,9 @@ async def update_runner_config(
 ) -> None:
     assert project.actions is not None
     config = runner_client.RunnerConfig(
-        actions=project.actions, action_handler_configs=project.action_handler_configs
+        actions=project.actions,
+        action_handler_configs=project.action_handler_configs,
+        services=project.services,
     )
     try:
         await runner_client.update_config(runner, project.def_path, config)

@@ -7,17 +7,6 @@ from typing import Any, Callable
 
 import ordered_set
 
-# TODO: get rid of these two tries
-try:
-    import finecode_httpclient
-except ImportError:
-    finecode_httpclient = None
-
-try:
-    from finecode_jsonrpc import jsonrpc_client
-except ImportError:
-    jsonrpc_client = None
-
 from loguru import logger
 
 from finecode_extension_api.interfaces import (  # idevenvinfoprovider,
@@ -27,10 +16,7 @@ from finecode_extension_api.interfaces import (  # idevenvinfoprovider,
     iextensionrunnerinfoprovider,
     ifileeditor,
     ifilemanager,
-    ihttpclient,
-    ijsonrpcclient,
     ilogger,
-    ilspclient,
     iprojectinfoprovider,
     irepositorycredentialsprovider,
 )
@@ -38,6 +24,7 @@ from finecode_extension_api.interfaces import (  # idevenvinfoprovider,
 from finecode_extension_runner import domain
 from finecode_extension_runner._services import run_action
 from finecode_extension_runner.di import _state, resolver
+from finecode_extension_runner.run_utils import import_module_member_by_source_str
 from finecode_extension_runner.impls import (  # dev_env_info_provider,
     action_runner,
     command_runner,
@@ -46,12 +33,10 @@ from finecode_extension_runner.impls import (  # dev_env_info_provider,
     file_manager,
     inmemory_cache,
     loguru_logger,
-    lsp_client,
     project_info_provider,
     repository_credentials_provider,
     service_registry,
 )
-
 
 def bootstrap(
     project_def_path_getter: Callable[[], pathlib.Path],
@@ -64,6 +49,7 @@ def bootstrap(
     action_by_name_getter: Callable[[str], domain.ActionDeclaration],
     current_env_name_getter: Callable[[], str],
     handler_packages: set[str],
+    service_declarations: list,
 ):
     # logger_instance = loguru_logger.LoguruLogger()
     logger_instance = loguru_logger.get_logger()
@@ -91,21 +77,9 @@ def bootstrap(
     _state.container[icache.ICache] = cache_instance
     _state.container[iactionrunner.IActionRunner] = action_runner_instance
 
-    if finecode_httpclient is not None:
-        _state.container[ihttpclient.IHttpClient] = finecode_httpclient.HttpClient(
-            logger=logger_instance
-        )
-
     _state.container[irepositorycredentialsprovider.IRepositoryCredentialsProvider] = (
         repository_credentials_provider.ConfigRepositoryCredentialsProvider()
     )
-
-    if jsonrpc_client is not None:
-        json_rpc_client_instance = jsonrpc_client.JsonRpcClientImpl()
-        _state.container[ijsonrpcclient.IJsonRpcClient] = json_rpc_client_instance
-        _state.container[ilspclient.ILspClient] = lsp_client.LspClientImpl(
-            json_rpc_client=json_rpc_client_instance,
-        )
 
     # _state.container[idevenvinfoprovider.IDevEnvInfoProvider] = dev_env_info_provider_instance
 
@@ -124,6 +98,7 @@ def bootstrap(
     )
 
     _activate_extensions(handler_packages)
+    _apply_user_service_config(service_declarations)
 
 
 def _activate_extensions(handler_packages: set[str]) -> None:
@@ -141,6 +116,18 @@ def _activate_extensions(handler_packages: set[str]) -> None:
             logger.trace(f"Activated extension '{pkg_name}'")
         except Exception as e:
             logger.error(f"Failed to activate extension '{pkg_name}': {e}")
+
+
+def _apply_user_service_config(service_declarations: list[object]) -> None:
+    registry = service_registry.ServiceRegistry()
+    for svc in service_declarations:
+        try:
+            interface = import_module_member_by_source_str(svc.interface)
+            impl_cls = import_module_member_by_source_str(svc.source)
+            registry.register_impl(interface, impl_cls)
+            logger.trace(f"Configured service '{svc.source}' for '{svc.interface}'")
+        except Exception as e:
+            logger.error(f"Failed to configure service '{svc.source}': {e}")
 
 
 def _collect_activatable_packages(

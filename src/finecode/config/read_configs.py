@@ -171,6 +171,7 @@ async def read_project_config(
         add_extension_runner_to_dependencies(project_config)
 
         merge_handlers_dependencies_into_groups(project_config)
+        merge_services_dependencies_into_groups(project_config)
 
         ws_context.ws_projects_raw_configs[project.dir_path] = project_config
 
@@ -400,6 +401,14 @@ def _merge_projects_configs(
                             _merge_object_array_by_key(
                                 existing_handlers, new_handlers, "name"
                             )
+        elif key == "service":
+            if key not in tool_finecode_config1:
+                tool_finecode_config1[key] = []
+            existing = tool_finecode_config1[key]
+            if isinstance(value, list):
+                _merge_object_array_by_key(existing, value, "interface")
+            else:
+                tool_finecode_config1[key] = value
         elif key == "action_handler":
             # Handle action_handler array merge by source
             if key not in tool_finecode_config1:
@@ -612,6 +621,35 @@ def merge_handlers_dependencies_into_groups(project_config: dict[str, Any]) -> N
             if dep not in unique_deps:
                 unique_deps.append(dep)
 
+        deps_groups[group_name] = unique_deps
+
+
+def merge_services_dependencies_into_groups(project_config: dict[str, Any]) -> None:
+    # tool.finecode.service[x].dependencies
+    services_list = project_config.get("tool", {}).get("finecode", {}).get("service", [])
+    if "dependency-groups" not in project_config:
+        project_config["dependency-groups"] = {}
+    deps_groups = project_config["dependency-groups"]
+
+    for service in services_list:
+        service_env = service.get("env", None)
+        if service_env is None:
+            logger.warning(f"Service {service} has no env, skip it")
+            continue
+        deps = service.get("dependencies", [])
+
+        if service_env not in deps_groups:
+            deps_groups[service_env] = []
+
+        env_deps = deps_groups[service_env]
+        env_deps += deps
+
+    for group_name in deps_groups.keys():
+        deps_list = deps_groups[group_name]
+        unique_deps = []
+        for dep in deps_list:
+            if dep not in unique_deps:
+                unique_deps.append(dep)
         deps_groups[group_name] = unique_deps
 
 

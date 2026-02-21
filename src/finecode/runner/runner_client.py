@@ -194,11 +194,13 @@ class RunnerConfig:
     actions: list[domain.Action]
     # config by handler source
     action_handler_configs: dict[str, dict[str, Any]]
+    services: list[domain.ServiceDeclaration] = dataclasses.field(default_factory=list)
 
     def to_dict(self) -> dict[str, typing.Any]:
         return {
             "actions": [action.to_dict() for action in self.actions],
             "action_handler_configs": self.action_handler_configs,
+            "services": [svc.to_dict() for svc in self.services],
         }
 
 

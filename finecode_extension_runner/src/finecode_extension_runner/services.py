@@ -106,6 +106,8 @@ async def update_config(
         handler.source.split(".")[0]
         for action in actions.values()
         for handler in action.handlers
+    } | {
+        svc.source.split(".")[0] for svc in request.services
     }
 
     di_bootstrap.bootstrap(
@@ -117,6 +119,7 @@ async def update_config(
         action_by_name_getter=action_by_name_getter,
         current_env_name_getter=current_env_name_getter,
         handler_packages=handler_packages,
+        service_declarations=request.services,
     )
 
     return schemas.UpdateConfigResponse()

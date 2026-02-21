@@ -27,12 +27,19 @@ class Action(BaseSchema):
 
 
 @dataclass
+class ServiceDeclaration(BaseSchema):
+    interface: str
+    source: str
+
+
+@dataclass
 class UpdateConfigRequest(BaseSchema):
     working_dir: Path
     project_name: str
     project_def_path: Path
     actions: dict[str, Action]
     action_handler_configs: dict[str, dict[str, Any]]
+    services: list[ServiceDeclaration] = field(default_factory=list)
 
 
 @dataclass

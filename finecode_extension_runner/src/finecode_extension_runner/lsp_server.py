@@ -397,6 +397,13 @@ async def update_config(
                 for action in actions
             },
             action_handler_configs=action_handler_configs,
+            services=[
+                schemas.ServiceDeclaration(
+                    interface=svc["interface"],
+                    source=svc["source"],
+                )
+                for svc in config.get("services", [])
+            ],
         )
         response = await services.update_config(
             request=request,

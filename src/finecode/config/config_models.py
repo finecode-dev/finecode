@@ -30,6 +30,13 @@ class ActionHandlerDefinition(BaseModel):
     enabled: bool = True
 
 
+class ServiceDefinition(BaseModel):
+    interface: str
+    source: str
+    env: str
+    dependencies: list[str] = []
+
+
 class ActionDefinition(BaseModel):
     source: str
     handlers: list[ActionHandlerDefinition] = []

@@ -62,6 +62,49 @@ def collect_actions(
     return actions
 
 
+def collect_services(
+    project_path: Path,
+    ws_context: context.WorkspaceContext,
+) -> list[domain.ServiceDeclaration]:
+    try:
+        project = ws_context.ws_projects[project_path]
+    except KeyError as exception:
+        raise ValueError(
+            f"Project {project_path} doesn't exist."
+            + f" Existing projects: {ws_context.ws_projects}"
+        ) from exception
+
+    try:
+        config = ws_context.ws_projects_raw_configs[project_path]
+    except KeyError as exception:
+        raise Exception("First you need to parse config of project") from exception
+
+    services = _collect_services_in_config(config)
+    project.services = services
+    return services
+
+
+def _collect_services_in_config(
+    config: dict[str, Any],
+) -> list[domain.ServiceDeclaration]:
+    services: list[domain.ServiceDeclaration] = []
+    for service_def_raw in config["tool"]["finecode"].get("service", []):
+        try:
+            service_def = config_models.ServiceDefinition(**service_def_raw)
+        except config_models.ValidationError as exception:
+            raise config_models.ConfigurationError(str(exception)) from exception
+
+        services.append(
+            domain.ServiceDeclaration(
+                interface=service_def.interface,
+                source=service_def.source,
+                env=service_def.env,
+                dependencies=service_def.dependencies,
+            )
+        )
+    return services
+
+
 def _collect_action_handler_configs_in_config(
     config: dict[str, Any],
 ) -> dict[str, dict[str, Any]]:

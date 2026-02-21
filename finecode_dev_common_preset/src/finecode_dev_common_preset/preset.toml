@@ -35,6 +35,24 @@ fine_python_setuptools_scm = { path = "../../../extensions/fine_python_setuptool
 requires = ["setuptools>=64", "setuptools-scm>=8"]
 build-backend = "setuptools.build_meta"
 
+[[tool.finecode.service]]
+interface = "finecode_extension_api.interfaces.ihttpclient.IHttpClient"
+source = "finecode_httpclient.HttpClient"
+env = "dev_no_runtime"
+dependencies = ["finecode_httpclient~=0.1.0a1"]
+
+[[tool.finecode.service]]
+interface = "finecode_extension_api.interfaces.ijsonrpcclient.IJsonRpcClient"
+source = "finecode_jsonrpc.jsonrpc_client.JsonRpcClientImpl"
+env = "dev_no_runtime"
+dependencies = ["finecode_jsonrpc~=0.1.0a1"]
+
+[[tool.finecode.service]]
+interface = "finecode_extension_api.interfaces.ilspclient.ILspClient"
+source = "finecode_extension_runner.impls.lsp_client.LspClientImpl"
+env = "dev_no_runtime"
+dependencies = []
+
 # TODO: recognize minimal python version automatically
 [[tool.finecode.action_handler]]
 source = "fine_python_ruff.RuffLintFilesHandler"

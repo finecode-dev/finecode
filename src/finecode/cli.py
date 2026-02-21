@@ -107,8 +107,12 @@ def parse_handler_config_from_cli(
 
         # Remove --config. prefix and split by =
         config_part = arg[len("--config.") :]
-        key_part, value = config_part.split("=", 1)
-        value = value.strip('"').strip("'")
+        key_part, raw_value = config_part.split("=", 1)
+        try:
+            value = json.loads(raw_value)
+        except json.JSONDecodeError:
+            # fallback for literal string, all other types can be parsed by json.loads
+            value = raw_value
 
         # Split by . to determine if it's action-level or handler-specific
         parts = key_part.split(".")
@@ -228,7 +232,7 @@ async def show_user_message(message: str, message_type: str) -> None:
 def deserialize_action_payload(raw_payload: dict[str, str]) -> dict[str, typing.Any]:
     deserialized_payload = {}
     for key, value in raw_payload.items():
-        if value.startswith("{") and value.endswith("}"):
+        if (value.startswith("{") and value.endswith("}")) or (value.startswith('[') and value.endswith(']')):
             try:
                 deserialized_value = json.loads(value)
             except json.JSONDecodeError:
