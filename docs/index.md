@@ -90,6 +90,18 @@ In a monorepo with many packages, this becomes especially valuable — FineCode 
 python -m finecode prepare-envs
 ```
 
+## Simpler CI, any platform
+
+Without FineCode, CI pipelines tend to grow — separate steps for each tool, platform-specific workarounds, duplicated logic between local and CI runs.
+
+With FineCode, your CI is just:
+
+```yaml
+- run: python -m finecode run lint check_formatting
+```
+
+That's the same command you run locally. FineCode handles tool invocation, configuration, and environment differences. Switch CI provider, add a new linter, change a tool version — the pipeline stays the same.
+
 ## Not just linting and formatting
 
 FineCode ships with built-in actions for the most common workflows — lint, format, type-check, build, publish — but actions are just Python classes. You can define your own for anything that fits your development process: running migrations, generating code, validating architecture, checking licenses, or anything specific to your project.
