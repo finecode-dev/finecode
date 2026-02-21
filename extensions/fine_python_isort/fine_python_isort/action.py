@@ -50,7 +50,7 @@ class IsortFormatFilesHandler(
             file_content, file_version = run_context.file_info_by_path[file_path]
 
             new_file_content, file_changed = await self.process_executor.submit(
-                format_one, file_content, self.config
+                format_one, file_content, dataclasses.asdict(self.config)
             )
 
             # save for next handlers
@@ -68,23 +68,11 @@ class IsortFormatFilesHandler(
 
 
 def format_one(
-    file_content: str, handler_config: IsortFormatFilesHandlerConfig
+    file_content: str, handler_config: dict[str, object]
 ) -> tuple[str, bool]:
-    isort_config_overrides = {}
-    for param in [
-        "profile",
-        "line_length",
-        "multi_line_output",
-        "include_trailing_comma",
-        "force_grid_wrap",
-        "use_parentheses",
-        "ensure_newline_before_comments",
-        "line_length",
-        "split_on_trailing_comma",
-    ]:
-        handler_config_value = getattr(handler_config, param)
-        if handler_config_value is not None:
-            isort_config_overrides[param] = handler_config_value
+    isort_config_overrides = {
+        k: v for k, v in handler_config.items() if v is not None
+    }
 
     input_stream = StringIO(file_content)
     output_stream_context = isort_api._in_memory_output_stream_context()
