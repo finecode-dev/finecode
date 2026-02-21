@@ -1,25 +1,24 @@
 from __future__ import annotations
 
-import traceback
-
-import enum
+import asyncio
+import collections.abc
+import concurrent.futures
 import dataclasses
+import enum
 import functools
+import json
 import os
+import re
 import subprocess
 import sys
-from pathlib import Path
-import asyncio
-import json
-import re
 import threading
+import traceback
 import typing
 import uuid
-import concurrent.futures
-import collections.abc
+from pathlib import Path
 
-import culsans
 import apischema
+import culsans
 from finecode_jsonrpc import _io_thread
 from loguru import logger
 
@@ -140,7 +139,12 @@ class JsonRpcClient:
     CONTENT_TYPE: typing.Final[str] = "application/vscode-jsonrpc"
     VERSION: typing.Final[str] = "2.0"
 
-    def __init__(self, message_types: dict[str, typing.Any], readable_id: str, communication_type: CommunicationType = CommunicationType.TCP) -> None:
+    def __init__(
+        self,
+        message_types: dict[str, typing.Any],
+        readable_id: str,
+        communication_type: CommunicationType = CommunicationType.TCP,
+    ) -> None:
         self.server_process_stopped: typing.Final = threading.Event()
         self.server_exit_callback: (
             collections.abc.Callable[[], collections.abc.Coroutine] | None
@@ -159,7 +163,7 @@ class JsonRpcClient:
         self._expected_result_type_by_msg_id: dict[str, typing.Any] = {}
 
         self.feature_impls: dict[str, collections.abc.Callable] = {}
-        
+
         # NOTE: reader and writer can be accessed only in IO thread
         self._reader: asyncio.StreamReader | None = None
         self._writer: asyncio.StreamWriter | None = None
@@ -175,7 +179,7 @@ class JsonRpcClient:
         working_dir_path: Path,
         io_thread: _io_thread.AsyncIOThread,
         debug_port_future: concurrent.futures.Future[int] | None,
-        connect: bool = True
+        connect: bool = True,
     ) -> None:
         old_working_dir = os.getcwd()
         os.chdir(working_dir_path)
@@ -184,7 +188,11 @@ class JsonRpcClient:
         old_virtual_env_var = os.environ.pop("VIRTUAL_ENV", None)
 
         try:
-            await self._start_server(full_cmd=server_cmd, io_thread=io_thread, debug_port_future=debug_port_future)
+            await self._start_server(
+                full_cmd=server_cmd,
+                io_thread=io_thread,
+                debug_port_future=debug_port_future,
+            )
             if connect:
                 await self.connect_to_server(io_thread=io_thread)
         finally:
@@ -193,7 +201,12 @@ class JsonRpcClient:
 
             os.chdir(old_working_dir)  # restore original working directory
 
-    async def _start_server(self, full_cmd: str, io_thread: _io_thread.AsyncIOThread, debug_port_future: concurrent.futures.Future[int] | None) -> None:
+    async def _start_server(
+        self,
+        full_cmd: str,
+        io_thread: _io_thread.AsyncIOThread,
+        debug_port_future: concurrent.futures.Future[int] | None,
+    ) -> None:
         server_future = io_thread.run_coroutine(
             start_server(
                 cmd=full_cmd,
@@ -203,7 +216,7 @@ class JsonRpcClient:
                 server_stopped_event=self.server_process_stopped,
                 server_id=self.readable_id,
                 async_tasks=self._async_tasks_in_io_thread,
-                debug_port_future=debug_port_future
+                debug_port_future=debug_port_future,
             )
         )
 
@@ -220,9 +233,9 @@ class JsonRpcClient:
             # there are no active tasks yet, no need to stop, just interrupt starting
             # the server
             raise server_start_exception
-    
+
         self._reader, self._writer, self._tcp_port_future = server_future.result()
-        
+
         notify_exit = asyncio.create_task(self._server_process_stop_handler())
         notify_exit.add_done_callback(
             functools.partial(
@@ -233,7 +246,9 @@ class JsonRpcClient:
         self._async_tasks.extend([notify_exit])
         logger.debug(f"End of start for {full_cmd}")
 
-    async def connect_to_server(self, io_thread: _io_thread.AsyncIOThread, timeout: float | None = 30):
+    async def connect_to_server(
+        self, io_thread: _io_thread.AsyncIOThread, timeout: float | None = 30
+    ):
         connect_to_server_future = io_thread.run_coroutine(
             self._connect_to_server_io(timeout=timeout)
         )
@@ -241,7 +256,8 @@ class JsonRpcClient:
         # add done callback to catch exceptions if coroutine fails
         connect_to_server_future.add_done_callback(
             functools.partial(
-                task_done_log_callback, task_id=f"connect_to_server_future|{self.readable_id}"
+                task_done_log_callback,
+                task_id=f"connect_to_server_future|{self.readable_id}",
             )
         )
 
@@ -766,20 +782,26 @@ class JsonRpcClient:
                 for task in self._async_tasks_in_io_thread:
                     task.cancel()
 
-                raise RunnerFailedToStart("Didn't get port in 30 seconds") from exception
+                raise RunnerFailedToStart(
+                    "Didn't get port in 30 seconds"
+                ) from exception
 
             port = self._tcp_port_future.result()
             logger.debug(f"Got port {port} | {self.readable_id}")
 
             try:
-                self._reader, self._writer = await asyncio.open_connection("127.0.0.1", port)
+                self._reader, self._writer = await asyncio.open_connection(
+                    "127.0.0.1", port
+                )
             except Exception as exception:
                 logger.exception(exception)
 
                 for task in self._async_tasks_in_io_thread:
                     task.cancel()
 
-                raise RunnerFailedToStart(f"Failed to open connection: {exception}") from exception
+                raise RunnerFailedToStart(
+                    f"Failed to open connection: {exception}"
+                ) from exception
 
         assert self._reader is not None and self._writer is not None
 
@@ -795,17 +817,21 @@ class JsonRpcClient:
         )
         task.add_done_callback(
             functools.partial(
-                task_done_log_callback, task_id=f"read_messages_from_reader|{self.readable_id}"
+                task_done_log_callback,
+                task_id=f"read_messages_from_reader|{self.readable_id}",
             )
         )
         self._async_tasks_in_io_thread.append(task)
-        
+
         task = asyncio.create_task(
-            send_messages_from_queue(queue=self.out_message_queue.async_q, writer=self._writer)
+            send_messages_from_queue(
+                queue=self.out_message_queue.async_q, writer=self._writer
+            )
         )
         task.add_done_callback(
             functools.partial(
-                task_done_log_callback, task_id=f"send_messages_from_queue|{self.readable_id}"
+                task_done_log_callback,
+                task_id=f"send_messages_from_queue|{self.readable_id}",
             )
         )
         self._async_tasks_in_io_thread.append(task)
@@ -819,10 +845,12 @@ async def start_server(
     server_stopped_event: threading.Event,
     server_id: str,
     async_tasks: list[asyncio.Task[typing.Any]],
-    debug_port_future: concurrent.futures.Future[int] | None
-) -> tuple[asyncio.StreamReader | None, asyncio.StreamWriter | None, asyncio.Future[int] | None]:
+    debug_port_future: concurrent.futures.Future[int] | None,
+) -> tuple[
+    asyncio.StreamReader | None, asyncio.StreamWriter | None, asyncio.Future[int] | None
+]:
     logger.debug(f"Starting server process: {cmd}")
-    
+
     creationflags = 0
     # start_new_session = True .. process has parent id of real parent, but is not
     #                             ended if parent was ended
@@ -847,7 +875,7 @@ async def start_server(
             stderr=asyncio.subprocess.PIPE,
             # max length of line: in STDIO mode, the whole file can be sent as a single
             # line, increase default limit 64 KBit to 10 MiB
-            limit = 1024 * 1024 * 10,  # 10 MiB,
+            limit=1024 * 1024 * 10,  # 10 MiB,
             **subprocess_kwargs,
         )
     elif communication_type == CommunicationType.TCP:
@@ -880,10 +908,18 @@ async def start_server(
         # TODO: read debug port also in stdio
         tcp_port_future = asyncio.Future[int]()
         task = asyncio.create_task(
-            read_stdout(server.stdout, stop_event, tcp_port_future, server.pid, debug_port_future)
+            read_stdout(
+                server.stdout,
+                stop_event,
+                tcp_port_future,
+                server.pid,
+                debug_port_future,
+            )
         )
         task.add_done_callback(
-            functools.partial(task_done_log_callback, task_id=f"read_stdout|{server_id}")
+            functools.partial(
+                task_done_log_callback, task_id=f"read_stdout|{server_id}"
+            )
         )
         async_tasks.append(task)
 
@@ -891,7 +927,11 @@ async def start_server(
 
     task = asyncio.create_task(
         wait_for_stop_event_and_clean(
-            stop_event, server, async_tasks, server_stopped_event, out_message_queue.async_q
+            stop_event,
+            server,
+            async_tasks,
+            server_stopped_event,
+            out_message_queue.async_q,
         )
     )
     task.add_done_callback(
@@ -900,8 +940,10 @@ async def start_server(
         )
     )
 
-    logger.debug(f"Server {server.pid} started with {communication_type.name} | {server_id}")
-    
+    logger.debug(
+        f"Server {server.pid} started with {communication_type.name} | {server_id}"
+    )
+
     return (reader, writer, tcp_port_future)
 
 
@@ -963,7 +1005,7 @@ async def read_stdout(
     stop_event: threading.Event,
     port_future: asyncio.Future[int],
     server_pid: int,
-    debug_port_future: concurrent.futures.Future[int] | None
+    debug_port_future: concurrent.futures.Future[int] | None,
 ) -> None:
     logger.debug(f"Start reading logs from stdout | {server_pid}")
     try:

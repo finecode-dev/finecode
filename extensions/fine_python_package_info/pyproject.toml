@@ -12,6 +12,9 @@ dependencies = [
     "build==1.4.*",
 ]
 
+[project.entry-points."finecode.activator"]
+fine_python_package_info = "fine_python_package_info.activator:Activator"
+
 [dependency-groups]
 dev_workspace = ["finecode~=0.4.0a0", "finecode_dev_common_preset~=0.3.0a0"]
 

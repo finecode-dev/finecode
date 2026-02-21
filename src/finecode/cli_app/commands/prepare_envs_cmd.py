@@ -106,6 +106,7 @@ async def prepare_envs(workdir_path: pathlib.Path, recreate: bool) -> None:
             (
                 result_output,
                 result_return_code,
+                _
             ) = await utils.run_actions_in_projects_and_concat_results(
                 actions_by_projects,
                 action_payload,
@@ -132,6 +133,7 @@ async def prepare_envs(workdir_path: pathlib.Path, recreate: bool) -> None:
             (
                 result_output,
                 result_return_code,
+                _
             ) = await utils.run_actions_in_projects_and_concat_results(
                 actions_by_projects,
                 action_payload,

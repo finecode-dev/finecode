@@ -102,6 +102,12 @@ async def update_config(
     def current_env_name_getter() -> str:
         return global_state.env_name
 
+    handler_packages = {
+        handler.source.split(".")[0]
+        for action in actions.values()
+        for handler in action.handlers
+    }
+
     di_bootstrap.bootstrap(
         project_def_path_getter=project_def_path_getter,
         project_raw_config_getter=project_raw_config_getter,
@@ -110,6 +116,7 @@ async def update_config(
         actions_names_getter=actions_names_getter,
         action_by_name_getter=action_by_name_getter,
         current_env_name_getter=current_env_name_getter,
+        handler_packages=handler_packages,
     )
 
     return schemas.UpdateConfigResponse()
@@ -185,8 +192,8 @@ def resolve_package_path(package_name: str) -> str:
         package_path = importlib.util.find_spec(
             package_name
         ).submodule_search_locations[0]
-    except Exception:
-        raise ValueError(f"Cannot find package {package_name}")
+    except Exception as exception:
+        raise ValueError(f"Cannot find package {package_name}") from exception
 
     return package_path
 
