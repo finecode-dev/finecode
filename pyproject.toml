@@ -20,7 +20,7 @@ dependencies = [
     "mcp==1.13.*",
     "fine_python_virtualenv~=0.2.0a0",
     "fine_python_pip~=0.2.0a0",
-    "culsans==0.9.*",
+    "culsans==0.11.*",
     "apischema==0.19.*",
 ]
 
