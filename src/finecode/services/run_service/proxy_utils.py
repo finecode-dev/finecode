@@ -9,7 +9,7 @@ import typing
 import ordered_set
 from loguru import logger
 
-from finecode import context, domain, find_project, user_messages
+from finecode import context, domain, domain_helpers, find_project, user_messages
 from finecode.runner import runner_manager
 from finecode.runner import runner_client
 from finecode.runner.runner_manager import RunnerFailedToStart
@@ -57,6 +57,7 @@ async def find_action_project_and_run(
     run_trigger: runner_client.RunActionTrigger,
     dev_env: runner_client.DevEnv,
     ws_context: context.WorkspaceContext,
+    initialize_all_handlers: bool = False,
 ) -> runner_client.RunActionResponse:
     project_path = await find_action_project(
         file_path=file_path, action_name=action_name, ws_context=ws_context
@@ -72,6 +73,7 @@ async def find_action_project_and_run(
             preprocess_payload=False,
             run_trigger=run_trigger,
             dev_env=dev_env,
+            initialize_all_handlers=initialize_all_handlers,
         )
     except ActionRunFailed as exception:
         raise exception
@@ -185,6 +187,7 @@ async def run_with_partial_results(
     run_trigger: runner_client.RunActionTrigger,
     dev_env: runner_client.DevEnv,
     ws_context: context.WorkspaceContext,
+    initialize_all_handlers: bool = False,
 ) -> collections.abc.AsyncIterator[
     collections.abc.AsyncIterable[domain.PartialResultRawValue]
 ]:
@@ -208,7 +211,11 @@ async def run_with_partial_results(
             for env_name in action_envs:
                 try:
                     runner = await runner_manager.get_or_start_runner(
-                        project_def=project, env_name=env_name, ws_context=ws_context
+                        project_def=project,
+                        env_name=env_name,
+                        ws_context=ws_context,
+                        initialize_all_handlers=initialize_all_handlers,
+                        action_names_to_initialize=[action_name],
                     )
                 except runner_manager.RunnerFailedToStart as exception:
                     raise ActionRunFailed(
@@ -253,6 +260,7 @@ async def find_action_project_and_run_with_partial_results(
     run_trigger: runner_client.RunActionTrigger,
     dev_env: runner_client.DevEnv,
     ws_context: context.WorkspaceContext,
+    initialize_all_handlers: bool = False,
 ) -> collections.abc.AsyncIterator[runner_client.RunActionRawResult]:
     logger.trace(f"Run {action_name} on {file_path}")
     project_path = await find_action_project(
@@ -266,6 +274,7 @@ async def find_action_project_and_run_with_partial_results(
         run_trigger=run_trigger,
         dev_env=dev_env,
         ws_context=ws_context,
+        initialize_all_handlers=initialize_all_handlers,
     )
 
 
@@ -304,8 +313,17 @@ async def start_required_environments(
     actions_by_projects: dict[pathlib.Path, list[str]],
     ws_context: context.WorkspaceContext,
     update_config_in_running_runners: bool = False,
+    initialize_handlers: bool = True,
+    initialize_all_handlers: bool = False,
 ) -> None:
-    """Collect all required envs from actions that will be run and start them."""
+    """Collect all required envs from actions that will be run and start them.
+
+    Args:
+        initialize_handlers: Initialize handlers for the specified actions.
+        initialize_all_handlers: Initialize all handlers in the environment,
+            not just those for the specified actions. Takes precedence over
+            initialize_handlers.
+    """
     required_envs_by_project: dict[pathlib.Path, set[str]] = {}
     for project_dir_path, action_names in actions_by_projects.items():
         project = ws_context.ws_projects[project_dir_path]
@@ -329,8 +347,23 @@ async def start_required_environments(
                 existing_runners = ws_context.ws_projects_extension_runners.get(
                     project_dir_path, {}
                 )
+                action_names = actions_by_projects[project_dir_path]
 
                 for env_name in required_envs:
+                    if initialize_all_handlers:
+                        handlers_to_init = (
+                            domain_helpers.collect_all_handlers_to_initialize(
+                                project, env_name
+                            )
+                        )
+                    elif initialize_handlers:
+                        handlers_to_init = (
+                            domain_helpers.collect_handlers_to_initialize_for_actions(
+                                project, env_name, action_names
+                            )
+                        )
+                    else:
+                        handlers_to_init = None
                     tg.create_task(
                         _start_runner_or_update_config(
                             env_name=env_name,
@@ -338,6 +371,7 @@ async def start_required_environments(
                             project=project,
                             update_config_in_running_runners=update_config_in_running_runners,
                             ws_context=ws_context,
+                            handlers_to_initialize=handlers_to_init,
                         )
                     )
     except ExceptionGroup as eg:
@@ -356,6 +390,7 @@ async def _start_runner_or_update_config(
     project: domain.Project,
     update_config_in_running_runners: bool,
     ws_context: context.WorkspaceContext,
+    handlers_to_initialize: dict[str, list[str]] | None,
 ):
     runner_exist = env_name in existing_runners
     start_runner = True
@@ -372,7 +407,7 @@ async def _start_runner_or_update_config(
     if start_runner:
         try:
             await runner_manager.start_runner(
-                project_def=project, env_name=env_name, ws_context=ws_context
+                project_def=project, env_name=env_name, handlers_to_initialize=handlers_to_initialize, ws_context=ws_context
             )
         except runner_manager.RunnerFailedToStart as exception:
             raise StartingEnvironmentsFailed(
@@ -387,7 +422,9 @@ async def _start_runner_or_update_config(
 
             try:
                 await runner_manager.update_runner_config(
-                    runner=runner, project=project
+                    runner=runner,
+                    project=project,
+                    handlers_to_initialize=handlers_to_initialize,
                 )
             except RunnerFailedToStart as exception:
                 raise StartingEnvironmentsFailed(
@@ -546,6 +583,7 @@ async def run_action(
     dev_env: runner_client.DevEnv,
     result_formats: list[runner_client.RunResultFormat] | None = None,
     preprocess_payload: bool = True,
+    initialize_all_handlers: bool = False,
 ) -> RunActionResponse:
     formatted_params = str(params)
     if len(formatted_params) > 100:
@@ -600,6 +638,7 @@ async def run_action(
             run_trigger=run_trigger,
             dev_env=dev_env,
             result_formats=_result_formats,
+            initialize_all_handlers=initialize_all_handlers,
         )
     else:
         # TODO: concurrent vs sequential, this value should be taken from action config
@@ -619,6 +658,7 @@ async def run_action(
                     run_trigger=run_trigger,
                     dev_env=dev_env,
                     result_formats=_result_formats,
+                    initialize_all_handlers=initialize_all_handlers,
                 )
 
     return response
@@ -633,10 +673,15 @@ async def _run_action_in_env_runner(
     run_trigger: runner_client.RunActionTrigger,
     dev_env: runner_client.DevEnv,
     result_formats: list[runner_client.RunResultFormat],
+    initialize_all_handlers: bool = False,
 ):
     try:
         runner = await runner_manager.get_or_start_runner(
-            project_def=project_def, env_name=env_name, ws_context=ws_context
+            project_def=project_def,
+            env_name=env_name,
+            ws_context=ws_context,
+            initialize_all_handlers=initialize_all_handlers,
+            action_names_to_initialize=[action_name],
         )
     except runner_manager.RunnerFailedToStart as exception:
         raise ActionRunFailed(

@@ -195,13 +195,19 @@ class RunnerConfig:
     # config by handler source
     action_handler_configs: dict[str, dict[str, Any]]
     services: list[domain.ServiceDeclaration] = dataclasses.field(default_factory=list)
+    # If provided, eagerly instantiate these handlers after config update.
+    # Keys are action names, values are lists of handler names within that action.
+    handlers_to_initialize: dict[str, list[str]] | None = None
 
     def to_dict(self) -> dict[str, typing.Any]:
-        return {
+        result: dict[str, typing.Any] = {
             "actions": [action.to_dict() for action in self.actions],
             "action_handler_configs": self.action_handler_configs,
             "services": [svc.to_dict() for svc in self.services],
         }
+        if self.handlers_to_initialize is not None:
+            result["handlers_to_initialize"] = self.handlers_to_initialize
+        return result
 
 
 async def update_config(

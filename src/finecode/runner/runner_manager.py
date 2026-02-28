@@ -13,7 +13,7 @@ import typing
 
 from loguru import logger
 
-from finecode import context, domain, finecode_cmd
+from finecode import context, domain, domain_helpers, finecode_cmd
 from finecode.config import collect_actions, config_models, read_configs
 from finecode.runner import (
     runner_client,
@@ -254,8 +254,11 @@ def stop_extension_runner_sync(runner: runner_client.ExtensionRunnerInfo) -> Non
         logger.trace("Extension runner was not running")
 
 
+
 async def start_runners_with_presets(
-    projects: list[domain.Project], ws_context: context.WorkspaceContext
+    projects: list[domain.Project],
+    ws_context: context.WorkspaceContext,
+    initialize_all_handlers: bool = False,
 ) -> None:
     # start runners with presets in projects, resolve presets and read project actions
     new_runners_tasks: list[asyncio.Task] = []
@@ -339,7 +342,16 @@ async def start_runners_with_presets(
         dev_workspace_runner = ws_context.ws_projects_extension_runners[
             project.dir_path
         ]["dev_workspace"]
-        await update_runner_config(runner=dev_workspace_runner, project=project)
+        handlers_to_init = (
+            domain_helpers.collect_all_handlers_to_initialize(project, "dev_workspace")
+            if initialize_all_handlers
+            else None
+        )
+        await update_runner_config(
+            runner=dev_workspace_runner,
+            project=project,
+            handlers_to_initialize=handlers_to_init,
+        )
 
 
 async def get_or_start_runners_with_presets(
@@ -367,7 +379,7 @@ async def get_or_start_runners_with_presets(
 
 
 async def start_runner(
-    project_def: domain.Project, env_name: str, ws_context: context.WorkspaceContext, debug: bool = False
+    project_def: domain.Project, env_name: str, handlers_to_initialize: dict[str, list[str]] | None, ws_context: context.WorkspaceContext, debug: bool = False
 ) -> runner_client.ExtensionRunnerInfo:
     # this function manages status of the runner and initialized event
     runner = runner_client.ExtensionRunnerInfo(
@@ -410,7 +422,7 @@ async def start_runner(
                 f"Found problem in configuration of {project_def.dir_path}: {exception.message}"
             ) from exception
 
-    await update_runner_config(runner=runner, project=project_def)
+    await update_runner_config(runner=runner, project=project_def, handlers_to_initialize=handlers_to_initialize)
     await _finish_runner_init(runner=runner, project=project_def, ws_context=ws_context)
 
     runner.status = runner_client.RunnerStatus.RUNNING
@@ -421,7 +433,11 @@ async def start_runner(
 
 
 async def get_or_start_runner(
-    project_def: domain.Project, env_name: str, ws_context: context.WorkspaceContext
+    project_def: domain.Project,
+    env_name: str,
+    ws_context: context.WorkspaceContext,
+    initialize_all_handlers: bool = False,
+    action_names_to_initialize: list[str] | None = None,
 ) -> runner_client.ExtensionRunnerInfo:
     try:
         runners_by_env = ws_context.ws_projects_extension_runners[project_def.dir_path]
@@ -431,8 +447,16 @@ async def get_or_start_runner(
         logger.trace(
             f"Runner for env {env_name} in {project_def.dir_path} not found, start one"
         )
+        if initialize_all_handlers:
+            handlers_to_initialize = domain_helpers.collect_all_handlers_to_initialize(project_def, env_name)
+        elif action_names_to_initialize is not None:
+            handlers_to_initialize = domain_helpers.collect_handlers_to_initialize_for_actions(
+                project_def, env_name, action_names_to_initialize
+            )
+        else:
+            handlers_to_initialize = None
         runner = await start_runner(
-            project_def=project_def, env_name=env_name, ws_context=ws_context
+            project_def=project_def, env_name=env_name, handlers_to_initialize=handlers_to_initialize, ws_context=ws_context
         )
 
     if runner.status != runner_client.RunnerStatus.RUNNING:
@@ -490,13 +514,16 @@ async def _init_lsp_client(
 
 
 async def update_runner_config(
-    runner: runner_client.ExtensionRunnerInfo, project: domain.Project
+    runner: runner_client.ExtensionRunnerInfo,
+    project: domain.Project,
+    handlers_to_initialize: dict[str, list[str]] | None,
 ) -> None:
     assert project.actions is not None
     config = runner_client.RunnerConfig(
         actions=project.actions,
         action_handler_configs=project.action_handler_configs,
         services=project.services,
+        handlers_to_initialize=handlers_to_initialize,
     )
     try:
         await runner_client.update_config(runner, project.def_path, config)
@@ -656,6 +683,7 @@ async def restart_extension_runner(
     await start_runner(
         project_def=project_def,
         env_name=runner.env_name,
+        handlers_to_initialize=None,
         ws_context=ws_context,
         debug=debug
     )

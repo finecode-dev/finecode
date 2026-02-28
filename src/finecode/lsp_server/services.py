@@ -73,7 +73,9 @@ async def add_workspace_dir(
 
     try:
         await runner_manager.start_runners_with_presets(
-            projects=new_projects, ws_context=global_state.ws_context
+            projects=new_projects,
+            ws_context=global_state.ws_context,
+            initialize_all_handlers=True,
         )
     except runner_manager.RunnerFailedToStart as exception:
         await user_messages.error(f"Starting runners with presets failed: {exception.message}. Did you run `finecode prepare-envs` ?")

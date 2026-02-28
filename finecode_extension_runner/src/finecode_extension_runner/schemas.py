@@ -40,6 +40,10 @@ class UpdateConfigRequest(BaseSchema):
     actions: dict[str, Action]
     action_handler_configs: dict[str, dict[str, Any]]
     services: list[ServiceDeclaration] = field(default_factory=list)
+    # If provided, eagerly instantiate these handlers after config update.
+    # Keys are action names, values are lists of handler names within that action.
+    # None means no eager initialization (lazy, on first use).
+    handlers_to_initialize: dict[str, list[str]] | None = None
 
 
 @dataclass

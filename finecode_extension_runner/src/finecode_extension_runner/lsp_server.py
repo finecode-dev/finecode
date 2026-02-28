@@ -404,6 +404,7 @@ async def update_config(
                 )
                 for svc in config.get("services", [])
             ],
+            handlers_to_initialize=config.get("handlers_to_initialize"),
         )
         response = await services.update_config(
             request=request,

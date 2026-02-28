@@ -68,6 +68,7 @@ async def document_diagnostic_with_full_result(
             run_trigger=run_service.RunActionTrigger.SYSTEM,
             dev_env=run_service.DevEnv.IDE,
             ws_context=global_state.ws_context,
+            initialize_all_handlers=True,
         )
     except run_service.ActionRunFailed as error:
         # don't throw error because vscode after a few sequential errors will stop
@@ -134,6 +135,7 @@ async def document_diagnostic_with_partial_results(
             run_trigger=run_service.RunActionTrigger.SYSTEM,
             dev_env=run_service.DevEnv.IDE,
             ws_context=global_state.ws_context,
+            initialize_all_handlers=True,
         ) as response:
             # LSP defines that the first response should be `DocumentDiagnosticReport`
             # with diagnostics information for requested file and then n responses
@@ -254,6 +256,7 @@ async def run_workspace_diagnostic_with_partial_results(
             run_trigger=run_service.RunActionTrigger.SYSTEM,
             dev_env=run_service.DevEnv.IDE,
             ws_context=global_state.ws_context,
+            initialize_all_handlers=True,
         ) as response:
             # use pydantic dataclass to convert dict to dataclass instance recursively
             # (default dataclass constructor doesn't handle nested items, it stores them just
@@ -321,6 +324,7 @@ async def workspace_diagnostic_with_full_result(
                         run_trigger=run_service.RunActionTrigger.SYSTEM,
                         dev_env=run_service.DevEnv.IDE,
                         preprocess_payload=False,
+                        initialize_all_handlers=True,
                     )
                 )
                 send_tasks.append(task)
@@ -382,7 +386,8 @@ async def _workspace_diagnostic(
     # letter fail with timeout error.
     try:
         await run_service.start_required_environments(
-            actions_by_projects, global_state.ws_context
+            actions_by_projects, global_state.ws_context,
+            initialize_all_handlers=True
         )
     except run_service.StartingEnvironmentsFailed as exception:
         logger.error(

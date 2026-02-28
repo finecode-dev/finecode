@@ -56,6 +56,7 @@ async def document_inlay_hint(
             run_trigger=run_service.RunActionTrigger.SYSTEM,
             dev_env=run_service.DevEnv.IDE,
             ws_context=global_state.ws_context,
+            initialize_all_handlers=True,
         )
     except find_project.FileHasNotActionException:
         # ignore this exception because client requests inlay hints for all workspace

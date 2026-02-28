@@ -15,6 +15,8 @@ from finecode_extension_runner._services.run_action import (
     ActionFailedException,
     StopWithResponse,
     run_action_raw,
+    create_action_exec_info,
+    ensure_handler_instantiated,
 )
 from finecode_extension_runner.di import bootstrap as di_bootstrap
 
@@ -122,7 +124,76 @@ async def update_config(
         service_declarations=request.services,
     )
 
+    if request.handlers_to_initialize is not None:
+        await initialize_handlers(request.handlers_to_initialize)
+
     return schemas.UpdateConfigResponse()
+
+
+async def initialize_handlers(
+    handlers_by_action: dict[str, list[str]],
+) -> None:
+    """Eagerly instantiate and initialize handlers.
+
+    This is called after update_config to pre-instantiate handlers so that
+    services (like LSP services) are started early rather than on first use.
+
+    Args:
+        handlers_by_action: mapping of action name → list of handler names
+            to eagerly initialize.
+    """
+    if global_state.runner_context is None:
+        logger.warning("Cannot initialize handlers: runner context is not set")
+        return
+
+    runner_context = global_state.runner_context
+    project = runner_context.project
+
+    for action_name, handler_names in handlers_by_action.items():
+        action_def = project.actions.get(action_name)
+        if action_def is None:
+            logger.warning(
+                f"Action '{action_name}' not found, skipping handler initialization"
+            )
+            continue
+
+        if action_name in runner_context.action_cache_by_name:
+            action_cache = runner_context.action_cache_by_name[action_name]
+        else:
+            action_cache = domain.ActionCache()
+            runner_context.action_cache_by_name[action_name] = action_cache
+
+        if action_cache.exec_info is None:
+            action_cache.exec_info = create_action_exec_info(action_def)
+
+        handlers_to_init = [
+            h for h in action_def.handlers if h.name in handler_names
+        ]
+        for handler in handlers_to_init:
+            if handler.name in action_cache.handler_cache_by_name:
+                handler_cache = action_cache.handler_cache_by_name[handler.name]
+                if handler_cache.instance is not None:
+                    continue
+            else:
+                handler_cache = domain.ActionHandlerCache()
+                action_cache.handler_cache_by_name[handler.name] = handler_cache
+
+            try:
+                await ensure_handler_instantiated(
+                    handler=handler,
+                    handler_cache=handler_cache,
+                    action_exec_info=action_cache.exec_info,
+                    runner_context=runner_context,
+                )
+                logger.trace(
+                    f"Eagerly initialized handler '{handler.name}' "
+                    f"for action '{action_name}'"
+                )
+            except Exception as e:
+                logger.error(
+                    f"Failed to eagerly initialize handler '{handler.name}' "
+                    f"for action '{action_name}': {e}"
+                )
 
 
 def reload_action(action_name: str) -> None:
@@ -231,6 +302,7 @@ def shutdown_action_handler(
                 if isinstance(used_service, service.DisposableService):
                     try:
                         used_service.dispose()
+                        logger.trace(f"Disposed service: {used_service}")
                     except Exception as exception:
                         logger.error(f"Failed to dispose service: {used_service}")
                         logger.exception(exception)

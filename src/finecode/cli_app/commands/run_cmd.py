@@ -156,7 +156,9 @@ async def run_actions(
 
         try:
             await run_service.start_required_environments(
-                actions_by_projects, ws_context, update_config_in_running_runners=True
+                actions_by_projects,
+                ws_context,
+                update_config_in_running_runners=True,
             )
         except run_service.StartingEnvironmentsFailed as exception:
             raise RunFailed(

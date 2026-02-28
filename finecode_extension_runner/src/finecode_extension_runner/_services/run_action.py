@@ -456,6 +456,132 @@ async def resolve_func_args_with_di(
     return args
 
 
+def _get_handler_raw_config(
+    handler: domain.ActionHandlerDeclaration,
+    runner_context: context.RunnerContext,
+) -> dict[str, typing.Any]:
+    handler_global_config = runner_context.project.action_handler_configs.get(
+        handler.source, None
+    )
+    handler_raw_config = {}
+    if handler_global_config is not None:
+        handler_raw_config = handler_global_config
+    if handler_raw_config == {}:
+        # still empty, just assign
+        handler_raw_config = handler.config
+    else:
+        # not empty anymore, deep merge
+        handler_config_merger.merge(handler_raw_config, handler.config)
+    return handler_raw_config
+
+
+async def ensure_handler_instantiated(
+    handler: domain.ActionHandlerDeclaration,
+    handler_cache: domain.ActionHandlerCache,
+    action_exec_info: domain.ActionExecInfo,
+    runner_context: context.RunnerContext,
+) -> None:
+    """Ensure handler is instantiated and initialized, populating handler_cache.
+
+    If handler is already instantiated (handler_cache.instance is not None), this is
+    a no-op. Otherwise, imports the handler class, resolves DI, instantiates it,
+    calls on_initialize lifecycle hook if present, and caches the result.
+    """
+    if handler_cache.instance is not None:
+        return
+
+    handler_raw_config = _get_handler_raw_config(handler, runner_context)
+
+    logger.trace(f"Load action handler {handler.name}")
+    try:
+        action_handler = run_utils.import_module_member_by_source_str(
+            handler.source
+        )
+    except ModuleNotFoundError as error:
+        logger.error(
+            f"Source of action handler {handler.name} '{handler.source}'"
+            " could not be imported"
+        )
+        logger.error(error)
+        raise ActionFailedException(
+            f"Import of action handler '{handler.name}' failed: {handler.source}"
+        ) from error
+
+    def get_handler_config(param_type):
+        # validate config using pydantic
+        try:
+            config_type = pydantic_dataclass(param_type)
+        except pydantic.ValidationError as exception:
+            raise ActionFailedException(exception.errors()) from exception
+        return config_type(**handler_raw_config)
+
+    def get_process_executor(param_type):
+        return action_exec_info.process_executor
+
+    exec_info = domain.ActionHandlerExecInfo()
+    # save immediately in context to be able to shutdown it if the first execution
+    # is interrupted by stopping ER
+    handler_cache.exec_info = exec_info
+    if inspect.isclass(action_handler):
+        args = await resolve_func_args_with_di(
+            func=action_handler.__init__,
+            known_args={
+                "config": get_handler_config,
+                "process_executor": get_process_executor,
+            },
+            params_to_ignore=["self"],
+        )
+
+        if "lifecycle" in args:
+            exec_info.lifecycle = args["lifecycle"]
+
+        handler_instance = action_handler(**args)
+        handler_cache.instance = handler_instance
+
+        service_instances = [
+            instance
+            for instance in args.values()
+            if isinstance(instance, service.Service)
+        ]
+        handler_cache.used_services = service_instances
+        for service_instance in service_instances:
+            if service_instance not in runner_context.running_services:
+                runner_context.running_services[service_instance] = (
+                    domain.RunningServiceInfo(used_by=[])
+                )
+
+            runner_context.running_services[service_instance].used_by.append(
+                handler_instance
+            )
+
+    else:
+        # handler is a plain function, not a class — nothing to instantiate
+        handler_cache.exec_info = exec_info
+        exec_info.status = domain.ActionHandlerExecInfoStatus.INITIALIZED
+        return
+
+    if (
+        exec_info.lifecycle is not None
+        and exec_info.lifecycle.on_initialize_callable is not None
+    ):
+        logger.trace(f"Initialize {handler.name} action handler")
+        try:
+            initialize_callable_result = (
+                exec_info.lifecycle.on_initialize_callable()
+            )
+            if inspect.isawaitable(initialize_callable_result):
+                await initialize_callable_result
+        except Exception as e:
+            logger.error(
+                f"Failed to initialize action handler {handler.name}: {e}"
+            )
+            raise ActionFailedException(
+                f"Initialisation of action handler '{handler.name}' failed: {e}"
+            ) from e
+
+    exec_info.status = domain.ActionHandlerExecInfoStatus.INITIALIZED
+
+
 async def execute_action_handler(
     handler: domain.ActionHandlerDeclaration,
     payload: code_action.RunActionPayload | None,
@@ -475,19 +601,6 @@ async def execute_action_handler(
     start_time = time.time_ns()
     execution_result: code_action.RunActionResult | None = None
 
-    handler_global_config = runner_context.project.action_handler_configs.get(
-        handler.source, None
-    )
-    handler_raw_config = {}
-    if handler_global_config is not None:
-        handler_raw_config = handler_global_config
-    if handler_raw_config == {}:
-        # still empty, just assign
-        handler_raw_config = handler.config
-    else:
-        # not empty anymore, deep merge
-        handler_config_merger.merge(handler_raw_config, handler.config)
-
     if handler_cache.instance is not None:
         handler_instance = handler_cache.instance
         handler_run_func = handler_instance.run
@@ -497,92 +610,21 @@ async def execute_action_handler(
             f"R{run_id} | Instance of action handler {handler.name} found in cache"
         )
     else:
-        logger.trace(f"R{run_id} | Load action handler {handler.name}")
-        try:
+        await ensure_handler_instantiated(
+            handler=handler,
+            handler_cache=handler_cache,
+            action_exec_info=action_exec_info,
+            runner_context=runner_context,
+        )
+        if handler_cache.instance is not None:
+            handler_run_func = handler_cache.instance.run
+        else:
+            # handler is a plain function
             action_handler = run_utils.import_module_member_by_source_str(
                 handler.source
             )
-        except ModuleNotFoundError as error:
-            logger.error(
-                f"R{run_id} | Source of action handler {handler.name} '{handler.source}'"
-                " could not be imported"
-            )
-            logger.error(error)
-            raise ActionFailedException(
-                f"Import of action handler '{handler.name}' failed(Run {run_id}): {handler.source}"
-            ) from error
-
-        def get_handler_config(param_type):
-            # validate config using pydantic
-            try:
-                config_type = pydantic_dataclass(param_type)
-            except pydantic.ValidationError as exception:
-                raise ActionFailedException(exception.errors()) from exception
-            return config_type(**handler_raw_config)
-
-        def get_process_executor(param_type):
-            return action_exec_info.process_executor
-
-        exec_info = domain.ActionHandlerExecInfo()
-        # save immediately in context to be able to shutdown it if the first execution
-        # is interrupted by stopping ER
-        handler_cache.exec_info = exec_info
-        if inspect.isclass(action_handler):
-            args = await resolve_func_args_with_di(
-                func=action_handler.__init__,
-                known_args={
-                    "config": get_handler_config,
-                    "process_executor": get_process_executor,
-                },
-                params_to_ignore=["self"],
-            )
-
-            if "lifecycle" in args:
-                exec_info.lifecycle = args["lifecycle"]
-
-            handler_instance = action_handler(**args)
-            handler_cache.instance = handler_instance
-            handler_run_func = handler_instance.run
-
-            service_instances = [
-                instance
-                for instance in args.values()
-                if isinstance(instance, service.Service)
-            ]
-            handler_cache.used_services = service_instances
-            for service_instance in service_instances:
-                if service_instance not in runner_context.running_services:
-                    runner_context.running_services[service_instance] = (
-                        domain.RunningServiceInfo(used_by=[])
-                    )
-
-                runner_context.running_services[service_instance].used_by.append(
-                    handler_instance
-                )
-
-        else:
             handler_run_func = action_handler
-
-        if (
-            exec_info.lifecycle is not None
-            and exec_info.lifecycle.on_initialize_callable is not None
-        ):
-            logger.trace(f"R{run_id} | Initialize {handler.name} action handler")
-            try:
-                initialize_callable_result = (
-                    exec_info.lifecycle.on_initialize_callable()
-                )
-                if inspect.isawaitable(initialize_callable_result):
-                    await initialize_callable_result
-            except Exception as e:
-                logger.error(
-                    f"R{run_id} | Failed to initialize action handler {handler.name}: {e}"
-                )
-                raise ActionFailedException(
-                    f"Initialisation of action handler '{handler.name}' failed(Run {run_id}): {e}"
-                ) from e
-
-        exec_info.status = domain.ActionHandlerExecInfoStatus.INITIALIZED
+        exec_info = handler_cache.exec_info
 
     def get_run_payload(param_type):
         return payload
