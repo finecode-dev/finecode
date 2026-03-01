@@ -368,7 +368,7 @@ class FileEditorSession(ifileeditor.IFileEditorSession):
         file_change_event = ifileeditor.FileChangeEvent(
             file_path=file_path, author=self.author, change=change
         )
-        for subscription in self._file_change_subscriptions[file_path].values():
+        for subscription in self._file_change_subscriptions.get(file_path, {}).values():
             subscription.event_queue.put_nowait(file_change_event)
         
         for subscription in self._all_events_subscriptions.values():
