@@ -7,7 +7,7 @@ from typing import override
 from finecode_extension_api import service
 from finecode_extension_api.actions import lint_files as lint_files_action
 from finecode_extension_api.interfaces import ifileeditor, ilspclient, ilogger
-from finecode_extension_api.contrib.lsp_service import LspService, map_diagnostics_to_lint_messages
+from finecode_extension_api.contrib.lsp_service import LspService, map_diagnostics_to_lint_messages, apply_text_edits
 
 
 class RuffLspService(service.DisposableService):
@@ -52,3 +52,15 @@ class RuffLspService(service.DisposableService):
         return map_diagnostics_to_lint_messages(
             raw_diagnostics, default_source="ruff"
         )
+
+    async def format_file(
+        self,
+        file_path: Path,
+        file_content: str,
+        timeout: float = 30.0,
+    ) -> str:
+        """Format a file via LSP and return the formatted content."""
+        raw_edits = await self._lsp_service.format_file(file_path, file_content, timeout=timeout)
+        if not raw_edits:
+            return file_content
+        return apply_text_edits(file_content, raw_edits)
