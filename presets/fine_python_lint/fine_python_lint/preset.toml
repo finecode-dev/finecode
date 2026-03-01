@@ -3,13 +3,13 @@ source = "finecode_extension_api.actions.lint_files.LintFilesAction"
 languages = ["python"]
 handlers = [
     { name = "ruff", source = "fine_python_ruff.RuffLintFilesHandler", env = "dev_no_runtime", dependencies = [
-        "fine_python_ruff~=0.2.0a0",
+        "fine_python_ruff[jsonrpc]~=0.2.0a0",
     ] },
     { name = "flake8", source = "fine_python_flake8.Flake8LintFilesHandler", env = "dev_no_runtime", dependencies = [
         "fine_python_flake8~=0.3.0a0",
     ] },
     { name = "pyrefly", source = "fine_python_pyrefly.PyreflyLintFilesHandler", env = "dev_no_runtime", dependencies = [
-        "fine_python_pyrefly~=0.2.0a0",
+        "fine_python_pyrefly[jsonrpc]~=0.2.0a0",
     ] },
 ]
 
@@ -40,3 +40,15 @@ source = "fine_python_pip.PipInstallDepsInEnvHandler"
 # as editable in multiple packages, there are concurrency problems and it would require
 # sequential installation of dependencies in all envs.
 config.editable_mode = 'compat'
+
+[[tool.finecode.service]]
+interface = "finecode_extension_api.interfaces.ijsonrpcclient.IJsonRpcClient"
+source = "finecode_jsonrpc.jsonrpc_client.JsonRpcClientImpl"
+env = "dev_no_runtime"
+dependencies = ["finecode_jsonrpc~=0.1.0a1"]
+
+[[tool.finecode.service]]
+interface = "finecode_extension_api.interfaces.ilspclient.ILspClient"
+source = "finecode_extension_runner.impls.lsp_client.LspClientImpl"
+env = "dev_no_runtime"
+dependencies = []

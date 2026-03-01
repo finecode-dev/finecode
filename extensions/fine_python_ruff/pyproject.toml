@@ -7,6 +7,12 @@ readme = "README.md"
 requires-python = ">=3.11, <= 3.14"
 dependencies = ["finecode_extension_api~=0.4.0a0", "ruff (>=0.8.0,<1.0.0)"]
 
+[project.optional-dependencies]
+jsonrpc = ["finecode_jsonrpc~=0.1.0a0"]
+
+[project.entry-points."finecode.activator"]
+fine_python_ruff = "fine_python_ruff.activator:Activator"
+
 [dependency-groups]
 dev_workspace = ["finecode~=0.4.0a0", "finecode_dev_common_preset~=0.3.0a0"]
 

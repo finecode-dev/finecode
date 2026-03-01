@@ -130,7 +130,7 @@ class IFileEditor(Protocol):
     Reading/writing files: use always `ifileeditor.IFileEditor` to read and write files. It will check whether file is opened
     and opened content should be modified or file is not opened and it can be modified directly on disk.
 
-    'opened files' ... files user sees and works with, not files which tools read
+    'opened files' ... files user sees and works with, not files which tools read.
     """
 
     def session(

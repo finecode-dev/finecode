@@ -12,7 +12,9 @@ from finecode_extension_api.interfaces import (
     icommandrunner,
     ilogger,
     ifileeditor,
+    iprojectinfoprovider,
 )
+from fine_python_ruff.ruff_lsp_service import RuffLspService
 
 
 @dataclasses.dataclass
@@ -23,6 +25,7 @@ class RuffLintFilesHandlerConfig(code_action.ActionHandlerConfig):
     ignore: list[str] | None = None  # Rules to disable
     extend_select: list[str] | None = None
     preview: bool = False
+    use_cli: bool = False
 
 
 class RuffLintFilesHandler(
@@ -40,14 +43,36 @@ class RuffLintFilesHandler(
         logger: ilogger.ILogger,
         file_editor: ifileeditor.IFileEditor,
         command_runner: icommandrunner.ICommandRunner,
+        project_info_provider: iprojectinfoprovider.IProjectInfoProvider,
+        lsp_service: RuffLspService,
     ) -> None:
         self.config = config
         self.cache = cache
         self.logger = logger
         self.file_editor = file_editor
         self.command_runner = command_runner
+        self.project_info_provider: iprojectinfoprovider.IProjectInfoProvider = project_info_provider
+        self.lsp_service: RuffLspService = lsp_service
 
         self.ruff_bin_path = Path(sys.executable).parent / "ruff"
+
+        if not self.config.use_cli:
+            # reference: https://docs.astral.sh/ruff/editors/settings/
+            lint_settings: dict[str, object] = {"enable": True}
+            if self.config.select is not None:
+                lint_settings["select"] = self.config.select
+            if self.config.extend_select is not None:
+                lint_settings["extendSelect"] = self.config.extend_select
+            if self.config.ignore is not None:
+                lint_settings["ignore"] = self.config.ignore
+            if self.config.preview:
+                lint_settings["preview"] = True
+            self.lsp_service.update_settings({
+                "lint": lint_settings,
+                "showSyntaxErrors": True,
+                "lineLength": self.config.line_length,
+                "targetVersion": self.config.target_version,
+            })
 
     async def run_on_single_file(
         self, file_path: Path
@@ -69,7 +94,13 @@ class RuffLintFilesHandler(
                 file_content: str = file_info.content
                 file_version: str = file_info.version
 
-        lint_messages = await self.run_ruff_lint_on_single_file(file_path, file_content)
+        if self.config.use_cli:
+            lint_messages = await self.run_ruff_lint_on_single_file(file_path, file_content)
+        else:
+            root_uri = self.project_info_provider.get_current_project_dir_path().as_uri()
+            await self.lsp_service.ensure_started(root_uri)
+
+            lint_messages = await self.lsp_service.check_file(file_path)
         messages[str(file_path)] = lint_messages
         await self.cache.save_file_cache(
             file_path, file_version, self.CACHE_KEY, lint_messages

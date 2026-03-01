@@ -12,14 +12,17 @@ from finecode_extension_api.interfaces import (
     icommandrunner,
     ilogger,
     ifileeditor,
+    iprojectinfoprovider,
     isrcartifactfileclassifier,
     iextensionrunnerinfoprovider,
 )
+from fine_python_pyrefly.pyrefly_lsp_service import PyreflyLspService
 
 
 @dataclasses.dataclass
 class PyreflyLintFilesHandlerConfig(code_action.ActionHandlerConfig):
     python_version: str | None = None
+    use_cli: bool = False
 
 
 class PyreflyLintFilesHandler(
@@ -47,6 +50,8 @@ class PyreflyLintFilesHandler(
         command_runner: icommandrunner.ICommandRunner,
         src_artifact_file_classifier: isrcartifactfileclassifier.ISrcArtifactFileClassifier,
         extension_runner_info_provider: iextensionrunnerinfoprovider.IExtensionRunnerInfoProvider,
+        project_info_provider: iprojectinfoprovider.IProjectInfoProvider,
+        lsp_service: PyreflyLspService,
     ) -> None:
         self.config = config
         self.cache = cache
@@ -55,8 +60,26 @@ class PyreflyLintFilesHandler(
         self.command_runner = command_runner
         self.src_artifact_file_classifier = src_artifact_file_classifier
         self.extension_runner_info_provider = extension_runner_info_provider
+        self.project_info_provider: iprojectinfoprovider.IProjectInfoProvider = project_info_provider
+        self.lsp_service: PyreflyLspService = lsp_service
 
         self.pyrefly_bin_path = Path(sys.executable).parent / "pyrefly"
+
+        if not self.config.use_cli:
+            # Pyrefly uses pull-based config: the LSP server sends
+            # workspace/configuration requests with section="python",
+            # expecting responses like [{"pyrefly": {"displayTypeErrors": ...}}].
+            # The same format is used for initializationOptions.
+            venv_dir = self.extension_runner_info_provider.get_venv_dir_path_of_env("runtime")
+            interpreter_path = self.extension_runner_info_provider.get_venv_python_interpreter(venv_dir)
+            site_packages = self.extension_runner_info_provider.get_venv_site_packages(venv_dir)
+            self.lsp_service.update_settings({
+                "pythonPath": str(interpreter_path),
+                "pyrefly": {
+                    "displayTypeErrors": "force-on",
+                    "extraPaths": [str(p) for p in site_packages],
+                },
+            })
 
     async def run_on_single_file(
         self, file_path: Path
@@ -76,7 +99,14 @@ class PyreflyLintFilesHandler(
         ) as session:
             file_version = await session.read_file_version(file_path)
 
-        lint_messages = await self.run_pyrefly_lint_on_single_file(file_path)
+        if self.config.use_cli:
+            lint_messages = await self.run_pyrefly_lint_on_single_file(file_path)
+        else:
+            root_uri = self.project_info_provider.get_current_project_dir_path().as_uri()
+            await self.lsp_service.ensure_started(root_uri)
+
+            lint_messages = await self.lsp_service.check_file(file_path)
+
         messages[str(file_path)] = lint_messages
         await self.cache.save_file_cache(
             file_path, file_version, self.CACHE_KEY, lint_messages
