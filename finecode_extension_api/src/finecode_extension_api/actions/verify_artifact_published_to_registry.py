@@ -27,8 +27,9 @@ class VerifyArtifactPublishedToRegistryRunResult(code_action.RunActionResult):
 
     def to_text(self) -> str | textstyler.StyledText:
         if self.errors:
-            return f"Verification failed with {len(self.errors)} error(s):\n" + "\n".join(
-                f"  - {e}" for e in self.errors
+            return (
+                f"Verification failed with {len(self.errors)} error(s):\n"
+                + "\n".join(f"  - {e}" for e in self.errors)
             )
         return "Verification successful"
 
