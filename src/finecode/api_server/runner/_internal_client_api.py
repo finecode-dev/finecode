@@ -6,7 +6,7 @@ import pathlib
 
 from loguru import logger
 
-from finecode.runner import _internal_client_types
+from finecode.api_server.runner import _internal_client_types
 from finecode_jsonrpc import client as jsonrpc_client
 
 

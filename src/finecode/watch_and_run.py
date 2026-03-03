@@ -1,7 +1,7 @@
 from loguru import logger
 
 import finecode.context as context
-import finecode.find_project as find_project
+import finecode.api_server.find_project as find_project
 import finecode.watcher as watcher
 
 

@@ -1,8 +1,6 @@
 import asyncio
 import collections.abc
-from functools import partial
 from pathlib import Path
-from typing import Any
 
 from loguru import logger
 from lsprotocol import types
@@ -10,9 +8,10 @@ from pygls.workspace import position_codec
 from pygls.lsp.server import LanguageServer
 from finecode_extension_runner.lsp_server import CustomLanguageServer
 
-from finecode.services import shutdown_service
-from finecode.runner import runner_manager
-from finecode.lsp_server import global_state, schemas, services
+from finecode import api_server
+from finecode.api_client import ApiClient
+from finecode.api_server.runner import runner_manager
+from finecode.lsp_server import global_state, schemas
 from finecode.lsp_server.endpoints import action_tree as action_tree_endpoints
 from finecode.lsp_server.endpoints import code_actions as code_actions_endpoints
 from finecode.lsp_server.endpoints import code_lens as code_lens_endpoints
@@ -189,37 +188,55 @@ async def _on_initialized(ls: LanguageServer, params: types.InitializedParams):
 
     logger.info("initialized, adding workspace directories")
 
-    async def apply_workspace_edit(params):
-        return await ls.workspace_apply_edit_async(params)
+    # Determine workspace root for API server startup.
+    workdir = Path.cwd()
+    if ls.workspace.folders:
+        first_folder = next(iter(ls.workspace.folders.values()))
+        workdir = Path(first_folder.uri.replace("file://", ""))
 
-    services.register_workspace_edit_applier(apply_workspace_edit)
+    # Ensure the FineCode API server is running and connect to it.
+    # The TCP connection keeps the API server alive for the LSP lifetime.
+    if not api_server.is_running():
+        api_server.ensure_running(workdir)
+        try:
+            port = await api_server.wait_until_ready()
+        except TimeoutError as exc:
+            logger.warning(f"FineCode API server did not start: {exc}")
+            port = None
+    else:
+        port = api_server.read_port()
 
-    services.register_project_changed_callback(
-        partial(action_tree_endpoints.notify_changed_action_node, ls)
-    )
-    services.register_send_user_message_notification_callback(
-        partial(send_user_message_notification, ls)
-    )
-    services.register_send_user_message_request_callback(
-        partial(send_user_message_request, ls)
-    )
+    if port is None:
+        logger.error("Cannot connect to FineCode API server — no port available")
+        return
 
-    def report_progress(token: str | int, value: Any):
-        ls.progress(types.ProgressParams(token, value))
+    try:
+        global_state.api_client = ApiClient()
+        await global_state.api_client.connect("127.0.0.1", port)
+    except (ConnectionRefusedError, OSError) as exc:
+        logger.error(f"Could not connect to FineCode API server: {exc}")
+        global_state.api_client = None
+        return
 
-    services.register_progress_reporter(report_progress)
-    services.register_debug_session_starter(partial(start_debug_session, ls))
+    # Register notification handlers for server→client push messages.
+    async def on_tree_changed(params: dict) -> None:
+        node = schemas.ActionTreeNode(**params["node"])
+        await action_tree_endpoints.notify_changed_action_node(ls, node)
 
+    async def on_user_message(params: dict) -> None:
+        await send_user_message_notification(ls, params["message"], params["type"])
+
+    global_state.api_client.on_notification("actions/treeChanged", on_tree_changed)
+    global_state.api_client.on_notification("server/userMessage", on_user_message)
+
+    # Add workspace directories via the API server.
     try:
         async with asyncio.TaskGroup() as tg:
             for ws_dir in ls.workspace.folders.values():
-                request = schemas.AddWorkspaceDirRequest(
-                    dir_path=ws_dir.uri.replace("file://", "")
-                )
-                tg.create_task(services.add_workspace_dir(request=request))
+                dir_path = Path(ws_dir.uri.replace("file://", ""))
+                tg.create_task(global_state.api_client.add_dir(dir_path))
     except ExceptionGroup as error:
         logger.exception(error)
-        raise error from eg
 
     global_state.server_initialized.set()
     logger.trace("Workspace directories added, end of initialized handler")
@@ -229,21 +246,28 @@ async def _workspace_did_change_workspace_folders(
     ls: LanguageServer, params: types.DidChangeWorkspaceFoldersParams
 ):
     logger.trace(f"Workspace dirs were changed: {params}")
-    await services.handle_changed_ws_dirs(
-        added=[
+    if global_state.api_client is None:
+        logger.warning("API client not connected, ignoring workspace folder change")
+        return
+
+    for ws_folder in params.event.removed:
+        await global_state.api_client.remove_dir(
             Path(ws_folder.uri.removeprefix("file://"))
-            for ws_folder in params.event.added
-        ],
-        removed=[
+        )
+
+    for ws_folder in params.event.added:
+        await global_state.api_client.add_dir(
             Path(ws_folder.uri.removeprefix("file://"))
-            for ws_folder in params.event.removed
-        ],
-    )
+        )
 
 
 def _on_shutdown(ls: LanguageServer, params):
     logger.info("on shutdown handler", params)
-    shutdown_service.on_shutdown(global_state.ws_context)
+    # Close connection to the API server. If this was the last client,
+    # the API server will auto-stop after a short delay and clean up runners.
+    if global_state.api_client is not None:
+        asyncio.ensure_future(global_state.api_client.close())
+        global_state.api_client = None
 
 
 async def reset(ls: LanguageServer, params):

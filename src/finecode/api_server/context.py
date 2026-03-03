@@ -4,10 +4,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from finecode import domain
+from finecode.api_server import domain
 
 if TYPE_CHECKING:
-    from finecode.runner.runner_client import ExtensionRunnerInfo
+    from finecode.api_server.runner.runner_client import ExtensionRunnerInfo
     from finecode_jsonrpc._io_thread import AsyncIOThread
 
 

@@ -3,7 +3,7 @@ Domain helper functions that operate on domain models but don't belong
 directly in the domain module.
 """
 
-from finecode import domain
+from finecode.api_server import domain
 
 
 def collect_all_handlers_to_initialize(

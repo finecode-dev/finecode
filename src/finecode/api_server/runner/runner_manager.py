@@ -13,16 +13,17 @@ import typing
 
 from loguru import logger
 
-from finecode import context, domain, domain_helpers, finecode_cmd
-from finecode.config import collect_actions, config_models, read_configs
-from finecode.runner import (
+from finecode.api_server import context, domain, domain_helpers
+from finecode.api_server.config import collect_actions, config_models, read_configs
+from finecode.api_server.runner import (
     runner_client,
     _internal_client_api,
     _internal_client_types,
+    finecode_cmd
 )
 import finecode_jsonrpc as jsonrpc_client
 from finecode_jsonrpc import _io_thread
-from finecode.utils import iterable_subscribe
+from finecode.api_server.utils import iterable_subscribe
 
 project_changed_callback: (
     typing.Callable[[domain.Project], collections.abc.Coroutine[None, None, None]]

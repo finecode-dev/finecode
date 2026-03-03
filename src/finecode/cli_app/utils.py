@@ -3,9 +3,9 @@ import typing
 
 import click
 
-from finecode import context
-from finecode.runner import runner_client
-from finecode.services import run_service
+from finecode.api_server import context
+from finecode.api_server.runner import runner_client
+from finecode.api_server.services import run_service
 
 
 class RunActionsResult(typing.NamedTuple):

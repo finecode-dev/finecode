@@ -5,9 +5,9 @@ from loguru import logger
 from lsprotocol import types
 from pygls.lsp.server import LanguageServer
 
-from finecode import domain
+from finecode.api_server import domain
 from finecode.lsp_server import global_state
-from finecode.runner import runner_client
+from finecode.api_server.runner import runner_client
 
 
 async def document_did_open(

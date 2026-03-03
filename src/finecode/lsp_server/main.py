@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from finecode import communication_utils
+from finecode.lsp_server import communication_utils
 from finecode import logger_utils
 from finecode.lsp_server.lsp_server import create_lsp_server
 
@@ -11,6 +11,6 @@ async def start(
     port: int | None = None,
     trace: bool = False,
 ) -> None:
-    logger_utils.init_logger(trace=trace)
+    logger_utils.init_logger(log_name="lsp_server", trace=trace)
     server = create_lsp_server()
     await server.start_io_async()

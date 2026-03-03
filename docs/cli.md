@@ -114,12 +114,12 @@ Output is written to `<cwd>/finecode_config_dump/`.
 
 ---
 
-## `start-api`
+## `start-lsp`
 
 Start the FineCode LSP server. Used by the IDE extension — you typically don't call this directly.
 
 ```
-python -m finecode start-api --stdio | --socket <port> | --ws [--host <host>] [--port <port>]
+python -m finecode start-lsp --stdio | --socket <port> | --ws [--host <host>] [--port <port>]
 ```
 
 | Option | Description |
@@ -129,7 +129,41 @@ python -m finecode start-api --stdio | --socket <port> | --ws [--host <host>] [-
 | `--ws` | Start a WebSocket server |
 | `--host <host>` | Host for TCP/WS server (default: 127.0.0.1 for TCP) |
 | `--port <port>` | Port for TCP/WS server |
-| `--mcp` | Also start an MCP server |
-| `--mcp-port <port>` | Port for the MCP server |
 | `--trace` | Enable verbose logging |
 | `--debug` | Wait for a debugpy client on port 5680 |
+
+The LSP server connects to the **FineCode API server** on startup (starting one if needed). See [IDE Integration — AI agent integration](ide-integration.md#ai-agent-integration-mcp) for details.
+
+---
+
+## `start-mcp`
+
+Start the FineCode MCP server on stdio. Connects to a running FineCode API server (or starts one) and exposes FineCode tools via the Model Context Protocol.
+
+```text
+.venvs/dev_workspace/bin/python -m finecode start-mcp [--workdir=<path>] [--trace]
+```
+
+| Option | Description |
+| --- | --- |
+| `--workdir=<path>` | Workspace root directory (default: current directory). |
+| `--trace` | Enable verbose logging |
+
+Typically started automatically by Claude Code via `.mcp.json` — see [IDE Integration](ide-integration.md#setup-for-claude-code).
+
+---
+
+## `start-api-server`
+
+Start the FineCode API server standalone (TCP JSON-RPC). Discovers projects, reads configs, starts extension runners, and listens for client connections. Auto-stops when the last client disconnects.
+
+```text
+python -m finecode start-api-server [--workdir=<path>] [--trace]
+```
+
+| Option | Description |
+| --- | --- |
+| `--workdir=<path>` | Workspace root directory (default: current directory) |
+| `--trace` | Enable verbose logging |
+
+Usually started automatically by `start-lsp` or `start-mcp`. Can also be started manually for debugging.

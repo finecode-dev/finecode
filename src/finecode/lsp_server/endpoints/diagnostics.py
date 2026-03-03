@@ -10,12 +10,11 @@ from loguru import logger
 from lsprotocol import types
 from pydantic.dataclasses import dataclass as pydantic_dataclass
 
-from finecode import (
+from finecode.api_server import (
     context,
-    pygls_types_utils,
 )
-from finecode.services import run_service
-from finecode.lsp_server import global_state
+from finecode.api_server.services import run_service
+from finecode.lsp_server import global_state, pygls_types_utils
 from finecode_extension_api.actions import lint as lint_action
 
 if TYPE_CHECKING:

@@ -5,9 +5,9 @@ from typing import TYPE_CHECKING, Any
 from loguru import logger
 from lsprotocol import types
 
-from finecode import find_project, pygls_types_utils
-from finecode.services import run_service
-from finecode.lsp_server import global_state
+from finecode.api_server import find_project
+from finecode.api_server.services import run_service
+from finecode.lsp_server import global_state, pygls_types_utils
 
 if TYPE_CHECKING:
     from pygls.lsp.server import LanguageServer

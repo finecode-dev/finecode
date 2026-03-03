@@ -5,12 +5,12 @@ import ordered_set
 from loguru import logger
 from pygls.lsp.server import LanguageServer
 
-from finecode import context, domain
-from finecode import services as wm_services
+from finecode.api_server import context, domain
+from finecode.api_server import services as wm_services
 from finecode import user_messages
 from finecode.lsp_server import global_state, schemas
 from finecode.lsp_server.services import ActionNotFound, InternalError
-from finecode.runner import runner_client
+from finecode.api_server.runner import runner_client
 
 
 async def list_actions(ls: LanguageServer, params):

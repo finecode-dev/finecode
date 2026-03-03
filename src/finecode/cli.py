@@ -11,7 +11,7 @@ from loguru import logger
 import finecode.lsp_server.main as wm_lsp_server
 from finecode import communication_utils, logger_utils, user_messages
 from finecode.cli_app.commands import dump_config_cmd, prepare_envs_cmd, run_cmd
-from finecode.config.config_models import ConfigurationError
+from finecode.api_server.config.config_models import ConfigurationError
 
 
 FINECODE_CONFIG_ENV_PREFIX = "FINECODE_CONFIG_"
@@ -184,11 +184,7 @@ def cli(): ...
 @click.option(
     "--port", "port", default=None, type=int, help="Port for TCP and WS server"
 )
-@click.option("--mcp", "mcp", is_flag=True, default=False)
-@click.option(
-    "--mcp-port", "mcp_port", default=None, type=int, help="Port for MCP server"
-)
-def start_api(
+def start_lsp(
     trace: bool,
     debug: bool,
     tcp: int | None,
@@ -196,8 +192,6 @@ def start_api(
     stdio: bool,
     host: str | None,
     port: int | None,
-    mcp: bool,
-    mcp_port: int | None,
 ):
     if debug is True:
         import debugpy
@@ -289,7 +283,7 @@ def run(ctx) -> None:
             break
         processed_args_count += 1
 
-    logger_utils.init_logger(trace=trace, stdout=True)
+    logger_utils.init_logger(log_name="cli", trace=trace, stdout=True)
 
     # Parse handler config from env vars
     handler_config_overrides: dict[str, dict[str, dict[str, str]]] = {}
@@ -402,7 +396,7 @@ def prepare_envs(trace: bool, debug: bool, recreate: bool) -> None:
         except Exception as e:
             logger.info(e)
 
-    logger_utils.init_logger(trace=trace, stdout=True)
+    logger_utils.init_logger(log_name="cli", trace=trace, stdout=True)
     user_messages._notification_sender = show_user_message
 
     try:
@@ -438,7 +432,7 @@ def dump_config(trace: bool, debug: bool, project: str | None):
         click.echo("--project parameter is required", err=True)
         return
 
-    logger_utils.init_logger(trace=trace, stdout=True)
+    logger_utils.init_logger(log_name="cli", trace=trace, stdout=True)
     user_messages._notification_sender = show_user_message
 
     try:
@@ -450,6 +444,30 @@ def dump_config(trace: bool, debug: bool, project: str | None):
     except dump_config_cmd.DumpFailed as exception:
         click.echo(exception.message, err=True)
         sys.exit(1)
+
+
+@cli.command()
+@click.option("--workdir", "workdir", default=None, type=str, help="Workspace root directory")
+@click.option("--trace", "trace", is_flag=True, default=False)
+def start_mcp(workdir: str | None, trace: bool):
+    """Start the FineCode MCP server (stdio). Connects to a running FineCode API server."""
+    from finecode import mcp_server
+
+    logger_utils.init_logger(log_name="mcp_server", trace=trace, stdout=False)
+    workdir_path = pathlib.Path(workdir) if workdir else pathlib.Path(os.getcwd())
+    asyncio.run(mcp_server.start(workdir_path))
+
+
+@cli.command()
+@click.option("--workdir", "workdir", default=None, type=str, help="Workspace root directory")
+@click.option("--trace", "trace", is_flag=True, default=False)
+def start_api_server(workdir: str | None, trace: bool):
+    """Start the FineCode API server standalone (TCP JSON-RPC). Auto-stops when all clients disconnect."""
+    from finecode.api_server import api_server
+
+    logger_utils.init_logger(log_name="api_server", trace=trace, stdout=False)
+    workdir_path = pathlib.Path(workdir) if workdir else pathlib.Path(os.getcwd())
+    asyncio.run(api_server.start_standalone(workdir_path))
 
 
 if __name__ == "__main__":

@@ -1,9 +1,8 @@
 from pathlib import Path
 from typing import Any
 
-import finecode.config.config_models as config_models
-import finecode.context as context
-import finecode.domain as domain
+import finecode.api_server.config.config_models as config_models
+from finecode.api_server import context, domain
 
 
 def collect_actions(

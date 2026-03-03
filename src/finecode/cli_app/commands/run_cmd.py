@@ -6,10 +6,10 @@ import typing
 import ordered_set
 from loguru import logger
 
-from finecode import context, domain
-from finecode.services import run_service, shutdown_service
-from finecode.config import collect_actions, config_models, read_configs
-from finecode.runner import runner_manager
+from finecode.api_server import context, domain
+from finecode.api_server.services import run_service, shutdown_service
+from finecode.api_server.config import collect_actions, config_models, read_configs
+from finecode.api_server.runner import runner_manager
 
 from finecode.cli_app import utils
 

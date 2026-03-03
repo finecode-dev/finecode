@@ -1,7 +1,7 @@
 from loguru import logger
 
-from finecode import context
-from finecode.runner import runner_client, runner_manager
+from finecode.api_server import context
+from finecode.api_server.runner import runner_client, runner_manager
 
 
 def on_shutdown(ws_context: context.WorkspaceContext):
@@ -19,5 +19,3 @@ def on_shutdown(ws_context: context.WorkspaceContext):
     if ws_context.runner_io_thread is not None:
         logger.trace("Stop IO thread")
         ws_context.runner_io_thread.stop(timeout=5)
-
-    # TODO: stop MCP if running

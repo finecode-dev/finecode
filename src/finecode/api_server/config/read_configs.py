@@ -5,9 +5,10 @@ from typing import Any, NamedTuple
 from loguru import logger
 from tomlkit import loads as toml_loads
 
-from finecode import context, domain, user_messages
-from finecode.config import config_models
-from finecode.runner import runner_client
+from finecode import user_messages
+from finecode.api_server import context, domain
+from finecode.api_server.config import config_models
+from finecode.api_server.runner import runner_client
 
 
 async def read_projects_in_dir(
@@ -115,7 +116,7 @@ async def read_project_config(
             project_def = toml_loads(pyproject_file.read()).unwrap()
         # TODO: validate that finecode is installed?
 
-        base_config_path = Path(__file__).parent.parent / "base_config.toml"
+        base_config_path = Path(__file__).parent.parent.parent / "base_config.toml"
         # TODO: cache instead of reading each time
         with open(base_config_path, "r") as base_config_file:
             base_config = toml_loads(base_config_file.read()).unwrap()
