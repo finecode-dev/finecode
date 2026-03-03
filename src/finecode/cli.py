@@ -9,7 +9,8 @@ import click
 from loguru import logger
 
 import finecode.lsp_server.main as wm_lsp_server
-from finecode import communication_utils, logger_utils, user_messages
+from finecode import logger_utils, user_messages
+from finecode.lsp_server import communication_utils
 from finecode.cli_app.commands import dump_config_cmd, prepare_envs_cmd, run_cmd
 from finecode.api_server.config.config_models import ConfigurationError
 
@@ -455,7 +456,7 @@ def start_mcp(workdir: str | None, trace: bool):
 
     logger_utils.init_logger(log_name="mcp_server", trace=trace, stdout=False)
     workdir_path = pathlib.Path(workdir) if workdir else pathlib.Path(os.getcwd())
-    asyncio.run(mcp_server.start(workdir_path))
+    mcp_server.start(workdir_path)
 
 
 @cli.command()
