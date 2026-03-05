@@ -1,145 +1,77 @@
 # FineCode
 
-## Personalize and improve your development experience
+FineCode gives you one workflow for code quality and developer tooling across CLI, IDE, CI, and AI assistants.
 
-FineCode is a tool runner and set of utilities for creating tools for software developers.
+## What FineCode Solves
 
-With FineCode you can:
+- Unifies tool execution across local CLI, IDE, CI and AI
+- Keeps tooling config reusable via presets
+- Supports multi-project workspaces
+- Isolates tooling dependencies in dedicated virtual environments
 
-- make tool configuration in your project reusable and distributable(see Presets below)
-- improve integration of tools used in the project with IDE, especially in workspace setup
-- create your own tools with IDE integration out of the box, and IDE extensios as well
+## Prerequisites
 
-## Getting started: example how to setup linting and formatting in your project
+- Python 3.11-3.14
+- pip 25.1+ (for `--group` support)
 
-1.1 Install FineCode. We recommend using dependency groups ([PEP-735](https://peps.python.org/pep-0735/)) but not all package managers support them. We will show a recommended way with which you don't need package manager at all, only `pip`, but you can adapt it also for package manager used in your project.
+## Quick Start (5 minutes)
 
-1.1.1 Add `dev_workspace` dependency group to `pyproject.toml`:
-
-  ```toml
-  [dependency-groups]
-  dev_workspace = ["finecode==0.3.*"]
-  ```
-
-1.1.2 Create dev_workspace venv: `python -m venv .venvs/dev_workspace` ([Python Docs](https://docs.python.org/3/library/venv.html#creating-virtual-environments ))
-
-1.1.3 Activate this venv and install dependencies from `dev_workspace` group:
-  ```
-  source .venvs/dev_workspace/bin/activate
-  python -m pip install --group="dev_workspace"
-  ```
-
-NOTE: `pip install` supports `--group` parameter since pip 25.1. Make sure you have new enough version, otherwise update it: `python -m pip install --upgrade pip`.
-
-1.2 Using existing preset
-
-1.2.1 Put `fine_python_recommended` dependency in `dev_workspace` dependency group:
-
-  ```toml
-  [dependency-groups]
-  dev_workspace = ["finecode==0.3.*", "fine_python_recommended==0.3.*"]
-  ```
-
-For list of presets from FineCode authors see 'Presets' section below.
-
-1.2.1 Run `prepare-envs` finecode command:
-
-  ```bash
-  python -m finecode prepare-envs
-  ```
-
-1.3 Enable finecode and preset
+1. Add dependencies and FineCode config to `pyproject.toml`:
 
 ```toml
+[dependency-groups]
+dev_workspace = ["finecode==0.3.*", "fine_python_recommended==0.3.*"]
+
 [tool.finecode]
-presets = [
-    { source = "fine_python_recommended" }
-]
+presets = [{ source = "fine_python_recommended" }]
 ```
 
-1.4 That's it! Now you can lint and format your codebase by running `lint` and `format` actions(see 'IDE Integration' and 'CLI' sections for more details).
+2. Create and activate environment:
 
-You can customize preset, create your own, implement own actions, action handlers and more. All these possibilities are explained in details below.
+```bash
+python -m venv .venvs/dev_workspace
+# macOS/Linux
+source .venvs/dev_workspace/bin/activate
+# Windows (PowerShell)
+.venvs\dev_workspace\Scripts\Activate.ps1
+# Windows (cmd.exe)
+.venvs\dev_workspace\Scripts\activate.bat
+```
 
-## IDE Integration
+3. Install dependencies and run FineCode:
 
-### VSCode
+```bash
+python -m pip install --upgrade pip
+python -m pip install --group="dev_workspace"
+python -m finecode prepare-envs
+python -m finecode run lint
+```
 
-For integration with VSCode, install [FineCode extension](https://github.com/finecode-dev/finecode-vscode)
+4. (Optional, but recommended) Enable FineCode in development environments you use:
 
-## CLI
+- IDE (VSCode): [IDE Integration docs](https://finecode-dev.github.io/ide-integration/) and [FineCode VSCode extension](https://marketplace.visualstudio.com/items?itemName=VladyslavHnatiuk.finecode-vscode)
+- AI assistants (MCP): [MCP setup](https://finecode-dev.github.io/ide-integration/#setup-for-claude-code)
+- Git hooks: [Use the same actions in local/CI/hooks workflows](https://finecode-dev.github.io/#one-command-surface-for-local-ci-ide-and-ai)
 
-1. In virtualenv of your project you can use the following command:
+For full setup and recommended presets, see: [Getting Started](https://finecode-dev.github.io/getting-started/)
 
-`python -m finecode run [run_options] <list_of_actions> [actions_payload]`
+## Documentation
 
-Available run options:
+- [Start here](https://finecode-dev.github.io/)
+- [Concepts](https://finecode-dev.github.io/concepts/)
+- [CLI](https://finecode-dev.github.io/cli/)
+- [Configuration](https://finecode-dev.github.io/configuration/)
+- [IDE Integration (LSP, VSCode, MCP)](https://finecode-dev.github.io/ide-integration/)
+- [Guide: Creating an Extension](https://finecode-dev.github.io/guides/creating-extension/)
+- [Guide: Creating a Preset](https://finecode-dev.github.io/guides/creating-preset/)
+- [Guide: Multi-Project Workspace](https://finecode-dev.github.io/guides/workspace/)
+- [Reference: Built-in Actions](https://finecode-dev.github.io/reference/actions/)
+- [Reference: Extensions](https://finecode-dev.github.io/reference/extensions/)
 
-- `--workdir="<path>"` ... use provided directory as work directory
-- `--project="<name>"` ... run actions only in this project. Multiple projects can be selected by providing multiple `--project="<name>"` options
-- `--concurrently` ... run actions concurrently. Single projects are always handled concurrently, this option determines whether actions inside of single project are run concurrently or not
-- `--trace` ... activate trace(more detailed) logging
+## Contributing
 
-If no projects are provided via options, FineCode will interpret working directory as workspace root, find all projects in it and run provided actions in all projects, in which they exist.
+See [Development](https://finecode-dev.github.io/development/) for local development workflow.
 
-If projects are provided, actions are expected to exist in all of them.
+## License
 
-Actions payload: if actions require payload or you want to run them with payload other than configured, you can provide it after names of actions.
-
-Examples:
-
-- `python -m finecode run --concurrently lint check_formatting` ... run `lint` and `check_formatting` actions concurrently in all projects in the workspace, root of which is in current working directory
-- `python -m finecode --workdir="./finecode_extension_api" run lint check_formatting` ... run `lint` and `check_formatting` sequentially in `finecode_extension_api` directory (project is there)
-- `python -m finecode --project="fine_python_mypy" --project="fine_python_ruff" run lint` ... run `lint` action in projects `fine_python_mypy` and `fine_python_ruff`. They should be discoverable from the working directory.
-
-2. You can dump project config with fully resolved configuration using following command:
-
-`python -m finecode dump-config [--trace] [--project="<project_name>"]`
-
-The result will be saved in `<cwd>/finecode_config_dump/` directory.
-
-Options:
-
-- `--trace` ... activate trace(more detailed) logging
-- `--project` ... by default config of project in current working directory is dumped. If current working directory contains multiple projects and you want to dump config of particular one, provide its name using this option
-
-## Extensions from FineCode authors
-
-### Presets
-
-- fine_python_recommended
-- fine_python_format
-- fine_python_lint
-
-### Actions and action handlers
-
-[Directory with actions](https://github.com/finecode-dev/finecode/tree/main/finecode_extension_api/finecode_extension_api/actions)
-
-- lint
-  - Flake8
-  - Ruff
-  - Mypy
-- format
-  - Black
-  - isort
-
-IDE
-
-TODO: list all from LSP
-
-## Workspace with multiple subprojects
-
-### Reusing config
-
-To reuse configuration in multiple subprojects, put it in a separate package in your workspace and add it as dev dependency in all subprojects in which you want to use it.
-
-Design decision: there are multiple ways to achieve the same result:
-
-- separate package
-  - configuration of subprojects doesn't depend on file structure of the workspace. Subproject can be moved in another place or even outside of workspace and this will not affect its configuration, only if path to package with common configuration was file path, it should be changed.
-  - fully transparent: the full configuration is known in a subproject without searching workspace root and analyzing the workspace
-- hierarchical configuration
-  - makes subprojects more dependent on workspace, in case of moving subproject, additional actions with configurations are needed to keep it the same
-- letting to define reusable part on workspace level and provide it automatically to all subprojects
-  - not transparent, part of configuration is implicit
-  - FineCode needs to check whether it was started in workspace or in subproject, go deeper in file tree and find workspace root to resolve all configurations
+[MIT](LICENSE)
