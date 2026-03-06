@@ -460,15 +460,13 @@ def start_mcp(workdir: str | None, trace: bool):
 
 
 @cli.command()
-@click.option("--workdir", "workdir", default=None, type=str, help="Workspace root directory")
 @click.option("--trace", "trace", is_flag=True, default=False)
-def start_api_server(workdir: str | None, trace: bool):
+def start_api_server(trace: bool):
     """Start the FineCode API server standalone (TCP JSON-RPC). Auto-stops when all clients disconnect."""
     from finecode.api_server import api_server
 
     logger_utils.init_logger(log_name="api_server", trace=trace, stdout=False)
-    workdir_path = pathlib.Path(workdir) if workdir else pathlib.Path(os.getcwd())
-    asyncio.run(api_server.start_standalone(workdir_path))
+    asyncio.run(api_server.start_standalone())
 
 
 if __name__ == "__main__":

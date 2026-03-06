@@ -32,8 +32,26 @@ NO_CLIENT_TIMEOUT_SECONDS = 30
 # ---------------------------------------------------------------------------
 
 
+def _snake_to_camel(s: str) -> str:
+    """Convert snake_case to camelCase."""
+    parts = s.split('_')
+    return parts[0] + ''.join(word.capitalize() for word in parts[1:])
+
+
+def _convert_to_camel_case(obj: typing.Any) -> typing.Any:
+    """Recursively convert all snake_case keys to camelCase in dicts/lists."""
+    if isinstance(obj, dict):
+        return {_snake_to_camel(k): _convert_to_camel_case(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [_convert_to_camel_case(item) for item in obj]
+    else:
+        return obj
+
+
 def _jsonrpc_response(id: int | str, result: typing.Any) -> dict:
-    return {"jsonrpc": "2.0", "id": id, "result": result}
+    # Convert result to camelCase before embedding in response
+    camel_result = _convert_to_camel_case(result)
+    return {"jsonrpc": "2.0", "id": id, "result": camel_result}
 
 
 def _jsonrpc_error(
@@ -126,7 +144,9 @@ def _notification_stub(method_name: str) -> NotificationHandler:
 
 def _notify_all_clients(method: str, params: dict) -> None:
     """Broadcast a JSON-RPC notification to all connected clients."""
-    msg = {"jsonrpc": "2.0", "method": method, "params": params}
+    # Convert params to camelCase before sending
+    camel_params = _convert_to_camel_case(params)
+    msg = {"jsonrpc": "2.0", "method": method, "params": camel_params}
     for writer in list(_connected_clients):
         try:
             _write_message(writer, msg)
@@ -160,6 +180,7 @@ async def _handle_add_dir(
     from finecode.api_server.runner import runner_manager
 
     dir_path = pathlib.Path(params["dir_path"])
+    logger.trace(f"Add ws dir: {dir_path}")
 
     if dir_path in ws_context.ws_dirs_paths:
         return {"projects": []}
@@ -195,6 +216,7 @@ async def _handle_remove_dir(
     from finecode.api_server.runner import runner_manager
 
     dir_path = pathlib.Path(params["dir_path"])
+    logger.trace(f'Remove ws dir: {dir_path}')
     ws_context.ws_dirs_paths.remove(dir_path)
 
     for project_dir in list(ws_context.ws_projects.keys()):
@@ -241,6 +263,65 @@ async def _handle_list_actions(
     return {"actions": actions}
 
 
+async def _handle_run_action(
+    params: dict | None, ws_context: context.WorkspaceContext
+) -> dict:
+    """Run an action on a project."""
+    params = params or {}
+    action_name = params.get("action")
+    project_name = params.get("project")
+    action_params = params.get("params", {})
+    config_overrides = params.get("config_overrides")
+    
+    if not action_name:
+        raise ValueError("action parameter is required")
+    if not project_name:
+        raise ValueError("project parameter is required")
+    
+    # Find the project
+    project = None
+    for proj in ws_context.ws_projects.values():
+        if proj.name == project_name:
+            project = proj
+            break
+    
+    if project is None:
+        raise ValueError(f"Project '{project_name}' not found")
+    
+    # Import run_service here to avoid circular imports
+    from finecode.api_server.services import run_service
+    
+    try:
+        result = await run_service.run_action(
+            action_name=action_name,
+            params=action_params,
+            project_def=project,
+            ws_context=ws_context,
+            run_trigger=run_service.RunActionTrigger.SYSTEM,
+            dev_env=run_service.DevEnv.IDE,
+            preprocess_payload=True,
+            initialize_all_handlers=True,
+        )
+        
+        # Extract the result data
+        if result is None:
+            return {}
+        
+        # The result is an ActionRunResult with a .result property
+        return result.result or {}
+    except run_service.ActionRunFailed as e:
+        raise RuntimeError(f"Action failed: {e}")
+
+from finecode.api_server.services.action_tree import (
+    _handle_get_tree,
+)
+from finecode.api_server.services.document_sync import (
+    handle_documents_opened,
+    handle_documents_closed,
+    handle_documents_changed,
+)
+
+
 # -- Method dispatch tables ------------------------------------------------
 
 _METHODS: dict[str, MethodHandler] = {
@@ -250,12 +331,12 @@ _METHODS: dict[str, MethodHandler] = {
     "workspace/removeDir": _handle_remove_dir,
     # actions/
     "actions/list": _handle_list_actions,
-    "actions/getTree": _stub("actions/getTree"),
-    "actions/run": _stub("actions/run"),
+    "actions/getTree": _handle_get_tree,
+    "actions/run": _handle_run_action,
     "actions/runBatch": _stub("actions/runBatch"),
     "actions/runWithPartialResults": _stub("actions/runWithPartialResults"),
     "actions/reload": _stub("actions/reload"),
-    # runners/
+    # runners:
     "runners/list": _stub("runners/list"),
     "runners/restart": _stub("runners/restart"),
     # server/
@@ -264,9 +345,9 @@ _METHODS: dict[str, MethodHandler] = {
 
 _NOTIFICATIONS: dict[str, NotificationHandler] = {
     # documents/
-    "documents/opened": _notification_stub("documents/opened"),
-    "documents/closed": _notification_stub("documents/closed"),
-    "documents/changed": _notification_stub("documents/changed"),
+    "documents/opened": handle_documents_opened,
+    "documents/closed": handle_documents_closed,
+    "documents/changed": handle_documents_changed,
 }
 
 
@@ -345,6 +426,7 @@ async def _handle_client(
             if is_notification:
                 notification_handler = _NOTIFICATIONS.get(method)
                 if notification_handler is not None:
+                    logger.trace(f"Received notification {method}")
                     try:
                         await notification_handler(params, ws_context)
                     except Exception as exc:
@@ -444,7 +526,7 @@ def ensure_running(workdir: pathlib.Path) -> None:
     python_cmd = sys.executable
     logger.info(f"Starting FineCode API server subprocess in {workdir}")
     subprocess.Popen(
-        [python_cmd, "-m", "finecode", "start-api-server", "--workdir", str(workdir)],
+        [python_cmd, "-m", "finecode", "start-api-server", "--trace"],
         cwd=str(workdir),
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
@@ -548,13 +630,9 @@ def _register_callbacks() -> None:
     user_messages._notification_sender = on_user_message
 
 
-async def start_standalone(workdir: pathlib.Path) -> None:
+async def start_standalone() -> None:
     """Start the API server as a standalone process with its own WorkspaceContext.
-
-    Discovers projects, reads configs, and starts extension runners before
-    accepting client connections. Used when no LSP server is running.
     """
     ws_context = context.WorkspaceContext([])
     _register_callbacks()
-    # await _handle_add_dir({"dir_path": str(workdir)}, ws_context)
     await start(ws_context)

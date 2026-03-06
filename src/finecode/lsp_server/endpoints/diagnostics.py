@@ -1,8 +1,6 @@
 # TODO: handle all validation errors
 from __future__ import annotations
 
-import asyncio
-from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -10,12 +8,23 @@ from loguru import logger
 from lsprotocol import types
 from pydantic.dataclasses import dataclass as pydantic_dataclass
 
-from finecode.api_server import (
-    context,
-)
-from finecode.api_server.services import run_service
 from finecode.lsp_server import global_state, pygls_types_utils
 from finecode_extension_api.actions import lint as lint_action
+
+
+async def _find_project_name_for_file(file_path: Path) -> str | None:
+    """Return the project name containing *file_path*.
+
+    This helper delegates the lookup to the API server via
+    ``workspace/findProjectForFile``; the server applies the same logic that
+    would otherwise live locally.  ``None`` is returned if the file does not
+    belong to any known project.
+    """
+    # delegate the resolution to the API server
+    assert global_state.api_client is not None, "API client required for project lookup"
+    project = await global_state.api_client.find_project_for_file(str(file_path))
+    return project
+
 
 if TYPE_CHECKING:
     from pygls.lsp.server import LanguageServer
@@ -56,23 +65,30 @@ async def document_diagnostic_with_full_result(
     file_path: Path,
 ) -> types.DocumentDiagnosticReport | None:
     logger.trace(f"Document diagnostic with full result: {file_path}")
+
+    if global_state.api_client is None:
+        logger.error("Diagnostics requested but API client not connected")
+        return None
+
+    project_name = await _find_project_name_for_file(file_path)
+    if project_name is None:
+        logger.error(f"Cannot determine project for diagnostics: {file_path}")
+        return None
+
     try:
-        response = await run_service.find_action_project_and_run(
-            file_path=file_path,
-            action_name="lint",
+        response = await global_state.api_client.run_action(
+            action="lint",
+            project=project_name,
             params={
                 "target": "files",
-                "file_paths": [file_path],
+                "file_paths": [str(file_path)],
             },
-            run_trigger=run_service.RunActionTrigger.SYSTEM,
-            dev_env=run_service.DevEnv.IDE,
-            ws_context=global_state.ws_context,
-            initialize_all_handlers=True,
+            options={"trigger": "system", "dev_env": "ide"},
         )
-    except run_service.ActionRunFailed as error:
+    except Exception as error:  # catching any runtime error from client
         # don't throw error because vscode after a few sequential errors will stop
         # requesting diagnostics until restart. Show user message instead
-        logger.error(str(error))  # TODO: user message
+        logger.error(f"Diagnostics API request failed: {error}")
         return None
 
     if response is None:
@@ -82,7 +98,7 @@ async def document_diagnostic_with_full_result(
     # (default dataclass constructor doesn't handle nested items, it stores them just
     # as dict)
     result_type = pydantic_dataclass(lint_action.LintRunResult)
-    lint_result: lint_action.LintRunResult = result_type(**response.json())
+    lint_result: lint_action.LintRunResult = result_type(**response)
 
     try:
         requested_file_messages = lint_result.messages.pop(str(file_path))
@@ -118,85 +134,32 @@ async def document_diagnostic_with_partial_results(
     file_path: Path, partial_result_token: int | str
 ) -> None:
     logger.trace(f"Document diagnostic with partial results: {file_path}")
-    assert global_state.progress_reporter is not None, (
-        "LSP Server in Workspace Manager was incorrectly initialized:"
-        " progress reporter not registered"
-    )
+
+    if global_state.api_client is None:
+        logger.error("Diagnostics requested but API client not connected")
+        return None
+
+    project_name = await _find_project_name_for_file(file_path)
+    if project_name is None:
+        logger.error(f"Cannot determine project for diagnostics: {file_path}")
+        return None
+
+    # Store the expected response type for this token
+    global_state.partial_result_tokens[partial_result_token] = ("lint", "document_diagnostic")
 
     try:
-        async with run_service.find_action_project_and_run_with_partial_results(
-            file_path=file_path,
-            action_name="lint",
-            params={
-                "file_paths": [file_path],
+        await global_state.api_client.request(
+            "actions/runWithPartialResults",
+            {
+                "action": "lint",
+                "project": project_name,
+                "params": {"file_paths": [str(file_path)]},
+                "partial_result_token": partial_result_token,
+                "options": {"trigger": "system", "dev_env": "ide"},
             },
-            partial_result_token=partial_result_token,
-            run_trigger=run_service.RunActionTrigger.SYSTEM,
-            dev_env=run_service.DevEnv.IDE,
-            ws_context=global_state.ws_context,
-            initialize_all_handlers=True,
-        ) as response:
-            # LSP defines that the first response should be `DocumentDiagnosticReport`
-            # with diagnostics information for requested file and then n responses
-            # with diagnostics for related documents using
-            # `DocumentDiagnosticReportPartialResult`.
-            #
-            # We get responses for all files in random order, first wait for response
-            # for requested file, send it and only then all other.
-            related_documents: dict[str, types.FullDocumentDiagnosticReport] = {}
-            got_response_for_requested_file: bool = False
-            requested_file_path_str = str(file_path)
-            # use pydantic dataclass to convert dict to dataclass instance recursively
-            # (default dataclass constructor doesn't handle nested items, it stores them just
-            # as dict)
-            result_type = pydantic_dataclass(lint_action.LintRunResult)
-            async for partial_response in response:
-                lint_subresult: lint_action.LintRunResult = result_type(
-                    **partial_response
-                )
-                for file_path_str, lint_messages in lint_subresult.messages.items():
-                    if requested_file_path_str == file_path_str:
-                        if got_response_for_requested_file:
-                            raise Exception(
-                                "Unexpected behavior: got response for requested file twice"
-                            )
-                        document_items = [
-                            map_lint_message_to_diagnostic(lint_message)
-                            for lint_message in lint_messages
-                        ]
-                        document_report = types.RelatedFullDocumentDiagnosticReport(
-                            items=document_items, related_documents=related_documents
-                        )
-                        global_state.progress_reporter(
-                            partial_result_token, document_report
-                        )
-                        got_response_for_requested_file = True
-                    else:
-                        document_uri = pygls_types_utils.path_to_uri_str(
-                            Path(file_path_str)
-                        )
-                        document_items = [
-                            map_lint_message_to_diagnostic(lint_message)
-                            for lint_message in lint_messages
-                        ]
-                        related_documents[document_uri] = (
-                            types.FullDocumentDiagnosticReport(items=document_items)
-                        )
-
-                if got_response_for_requested_file and len(related_documents) > 0:
-                    related_doc_diagnostics = (
-                        types.DocumentDiagnosticReportPartialResult(
-                            related_documents=related_documents
-                        )
-                    )
-                    global_state.progress_reporter(
-                        partial_result_token, related_doc_diagnostics
-                    )
-    except run_service.ActionRunFailed as error:
-        # don't throw error because vscode after a few sequential errors will stop
-        # requesting diagnostics until restart. Show user message instead
-        logger.error(str(error))  # TODO: user message
-
+        )
+    except Exception as error:
+        logger.error(f"Diagnostics API request failed: {error}")
     return None
 
 
@@ -234,123 +197,88 @@ async def document_diagnostic(
         return None
 
 
-@dataclass
-class LintActionExecInfo:
-    project_dir_path: Path
-    action_name: str
-    request_data: dict[str, str | list[str]] = field(default_factory=dict)
-
-
 async def run_workspace_diagnostic_with_partial_results(
-    exec_info: LintActionExecInfo, partial_result_token: str | int
+    partial_result_token: str | int
 ):
-    assert global_state.progress_reporter is not None
+    """Run lint with partial results on all projects.
+
+    The API server automatically runs the action in all relevant projects when
+    the 'project' field is empty.
+    """
+    assert global_state.api_client is not None, "API client must be connected"
+
+    # Store the expected response type for this token
+    global_state.partial_result_tokens[partial_result_token] = ("lint", "workspace_diagnostic")
 
     try:
-        async with run_service.run_with_partial_results(
-            action_name="lint",
-            params=exec_info.request_data,
-            partial_result_token=partial_result_token,
-            project_dir_path=exec_info.project_dir_path,
-            run_trigger=run_service.RunActionTrigger.SYSTEM,
-            dev_env=run_service.DevEnv.IDE,
-            ws_context=global_state.ws_context,
-            initialize_all_handlers=True,
-        ) as response:
-            # use pydantic dataclass to convert dict to dataclass instance recursively
-            # (default dataclass constructor doesn't handle nested items, it stores them just
-            # as dict)
-            result_type = pydantic_dataclass(lint_action.LintRunResult)
-            async for partial_response in response:
-                lint_subresult: lint_action.LintRunResult = result_type(
-                    **partial_response
-                )
-                lsp_subresult = types.WorkspaceDiagnosticReportPartialResult(
-                    items=[
-                        types.WorkspaceFullDocumentDiagnosticReport(
-                            uri=pygls_types_utils.path_to_uri_str(Path(file_path_str)),
-                            items=[
-                                map_lint_message_to_diagnostic(lint_message)
-                                for lint_message in lint_messages
-                            ],
-                        )
-                        for (
-                            file_path_str,
-                            lint_messages,
-                        ) in lint_subresult.messages.items()
-                    ]
-                )
-                global_state.progress_reporter(partial_result_token, lsp_subresult)
-    except run_service.ActionRunFailed as error:
-        # don't throw error because vscode after a few sequential errors will stop
-        # requesting diagnostics until restart. Show user message instead
-        logger.error(str(error))  # TODO: user message
+        # send request to API server; notifications will trigger progress reporter
+        await global_state.api_client.request(
+            "actions/runWithPartialResults",
+            {
+                "action": "lint",
+                "project": "",  # empty project = all relevant projects
+                "params": {"target": "project"},
+                "partial_result_token": partial_result_token,
+                "options": {"trigger": "system", "dev_env": "ide"},
+            },
+        )
+    except Exception as error:
+        logger.error(f"Workspace diagnostics API request failed: {error}")
 
 
 async def workspace_diagnostic_with_partial_results(
-    exec_infos: list[LintActionExecInfo], partial_result_token: str | int
+    partial_result_token: str | int
 ) -> types.WorkspaceDiagnosticReport:
-    try:
-        async with asyncio.TaskGroup() as tg:
-            for exec_info in exec_infos:
-                tg.create_task(
-                    run_workspace_diagnostic_with_partial_results(
-                        exec_info=exec_info, partial_result_token=partial_result_token
-                    )
-                )
-    except ExceptionGroup as eg:
-        logger.error(f"Error in workspace diagnostic: {eg.exceptions}")
+    """Request workspace diagnostics with partial results.
 
+    Returns an empty report; the actual results arrive via notifications.
+    """
+    await run_workspace_diagnostic_with_partial_results(
+        partial_result_token=partial_result_token
+    )
     # lsprotocol allows None as return value, but then vscode throws error
     # 'cannot read items of null'. keep empty report instead
     return types.WorkspaceDiagnosticReport(items=[])
 
 
-async def workspace_diagnostic_with_full_result(
-    exec_infos: list[LintActionExecInfo], ws_context: context.WorkspaceContext
-):
-    send_tasks: list[asyncio.Task] = []
-    try:
-        async with asyncio.TaskGroup() as tg:
-            for exec_info in exec_infos:
-                project = ws_context.ws_projects[exec_info.project_dir_path]
-                task = tg.create_task(
-                    run_service.run_action(
-                        action_name=exec_info.action_name,
-                        params=exec_info.request_data,
-                        project_def=project,
-                        ws_context=ws_context,
-                        run_trigger=run_service.RunActionTrigger.SYSTEM,
-                        dev_env=run_service.DevEnv.IDE,
-                        preprocess_payload=False,
-                        initialize_all_handlers=True,
-                    )
-                )
-                send_tasks.append(task)
-    except ExceptionGroup as eg:
-        logger.error(f"Error in workspace diagnostic: {eg.exceptions}")
+async def workspace_diagnostic_with_full_result() -> types.WorkspaceDiagnosticReport:
+    """Run lint action on all projects via API and aggregate results.
 
-    responses = [task.result().result for task in send_tasks]
+    The API server automatically runs in all relevant projects when 'project'
+    field is empty.
+    """
+    assert global_state.api_client is not None, "API client must be connected"
+
+    try:
+        response = await global_state.api_client.run_action(
+            action="lint",
+            project="",  # empty project = all relevant projects
+            params={"target": "project"},
+            options={"trigger": "system", "dev_env": "ide"},
+        )
+    except Exception as error:
+        logger.error(f"Error in workspace diagnostic: {error}")
+        return types.WorkspaceDiagnosticReport(items=[])
+
+    if not response:
+        return types.WorkspaceDiagnosticReport(items=[])
 
     # use pydantic dataclass to convert dict to dataclass instance recursively
     # (default dataclass constructor doesn't handle nested items, it stores them just
     # as dict)
     result_type = pydantic_dataclass(lint_action.LintRunResult)
+    lint_result: lint_action.LintRunResult = result_type(**response)
+
     items: list[types.WorkspaceDocumentDiagnosticReport] = []
-    for response in responses:
-        if response is None:
-            continue
-        else:
-            lint_result: lint_action.LintRunResult = result_type(**response)
-            for file_path_str, lint_messages in lint_result.messages.items():
-                new_report = types.WorkspaceFullDocumentDiagnosticReport(
-                    uri=pygls_types_utils.path_to_uri_str(Path(file_path_str)),
-                    items=[
-                        map_lint_message_to_diagnostic(lint_message)
-                        for lint_message in lint_messages
-                    ],
-                )
-                items.append(new_report)
+    for file_path_str, lint_messages in lint_result.messages.items():
+        new_report = types.WorkspaceFullDocumentDiagnosticReport(
+            uri=pygls_types_utils.path_to_uri_str(Path(file_path_str)),
+            items=[
+                map_lint_message_to_diagnostic(lint_message)
+                for lint_message in lint_messages
+            ],
+        )
+        items.append(new_report)
 
     # lsprotocol allows None as return value, but then vscode throws error
     # 'cannot read items of null'. keep empty report instead
@@ -360,47 +288,22 @@ async def workspace_diagnostic_with_full_result(
 async def _workspace_diagnostic(
     params: types.WorkspaceDiagnosticParams,
 ) -> types.WorkspaceDiagnosticReport | None:
-    relevant_projects_paths: list[Path] = run_service.find_all_projects_with_action(
-        # check lint_files, because 'lint' is builtin and exists in all projects by default
-        action_name="lint_files_python",
-        ws_context=global_state.ws_context,  # TODO: correct check of name
-    )
-    exec_info_by_project_dir_path: dict[Path, LintActionExecInfo] = {}
-    actions_by_projects: dict[Path, list[str]] = {}
+    """Run workspace diagnostics for all projects via the API server.
 
-    for project_dir_path in relevant_projects_paths:
-        exec_info_by_project_dir_path[project_dir_path] = LintActionExecInfo(
-            project_dir_path=project_dir_path,
-            action_name="lint",
-            request_data={"target": "project", "trigger": "system", "dev_env": "ide"},
-        )
-        actions_by_projects[project_dir_path] = ["lint"]
+    The API server automatically selects relevant projects when the 'project'
+    field is empty.
+    """
+    assert global_state.api_client is not None, "API client must be connected"
 
-    exec_infos = list(exec_info_by_project_dir_path.values())
-    run_with_partial_results: bool = params.partial_result_token is not None
+    if params.partial_result_token is not None:
+        # fire off partial‑result request and return an empty placeholder; the
+        # progress reporter will handle streaming through notifications.
+        await workspace_diagnostic_with_partial_results(
+            partial_result_token=params.partial_result_token,
+        )
+        return types.WorkspaceDiagnosticReport(items=[])
 
-    # linting is resource-intensive task. First start all runners and only then begin
-    # linting to avoid the case, when some of runners start first, take all available
-    # resources and other stay blocked. Starting of environment has timeout and the
-    # letter fail with timeout error.
-    try:
-        await run_service.start_required_environments(
-            actions_by_projects, global_state.ws_context,
-            initialize_all_handlers=True
-        )
-    except run_service.StartingEnvironmentsFailed as exception:
-        logger.error(
-            f"Failed to start required environments for running workspace diagnostic: {exception.message}"
-        )
-
-    if run_with_partial_results:
-        return await workspace_diagnostic_with_partial_results(
-            exec_infos=exec_infos, partial_result_token=params.partial_result_token
-        )
-    else:
-        return await workspace_diagnostic_with_full_result(
-            exec_infos=exec_infos, ws_context=global_state.ws_context
-        )
+    return await workspace_diagnostic_with_full_result()
 
 
 async def workspace_diagnostic(

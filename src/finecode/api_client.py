@@ -99,6 +99,65 @@ class ApiClient:
         """List all projects in the workspace."""
         return await self.request("workspace/listProjects")
 
+    async def find_project_for_file(self, file_path: str) -> str | None:
+        """Return the project name containing a given file.
+
+        An empty string or null result indicates that the file does not belong to
+        any project.  This mirrors the server's
+        ``workspace/findProjectForFile`` handler.
+        """
+        result = await self.request(
+            "workspace/findProjectForFile", {"file_path": file_path}
+        )
+        # server returns {"project": name | None}
+        return result.get("project")
+
+    async def list_actions(self, project: str | None = None) -> list[dict]:
+        """List available actions, optionally filtered by project name."""
+        params: dict = {}
+        if project is not None:
+            params["project"] = project
+        result = await self.request("actions/list", params)
+        return result["actions"]
+
+    async def get_tree(self, parent_node_id: str | None = None) -> dict:
+        """Retrieve the hierarchical action tree from the API server.
+
+        ``parent_node_id`` is currently ignored by the server but is accepted for
+        future compatibility (and mirrors the arguments passed by the IDE
+        command).
+        The returned value is the raw dictionary returned by the server, which
+        at the moment has the shape ``{"nodes": [...]} ``.
+        """
+        params: dict = {}
+        if parent_node_id is not None:
+            params["parent_node_id"] = parent_node_id
+        result = await self.request("actions/getTree", params)
+        return result
+
+    async def run_action(
+        self,
+        action: str,
+        project: str,
+        params: dict | None = None,
+        config_overrides: dict | None = None,
+    ) -> dict:
+        """Run an action on a project."""
+        body: dict = {
+            "action": action,
+            "project": project,
+            "options": {
+                "result_formats": ["json", "string"],
+                "trigger": "user",
+                "dev_env": "ai",
+            },
+        }
+        if params:
+            body["params"] = params
+        if config_overrides:
+            body["config_overrides"] = config_overrides
+        return await self.request("actions/run", body)
+
     async def add_dir(self, dir_path: pathlib.Path) -> dict:
         """Add a workspace directory. Returns {projects: [...]}."""
         return await self.request("workspace/addDir", {"dir_path": str(dir_path)})
@@ -106,6 +165,52 @@ class ApiClient:
     async def remove_dir(self, dir_path: pathlib.Path) -> None:
         """Remove a workspace directory."""
         await self.request("workspace/removeDir", {"dir_path": str(dir_path)})
+
+    # -- Document notifications -------------------------------------------------
+
+    async def notify_document_opened(
+        self, uri: str, version: int | str | None = None
+    ) -> None:
+        """Send document opened notification to the server."""
+        params = {"uri": uri}
+        if version is not None:
+            params["version"] = version
+
+        self._send_notification("documents/opened", params)
+
+    async def notify_document_closed(self, uri: str) -> None:
+        """Send document closed notification to the server."""
+        self._send_notification("documents/closed", {"uri": uri})
+
+    async def notify_document_changed(
+        self, uri: str, version: int | str, content_changes: list[dict]
+    ) -> None:
+        """Send document changed notification to the server."""
+        params = {
+            "uri": uri,
+            "version": version,
+            "contentChanges": content_changes,
+        }
+        self._send_notification("documents/changed", params)
+
+    # -- Low-level notification -------------------------------------------------
+
+    def _send_notification(self, method: str, params: dict | None = None) -> None:
+        """Send a JSON-RPC notification (no response expected)."""
+        if self._writer is None:
+            raise RuntimeError("Not connected to FineCode API server")
+
+        msg = {
+            "jsonrpc": "2.0",
+            "method": method,
+            "params": params or {},
+        }
+
+        body = json.dumps(msg).encode("utf-8")
+        header = f"Content-Length: {len(body)}\r\n\r\n".encode("utf-8")
+        self._writer.write(header + body)
+        # Don't await drain for notifications, fire and forget
+
 
     # -- Low-level request --------------------------------------------------
 

@@ -8,17 +8,16 @@ from pygls.workspace import position_codec
 from pygls.lsp.server import LanguageServer
 from finecode_extension_runner.lsp_server import CustomLanguageServer
 
-from finecode import api_server
+from finecode.api_server import api_server
 from finecode.api_client import ApiClient
-from finecode.api_server.runner import runner_manager
 from finecode.lsp_server import global_state, schemas
 from finecode.lsp_server.endpoints import action_tree as action_tree_endpoints
-from finecode.lsp_server.endpoints import code_actions as code_actions_endpoints
-from finecode.lsp_server.endpoints import code_lens as code_lens_endpoints
+# from finecode.lsp_server.endpoints import code_actions as code_actions_endpoints
+# from finecode.lsp_server.endpoints import code_lens as code_lens_endpoints
 from finecode.lsp_server.endpoints import diagnostics as diagnostics_endpoints
 from finecode.lsp_server.endpoints import document_sync as document_sync_endpoints
-from finecode.lsp_server.endpoints import formatting as formatting_endpoints
-from finecode.lsp_server.endpoints import inlay_hints as inlay_hints_endpoints
+# from finecode.lsp_server.endpoints import formatting as formatting_endpoints
+# from finecode.lsp_server.endpoints import inlay_hints as inlay_hints_endpoints
 
 
 def position_from_client_units(
@@ -49,18 +48,18 @@ def create_lsp_server() -> CustomLanguageServer:
     register_workspace_dirs_feature(_workspace_did_change_workspace_folders)
 
     # Formatting
-    register_formatting_feature = server.feature(types.TEXT_DOCUMENT_FORMATTING)
-    register_formatting_feature(formatting_endpoints.format_document)
+    # register_formatting_feature = server.feature(types.TEXT_DOCUMENT_FORMATTING)
+    # register_formatting_feature(formatting_endpoints.format_document)
 
-    register_range_formatting_feature = server.feature(
-        types.TEXT_DOCUMENT_RANGE_FORMATTING
-    )
-    register_range_formatting_feature(formatting_endpoints.format_range)
+    # register_range_formatting_feature = server.feature(
+    #     types.TEXT_DOCUMENT_RANGE_FORMATTING
+    # )
+    # register_range_formatting_feature(formatting_endpoints.format_range)
 
-    register_ranges_formatting_feature = server.feature(
-        types.TEXT_DOCUMENT_RANGES_FORMATTING
-    )
-    register_ranges_formatting_feature(formatting_endpoints.format_ranges)
+    # register_ranges_formatting_feature = server.feature(
+    #     types.TEXT_DOCUMENT_RANGES_FORMATTING
+    # )
+    # register_ranges_formatting_feature(formatting_endpoints.format_ranges)
 
     # document sync
     register_document_did_open_feature = server.feature(types.TEXT_DOCUMENT_DID_OPEN)
@@ -78,20 +77,20 @@ def create_lsp_server() -> CustomLanguageServer:
     register_document_did_close_feature(document_sync_endpoints.document_did_close)
 
     # code actions
-    register_document_code_action_feature = server.feature(
-        types.TEXT_DOCUMENT_CODE_ACTION
-    )
-    register_document_code_action_feature(code_actions_endpoints.document_code_action)
+    # register_document_code_action_feature = server.feature(
+    #     types.TEXT_DOCUMENT_CODE_ACTION
+    # )
+    # register_document_code_action_feature(code_actions_endpoints.document_code_action)
 
-    register_code_action_resolve_feature = server.feature(types.CODE_ACTION_RESOLVE)
-    register_code_action_resolve_feature(code_actions_endpoints.code_action_resolve)
+    # register_code_action_resolve_feature = server.feature(types.CODE_ACTION_RESOLVE)
+    # register_code_action_resolve_feature(code_actions_endpoints.code_action_resolve)
 
     # code lens
-    register_document_code_lens_feature = server.feature(types.TEXT_DOCUMENT_CODE_LENS)
-    register_document_code_lens_feature(code_lens_endpoints.document_code_lens)
+    # register_document_code_lens_feature = server.feature(types.TEXT_DOCUMENT_CODE_LENS)
+    # register_document_code_lens_feature(code_lens_endpoints.document_code_lens)
 
-    register_code_lens_resolve_feature = server.feature(types.CODE_LENS_RESOLVE)
-    register_code_lens_resolve_feature(code_lens_endpoints.code_lens_resolve)
+    # register_code_lens_resolve_feature = server.feature(types.CODE_LENS_RESOLVE)
+    # register_code_lens_resolve_feature(code_lens_endpoints.code_lens_resolve)
 
     # diagnostics
     register_text_document_diagnostic_feature = server.feature(
@@ -103,46 +102,46 @@ def create_lsp_server() -> CustomLanguageServer:
     register_workspace_diagnostic_feature(diagnostics_endpoints.workspace_diagnostic)
 
     # inline hints
-    register_document_inlay_hint_feature = server.feature(
-        types.TEXT_DOCUMENT_INLAY_HINT
-    )
-    register_document_inlay_hint_feature(inlay_hints_endpoints.document_inlay_hint)
+    # register_document_inlay_hint_feature = server.feature(
+    #     types.TEXT_DOCUMENT_INLAY_HINT
+    # )
+    # register_document_inlay_hint_feature(inlay_hints_endpoints.document_inlay_hint)
 
-    register_inlay_hint_feature = server.feature(types.INLAY_HINT_RESOLVE)
-    register_inlay_hint_feature(inlay_hints_endpoints.inlay_hint_resolve)
+    # register_inlay_hint_feature = server.feature(types.INLAY_HINT_RESOLVE)
+    # register_inlay_hint_feature(inlay_hints_endpoints.inlay_hint_resolve)
 
-    # Finecode
+    # Finecode commands exposed to the IDE
     register_list_actions_cmd = server.command("finecode.getActions")
     register_list_actions_cmd(action_tree_endpoints.list_actions)
 
-    register_list_actions_for_position_cmd = server.command(
-        "finecode.getActionsForPosition"
-    )
-    register_list_actions_for_position_cmd(
-        action_tree_endpoints.list_actions_for_position
-    )
+    # register_list_actions_for_position_cmd = server.command(
+    #     "finecode.getActionsForPosition"
+    # )
+    # register_list_actions_for_position_cmd(
+    #     action_tree_endpoints.list_actions_for_position
+    # )
 
-    register_run_action_on_file_cmd = server.command("finecode.runActionOnFile")
-    register_run_action_on_file_cmd(action_tree_endpoints.run_action_on_file)
+    # register_run_action_on_file_cmd = server.command("finecode.runActionOnFile")
+    # register_run_action_on_file_cmd(action_tree_endpoints.run_action_on_file)
 
     # register_run_action_on_project_cmd = server.command("finecode.runActionOnProject")
     # register_run_action_on_project_cmd(action_tree_endpoints.run_action_on_project)
 
-    register_reload_action_cmd = server.command("finecode.reloadAction")
-    register_reload_action_cmd(action_tree_endpoints.reload_action)
+    # register_reload_action_cmd = server.command("finecode.reloadAction")
+    # register_reload_action_cmd(action_tree_endpoints.reload_action)
 
-    register_reset_cmd = server.command("finecode.reset")
-    register_reset_cmd(reset)
+    # register_reset_cmd = server.command("finecode.reset")
+    # register_reset_cmd(reset)
 
-    register_restart_extension_runner_cmd = server.command(
-        "finecode.restartExtensionRunner"
-    )
-    register_restart_extension_runner_cmd(restart_extension_runner)
+    # register_restart_extension_runner_cmd = server.command(
+    #     "finecode.restartExtensionRunner"
+    # )
+    # register_restart_extension_runner_cmd(restart_extension_runner)
     
-    register_restart_and_debug_extension_runner_cmd = server.command(
-        "finecode.restartAndDebugExtensionRunner"
-    )
-    register_restart_and_debug_extension_runner_cmd(restart_and_debug_extension_runner)
+    # register_restart_and_debug_extension_runner_cmd = server.command(
+    #     "finecode.restartAndDebugExtensionRunner"
+    # )
+    # register_restart_and_debug_extension_runner_cmd(restart_and_debug_extension_runner)
 
     register_shutdown_feature = server.feature(types.SHUTDOWN)
     register_shutdown_feature(_on_shutdown)
@@ -220,14 +219,80 @@ async def _on_initialized(ls: LanguageServer, params: types.InitializedParams):
 
     # Register notification handlers for server→client push messages.
     async def on_tree_changed(params: dict) -> None:
-        node = schemas.ActionTreeNode(**params["node"])
-        await action_tree_endpoints.notify_changed_action_node(ls, node)
+        # TODO
+        ...
+        # node = schemas.ActionTreeNode(**params["node"])
+        # await action_tree_endpoints.notify_changed_action_node(ls, node)
 
     async def on_user_message(params: dict) -> None:
         await send_user_message_notification(ls, params["message"], params["type"])
 
     global_state.api_client.on_notification("actions/treeChanged", on_tree_changed)
     global_state.api_client.on_notification("server/userMessage", on_user_message)
+
+    # forward progress notifications to the LSP progress reporter
+    from finecode_extension_api.actions import lint as lint_action
+    from pydantic.dataclasses import dataclass as pydantic_dataclass
+    from finecode.lsp_server import pygls_types_utils
+    from finecode.lsp_server.endpoints.diagnostics import map_lint_message_to_diagnostic
+
+    def _map_lint_to_document_diagnostic_partial(lint_result: lint_action.LintRunResult) -> types.DocumentDiagnosticReportPartialResult:
+        related_documents = {}
+        for file_path_str, lint_messages in lint_result.messages.items():
+            file_report = types.FullDocumentDiagnosticReport(
+                items=[
+                    map_lint_message_to_diagnostic(lint_message)
+                    for lint_message in lint_messages
+                ]
+            )
+            uri = pygls_types_utils.path_to_uri_str(Path(file_path_str))
+            related_documents[uri] = file_report
+        
+        return types.DocumentDiagnosticReportPartialResult(related_documents=related_documents)
+
+    def _map_lint_to_workspace_diagnostic_partial(lint_result: lint_action.LintRunResult) -> types.WorkspaceDiagnosticReportPartialResult:
+        items = [
+            types.WorkspaceFullDocumentDiagnosticReport(
+                uri=pygls_types_utils.path_to_uri_str(Path(file_path_str)),
+                items=[
+                    map_lint_message_to_diagnostic(lint_message)
+                    for lint_message in lint_messages
+                ],
+            )
+            for file_path_str, lint_messages in lint_result.messages.items()
+        ]
+        return types.WorkspaceDiagnosticReportPartialResult(items=items)
+
+    async def on_partial_result(params: dict) -> None:
+        token = params.get("partial_result_token")
+        value = params.get("value")
+        
+        if token is None or value is None:
+            logger.error("Invalid partial result notification: missing token or value")
+            return
+        
+        action, endpoint_type = global_state.partial_result_tokens.pop(token, (None, None))
+        if not action or not endpoint_type:
+            logger.error(f"No mapping found for partial result token {token}")
+            return
+        
+        if action == "lint":
+            result_type = pydantic_dataclass(lint_action.LintRunResult)
+            lint_result: lint_action.LintRunResult = result_type(**value)
+            
+            if endpoint_type == "document_diagnostic":
+                lsp_partial = _map_lint_to_document_diagnostic_partial(lint_result)
+            elif endpoint_type == "workspace_diagnostic":
+                lsp_partial = _map_lint_to_workspace_diagnostic_partial(lint_result)
+            else:
+                logger.error(f"Unknown endpoint_type {endpoint_type} for action {action}")
+                return
+            
+            await ls.progress(types.ProgressParams(token=token, value=lsp_partial))
+        else:
+            logger.warning(f"Unsupported action for partial results: {action}")
+
+    global_state.api_client.on_notification("actions/partialResult", on_partial_result)
 
     # Add workspace directories via the API server.
     try:
@@ -285,7 +350,8 @@ async def restart_extension_runner(ls: LanguageServer, tree_node, param2):
     runner_working_dir_path = Path(runner_working_dir_str)
     env_name = splitted_runner_id[-1]
 
-    await runner_manager.restart_extension_runner(runner_working_dir_path=runner_working_dir_path, env_name=env_name, ws_context=global_state.ws_context)
+    # TODO
+    # await runner_manager.restart_extension_runner(runner_working_dir_path=runner_working_dir_path, env_name=env_name, ws_context=global_state.ws_context)
 
 
 async def restart_and_debug_extension_runner(ls: LanguageServer, tree_node, params2):
@@ -299,7 +365,8 @@ async def restart_and_debug_extension_runner(ls: LanguageServer, tree_node, para
     env_name = splitted_runner_id[-1]
 
     logger.info(f'start debugging {runner_working_dir_path} {runner_id} {env_name}')
-    await runner_manager.restart_extension_runner(runner_working_dir_path=runner_working_dir_path, env_name=env_name, ws_context=global_state.ws_context, debug=True)
+    # TODO
+    # await runner_manager.restart_extension_runner(runner_working_dir_path=runner_working_dir_path, env_name=env_name, ws_context=global_state.ws_context, debug=True)
 
 
 async def send_user_message_notification(

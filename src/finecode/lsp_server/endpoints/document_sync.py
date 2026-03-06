@@ -1,162 +1,84 @@
-import asyncio
-from pathlib import Path
-
 from loguru import logger
 from lsprotocol import types
 from pygls.lsp.server import LanguageServer
 
-from finecode.api_server import domain
 from finecode.lsp_server import global_state
-from finecode.api_server.runner import runner_client
 
 
 async def document_did_open(
     ls: LanguageServer, params: types.DidOpenTextDocumentParams
 ):
     logger.trace(f"Document did open: {params.text_document.uri}")
-    global_state.ws_context.opened_documents[params.text_document.uri] = (
-        domain.TextDocumentInfo(
-            uri=params.text_document.uri, version=str(params.text_document.version)
-        )
-    )
+    await global_state.server_initialized.wait()
 
-    file_path = Path(params.text_document.uri.replace("file://", ""))
-    projects_paths = [
-        project_path
-        for project_path, project in global_state.ws_context.ws_projects.items()
-        if project.status == domain.ProjectStatus.CONFIG_VALID
-        and file_path.is_relative_to(project_path)
-    ]
+    if global_state.api_client is None:
+        raise Exception("API server not connected")
 
-    document_info = domain.TextDocumentInfo(
-        uri=params.text_document.uri, version=str(params.text_document.version)
+    await global_state.api_client.notify_document_opened(
+        uri=params.text_document.uri, version=params.text_document.version
     )
-    try:
-        async with asyncio.TaskGroup() as tg:
-            for project_path in projects_paths:
-                runners_by_env = (
-                    global_state.ws_context.ws_projects_extension_runners.get(
-                        project_path, {}
-                    )
-                )
-                for runner in runners_by_env.values():
-                    if runner.status == runner_client.RunnerStatus.RUNNING:
-                        tg.create_task(
-                            runner_client.notify_document_did_open(
-                                runner=runner, document_info=document_info
-                            )
-                        )
-    except ExceptionGroup as eg:
-        for exception in eg.exceptions:
-            logger.exception(exception)
-        logger.error(f"Error while sending opened document: {eg}")
 
 
 async def document_did_close(
     ls: LanguageServer, params: types.DidCloseTextDocumentParams
 ):
     logger.trace(f"Document did close: {params.text_document.uri}")
-    try:
-        del global_state.ws_context.opened_documents[params.text_document.uri]
-    except KeyError:
-        logger.error(
-            f"Document not found in opened documents: {params.text_document.uri}"
-        )
-        return
+    await global_state.server_initialized.wait()
 
-    file_path = Path(params.text_document.uri.replace("file://", ""))
-    projects_paths = [
-        project_path
-        for project_path, project in global_state.ws_context.ws_projects.items()
-        if project.status == domain.ProjectStatus.CONFIG_VALID
-        and file_path.is_relative_to(project_path)
-    ]
+    if global_state.api_client is None:
+        raise Exception("API server not connected")
 
-    try:
-        async with asyncio.TaskGroup() as tg:
-            for project_path in projects_paths:
-                runners_by_env = global_state.ws_context.ws_projects_extension_runners[
-                    project_path
-                ]
-                for runner in runners_by_env.values():
-                    if runner.status != runner_client.RunnerStatus.RUNNING:
-                        logger.trace(
-                            f"Runner {runner.readable_id} is not running, skip it"
-                        )
-                        continue
-
-                    tg.create_task(
-                        runner_client.notify_document_did_close(
-                            runner=runner, document_uri=params.text_document.uri
-                        )
-                    )
-    except ExceptionGroup as e:
-        logger.error(f"Error while sending closed document: {e}")
+    await global_state.api_client.notify_document_closed(
+        uri=params.text_document.uri
+    )
 
 
 async def document_did_save(
     ls: LanguageServer, params: types.DidSaveTextDocumentParams
 ):
     logger.trace(f"Document did save: {params}")
+    await global_state.server_initialized.wait()
 
 
 async def document_did_change(
     ls: LanguageServer, params: types.DidChangeTextDocumentParams
 ):
-    global_state.ws_context.opened_documents[
-        params.text_document.uri
-    ].version = params.text_document.version
-    
     logger.trace(f"Document did change: {params.text_document.uri}")
-    file_path = Path(params.text_document.uri.replace("file://", ""))
-    projects_paths = [
-        project_path
-        for project_path, project in global_state.ws_context.ws_projects.items()
-        if project.status == domain.ProjectStatus.CONFIG_VALID
-        and file_path.is_relative_to(project_path)
-    ]
-    
+    await global_state.server_initialized.wait()
+
+    if global_state.api_client is None:
+        raise Exception("API server not connected")
+
+    # Convert content changes to API format (camelCase)
     content_changes = []
     for change in params.content_changes:
         if isinstance(change, types.TextDocumentContentChangePartial):
-            mapped_change = runner_client.TextDocumentContentChangePartial(
-                range=runner_client.Range(
-                    start=runner_client.Position(line=change.range.start.line, character=change.range.start.character),
-                    end=runner_client.Position(line=change.range.end.line, character=change.range.end.character)
-                ),
-                text=change.text,
-                range_length=change.range_length
+            content_changes.append(
+                {
+                    "range": {
+                        "start": {
+                            "line": change.range.start.line,
+                            "character": change.range.start.character,
+                        },
+                        "end": {
+                            "line": change.range.end.line,
+                            "character": change.range.end.character,
+                        },
+                    },
+                    "text": change.text,
+                    "rangeLength": change.range_length,
+                }
             )
-            content_changes.append(mapped_change)
         elif isinstance(change, types.TextDocumentContentChangeWholeDocument):
-            mapped_change = runner_client.TextDocumentContentChangeWholeDocument(text=change.text)
-            content_changes.append(mapped_change)
+            content_changes.append({"text": change.text})
         else:
-            logger.error(f"Got unsupported content change from LSP client: {type(change)}, skip it")
+            logger.error(
+                f"Got unsupported content change from LSP client: {type(change)}, skip it"
+            )
             continue
 
-    change_params = runner_client.DidChangeTextDocumentParams(
-        text_document=runner_client.VersionedTextDocumentIdentifier(version=params.text_document.version, uri=params.text_document.uri),
-        content_changes=content_changes
+    await global_state.api_client.notify_document_changed(
+        uri=params.text_document.uri,
+        version=params.text_document.version,
+        content_changes=content_changes,
     )
-
-    try:
-        async with asyncio.TaskGroup() as tg:
-            for project_path in projects_paths:
-                runners_by_env = global_state.ws_context.ws_projects_extension_runners[
-                    project_path
-                ]
-                for runner in runners_by_env.values():
-                    if runner.status != runner_client.RunnerStatus.RUNNING:
-                        logger.trace(
-                            f"Runner {runner.readable_id} is not running, skip it"
-                        )
-                        continue
-
-                    tg.create_task(
-                        runner_client.notify_document_did_change(
-                            runner=runner, change_params=change_params
-                        )
-                    )
-    except ExceptionGroup as e:
-        logger.error(f"Error while sending changed document: {e}")
