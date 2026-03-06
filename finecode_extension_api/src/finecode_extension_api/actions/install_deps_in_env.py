@@ -25,12 +25,22 @@ class InstallDepsInEnvRunPayload(code_action.RunActionPayload):
     dependencies: list[Dependency]
 
 
-class InstallDepsInEnvRunContext(code_action.RunActionContext):
+class InstallDepsInEnvRunContext(
+    code_action.RunActionContext[InstallDepsInEnvRunPayload]
+):
     def __init__(
         self,
         run_id: int,
+        initial_payload: InstallDepsInEnvRunPayload,
+        meta: code_action.RunActionMeta,
+        info_provider: code_action.RunContextInfoProvider,
     ) -> None:
-        super().__init__(run_id=run_id)
+        super().__init__(
+            run_id=run_id,
+            initial_payload=initial_payload,
+            meta=meta,
+            info_provider=info_provider,
+        )
 
 
 @dataclasses.dataclass

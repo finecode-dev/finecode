@@ -19,9 +19,10 @@ def init_logger(trace: bool, stdout: bool = False):
         activation=[
             ("pygls.protocol.json_rpc", False),
             ("pygls.feature_manager", False),
-            ("pygls.io_", False),
+            # ("pygls.io_", False),
         ]
     )
+    logs.set_log_level_for_group(group="finecode_jsonrpc.client", level=logs.LogLevel.INFO)
     logs.save_logs_to_file(
         file_path=logs_dir_path / "workspace_manager.log",
         log_level="TRACE" if trace else "INFO",

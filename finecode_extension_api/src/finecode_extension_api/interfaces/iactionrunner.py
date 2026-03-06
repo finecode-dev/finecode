@@ -1,10 +1,43 @@
-from typing import Any, Protocol
+import typing
+
+from finecode_extension_api import code_action, service
+
+PayloadT = typing.TypeVar("PayloadT", bound=code_action.RunActionPayload)
+ResultT = typing.TypeVar("ResultT", bound=code_action.RunActionResult)
+ActionT = typing.TypeVar(
+    "ActionT",
+    bound=code_action.Action[typing.Any, typing.Any, typing.Any],
+    covariant=True,
+)
 
 
-class IActionRunner(Protocol):
+class ActionDeclaration(typing.Generic[ActionT]): ...
+
+
+class IActionRunner(service.Service, typing.Protocol):
+    def get_actions_by_source(
+        self, source: str, expected_type: type[ActionT]
+    ) -> list[ActionDeclaration[ActionT]]: ...
+
+    def get_actions_for_language(
+        self, source: str, language: str, expected_type: type[ActionT]
+    ) -> list[ActionDeclaration[ActionT]]: ...
+
+    def get_action_by_name(
+        self, name: str, expected_type: type[ActionT]
+    ) -> ActionDeclaration[ActionT]:
+        # use it only if you are sure you need it. In most cases get_actions_by_source
+        # should be preferred
+        ...
+
     async def run_action(
-        self, name: str, payload: dict[str, Any]
-    ) -> dict[str, Any]: ...
+        self,
+        action: ActionDeclaration[code_action.Action[PayloadT, typing.Any, ResultT]],
+        payload: PayloadT,
+        meta: code_action.RunActionMeta,
+    ) -> ResultT: ...
+
+    def get_actions_names(self) -> list[str]: ...
 
 
 class BaseRunActionException(Exception):

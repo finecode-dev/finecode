@@ -8,7 +8,7 @@ from finecode import domain
 
 if TYPE_CHECKING:
     from finecode.runner.runner_client import ExtensionRunnerInfo
-    from finecode.runner._io_thread import AsyncIOThread
+    from finecode_jsonrpc._io_thread import AsyncIOThread
 
 
 @dataclass
@@ -25,11 +25,20 @@ class WorkspaceContext:
         default_factory=dict
     )
     runner_io_thread: AsyncIOThread | None = None
-    ignore_watch_paths: set[Path] = field(default_factory=set)
 
-    # we save list of meta and pygls manages content of documents automatically.
-    # They can be accessed using `ls.workspace.get_text_document()` function
+    # LSP doesn't provide endpoint to get opened files on client. The server should
+    # listen to didOpen and didClose events and manage state by itself. In this
+    # dictionary meta info of opened document is stored to be able to provide opened files
+    # to ERs in case of their restart.
+    # TODO: move in LSP server
     opened_documents: dict[str, domain.TextDocumentInfo] = field(default_factory=dict)
+
+    # Handler config overrides from CLI env vars or options.
+    # Format: {action_name: {handler_name_or_empty: {param: value}}}
+    # Empty string key "" means action-level (applies to all handlers).
+    handler_config_overrides: dict[str, dict[str, dict[str, str]]] = field(
+        default_factory=dict
+    )
 
     # cache
     # <directory: <action_name: project_path>>

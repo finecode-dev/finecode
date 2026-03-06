@@ -7,9 +7,10 @@ import typing
 
 import deepmerge
 from loguru import logger
+import pydantic
 from pydantic.dataclasses import dataclass as pydantic_dataclass
 
-from finecode_extension_api import code_action, textstyler
+from finecode_extension_api import code_action, textstyler, service
 from finecode_extension_api.interfaces import iactionrunner
 from finecode_extension_runner import context, domain, global_state
 from finecode_extension_runner import (
@@ -46,15 +47,38 @@ def set_partial_result_sender(send_func: typing.Callable) -> None:
     )
 
 
+class AsyncPlaceholderContext:
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb): ...
+
+
 async def run_action(
-    request: schemas.RunActionRequest, options: schemas.RunActionOptions
-) -> schemas.RunActionResponse:
-    global last_run_id
-    run_id = last_run_id
-    last_run_id += 1
+    action_def: domain.ActionDeclaration,
+    payload: code_action.RunActionPayload | None,
+    meta: code_action.RunActionMeta,
+    partial_result_token: int | str | None = None,
+    run_id: int | None = None,
+) -> code_action.RunActionResult | None:
+    # design decisions:
+    # - keep payload unchanged between all subaction runs.
+    #   For intermediate data use run_context
+    # - result is modifiable. Result of each subaction updates the previous result.
+    #   In case of failure of subaction, at least result of all previous handlers is
+    #   returned. (experimental)
+    # - execution of handlers can be concurrent or sequential. But executions of handler
+    #   on iterable payloads(single parts) are always concurrent.
+
+    if run_id is None:
+        global last_run_id
+        run_id = last_run_id
+        last_run_id += 1
+
     logger.trace(
-        f"Run action '{request.action_name}', run id: {run_id}, partial result token: {options.partial_result_token}"
+        f"Run action '{action_def.name}', run id: {run_id}, partial result token: {partial_result_token}"
     )
+
     # TODO: check whether config is set: this will be solved by passing initial
     # configuration as payload of initialize
     if global_state.runner_context is None:
@@ -63,6 +87,251 @@ async def run_action(
         )
 
     start_time = time.time_ns()
+
+    try:
+        action_cache = global_state.runner_context.action_cache_by_name[action_def.name]
+    except KeyError:
+        action_cache = domain.ActionCache()
+        global_state.runner_context.action_cache_by_name[action_def.name] = action_cache
+
+    if action_cache.exec_info is not None:
+        action_exec_info = action_cache.exec_info
+    else:
+        action_exec_info = create_action_exec_info(action_def)
+        action_cache.exec_info = action_exec_info
+
+    # TODO: take value from action config
+    execute_handlers_concurrently = action_def.name.startswith("lint_files_")
+
+    run_context: code_action.RunActionContext | AsyncPlaceholderContext
+    run_context_info = code_action.RunContextInfoProvider(is_concurrent_execution=execute_handlers_concurrently)
+    if action_exec_info.run_context_type is not None:
+        constructor_args = await resolve_func_args_with_di(
+            action_exec_info.run_context_type.__init__,
+            known_args={
+                "run_id": lambda _: run_id,
+                "initial_payload": lambda _: payload,
+                "meta": lambda _: meta,
+                "info_provider": lambda _: run_context_info
+            },
+            params_to_ignore=["self"],
+        )
+
+        # developers can change run context constructor, handle all exceptions
+        try:
+            run_context = action_exec_info.run_context_type(**constructor_args)
+        except Exception as exception:
+            raise ActionFailedException(
+                f"Failed to instantiate run context of action {action_def.name}(Run {run_id}): {str(exception)}."
+                + " See ER logs for more details"
+            ) from exception
+    else:
+        # TODO: check run_context below, whether AsyncPlaceholder can really be used
+        run_context = AsyncPlaceholderContext()
+
+    action_result: code_action.RunActionResult | None = None
+    runner_context = global_state.runner_context
+
+    # to be able to catch source of exceptions in user-accessible code more precisely,
+    # manually enter and exit run context
+    try:
+        run_context_instance = await run_context.__aenter__()
+    except Exception as exception:
+        raise ActionFailedException(
+            f"Failed to enter run context of action {action_def.name}(Run {run_id}): {str(exception)}."
+            + " See ER logs for more details"
+        ) from exception
+
+    try:
+        send_partial_results = partial_result_token is not None
+        with action_exec_info.process_executor.activate():
+            # action payload can be iterable or not
+            if isinstance(payload, collections.abc.AsyncIterable):
+                # iterable: `run` method should not calculate results itself, but call
+                #           `partial_result_scheduler.schedule`. Then we execute provided
+                #           coroutines either concurrently or sequentially.
+                logger.trace(
+                    f"R{run_id} | Iterable payload, execute all handlers to schedule coros"
+                )
+                for handler in action_def.handlers:
+                    await execute_action_handler(
+                        handler=handler,
+                        payload=payload,
+                        run_context=run_context_instance,
+                        run_id=run_id,
+                        action_cache=action_cache,
+                        action_exec_info=action_exec_info,
+                        runner_context=runner_context,
+                    )
+
+                parts = [part async for part in payload]
+                subresults_tasks: list[asyncio.Task] = []
+                logger.trace(
+                    "R{run_id} | Run subresult coros {exec_type} {partials} partial results".format(
+                        run_id=run_id,
+                        exec_type=(
+                            "concurrently"
+                            if execute_handlers_concurrently
+                            else "sequentially"
+                        ),
+                        partials="with" if send_partial_results else "without",
+                    )
+                )
+                try:
+                    async with asyncio.TaskGroup() as tg:
+                        for part in parts:
+                            part_coros = (
+                                run_context.partial_result_scheduler.coroutines_by_key[part]
+                            )
+                            del run_context.partial_result_scheduler.coroutines_by_key[part]
+                            if execute_handlers_concurrently:
+                                coro = run_subresult_coros_concurrently(
+                                    part_coros,
+                                    send_partial_results,
+                                    partial_result_token,
+                                    partial_result_sender,
+                                    action_def.name,
+                                    run_id,
+                                )
+                            else:
+                                coro = run_subresult_coros_sequentially(
+                                    part_coros,
+                                    send_partial_results,
+                                    partial_result_token,
+                                    partial_result_sender,
+                                    action_def.name,
+                                    run_id,
+                                )
+                            subresult_task = tg.create_task(coro)
+                            subresults_tasks.append(subresult_task)
+                except ExceptionGroup as eg:
+                    errors: list[str] = []
+                    for exc in eg.exceptions:
+                        if not isinstance(exc, ActionFailedException):
+                            logger.error("Unexpected exception:")
+                            logger.exception(exc)
+                        else:
+                            errors.append(exc.message)
+                    raise ActionFailedException(
+                        f"Running action handlers of '{action_def.name}' failed(Run {run_id}): {errors}."
+                        " See ER logs for more details"
+                    ) from eg
+
+                if send_partial_results:
+                    # all subresults are ready
+                    logger.trace(f"R{run_id} | all subresults are ready, send them")
+                    await partial_result_sender.send_all_immediately()
+                else:
+                    for subresult_task in subresults_tasks:
+                        result = subresult_task.result()
+                        if result is not None:
+                            if action_result is None:
+                                action_result = result
+                            else:
+                                action_result.update(result)
+            else:
+                # action payload not iterable, just execute handlers on the whole payload
+                if execute_handlers_concurrently:
+                    handlers_tasks: list[asyncio.Task] = []
+                    try:
+                        async with asyncio.TaskGroup() as tg:
+                            for handler in action_def.handlers:
+                                handler_task = tg.create_task(
+                                    execute_action_handler(
+                                        handler=handler,
+                                        payload=payload,
+                                        run_context=run_context_instance,
+                                        run_id=run_id,
+                                        action_cache=action_cache,
+                                        action_exec_info=action_exec_info,
+                                        runner_context=runner_context,
+                                    )
+                                )
+                                handlers_tasks.append(handler_task)
+                    except ExceptionGroup as eg:
+                        for exc in eg.exceptions:
+                            # TODO: expected / unexpected?
+                            logger.exception(exc)
+                        raise ActionFailedException(
+                            f"Running action handlers of '{action_def.name}' failed"
+                            f"(Run {run_id}). See ER logs for more details"
+                        ) from eg
+
+                    for handler_task in handlers_tasks:
+                        coro_result = handler_task.result()
+                        if coro_result is not None:
+                            if action_result is None:
+                                action_result = coro_result
+                            else:
+                                action_result.update(coro_result)
+                else:
+                    for handler in action_def.handlers:
+                        try:
+                            handler_result = await execute_action_handler(
+                                handler=handler,
+                                payload=payload,
+                                run_context=run_context_instance,
+                                run_id=run_id,
+                                action_cache=action_cache,
+                                action_exec_info=action_exec_info,
+                                runner_context=runner_context,
+                            )
+                        except ActionFailedException as exception:
+                            raise exception
+
+                        if handler_result is not None:
+                            if action_result is None:
+                                action_result = handler_result
+                            else:
+                                action_result.update(handler_result)
+
+                            run_context_info.update(action_result)
+    finally:
+        # exit run context
+        try:
+            await run_context_instance.__aexit__(None, None, None)
+        except Exception as exception:
+            raise ActionFailedException(
+                f"Failed to exit run context of action {action_def.name}(Run {run_id}): {str(exception)}."
+                + " See ER logs for more details"
+            ) from exception
+
+    end_time = time.time_ns()
+    duration = (end_time - start_time) / 1_000_000
+    logger.trace(
+        f"R{run_id} | Run action end '{action_def.name}', duration: {duration}ms"
+    )
+
+    # if partial results were sent, `action_result` may be None
+    if action_result is not None and not isinstance(
+        action_result, code_action.RunActionResult
+    ):
+        logger.error(
+            f"R{run_id} | Unexpected result type: {type(action_result).__name__}"
+        )
+        raise ActionFailedException(
+            f"Unexpected result type: {type(action_result).__name__}"
+        )
+
+    return action_result
+
+
+async def run_action_raw(
+    request: schemas.RunActionRequest, options: schemas.RunActionOptions
+) -> schemas.RunActionResponse:
+    global last_run_id
+    run_id = last_run_id
+    last_run_id += 1
+    logger.trace(
+        f"Run action '{request.action_name}', run id: {run_id}, partial result token: {options.partial_result_token}"
+    )
+    # # TODO: check whether config is set: this will be solved by passing initial
+    # # configuration as payload of initialize
+    if global_state.runner_context is None:
+        raise ActionFailedException(
+            "Run of action failed because extension runner is not initialized yet"
+        )
+
     project_def = global_state.runner_context.project
 
     try:
@@ -73,14 +342,6 @@ async def run_action(
             f"R{run_id} | Action {request.action_name} not found"
         )
 
-    # design decisions:
-    # - keep payload unchanged between all subaction runs.
-    #   For intermediate data use run_context
-    # - result is modifiable. Result of each subaction updates the previous result.
-    #   In case of failure of subaction, at least result of all previous handlers is
-    #   returned. (experimental)
-    # - execution of handlers can be concurrent or sequential. But executions of handler
-    #   on iterable payloads(single parts) are always concurrent.
     action_name = request.action_name
 
     try:
@@ -101,221 +362,48 @@ async def run_action(
         payload_type_with_validation = pydantic_dataclass(action_exec_info.payload_type)
         payload = payload_type_with_validation(**request.params)
 
-    run_context: code_action.RunActionContext | None = None
-    if action_exec_info.run_context_type is not None:
-        constructor_args = await resolve_func_args_with_di(
-            action_exec_info.run_context_type.__init__,
-            known_args={"run_id": lambda _: run_id},
-            params_to_ignore=["self"],
-        )
-
-        run_context = action_exec_info.run_context_type(**constructor_args)
-        # TODO: handler errors
-        await run_context.init(initial_payload=payload)
-
-    action_result: code_action.RunActionResult | None = None
-    runner_context = global_state.runner_context
-
-    # TODO: take value from action config
-    execute_handlers_concurrently = action.name == "lint"
-    partial_result_token = options.partial_result_token
-    send_partial_results = partial_result_token is not None
-    with action_exec_info.process_executor.activate():
-        # action payload can be iterable or not
-        if isinstance(payload, collections.abc.AsyncIterable):
-            # iterable: `run` method should not calculate results itself, but call
-            #           `partial_result_scheduler.schedule`. Then we execute provided
-            #           coroutines either concurrently or sequentially.
-            logger.trace(
-                f"R{run_id} | Iterable payload, execute all handlers to schedule coros"
-            )
-            for handler in action.handlers:
-                await execute_action_handler(
-                    handler=handler,
-                    payload=payload,
-                    run_context=run_context,
-                    run_id=run_id,
-                    action_cache=action_cache,
-                    action_exec_info=action_exec_info,
-                    runner_context=runner_context,
-                )
-
-            parts = [part async for part in payload]
-            subresults_tasks: list[asyncio.Task] = []
-            logger.trace(
-                "R{run_id} | Run subresult coros {exec_type} {partials} partial results".format(
-                    run_id=run_id,
-                    exec_type=(
-                        "concurrently"
-                        if execute_handlers_concurrently
-                        else "sequentially"
-                    ),
-                    partials="with" if send_partial_results else "without",
-                )
-            )
-            try:
-                async with asyncio.TaskGroup() as tg:
-                    for part in parts:
-                        part_coros = (
-                            run_context.partial_result_scheduler.coroutines_by_key[part]
-                        )
-                        del run_context.partial_result_scheduler.coroutines_by_key[part]
-                        if execute_handlers_concurrently:
-                            coro = run_subresult_coros_concurrently(
-                                part_coros,
-                                send_partial_results,
-                                partial_result_token,
-                                partial_result_sender,
-                                action.name,
-                                run_id,
-                            )
-                        else:
-                            coro = run_subresult_coros_sequentially(
-                                part_coros,
-                                send_partial_results,
-                                partial_result_token,
-                                partial_result_sender,
-                                action.name,
-                                run_id,
-                            )
-                        subresult_task = tg.create_task(coro)
-                        subresults_tasks.append(subresult_task)
-            except ExceptionGroup as eg:
-                errors: list[str] = []
-                for exc in eg.exceptions:
-                    if not isinstance(exc, ActionFailedException):
-                        logger.error("Unexpected exception:")
-                        logger.exception(exc)
-                    else:
-                        errors.append(exc.message)
-                raise ActionFailedException(
-                    f"Running action handlers of '{action.name}' failed(Run {run_id}): {errors}."
-                    " See ER logs for more details"
-                )
-
-            if send_partial_results:
-                # all subresults are ready
-                logger.trace(f"R{run_id} | all subresults are ready, send them")
-                await partial_result_sender.send_all_immediately()
-            else:
-                for subresult_task in subresults_tasks:
-                    result = subresult_task.result()
-                    if result is not None:
-                        if action_result is None:
-                            action_result = result
-                        else:
-                            action_result.update(result)
-        else:
-            # action payload not iterable, just execute handlers on the whole payload
-            if execute_handlers_concurrently:
-                handlers_tasks: list[asyncio.Task] = []
-                try:
-                    async with asyncio.TaskGroup() as tg:
-                        for handler in action.handlers:
-                            handler_task = tg.create_task(
-                                execute_action_handler(
-                                    handler=handler,
-                                    payload=payload,
-                                    run_context=run_context,
-                                    run_id=run_id,
-                                    action_cache=action_cache,
-                                    action_exec_info=action_exec_info,
-                                    runner_context=runner_context,
-                                )
-                            )
-                            handlers_tasks.append(handler_task)
-                except ExceptionGroup as eg:
-                    for exc in eg.exceptions:
-                        # TODO: expected / unexpected?
-                        logger.exception(exc)
-                    raise ActionFailedException(
-                        f"Running action handlers of '{action.name}' failed"
-                        f"(Run {run_id}). See ER logs for more details"
-                    )
-
-                for handler_task in handlers_tasks:
-                    coro_result = handler_task.result()
-                    if coro_result is not None:
-                        if action_result is None:
-                            action_result = coro_result
-                        else:
-                            action_result.update(coro_result)
-            else:
-                for handler in action.handlers:
-                    try:
-                        handler_result = await execute_action_handler(
-                            handler=handler,
-                            payload=payload,
-                            run_context=run_context,
-                            run_id=run_id,
-                            action_cache=action_cache,
-                            action_exec_info=action_exec_info,
-                            runner_context=runner_context,
-                        )
-                    except ActionFailedException as exception:
-                        raise exception
-
-                    if handler_result is not None:
-                        if action_result is None:
-                            action_result = handler_result
-                        else:
-                            action_result.update(handler_result)
-
-    end_time = time.time_ns()
-    duration = (end_time - start_time) / 1_000_000
-    logger.trace(
-        f"R{run_id} | Run action end '{request.action_name}', duration: {duration}ms"
+    action_result = await run_action(
+        action_def=action,
+        payload=payload,
+        meta=options.meta,
+        partial_result_token=options.partial_result_token,
+        run_id=run_id,
     )
 
-    # if partial results were sent, `action_result` may be None
-    if action_result is not None and not isinstance(
-        action_result, code_action.RunActionResult
-    ):
-        logger.error(
-            f"R{run_id} | Unexpected result type: {type(action_result).__name__}"
-        )
-        raise ActionFailedException(
-            f"Unexpected result type: {type(action_result).__name__}"
-        )
-
     response = action_result_to_run_action_response(
-        action_result, options.result_format
+        action_result, options.result_formats
     )
     return response
 
 
 def action_result_to_run_action_response(
     action_result: code_action.RunActionResult | None,
-    asked_result_format: typing.Literal["json"] | typing.Literal["string"],
+    asked_result_formats: list[typing.Literal["json"] | typing.Literal["string"]],
 ) -> schemas.RunActionResponse:
-    serialized_result: dict[str, typing.Any] | str | None = None
-    result_format = "string"
+    result_by_format: dict[str, dict[str, typing.Any] | str | None] = {}
     run_return_code = code_action.RunReturnCode.SUCCESS
     if isinstance(action_result, code_action.RunActionResult):
         run_return_code = action_result.return_code
-        if asked_result_format == "json":
-            serialized_result = dataclasses.asdict(action_result)
-            result_format = "json"
-        elif asked_result_format == "string":
-            result_text = action_result.to_text()
-            if isinstance(result_text, textstyler.StyledText):
-                serialized_result = result_text.to_json()
-                result_format = "styled_text_json"
+        for asked_result_format in asked_result_formats:
+            if asked_result_format == "json":
+                result_by_format["json"] = dataclasses.asdict(action_result)
+            elif asked_result_format == "string":
+                result_text = action_result.to_text()
+                if isinstance(result_text, textstyler.StyledText):
+                    result_by_format["styled_text_json"] = result_text.to_json()
+                else:
+                    result_by_format["string"] = result_text
             else:
-                serialized_result = result_text
-                result_format = "string"
-        else:
-            raise ActionFailedException(
-                f"Unsupported result format: {asked_result_format}"
-            )
+                raise ActionFailedException(
+                    f"Unsupported result format: {asked_result_format}"
+                )
     return schemas.RunActionResponse(
-        result=serialized_result,
-        format=result_format,
+        result_by_format=result_by_format,
         return_code=run_return_code.value,
     )
 
 
-def create_action_exec_info(action: domain.Action) -> domain.ActionExecInfo:
+def create_action_exec_info(action: domain.ActionDeclaration) -> domain.ActionExecInfo:
     try:
         action_type_def = run_utils.import_module_member_by_source_str(action.source)
     except Exception as e:
@@ -342,7 +430,7 @@ async def resolve_func_args_with_di(
     func: typing.Callable,
     known_args: dict[str, typing.Callable[[typing.Any], typing.Any]] | None = None,
     params_to_ignore: list[str] | None = None,
-):
+) -> dict[str, typing.Any]:
     func_parameters = inspect.signature(func).parameters
     func_annotations = inspect.get_annotations(func, eval_str=True)
     args: dict[str, typing.Any] = {}
@@ -368,10 +456,136 @@ async def resolve_func_args_with_di(
     return args
 
 
+def _get_handler_raw_config(
+    handler: domain.ActionHandlerDeclaration,
+    runner_context: context.RunnerContext,
+) -> dict[str, typing.Any]:
+    handler_global_config = runner_context.project.action_handler_configs.get(
+        handler.source, None
+    )
+    handler_raw_config = {}
+    if handler_global_config is not None:
+        handler_raw_config = handler_global_config
+    if handler_raw_config == {}:
+        # still empty, just assign
+        handler_raw_config = handler.config
+    else:
+        # not empty anymore, deep merge
+        handler_config_merger.merge(handler_raw_config, handler.config)
+    return handler_raw_config
+
+
+async def ensure_handler_instantiated(
+    handler: domain.ActionHandlerDeclaration,
+    handler_cache: domain.ActionHandlerCache,
+    action_exec_info: domain.ActionExecInfo,
+    runner_context: context.RunnerContext,
+) -> None:
+    """Ensure handler is instantiated and initialized, populating handler_cache.
+
+    If handler is already instantiated (handler_cache.instance is not None), this is
+    a no-op. Otherwise, imports the handler class, resolves DI, instantiates it,
+    calls on_initialize lifecycle hook if present, and caches the result.
+    """
+    if handler_cache.instance is not None:
+        return
+
+    handler_raw_config = _get_handler_raw_config(handler, runner_context)
+
+    logger.trace(f"Load action handler {handler.name}")
+    try:
+        action_handler = run_utils.import_module_member_by_source_str(
+            handler.source
+        )
+    except ModuleNotFoundError as error:
+        logger.error(
+            f"Source of action handler {handler.name} '{handler.source}'"
+            " could not be imported"
+        )
+        logger.error(error)
+        raise ActionFailedException(
+            f"Import of action handler '{handler.name}' failed: {handler.source}"
+        ) from error
+
+    def get_handler_config(param_type):
+        # validate config using pydantic
+        try:
+            config_type = pydantic_dataclass(param_type)
+        except pydantic.ValidationError as exception:
+            raise ActionFailedException(exception.errors()) from exception
+        return config_type(**handler_raw_config)
+
+    def get_process_executor(param_type):
+        return action_exec_info.process_executor
+
+    exec_info = domain.ActionHandlerExecInfo()
+    # save immediately in context to be able to shutdown it if the first execution
+    # is interrupted by stopping ER
+    handler_cache.exec_info = exec_info
+    if inspect.isclass(action_handler):
+        args = await resolve_func_args_with_di(
+            func=action_handler.__init__,
+            known_args={
+                "config": get_handler_config,
+                "process_executor": get_process_executor,
+            },
+            params_to_ignore=["self"],
+        )
+
+        if "lifecycle" in args:
+            exec_info.lifecycle = args["lifecycle"]
+
+        handler_instance = action_handler(**args)
+        handler_cache.instance = handler_instance
+
+        service_instances = [
+            instance
+            for instance in args.values()
+            if isinstance(instance, service.Service)
+        ]
+        handler_cache.used_services = service_instances
+        for service_instance in service_instances:
+            if service_instance not in runner_context.running_services:
+                runner_context.running_services[service_instance] = (
+                    domain.RunningServiceInfo(used_by=[])
+                )
+
+            runner_context.running_services[service_instance].used_by.append(
+                handler_instance
+            )
+
+    else:
+        # handler is a plain function, not a class — nothing to instantiate
+        handler_cache.exec_info = exec_info
+        exec_info.status = domain.ActionHandlerExecInfoStatus.INITIALIZED
+        return
+
+    if (
+        exec_info.lifecycle is not None
+        and exec_info.lifecycle.on_initialize_callable is not None
+    ):
+        logger.trace(f"Initialize {handler.name} action handler")
+        try:
+            initialize_callable_result = (
+                exec_info.lifecycle.on_initialize_callable()
+            )
+            if inspect.isawaitable(initialize_callable_result):
+                await initialize_callable_result
+        except Exception as e:
+            logger.error(
+                f"Failed to initialize action handler {handler.name}: {e}"
+            )
+            raise ActionFailedException(
+                f"Initialisation of action handler '{handler.name}' failed: {e}"
+            ) from e
+
+    exec_info.status = domain.ActionHandlerExecInfoStatus.INITIALIZED
+
+
 async def execute_action_handler(
-    handler: domain.ActionHandler,
+    handler: domain.ActionHandlerDeclaration,
     payload: code_action.RunActionPayload | None,
-    run_context: code_action.RunActionContext | None,
+    run_context: code_action.RunActionContext | AsyncPlaceholderContext,
     run_id: int,
     action_exec_info: domain.ActionExecInfo,
     action_cache: domain.ActionCache,
@@ -387,92 +601,30 @@ async def execute_action_handler(
     start_time = time.time_ns()
     execution_result: code_action.RunActionResult | None = None
 
-    handler_global_config = runner_context.project.action_handler_configs.get(
-        handler.source, None
-    )
-    handler_raw_config = {}
-    if handler_global_config is not None:
-        handler_raw_config = handler_global_config
-    if handler_raw_config == {}:
-        # still empty, just assign
-        handler_raw_config = handler.config
-    else:
-        # not empty anymore, deep merge
-        handler_config_merger.merge(handler_raw_config, handler.config)
-
     if handler_cache.instance is not None:
         handler_instance = handler_cache.instance
         handler_run_func = handler_instance.run
         exec_info = handler_cache.exec_info
+        # TODO: check status of exec_info?
         logger.trace(
             f"R{run_id} | Instance of action handler {handler.name} found in cache"
         )
     else:
-        logger.trace(f"R{run_id} | Load action handler {handler.name}")
-        try:
+        await ensure_handler_instantiated(
+            handler=handler,
+            handler_cache=handler_cache,
+            action_exec_info=action_exec_info,
+            runner_context=runner_context,
+        )
+        if handler_cache.instance is not None:
+            handler_run_func = handler_cache.instance.run
+        else:
+            # handler is a plain function
             action_handler = run_utils.import_module_member_by_source_str(
                 handler.source
             )
-        except ModuleNotFoundError as error:
-            logger.error(
-                f"R{run_id} | Source of action handler {handler.name} '{handler.source}'"
-                " could not be imported"
-            )
-            logger.error(error)
-            raise ActionFailedException(
-                f"Import of action handler '{handler.name}' failed(Run {run_id}): {handler.source}"
-            )
-
-        def get_handler_config(param_type):
-            # TODO: validation errors
-            return param_type(**handler_raw_config)
-
-        def get_process_executor(param_type):
-            return action_exec_info.process_executor
-
-        exec_info = domain.ActionHandlerExecInfo()
-        # save immediately in context to be able to shutdown it if the first execution
-        # is interrupted by stopping ER
-        handler_cache.exec_info = exec_info
-        if inspect.isclass(action_handler):
-            args = await resolve_func_args_with_di(
-                func=action_handler.__init__,
-                known_args={
-                    "config": get_handler_config,
-                    "process_executor": get_process_executor,
-                },
-                params_to_ignore=["self"],
-            )
-
-            if "lifecycle" in args:
-                exec_info.lifecycle = args["lifecycle"]
-
-            handler_instance = action_handler(**args)
-            handler_cache.instance = handler_instance
-            handler_run_func = handler_instance.run
-        else:
             handler_run_func = action_handler
-
-        if (
-            exec_info.lifecycle is not None
-            and exec_info.lifecycle.on_initialize_callable is not None
-        ):
-            logger.trace(f"R{run_id} | Initialize {handler.name} action handler")
-            try:
-                initialize_callable_result = (
-                    exec_info.lifecycle.on_initialize_callable()
-                )
-                if inspect.isawaitable(initialize_callable_result):
-                    await initialize_callable_result
-            except Exception as e:
-                logger.error(
-                    f"R{run_id} | Failed to initialize action handler {handler.name}: {e}"
-                )
-                raise ActionFailedException(
-                    f"Initialisation of action handler '{handler.name}' failed(Run {run_id}): {e}"
-                )
-
-        exec_info.status = domain.ActionHandlerExecInfoStatus.INITIALIZED
+        exec_info = handler_cache.exec_info
 
     def get_run_payload(param_type):
         return payload
@@ -489,6 +641,7 @@ async def execute_action_handler(
     )
     # TODO: cache parameters
     try:
+        logger.trace(f"Call handler {handler.name}(run {run_id})")
         # there is also `inspect.iscoroutinefunction` but it cannot recognize coroutine
         # functions which are class methods. Use `isawaitable` on result instead.
         call_result = handler_run_func(**args)
@@ -500,18 +653,18 @@ async def execute_action_handler(
         if isinstance(exception, code_action.StopActionRunWithResult):
             action_result = exception.result
             response = action_result_to_run_action_response(action_result, "string")
-            raise StopWithResponse(response=response)
-        elif isinstance(exception, iactionrunner.BaseRunActionException) or isinstance(
-            exception, code_action.ActionFailedException
-        ):
+            raise StopWithResponse(response=response) from exception
+        elif isinstance(
+            exception, iactionrunner.BaseRunActionException
+        ) or isinstance(exception, code_action.ActionFailedException):
             error_str = exception.message
         else:
             logger.error("Unhandled exception in action handler:")
-            logger.exception(exception)
             error_str = str(exception)
+        logger.exception(exception)
         raise ActionFailedException(
             f"Running action handler '{handler.name}' failed(Run {run_id}): {error_str}"
-        )
+        ) from exception
 
     end_time = time.time_ns()
     duration = (end_time - start_time) / 1_000_000
@@ -547,7 +700,7 @@ async def run_subresult_coros_concurrently(
                 errors_str += str(exc) + "."
         raise ActionFailedException(
             f"Concurrent running action handlers of '{action_name}' failed(Run {run_id}): {errors_str}"
-        )
+        ) from eg
 
     action_subresult: code_action.RunActionResult | None = None
     for coro_task in coros_tasks:

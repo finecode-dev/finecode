@@ -1,0 +1,119 @@
+# note: ruff formatter cannot sort imports, only ruff linter with fixes:
+# https://docs.astral.sh/ruff/formatter/#sorting-imports
+from __future__ import annotations
+
+import dataclasses
+import sys
+from pathlib import Path
+
+if sys.version_info < (3, 12):
+    from typing_extensions import override
+else:
+    from typing import override
+
+from finecode_extension_api import code_action
+from finecode_extension_api.actions import format_files as format_files_action
+from finecode_extension_api.interfaces import (
+    icache,
+    icommandrunner,
+    ilogger,
+    iextensionrunnerinfoprovider,
+)
+
+
+@dataclasses.dataclass
+class RuffFormatFilesHandlerConfig(code_action.ActionHandlerConfig):
+    line_length: int = 88
+    indent_width: int = 4
+    quote_style: str = "double"  # "double" or "single"
+    target_version: str = "py38"  # minimum Python version
+    preview: bool = False
+
+
+class RuffFormatFilesHandler(
+    code_action.ActionHandler[
+        format_files_action.FormatFilesAction, RuffFormatFilesHandlerConfig
+    ]
+):
+    def __init__(
+        self,
+        config: RuffFormatFilesHandlerConfig,
+        extension_runner_info_provider: iextensionrunnerinfoprovider.IExtensionRunnerInfoProvider,
+        logger: ilogger.ILogger,
+        cache: icache.ICache,
+        command_runner: icommandrunner.ICommandRunner,
+    ) -> None:
+        self.config = config
+        self.logger = logger
+        self.cache = cache
+        self.command_runner = command_runner
+        self.extension_runner_info_provider = extension_runner_info_provider
+
+        self.ruff_bin_path = Path(sys.executable).parent / "ruff"
+
+    @override
+    async def run(
+        self,
+        payload: format_files_action.FormatFilesRunPayload,
+        run_context: format_files_action.FormatFilesRunContext,
+    ) -> format_files_action.FormatFilesRunResult:
+        result_by_file_path: dict[Path, format_files_action.FormatRunFileResult] = {}
+        for file_path in payload.file_paths:
+            file_content, file_version = run_context.file_info_by_path[file_path]
+
+            new_file_content, file_changed = await self.format_one(
+                file_path, file_content
+            )
+
+            # save for next handlers
+            run_context.file_info_by_path[file_path] = format_files_action.FileInfo(
+                new_file_content, file_version
+            )
+
+            result_by_file_path[file_path] = format_files_action.FormatRunFileResult(
+                changed=file_changed, code=new_file_content
+            )
+
+        return format_files_action.FormatFilesRunResult(
+            result_by_file_path=result_by_file_path
+        )
+
+    async def format_one(self, file_path: Path, file_content: str) -> tuple[str, bool]:
+        """Format a single file using ruff format"""
+        # Build ruff format command
+        cmd = [
+            str(self.ruff_bin_path),
+            "format",
+            "--cache-dir",
+            str(
+                self.extension_runner_info_provider.get_cache_dir_path() / ".ruff_cache"
+            ),
+            "--line-length",
+            str(self.config.line_length),
+            f'--config="indent-width={str(self.config.indent_width)}"',
+            f"--config=\"format.quote-style='{self.config.quote_style}'\"",
+            "--target-version",
+            self.config.target_version,
+            "--stdin-filename",
+            str(file_path),
+        ]
+
+        if self.config.preview:
+            cmd.append("--preview")
+
+        cmd_str = " ".join(cmd)
+        ruff_process = await self.command_runner.run(cmd_str)
+
+        ruff_process.write_to_stdin(file_content)
+        ruff_process.close_stdin()  # Signal EOF
+
+        await ruff_process.wait_for_end()
+
+        if ruff_process.get_exit_code() == 0:
+            new_file_content = ruff_process.get_output()
+            file_changed = new_file_content != file_content
+            return new_file_content, file_changed
+        else:
+            raise code_action.ActionFailedException(
+                f"ruff failed with code {ruff_process.get_exit_code()}: {ruff_process.get_error_output()} || {ruff_process.get_output()}"
+            )

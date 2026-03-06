@@ -4,12 +4,12 @@ import tomlkit
 import tomlkit.exceptions
 
 from finecode_extension_api.interfaces import (
-    ifilemanager,
-    ipypackagelayoutinfoprovider,
+    ifileeditor,
     icache,
 )
 from finecode_extension_api import service
 
+from fine_python_package_info import ipypackagelayoutinfoprovider
 
 class ConfigParseError(Exception):
     def __init__(self, message: str) -> None:
@@ -20,11 +20,14 @@ class PyPackageLayoutInfoProvider(
     ipypackagelayoutinfoprovider.IPyPackageLayoutInfoProvider, service.Service
 ):
     PACKAGE_NAME_CACHE_KEY = "PyPackageLayoutInfoProviderPackageName"
+    FILE_OPERATION_AUTHOR = ifileeditor.FileOperationAuthor(
+        id="PyPackageLayoutInfoProvider"
+    )
 
     def __init__(
-        self, file_manager: ifilemanager.IFileManager, cache: icache.ICache
+        self, file_editor: ifileeditor.IFileEditor, cache: icache.ICache
     ) -> None:
-        self.file_manager = file_manager
+        self.file_editor = file_editor
         self.cache = cache
 
     async def _get_package_name(self, package_dir_path: pathlib.Path) -> str:
@@ -43,12 +46,13 @@ class PyPackageLayoutInfoProvider(
         except icache.CacheMissException:
             ...
 
-        package_def_file_content = await self.file_manager.get_content(
-            file_path=package_def_file
-        )
-        package_def_file_version = await self.file_manager.get_file_version(
-            file_path=package_def_file
-        )
+        async with self.file_editor.session(
+            author=self.FILE_OPERATION_AUTHOR
+        ) as session:
+            async with session.read_file(file_path=package_def_file) as file_info:
+                package_def_file_content: str = file_info.content
+                package_def_file_version: str = file_info.version
+
         try:
             package_def_dict = tomlkit.loads(package_def_file_content)
         except tomlkit.exceptions.ParseError as exception:
@@ -82,7 +86,7 @@ class PyPackageLayoutInfoProvider(
             except ConfigParseError as exception:
                 raise ipypackagelayoutinfoprovider.FailedToGetPackageLayout(
                     exception.message
-                )
+                ) from exception
 
             if (package_dir_path / package_name).exists():
                 return ipypackagelayoutinfoprovider.PyPackageLayout.FLAT

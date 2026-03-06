@@ -38,12 +38,12 @@ def register_send_user_message_request_callback(send_user_message_request_callba
     user_messages._lsp_message_send = send_user_message_request_callback
 
 
-def register_document_getter(get_document_func):
-    runner_manager.get_document = get_document_func
-
-
 def register_workspace_edit_applier(apply_workspace_edit_func):
     runner_manager.apply_workspace_edit = apply_workspace_edit_func
+
+
+def register_debug_session_starter(start_debug_session_func):
+    runner_manager.start_debug_session = start_debug_session_func
 
 
 def register_progress_reporter(report_progress_func):
@@ -57,7 +57,7 @@ async def add_workspace_dir(
     dir_path = Path(request.dir_path)
 
     if dir_path in global_state.ws_context.ws_dirs_paths:
-        raise ValueError("Directory is already added")
+        await user_messages.error(f"Directory {dir_path} is already added")
 
     global_state.ws_context.ws_dirs_paths.append(dir_path)
     new_projects = await read_configs.read_projects_in_dir(
@@ -73,10 +73,12 @@ async def add_workspace_dir(
 
     try:
         await runner_manager.start_runners_with_presets(
-            projects=new_projects, ws_context=global_state.ws_context
+            projects=new_projects,
+            ws_context=global_state.ws_context,
+            initialize_all_handlers=True,
         )
     except runner_manager.RunnerFailedToStart as exception:
-        raise ValueError(f"Starting runners with presets failed: {exception.message}")
+        await user_messages.error(f"Starting runners with presets failed: {exception.message}. Did you run `finecode prepare-envs` ?")
 
     return schemas.AddWorkspaceDirResponse()
 

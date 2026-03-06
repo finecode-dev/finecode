@@ -12,21 +12,21 @@ from flake8.api import legacy as flake8
 from flake8.plugins import finder
 
 from finecode_extension_api import code_action
-from finecode_extension_api.actions import lint as lint_action
+from finecode_extension_api.actions import lint_files as lint_files_action
 from finecode_extension_api.interfaces import (
     icache,
-    ifilemanager,
+    ifileeditor,
     ilogger,
     iprocessexecutor,
 )
 
 
-def map_flake8_check_result_to_lint_message(result: tuple) -> lint_action.LintMessage:
+def map_flake8_check_result_to_lint_message(result: tuple) -> lint_files_action.LintMessage:
     error_code, line_number, column, text, physical_line = result
-    return lint_action.LintMessage(
-        range=lint_action.Range(
-            start=lint_action.Position(line=line_number, character=column),
-            end=lint_action.Position(
+    return lint_files_action.LintMessage(
+        range=lint_files_action.Range(
+            start=lint_files_action.Position(line=line_number, character=column),
+            end=lint_files_action.Position(
                 line=line_number,
                 character=len(physical_line) if physical_line is not None else column,
             ),
@@ -35,9 +35,9 @@ def map_flake8_check_result_to_lint_message(result: tuple) -> lint_action.LintMe
         code=error_code,
         source="flake8",
         severity=(
-            lint_action.LintMessageSeverity.WARNING
+            lint_files_action.LintMessageSeverity.WARNING
             if error_code.startswith("W")
-            else lint_action.LintMessageSeverity.ERROR
+            else lint_files_action.LintMessageSeverity.ERROR
         ),
     )
 
@@ -46,9 +46,9 @@ def run_flake8_on_single_file(
     file_path: Path,
     file_content: str,
     file_ast: ast.Module,
-    config: Flake8LintHandlerConfig,
-) -> list[lint_action.LintMessage]:
-    lint_messages: list[lint_action.LintMessage] = []
+    config: Flake8LintFilesHandlerConfig,
+) -> list[lint_files_action.LintMessage]:
+    lint_messages: list[lint_files_action.LintMessage] = []
     # flake8 expects lines with newline at the end
     file_lines = [line + "\n" for line in file_content.split("\n")]
     # TODO: investigate whether guide and decider can be reused. They cannot be
@@ -109,31 +109,34 @@ def run_flake8_on_single_file(
 
 
 @dataclasses.dataclass
-class Flake8LintHandlerConfig(code_action.ActionHandlerConfig):
+class Flake8LintFilesHandlerConfig(code_action.ActionHandlerConfig):
     max_line_length: int = 79
     select: list[str] | None = None
     extend_select: list[str] | None = None
     extend_ignore: list[str] | None = None
 
 
-class Flake8LintHandler(
-    code_action.ActionHandler[lint_action.LintAction, Flake8LintHandlerConfig]
+class Flake8LintFilesHandler(
+    code_action.ActionHandler[lint_files_action.LintFilesAction, Flake8LintFilesHandlerConfig]
 ):
     CACHE_KEY = "flake8"
+    FILE_OPERATION_AUTHOR = ifileeditor.FileOperationAuthor(
+        id="Flake8LintFilesHandler"
+    )
 
     def __init__(
         self,
-        config: Flake8LintHandlerConfig,
+        config: Flake8LintFilesHandlerConfig,
         cache: icache.ICache,
         logger: ilogger.ILogger,
-        file_manager: ifilemanager.IFileManager,
+        file_editor: ifileeditor.IFileEditor,
         ast_provider: iast_provider.IPythonSingleAstProvider,
         process_executor: iprocessexecutor.IProcessExecutor,
     ) -> None:
         self.config = config
         self.cache = cache
         self.logger = logger
-        self.file_manager = file_manager
+        self.file_editor = file_editor
         self.ast_provider = ast_provider
         self.process_executor = process_executor
 
@@ -145,19 +148,24 @@ class Flake8LintHandler(
 
     async def run_on_single_file(
         self, file_path: Path
-    ) -> lint_action.LintRunResult | None:
+    ) -> lint_files_action.LintFilesRunResult | None:
         messages = {}
         try:
             cached_lint_messages = await self.cache.get_file_cache(
                 file_path, self.CACHE_KEY
             )
             messages[str(file_path)] = cached_lint_messages
-            return lint_action.LintRunResult(messages=messages)
+            return lint_files_action.LintFilesRunResult(messages=messages)
         except icache.CacheMissException:
             pass
 
-        file_content = await self.file_manager.get_content(file_path)
-        file_version = await self.file_manager.get_file_version(file_path)
+        async with self.file_editor.session(
+            author=self.FILE_OPERATION_AUTHOR
+        ) as session:
+            async with session.read_file(file_path=file_path) as file_info:
+                file_content: str = file_info.content
+                file_version: str = file_info.version
+
         try:
             file_ast = await self.ast_provider.get_file_ast(file_path=file_path)
         except SyntaxError:
@@ -175,12 +183,12 @@ class Flake8LintHandler(
             file_path, file_version, self.CACHE_KEY, lint_messages
         )
 
-        return lint_action.LintRunResult(messages=messages)
+        return lint_files_action.LintFilesRunResult(messages=messages)
 
     async def run(
         self,
-        payload: lint_action.LintRunPayload,
-        run_context: code_action.RunActionWithPartialResultsContext,
+        payload: lint_files_action.LintFilesRunPayload,
+        run_context: lint_files_action.LintFilesRunContext,
     ) -> None:
         if self.config.select is not None and len(self.config.select) == 0:
             # empty set of rules is selected, no need to run flake8

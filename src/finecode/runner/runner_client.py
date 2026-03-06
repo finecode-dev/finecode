@@ -15,13 +15,18 @@ from typing import Any
 from loguru import logger
 
 import finecode.domain as domain
-from finecode.runner import jsonrpc_client, _internal_client_types, _internal_client_api
+from finecode.runner import _internal_client_types, _internal_client_api
+import finecode_jsonrpc as jsonrpc_client
 
 
 # reexport
 BaseRunnerRequestException = jsonrpc_client.BaseRunnerRequestException
-GetDocumentParams = _internal_client_types.GetDocumentParams
-GetDocumentResult = _internal_client_types.GetDocumentResult
+DidChangeTextDocumentParams = _internal_client_types.DidChangeTextDocumentParams
+VersionedTextDocumentIdentifier = _internal_client_types.VersionedTextDocumentIdentifier
+TextDocumentContentChangeWholeDocument = _internal_client_types.TextDocumentContentChangeWholeDocument
+TextDocumentContentChangePartial = _internal_client_types.TextDocumentContentChangePartial
+Range = _internal_client_types.Range
+Position = _internal_client_types.Position
 
 
 class ActionRunFailed(jsonrpc_client.BaseRunnerRequestException): ...
@@ -61,14 +66,41 @@ class RunnerStatus(enum.Enum):
 type RunActionRawResult = dict[str, Any] | str
 
 
-class RunActionResponse(typing.NamedTuple):
-    result: RunActionRawResult
+@dataclasses.dataclass
+class RunActionResponse:
+    result_by_format: dict[str, RunActionRawResult]
     return_code: int
+
+    def json(self) -> dict[str, Any]:
+        result = self.result_by_format.get("json")
+        if result is None:
+            raise ActionRunFailed("Expected json result format but it was not returned")
+        return result
+
+    def text(self) -> str:
+        result = self.result_by_format.get("styled_text_json") or self.result_by_format.get("string")
+        if result is None:
+            raise ActionRunFailed("Expected text result format but it was not returned")
+        return result
 
 
 class RunResultFormat(enum.Enum):
     JSON = "json"
     STRING = "string"
+
+
+class RunActionTrigger(enum.StrEnum):
+    USER = 'user'
+    SYSTEM = 'system'
+    UNKNOWN = 'unknown'
+
+
+class DevEnv(enum.StrEnum):
+    IDE = 'ide'
+    CLI = 'cli'
+    AI = 'ai'
+    PRECOMMIT = 'precommit'
+    CI_CD = 'cicd'
 
 
 async def run_action(
@@ -109,26 +141,18 @@ async def run_action(
         raise ActionRunFailed(command_result["error"])
 
     return_code = command_result["return_code"]
-    raw_result = ""
-    stringified_result = command_result["result"]
+    stringified_result = command_result["result_by_format"]
     # currently result is always dumped to json even if response format is expected to
     # be a string. See docs of ER lsp server for more details.
-    raw_result = json.loads(stringified_result)
-    if command_result["format"] == "string":
-        result = raw_result
-    elif (
-        command_result["format"] == "json"
-        or command_result["format"] == "styled_text_json"
-    ):
-        # string was already converted to dict above
-        result = raw_result
-    else:
-        raise Exception(f"Not support result format: {command_result['format']}")
+    try:
+        result_by_format = json.loads(stringified_result)
+    except json.JSONDecodeError as exception:
+        raise ActionRunFailed(f"Failed to decode result json: {exception}") from exception
 
     if command_result["status"] == "stopped":
-        raise ActionRunStopped(message=result)
+        raise ActionRunStopped(message=result_by_format)
 
-    return RunActionResponse(result=result, return_code=return_code)
+    return RunActionResponse(result_by_format=result_by_format, return_code=return_code)
 
 
 async def reload_action(runner: ExtensionRunnerInfo, action_name: str) -> None:
@@ -170,12 +194,20 @@ class RunnerConfig:
     actions: list[domain.Action]
     # config by handler source
     action_handler_configs: dict[str, dict[str, Any]]
+    services: list[domain.ServiceDeclaration] = dataclasses.field(default_factory=list)
+    # If provided, eagerly instantiate these handlers after config update.
+    # Keys are action names, values are lists of handler names within that action.
+    handlers_to_initialize: dict[str, list[str]] | None = None
 
     def to_dict(self) -> dict[str, typing.Any]:
-        return {
+        result: dict[str, typing.Any] = {
             "actions": [action.to_dict() for action in self.actions],
             "action_handler_configs": self.action_handler_configs,
+            "services": [svc.to_dict() for svc in self.services],
         }
+        if self.handlers_to_initialize is not None:
+            result["handlers_to_initialize"] = self.handlers_to_initialize
+        return result
 
 
 async def update_config(
@@ -219,6 +251,12 @@ async def notify_document_did_close(
         params=_internal_client_types.DidCloseTextDocumentParams(
             text_document=_internal_client_types.TextDocumentIdentifier(document_uri)
         ),
+    )
+
+async def notify_document_did_change(runner: ExtensionRunnerInfo, change_params: _internal_client_types.DidChangeTextDocumentParams) -> None:
+    runner.client.notify(
+        method=_internal_client_types.TEXT_DOCUMENT_DID_CHANGE,
+        params=change_params,
     )
 
 

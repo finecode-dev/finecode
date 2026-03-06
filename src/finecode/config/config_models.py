@@ -23,15 +23,24 @@ class PresetDefinition(BaseModel):
 
 class ActionHandlerDefinition(BaseModel):
     name: str
+    source: str = ""
+    env: str = ""
+    dependencies: list[str] = []
+    config: dict[str, Any] | None = None
+    enabled: bool = True
+
+
+class ServiceDefinition(BaseModel):
+    interface: str
     source: str
     env: str
     dependencies: list[str] = []
-    config: dict[str, Any] | None = None
 
 
 class ActionDefinition(BaseModel):
     source: str
     handlers: list[ActionHandlerDefinition] = []
+    handlers_mode: str = "merge"  # "merge" or "replace"
     config: dict[str, Any] | None = None
 
 

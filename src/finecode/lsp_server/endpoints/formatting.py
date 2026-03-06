@@ -24,7 +24,10 @@ async def format_document(ls: LanguageServer, params: types.DocumentFormattingPa
             file_path=file_path,
             action_name="format",
             params={"file_paths": [file_path], "save": False},
+            run_trigger=run_service.RunActionTrigger.USER,
+            dev_env=run_service.DevEnv.IDE,
             ws_context=global_state.ws_context,
+            initialize_all_handlers=True,
         )
     except Exception as error:  # TODO
         logger.error(f"Error document formatting {file_path}: {error}")
@@ -33,7 +36,7 @@ async def format_document(ls: LanguageServer, params: types.DocumentFormattingPa
     if response is None:
         return []
 
-    response_for_file = response.result.get("result_by_file_path", {}).get(
+    response_for_file = response.json().get("result_by_file_path", {}).get(
         str(file_path), None
     )
     if response_for_file is None:

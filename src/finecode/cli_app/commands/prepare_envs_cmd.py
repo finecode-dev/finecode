@@ -59,7 +59,7 @@ async def prepare_envs(workdir_path: pathlib.Path, recreate: bool) -> None:
         except config_models.ConfigurationError as exception:
             raise PrepareEnvsFailed(
                 f"Reading project config and collecting actions in {project.dir_path} failed: {exception.message}"
-            )
+            ) from exception
 
     try:
         # try to start runner in 'dev_workspace' env of each project. If venv doesn't
@@ -83,7 +83,7 @@ async def prepare_envs(workdir_path: pathlib.Path, recreate: bool) -> None:
         except runner_manager.RunnerFailedToStart as exception:
             raise PrepareEnvsFailed(
                 f"Starting runners with presets failed: {exception.message}"
-            )
+            ) from exception
 
         # now all 'dev_workspace' envs are valid, run 'prepare_runners' in them to create
         # venvs and install runners and presets in them
@@ -106,8 +106,14 @@ async def prepare_envs(workdir_path: pathlib.Path, recreate: bool) -> None:
             (
                 result_output,
                 result_return_code,
+                _
             ) = await utils.run_actions_in_projects_and_concat_results(
-                actions_by_projects, action_payload, ws_context, concurrently=True
+                actions_by_projects,
+                action_payload,
+                ws_context,
+                concurrently=True,
+                run_trigger=run_service.RunActionTrigger.USER,
+                dev_env=run_service.DevEnv.CLI,
             )
         except run_service.ActionRunFailed as error:
             logger.error(error.message)
@@ -127,8 +133,14 @@ async def prepare_envs(workdir_path: pathlib.Path, recreate: bool) -> None:
             (
                 result_output,
                 result_return_code,
+                _
             ) = await utils.run_actions_in_projects_and_concat_results(
-                actions_by_projects, action_payload, ws_context, concurrently=True
+                actions_by_projects,
+                action_payload,
+                ws_context,
+                concurrently=True,
+                run_trigger=run_service.RunActionTrigger.USER,
+                dev_env=run_service.DevEnv.CLI,
             )
         except run_service.ActionRunFailed as error:
             logger.error(error.message)
@@ -192,13 +204,11 @@ async def check_or_recreate_all_dev_workspace_envs(
     current_project_dir_path = ws_context.ws_dirs_paths[0]
     current_project = ws_context.ws_projects[current_project_dir_path]
     try:
-        await runner_manager.start_runner(
-            project_def=current_project, env_name="dev_workspace", ws_context=ws_context
-        )
+        await runner_manager._start_dev_workspace_runner(project_def=current_project, ws_context=ws_context)
     except runner_manager.RunnerFailedToStart as exception:
         raise PrepareEnvsFailed(
             f"Failed to start `dev_workspace` runner in {current_project.name}: {exception.message}"
-        )
+        ) from exception
 
     envs = []
 
@@ -251,15 +261,17 @@ async def check_or_recreate_all_dev_workspace_envs(
             },
             project_def=current_project,
             ws_context=ws_context,
-            result_format=run_service.RunResultFormat.STRING,
+            result_formats=[run_service.RunResultFormat.STRING],
             preprocess_payload=False,
+            run_trigger=run_service.RunActionTrigger.USER,
+            dev_env=run_service.DevEnv.CLI,
         )
     except run_service.ActionRunFailed as exception:
         raise PrepareEnvsFailed(
             f"'prepare_dev_workspaces_env' failed in {current_project.name}: {exception.message}"
-        )
+        ) from exception
 
     if action_result.return_code != 0:
         raise PrepareEnvsFailed(
-            f"'prepare_dev_workspaces_env' ended in {current_project.name} with return code {action_result.return_code}: {action_result.result}"
+            f"'prepare_dev_workspaces_env' ended in {current_project.name} with return code {action_result.return_code}: {action_result.result_by_format['string']}"
         )

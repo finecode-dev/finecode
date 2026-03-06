@@ -1,4 +1,7 @@
+import json
 import pathlib
+import sys
+import typing
 
 import ordered_set
 from loguru import logger
@@ -22,8 +25,13 @@ async def run_actions(
     actions: list[str],
     action_payload: dict[str, str],
     concurrently: bool,
-) -> tuple[str, int]:
+    handler_config_overrides: dict[str, dict[str, dict[str, str]]] | None = None,
+    save_results: bool = True,
+    map_payload_fields: set[str] | None = None,
+) -> utils.RunActionsResult:
     ws_context = context.WorkspaceContext([workdir_path])
+    if handler_config_overrides:
+        ws_context.handler_config_overrides = handler_config_overrides
     await read_configs.read_projects_in_dir(
         dir_path=workdir_path, ws_context=ws_context
     )
@@ -108,7 +116,7 @@ async def run_actions(
         except config_models.ConfigurationError as exception:
             raise RunFailed(
                 f"Reading project config and collecting actions in {project.dir_path} failed: {exception.message}"
-            )
+            ) from exception
 
     try:
         # 1. Start runners with presets to be able to resolve presets. Presets are
@@ -117,9 +125,9 @@ async def run_actions(
             await runner_manager.start_runners_with_presets(projects, ws_context)
         except runner_manager.RunnerFailedToStart as exception:
             raise RunFailed(
-                f"One or more projects are misconfigured, runners for them didn't"
-                f" start: {exception.message}. Check logs for details."
-            )
+                "One or more projects are misconfigured, runners for them didn't"
+                + f" start: {exception.message}. Check logs for details."
+            ) from exception
         except Exception as exception:
             logger.error("Unexpected exception:")
             logger.exception(exception)
@@ -148,19 +156,37 @@ async def run_actions(
 
         try:
             await run_service.start_required_environments(
-                actions_by_projects, ws_context, update_config_in_running_runners=True
+                actions_by_projects,
+                ws_context,
+                update_config_in_running_runners=True,
             )
         except run_service.StartingEnvironmentsFailed as exception:
             raise RunFailed(
                 f"Failed to start environments for running actions: {exception.message}"
+            ) from exception
+
+        payload_overrides_by_project: dict[str, dict[str, typing.Any]] = {}
+        if map_payload_fields:
+            payload_overrides_by_project = resolve_mapped_payload_fields(
+                map_payload_fields=map_payload_fields,
+                action_payload=action_payload,
             )
 
         try:
             return await utils.run_actions_in_projects_and_concat_results(
-                actions_by_projects, action_payload, ws_context, concurrently
+                actions_by_projects,
+                action_payload,
+                ws_context,
+                concurrently,
+                run_trigger=run_service.RunActionTrigger.USER,
+                dev_env=run_service.DevEnv.CLI,
+                output_json=save_results,
+                payload_overrides_by_project=payload_overrides_by_project,
             )
         except run_service.ActionRunFailed as exception:
-            raise RunFailed(f"Failed to run actions: {exception.message}")
+            raise RunFailed(
+                f"Failed to run actions: {exception.message}"
+            ) from exception
     finally:
         shutdown_service.on_shutdown(ws_context)
 
@@ -178,13 +204,56 @@ def get_projects_by_names(
                 for project in ws_context.ws_projects.values()
                 if project.name == project_name
             )
-        except StopIteration:
+        except StopIteration as exception:
             raise RunFailed(
                 f"Project '{projects_names}' not found in working directory '{workdir_path}'"
-            )
+            ) from exception
 
         projects.append(project)
     return projects
+
+
+def resolve_mapped_payload_fields(
+    map_payload_fields: set[str],
+    action_payload: dict[str, typing.Any],
+) -> dict[str, dict[str, typing.Any]]:
+    """Resolve mapped payload fields from saved results.
+
+    Returns a dict keyed by project path string, where each value is a dict
+    of field overrides for that project.
+    """
+    results_dir = pathlib.Path(sys.executable).parent.parent / "cache" / "finecode" / "results"
+    payload_overrides_by_project: dict[str, dict[str, typing.Any]] = {}
+
+    for field_name in map_payload_fields:
+        raw_value = action_payload.get(field_name)
+        if raw_value is None:
+            raise RunFailed(
+                f"Mapped payload field '{field_name}' not found in action payload"
+            )
+
+        action_name, field_path = str(raw_value).split(".", 1)
+        result_file = results_dir / f"{action_name}.json"
+        if not result_file.exists():
+            raise RunFailed(
+                f"Results file '{result_file}' not found for mapped field '{field_name}'"
+            )
+
+        results_by_project: dict[str, typing.Any] = json.loads(result_file.read_text())
+        for project_path, project_result in results_by_project.items():
+            resolved_value = project_result
+            for key in field_path.split("."):
+                if not isinstance(resolved_value, dict):
+                    raise RunFailed(
+                        f"Cannot resolve '{field_path}' in results of '{action_name}' for project '{project_path}'"
+                    )
+                resolved_value = resolved_value.get(key)
+
+            if project_path not in payload_overrides_by_project:
+                payload_overrides_by_project[project_path] = {}
+            payload_overrides_by_project[project_path][field_name] = resolved_value
+
+    return payload_overrides_by_project
 
 
 __all__ = ["run_actions"]

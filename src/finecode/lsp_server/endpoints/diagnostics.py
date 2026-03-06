@@ -12,8 +12,6 @@ from pydantic.dataclasses import dataclass as pydantic_dataclass
 
 from finecode import (
     context,
-    domain,
-    project_analyzer,
     pygls_types_utils,
 )
 from finecode.services import run_service
@@ -63,11 +61,14 @@ async def document_diagnostic_with_full_result(
         response = await run_service.find_action_project_and_run(
             file_path=file_path,
             action_name="lint",
-            # TODO: use payload class
             params={
+                "target": "files",
                 "file_paths": [file_path],
             },
+            run_trigger=run_service.RunActionTrigger.SYSTEM,
+            dev_env=run_service.DevEnv.IDE,
             ws_context=global_state.ws_context,
+            initialize_all_handlers=True,
         )
     except run_service.ActionRunFailed as error:
         # don't throw error because vscode after a few sequential errors will stop
@@ -82,7 +83,7 @@ async def document_diagnostic_with_full_result(
     # (default dataclass constructor doesn't handle nested items, it stores them just
     # as dict)
     result_type = pydantic_dataclass(lint_action.LintRunResult)
-    lint_result: lint_action.LintRunResult = result_type(**response.result)
+    lint_result: lint_action.LintRunResult = result_type(**response.json())
 
     try:
         requested_file_messages = lint_result.messages.pop(str(file_path))
@@ -131,7 +132,10 @@ async def document_diagnostic_with_partial_results(
                 "file_paths": [file_path],
             },
             partial_result_token=partial_result_token,
+            run_trigger=run_service.RunActionTrigger.SYSTEM,
+            dev_env=run_service.DevEnv.IDE,
             ws_context=global_state.ws_context,
+            initialize_all_handlers=True,
         ) as response:
             # LSP defines that the first response should be `DocumentDiagnosticReport`
             # with diagnostics information for requested file and then n responses
@@ -249,7 +253,10 @@ async def run_workspace_diagnostic_with_partial_results(
             params=exec_info.request_data,
             partial_result_token=partial_result_token,
             project_dir_path=exec_info.project_dir_path,
+            run_trigger=run_service.RunActionTrigger.SYSTEM,
+            dev_env=run_service.DevEnv.IDE,
             ws_context=global_state.ws_context,
+            initialize_all_handlers=True,
         ) as response:
             # use pydantic dataclass to convert dict to dataclass instance recursively
             # (default dataclass constructor doesn't handle nested items, it stores them just
@@ -314,7 +321,10 @@ async def workspace_diagnostic_with_full_result(
                         params=exec_info.request_data,
                         project_def=project,
                         ws_context=ws_context,
+                        run_trigger=run_service.RunActionTrigger.SYSTEM,
+                        dev_env=run_service.DevEnv.IDE,
                         preprocess_payload=False,
+                        initialize_all_handlers=True,
                     )
                 )
                 send_tasks.append(task)
@@ -352,47 +362,37 @@ async def _workspace_diagnostic(
     params: types.WorkspaceDiagnosticParams,
 ) -> types.WorkspaceDiagnosticReport | None:
     relevant_projects_paths: list[Path] = run_service.find_all_projects_with_action(
-        action_name="lint", ws_context=global_state.ws_context
+        # check lint_files, because 'lint' is builtin and exists in all projects by default
+        action_name="lint_files_python",
+        ws_context=global_state.ws_context,  # TODO: correct check of name
     )
     exec_info_by_project_dir_path: dict[Path, LintActionExecInfo] = {}
+    actions_by_projects: dict[Path, list[str]] = {}
 
     for project_dir_path in relevant_projects_paths:
-        project = global_state.ws_context.ws_projects[project_dir_path]
         exec_info_by_project_dir_path[project_dir_path] = LintActionExecInfo(
-            project_dir_path=project_dir_path, action_name="lint"
+            project_dir_path=project_dir_path,
+            action_name="lint",
+            request_data={"target": "project", "trigger": "system", "dev_env": "ide"},
         )
-
-    # find which runner is responsible for which files
-    # currently FineCode supports only raw python files, find them in each ws project
-    # exclude projects without finecode
-    # if both parent and child projects have lint action, exclude files of chid from
-    # parent
-    # check which runners are active and run in them
-    #
-    # assign files to projects
-    files_by_projects: dict[
-        Path, list[Path]
-    ] = await project_analyzer.get_files_by_projects(
-        projects_dirs_paths=relevant_projects_paths, ws_context=global_state.ws_context
-    )
-
-    for project_dir_path, files_for_runner in files_by_projects.items():
-        project = global_state.ws_context.ws_projects[project_dir_path]
-        if project.status != domain.ProjectStatus.CONFIG_VALID:
-            logger.warning(
-                f"Project {project_dir_path} has not valid configuration and finecode,"
-                " lint in it will not be executed"
-            )
-            continue
-
-        exec_info = exec_info_by_project_dir_path[project_dir_path]
-        if exec_info.action_name == "lint":
-            exec_info.request_data = {
-                "file_paths": [file_path.as_posix() for file_path in files_for_runner],
-            }
+        actions_by_projects[project_dir_path] = ["lint"]
 
     exec_infos = list(exec_info_by_project_dir_path.values())
     run_with_partial_results: bool = params.partial_result_token is not None
+
+    # linting is resource-intensive task. First start all runners and only then begin
+    # linting to avoid the case, when some of runners start first, take all available
+    # resources and other stay blocked. Starting of environment has timeout and the
+    # letter fail with timeout error.
+    try:
+        await run_service.start_required_environments(
+            actions_by_projects, global_state.ws_context,
+            initialize_all_handlers=True
+        )
+    except run_service.StartingEnvironmentsFailed as exception:
+        logger.error(
+            f"Failed to start required environments for running workspace diagnostic: {exception.message}"
+        )
 
     if run_with_partial_results:
         return await workspace_diagnostic_with_partial_results(
