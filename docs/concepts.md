@@ -15,12 +15,6 @@ class LintAction(code_action.Action[LintRunPayload, LintRunContext, LintRunResul
 
 Actions are identified by their **import path** (e.g. `finecode_extension_api.actions.lint.LintAction`), not by the name used in config. The config name is just a human-readable alias.
 
-Actions can be called from:
-
-- the CLI (`python -m finecode run lint`)
-- the IDE via the LSP server (diagnostics, code actions, formatting)
-- other handlers
-
 ## ActionHandler
 
 An **ActionHandler** is a concrete implementation of an action. Multiple handlers can be registered for a single action. For example, the `lint` action might have handlers for ruff, flake8, and mypy — each independently checking the code.
@@ -76,9 +70,9 @@ A preset contains a `preset.toml` file that declares which handlers to activate 
 
 When configuring an action in `pyproject.toml`, you can control how your configuration relates to preset handlers:
 
-- **Default (additive):** your handlers are added to the preset's handlers.
+- **`handlers_mode = "merge"`:** (default) your handlers are added to the preset's handlers.
 - **`handlers_mode = "replace"`:** your handler list completely replaces the preset's handlers for that action.
-- **`disabled = true` on a handler entry:** disables that specific inherited handler.
+- **`enabled = false` on a handler entry:** disables that specific inherited handler.
 
 ## Project
 

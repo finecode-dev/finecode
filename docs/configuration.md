@@ -55,7 +55,7 @@ handlers = [
 ```toml
 [tool.finecode.action.lint]
 handlers = [
-    { name = "flake8", disabled = true },
+    { name = "flake8", enabled = false },
 ]
 ```
 

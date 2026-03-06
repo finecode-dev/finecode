@@ -63,12 +63,13 @@ markdown_extensions:
       permalink: true
 
 nav:
-  - Home: index.md
-  - Getting Started: getting-started.md
+  - Getting Started:
+      - Welcome to FineCode: index.md
+      - Setup: getting-started.md
+      - IDE and MCP Setup: getting-started-ide-mcp.md
   - Concepts: concepts.md
   - Configuration: configuration.md
   - CLI Reference: cli.md
-  - IDE Integration: ide-integration.md
   - Guides:
       - Creating an Extension: guides/creating-extension.md
       - Creating a Preset: guides/creating-preset.md
@@ -76,3 +77,8 @@ nav:
   - Reference:
       - Built-in Actions: reference/actions.md
       - Extensions: reference/extensions.md
+      - LSP and MCP Architecture: reference/lsp-mcp-architecture.md
+  - Development:
+      - Overview: development.md
+      - API Protocol: api-protocol.md
+      - Developing FineCode: guides/developing-finecode.md

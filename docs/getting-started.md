@@ -90,7 +90,7 @@ python -m finecode run --concurrently lint check_formatting
 
 ## Next steps
 
-- [IDE Integration](ide-integration.md) — set up the VSCode extension for real-time feedback
+- [IDE and MCP Setup](getting-started-ide-mcp.md) — connect FineCode to VSCode and MCP-compatible AI clients
 - [Configuration](configuration.md) — customize tool settings and override handler config
 - [Concepts](concepts.md) — understand how Actions, Handlers, and Presets fit together
 - [Creating an Extension](guides/creating-extension.md) — write your own tool integration

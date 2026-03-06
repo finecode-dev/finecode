@@ -132,7 +132,7 @@ python -m finecode start-lsp --stdio | --socket <port> | --ws [--host <host>] [-
 | `--trace` | Enable verbose logging |
 | `--debug` | Wait for a debugpy client on port 5680 |
 
-The LSP server connects to the **FineCode API server** on startup (starting one if needed). See [IDE Integration — AI agent integration](ide-integration.md#ai-agent-integration-mcp) for details.
+The LSP server connects to the **FineCode API server** on startup (starting one if needed). See [LSP and MCP Architecture](reference/lsp-mcp-architecture.md) for details.
 
 ---
 
@@ -149,21 +149,20 @@ Start the FineCode MCP server on stdio. Connects to a running FineCode API serve
 | `--workdir=<path>` | Workspace root directory (default: current directory). |
 | `--trace` | Enable verbose logging |
 
-Typically started automatically by Claude Code via `.mcp.json` — see [IDE Integration](ide-integration.md#setup-for-claude-code).
+Typically started automatically by MCP-compatible clients (for example, Claude Code) — see [IDE and MCP Setup](getting-started-ide-mcp.md#mcp-setup-for-ai-clients).
 
 ---
 
 ## `start-api-server`
 
-Start the FineCode API server standalone (TCP JSON-RPC). Discovers projects, reads configs, starts extension runners, and listens for client connections. Auto-stops when the last client disconnects.
+Start the FineCode API server standalone (TCP JSON-RPC), listen for client connections. Auto-stops when the last client disconnects.
 
 ```text
-python -m finecode start-api-server [--workdir=<path>] [--trace]
+python -m finecode start-api-server [--trace]
 ```
 
 | Option | Description |
 | --- | --- |
-| `--workdir=<path>` | Workspace root directory (default: current directory) |
 | `--trace` | Enable verbose logging |
 
 Usually started automatically by `start-lsp` or `start-mcp`. Can also be started manually for debugging.
