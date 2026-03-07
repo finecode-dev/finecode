@@ -25,9 +25,9 @@ def map_flake8_check_result_to_lint_message(result: tuple) -> lint_files_action.
     error_code, line_number, column, text, physical_line = result
     return lint_files_action.LintMessage(
         range=lint_files_action.Range(
-            start=lint_files_action.Position(line=line_number, character=column),
+            start=lint_files_action.Position(line=line_number - 1, character=column),
             end=lint_files_action.Position(
-                line=line_number,
+                line=line_number - 1,
                 character=len(physical_line) if physical_line is not None else column,
             ),
         ),

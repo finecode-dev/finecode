@@ -40,6 +40,11 @@ def _register_action_tools(mcp: FastMCP, actions: list[dict]) -> None:
                     action_name,
                     project,
                     params={"file_paths": file_paths} if file_paths else None,
+                    options={
+                        "result_formats": ["json", "string"],
+                        "trigger": "user",
+                        "dev_env": "ai",
+                    }
                 )
             handler.__name__ = action_name
             return handler

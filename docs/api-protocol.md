@@ -333,6 +333,7 @@ Execute an action with streaming partial results. The server sends
   "params": {"file_paths": ["/path/to/file.py"]},
   "partial_result_token": "diag_1",
   "options": {
+    "result_formats": ["json", "string"],
     "trigger": "system",
     "dev_env": "ide"
   }
@@ -341,9 +342,19 @@ Execute an action with streaming partial results. The server sends
 
 Required: `action`, `project`, `partial_result_token`.
 
+Supported `result_formats`: `"json"`, `"string"`, etc. (same as `actions/run`).
+
 **Result:** Same as `actions/run` (the final aggregated result).
 
 During execution, the server sends `actions/partialResult` notifications (see below).
+
+> **Guarantee:** The API server always delivers results via `actions/partialResult`
+> notifications, even when an extension runner does not stream incrementally (i.e.
+> it collects all results internally and returns them as a single final response).
+> In that case the server emits the final result as a partial result notification
+> before returning the aggregated response.  Clients can therefore rely solely on
+> `actions/partialResult` notifications to receive results and safely ignore the
+> response body of this request.
 
 ---
 
@@ -513,10 +524,22 @@ Sent during `actions/runWithPartialResults` execution as results stream in.
 **Params:**
 
 ```json
-{"token": "diag_1", "value": {"messages": {"file.py": [...]}}}
+{
+  "token": "diag_1",
+  "value": {
+    "result_by_format": {
+      "json": {"messages": {"file.py": [...]}},
+      "string": "3 issues found in file.py"
+    }
+  }
+}
 ```
 
 `token` matches the `partial_result_token` from the originating request.
+
+`result_by_format` contains results in all formats requested in the originating
+`actions/runWithPartialResults` params (same structure as `actions/run` response,
+but without `return_code`).
 
 > **Note:** Notifications are delivered only to the client connection that
 > initiated the corresponding `actions/runWithPartialResults` request.  The

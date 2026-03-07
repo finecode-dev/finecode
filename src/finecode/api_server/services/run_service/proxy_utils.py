@@ -151,32 +151,62 @@ async def run_action_and_notify(
     partial_results_task: asyncio.Task,
     run_trigger: runner_client.RunActionTrigger,
     dev_env: runner_client.DevEnv,
+    result_formats: list[runner_client.RunResultFormat] | None = None,
 ) -> runner_client.RunActionResponse:
     try:
-        return await run_action_in_runner(
+        options: dict[str, typing.Any] = {
+            "partial_result_token": partial_result_token,
+            "meta": {"trigger": run_trigger.value, "dev_env": dev_env.value},
+        }
+        if result_formats is not None:
+            options["result_formats"] = result_formats
+        logger.trace(f"run_action_and_notify: sending to runner {runner.readable_id}, action={action_name}, token={partial_result_token}, options_keys={list(options.keys())}")
+        response = await run_action_in_runner(
             action_name=action_name,
             params=params,
             runner=runner,
-            options={
-                "partial_result_token": partial_result_token,
-                "meta": {"trigger": run_trigger.value, "dev_env": dev_env.value},
-            },
+            options=options,
         )
+        logger.trace(f"run_action_and_notify: got response from runner {runner.readable_id}, return_code={response.return_code}, result_formats={list(response.result_by_format.keys())}")
+        return response
     finally:
+        logger.trace(f"run_action_and_notify: ending result_list, cancelling partial_results_task for token={partial_result_token}")
         result_list.end()
         partial_results_task.cancel("Got final result")
 
 
 async def get_partial_results(
-    result_list: AsyncList, partial_result_token: int | str
+    result_list: AsyncList,
+    partial_result_token: int | str,
+    runner: runner_client.ExtensionRunnerInfo,
 ) -> None:
     try:
-        with runner_manager.partial_results.iterator() as iterator:
+        logger.trace(f"get_partial_results: listening on runner {runner.readable_id} for token={partial_result_token}")
+        with runner.partial_results.iterator() as iterator:
             async for partial_result in iterator:
+                logger.trace(f"get_partial_results: received partial from {runner.readable_id}, result_token={partial_result.token}, our_token={partial_result_token}, match={partial_result.token == partial_result_token}")
                 if partial_result.token == partial_result_token:
+                    value_preview = str(partial_result.value)[:200] if partial_result.value else "None"
+                    logger.trace(f"get_partial_results: matched! value preview: {value_preview}")
                     result_list.append(partial_result.value)
     except asyncio.CancelledError:
-        pass
+        logger.trace(f"get_partial_results: cancelled for runner {runner.readable_id} token={partial_result_token}")
+
+
+class RunWithPartialResultsContext:
+    """Holds both the partial results async iterable and the final runner responses.
+
+    ``partials`` is available immediately for iteration.  ``responses`` is
+    populated after the context manager exits (i.e. after all runner tasks
+    complete).
+    """
+
+    def __init__(self, partials: AsyncList[domain.PartialResultRawValue]) -> None:
+        self.partials = partials
+        self.responses: list[runner_client.RunActionResponse] = []
+
+    def __aiter__(self):
+        return self.partials.__aiter__()
 
 
 @contextlib.asynccontextmanager
@@ -189,20 +219,16 @@ async def run_with_partial_results(
     dev_env: runner_client.DevEnv,
     ws_context: context.WorkspaceContext,
     initialize_all_handlers: bool = False,
-) -> collections.abc.AsyncIterator[
-    collections.abc.AsyncIterable[domain.PartialResultRawValue]
-]:
+    result_formats: list[runner_client.RunResultFormat] | None = None,
+) -> collections.abc.AsyncIterator[RunWithPartialResultsContext]:
     logger.trace(f"Run {action_name} in project {project_dir_path}")
 
     result: AsyncList[domain.PartialResultRawValue] = AsyncList()
+    ctx = RunWithPartialResultsContext(partials=result)
     project = ws_context.ws_projects[project_dir_path]
     try:
+        action_tasks: list[asyncio.Task] = []
         async with asyncio.TaskGroup() as tg:
-            partial_results_task = tg.create_task(
-                get_partial_results(
-                    result_list=result, partial_result_token=partial_result_token
-                )
-            )
             action = next(
                 action for action in project.actions if action.name == action_name
             )
@@ -223,20 +249,31 @@ async def run_with_partial_results(
                         f"Runner {env_name} in project {project.dir_path} failed: {exception.message}"
                     ) from exception
 
-                tg.create_task(
+                runner_partial_results_task = tg.create_task(
+                    get_partial_results(
+                        result_list=result,
+                        partial_result_token=partial_result_token,
+                        runner=runner,
+                    )
+                )
+                action_tasks.append(tg.create_task(
                     run_action_and_notify(
                         action_name=action_name,
                         params=params,
                         partial_result_token=partial_result_token,
                         runner=runner,
                         result_list=result,
-                        partial_results_task=partial_results_task,
+                        partial_results_task=runner_partial_results_task,
                         run_trigger=run_trigger,
                         dev_env=dev_env,
+                        result_formats=result_formats,
                     )
-                )
+                ))
 
-            yield result
+            yield ctx
+        # TaskGroup exited — all tasks completed, collect final responses
+        for task in action_tasks:
+            ctx.responses.append(task.result())
     except ExceptionGroup as eg:
         errors: list[str] = []
         for exception in eg.exceptions:

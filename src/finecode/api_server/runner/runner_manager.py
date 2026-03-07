@@ -23,8 +23,6 @@ from finecode.api_server.runner import (
 )
 import finecode_jsonrpc as jsonrpc_client
 from finecode_jsonrpc import _io_thread
-from finecode.api_server.utils import iterable_subscribe
-
 project_changed_callback: (
     typing.Callable[[domain.Project], collections.abc.Coroutine[None, None, None]]
     | None
@@ -32,9 +30,6 @@ project_changed_callback: (
 # get_document: typing.Callable[[], collections.abc.Coroutine] | None = None
 apply_workspace_edit: typing.Callable[[], collections.abc.Coroutine] | None = None
 start_debug_session: typing.Callable[[int], collections.abc.Coroutine] | None = None
-partial_results: iterable_subscribe.IterableSubscribe = (
-    iterable_subscribe.IterableSubscribe()
-)
 
 # reexport
 RunnerFailedToStart = jsonrpc_client.RunnerFailedToStart
@@ -189,7 +184,7 @@ async def _start_extension_runner_process(
     )
 
     async def on_progress(params: _internal_client_types.ProgressParams) -> None:
-        logger.debug(f"Got progress from runner for token: {params.token}")
+        logger.debug(f"Got progress from runner {runner.readable_id} for token: {params.token}")
         try:
             result_value = json.loads(params.value)
         except json.JSONDecodeError as exception:
@@ -199,7 +194,7 @@ async def _start_extension_runner_process(
         partial_result = domain.PartialResult(
             token=params.token, value=result_value
         )
-        partial_results.publish(partial_result)
+        runner.partial_results.publish(partial_result)
 
     runner.client.feature(_internal_client_types.PROGRESS, on_progress)
 

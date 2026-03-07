@@ -8,6 +8,24 @@ from finecode_extension_api import code_action, textstyler
 
 @dataclasses.dataclass
 class Position:
+    """A position in a text document.
+
+    Both ``line`` and ``character`` are **0-based**, matching the LSP specification:
+    - ``line``: 0-based line index (line 0 = first line of the file).
+    - ``character``: 0-based UTF-16 code unit offset within the line.
+
+    Extension authors note: most CLI linters (ruff, mypy, flake8) report 1-based line
+    numbers in their output. You must subtract 1 when building a ``Position`` from such
+    output::
+
+        # ruff JSON: location["row"] is 1-based
+        Position(line=location["row"] - 1, character=location["column"])
+
+    Extensions that receive diagnostics from an embedded LSP server (via
+    ``map_diagnostics_to_lint_messages``) get 0-based values directly from the LSP
+    protocol — do NOT subtract 1 in that case.
+    """
+
     line: int
     character: int
 
@@ -91,8 +109,8 @@ class LintFilesRunResult(code_action.RunActionResult):
                     if message.source is not None:
                         source_str = f" ({message.source})"
                     text.append_styled(file_path_str, bold=True)
-                    text.append(f":{message.range.start.line}")
-                    text.append(f":{message.range.start.character}: ")
+                    text.append(f":{message.range.start.line + 1}")
+                    text.append(f":{message.range.start.character + 1}: ")
                     if message.code is not None:
                         text.append_styled(
                             message.code, foreground=textstyler.Color.RED

@@ -38,8 +38,16 @@ def _snake_to_camel(s: str) -> str:
     return parts[0] + ''.join(word.capitalize() for word in parts[1:])
 
 
+class _NoConvert:
+    """Wrap a value to prevent camelCase conversion of its contents."""
+    def __init__(self, value: typing.Any) -> None:
+        self.value = value
+
+
 def _convert_to_camel_case(obj: typing.Any) -> typing.Any:
     """Recursively convert all snake_case keys to camelCase in dicts/lists."""
+    if isinstance(obj, _NoConvert):
+        return obj.value
     if isinstance(obj, dict):
         return {_snake_to_camel(k): _convert_to_camel_case(v) for k, v in obj.items()}
     elif isinstance(obj, list):
@@ -172,6 +180,42 @@ async def _handle_list_projects(
     return [_project_to_dict(p) for p in ws_context.ws_projects.values()]
 
 
+async def _handle_find_project_for_file(
+    params: dict, ws_context: context.WorkspaceContext
+) -> dict:
+    """Return project name containing a given file.
+
+    It finds the *nearest* project in the
+    workspace that actually "uses finecode" (i.e. has a valid config).  The
+    project is determined purely based on path containment.
+
+    **Params:** ``{"file_path": "/abs/path/to/file"}``
+    **Result:** ``{"project": "project_name"}`` or ``{"project": null}`` if
+    the file does not belong to any suitable project.
+    """
+
+    file_path = pathlib.Path(params["file_path"])
+
+    # iterate over known projects in reverse-sorted order so that nested/child
+    # projects are considered before their parents.  This mirrors the behaviour
+    # in ``find_project_with_action_for_file`` but without any action-specific
+    # checks.
+    sorted_dirs = list(ws_context.ws_projects.keys())
+    # reverse sort by path (string) ensures children come first
+    sorted_dirs.sort(reverse=True)
+
+    for project_dir in sorted_dirs:
+        if file_path.is_relative_to(project_dir):
+            project = ws_context.ws_projects[project_dir]
+            if project.status == domain.ProjectStatus.CONFIG_VALID:
+                return {"project": project.name}
+            # skip projects that aren't using finecode
+            continue
+
+    # not in any project or none of the containing projects are CONFIG_VALID
+    return {"project": None}
+
+
 async def _handle_add_dir(
     params: dict | None, ws_context: context.WorkspaceContext
 ) -> dict:
@@ -271,44 +315,51 @@ async def _handle_run_action(
     action_name = params.get("action")
     project_name = params.get("project")
     action_params = params.get("params", {})
-    config_overrides = params.get("config_overrides")
-    
+    options = params.get("options", {})
+
     if not action_name:
         raise ValueError("action parameter is required")
     if not project_name:
         raise ValueError("project parameter is required")
-    
+
     # Find the project
     project = None
     for proj in ws_context.ws_projects.values():
         if proj.name == project_name:
             project = proj
             break
-    
+
     if project is None:
         raise ValueError(f"Project '{project_name}' not found")
-    
+
     # Import run_service here to avoid circular imports
     from finecode.api_server.services import run_service
-    
+
+    result_format_strs: list[str] = options.get("result_formats", ["json"])
+    result_formats = [
+        run_service.RunResultFormat(fmt)
+        for fmt in result_format_strs
+        if fmt in ("json", "string")
+    ]
+    trigger = run_service.RunActionTrigger(options.get("trigger", "unknown"))
+    dev_env = run_service.DevEnv(options.get("dev_env", "cli"))
+
     try:
         result = await run_service.run_action(
             action_name=action_name,
             params=action_params,
             project_def=project,
             ws_context=ws_context,
-            run_trigger=run_service.RunActionTrigger.SYSTEM,
-            dev_env=run_service.DevEnv.IDE,
+            run_trigger=trigger,
+            dev_env=dev_env,
+            result_formats=result_formats,
             preprocess_payload=True,
             initialize_all_handlers=True,
         )
-        
-        # Extract the result data
-        if result is None:
-            return {}
-        
-        # The result is an ActionRunResult with a .result property
-        return result.result or {}
+        return {
+            "result_by_format": _NoConvert(result.result_by_format),
+            "return_code": result.return_code,
+        }
     except run_service.ActionRunFailed as e:
         raise RuntimeError(f"Action failed: {e}")
 
@@ -322,11 +373,128 @@ from finecode.api_server.services.document_sync import (
 )
 
 
+# -- helpers ---------------------------------------------------------------
+
+def _notify_client(writer: asyncio.StreamWriter, method: str, params: dict) -> None:
+    """Send a notification to a single client only.
+
+    Unlike ``_notify_all_clients`` this helper targets the provided writer,
+    which is useful for streaming partial results back to the request originator
+    without broadcasting to every connected client.
+    """
+    camel_params = _convert_to_camel_case(params)
+    msg = {"jsonrpc": "2.0", "method": method, "params": camel_params}
+    try:
+        _write_message(writer, msg)
+    except Exception:
+        logger.trace("FineCode API: failed to notify client, skipping")
+
+
+# -- Request handlers ------------------------------------------------------
+
+async def _handle_run_with_partial_results(
+    params: dict | None,
+    ws_context: context.WorkspaceContext,
+    writer: asyncio.StreamWriter,
+) -> dict:
+    """Handle the ``actions/runWithPartialResults`` request.
+
+    The handler uses :mod:`partial_results_service` to obtain an async iterator
+    of partial values and forwards them to the requesting client only.  When the
+    iterator completes an aggregated result dict is returned exactly as the
+    ``actions/run`` method would produce.
+    """
+    if params is None:
+        raise ValueError("params required")
+    action_name = params.get("action")
+    token = params.get("partial_result_token")
+    if not action_name or token is None:
+        raise ValueError("action and partial_result_token are required")
+    project_name = params.get("project", "")
+    options = params.get("options", {})
+
+    from finecode.api_server.services import run_service, partial_results_service
+
+    trigger = run_service.RunActionTrigger(options.get("trigger", "system"))
+    dev_env = run_service.DevEnv(options.get("dev_env", "ide"))
+    result_formats = options.get("result_formats", ["json"])
+
+    logger.info(f"runWithPartialResults: action={action_name} project={project_name!r} token={token} formats={result_formats}")
+
+    stream = await partial_results_service.run_action_with_partial_results(
+        action_name=action_name,
+        project_name=project_name,
+        params=params.get("params", {}),
+        partial_result_token=token,
+        run_trigger=trigger,
+        dev_env=dev_env,
+        ws_context=ws_context,
+        result_formats=result_formats,
+    )
+
+    partial_count = 0
+    async for value in stream:
+        partial_count += 1
+        logger.trace(f"runWithPartialResults: sending partial #{partial_count} for token={token}, keys={list(value.keys()) if isinstance(value, dict) else type(value)}")
+        # Wrap the per-format action data to prevent camelCase conversion of result content.
+        protected_value = dict(value)
+        if "result_by_format" in protected_value:
+            protected_value["result_by_format"] = _NoConvert(protected_value["result_by_format"])
+        _notify_client(
+            writer,
+            "actions/partialResult",
+            {"token": token, "value": protected_value},
+        )
+        await writer.drain()
+
+    final = await stream.final_result()
+    logger.trace(f"runWithPartialResults: done, sent {partial_count} partials, final keys={list(final.keys()) if isinstance(final, dict) else type(final)}")
+    # Protect action result data from camelCase conversion.
+    if "result_by_format" in final:
+        final = dict(final)
+        final["result_by_format"] = _NoConvert(final["result_by_format"])
+    return final
+
+
+async def _handle_run_with_partial_results_task(
+    params: dict | None,
+    ws_context: context.WorkspaceContext,
+    writer: asyncio.StreamWriter,
+    req_id: int | str,
+) -> None:
+    """Task to handle the ``actions/runWithPartialResults`` request asynchronously.
+
+    This runs in a separate task to avoid blocking the client handler loop
+    during long-running actions.
+    """
+    try:
+        result = await _handle_run_with_partial_results(
+            params, ws_context, writer
+        )
+        _write_message(writer, _jsonrpc_response(req_id, result))
+        await writer.drain()
+    except _NotImplementedError as exc:
+        _write_message(
+            writer,
+            _jsonrpc_error(req_id, NOT_IMPLEMENTED_CODE, str(exc)),
+        )
+        await writer.drain()
+    except Exception as exc:
+        logger.exception(
+            "FineCode API: error handling actions/runWithPartialResults"
+        )
+        _write_message(
+            writer, _jsonrpc_error(req_id, -32603, str(exc))
+        )
+        await writer.drain()
+
+
 # -- Method dispatch tables ------------------------------------------------
 
 _METHODS: dict[str, MethodHandler] = {
     # workspace/
     "workspace/listProjects": _handle_list_projects,
+    "workspace/findProjectForFile": _handle_find_project_for_file,
     "workspace/addDir": _handle_add_dir,
     "workspace/removeDir": _handle_remove_dir,
     # actions/
@@ -334,7 +502,7 @@ _METHODS: dict[str, MethodHandler] = {
     "actions/getTree": _handle_get_tree,
     "actions/run": _handle_run_action,
     "actions/runBatch": _stub("actions/runBatch"),
-    "actions/runWithPartialResults": _stub("actions/runWithPartialResults"),
+    # (runWithPartialResults is handled specially in _handle_client)
     "actions/reload": _stub("actions/reload"),
     # runners:
     "runners/list": _stub("runners/list"),
@@ -361,6 +529,7 @@ _no_client_timeout_task: asyncio.Task | None = None
 _server: asyncio.Server | None = None
 _discovery_file: pathlib.Path | None = None
 _had_client: bool = False
+_running_partial_result_tasks: dict[asyncio.StreamWriter, set[asyncio.Task]] = {}
 
 
 async def _schedule_auto_stop() -> None:
@@ -436,6 +605,26 @@ async def _handle_client(
                 continue
 
             # Requests (has id) — dispatch and respond.
+            # ``actions/runWithPartialResults`` is handled specially because it
+            # needs access to the writer in order to stream notifications back to
+            # the requesting client only.  Any other method uses the generic
+            # _METHODS table.
+            if method == "actions/runWithPartialResults":
+                # Spawn a task to handle this long-running request without blocking
+                # the client handler loop. This allows the client to send other
+                # requests while this action is running.
+                task = asyncio.create_task(
+                    _handle_run_with_partial_results_task(
+                        params, ws_context, writer, req_id
+                    )
+                )
+                # Track the task associated with this client
+                if writer not in _running_partial_result_tasks:
+                    _running_partial_result_tasks[writer] = set()
+                _running_partial_result_tasks[writer].add(task)
+                task.add_done_callback(lambda t: _running_partial_result_tasks[writer].discard(t) if writer in _running_partial_result_tasks else None)
+                continue
+
             handler = _METHODS.get(method)
             if handler is None:
                 _write_message(
@@ -465,6 +654,13 @@ async def _handle_client(
     finally:
         logger.info(f"FineCode API: client disconnected ({peer})")
         _connected_clients.discard(writer)
+        
+        # Cancel any running partial result tasks for this client
+        if writer in _running_partial_result_tasks:
+            for task in _running_partial_result_tasks[writer]:
+                task.cancel()
+            del _running_partial_result_tasks[writer]
+        
         writer.close()
         await writer.wait_closed()
 
@@ -596,6 +792,12 @@ def stop() -> None:
         except OSError:
             pass
         _discovery_file = None
+
+    # Cancel any running partial result tasks
+    for tasks in _running_partial_result_tasks.values():
+        for task in tasks:
+            task.cancel()
+    _running_partial_result_tasks.clear()
 
 
 # ---------------------------------------------------------------------------

@@ -16,6 +16,7 @@ from loguru import logger
 
 import finecode.api_server.domain as domain
 from finecode.api_server.runner import _internal_client_types, _internal_client_api
+from finecode.api_server.utils.iterable_subscribe import IterableSubscribe
 import finecode_jsonrpc as jsonrpc_client
 
 
@@ -44,6 +45,9 @@ class ExtensionRunnerInfo:
     initialized_event: asyncio.Event
     # e.g. if there is no venv for env, client can be None
     client: jsonrpc_client.JsonRpcClient | None = None
+    partial_results: IterableSubscribe = dataclasses.field(
+        default_factory=IterableSubscribe
+    )
 
     @property
     def readable_id(self) -> str:
@@ -153,6 +157,33 @@ async def run_action(
         raise ActionRunStopped(message=result_by_format)
 
     return RunActionResponse(result_by_format=result_by_format, return_code=return_code)
+
+
+async def merge_results(
+    runner: ExtensionRunnerInfo,
+    action_name: str,
+    results: list[dict],
+) -> dict:
+    if not runner.initialized_event.is_set():
+        await runner.initialized_event.wait()
+
+    if runner.status != RunnerStatus.RUNNING:
+        raise ActionRunFailed(
+            f"Runner {runner.readable_id} is not running: {runner.status}"
+        )
+
+    response = await runner.client.send_request(
+        method=_internal_client_types.WORKSPACE_EXECUTE_COMMAND,
+        params=_internal_client_types.ExecuteCommandParams(
+            command="actions/mergeResults",
+            arguments=[action_name, results],
+        ),
+        timeout=None,
+    )
+    command_result = response.result
+    if "error" in command_result:
+        raise ActionRunFailed(command_result["error"])
+    return command_result["merged"]
 
 
 async def reload_action(runner: ExtensionRunnerInfo, action_name: str) -> None:
@@ -269,6 +300,7 @@ __all__ = [
     "RunActionResponse",
     "RunResultFormat",
     "run_action",
+    "merge_results",
     "reload_action",
     "resolve_package_path",
     "RunnerConfig",

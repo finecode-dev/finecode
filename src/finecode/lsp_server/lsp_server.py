@@ -264,21 +264,27 @@ async def _on_initialized(ls: LanguageServer, params: types.InitializedParams):
         return types.WorkspaceDiagnosticReportPartialResult(items=items)
 
     async def on_partial_result(params: dict) -> None:
-        token = params.get("partial_result_token")
+        token = params.get("token")
         value = params.get("value")
-        
+
         if token is None or value is None:
             logger.error("Invalid partial result notification: missing token or value")
             return
-        
-        action, endpoint_type = global_state.partial_result_tokens.pop(token, (None, None))
+
+        # TODO: remove mapping either after last partial or after final result
+        action, endpoint_type = global_state.partial_result_tokens.get(token, (None, None))
         if not action or not endpoint_type:
             logger.error(f"No mapping found for partial result token {token}")
             return
-        
+
         if action == "lint":
+            result_by_format = value.get("resultByFormat") or {}
+            json_result = result_by_format.get("json")
+            if json_result is None:
+                logger.error(f"No json result in partial result for token {token}")
+                return
             result_type = pydantic_dataclass(lint_action.LintRunResult)
-            lint_result: lint_action.LintRunResult = result_type(**value)
+            lint_result: lint_action.LintRunResult = result_type(**json_result)
             
             if endpoint_type == "document_diagnostic":
                 lsp_partial = _map_lint_to_document_diagnostic_partial(lint_result)
@@ -288,7 +294,7 @@ async def _on_initialized(ls: LanguageServer, params: types.InitializedParams):
                 logger.error(f"Unknown endpoint_type {endpoint_type} for action {action}")
                 return
             
-            await ls.progress(types.ProgressParams(token=token, value=lsp_partial))
+            ls.progress(types.ProgressParams(token=token, value=lsp_partial))
         else:
             logger.warning(f"Unsupported action for partial results: {action}")
 

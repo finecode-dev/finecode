@@ -76,7 +76,7 @@ async def run_action(
         last_run_id += 1
 
     logger.trace(
-        f"Run action '{action_def.name}', run id: {run_id}, partial result token: {partial_result_token}"
+        f"run_action: action='{action_def.name}', run_id={run_id}, partial_result_token={partial_result_token}"
     )
 
     # TODO: check whether config is set: this will be solved by passing initial
@@ -144,6 +144,7 @@ async def run_action(
 
     try:
         send_partial_results = partial_result_token is not None
+        logger.trace(f"R{run_id} | send_partial_results={send_partial_results}, partial_result_token={partial_result_token}, payload_type={type(payload).__name__}, is_iterable={isinstance(payload, collections.abc.AsyncIterable)}")
         with action_exec_info.process_executor.activate():
             # action payload can be iterable or not
             if isinstance(payload, collections.abc.AsyncIterable):
@@ -417,11 +418,12 @@ def create_action_exec_info(action: domain.ActionDeclaration) -> domain.ActionEx
 
     payload_type = action_type_def.PAYLOAD_TYPE
     run_context_type = action_type_def.RUN_CONTEXT_TYPE
+    result_type = action_type_def.RESULT_TYPE
 
     # TODO: validate that classes and correct subclasses?
 
     action_exec_info = domain.ActionExecInfo(
-        payload_type=payload_type, run_context_type=run_context_type
+        payload_type=payload_type, run_context_type=run_context_type, result_type=result_type
     )
     return action_exec_info
 

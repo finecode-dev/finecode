@@ -141,16 +141,13 @@ class ApiClient:
         project: str,
         params: dict | None = None,
         config_overrides: dict | None = None,
+        options: dict | None = None,
     ) -> dict:
         """Run an action on a project."""
         body: dict = {
             "action": action,
             "project": project,
-            "options": {
-                "result_formats": ["json", "string"],
-                "trigger": "user",
-                "dev_env": "ai",
-            },
+            "options": options,
         }
         if params:
             body["params"] = params

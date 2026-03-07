@@ -18,7 +18,7 @@ DIAGNOSTIC_RE = re.compile(
 ERROR_CODE_BASE_URL = "https://mypy.readthedocs.io/en/latest/_refs.html#code-"
 SEE_HREF_PREFIX = "See https://mypy.readthedocs.io"
 SEE_PREFIX_LEN = len("See ")
-LINE_OFFSET = 0
+LINE_OFFSET = 1
 CHAR_OFFSET = 1
 NOTE_CODE = "note"
 

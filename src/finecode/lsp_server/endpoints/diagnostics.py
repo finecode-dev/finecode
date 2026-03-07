@@ -37,11 +37,11 @@ def map_lint_message_to_diagnostic(
     return types.Diagnostic(
         range=types.Range(
             types.Position(
-                lint_message.range.start.line - 1,
+                lint_message.range.start.line,
                 lint_message.range.start.character,
             ),
             types.Position(
-                lint_message.range.end.line - 1,
+                lint_message.range.end.line,
                 lint_message.range.end.character,
             ),
         ),
@@ -97,8 +97,11 @@ async def document_diagnostic_with_full_result(
     # use pydantic dataclass to convert dict to dataclass instance recursively
     # (default dataclass constructor doesn't handle nested items, it stores them just
     # as dict)
+    json_result = (response.get("resultByFormat") or {}).get("json")
+    if json_result is None:
+        return None
     result_type = pydantic_dataclass(lint_action.LintRunResult)
-    lint_result: lint_action.LintRunResult = result_type(**response)
+    lint_result: lint_action.LintRunResult = result_type(**json_result)
 
     try:
         requested_file_messages = lint_result.messages.pop(str(file_path))
@@ -155,7 +158,7 @@ async def document_diagnostic_with_partial_results(
                 "project": project_name,
                 "params": {"file_paths": [str(file_path)]},
                 "partial_result_token": partial_result_token,
-                "options": {"trigger": "system", "dev_env": "ide"},
+                "options": {"result_formats": ["json"], "trigger": "system", "dev_env": "ide"},
             },
         )
     except Exception as error:
@@ -219,7 +222,7 @@ async def run_workspace_diagnostic_with_partial_results(
                 "project": "",  # empty project = all relevant projects
                 "params": {"target": "project"},
                 "partial_result_token": partial_result_token,
-                "options": {"trigger": "system", "dev_env": "ide"},
+                "options": {"result_formats": ["json"], "trigger": "system", "dev_env": "ide"},
             },
         )
     except Exception as error:
@@ -266,8 +269,11 @@ async def workspace_diagnostic_with_full_result() -> types.WorkspaceDiagnosticRe
     # use pydantic dataclass to convert dict to dataclass instance recursively
     # (default dataclass constructor doesn't handle nested items, it stores them just
     # as dict)
+    json_result = (response.get("resultByFormat") or {}).get("json")
+    if not json_result:
+        return types.WorkspaceDiagnosticReport(items=[])
     result_type = pydantic_dataclass(lint_action.LintRunResult)
-    lint_result: lint_action.LintRunResult = result_type(**response)
+    lint_result: lint_action.LintRunResult = result_type(**json_result)
 
     items: list[types.WorkspaceDocumentDiagnosticReport] = []
     for file_path_str, lint_messages in lint_result.messages.items():
