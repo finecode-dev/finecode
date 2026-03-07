@@ -373,6 +373,91 @@ from finecode.api_server.services.document_sync import (
 )
 
 
+async def _handle_actions_reload(
+    params: dict | None, ws_context: context.WorkspaceContext
+) -> dict:
+    """Reload an action's handlers in all relevant extension runners.
+
+    Params: ``{"action_node_id": "project_path::action_name"}``
+    Result: ``{}``
+    """
+    from finecode.api_server.runner import runner_client
+
+    params = params or {}
+    action_node_id = params.get("action_node_id", "")
+    parts = action_node_id.split("::")
+    if len(parts) < 2:
+        raise ValueError(f"Invalid action_node_id: {action_node_id!r}")
+
+    project_path = pathlib.Path(parts[0])
+    action_name = parts[1]
+
+    runners_by_env = ws_context.ws_projects_extension_runners.get(project_path, {})
+    for runner in runners_by_env.values():
+        await runner_client.reload_action(runner, action_name)
+
+    return {}
+
+
+async def _handle_runners_list(
+    params: dict | None, ws_context: context.WorkspaceContext
+) -> dict:
+    """List all extension runners and their status.
+
+    Result: ``{"runners": [{"project_path", "env_name", "status", "readable_id"}]}``
+    """
+    from finecode.api_server.runner import runner_client
+
+    runners = []
+    for project_path, runners_by_env in ws_context.ws_projects_extension_runners.items():
+        for env_name, runner in runners_by_env.items():
+            runners.append({
+                "project_path": str(project_path),
+                "env_name": env_name,
+                "status": runner.status.name,
+                "readable_id": runner.readable_id,
+            })
+    return {"runners": runners}
+
+
+async def _handle_runners_restart(
+    params: dict | None, ws_context: context.WorkspaceContext
+) -> dict:
+    """Restart a specific extension runner.
+
+    Params: ``{"runner_working_dir": "/abs/path", "env_name": "dev_workspace", "debug": false}``
+    Result: ``{}``
+    """
+    from finecode.api_server.runner import runner_manager
+
+    params = params or {}
+    runner_working_dir = params.get("runner_working_dir")
+    env_name = params.get("env_name")
+    debug = params.get("debug", False)
+
+    if not runner_working_dir or not env_name:
+        raise ValueError("runner_working_dir and env_name are required")
+
+    await runner_manager.restart_extension_runner(
+        runner_working_dir_path=pathlib.Path(runner_working_dir),
+        env_name=env_name,
+        ws_context=ws_context,
+        debug=debug,
+    )
+    return {}
+
+
+async def _handle_server_reset(
+    params: dict | None, ws_context: context.WorkspaceContext
+) -> dict:
+    """Reset the server state.
+
+    Result: ``{}``
+    """
+    logger.info("FineCode API: server reset requested")
+    return {}
+
+
 # -- helpers ---------------------------------------------------------------
 
 def _notify_client(writer: asyncio.StreamWriter, method: str, params: dict) -> None:
@@ -503,11 +588,12 @@ _METHODS: dict[str, MethodHandler] = {
     "actions/run": _handle_run_action,
     "actions/runBatch": _stub("actions/runBatch"),
     # (runWithPartialResults is handled specially in _handle_client)
-    "actions/reload": _stub("actions/reload"),
+    "actions/reload": _handle_actions_reload,
     # runners:
-    "runners/list": _stub("runners/list"),
-    "runners/restart": _stub("runners/restart"),
+    "runners/list": _handle_runners_list,
+    "runners/restart": _handle_runners_restart,
     # server/
+    "server/reset": _handle_server_reset,
     "server/shutdown": _stub("server/shutdown"),
 }
 
