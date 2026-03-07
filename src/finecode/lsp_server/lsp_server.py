@@ -16,7 +16,7 @@ from finecode.lsp_server.endpoints import action_tree as action_tree_endpoints
 # from finecode.lsp_server.endpoints import code_lens as code_lens_endpoints
 from finecode.lsp_server.endpoints import diagnostics as diagnostics_endpoints
 from finecode.lsp_server.endpoints import document_sync as document_sync_endpoints
-# from finecode.lsp_server.endpoints import formatting as formatting_endpoints
+from finecode.lsp_server.endpoints import formatting as formatting_endpoints
 # from finecode.lsp_server.endpoints import inlay_hints as inlay_hints_endpoints
 
 
@@ -48,18 +48,18 @@ def create_lsp_server() -> CustomLanguageServer:
     register_workspace_dirs_feature(_workspace_did_change_workspace_folders)
 
     # Formatting
-    # register_formatting_feature = server.feature(types.TEXT_DOCUMENT_FORMATTING)
-    # register_formatting_feature(formatting_endpoints.format_document)
+    register_formatting_feature = server.feature(types.TEXT_DOCUMENT_FORMATTING)
+    register_formatting_feature(formatting_endpoints.format_document)
 
-    # register_range_formatting_feature = server.feature(
-    #     types.TEXT_DOCUMENT_RANGE_FORMATTING
-    # )
-    # register_range_formatting_feature(formatting_endpoints.format_range)
+    register_range_formatting_feature = server.feature(
+        types.TEXT_DOCUMENT_RANGE_FORMATTING
+    )
+    register_range_formatting_feature(formatting_endpoints.format_range)
 
-    # register_ranges_formatting_feature = server.feature(
-    #     types.TEXT_DOCUMENT_RANGES_FORMATTING
-    # )
-    # register_ranges_formatting_feature(formatting_endpoints.format_ranges)
+    register_ranges_formatting_feature = server.feature(
+        types.TEXT_DOCUMENT_RANGES_FORMATTING
+    )
+    register_ranges_formatting_feature(formatting_endpoints.format_ranges)
 
     # document sync
     register_document_did_open_feature = server.feature(types.TEXT_DOCUMENT_DID_OPEN)
