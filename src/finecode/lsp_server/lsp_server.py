@@ -10,7 +10,7 @@ from finecode_extension_runner.lsp_server import CustomLanguageServer
 
 from finecode.api_server import api_server
 from finecode.api_client import ApiClient
-from finecode.lsp_server import global_state, schemas
+from finecode.lsp_server import global_state
 from finecode.lsp_server.endpoints import action_tree as action_tree_endpoints
 from finecode.lsp_server.endpoints import code_actions as code_actions_endpoints
 from finecode.lsp_server.endpoints import code_lens as code_lens_endpoints
@@ -114,34 +114,34 @@ def create_lsp_server() -> CustomLanguageServer:
     register_list_actions_cmd = server.command("finecode.getActions")
     register_list_actions_cmd(action_tree_endpoints.list_actions)
 
-    # register_list_actions_for_position_cmd = server.command(
-    #     "finecode.getActionsForPosition"
-    # )
-    # register_list_actions_for_position_cmd(
-    #     action_tree_endpoints.list_actions_for_position
-    # )
+    register_list_actions_for_position_cmd = server.command(
+        "finecode.getActionsForPosition"
+    )
+    register_list_actions_for_position_cmd(
+        action_tree_endpoints.list_actions_for_position
+    )
 
-    # register_run_action_on_file_cmd = server.command("finecode.runActionOnFile")
-    # register_run_action_on_file_cmd(action_tree_endpoints.run_action_on_file)
+    register_run_action_on_file_cmd = server.command("finecode.runActionOnFile")
+    register_run_action_on_file_cmd(action_tree_endpoints.run_action_on_file)
 
-    # register_run_action_on_project_cmd = server.command("finecode.runActionOnProject")
-    # register_run_action_on_project_cmd(action_tree_endpoints.run_action_on_project)
+    register_run_action_on_project_cmd = server.command("finecode.runActionOnProject")
+    register_run_action_on_project_cmd(action_tree_endpoints.run_action_on_project)
 
-    # register_reload_action_cmd = server.command("finecode.reloadAction")
-    # register_reload_action_cmd(action_tree_endpoints.reload_action)
+    register_reload_action_cmd = server.command("finecode.reloadAction")
+    register_reload_action_cmd(action_tree_endpoints.reload_action)
 
-    # register_reset_cmd = server.command("finecode.reset")
-    # register_reset_cmd(reset)
+    register_reset_cmd = server.command("finecode.reset")
+    register_reset_cmd(reset)
 
-    # register_restart_extension_runner_cmd = server.command(
-    #     "finecode.restartExtensionRunner"
-    # )
-    # register_restart_extension_runner_cmd(restart_extension_runner)
-    
-    # register_restart_and_debug_extension_runner_cmd = server.command(
-    #     "finecode.restartAndDebugExtensionRunner"
-    # )
-    # register_restart_and_debug_extension_runner_cmd(restart_and_debug_extension_runner)
+    register_restart_extension_runner_cmd = server.command(
+        "finecode.restartExtensionRunner"
+    )
+    register_restart_extension_runner_cmd(restart_extension_runner)
+
+    register_restart_and_debug_extension_runner_cmd = server.command(
+        "finecode.restartAndDebugExtensionRunner"
+    )
+    register_restart_and_debug_extension_runner_cmd(restart_and_debug_extension_runner)
 
     register_shutdown_feature = server.feature(types.SHUTDOWN)
     register_shutdown_feature(_on_shutdown)
@@ -345,34 +345,49 @@ async def reset(ls: LanguageServer, params):
     logger.info("Reset WM")
     await global_state.server_initialized.wait()
 
+    if global_state.api_client is None:
+        logger.error("Reset requested but API client not connected")
+        return
+
+    await global_state.api_client.request("server/reset", {})
+
 
 async def restart_extension_runner(ls: LanguageServer, tree_node, param2):
     logger.info(f"restart extension runner {tree_node}")
     await global_state.server_initialized.wait()
 
+    if global_state.api_client is None:
+        logger.error("Restart runner requested but API client not connected")
+        return
+
     runner_id = tree_node['projectPath']
     splitted_runner_id = runner_id.split('::')
     runner_working_dir_str = splitted_runner_id[0]
-    runner_working_dir_path = Path(runner_working_dir_str)
     env_name = splitted_runner_id[-1]
 
-    # TODO
-    # await runner_manager.restart_extension_runner(runner_working_dir_path=runner_working_dir_path, env_name=env_name, ws_context=global_state.ws_context)
+    await global_state.api_client.request(
+        "runners/restart",
+        {"runner_working_dir": runner_working_dir_str, "env_name": env_name},
+    )
 
 
 async def restart_and_debug_extension_runner(ls: LanguageServer, tree_node, params2):
     logger.info(f"restart and debug extension runner {tree_node} {params2}")
     await global_state.server_initialized.wait()
 
+    if global_state.api_client is None:
+        logger.error("Restart+debug runner requested but API client not connected")
+        return
+
     runner_id = tree_node['projectPath']
     splitted_runner_id = runner_id.split('::')
     runner_working_dir_str = splitted_runner_id[0]
-    runner_working_dir_path = Path(runner_working_dir_str)
     env_name = splitted_runner_id[-1]
 
-    logger.info(f'start debugging {runner_working_dir_path} {runner_id} {env_name}')
-    # TODO
-    # await runner_manager.restart_extension_runner(runner_working_dir_path=runner_working_dir_path, env_name=env_name, ws_context=global_state.ws_context, debug=True)
+    await global_state.api_client.request(
+        "runners/restart",
+        {"runner_working_dir": runner_working_dir_str, "env_name": env_name, "debug": True},
+    )
 
 
 async def send_user_message_notification(

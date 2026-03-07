@@ -14,12 +14,92 @@ async def list_actions(ls: LanguageServer, params):
     # if the list contains only one element. Test after migration from pygls
     parent_node_id = params  # params[0]
 
-    # Prefer API server if connected.
     if global_state.api_client is None:
         raise Exception()
 
     response = await global_state.api_client.get_tree(parent_node_id)
     return response
+
+
+async def list_actions_for_position(ls: LanguageServer, params):
+    logger.info(f"list_actions_for_position {params}")
+    await global_state.server_initialized.wait()
+
+    if global_state.api_client is None:
+        raise Exception()
+
+    response = await global_state.api_client.get_tree(None)
+    return response
+
+
+async def run_action_on_file(ls: LanguageServer, params):
+    logger.info(f"run action on file {params}")
+    await global_state.server_initialized.wait()
+
+    if global_state.api_client is None:
+        raise Exception()
+
+    params_dict = params[0]
+    action_node_id = params_dict["projectPath"]
+    action_node_id_parts = action_node_id.split("::")
+    project_path_str = action_node_id_parts[0]
+    action_name = action_node_id_parts[1]
+
+    document_meta = await ls.protocol.send_request_async(
+        method="editor/documentMeta", params={}
+    )
+    if document_meta is None:
+        return None
+
+    run_params: dict = {"file_paths": [document_meta.uri.path], "target": "files"}
+    if action_name == "format":
+        run_params["save"] = False
+
+    response = await global_state.api_client.run_action(
+        action=action_name,
+        project=project_path_str,
+        params=run_params,
+        options={"trigger": "user", "dev_env": "ide"},
+    )
+    return response
+
+
+async def run_action_on_project(ls: LanguageServer, params):
+    logger.info(f"run action on project {params}")
+    await global_state.server_initialized.wait()
+
+    if global_state.api_client is None:
+        raise Exception()
+
+    params_dict = params[0]
+    action_node_id = params_dict["projectPath"]
+    action_node_id_parts = action_node_id.split("::")
+    project_path_str = action_node_id_parts[0]
+    action_name = action_node_id_parts[1]
+
+    response = await global_state.api_client.run_action(
+        action=action_name,
+        project=project_path_str,
+        params={"target": "project"},
+        options={"trigger": "user", "dev_env": "ide"},
+    )
+    return response
+
+
+async def reload_action(ls: LanguageServer, params):
+    logger.info(f"reload action {params}")
+    await global_state.server_initialized.wait()
+
+    if global_state.api_client is None:
+        raise Exception()
+
+    params_dict = params[0]
+    action_node_id = params_dict["projectPath"]
+
+    await global_state.api_client.request(
+        "actions/reload", {"action_node_id": action_node_id}
+    )
+    return {}
 
 
 # async def list_actions_for_position(ls: LanguageServer, params):
