@@ -12,12 +12,12 @@ from finecode.api_server import api_server
 from finecode.api_client import ApiClient
 from finecode.lsp_server import global_state, schemas
 from finecode.lsp_server.endpoints import action_tree as action_tree_endpoints
-# from finecode.lsp_server.endpoints import code_actions as code_actions_endpoints
-# from finecode.lsp_server.endpoints import code_lens as code_lens_endpoints
+from finecode.lsp_server.endpoints import code_actions as code_actions_endpoints
+from finecode.lsp_server.endpoints import code_lens as code_lens_endpoints
 from finecode.lsp_server.endpoints import diagnostics as diagnostics_endpoints
 from finecode.lsp_server.endpoints import document_sync as document_sync_endpoints
 from finecode.lsp_server.endpoints import formatting as formatting_endpoints
-# from finecode.lsp_server.endpoints import inlay_hints as inlay_hints_endpoints
+from finecode.lsp_server.endpoints import inlay_hints as inlay_hints_endpoints
 
 
 def position_from_client_units(
@@ -77,20 +77,20 @@ def create_lsp_server() -> CustomLanguageServer:
     register_document_did_close_feature(document_sync_endpoints.document_did_close)
 
     # code actions
-    # register_document_code_action_feature = server.feature(
-    #     types.TEXT_DOCUMENT_CODE_ACTION
-    # )
-    # register_document_code_action_feature(code_actions_endpoints.document_code_action)
+    register_document_code_action_feature = server.feature(
+        types.TEXT_DOCUMENT_CODE_ACTION
+    )
+    register_document_code_action_feature(code_actions_endpoints.document_code_action)
 
-    # register_code_action_resolve_feature = server.feature(types.CODE_ACTION_RESOLVE)
-    # register_code_action_resolve_feature(code_actions_endpoints.code_action_resolve)
+    register_code_action_resolve_feature = server.feature(types.CODE_ACTION_RESOLVE)
+    register_code_action_resolve_feature(code_actions_endpoints.code_action_resolve)
 
     # code lens
-    # register_document_code_lens_feature = server.feature(types.TEXT_DOCUMENT_CODE_LENS)
-    # register_document_code_lens_feature(code_lens_endpoints.document_code_lens)
+    register_document_code_lens_feature = server.feature(types.TEXT_DOCUMENT_CODE_LENS)
+    register_document_code_lens_feature(code_lens_endpoints.document_code_lens)
 
-    # register_code_lens_resolve_feature = server.feature(types.CODE_LENS_RESOLVE)
-    # register_code_lens_resolve_feature(code_lens_endpoints.code_lens_resolve)
+    register_code_lens_resolve_feature = server.feature(types.CODE_LENS_RESOLVE)
+    register_code_lens_resolve_feature(code_lens_endpoints.code_lens_resolve)
 
     # diagnostics
     register_text_document_diagnostic_feature = server.feature(
@@ -102,13 +102,13 @@ def create_lsp_server() -> CustomLanguageServer:
     register_workspace_diagnostic_feature(diagnostics_endpoints.workspace_diagnostic)
 
     # inline hints
-    # register_document_inlay_hint_feature = server.feature(
-    #     types.TEXT_DOCUMENT_INLAY_HINT
-    # )
-    # register_document_inlay_hint_feature(inlay_hints_endpoints.document_inlay_hint)
+    register_document_inlay_hint_feature = server.feature(
+        types.TEXT_DOCUMENT_INLAY_HINT
+    )
+    register_document_inlay_hint_feature(inlay_hints_endpoints.document_inlay_hint)
 
-    # register_inlay_hint_feature = server.feature(types.INLAY_HINT_RESOLVE)
-    # register_inlay_hint_feature(inlay_hints_endpoints.inlay_hint_resolve)
+    register_inlay_hint_feature = server.feature(types.INLAY_HINT_RESOLVE)
+    register_inlay_hint_feature(inlay_hints_endpoints.inlay_hint_resolve)
 
     # Finecode commands exposed to the IDE
     register_list_actions_cmd = server.command("finecode.getActions")
