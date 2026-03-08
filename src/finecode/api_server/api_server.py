@@ -181,6 +181,27 @@ async def _handle_list_projects(
     return [_project_to_dict(p) for p in ws_context.ws_projects.values()]
 
 
+async def _handle_get_project_raw_config(
+    params: dict | None, ws_context: context.WorkspaceContext
+) -> dict:
+    """Return the resolved raw config for a project by name.
+
+    Params: ``{"project": "project_name"}``
+    Result: ``{"raw_config": {...}}``
+    """
+    params = params or {}
+    project_name = params.get("project")
+    if not project_name:
+        raise ValueError("project parameter is required")
+
+    for project_dir_path, project in ws_context.ws_projects.items():
+        if project.name == project_name:
+            raw_config = ws_context.ws_projects_raw_configs.get(project_dir_path, {})
+            return _NoConvert({"raw_config": raw_config})
+
+    raise ValueError(f"Project '{project_name}' not found")
+
+
 async def _handle_find_project_for_file(
     params: dict, ws_context: context.WorkspaceContext
 ) -> dict:
@@ -792,6 +813,7 @@ _METHODS: dict[str, MethodHandler] = {
     "workspace/addDir": _handle_add_dir,
     "workspace/removeDir": _handle_remove_dir,
     "workspace/setConfigOverrides": _handle_set_config_overrides,
+    "workspace/getProjectRawConfig": _handle_get_project_raw_config,
     # actions/
     "actions/list": _handle_list_actions,
     "actions/getTree": _handle_get_tree,

@@ -5,7 +5,7 @@ import typing
 
 import click
 
-from finecode.api_client import ApiClient
+from finecode.api_client import ApiClient, ApiError
 from finecode.api_server import api_server
 from finecode.api_server.runner import runner_client
 from finecode.cli_app import utils
@@ -53,7 +53,8 @@ async def run_actions(
                         "Warning: --config overrides are ignored in --shared-server mode. ",
                         err=True,
                     )
-
+            # TODO: could it be optimized: if projects are provided, parse only them?
+            # the same also in other CLI commands
             await client.add_dir(workdir_path)
 
             params_by_project: dict[str, dict[str, typing.Any]] = {}
@@ -78,7 +79,7 @@ async def run_actions(
                         "dev_env": "cli",
                     },
                 )
-            except RuntimeError as exc:
+            except ApiError as exc:
                 raise RunFailed(str(exc)) from exc
 
             return _build_run_result(batch_result)

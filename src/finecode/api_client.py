@@ -19,6 +19,26 @@ from loguru import logger
 CONTENT_LENGTH_HEADER = "Content-Length: "
 
 
+class ApiError(Exception):
+    """Base class for API client errors."""
+
+
+class ApiServerError(ApiError):
+    """Server returned a JSON-RPC error response."""
+
+    def __init__(self, code: int, message: str) -> None:
+        self.code = code
+        super().__init__(f"API error ({code}): {message}")
+
+
+class ApiResponseError(ApiError):
+    """Server returned an unexpected or malformed response."""
+
+    def __init__(self, method: str, detail: str) -> None:
+        self.method = method
+        super().__init__(f"Unexpected response for '{method}': {detail}")
+
+
 async def _read_message(reader: asyncio.StreamReader) -> dict | None:
     """Read one Content-Length framed JSON-RPC message. Returns None on EOF."""
     header_line = await reader.readline()
@@ -43,6 +63,11 @@ class ApiClient:
     After connect(), a background reader loop dispatches incoming messages:
     - Responses (with ``id``) resolve the matching pending request future.
     - Notifications (without ``id``) are dispatched to registered callbacks.
+
+    Errors:
+    - ``ApiServerError``: the server returned a JSON-RPC error.
+    - ``ApiResponseError``: the server response was missing an expected field.
+    - ``ConnectionError``: the connection was lost.
     """
 
     def __init__(self) -> None:
@@ -110,7 +135,23 @@ class ApiClient:
             "workspace/findProjectForFile", {"file_path": file_path}
         )
         # server returns {"project": name | None}
+        if not isinstance(result, dict):
+            raise ApiResponseError(
+                "workspace/findProjectForFile", f"expected dict, got {type(result).__name__}"
+            )
         return result.get("project")
+
+    async def get_project_raw_config(self, project: str) -> dict:
+        """Return the resolved raw config for a project by name."""
+        result = await self.request(
+            "workspace/getProjectRawConfig", {"project": project}
+        )
+        if not isinstance(result, dict) or "raw_config" not in result:
+            raise ApiResponseError(
+                "workspace/getProjectRawConfig",
+                f"missing 'raw_config' field, got {result!r}",
+            )
+        return result["raw_config"]
 
     async def list_actions(self, project: str | None = None) -> list[dict]:
         """List available actions, optionally filtered by project name."""
@@ -118,6 +159,10 @@ class ApiClient:
         if project is not None:
             params["project"] = project
         result = await self.request("actions/list", params)
+        if not isinstance(result, dict) or "actions" not in result:
+            raise ApiResponseError(
+                "actions/list", f"missing 'actions' field, got {result!r}"
+            )
         return result["actions"]
 
     async def get_tree(self, parent_node_id: str | None = None) -> dict:
@@ -248,7 +293,12 @@ class ApiClient:
     # -- Low-level request --------------------------------------------------
 
     async def request(self, method: str, params: dict | None = None) -> dict:
-        """Send a JSON-RPC request and wait for the response."""
+        """Send a JSON-RPC request and wait for the response.
+
+        Raises:
+            ApiServerError: the server returned a JSON-RPC error.
+            ConnectionError: the connection was closed before a response arrived.
+        """
         if self._writer is None:
             raise RuntimeError("Not connected to FineCode API server")
 
@@ -273,7 +323,7 @@ class ApiClient:
 
         if "error" in response:
             error = response["error"]
-            raise RuntimeError(f"API error ({error['code']}): {error['message']}")
+            raise ApiServerError(error["code"], error["message"])
 
         return response.get("result")
 

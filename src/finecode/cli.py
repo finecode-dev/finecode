@@ -423,7 +423,8 @@ def prepare_envs(trace: bool, debug: bool, recreate: bool) -> None:
 @click.option("--trace", "trace", is_flag=True, default=False)
 @click.option("--debug", "debug", is_flag=True, default=False)
 @click.option("--project", "project", type=str)
-def dump_config(trace: bool, debug: bool, project: str | None):
+@click.option("--shared-server", "shared_server", is_flag=True, default=False)
+def dump_config(trace: bool, debug: bool, project: str | None, shared_server: bool):
     if debug is True:
         import debugpy
 
@@ -443,7 +444,9 @@ def dump_config(trace: bool, debug: bool, project: str | None):
     try:
         asyncio.run(
             dump_config_cmd.dump_config(
-                workdir_path=pathlib.Path(os.getcwd()), project_name=project
+                workdir_path=pathlib.Path(os.getcwd()),
+                project_name=project,
+                own_server=not shared_server,
             )
         )
     except dump_config_cmd.DumpFailed as exception:

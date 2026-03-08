@@ -193,6 +193,40 @@ from context.
 
 ---
 
+#### `workspace/getProjectRawConfig`
+
+Return the fully resolved raw configuration for a project, as stored in the
+workspace context after config reading and preset resolution.
+
+- **Type:** request
+- **Clients:** CLI
+- **Status:** implemented
+
+**Params:**
+
+```json
+{"project": "my_project"}
+```
+
+**Result:**
+
+```json
+{
+  "raw_config": {
+    "tool": { "finecode": { ... } },
+    ...
+  }
+}
+```
+
+**Errors:**
+
+- `project` is required — returns a JSON-RPC error if omitted.
+- Project not found — returns a JSON-RPC error if no project with the given name
+  exists in the workspace context.
+
+---
+
 ### `actions/` — Action Discovery & Execution
 
 #### `actions/list`
