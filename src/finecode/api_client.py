@@ -135,12 +135,50 @@ class ApiClient:
         result = await self.request("actions/getTree", params)
         return result
 
+    async def set_config_overrides(
+        self, overrides: dict
+    ) -> None:
+        """Set persistent handler config overrides on the server.
+
+        Overrides are stored for the lifetime of the server and applied to all
+        subsequent action runs.  Call this before ``add_dir`` if possible so that runners
+        always start with the correct config and no update push is required.
+
+        overrides format: {action_name: {handler_name_or_"": {param: value}}}
+        The empty-string key "" means the override applies to all handlers of
+        that action.
+        """
+        await self.request("workspace/setConfigOverrides", {"overrides": overrides})
+
+    async def run_batch(
+        self,
+        actions: list[str],
+        projects: list[str] | None = None,
+        params: dict | None = None,
+        params_by_project: dict[str, dict] | None = None,
+        options: dict | None = None,
+    ) -> dict:
+        """Run multiple actions across multiple (or all) projects.
+
+        Results are keyed by project path string, then action name.
+        All result keys use snake_case (return_code, result_by_format).
+        """
+        body: dict = {"actions": actions}
+        if projects is not None:
+            body["projects"] = projects
+        if params:
+            body["params"] = params
+        if params_by_project:
+            body["params_by_project"] = params_by_project
+        if options:
+            body["options"] = options
+        return await self.request("actions/runBatch", body)
+
     async def run_action(
         self,
         action: str,
         project: str,
         params: dict | None = None,
-        config_overrides: dict | None = None,
         options: dict | None = None,
     ) -> dict:
         """Run an action on a project."""
@@ -151,8 +189,6 @@ class ApiClient:
         }
         if params:
             body["params"] = params
-        if config_overrides:
-            body["config_overrides"] = config_overrides
         return await self.request("actions/run", body)
 
     async def add_dir(self, dir_path: pathlib.Path) -> dict:

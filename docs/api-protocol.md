@@ -129,6 +129,51 @@ and starts extension runners.
 
 ---
 
+#### `workspace/setConfigOverrides`
+
+Set persistent handler config overrides on the server. Overrides are stored for
+the lifetime of the server and applied to all subsequent action runs — unlike the
+`config_overrides` field that was previously accepted by `actions/runBatch`, which
+required runners to be stopped first.
+
+- **Type:** request
+- **Clients:** CLI
+- **Status:** implemented
+
+**Params:**
+
+```json
+{
+  "overrides": {
+    "lint": {
+      "ruff": {"line_length": 120},
+      "": {"some_action_level_param": "value"}
+    }
+  }
+}
+```
+
+`overrides` format: `{action_name: {handler_name_or_"": {param: value}}}`.
+The empty-string key `""` means the override applies to all handlers of that action.
+
+**Result:** `{}`
+
+**Behaviour:**
+
+- Overrides are stored in the server's workspace context and applied to all
+  subsequent action runs.
+- If extension runners are already running, they receive a config update
+  immediately; initialized handlers are dropped and will be re-initialized with
+  the new config on the next run.
+- The CLI `run` command sends this message **before** `workspace/addDir` in
+  standalone mode (`--own-server`), so runners always start with the correct
+  config and no update push is required.
+- Config overrides are **not supported** in `--shared-server` mode: the CLI
+  will print a warning and ignore them.
+- Calling this method again replaces the previous overrides entirely.
+
+---
+
 #### `workspace/removeDir`
 
 Remove a workspace directory. Stops runners for affected projects and removes them
@@ -240,7 +285,6 @@ Execute a single action on a project.
   "action": "lint",
   "project": "finecode",
   "params": {"file_paths": ["/path/to/file.py"]},
-  "config_overrides": {"ruff": {"line_length": 120}},
   "options": {
     "result_formats": ["json", "string"],
     "trigger": "user",
@@ -284,7 +328,6 @@ Execute multiple actions across multiple projects. Used for batch operations.
   "actions": ["lint", "check_formatting"],
   "projects": ["finecode", "finecode_extension_api"],
   "params": {},
-  "config_overrides": {},
   "options": {
     "concurrent": false,
     "result_formats": ["json", "string"],

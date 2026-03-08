@@ -251,6 +251,7 @@ def run(ctx) -> None:
     no_env_config: bool = False
     save_results: bool = True
     map_payload_fields: set[str] = set()
+    shared_server: bool = False
 
     # finecode run parameters
     for arg in args:
@@ -280,6 +281,8 @@ def run(ctx) -> None:
         elif arg.startswith("--map-payload-fields"):
             fields = arg.removeprefix("--map-payload-fields=")
             map_payload_fields = {f.replace("-", "_") for f in fields.split(",")}
+        elif arg == "--shared-server":
+            shared_server = True
         elif not arg.startswith("--"):
             break
         processed_args_count += 1
@@ -355,6 +358,7 @@ def run(ctx) -> None:
                 handler_config_overrides,
                 save_results,
                 map_payload_fields,
+                own_server=not shared_server,
             )
         )
         click.echo(result.output)
@@ -461,12 +465,29 @@ def start_mcp(workdir: str | None, trace: bool):
 
 @cli.command()
 @click.option("--trace", "trace", is_flag=True, default=False)
-def start_api_server(trace: bool):
+@click.option(
+    "--port-file",
+    "port_file",
+    default=None,
+    type=str,
+    help="Write the listening port to this file instead of the shared discovery file. "
+         "Used by dedicated instances started without --shared-server.",
+)
+@click.option(
+    "--disconnect-timeout",
+    "disconnect_timeout",
+    default=30,
+    type=int,
+    show_default=True,
+    help="Seconds to wait after the last client disconnects before shutting down.",
+)
+def start_api_server(trace: bool, port_file: str | None, disconnect_timeout: int):
     """Start the FineCode API server standalone (TCP JSON-RPC). Auto-stops when all clients disconnect."""
     from finecode.api_server import api_server
 
     logger_utils.init_logger(log_name="api_server", trace=trace, stdout=False)
-    asyncio.run(api_server.start_standalone())
+    port_file_path = pathlib.Path(port_file) if port_file else None
+    asyncio.run(api_server.start_standalone(port_file=port_file_path, disconnect_timeout=disconnect_timeout))
 
 
 if __name__ == "__main__":

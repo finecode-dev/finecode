@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import pathlib
 import socket
 import subprocess
@@ -23,7 +24,7 @@ from loguru import logger
 from finecode.api_server import context, domain
 
 CONTENT_LENGTH_HEADER = "Content-Length: "
-AUTO_STOP_DELAY_SECONDS = 5
+DISCONNECT_TIMEOUT_SECONDS = 30
 NO_CLIENT_TIMEOUT_SECONDS = 30
 
 
@@ -222,6 +223,7 @@ async def _handle_add_dir(
     """Add a workspace directory. Discovers projects, reads configs, starts runners."""
     from finecode.api_server.config import read_configs
     from finecode.api_server.runner import runner_manager
+    from finecode.api_server.runner.runner_client import RunnerStatus
 
     dir_path = pathlib.Path(params["dir_path"])
     logger.trace(f"Add ws dir: {dir_path}")
@@ -249,6 +251,28 @@ async def _handle_add_dir(
                        f"Did you run `finecode prepare-envs`?",
             "type": "ERROR",
         })
+
+    # If config overrides were set before this addDir call (e.g. standalone CLI mode),
+    # apply them to the newly discovered projects and push to their running runners.
+    if ws_context.handler_config_overrides and new_projects:
+        action_names = list(ws_context.handler_config_overrides.keys())
+        _apply_config_overrides_to_projects(new_projects, action_names, ws_context.handler_config_overrides)
+        try:
+            async with asyncio.TaskGroup() as tg:
+                for project in new_projects:
+                    runners = ws_context.ws_projects_extension_runners.get(project.dir_path, {})
+                    for runner in runners.values():
+                        if runner.status == RunnerStatus.RUNNING:
+                            tg.create_task(
+                                runner_manager.update_runner_config(
+                                    runner=runner,
+                                    project=project,
+                                    handlers_to_initialize=None,
+                                )
+                            )
+        except* Exception as eg:
+            for exc in eg.exceptions:
+                logger.warning(f"Failed to push config update to runner: {exc}")
 
     return {"projects": [_project_to_dict(p) for p in new_projects]}
 
@@ -360,8 +384,8 @@ async def _handle_run_action(
             "result_by_format": _NoConvert(result.result_by_format),
             "return_code": result.return_code,
         }
-    except run_service.ActionRunFailed as e:
-        raise RuntimeError(f"Action failed: {e}")
+    except run_service.ActionRunFailed:
+        raise
 
 from finecode.api_server.services.action_tree import (
     _handle_get_tree,
@@ -456,6 +480,191 @@ async def _handle_server_reset(
     """
     logger.info("FineCode API: server reset requested")
     return {}
+
+
+async def _handle_set_config_overrides(
+    params: dict | None, ws_context: context.WorkspaceContext
+) -> dict:
+    """Handle ``workspace/setConfigOverrides``.
+
+    Stores handler config overrides persistently in the workspace context so that
+    they are applied to all subsequent action runs. These overrides survive across
+    multiple requests and do not require runners to be stopped first.
+
+    If extension runners are already running they receive a config-update push
+    immediately; their initialized handlers are dropped and will be re-initialized
+    with the new config on the next run.
+    """
+    from finecode.api_server.runner import runner_manager
+    from finecode.api_server.runner.runner_client import RunnerStatus
+
+    params = params or {}
+    overrides: dict = params.get("overrides", {})
+
+    ws_context.handler_config_overrides = overrides
+
+    # Apply to all existing project domain objects so that project.action_handler_configs
+    # reflects the new overrides
+    all_projects = list(ws_context.ws_projects.values())
+    action_names = list(overrides.keys())
+    if all_projects and action_names:
+        _apply_config_overrides_to_projects(all_projects, action_names, overrides)
+
+    # Push the updated config to any already-running runners so they drop their
+    # initialized handlers and pick up the new config on the next invocation.
+    try:
+        async with asyncio.TaskGroup() as tg:
+            for project_path, runners_by_env in ws_context.ws_projects_extension_runners.items():
+                project = ws_context.ws_projects.get(project_path)
+                if project is None or project.actions is None:
+                    continue
+                for runner in runners_by_env.values():
+                    if runner.status == RunnerStatus.RUNNING:
+                        tg.create_task(
+                            runner_manager.update_runner_config(
+                                runner=runner,
+                                project=project,
+                                handlers_to_initialize=None,
+                            )
+                        )
+    except* Exception as eg:
+        for exc in eg.exceptions:
+            logger.warning(f"Failed to push config update to runner: {exc}")
+
+    return {}
+
+
+def _apply_config_overrides_to_projects(
+    projects: list[domain.Project],
+    actions: list[str],
+    config_overrides: dict[str, dict[str, dict[str, typing.Any]]],
+) -> dict[pathlib.Path, dict[str, dict[str, typing.Any]]]:
+    """Apply handler config overrides to project.action_handler_configs.
+
+    ``config_overrides`` format: ``{action_name: {handler_name_or_"": {param: value}}}``
+    where the empty-string key ``""`` means all handlers of that action.
+
+    Returns the original ``action_handler_configs`` per project.
+    """
+    originals: dict[pathlib.Path, dict[str, dict[str, typing.Any]]] = {}
+    actions_set = set(actions)
+    for project in projects:
+        if project.actions is None:
+            continue
+        originals[project.dir_path] = {
+            source: dict(cfg)
+            for source, cfg in project.action_handler_configs.items()
+        }
+        for action in project.actions:
+            if action.name not in actions_set:
+                continue
+            action_overrides = config_overrides.get(action.name, {})
+            if not action_overrides:
+                continue
+            action_level = action_overrides.get("", {})
+            for handler in action.handlers:
+                handler_specific = action_overrides.get(handler.name, {})
+                merged = {**action_level, **handler_specific}
+                if merged:
+                    project.action_handler_configs[handler.source] = {
+                        **(project.action_handler_configs.get(handler.source) or {}),
+                        **merged,
+                    }
+    return originals
+
+
+async def _handle_run_batch(
+    params: dict | None, ws_context: context.WorkspaceContext
+) -> typing.Any:
+    """Run multiple actions across multiple (or all) projects.
+
+    Params:
+      actions: list[str] - action names to run
+      projects: list[str] | None - project names to filter; absent/null means all projects
+      params: dict - action payload shared across all projects
+      params_by_project: dict[str, dict] - per-project payload overrides keyed by project path string
+      options:
+        concurrently: bool - run actions concurrently within each project (default false)
+        result_formats: list[str] - "string" and/or "json" (default ["string"])
+        trigger: str - run trigger (default "user")
+        dev_env: str - dev environment (default "cli")
+
+    Result: snake_case keys throughout (entire result is protected from camelCase conversion).
+      {"results": {project_path_str: {action_name: {"result_by_format": ..., "return_code": int}}},
+       "return_code": int}
+    """
+    from finecode.api_server.services import run_service
+
+    params = params or {}
+    actions: list[str] = params.get("actions", [])
+    project_names: list[str] | None = params.get("projects")
+    action_params: dict = params.get("params", {})
+    params_by_project: dict[str, dict] = params.get("params_by_project", {})
+    options: dict = params.get("options", {})
+
+    concurrently: bool = options.get("concurrently", False)
+    result_format_strs: list[str] = options.get("result_formats", ["string"])
+    result_formats = [
+        run_service.RunResultFormat(fmt)
+        for fmt in result_format_strs
+        if fmt in ("json", "string")
+    ]
+    trigger = run_service.RunActionTrigger(options.get("trigger", "user"))
+    dev_env = run_service.DevEnv(options.get("dev_env", "cli"))
+
+    if not actions:
+        raise ValueError("actions list is required and must be non-empty")
+
+    # Build actions_by_project (path -> [action_names])
+    if project_names is not None:
+        actions_by_project: dict[pathlib.Path, list[str]] = {}
+        for project_name in project_names:
+            project = next(
+                (p for p in ws_context.ws_projects.values() if p.name == project_name),
+                None,
+            )
+            if project is None:
+                raise ValueError(f"Project '{project_name}' not found")
+            actions_by_project[project.dir_path] = list(actions)
+    else:
+        actions_by_project = run_service.find_projects_with_actions(ws_context, actions)
+        if not actions_by_project:
+            raise ValueError(f"No projects found with actions: {actions}")
+
+    await run_service.start_required_environments(
+        actions_by_project, ws_context, update_config_in_running_runners=True
+    )
+
+    result_by_project = await run_service.run_actions_in_projects(
+        actions_by_project=actions_by_project,
+        action_payload=action_params,
+        ws_context=ws_context,
+        concurrently=concurrently,
+        result_formats=result_formats,
+        run_trigger=trigger,
+        dev_env=dev_env,
+        payload_overrides_by_project=params_by_project,
+    )
+
+    overall_return_code = 0
+    results: dict[str, dict] = {}
+    for project_path, actions_result in result_by_project.items():
+        project_results: dict[str, dict] = {}
+        for action_name, response in actions_result.items():
+            overall_return_code |= response.return_code
+            project_results[action_name] = {
+                "result_by_format": response.result_by_format,
+                "return_code": response.return_code,
+            }
+        results[str(project_path)] = project_results
+
+    # Protect the entire result from camelCase conversion: action names like
+    # "check_formatting" must not become "checkFormatting", and nested keys
+    # (result_by_format, return_code) must stay snake_case for the CLI client.
+    return _NoConvert({
+        "results": results,
+        "return_code": overall_return_code,
+    })
 
 
 # -- helpers ---------------------------------------------------------------
@@ -582,11 +791,12 @@ _METHODS: dict[str, MethodHandler] = {
     "workspace/findProjectForFile": _handle_find_project_for_file,
     "workspace/addDir": _handle_add_dir,
     "workspace/removeDir": _handle_remove_dir,
+    "workspace/setConfigOverrides": _handle_set_config_overrides,
     # actions/
     "actions/list": _handle_list_actions,
     "actions/getTree": _handle_get_tree,
     "actions/run": _handle_run_action,
-    "actions/runBatch": _stub("actions/runBatch"),
+    "actions/runBatch": _handle_run_batch,
     # (runWithPartialResults is handled specially in _handle_client)
     "actions/reload": _handle_actions_reload,
     # runners:
@@ -616,13 +826,14 @@ _server: asyncio.Server | None = None
 _discovery_file: pathlib.Path | None = None
 _had_client: bool = False
 _running_partial_result_tasks: dict[asyncio.StreamWriter, set[asyncio.Task]] = {}
+_disconnect_timeout: int = DISCONNECT_TIMEOUT_SECONDS
 
 
 async def _schedule_auto_stop() -> None:
-    """Wait a bit after the last client disconnects, then stop the server."""
-    await asyncio.sleep(AUTO_STOP_DELAY_SECONDS)
+    """Wait after the last client disconnects, then stop the server."""
+    await asyncio.sleep(_disconnect_timeout)
     if not _connected_clients:
-        logger.info("FineCode API: no clients connected, shutting down")
+        logger.info(f"FineCode API: no clients connected for {_disconnect_timeout}s, shutting down")
         stop()
 
 
@@ -830,10 +1041,78 @@ async def wait_until_ready(timeout: float = 30) -> int:
     )
 
 
-async def start(ws_context: context.WorkspaceContext) -> None:
-    """Start the FineCode API TCP server and write the discovery file."""
-    global _server, _discovery_file, _no_client_timeout_task, _had_client
+def start_own_server(workdir: pathlib.Path) -> pathlib.Path:
+    """Start a dedicated API server subprocess for exclusive use by one CLI call.
+
+    Unlike ``ensure_running()``, this always starts a *fresh* process and writes
+    the listening port to a temporary file (not the shared discovery file), so it
+    does not interfere with a concurrently running shared API server (e.g. the one
+    used by the LSP/MCP clients).
+
+    Returns the path to the temporary port file.  Pass it to
+    ``wait_until_ready_from_file()`` to obtain the port and connect.
+    The server auto-stops ``AUTO_STOP_DELAY_SECONDS`` after the client disconnects.
+    """
+    import tempfile
+
+    fd, port_file_str = tempfile.mkstemp(suffix=".finecode_port")
+    os.close(fd)
+    port_file = pathlib.Path(port_file_str)
+    # Write empty content so the server knows to overwrite rather than append.
+    port_file.write_text("")
+
+    logger.info(f"Starting dedicated FineCode API server in {workdir}")
+    subprocess.Popen(
+        [sys.executable, "-m", "finecode", "start-api-server", "--port-file", str(port_file)],
+        cwd=str(workdir),
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    return port_file
+
+
+async def wait_until_ready_from_file(
+    port_file: pathlib.Path, timeout: float = 30
+) -> int:
+    """Wait for a dedicated API server using a custom port file. Returns the port."""
+    deadline = asyncio.get_event_loop().time() + timeout
+    while asyncio.get_event_loop().time() < deadline:
+        try:
+            content = port_file.read_text().strip()
+            if content:
+                port = int(content)
+                with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                    s.settimeout(1)
+                    s.connect(("127.0.0.1", port))
+                    return port
+        except (FileNotFoundError, ValueError, OSError):
+            pass
+        await asyncio.sleep(0.5)
+    raise TimeoutError(
+        f"Dedicated FineCode API server did not start within {timeout}s. "
+        "Check logs for errors."
+    )
+
+
+async def start(
+    ws_context: context.WorkspaceContext,
+    port_file: pathlib.Path | None = None,
+    disconnect_timeout: int = DISCONNECT_TIMEOUT_SECONDS,
+) -> None:
+    """Start the FineCode API TCP server and write the discovery file.
+
+    Args:
+        ws_context: Shared workspace context.
+        port_file: Path to write the listening port to.  Defaults to the shared
+            discovery file (``_cache_dir() / "api_port"``).  Pass a custom path
+            when starting a dedicated instance so it does not overwrite the shared
+            server's discovery file.
+        disconnect_timeout: Seconds to wait after the last client disconnects
+            before shutting down. Defaults to DISCONNECT_TIMEOUT_SECONDS (30).
+    """
+    global _server, _discovery_file, _no_client_timeout_task, _had_client, _disconnect_timeout
     _had_client = False
+    _disconnect_timeout = disconnect_timeout
     port = _find_free_port()
 
     _server = await asyncio.start_server(
@@ -843,7 +1122,7 @@ async def start(ws_context: context.WorkspaceContext) -> None:
     )
 
     # Write discovery file so clients can find us.
-    _discovery_file = discovery_file_path()
+    _discovery_file = port_file if port_file is not None else discovery_file_path()
     _discovery_file.parent.mkdir(parents=True, exist_ok=True)
     _discovery_file.write_text(str(port))
 
@@ -918,9 +1197,19 @@ def _register_callbacks() -> None:
     user_messages._notification_sender = on_user_message
 
 
-async def start_standalone() -> None:
+async def start_standalone(
+    port_file: pathlib.Path | None = None,
+    disconnect_timeout: int = DISCONNECT_TIMEOUT_SECONDS,
+) -> None:
     """Start the API server as a standalone process with its own WorkspaceContext.
+
+    Args:
+        port_file: Optional custom path to write the listening port to.  Used by
+            dedicated instances started via ``start_own_server()`` so they do not
+            overwrite the shared server's discovery file.
+        disconnect_timeout: Seconds to wait after the last client disconnects
+            before shutting down.
     """
     ws_context = context.WorkspaceContext([])
     _register_callbacks()
-    await start(ws_context)
+    await start(ws_context, port_file=port_file, disconnect_timeout=disconnect_timeout)

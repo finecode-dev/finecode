@@ -9,6 +9,36 @@ python -m finecode <command> [options]
 
 ---
 
+## Usage modes
+
+The `run` command supports two usage modes.
+
+### Standalone (one-shot) — default
+
+Each `run` invocation is fully independent. FineCode starts a dedicated API server subprocess for the duration of the command, then shuts it down on exit. This is the default behavior.
+
+```bash
+python -m finecode run lint
+```
+
+Use this in CI/CD pipelines or any context where you don't want persistent background processes. Results from one action can be saved to the file cache and referenced by a later action via `--map-payload-fields` (see the `run` reference below).
+
+### Persistent server
+
+A long-lived API server holds warm state — loaded configuration, started runners — across multiple `run` calls. Use `--shared-server` to connect to a running shared instance instead of starting a dedicated one.
+
+```bash
+# Connect to the shared server (start it first if needed):
+python -m finecode run --shared-server lint
+python -m finecode run --shared-server format
+```
+
+This mode is used automatically by the LSP and MCP integrations. It gives faster repeated runs because configuration loading and runner startup are amortized across calls.
+
+The server waits 30 seconds after the last client disconnects before shutting down (configurable via `--disconnect-timeout` on `start-api-server`).
+
+---
+
 ## `run`
 
 Run one or more actions across projects.
@@ -24,6 +54,7 @@ python -m finecode run [options] <action> [<action> ...] [payload] [--config.<ke
 | `--workdir=<path>` | Use `<path>` as the workspace root instead of `cwd` |
 | `--project=<name>` | Run only in this project. Repeatable for multiple projects. |
 | `--concurrently` | Run actions concurrently within each project |
+| `--shared-server` | Connect to the shared persistent API server instead of starting a dedicated one |
 | `--trace` | Enable verbose (trace-level) logging |
 | `--no-env-config` | Ignore `FINECODE_CONFIG_*` environment variables |
 | `--no-save-results` | Do not write action results to the cache directory |
@@ -155,14 +186,15 @@ Typically started automatically by MCP-compatible clients (for example, Claude C
 
 ## `start-api-server`
 
-Start the FineCode API server standalone (TCP JSON-RPC), listen for client connections. Auto-stops when the last client disconnects.
+Start the FineCode API server standalone (TCP JSON-RPC), listen for client connections. Shuts down after the last client disconnects and the disconnect timeout expires.
 
 ```text
-python -m finecode start-api-server [--trace]
+python -m finecode start-api-server [--trace] [--disconnect-timeout=<seconds>]
 ```
 
 | Option | Description |
 | --- | --- |
 | `--trace` | Enable verbose logging |
+| `--disconnect-timeout=<seconds>` | Seconds to wait after the last client disconnects before shutting down (default: 30) |
 
 Usually started automatically by `start-lsp` or `start-mcp`. Can also be started manually for debugging.
