@@ -9,8 +9,8 @@ async def start(
     comm_type: communication_utils.CommunicationType,
     host: str | None = None,
     port: int | None = None,
-    trace: bool = False,
+    log_level: str = "INFO",
 ) -> None:
-    logger_utils.init_logger(log_name="lsp_server", trace=trace)
+    logger_utils.init_logger(log_name="lsp_server", log_level=log_level)
     server = create_lsp_server()
     await server.start_io_async()

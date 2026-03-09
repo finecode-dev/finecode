@@ -12,7 +12,7 @@ class PrepareEnvsFailed(Exception):
 
 
 async def prepare_envs(
-    workdir_path: pathlib.Path, recreate: bool, own_server: bool = True
+    workdir_path: pathlib.Path, recreate: bool, own_server: bool = True, log_level: str = "INFO"
 ) -> None:
     """Prepare all virtual environments for a workspace.
 
@@ -27,7 +27,7 @@ async def prepare_envs(
     port_file = None
     try:
         if own_server:
-            port_file = wm_server.start_own_server(workdir_path)
+            port_file = wm_server.start_own_server(workdir_path, log_level=log_level)
             try:
                 port = await wm_server.wait_until_ready_from_file(port_file)
             except TimeoutError as exc:

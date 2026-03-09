@@ -172,7 +172,7 @@ def cli(): ...
 
 
 @cli.command()
-@click.option("--trace", "trace", is_flag=True, default=False)
+@click.option("--log-level", "log_level", default="INFO", type=click.Choice(["TRACE", "DEBUG", "INFO", "WARNING", "ERROR"], case_sensitive=False), show_default=True)
 @click.option("--debug", "debug", is_flag=True, default=False)
 @click.option(
     "--socket", "tcp", default=None, type=int, help="start a TCP server"
@@ -186,7 +186,7 @@ def cli(): ...
     "--port", "port", default=None, type=int, help="Port for TCP and WS server"
 )
 def start_lsp(
-    trace: bool,
+    log_level: str,
     debug: bool,
     tcp: int | None,
     ws: bool,
@@ -215,7 +215,7 @@ def start_lsp(
         raise ValueError("Specify either --tcp, --ws or --stdio")
 
     asyncio.run(
-        wm_lsp_server.start(comm_type=comm_type, host=host, port=port, trace=trace)
+        wm_lsp_server.start(comm_type=comm_type, host=host, port=port, log_level=log_level)
     )
 
 
@@ -247,7 +247,7 @@ def run(ctx) -> None:
     workdir_path: pathlib.Path = pathlib.Path(os.getcwd())
     processed_args_count: int = 0
     concurrently: bool = False
-    trace: bool = False
+    log_level: str = "INFO"
     no_env_config: bool = False
     save_results: bool = True
     map_payload_fields: set[str] = set()
@@ -272,8 +272,8 @@ def run(ctx) -> None:
             projects.append(project)
         elif arg == "--concurrently":
             concurrently = True
-        elif arg == "--trace":
-            trace = True
+        elif arg.startswith("--log-level"):
+            log_level = arg.removeprefix("--log-level=").upper()
         elif arg == "--no-env-config":
             no_env_config = True
         elif arg == "--no-save-results":
@@ -287,7 +287,7 @@ def run(ctx) -> None:
             break
         processed_args_count += 1
 
-    logger_utils.init_logger(log_name="cli", trace=trace, stdout=True)
+    logger_utils.init_logger(log_name="cli", log_level=log_level, stdout=True)
 
     # Parse handler config from env vars
     handler_config_overrides: dict[str, dict[str, dict[str, str]]] = {}
@@ -359,6 +359,7 @@ def run(ctx) -> None:
                 save_results,
                 map_payload_fields,
                 own_server=not shared_server,
+                log_level=log_level,
             )
         )
         click.echo(result.output)
@@ -384,11 +385,11 @@ def run(ctx) -> None:
 
 
 @cli.command()
-@click.option("--trace", "trace", is_flag=True, default=False)
+@click.option("--log-level", "log_level", default="INFO", type=click.Choice(["TRACE", "DEBUG", "INFO", "WARNING", "ERROR"], case_sensitive=False), show_default=True)
 @click.option("--debug", "debug", is_flag=True, default=False)
 @click.option("--recreate", "recreate", is_flag=True, default=False)
 @click.option("--shared-server", "shared_server", is_flag=True, default=False)
-def prepare_envs(trace: bool, debug: bool, recreate: bool, shared_server: bool) -> None:
+def prepare_envs(log_level: str, debug: bool, recreate: bool, shared_server: bool) -> None:
     """
     `prepare-envs` should be called from workspace/project root directory.
     """
@@ -402,7 +403,7 @@ def prepare_envs(trace: bool, debug: bool, recreate: bool, shared_server: bool) 
         except Exception as e:
             logger.info(e)
 
-    logger_utils.init_logger(log_name="cli", trace=trace, stdout=True)
+    logger_utils.init_logger(log_name="cli", log_level=log_level, stdout=True)
     user_messages._notification_sender = show_user_message
 
     try:
@@ -411,6 +412,7 @@ def prepare_envs(trace: bool, debug: bool, recreate: bool, shared_server: bool) 
                 workdir_path=pathlib.Path(os.getcwd()),
                 recreate=recreate,
                 own_server=not shared_server,
+                log_level=log_level,
             )
         )
     except prepare_envs_cmd.PrepareEnvsFailed as exception:
@@ -423,11 +425,11 @@ def prepare_envs(trace: bool, debug: bool, recreate: bool, shared_server: bool) 
 
 
 @cli.command()
-@click.option("--trace", "trace", is_flag=True, default=False)
+@click.option("--log-level", "log_level", default="INFO", type=click.Choice(["TRACE", "DEBUG", "INFO", "WARNING", "ERROR"], case_sensitive=False), show_default=True)
 @click.option("--debug", "debug", is_flag=True, default=False)
 @click.option("--project", "project", type=str)
 @click.option("--shared-server", "shared_server", is_flag=True, default=False)
-def dump_config(trace: bool, debug: bool, project: str | None, shared_server: bool):
+def dump_config(log_level: str, debug: bool, project: str | None, shared_server: bool):
     if debug is True:
         import debugpy
 
@@ -441,7 +443,7 @@ def dump_config(trace: bool, debug: bool, project: str | None, shared_server: bo
         click.echo("--project parameter is required", err=True)
         return
 
-    logger_utils.init_logger(log_name="cli", trace=trace, stdout=True)
+    logger_utils.init_logger(log_name="cli", log_level=log_level, stdout=True)
     user_messages._notification_sender = show_user_message
 
     try:
@@ -450,6 +452,7 @@ def dump_config(trace: bool, debug: bool, project: str | None, shared_server: bo
                 workdir_path=pathlib.Path(os.getcwd()),
                 project_name=project,
                 own_server=not shared_server,
+                log_level=log_level,
             )
         )
     except dump_config_cmd.DumpFailed as exception:
@@ -459,18 +462,18 @@ def dump_config(trace: bool, debug: bool, project: str | None, shared_server: bo
 
 @cli.command()
 @click.option("--workdir", "workdir", default=None, type=str, help="Workspace root directory")
-@click.option("--trace", "trace", is_flag=True, default=False)
-def start_mcp(workdir: str | None, trace: bool):
+@click.option("--log-level", "log_level", default="INFO", type=click.Choice(["TRACE", "DEBUG", "INFO", "WARNING", "ERROR"], case_sensitive=False), show_default=True)
+def start_mcp(workdir: str | None, log_level: str):
     """Start the FineCode MCP server (stdio). Connects to a running FineCode WM Server."""
     from finecode import mcp_server
 
-    logger_utils.init_logger(log_name="mcp_server", trace=trace, stdout=False)
+    logger_utils.init_logger(log_name="mcp_server", log_level=log_level, stdout=False)
     workdir_path = pathlib.Path(workdir) if workdir else pathlib.Path(os.getcwd())
     mcp_server.start(workdir_path)
 
 
 @cli.command()
-@click.option("--trace", "trace", is_flag=True, default=False)
+@click.option("--log-level", "log_level", default="INFO", type=click.Choice(["TRACE", "DEBUG", "INFO", "WARNING", "ERROR"], case_sensitive=False), show_default=True)
 @click.option(
     "--port-file",
     "port_file",
@@ -487,11 +490,11 @@ def start_mcp(workdir: str | None, trace: bool):
     show_default=True,
     help="Seconds to wait after the last client disconnects before shutting down.",
 )
-def start_wm_server(trace: bool, port_file: str | None, disconnect_timeout: int):
+def start_wm_server(log_level: str, port_file: str | None, disconnect_timeout: int):
     """Start the FineCode WM Server standalone (TCP JSON-RPC). Auto-stops when all clients disconnect."""
     from finecode.wm_server import wm_server
 
-    log_file_path = logger_utils.init_logger(log_name="wm_server", trace=trace, stdout=False)
+    log_file_path = logger_utils.init_logger(log_name="wm_server", log_level=log_level, stdout=False)
     wm_server._log_file_path = log_file_path
     port_file_path = pathlib.Path(port_file) if port_file else None
     asyncio.run(wm_server.start_standalone(port_file=port_file_path, disconnect_timeout=disconnect_timeout))

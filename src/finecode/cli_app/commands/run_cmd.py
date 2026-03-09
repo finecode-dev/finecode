@@ -26,11 +26,12 @@ async def run_actions(
     save_results: bool = True,
     map_payload_fields: set[str] | None = None,
     own_server: bool = False,
+    log_level: str = "INFO",
 ) -> utils.RunActionsResult:
     port_file = None
     try:
         if own_server:
-            port_file = wm_server.start_own_server(workdir_path)
+            port_file = wm_server.start_own_server(workdir_path, log_level=log_level)
             try:
                 port = await wm_server.wait_until_ready_from_file(port_file)
             except TimeoutError as exc:

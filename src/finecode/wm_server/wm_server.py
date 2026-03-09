@@ -1223,7 +1223,7 @@ async def wait_until_ready(timeout: float = 30) -> int:
     )
 
 
-def start_own_server(workdir: pathlib.Path) -> pathlib.Path:
+def start_own_server(workdir: pathlib.Path, log_level: str = "INFO") -> pathlib.Path:
     """Start a dedicated WM server subprocess for exclusive use by one CLI call.
 
     Unlike ``ensure_running()``, this always starts a *fresh* process and writes
@@ -1245,7 +1245,7 @@ def start_own_server(workdir: pathlib.Path) -> pathlib.Path:
 
     logger.info(f"Starting dedicated FineCode WM server in {workdir}")
     subprocess.Popen(
-        [sys.executable, "-m", "finecode", "start-wm-server", "--port-file", str(port_file)],
+        [sys.executable, "-m", "finecode", "start-wm-server", "--port-file", str(port_file), "--log-level", log_level],
         cwd=str(workdir),
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,

@@ -8,7 +8,7 @@ from loguru import logger
 from finecode_extension_runner import logs
 
 
-def init_logger(log_name: str, trace: bool, stdout: bool = False) -> Path:
+def init_logger(log_name: str, log_level: str = "INFO", stdout: bool = False) -> Path:
     venv_dir_path = Path(sys.executable).parent.parent
     logs_dir_path = venv_dir_path / "logs"
 
@@ -25,7 +25,7 @@ def init_logger(log_name: str, trace: bool, stdout: bool = False) -> Path:
     logs.set_log_level_for_group(group="finecode_jsonrpc.client", level=logs.LogLevel.INFO)
     log_file_path = logs.save_logs_to_file(
         file_path=logs_dir_path / log_name / f"{log_name}.log",
-        log_level="TRACE" if trace else "INFO",
+        log_level=log_level,
         stdout=stdout,
     )
 

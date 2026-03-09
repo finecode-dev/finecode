@@ -10,12 +10,12 @@ class DumpFailed(Exception):
 
 
 async def dump_config(
-    workdir_path: pathlib.Path, project_name: str, own_server: bool = True
+    workdir_path: pathlib.Path, project_name: str, own_server: bool = True, log_level: str = "INFO"
 ):
     port_file = None
     try:
         if own_server:
-            port_file = wm_server.start_own_server(workdir_path)
+            port_file = wm_server.start_own_server(workdir_path, log_level=log_level)
             try:
                 port = await wm_server.wait_until_ready_from_file(port_file)
             except TimeoutError as exc:
