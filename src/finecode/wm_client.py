@@ -91,8 +91,10 @@ class ApiClient:
             log_path = info.get("log_file_path")
             if log_path:
                 logger.info(f"WM Server log file: {log_path}")
-        except Exception:
-            pass  # non-critical, don't block connection
+            else:
+                logger.info("WM Server returned no log file path")
+        except Exception as exception:
+            logger.info(f"Failed to get WM Server log file path: {exception}")
 
     async def close(self) -> None:
         if self._reader_task is not None:

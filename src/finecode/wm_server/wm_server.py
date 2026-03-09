@@ -643,9 +643,9 @@ async def _handle_server_get_info(
     Returns static information about the running WM Server instance,
     including the path to its log file.
     """
-    return {
+    return _NoConvert({
         "log_file_path": str(_log_file_path) if _log_file_path is not None else None,
-    }
+    })
 
 
 async def _handle_server_reset(
