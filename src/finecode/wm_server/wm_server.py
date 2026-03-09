@@ -27,6 +27,9 @@ CONTENT_LENGTH_HEADER = "Content-Length: "
 DISCONNECT_TIMEOUT_SECONDS = 30
 NO_CLIENT_TIMEOUT_SECONDS = 30
 
+# save so that server/getInfo can return it
+_log_file_path: pathlib.Path | None = None
+
 
 # ---------------------------------------------------------------------------
 # JSON-RPC helpers
@@ -632,6 +635,19 @@ async def _handle_runners_remove_env(
     return {}
 
 
+async def _handle_server_get_info(
+    params: dict | None, ws_context: context.WorkspaceContext
+) -> dict:
+    """Handle ``server/getInfo``.
+
+    Returns static information about the running WM Server instance,
+    including the path to its log file.
+    """
+    return {
+        "log_file_path": str(_log_file_path) if _log_file_path is not None else None,
+    }
+
+
 async def _handle_server_reset(
     params: dict | None, ws_context: context.WorkspaceContext
 ) -> dict:
@@ -968,6 +984,7 @@ _METHODS: dict[str, MethodHandler] = {
     "runners/checkEnv": _handle_runners_check_env,
     "runners/removeEnv": _handle_runners_remove_env,
     # server/
+    "server/getInfo": _handle_server_get_info,
     "server/reset": _handle_server_reset,
     "server/shutdown": _stub("server/shutdown"),
 }

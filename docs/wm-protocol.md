@@ -658,6 +658,29 @@ environment, it is stopped first.
 
 ### `server/` — Server Lifecycle & Notifications
 
+#### `server/getInfo`
+
+Return static information about the running WM Server instance.
+
+- **Type:** request
+- **Clients:** LSP, MCP, CLI
+- **Status:** implemented
+
+**Params:** `{}`
+
+**Result:**
+
+```json
+{
+  "log_file_path": "/abs/path/to/.venvs/dev_workspace/logs/wm_server/wm_server.log"
+}
+```
+
+`log_file_path` is the absolute path to the WM Server's log file for the current process.
+Clients can log or display this path so the user can open the file directly when troubleshooting.
+
+---
+
 #### `server/shutdown`
 
 Explicitly shut down the WM Server.

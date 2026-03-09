@@ -217,6 +217,19 @@ async def _on_initialized(ls: LanguageServer, params: types.InitializedParams):
         global_state.wm_client = None
         return
 
+    try:
+        info = await global_state.wm_client.get_info()
+        log_path = info.get("log_file_path")
+        if log_path:
+            ls.window_log_message(
+                types.LogMessageParams(
+                    type=types.MessageType.Info,
+                    message=f"FineCode WM Server log: {log_path}",
+                )
+            )
+    except Exception:
+        pass
+
     # Register notification handlers for server→client push messages.
     async def on_tree_changed(params: dict) -> None:
         # TODO

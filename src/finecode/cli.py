@@ -491,7 +491,8 @@ def start_wm_server(trace: bool, port_file: str | None, disconnect_timeout: int)
     """Start the FineCode WM Server standalone (TCP JSON-RPC). Auto-stops when all clients disconnect."""
     from finecode.wm_server import wm_server
 
-    logger_utils.init_logger(log_name="wm_server", trace=trace, stdout=False)
+    log_file_path = logger_utils.init_logger(log_name="wm_server", trace=trace, stdout=False)
+    wm_server._log_file_path = log_file_path
     port_file_path = pathlib.Path(port_file) if port_file else None
     asyncio.run(wm_server.start_standalone(port_file=port_file_path, disconnect_timeout=disconnect_timeout))
 

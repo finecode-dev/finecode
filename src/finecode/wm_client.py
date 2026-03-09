@@ -86,6 +86,13 @@ class ApiClient:
         self._reader, self._writer = await asyncio.open_connection(host, port)
         self._reader_task = asyncio.create_task(self._read_loop())
         logger.info(f"Connected to FineCode API at {host}:{port}")
+        try:
+            info = await self.get_info()
+            log_path = info.get("log_file_path")
+            if log_path:
+                logger.info(f"WM Server log file: {log_path}")
+        except Exception:
+            pass  # non-critical, don't block connection
 
     async def close(self) -> None:
         if self._reader_task is not None:
@@ -117,6 +124,12 @@ class ApiClient:
     ) -> None:
         """Register an async callback for a server→client notification."""
         self._notification_handlers[method] = callback
+
+    # -- Server methods -----------------------------------------------------
+
+    async def get_info(self) -> dict:
+        """Return static info about the WM Server (e.g. log file path)."""
+        return await self.request("server/getInfo")
 
     # -- Workspace methods --------------------------------------------------
 

@@ -43,7 +43,7 @@ def save_logs_to_file(
     rotation: str = "10 MB",
     retention: int = 3,
     stdout: bool = True,
-):
+) -> Path:
     if stdout is True:
         if isinstance(sys.stdout, io.TextIOWrapper):
             # reconfigure to be able to handle special symbols
@@ -101,7 +101,8 @@ def save_logs_to_file(
         encoding="utf8",
         filter=filter_logs,
     )
-    logger.trace(f"Log file: {file_path}")
+    logger.trace(f"Log file: {file_path_with_id}")
+    return file_path_with_id
 
 
 def set_log_level_for_group(group: str, level: LogLevel | None):
