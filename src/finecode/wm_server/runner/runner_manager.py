@@ -13,9 +13,9 @@ import typing
 
 from loguru import logger
 
-from finecode.api_server import context, domain, domain_helpers
-from finecode.api_server.config import collect_actions, config_models, read_configs
-from finecode.api_server.runner import (
+from finecode.wm_server import context, domain, domain_helpers
+from finecode.wm_server.config import collect_actions, config_models, read_configs
+from finecode.wm_server.runner import (
     runner_client,
     _internal_client_api,
     _internal_client_types,

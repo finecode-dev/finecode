@@ -2,9 +2,9 @@ from pathlib import Path
 
 from loguru import logger
 
-from finecode.api_server import domain
-from finecode.api_server.context import WorkspaceContext
-from finecode.api_server.runner import runner_manager
+from finecode.wm_server import domain
+from finecode.wm_server.context import WorkspaceContext
+from finecode.wm_server.runner import runner_manager
 
 
 class FileNotInWorkspaceException(BaseException): ...

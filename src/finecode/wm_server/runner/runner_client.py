@@ -14,9 +14,9 @@ from typing import Any
 
 from loguru import logger
 
-import finecode.api_server.domain as domain
-from finecode.api_server.runner import _internal_client_types, _internal_client_api
-from finecode.api_server.utils.iterable_subscribe import IterableSubscribe
+import finecode.wm_server.domain as domain
+from finecode.wm_server.runner import _internal_client_types, _internal_client_api
+from finecode.wm_server.utils.iterable_subscribe import IterableSubscribe
 import finecode_jsonrpc as jsonrpc_client
 
 

@@ -2,7 +2,7 @@
 
 It is intentionally small and
 only encapsulates the orchestration logic; it does **not** perform any I/O
-with client sockets.  The request handler in ``api_server.py`` will take the
+with client sockets.  The request handler in ``wm_server.py`` will take the
 async iterator produced here and write notifications back to the caller.
 """
 from __future__ import annotations
@@ -11,9 +11,9 @@ import asyncio
 
 from loguru import logger
 
-from finecode.api_server import context, domain
-from finecode.api_server.runner import runner_client
-from finecode.api_server.services.run_service import (
+from finecode.wm_server import context, domain
+from finecode.wm_server.runner import runner_client
+from finecode.wm_server.services.run_service import (
     find_all_projects_with_action,
     run_with_partial_results,
     start_required_environments,

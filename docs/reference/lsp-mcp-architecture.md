@@ -1,22 +1,22 @@
 # LSP and MCP Architecture
 
-FineCode uses one shared API server for CLI, IDE (LSP), and AI-agent (MCP) clients.
+FineCode uses one shared Workspace Manager Server (WM Server) for CLI, IDE (LSP), and AI-agent (MCP) clients.
 
 ## Component model
 
 ```text
-FineCode API Server (TCP JSON-RPC, auto-managed)
+FineCode WM Server (TCP JSON-RPC, auto-managed)
 ├── WorkspaceContext, runners, services
 └── auto-stops when no clients remain
 
 LSP Server (start-lsp, started by IDE)
-└── connects to API server (starts one if needed)
+└── connects to WM Server (starts one if needed)
 
 MCP Server (start-mcp, started by MCP client)
-└── connects to API server (starts one if needed)
+└── connects to WM Server (starts one if needed)
 ```
 
-The API server writes its port to `.venvs/dev_workspace/cache/finecode/api_port` for client discovery.
+The WM Server writes its port to `.venvs/dev_workspace/cache/finecode/wm_port` for client discovery.
 
 ## LSP request flow
 
@@ -41,9 +41,9 @@ The LSP layer translates protocol messages into FineCode actions, delegates exec
 
 ## Lifecycle behavior
 
-- Any client (CLI, LSP, MCP) can start the API server if it is not already running.
-- Each connected client keeps the API server alive.
-- When the last client disconnects, the API server exits automatically.
+- Any client (CLI, LSP, MCP) can start the WM Server if it is not already running.
+- Each connected client keeps the WM Server alive.
+- When the last client disconnects, the WM Server exits automatically.
 
 ## Manual server startup for debugging
 

@@ -25,7 +25,7 @@ The FineCode documentation is organized into the following sections:
 
 ### Developer Documentation
 - **Overview** (`development.md`): Contributing to FineCode core development
-- **API Protocol** (`api-protocol.md`): Technical protocol and endpoint reference
+- **WM Protocol** (`wm-protocol.md`): Technical protocol and endpoint reference
 - **Developing FineCode** (`guides/developing-finecode.md`): Monorepo workflows and conventions
 
 ### Potential Additions

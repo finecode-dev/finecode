@@ -1,7 +1,7 @@
 import pathlib
 import typing
 
-from finecode.api_server import context
+from finecode.wm_server import context
 
 
 async def preprocess_for_project(

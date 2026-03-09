@@ -10,13 +10,13 @@ import ordered_set
 from loguru import logger
 
 from finecode import user_messages
-from finecode.api_server import find_project, context, domain, domain_helpers
-from finecode.api_server.runner import runner_manager
-from finecode.api_server.runner import runner_client
-from finecode.api_server.runner.runner_manager import RunnerFailedToStart
-from finecode.api_server.runner.runner_client import RunResultFormat  # reexport
+from finecode.wm_server import find_project, context, domain, domain_helpers
+from finecode.wm_server.runner import runner_manager
+from finecode.wm_server.runner import runner_client
+from finecode.wm_server.runner.runner_manager import RunnerFailedToStart
+from finecode.wm_server.runner.runner_client import RunResultFormat  # reexport
 
-from finecode.api_server.services.run_service import payload_preprocessor
+from finecode.wm_server.services.run_service import payload_preprocessor
 from .exceptions import ActionRunFailed, StartingEnvironmentsFailed
 
 

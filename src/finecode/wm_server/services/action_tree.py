@@ -1,7 +1,7 @@
 """Action tree
 
 This module contains the logic that constructs the hierarchical action tree used by the
-IDE. It also provides the request handler that the API server exposes
+IDE. It also provides the request handler that the WM server exposes
 as ``actions/getTree``.
 """
 
@@ -11,7 +11,7 @@ import asyncio
 import pathlib
 from loguru import logger
 
-from finecode.api_server import context, domain
+from finecode.wm_server import context, domain
 
 
 def _project_action_tree(project: domain.Project | None, ws_context: context.WorkspaceContext) -> list[dict]:

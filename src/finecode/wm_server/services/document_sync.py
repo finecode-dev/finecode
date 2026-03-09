@@ -1,4 +1,4 @@
-"""Document synchronization handlers for the API server.
+"""Document synchronization handlers for the WM server.
 
 Handles document lifecycle notifications (opened, closed, changed) and forwards
 them to affected extension runners.
@@ -10,7 +10,7 @@ import asyncio
 import pathlib
 from loguru import logger
 
-from finecode.api_server import context, domain
+from finecode.wm_server import context, domain
 
 
 async def handle_documents_opened(
@@ -20,7 +20,7 @@ async def handle_documents_opened(
     if params is None:
         return
 
-    from finecode.api_server.runner import runner_client
+    from finecode.wm_server.runner import runner_client
 
     uri = params.get("uri")
     version = params.get("version")
@@ -62,7 +62,7 @@ async def handle_documents_closed(
     if params is None:
         return
 
-    from finecode.api_server.runner import runner_client
+    from finecode.wm_server.runner import runner_client
 
     uri = params.get("uri")
     if not uri:
@@ -105,7 +105,7 @@ async def handle_documents_changed(
     if params is None:
         return
 
-    from finecode.api_server.runner import runner_client
+    from finecode.wm_server.runner import runner_client
 
     uri = params.get("uri")
     version = params.get("version")

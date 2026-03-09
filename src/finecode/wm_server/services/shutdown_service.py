@@ -1,7 +1,7 @@
 from loguru import logger
 
-from finecode.api_server import context
-from finecode.api_server.runner import runner_client, runner_manager
+from finecode.wm_server import context
+from finecode.wm_server.runner import runner_client, runner_manager
 
 
 def on_shutdown(ws_context: context.WorkspaceContext):

@@ -1,6 +1,6 @@
-# FineCode API Server Protocol
+# FineCode WM Server Protocol
 
-The FineCode API server is a TCP JSON-RPC 2.0 service that manages the workspace state
+The FineCode Workspace Manager Server (WM Server) is a TCP JSON-RPC 2.0 service that manages the workspace state
 (projects, configs, extension runners). Any client — LSP server, MCP server, or CLI — can
 connect to it.
 
@@ -8,8 +8,8 @@ connect to it.
 
 - TCP on `127.0.0.1`, random free port
 - Content-Length framing (same as LSP): `Content-Length: N\r\n\r\n{json_body}`
-- Discovery: port written to `.venvs/dev_workspace/cache/finecode/api_port`
-- Auto-stops when the last client disconnects (after a 5s grace period) or if no client connects 30 seconds after start of API Server
+- Discovery: port written to `.venvs/dev_workspace/cache/finecode/wm_port`
+- Auto-stops when the last client disconnects (after a 5s grace period) or if no client connects 30 seconds after start of WM Server
 
 ## JSON-RPC 2.0
 
@@ -89,7 +89,7 @@ list all projects and perform path comparisons itself.
 ```
 
 The server internally calls
-:func:`finecode.api_server.services.run_service.find_action_project` with
+:func:`finecode.wm_server.services.run_service.find_action_project` with
 ``action_name="lint"`` and returns the corresponding project name.
 
 ---
@@ -102,7 +102,7 @@ and optionally starts extension runners.
 > **Design note:** Ideally, workspace directories would be a single shared
 > definition independent of which client connects (LSP, MCP, CLI). Currently,
 > each client calls `workspace/addDir` with its own working directory, so the
-> API server's workspace is the union of what clients have registered. This is a
+> WM Server's workspace is the union of what clients have registered. This is a
 > known simplification — a future improvement would introduce a workspace
 > configuration file or a dedicated workspace management layer so that the set
 > of directories is not environment-specific.
@@ -455,7 +455,7 @@ Supported `result_formats`: `"json"`, `"string"`, etc. (same as `actions/run`).
 
 During execution, the server sends `actions/partialResult` notifications (see below).
 
-> **Guarantee:** The API server always delivers results via `actions/partialResult`
+> **Guarantee:** The WM Server always delivers results via `actions/partialResult`
 > notifications, even when an extension runner does not stream incrementally (i.e.
 > it collects all results internally and returns them as a single final response).
 > In that case the server emits the final result as a partial result notification
@@ -485,7 +485,7 @@ Hot-reload handler code for an action without restarting runners.
 
 ### `documents/` — Document Sync
 
-Notifications from the LSP client to keep the API server (and extension runners)
+Notifications from the LSP client to keep the WM Server (and extension runners)
 informed about open documents. These are fire-and-forget (no response).
 
 #### `documents/opened`
@@ -645,7 +645,7 @@ environment, it is stopped first.
 
 #### `server/shutdown`
 
-Explicitly shut down the API server.
+Explicitly shut down the WM Server.
 
 - **Type:** request
 - **Clients:** any
@@ -659,7 +659,7 @@ Explicitly shut down the API server.
 
 ### Server -> Client Notifications
 
-These are sent by the API server to connected clients. Clients must implement
+These are sent by the WM Server to connected clients. Clients must implement
 a background reader to receive them.
 
 #### `actions/partialResult`
@@ -692,7 +692,7 @@ but without `return_code`).
 
 > **Note:** Notifications are delivered only to the client connection that
 > initiated the corresponding `actions/runWithPartialResults` request.  The
-> API server does **not** broadcast these messages to every connected client.
+> WM Server does **not** broadcast these messages to every connected client.
 
 ---
 

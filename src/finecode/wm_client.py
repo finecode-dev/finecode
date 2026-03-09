@@ -1,6 +1,6 @@
-"""FineCode API client — JSON-RPC client for the FineCode API server.
+"""FineCode WM client — JSON-RPC client for the FineCode WM server.
 
-Connects to the FineCode API server over TCP using Content-Length framing.
+Connects to the FineCode WM server over TCP using Content-Length framing.
 Supports both request/response and server→client notifications via a
 background reader loop.
 
@@ -46,7 +46,7 @@ async def _read_message(reader: asyncio.StreamReader) -> dict | None:
         return None
     header_str = header_line.decode("utf-8").strip()
     if not header_str.startswith(CONTENT_LENGTH_HEADER):
-        logger.warning(f"ApiClient: unexpected header: {header_str!r}")
+        logger.warning(f"WmClient: unexpected header: {header_str!r}")
         return None
     content_length = int(header_str[len(CONTENT_LENGTH_HEADER):])
 
@@ -166,7 +166,7 @@ class ApiClient:
         return result["actions"]
 
     async def get_tree(self, parent_node_id: str | None = None) -> dict:
-        """Retrieve the hierarchical action tree from the API server.
+        """Retrieve the hierarchical action tree from the WM server.
 
         ``parent_node_id`` is currently ignored by the server but is accepted for
         future compatibility (and mirrors the arguments passed by the IDE
@@ -312,7 +312,7 @@ class ApiClient:
     def _send_notification(self, method: str, params: dict | None = None) -> None:
         """Send a JSON-RPC notification (no response expected)."""
         if self._writer is None:
-            raise RuntimeError("Not connected to FineCode API server")
+            raise RuntimeError("Not connected to FineCode WM server")
 
         msg = {
             "jsonrpc": "2.0",
@@ -336,7 +336,7 @@ class ApiClient:
             ConnectionError: the connection was closed before a response arrived.
         """
         if self._writer is None:
-            raise RuntimeError("Not connected to FineCode API server")
+            raise RuntimeError("Not connected to FineCode WM server")
 
         self._request_id += 1
         rid = self._request_id
@@ -380,7 +380,7 @@ class ApiClient:
                         future.set_result(msg)
                     else:
                         logger.warning(
-                            f"ApiClient: received response for unknown id {msg['id']}"
+                            f"WmClient: received response for unknown id {msg['id']}"
                         )
                 else:
                     # Server→client notification.
@@ -390,14 +390,14 @@ class ApiClient:
                         asyncio.create_task(handler(msg.get("params")))
                     else:
                         logger.trace(
-                            f"ApiClient: unhandled notification {method}"
+                            f"WmClient: unhandled notification {method}"
                         )
         except asyncio.CancelledError:
             raise
         except (asyncio.IncompleteReadError, ConnectionResetError):
-            logger.info("ApiClient: server connection lost")
+            logger.info("WmClient: server connection lost")
         except Exception:
-            logger.exception("ApiClient: error in reader loop")
+            logger.exception("WmClient: error in reader loop")
         finally:
             # Fail any remaining pending requests.
             for future in self._pending.values():

@@ -8,8 +8,8 @@ from pygls.workspace import position_codec
 from pygls.lsp.server import LanguageServer
 from finecode_extension_runner.lsp_server import CustomLanguageServer
 
-from finecode.api_server import api_server
-from finecode.api_client import ApiClient
+from finecode.wm_server import wm_server
+from finecode.wm_client import ApiClient
 from finecode.lsp_server import global_state
 from finecode.lsp_server.endpoints import action_tree as action_tree_endpoints
 from finecode.lsp_server.endpoints import code_actions as code_actions_endpoints
@@ -187,34 +187,34 @@ async def _on_initialized(ls: LanguageServer, params: types.InitializedParams):
 
     logger.info("initialized, adding workspace directories")
 
-    # Determine workspace root for API server startup.
+    # Determine workspace root for WM server startup.
     workdir = Path.cwd()
     if ls.workspace.folders:
         first_folder = next(iter(ls.workspace.folders.values()))
         workdir = Path(first_folder.uri.replace("file://", ""))
 
-    # Ensure the FineCode API server is running and connect to it.
-    # The TCP connection keeps the API server alive for the LSP lifetime.
-    if not api_server.is_running():
-        api_server.ensure_running(workdir)
+    # Ensure the FineCode WM server is running and connect to it.
+    # The TCP connection keeps the WM server alive for the LSP lifetime.
+    if not wm_server.is_running():
+        wm_server.ensure_running(workdir)
         try:
-            port = await api_server.wait_until_ready()
+            port = await wm_server.wait_until_ready()
         except TimeoutError as exc:
-            logger.warning(f"FineCode API server did not start: {exc}")
+            logger.warning(f"FineCode WM server did not start: {exc}")
             port = None
     else:
-        port = api_server.read_port()
+        port = wm_server.read_port()
 
     if port is None:
-        logger.error("Cannot connect to FineCode API server — no port available")
+        logger.error("Cannot connect to FineCode WM server — no port available")
         return
 
     try:
-        global_state.api_client = ApiClient()
-        await global_state.api_client.connect("127.0.0.1", port)
+        global_state.wm_client = ApiClient()
+        await global_state.wm_client.connect("127.0.0.1", port)
     except (ConnectionRefusedError, OSError) as exc:
-        logger.error(f"Could not connect to FineCode API server: {exc}")
-        global_state.api_client = None
+        logger.error(f"Could not connect to FineCode WM server: {exc}")
+        global_state.wm_client = None
         return
 
     # Register notification handlers for server→client push messages.
@@ -227,8 +227,8 @@ async def _on_initialized(ls: LanguageServer, params: types.InitializedParams):
     async def on_user_message(params: dict) -> None:
         await send_user_message_notification(ls, params["message"], params["type"])
 
-    global_state.api_client.on_notification("actions/treeChanged", on_tree_changed)
-    global_state.api_client.on_notification("server/userMessage", on_user_message)
+    global_state.wm_client.on_notification("actions/treeChanged", on_tree_changed)
+    global_state.wm_client.on_notification("server/userMessage", on_user_message)
 
     # forward progress notifications to the LSP progress reporter
     from finecode_extension_api.actions import lint as lint_action
@@ -298,14 +298,14 @@ async def _on_initialized(ls: LanguageServer, params: types.InitializedParams):
         else:
             logger.warning(f"Unsupported action for partial results: {action}")
 
-    global_state.api_client.on_notification("actions/partialResult", on_partial_result)
+    global_state.wm_client.on_notification("actions/partialResult", on_partial_result)
 
-    # Add workspace directories via the API server.
+    # Add workspace directories via the WM server.
     try:
         async with asyncio.TaskGroup() as tg:
             for ws_dir in ls.workspace.folders.values():
                 dir_path = Path(ws_dir.uri.replace("file://", ""))
-                tg.create_task(global_state.api_client.add_dir(dir_path))
+                tg.create_task(global_state.wm_client.add_dir(dir_path))
     except ExceptionGroup as error:
         logger.exception(error)
 
@@ -317,47 +317,47 @@ async def _workspace_did_change_workspace_folders(
     ls: LanguageServer, params: types.DidChangeWorkspaceFoldersParams
 ):
     logger.trace(f"Workspace dirs were changed: {params}")
-    if global_state.api_client is None:
-        logger.warning("API client not connected, ignoring workspace folder change")
+    if global_state.wm_client is None:
+        logger.warning("WM client not connected, ignoring workspace folder change")
         return
 
     for ws_folder in params.event.removed:
-        await global_state.api_client.remove_dir(
+        await global_state.wm_client.remove_dir(
             Path(ws_folder.uri.removeprefix("file://"))
         )
 
     for ws_folder in params.event.added:
-        await global_state.api_client.add_dir(
+        await global_state.wm_client.add_dir(
             Path(ws_folder.uri.removeprefix("file://"))
         )
 
 
 def _on_shutdown(ls: LanguageServer, params):
     logger.info("on shutdown handler", params)
-    # Close connection to the API server. If this was the last client,
-    # the API server will auto-stop after a short delay and clean up runners.
-    if global_state.api_client is not None:
-        asyncio.ensure_future(global_state.api_client.close())
-        global_state.api_client = None
+    # Close connection to the WM server. If this was the last client,
+    # the WM server will auto-stop after a short delay and clean up runners.
+    if global_state.wm_client is not None:
+        asyncio.ensure_future(global_state.wm_client.close())
+        global_state.wm_client = None
 
 
 async def reset(ls: LanguageServer, params):
     logger.info("Reset WM")
     await global_state.server_initialized.wait()
 
-    if global_state.api_client is None:
-        logger.error("Reset requested but API client not connected")
+    if global_state.wm_client is None:
+        logger.error("Reset requested but WM client not connected")
         return
 
-    await global_state.api_client.request("server/reset", {})
+    await global_state.wm_client.request("server/reset", {})
 
 
 async def restart_extension_runner(ls: LanguageServer, tree_node, param2):
     logger.info(f"restart extension runner {tree_node}")
     await global_state.server_initialized.wait()
 
-    if global_state.api_client is None:
-        logger.error("Restart runner requested but API client not connected")
+    if global_state.wm_client is None:
+        logger.error("Restart runner requested but WM client not connected")
         return
 
     runner_id = tree_node['projectPath']
@@ -365,7 +365,7 @@ async def restart_extension_runner(ls: LanguageServer, tree_node, param2):
     runner_working_dir_str = splitted_runner_id[0]
     env_name = splitted_runner_id[-1]
 
-    await global_state.api_client.request(
+    await global_state.wm_client.request(
         "runners/restart",
         {"runner_working_dir": runner_working_dir_str, "env_name": env_name},
     )
@@ -375,8 +375,8 @@ async def restart_and_debug_extension_runner(ls: LanguageServer, tree_node, para
     logger.info(f"restart and debug extension runner {tree_node} {params2}")
     await global_state.server_initialized.wait()
 
-    if global_state.api_client is None:
-        logger.error("Restart+debug runner requested but API client not connected")
+    if global_state.wm_client is None:
+        logger.error("Restart+debug runner requested but WM client not connected")
         return
 
     runner_id = tree_node['projectPath']
@@ -384,7 +384,7 @@ async def restart_and_debug_extension_runner(ls: LanguageServer, tree_node, para
     runner_working_dir_str = splitted_runner_id[0]
     env_name = splitted_runner_id[-1]
 
-    await global_state.api_client.request(
+    await global_state.wm_client.request(
         "runners/restart",
         {"runner_working_dir": runner_working_dir_str, "env_name": env_name, "debug": True},
     )

@@ -5,9 +5,9 @@ import typing
 
 import click
 
-from finecode.api_client import ApiClient, ApiError
-from finecode.api_server import api_server
-from finecode.api_server.runner import runner_client
+from finecode.wm_client import ApiClient, ApiError
+from finecode.wm_server import wm_server
+from finecode.wm_server.runner import runner_client
 from finecode.cli_app import utils
 
 
@@ -30,15 +30,15 @@ async def run_actions(
     port_file = None
     try:
         if own_server:
-            port_file = api_server.start_own_server(workdir_path)
+            port_file = wm_server.start_own_server(workdir_path)
             try:
-                port = await api_server.wait_until_ready_from_file(port_file)
+                port = await wm_server.wait_until_ready_from_file(port_file)
             except TimeoutError as exc:
                 raise RunFailed(str(exc)) from exc
         else:
-            api_server.ensure_running(workdir_path)
+            wm_server.ensure_running(workdir_path)
             try:
-                port = await api_server.wait_until_ready()
+                port = await wm_server.wait_until_ready()
             except TimeoutError as exc:
                 raise RunFailed(str(exc)) from exc
 

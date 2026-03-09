@@ -6,9 +6,9 @@ from loguru import logger
 from tomlkit import loads as toml_loads
 
 from finecode import user_messages
-from finecode.api_server import context, domain
-from finecode.api_server.config import config_models
-from finecode.api_server.runner import runner_client
+from finecode.wm_server import context, domain
+from finecode.wm_server.config import config_models
+from finecode.wm_server.runner import runner_client
 
 
 async def read_projects_in_dir(

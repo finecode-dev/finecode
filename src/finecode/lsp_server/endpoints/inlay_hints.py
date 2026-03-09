@@ -49,17 +49,17 @@ async def document_inlay_hint(
 
     file_path = pygls_types_utils.uri_str_to_path(params.text_document.uri)
 
-    if global_state.api_client is None:
-        logger.error("Inlay hints requested but API client not connected")
+    if global_state.wm_client is None:
+        logger.error("Inlay hints requested but WM client not connected")
         return None
 
-    project_name = await global_state.api_client.find_project_for_file(str(file_path))
+    project_name = await global_state.wm_client.find_project_for_file(str(file_path))
     if project_name is None:
         # Not all files belong to a project with this action — not an error.
         return []
 
     try:
-        response = await global_state.api_client.run_action(
+        response = await global_state.wm_client.run_action(
             action="text_document_inlay_hint",
             project=project_name,
             params=inlay_hint_params_to_dict(params),

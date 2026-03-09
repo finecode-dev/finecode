@@ -15,7 +15,7 @@ The `run` command supports two usage modes.
 
 ### Standalone (one-shot) — default
 
-Each `run` invocation is fully independent. FineCode starts a dedicated API server subprocess for the duration of the command, then shuts it down on exit. This is the default behavior.
+Each `run` invocation is fully independent. FineCode starts a dedicated WM Server subprocess for the duration of the command, then shuts it down on exit. This is the default behavior.
 
 ```bash
 python -m finecode run lint
@@ -25,7 +25,7 @@ Use this in CI/CD pipelines or any context where you don't want persistent backg
 
 ### Persistent server
 
-A long-lived API server holds warm state — loaded configuration, started runners — across multiple `run` calls. Use `--shared-server` to connect to a running shared instance instead of starting a dedicated one.
+A long-lived WM Server holds warm state — loaded configuration, started runners — across multiple `run` calls. Use `--shared-server` to connect to a running shared instance instead of starting a dedicated one.
 
 ```bash
 # Connect to the shared server (start it first if needed):
@@ -35,7 +35,7 @@ python -m finecode run --shared-server format
 
 This mode is used automatically by the LSP and MCP integrations. It gives faster repeated runs because configuration loading and runner startup are amortized across calls.
 
-The server waits 30 seconds after the last client disconnects before shutting down (configurable via `--disconnect-timeout` on `start-api-server`).
+The server waits 30 seconds after the last client disconnects before shutting down (configurable via `--disconnect-timeout` on `start-wm-server`).
 
 ---
 
@@ -54,7 +54,7 @@ python -m finecode run [options] <action> [<action> ...] [payload] [--config.<ke
 | `--workdir=<path>` | Use `<path>` as the workspace root instead of `cwd` |
 | `--project=<name>` | Run only in this project. Repeatable for multiple projects. |
 | `--concurrently` | Run actions concurrently within each project |
-| `--shared-server` | Connect to the shared persistent API server instead of starting a dedicated one |
+| `--shared-server` | Connect to the shared persistent WM Server instead of starting a dedicated one |
 | `--trace` | Enable verbose (trace-level) logging |
 | `--no-env-config` | Ignore `FINECODE_CONFIG_*` environment variables |
 | `--no-save-results` | Do not write action results to the cache directory |
@@ -163,13 +163,13 @@ python -m finecode start-lsp --stdio | --socket <port> | --ws [--host <host>] [-
 | `--trace` | Enable verbose logging |
 | `--debug` | Wait for a debugpy client on port 5680 |
 
-The LSP server connects to the **FineCode API server** on startup (starting one if needed). See [LSP and MCP Architecture](reference/lsp-mcp-architecture.md) for details.
+The LSP server connects to the **FineCode WM Server** on startup (starting one if needed). See [LSP and MCP Architecture](reference/lsp-mcp-architecture.md) for details.
 
 ---
 
 ## `start-mcp`
 
-Start the FineCode MCP server on stdio. Connects to a running FineCode API server (or starts one) and exposes FineCode tools via the Model Context Protocol.
+Start the FineCode MCP server on stdio. Connects to a running FineCode WM Server (or starts one) and exposes FineCode tools via the Model Context Protocol.
 
 ```text
 .venvs/dev_workspace/bin/python -m finecode start-mcp [--workdir=<path>] [--trace]
@@ -184,12 +184,12 @@ Typically started automatically by MCP-compatible clients (for example, Claude C
 
 ---
 
-## `start-api-server`
+## `start-wm-server`
 
-Start the FineCode API server standalone (TCP JSON-RPC), listen for client connections. Shuts down after the last client disconnects and the disconnect timeout expires.
+Start the FineCode Workspace Manager Server standalone (TCP JSON-RPC), listen for client connections. Shuts down after the last client disconnects and the disconnect timeout expires.
 
 ```text
-python -m finecode start-api-server [--trace] [--disconnect-timeout=<seconds>]
+python -m finecode start-wm-server [--trace] [--disconnect-timeout=<seconds>]
 ```
 
 | Option | Description |

@@ -15,14 +15,14 @@ from finecode_extension_api.actions import lint as lint_action
 async def _find_project_name_for_file(file_path: Path) -> str | None:
     """Return the project name containing *file_path*.
 
-    This helper delegates the lookup to the API server via
+    This helper delegates the lookup to the WM server via
     ``workspace/findProjectForFile``; the server applies the same logic that
     would otherwise live locally.  ``None`` is returned if the file does not
     belong to any known project.
     """
-    # delegate the resolution to the API server
-    assert global_state.api_client is not None, "API client required for project lookup"
-    project = await global_state.api_client.find_project_for_file(str(file_path))
+    # delegate the resolution to the WM server
+    assert global_state.wm_client is not None, "WM client required for project lookup"
+    project = await global_state.wm_client.find_project_for_file(str(file_path))
     return project
 
 
@@ -66,8 +66,8 @@ async def document_diagnostic_with_full_result(
 ) -> types.DocumentDiagnosticReport | None:
     logger.trace(f"Document diagnostic with full result: {file_path}")
 
-    if global_state.api_client is None:
-        logger.error("Diagnostics requested but API client not connected")
+    if global_state.wm_client is None:
+        logger.error("Diagnostics requested but WM client not connected")
         return None
 
     project_name = await _find_project_name_for_file(file_path)
@@ -76,7 +76,7 @@ async def document_diagnostic_with_full_result(
         return None
 
     try:
-        response = await global_state.api_client.run_action(
+        response = await global_state.wm_client.run_action(
             action="lint",
             project=project_name,
             params={
@@ -138,8 +138,8 @@ async def document_diagnostic_with_partial_results(
 ) -> None:
     logger.trace(f"Document diagnostic with partial results: {file_path}")
 
-    if global_state.api_client is None:
-        logger.error("Diagnostics requested but API client not connected")
+    if global_state.wm_client is None:
+        logger.error("Diagnostics requested but WM client not connected")
         return None
 
     project_name = await _find_project_name_for_file(file_path)
@@ -151,7 +151,7 @@ async def document_diagnostic_with_partial_results(
     global_state.partial_result_tokens[partial_result_token] = ("lint", "document_diagnostic")
 
     try:
-        await global_state.api_client.request(
+        await global_state.wm_client.request(
             "actions/runWithPartialResults",
             {
                 "action": "lint",
@@ -205,17 +205,17 @@ async def run_workspace_diagnostic_with_partial_results(
 ):
     """Run lint with partial results on all projects.
 
-    The API server automatically runs the action in all relevant projects when
+    The WM server automatically runs the action in all relevant projects when
     the 'project' field is empty.
     """
-    assert global_state.api_client is not None, "API client must be connected"
+    assert global_state.wm_client is not None, "WM client must be connected"
 
     # Store the expected response type for this token
     global_state.partial_result_tokens[partial_result_token] = ("lint", "workspace_diagnostic")
 
     try:
-        # send request to API server; notifications will trigger progress reporter
-        await global_state.api_client.request(
+        # send request to WM server; notifications will trigger progress reporter
+        await global_state.wm_client.request(
             "actions/runWithPartialResults",
             {
                 "action": "lint",
@@ -247,13 +247,13 @@ async def workspace_diagnostic_with_partial_results(
 async def workspace_diagnostic_with_full_result() -> types.WorkspaceDiagnosticReport:
     """Run lint action on all projects via API and aggregate results.
 
-    The API server automatically runs in all relevant projects when 'project'
+    The WM server automatically runs in all relevant projects when 'project'
     field is empty.
     """
-    assert global_state.api_client is not None, "API client must be connected"
+    assert global_state.wm_client is not None, "WM client must be connected"
 
     try:
-        response = await global_state.api_client.run_action(
+        response = await global_state.wm_client.run_action(
             action="lint",
             project="",  # empty project = all relevant projects
             params={"target": "project"},
@@ -294,12 +294,12 @@ async def workspace_diagnostic_with_full_result() -> types.WorkspaceDiagnosticRe
 async def _workspace_diagnostic(
     params: types.WorkspaceDiagnosticParams,
 ) -> types.WorkspaceDiagnosticReport | None:
-    """Run workspace diagnostics for all projects via the API server.
+    """Run workspace diagnostics for all projects via the WM server.
 
-    The API server automatically selects relevant projects when the 'project'
+    The WM server automatically selects relevant projects when the 'project'
     field is empty.
     """
-    assert global_state.api_client is not None, "API client must be connected"
+    assert global_state.wm_client is not None, "WM client must be connected"
 
     if params.partial_result_token is not None:
         # fire off partial‑result request and return an empty placeholder; the

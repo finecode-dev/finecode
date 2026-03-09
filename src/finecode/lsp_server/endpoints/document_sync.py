@@ -11,10 +11,10 @@ async def document_did_open(
     logger.trace(f"Document did open: {params.text_document.uri}")
     await global_state.server_initialized.wait()
 
-    if global_state.api_client is None:
-        raise Exception("API server not connected")
+    if global_state.wm_client is None:
+        raise Exception("WM server not connected")
 
-    await global_state.api_client.notify_document_opened(
+    await global_state.wm_client.notify_document_opened(
         uri=params.text_document.uri, version=params.text_document.version
     )
 
@@ -25,10 +25,10 @@ async def document_did_close(
     logger.trace(f"Document did close: {params.text_document.uri}")
     await global_state.server_initialized.wait()
 
-    if global_state.api_client is None:
-        raise Exception("API server not connected")
+    if global_state.wm_client is None:
+        raise Exception("WM server not connected")
 
-    await global_state.api_client.notify_document_closed(
+    await global_state.wm_client.notify_document_closed(
         uri=params.text_document.uri
     )
 
@@ -46,8 +46,8 @@ async def document_did_change(
     logger.trace(f"Document did change: {params.text_document.uri}")
     await global_state.server_initialized.wait()
 
-    if global_state.api_client is None:
-        raise Exception("API server not connected")
+    if global_state.wm_client is None:
+        raise Exception("WM server not connected")
 
     # Convert content changes to API format (camelCase)
     content_changes = []
@@ -77,7 +77,7 @@ async def document_did_change(
             )
             continue
 
-    await global_state.api_client.notify_document_changed(
+    await global_state.wm_client.notify_document_changed(
         uri=params.text_document.uri,
         version=params.text_document.version,
         content_changes=content_changes,

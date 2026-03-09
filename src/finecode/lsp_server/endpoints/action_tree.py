@@ -14,10 +14,10 @@ async def list_actions(ls: LanguageServer, params):
     # if the list contains only one element. Test after migration from pygls
     parent_node_id = params  # params[0]
 
-    if global_state.api_client is None:
+    if global_state.wm_client is None:
         raise Exception()
 
-    response = await global_state.api_client.get_tree(parent_node_id)
+    response = await global_state.wm_client.get_tree(parent_node_id)
     return response
 
 
@@ -25,10 +25,10 @@ async def list_actions_for_position(ls: LanguageServer, params):
     logger.info(f"list_actions_for_position {params}")
     await global_state.server_initialized.wait()
 
-    if global_state.api_client is None:
+    if global_state.wm_client is None:
         raise Exception()
 
-    response = await global_state.api_client.get_tree(None)
+    response = await global_state.wm_client.get_tree(None)
     return response
 
 
@@ -36,7 +36,7 @@ async def run_action_on_file(ls: LanguageServer, params):
     logger.info(f"run action on file {params}")
     await global_state.server_initialized.wait()
 
-    if global_state.api_client is None:
+    if global_state.wm_client is None:
         raise Exception()
 
     params_dict = params[0]
@@ -55,7 +55,7 @@ async def run_action_on_file(ls: LanguageServer, params):
     if action_name == "format":
         run_params["save"] = False
 
-    response = await global_state.api_client.run_action(
+    response = await global_state.wm_client.run_action(
         action=action_name,
         project=project_path_str,
         params=run_params,
@@ -68,7 +68,7 @@ async def run_action_on_project(ls: LanguageServer, params):
     logger.info(f"run action on project {params}")
     await global_state.server_initialized.wait()
 
-    if global_state.api_client is None:
+    if global_state.wm_client is None:
         raise Exception()
 
     params_dict = params[0]
@@ -77,7 +77,7 @@ async def run_action_on_project(ls: LanguageServer, params):
     project_path_str = action_node_id_parts[0]
     action_name = action_node_id_parts[1]
 
-    response = await global_state.api_client.run_action(
+    response = await global_state.wm_client.run_action(
         action=action_name,
         project=project_path_str,
         params={"target": "project"},
@@ -90,13 +90,13 @@ async def reload_action(ls: LanguageServer, params):
     logger.info(f"reload action {params}")
     await global_state.server_initialized.wait()
 
-    if global_state.api_client is None:
+    if global_state.wm_client is None:
         raise Exception()
 
     params_dict = params[0]
     action_node_id = params_dict["projectPath"]
 
-    await global_state.api_client.request(
+    await global_state.wm_client.request(
         "actions/reload", {"action_node_id": action_node_id}
     )
     return {}
@@ -110,8 +110,8 @@ async def reload_action(ls: LanguageServer, params):
 #     # TODO
 #     parent_node_id = ""
 
-#     if global_state.api_client is not None:
-#         resp = await global_state.api_client.get_tree(parent_node_id)
+#     if global_state.wm_client is not None:
+#         resp = await global_state.wm_client.get_tree(parent_node_id)
 #         return resp
 
 #     request = schemas.ListActionsRequest(parent_node_id="")

@@ -1,10 +1,10 @@
-"""FineCode API Server — TCP JSON-RPC server for external tool integration.
+"""FineCode WM Server — TCP JSON-RPC server for external tool integration.
 
-The API server is the shared backbone that holds the WorkspaceContext. Any client
+The WM server is the shared backbone that holds the WorkspaceContext. Any client
 (LSP server, MCP server, CLI) can start it if not already running and connect to it.
 When the last client disconnects, the server shuts down automatically.
 
-Discovery: writes the listening port to .venvs/dev_workspace/cache/finecode/api_port
+Discovery: writes the listening port to .venvs/dev_workspace/cache/finecode/wm_port
 so clients can find it (same cache directory used for action results).
 """
 
@@ -21,7 +21,7 @@ import typing
 
 from loguru import logger
 
-from finecode.api_server import context, domain
+from finecode.wm_server import context, domain
 
 CONTENT_LENGTH_HEADER = "Content-Length: "
 DISCONNECT_TIMEOUT_SECONDS = 30
@@ -103,7 +103,7 @@ def _write_message(writer: asyncio.StreamWriter, msg: dict) -> None:
 
 # ---------------------------------------------------------------------------
 # Method handlers (requests — client sends id, server responds)
-# See docs/api-protocol.md for full protocol documentation.
+# See docs/wm-protocol.md for full protocol documentation.
 # ---------------------------------------------------------------------------
 
 NOT_IMPLEMENTED_CODE = -32002
@@ -132,7 +132,7 @@ def _stub(method_name: str) -> MethodHandler:
     ) -> typing.Any:
         raise _NotImplementedError(f"{method_name}: {NOT_IMPLEMENTED_MSG}")
 
-    handler.__doc__ = f"Stub for {method_name}. See docs/api-protocol.md."
+    handler.__doc__ = f"Stub for {method_name}. See docs/wm-protocol.md."
     return handler
 
 
@@ -144,7 +144,7 @@ def _notification_stub(method_name: str) -> NotificationHandler:
     ) -> None:
         logger.trace(f"FineCode API: notification {method_name} received (stub, ignoring)")
 
-    handler.__doc__ = f"Stub for {method_name}. See docs/api-protocol.md."
+    handler.__doc__ = f"Stub for {method_name}. See docs/wm-protocol.md."
     return handler
 
 
@@ -250,9 +250,9 @@ async def _handle_add_dir(
         runners. Useful when runner environments may not exist yet (e.g. before
         running prepare-envs).
     """
-    from finecode.api_server.config import collect_actions, read_configs
-    from finecode.api_server.runner import runner_manager
-    from finecode.api_server.runner.runner_client import RunnerStatus
+    from finecode.wm_server.config import collect_actions, read_configs
+    from finecode.wm_server.runner import runner_manager
+    from finecode.wm_server.runner.runner_client import RunnerStatus
 
     params = params or {}
     dir_path = pathlib.Path(params["dir_path"])
@@ -272,7 +272,7 @@ async def _handle_add_dir(
 
     if not start_runners:
         # Collect actions directly from raw config without needing runners.
-        from finecode.api_server.config import config_models
+        from finecode.wm_server.config import config_models
         for project in new_projects:
             if project.status == domain.ProjectStatus.CONFIG_VALID:
                 try:
@@ -327,7 +327,7 @@ async def _handle_remove_dir(
     params: dict | None, ws_context: context.WorkspaceContext
 ) -> dict:
     """Remove a workspace directory. Stops runners, removes affected projects."""
-    from finecode.api_server.runner import runner_manager
+    from finecode.wm_server.runner import runner_manager
 
     dir_path = pathlib.Path(params["dir_path"])
     logger.trace(f'Remove ws dir: {dir_path}')
@@ -403,7 +403,7 @@ async def _handle_run_action(
         raise ValueError(f"Project '{project_name}' not found")
 
     # Import run_service here to avoid circular imports
-    from finecode.api_server.services import run_service
+    from finecode.wm_server.services import run_service
 
     result_format_strs: list[str] = options.get("result_formats", ["json"])
     result_formats = [
@@ -433,10 +433,10 @@ async def _handle_run_action(
     except run_service.ActionRunFailed:
         raise
 
-from finecode.api_server.services.action_tree import (
+from finecode.wm_server.services.action_tree import (
     _handle_get_tree,
 )
-from finecode.api_server.services.document_sync import (
+from finecode.wm_server.services.document_sync import (
     handle_documents_opened,
     handle_documents_closed,
     handle_documents_changed,
@@ -451,7 +451,7 @@ async def _handle_actions_reload(
     Params: ``{"action_node_id": "project_path::action_name"}``
     Result: ``{}``
     """
-    from finecode.api_server.runner import runner_client
+    from finecode.wm_server.runner import runner_client
 
     params = params or {}
     action_node_id = params.get("action_node_id", "")
@@ -476,7 +476,7 @@ async def _handle_runners_list(
 
     Result: ``{"runners": [{"project_path", "env_name", "status", "readable_id"}]}``
     """
-    from finecode.api_server.runner import runner_client
+    from finecode.wm_server.runner import runner_client
 
     runners = []
     for project_path, runners_by_env in ws_context.ws_projects_extension_runners.items():
@@ -498,7 +498,7 @@ async def _handle_runners_restart(
     Params: ``{"runner_working_dir": "/abs/path", "env_name": "dev_workspace", "debug": false}``
     Result: ``{}``
     """
-    from finecode.api_server.runner import runner_manager
+    from finecode.wm_server.runner import runner_manager
 
     params = params or {}
     runner_working_dir = params.get("runner_working_dir")
@@ -528,7 +528,7 @@ async def _handle_start_runners(
     Params: ``{"projects": ["project_name", ...]}`` (optional, default: all projects)
     Result: ``{}``
     """
-    from finecode.api_server.runner import runner_manager
+    from finecode.wm_server.runner import runner_manager
 
     params = params or {}
     project_names: list[str] | None = params.get("projects")
@@ -556,7 +556,7 @@ async def _handle_runners_check_env(
     Params: ``{"project": "project_name", "env_name": "dev_workspace"}``
     Result: ``{"valid": bool}``
     """
-    from finecode.api_server.runner import runner_manager
+    from finecode.wm_server.runner import runner_manager
 
     params = params or {}
     project_name = params.get("project")
@@ -587,7 +587,7 @@ async def _handle_runners_remove_env(
     Params: ``{"project": "project_name", "env_name": "dev_workspace"}``
     Result: ``{}``
     """
-    from finecode.api_server.runner import runner_manager
+    from finecode.wm_server.runner import runner_manager
 
     params = params or {}
     project_name = params.get("project")
@@ -636,8 +636,8 @@ async def _handle_set_config_overrides(
     immediately; their initialized handlers are dropped and will be re-initialized
     with the new config on the next run.
     """
-    from finecode.api_server.runner import runner_manager
-    from finecode.api_server.runner.runner_client import RunnerStatus
+    from finecode.wm_server.runner import runner_manager
+    from finecode.wm_server.runner.runner_client import RunnerStatus
 
     params = params or {}
     overrides: dict = params.get("overrides", {})
@@ -734,7 +734,7 @@ async def _handle_run_batch(
       {"results": {project_path_str: {action_name: {"result_by_format": ..., "return_code": int}}},
        "return_code": int}
     """
-    from finecode.api_server.services import run_service
+    from finecode.wm_server.services import run_service
 
     params = params or {}
     actions: list[str] = params.get("actions", [])
@@ -848,7 +848,7 @@ async def _handle_run_with_partial_results(
     project_name = params.get("project", "")
     options = params.get("options", {})
 
-    from finecode.api_server.services import run_service, partial_results_service
+    from finecode.wm_server.services import run_service, partial_results_service
 
     trigger = run_service.RunActionTrigger(options.get("trigger", "system"))
     dev_env = run_service.DevEnv(options.get("dev_env", "ide"))
@@ -1128,11 +1128,11 @@ def _cache_dir() -> pathlib.Path:
 
 
 def discovery_file_path() -> pathlib.Path:
-    return _cache_dir() / "api_port"
+    return _cache_dir() / "wm_port"
 
 
 def read_port() -> int | None:
-    """Read the API server port from the discovery file. Returns None if not found."""
+    """Read the WM server port from the discovery file. Returns None if not found."""
     path = discovery_file_path()
     if not path.exists():
         return None
@@ -1143,7 +1143,7 @@ def read_port() -> int | None:
 
 
 def is_running() -> bool:
-    """Check if an API server is already listening (discovery file exists and port responds)."""
+    """Check if a WM server is already listening (discovery file exists and port responds)."""
     port = read_port()
     if port is None:
         return False
@@ -1157,14 +1157,14 @@ def is_running() -> bool:
 
 
 def ensure_running(workdir: pathlib.Path) -> None:
-    """Start the API server as a subprocess if not already running."""
+    """Start the WM server as a subprocess if not already running."""
     if is_running():
         return
 
     python_cmd = sys.executable
-    logger.info(f"Starting FineCode API server subprocess in {workdir}")
+    logger.info(f"Starting FineCode WM server subprocess in {workdir}")
     subprocess.Popen(
-        [python_cmd, "-m", "finecode", "start-api-server", "--trace"],
+        [python_cmd, "-m", "finecode", "start-wm-server", "--trace"],
         cwd=str(workdir),
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
@@ -1172,7 +1172,7 @@ def ensure_running(workdir: pathlib.Path) -> None:
 
 
 async def wait_until_ready(timeout: float = 30) -> int:
-    """Wait for the API server to become available. Returns the port."""
+    """Wait for the WM server to become available. Returns the port."""
     deadline = asyncio.get_event_loop().time() + timeout
     while asyncio.get_event_loop().time() < deadline:
         if is_running():
@@ -1181,17 +1181,17 @@ async def wait_until_ready(timeout: float = 30) -> int:
                 return port
         await asyncio.sleep(0.5)
     raise TimeoutError(
-        f"FineCode API server did not start within {timeout}s. "
+        f"FineCode WM server did not start within {timeout}s. "
         f"Check logs for errors."
     )
 
 
 def start_own_server(workdir: pathlib.Path) -> pathlib.Path:
-    """Start a dedicated API server subprocess for exclusive use by one CLI call.
+    """Start a dedicated WM server subprocess for exclusive use by one CLI call.
 
     Unlike ``ensure_running()``, this always starts a *fresh* process and writes
     the listening port to a temporary file (not the shared discovery file), so it
-    does not interfere with a concurrently running shared API server (e.g. the one
+    does not interfere with a concurrently running shared WM server (e.g. the one
     used by the LSP/MCP clients).
 
     Returns the path to the temporary port file.  Pass it to
@@ -1206,9 +1206,9 @@ def start_own_server(workdir: pathlib.Path) -> pathlib.Path:
     # Write empty content so the server knows to overwrite rather than append.
     port_file.write_text("")
 
-    logger.info(f"Starting dedicated FineCode API server in {workdir}")
+    logger.info(f"Starting dedicated FineCode WM server in {workdir}")
     subprocess.Popen(
-        [sys.executable, "-m", "finecode", "start-api-server", "--port-file", str(port_file)],
+        [sys.executable, "-m", "finecode", "start-wm-server", "--port-file", str(port_file)],
         cwd=str(workdir),
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
@@ -1219,7 +1219,7 @@ def start_own_server(workdir: pathlib.Path) -> pathlib.Path:
 async def wait_until_ready_from_file(
     port_file: pathlib.Path, timeout: float = 30
 ) -> int:
-    """Wait for a dedicated API server using a custom port file. Returns the port."""
+    """Wait for a dedicated WM server using a custom port file. Returns the port."""
     deadline = asyncio.get_event_loop().time() + timeout
     while asyncio.get_event_loop().time() < deadline:
         try:
@@ -1234,7 +1234,7 @@ async def wait_until_ready_from_file(
             pass
         await asyncio.sleep(0.5)
     raise TimeoutError(
-        f"Dedicated FineCode API server did not start within {timeout}s. "
+        f"Dedicated FineCode WM server did not start within {timeout}s. "
         "Check logs for errors."
     )
 
@@ -1249,7 +1249,7 @@ async def start(
     Args:
         ws_context: Shared workspace context.
         port_file: Path to write the listening port to.  Defaults to the shared
-            discovery file (``_cache_dir() / "api_port"``).  Pass a custom path
+            discovery file (``_cache_dir() / "wm_port"``).  Pass a custom path
             when starting a dedicated instance so it does not overwrite the shared
             server's discovery file.
         disconnect_timeout: Seconds to wait after the last client disconnects
@@ -1271,7 +1271,7 @@ async def start(
     _discovery_file.parent.mkdir(parents=True, exist_ok=True)
     _discovery_file.write_text(str(port))
 
-    logger.info(f"FineCode API server listening on 127.0.0.1:{port}")
+    logger.info(f"FineCode WM server listening on 127.0.0.1:{port}")
     logger.info(f"Discovery file: {_discovery_file}")
 
     # Shut down if no client connects within the timeout.
@@ -1283,12 +1283,12 @@ async def start(
     finally:
         stop()
         # Clean up workspace resources (runners, IO thread).
-        from finecode.api_server.services import shutdown_service
+        from finecode.wm_server.services import shutdown_service
         shutdown_service.on_shutdown(ws_context)
 
 
 def stop() -> None:
-    """Stop the API server and remove the discovery file."""
+    """Stop the WM server and remove the discovery file."""
     global _server, _discovery_file
 
     if _server is not None:
@@ -1319,7 +1319,7 @@ def _register_callbacks() -> None:
     """Register runner_manager and user_messages callbacks that broadcast
     server→client notifications."""
     from finecode import user_messages
-    from finecode.api_server.runner import runner_manager
+    from finecode.wm_server.runner import runner_manager
 
     async def on_project_changed(project: domain.Project) -> None:
         _notify_all_clients("actions/treeChanged", {
@@ -1346,7 +1346,7 @@ async def start_standalone(
     port_file: pathlib.Path | None = None,
     disconnect_timeout: int = DISCONNECT_TIMEOUT_SECONDS,
 ) -> None:
-    """Start the API server as a standalone process with its own WorkspaceContext.
+    """Start the WM server as a standalone process with its own WorkspaceContext.
 
     Args:
         port_file: Optional custom path to write the listening port to.  Used by

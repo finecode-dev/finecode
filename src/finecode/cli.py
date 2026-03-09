@@ -12,7 +12,7 @@ import finecode.lsp_server.main as wm_lsp_server
 from finecode import logger_utils, user_messages
 from finecode.lsp_server import communication_utils
 from finecode.cli_app.commands import dump_config_cmd, prepare_envs_cmd, run_cmd
-from finecode.api_server.config.config_models import ConfigurationError
+from finecode.wm_server.config.config_models import ConfigurationError
 
 
 FINECODE_CONFIG_ENV_PREFIX = "FINECODE_CONFIG_"
@@ -461,7 +461,7 @@ def dump_config(trace: bool, debug: bool, project: str | None, shared_server: bo
 @click.option("--workdir", "workdir", default=None, type=str, help="Workspace root directory")
 @click.option("--trace", "trace", is_flag=True, default=False)
 def start_mcp(workdir: str | None, trace: bool):
-    """Start the FineCode MCP server (stdio). Connects to a running FineCode API server."""
+    """Start the FineCode MCP server (stdio). Connects to a running FineCode WM Server."""
     from finecode import mcp_server
 
     logger_utils.init_logger(log_name="mcp_server", trace=trace, stdout=False)
@@ -487,13 +487,13 @@ def start_mcp(workdir: str | None, trace: bool):
     show_default=True,
     help="Seconds to wait after the last client disconnects before shutting down.",
 )
-def start_api_server(trace: bool, port_file: str | None, disconnect_timeout: int):
-    """Start the FineCode API server standalone (TCP JSON-RPC). Auto-stops when all clients disconnect."""
-    from finecode.api_server import api_server
+def start_wm_server(trace: bool, port_file: str | None, disconnect_timeout: int):
+    """Start the FineCode WM Server standalone (TCP JSON-RPC). Auto-stops when all clients disconnect."""
+    from finecode.wm_server import wm_server
 
-    logger_utils.init_logger(log_name="api_server", trace=trace, stdout=False)
+    logger_utils.init_logger(log_name="wm_server", trace=trace, stdout=False)
     port_file_path = pathlib.Path(port_file) if port_file else None
-    asyncio.run(api_server.start_standalone(port_file=port_file_path, disconnect_timeout=disconnect_timeout))
+    asyncio.run(wm_server.start_standalone(port_file=port_file_path, disconnect_timeout=disconnect_timeout))
 
 
 if __name__ == "__main__":
