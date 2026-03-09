@@ -241,12 +241,22 @@ async def _handle_find_project_for_file(
 async def _handle_add_dir(
     params: dict | None, ws_context: context.WorkspaceContext
 ) -> dict:
-    """Add a workspace directory. Discovers projects, reads configs, starts runners."""
-    from finecode.api_server.config import read_configs
+    """Add a workspace directory. Discovers projects, reads configs, starts runners.
+
+    Params:
+      dir_path: str - absolute path to the workspace directory
+      start_runners: bool - whether to start extension runners (default true).
+        When false, configs are read and actions collected without starting any
+        runners. Useful when runner environments may not exist yet (e.g. before
+        running prepare-envs).
+    """
+    from finecode.api_server.config import collect_actions, read_configs
     from finecode.api_server.runner import runner_manager
     from finecode.api_server.runner.runner_client import RunnerStatus
 
+    params = params or {}
     dir_path = pathlib.Path(params["dir_path"])
+    start_runners: bool = params.get("start_runners", True)
     logger.trace(f"Add ws dir: {dir_path}")
 
     if dir_path in ws_context.ws_dirs_paths:
@@ -259,6 +269,21 @@ async def _handle_add_dir(
         await read_configs.read_project_config(
             project=project, ws_context=ws_context, resolve_presets=False
         )
+
+    if not start_runners:
+        # Collect actions directly from raw config without needing runners.
+        from finecode.api_server.config import config_models
+        for project in new_projects:
+            if project.status == domain.ProjectStatus.CONFIG_VALID:
+                try:
+                    collect_actions.collect_actions(
+                        project_path=project.dir_path, ws_context=ws_context
+                    )
+                except config_models.ConfigurationError as exc:
+                    logger.warning(
+                        f"Failed to collect actions for {project.name}: {exc.message}"
+                    )
+        return {"projects": [_project_to_dict(p) for p in new_projects]}
 
     try:
         await runner_manager.start_runners_with_presets(
@@ -489,6 +514,101 @@ async def _handle_runners_restart(
         ws_context=ws_context,
         debug=debug,
     )
+    return {}
+
+
+async def _handle_start_runners(
+    params: dict | None, ws_context: context.WorkspaceContext
+) -> dict:
+    """Start extension runners for all (or specified) projects.
+
+    Complements any runners already running — only missing runners are started.
+    Resolves presets so that ``project.actions`` reflects preset-defined handlers.
+
+    Params: ``{"projects": ["project_name", ...]}`` (optional, default: all projects)
+    Result: ``{}``
+    """
+    from finecode.api_server.runner import runner_manager
+
+    params = params or {}
+    project_names: list[str] | None = params.get("projects")
+
+    projects = list(ws_context.ws_projects.values())
+    if project_names is not None:
+        projects = [p for p in projects if p.name in project_names]
+
+    try:
+        await runner_manager.start_runners_with_presets(
+            projects=projects,
+            ws_context=ws_context,
+        )
+    except runner_manager.RunnerFailedToStart as exc:
+        raise ValueError(f"Starting runners failed: {exc.message}") from exc
+
+    return {}
+
+
+async def _handle_runners_check_env(
+    params: dict | None, ws_context: context.WorkspaceContext
+) -> dict:
+    """Check whether an environment is valid for a given project.
+
+    Params: ``{"project": "project_name", "env_name": "dev_workspace"}``
+    Result: ``{"valid": bool}``
+    """
+    from finecode.api_server.runner import runner_manager
+
+    params = params or {}
+    project_name = params.get("project")
+    env_name = params.get("env_name")
+
+    if not project_name or not env_name:
+        raise ValueError("project and env_name are required")
+
+    project = next(
+        (p for p in ws_context.ws_projects.values() if p.name == project_name), None
+    )
+    if project is None:
+        raise ValueError(f"Project '{project_name}' not found")
+
+    valid = await runner_manager.check_runner(
+        runner_dir=project.dir_path, env_name=env_name
+    )
+    return {"valid": valid}
+
+
+async def _handle_runners_remove_env(
+    params: dict | None, ws_context: context.WorkspaceContext
+) -> dict:
+    """Remove an environment for a given project.
+
+    Stops the runner if running, then deletes the environment directory.
+
+    Params: ``{"project": "project_name", "env_name": "dev_workspace"}``
+    Result: ``{}``
+    """
+    from finecode.api_server.runner import runner_manager
+
+    params = params or {}
+    project_name = params.get("project")
+    env_name = params.get("env_name")
+
+    if not project_name or not env_name:
+        raise ValueError("project and env_name are required")
+
+    project = next(
+        (p for p in ws_context.ws_projects.values() if p.name == project_name), None
+    )
+    if project is None:
+        raise ValueError(f"Project '{project_name}' not found")
+
+    # Stop the runner if it is currently running.
+    runners = ws_context.ws_projects_extension_runners.get(project.dir_path, {})
+    runner = runners.get(env_name)
+    if runner is not None:
+        await runner_manager.stop_extension_runner(runner=runner)
+
+    runner_manager.remove_runner_venv(runner_dir=project.dir_path, env_name=env_name)
     return {}
 
 
@@ -814,6 +934,7 @@ _METHODS: dict[str, MethodHandler] = {
     "workspace/removeDir": _handle_remove_dir,
     "workspace/setConfigOverrides": _handle_set_config_overrides,
     "workspace/getProjectRawConfig": _handle_get_project_raw_config,
+    "workspace/startRunners": _handle_start_runners,
     # actions/
     "actions/list": _handle_list_actions,
     "actions/getTree": _handle_get_tree,
@@ -824,6 +945,8 @@ _METHODS: dict[str, MethodHandler] = {
     # runners:
     "runners/list": _handle_runners_list,
     "runners/restart": _handle_runners_restart,
+    "runners/checkEnv": _handle_runners_check_env,
+    "runners/removeEnv": _handle_runners_remove_env,
     # server/
     "server/reset": _handle_server_reset,
     "server/shutdown": _stub("server/shutdown"),

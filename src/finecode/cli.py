@@ -387,7 +387,8 @@ def run(ctx) -> None:
 @click.option("--trace", "trace", is_flag=True, default=False)
 @click.option("--debug", "debug", is_flag=True, default=False)
 @click.option("--recreate", "recreate", is_flag=True, default=False)
-def prepare_envs(trace: bool, debug: bool, recreate: bool) -> None:
+@click.option("--shared-server", "shared_server", is_flag=True, default=False)
+def prepare_envs(trace: bool, debug: bool, recreate: bool, shared_server: bool) -> None:
     """
     `prepare-envs` should be called from workspace/project root directory.
     """
@@ -407,11 +408,13 @@ def prepare_envs(trace: bool, debug: bool, recreate: bool) -> None:
     try:
         asyncio.run(
             prepare_envs_cmd.prepare_envs(
-                workdir_path=pathlib.Path(os.getcwd()), recreate=recreate
+                workdir_path=pathlib.Path(os.getcwd()),
+                recreate=recreate,
+                own_server=not shared_server,
             )
         )
     except prepare_envs_cmd.PrepareEnvsFailed as exception:
-        click.echo(exception.args[0], err=True)
+        click.echo(exception.message, err=True)
         sys.exit(1)
     except Exception as exception:
         logger.exception(exception)

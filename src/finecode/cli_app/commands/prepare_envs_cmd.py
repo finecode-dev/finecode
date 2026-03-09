@@ -1,277 +1,186 @@
 import pathlib
-import shutil
 
 from loguru import logger
 
-from finecode.api_server import context, domain
-from finecode.api_server.services import run_service, shutdown_service
-from finecode.cli_app import utils
-from finecode.api_server.config import collect_actions, config_models, read_configs
-from finecode.api_server.runner import runner_manager
+from finecode.api_client import ApiClient, ApiError
+from finecode.api_server import api_server
 
 
-class PrepareEnvsFailed(Exception): ...
+class PrepareEnvsFailed(Exception):
+    def __init__(self, message: str) -> None:
+        self.message = message
 
 
-async def prepare_envs(workdir_path: pathlib.Path, recreate: bool) -> None:
-    # similar to `run_actions`, but with certain differences:
-    # - prepare_envs doesn't support presets because `dev_workspace` env most
-    #   probably doesn't exist yet
-    # - we don't need to check missing actions, because prepare_envs is a builtin action
-    #   and it exists always
-    ws_context = context.WorkspaceContext([workdir_path])
-    await read_configs.read_projects_in_dir(
-        dir_path=workdir_path, ws_context=ws_context
-    )
+async def prepare_envs(
+    workdir_path: pathlib.Path, recreate: bool, own_server: bool = True
+) -> None:
+    """Prepare all virtual environments for a workspace.
 
-    # `prepare_envs` can be run only from workspace/project root. Validate this
-    if workdir_path not in ws_context.ws_projects:
-        raise PrepareEnvsFailed(
-            "prepare_env can be run only from workspace/project root"
-        )
-
-    invalid_projects = [
-        project
-        for project in ws_context.ws_projects.values()
-        if project.status == domain.ProjectStatus.CONFIG_INVALID
-    ]
-    if len(invalid_projects) > 0:
-        raise PrepareEnvsFailed(
-            f"Projects have invalid configuration: {invalid_projects}"
-        )
-
-    # prepare envs only in projects with valid configurations and which use finecode
-    projects = [
-        project
-        for project in ws_context.ws_projects.values()
-        if project.status == domain.ProjectStatus.CONFIG_VALID
-    ]
-
-    # Collect actions in relevant projects
-    for project in projects:
-        try:
-            await read_configs.read_project_config(
-                project=project, ws_context=ws_context, resolve_presets=False
-            )
-            collect_actions.collect_actions(
-                project_path=project.dir_path, ws_context=ws_context
-            )
-        except config_models.ConfigurationError as exception:
-            raise PrepareEnvsFailed(
-                f"Reading project config and collecting actions in {project.dir_path} failed: {exception.message}"
-            ) from exception
-
+    Orchestration steps:
+    1. Discover projects (without starting runners — envs may not exist yet).
+    2. Check / remove dev_workspace environments as needed.
+    3. Run ``prepare_dev_workspaces_envs`` to create / update them.
+    4. Start extension runners (resolves preset actions).
+    5. Run ``prepare_runners`` to set up handler environments.
+    6. Run ``prepare_envs`` to finalise environment setup.
+    """
+    port_file = None
     try:
-        # try to start runner in 'dev_workspace' env of each project. If venv doesn't
-        # exist or doesn't work, recreate it by running actions in the current env.
-        if recreate:
-            remove_dev_workspace_envs(projects=projects, workdir_path=workdir_path)
-
-        await check_or_recreate_all_dev_workspace_envs(
-            projects=projects,
-            workdir_path=workdir_path,
-            recreate=recreate,
-            ws_context=ws_context,
-        )
-
-        # reread projects configs, now with resolved presets
-        # to be able to resolve presets, start runners with presets first
-        try:
-            await runner_manager.start_runners_with_presets(
-                projects=projects, ws_context=ws_context
-            )
-        except runner_manager.RunnerFailedToStart as exception:
-            raise PrepareEnvsFailed(
-                f"Starting runners with presets failed: {exception.message}"
-            ) from exception
-
-        # now all 'dev_workspace' envs are valid, run 'prepare_runners' in them to create
-        # venvs and install runners and presets in them
-        actions_by_projects: dict[pathlib.Path, list[str]] = {
-            project.dir_path: ["prepare_runners"] for project in projects
-        }
-        # action payload can be kept empty because it will be filled in payload preprocessor
-        action_payload: dict[str, str | bool] = {"recreate": recreate}
-
-        try:
-            await run_service.start_required_environments(
-                actions_by_projects, ws_context
-            )
-        except run_service.StartingEnvironmentsFailed as exception:
-            raise PrepareEnvsFailed(
-                f"Failed to start environments for running 'prepare_runners': {exception.message}"
-            )
-
-        try:
-            (
-                result_output,
-                result_return_code,
-                _
-            ) = await utils.run_actions_in_projects_and_concat_results(
-                actions_by_projects,
-                action_payload,
-                ws_context,
-                concurrently=True,
-                run_trigger=run_service.RunActionTrigger.USER,
-                dev_env=run_service.DevEnv.CLI,
-            )
-        except run_service.ActionRunFailed as error:
-            logger.error(error.message)
-            result_output = error.message
-            result_return_code = 1
-
-        if result_return_code != 0:
-            raise PrepareEnvsFailed(result_output)
-
-        actions_by_projects: dict[pathlib.Path, list[str]] = {
-            project.dir_path: ["prepare_envs"] for project in projects
-        }
-        # action payload can be kept empty because it will be filled in payload preprocessor
-        action_payload: dict[str, str | bool] = {"recreate": recreate}
-
-        try:
-            (
-                result_output,
-                result_return_code,
-                _
-            ) = await utils.run_actions_in_projects_and_concat_results(
-                actions_by_projects,
-                action_payload,
-                ws_context,
-                concurrently=True,
-                run_trigger=run_service.RunActionTrigger.USER,
-                dev_env=run_service.DevEnv.CLI,
-            )
-        except run_service.ActionRunFailed as error:
-            logger.error(error.message)
-            result_output = error.message
-            result_return_code = 1
-
-        if result_return_code != 0:
-            raise PrepareEnvsFailed(result_output)
-    finally:
-        shutdown_service.on_shutdown(ws_context)
-
-
-def remove_dev_workspace_envs(
-    projects: list[domain.Project], workdir_path: pathlib.Path
-) -> None:
-    for project in projects:
-        if project.dir_path == workdir_path:
-            # skip removing `dev_workspace` env of the current project, because user
-            # is responsible for keeping it correct
-            continue
-
-        runner_manager.remove_runner_venv(
-            runner_dir=project.dir_path, env_name="dev_workspace"
-        )
-
-
-async def check_or_recreate_all_dev_workspace_envs(
-    projects: list[domain.Project],
-    workdir_path: pathlib.Path,
-    recreate: bool,
-    ws_context: context.WorkspaceContext,
-) -> None:
-    # NOTE: this function can start new extensions runner, don't forget to call
-    #       on_shutdown if you use it
-    projects_dirs_with_valid_envs: list[pathlib.Path] = []
-    projects_dirs_with_invalid_envs: list[pathlib.Path] = []
-
-    for project in projects:
-        if project.dir_path == workdir_path:
-            # skip checking `dev_workspace` env of the current project, because user
-            # is responsible for keeping it correct
-            continue
-
-        runner_is_valid = await runner_manager.check_runner(
-            runner_dir=project.dir_path, env_name="dev_workspace"
-        )
-        if runner_is_valid:
-            projects_dirs_with_valid_envs.append(project.dir_path)
+        if own_server:
+            port_file = api_server.start_own_server(workdir_path)
+            try:
+                port = await api_server.wait_until_ready_from_file(port_file)
+            except TimeoutError as exc:
+                raise PrepareEnvsFailed(str(exc)) from exc
         else:
-            if recreate:
-                logger.trace(
-                    f"Recreate runner for env 'dev_workspace' in project '{project.name}'"
-                )
-            else:
-                logger.warning(
-                    f"Runner for env 'dev_workspace' in project '{project.name}' is invalid, recreate it"
-                )
-            projects_dirs_with_invalid_envs.append(project.dir_path)
+            api_server.ensure_running(workdir_path)
+            try:
+                port = await api_server.wait_until_ready()
+            except TimeoutError as exc:
+                raise PrepareEnvsFailed(str(exc)) from exc
 
-    # to recreate dev_workspace env, run `prepare_envs` in runner of current project
-    current_project_dir_path = ws_context.ws_dirs_paths[0]
-    current_project = ws_context.ws_projects[current_project_dir_path]
-    try:
-        await runner_manager._start_dev_workspace_runner(project_def=current_project, ws_context=ws_context)
-    except runner_manager.RunnerFailedToStart as exception:
+        client = ApiClient()
+        await client.connect("127.0.0.1", port)
+        try:
+            await _run(client, workdir_path, recreate)
+        finally:
+            await client.close()
+    finally:
+        if port_file is not None and port_file.exists():
+            port_file.unlink(missing_ok=True)
+
+
+async def _run(
+    client: ApiClient, workdir_path: pathlib.Path, recreate: bool
+) -> None:
+    # Step 1 — discover projects without starting runners (envs may not exist).
+    logger.info("Discovering projects...")
+    result = await client.add_dir(workdir_path, start_runners=False)
+    projects: list[dict] = result.get("projects", [])
+
+    workdir_str = str(workdir_path)
+    current_project = next(
+        (p for p in projects if p["path"] == workdir_str), None
+    )
+    if current_project is None:
         raise PrepareEnvsFailed(
-            f"Failed to start `dev_workspace` runner in {current_project.name}: {exception.message}"
-        ) from exception
-
-    envs = []
-
-    # run pip install in dev_workspace even if env exists to make sure that correct
-    # dependencies are installed
-    for project_dir_path in projects_dirs_with_valid_envs:
-        if project_dir_path == workdir_path:
-            # skip installation of dependencies in `dev_workspace` env of the
-            # current project, because user is responsible for keeping them
-            # up-to-date
-            continue
-
-        # dependencies in `dev_workspace` should be simple and installable without
-        # dumping
-        envs.append(
-            {
-                "name": "dev_workspace",
-                "venv_dir_path": project_dir_path / ".venvs" / "dev_workspace",
-                "project_def_path": project_dir_path / "pyproject.toml",
-            }
+            "prepare-envs can be run only from workspace/project root"
         )
 
-    if len(projects_dirs_with_invalid_envs) > 0:
-        invalid_envs = []
+    invalid_status_projects = [
+        p for p in projects if p["status"] == "CONFIG_INVALID"
+    ]
+    if invalid_status_projects:
+        names = [p["name"] for p in invalid_status_projects]
+        raise PrepareEnvsFailed(
+            f"Projects have invalid configuration: {names}"
+        )
 
-        for project_dir_path in projects_dirs_with_invalid_envs:
-            # dependencies in `dev_workspace` should be simple and installable without
-            # dumping
-            invalid_envs.append(
-                {
-                    "name": "dev_workspace",
-                    "venv_dir_path": project_dir_path / ".venvs" / "dev_workspace",
-                    "project_def_path": project_dir_path / "pyproject.toml",
-                }
+    other_projects = [
+        p
+        for p in projects
+        if p["path"] != workdir_str and p["status"] == "CONFIG_VALID"
+    ]
+
+    logger.info(f"Found {len(projects)} project(s): {[p['name'] for p in projects]}")
+
+    # Step 2 — check / remove dev_workspace environments.
+    logger.info("Checking dev workspace environments...")
+    for project in other_projects:
+        if recreate:
+            logger.trace(
+                f"Recreate env 'dev_workspace' in project '{project['name']}'"
             )
+            try:
+                await client.remove_env(project["name"], "dev_workspace")
+            except ApiError as exc:
+                raise PrepareEnvsFailed(
+                    f"Failed to remove env for '{project['name']}': {exc}"
+                ) from exc
+        else:
+            try:
+                valid = await client.check_env(project["name"], "dev_workspace")
+            except ApiError as exc:
+                raise PrepareEnvsFailed(
+                    f"Failed to check env for '{project['name']}': {exc}"
+                ) from exc
+            if not valid:
+                logger.warning(
+                    f"Env 'dev_workspace' in project '{project['name']}' is "
+                    f"invalid, recreating it"
+                )
+                try:
+                    await client.remove_env(project["name"], "dev_workspace")
+                except ApiError as exc:
+                    raise PrepareEnvsFailed(
+                        f"Failed to remove invalid env for '{project['name']}': {exc}"
+                    ) from exc
 
-        # remove existing invalid envs
-        for env_info in invalid_envs:
-            if env_info["venv_dir_path"].exists():
-                logger.trace(f"{env_info['venv_dir_path']} was invalid, remove it")
-                shutil.rmtree(env_info["venv_dir_path"])
-
-        envs += invalid_envs
+    # Step 3 — create / update dev_workspace environments.
+    logger.info("Creating/updating dev workspace environments...")
+    envs = [
+        {
+            "name": "dev_workspace",
+            "venv_dir_path": str(pathlib.Path(p["path"]) / ".venvs" / "dev_workspace"),
+            "project_def_path": str(pathlib.Path(p["path"]) / "pyproject.toml"),
+        }
+        for p in other_projects
+    ]
 
     try:
-        action_result = await run_service.run_action(
-            action_name="prepare_dev_workspaces_envs",
-            params={
-                "envs": envs,
+        prepare_dw_result = await client.run_action(
+            action="prepare_dev_workspaces_envs",
+            project=current_project["name"],
+            params={"envs": envs},
+            options={
+                "result_formats": ["string"],
+                "trigger": "user",
+                "dev_env": "cli",
             },
-            project_def=current_project,
-            ws_context=ws_context,
-            result_formats=[run_service.RunResultFormat.STRING],
-            preprocess_payload=False,
-            run_trigger=run_service.RunActionTrigger.USER,
-            dev_env=run_service.DevEnv.CLI,
         )
-    except run_service.ActionRunFailed as exception:
+    except ApiError as exc:
         raise PrepareEnvsFailed(
-            f"'prepare_dev_workspaces_env' failed in {current_project.name}: {exception.message}"
-        ) from exception
+            f"'prepare_dev_workspaces_envs' failed: {exc}"
+        ) from exc
 
-    if action_result.return_code != 0:
+    if prepare_dw_result.get("return_code", 0) != 0:
+        output = (prepare_dw_result.get("result_by_format") or {}).get("string", "")
         raise PrepareEnvsFailed(
-            f"'prepare_dev_workspaces_env' ended in {current_project.name} with return code {action_result.return_code}: {action_result.result_by_format['string']}"
+            f"'prepare_dev_workspaces_envs' failed with return code "
+            f"{prepare_dw_result['return_code']}: {output}"
+        )
+
+    # Step 4 — start runners with presets (resolves preset-defined actions).
+    logger.info("Starting extension runners...")
+    try:
+        await client.start_runners()
+    except ApiError as exc:
+        raise PrepareEnvsFailed(f"Starting runners failed: {exc}") from exc
+
+    # Steps 5 & 6 — run prepare_runners then prepare_envs on all projects.
+    logger.info("Preparing runner and handler environments...")
+    # Actions run sequentially within each project (prepare_runners before
+    # prepare_envs), while projects run concurrently.
+    try:
+        batch_result = await client.run_batch(
+            actions=["prepare_runners", "prepare_envs"],
+            options={
+                "concurrently": False,
+                "result_formats": ["string"],
+                "trigger": "user",
+                "dev_env": "cli",
+            },
+        )
+    except ApiError as exc:
+        raise PrepareEnvsFailed(f"'prepare_runners'/'prepare_envs' failed: {exc}") from exc
+
+    if batch_result.get("return_code", 0) != 0:
+        output_parts = []
+        for actions_result in batch_result.get("results", {}).values():
+            for response in actions_result.values():
+                text = (response.get("result_by_format") or {}).get("string", "")
+                if text:
+                    output_parts.append(text)
+        raise PrepareEnvsFailed(
+            "'prepare_runners'/'prepare_envs' failed:\n" + "\n".join(output_parts)
         )

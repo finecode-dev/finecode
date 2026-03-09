@@ -236,9 +236,45 @@ class ApiClient:
             body["params"] = params
         return await self.request("actions/run", body)
 
-    async def add_dir(self, dir_path: pathlib.Path) -> dict:
-        """Add a workspace directory. Returns {projects: [...]}."""
-        return await self.request("workspace/addDir", {"dir_path": str(dir_path)})
+    async def add_dir(self, dir_path: pathlib.Path, start_runners: bool = True) -> dict:
+        """Add a workspace directory. Returns {projects: [...]}.
+
+        When ``start_runners=False`` the server reads configs and collects
+        actions without starting any extension runners.  Use this when runner
+        environments may not exist yet (e.g. before ``prepare-envs``).
+        """
+        return await self.request(
+            "workspace/addDir",
+            {"dir_path": str(dir_path), "start_runners": start_runners},
+        )
+
+    async def start_runners(self, projects: list[str] | None = None) -> None:
+        """Start extension runners for all (or specified) projects.
+
+        Complements any already-running runners — only missing runners are
+        started.  Also resolves presets so ``project.actions`` is up to date.
+        """
+        params: dict = {}
+        if projects is not None:
+            params["projects"] = projects
+        await self.request("workspace/startRunners", params)
+
+    async def check_env(self, project: str, env_name: str) -> bool:
+        """Return whether the named environment is valid for a project."""
+        result = await self.request(
+            "runners/checkEnv", {"project": project, "env_name": env_name}
+        )
+        if not isinstance(result, dict) or "valid" not in result:
+            raise ApiResponseError(
+                "runners/checkEnv", f"missing 'valid' field, got {result!r}"
+            )
+        return result["valid"]
+
+    async def remove_env(self, project: str, env_name: str) -> None:
+        """Remove the named environment for a project."""
+        await self.request(
+            "runners/removeEnv", {"project": project, "env_name": env_name}
+        )
 
     async def remove_dir(self, dir_path: pathlib.Path) -> None:
         """Remove a workspace directory."""

@@ -97,7 +97,7 @@ The server internally calls
 #### `workspace/addDir`
 
 Add a workspace directory. Discovers projects, reads configs, collects actions,
-and starts extension runners.
+and optionally starts extension runners.
 
 > **Design note:** Ideally, workspace directories would be a single shared
 > definition independent of which client connects (LSP, MCP, CLI). Currently,
@@ -108,14 +108,19 @@ and starts extension runners.
 > of directories is not environment-specific.
 
 - **Type:** request
-- **Clients:** LSP
+- **Clients:** LSP, CLI
 - **Status:** implemented
 
 **Params:**
 
 ```json
-{"dir_path": "/path/to/workspace"}
+{"dir_path": "/path/to/workspace", "start_runners": true}
 ```
+
+`start_runners` is optional (default: `true`). When `false`, the server reads
+configs and collects actions without starting any extension runners. Use this
+when runner environments may not exist yet (e.g. before running `prepare-envs`).
+Actions are still available in the result so clients can validate the workspace.
 
 **Result:**
 
@@ -126,6 +131,31 @@ and starts extension runners.
   ]
 }
 ```
+
+`status` values: `"CONFIG_VALID"`, `"CONFIG_INVALID"`
+
+---
+
+#### `workspace/startRunners`
+
+Start extension runners for all (or specified) projects. Only starts runners
+that are not already running — complements existing runner state rather than
+replacing it. Also resolves preset-defined actions so that `actions/run` can
+find them.
+
+- **Type:** request
+- **Clients:** CLI
+- **Status:** implemented
+
+**Params:**
+
+```json
+{"projects": ["my_project"]}
+```
+
+`projects` is optional. If omitted, starts runners for all projects.
+
+**Result:** `{}`
 
 ---
 
@@ -564,6 +594,48 @@ Restart an extension runner. Optionally start in debug mode.
 ```
 
 `debug` is optional, defaults to `false`.
+
+**Result:** `{}`
+
+---
+
+#### `runners/checkEnv`
+
+Check whether the named environment for a project is valid (i.e. the virtualenv
+exists and its dependencies are correctly installed).
+
+- **Type:** request
+- **Clients:** CLI
+- **Status:** implemented
+
+**Params:**
+
+```json
+{"project": "my_project", "env_name": "dev_workspace"}
+```
+
+**Result:**
+
+```json
+{"valid": true}
+```
+
+---
+
+#### `runners/removeEnv`
+
+Remove the named environment for a project. If a runner is currently using that
+environment, it is stopped first.
+
+- **Type:** request
+- **Clients:** CLI
+- **Status:** implemented
+
+**Params:**
+
+```json
+{"project": "my_project", "env_name": "dev_workspace"}
+```
 
 **Result:** `{}`
 
