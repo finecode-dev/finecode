@@ -376,7 +376,7 @@ Required: `action`, `project`. All other fields optional.
 
 `trigger` values: `"user"`, `"system"`, `"unknown"` (default: `"unknown"`)
 
-`dev_env` values: `"ide"`, `"cli"`, `"ai"`, `"precommit"`, `"cicd"` (default: `"cli"`)
+`dev_env` values: `"ide"`, `"cli"`, `"ai"`, `"precommit"`, `"ci"` (default: `"cli"`)
 
 **Result:**
 

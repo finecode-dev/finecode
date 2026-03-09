@@ -104,7 +104,7 @@ class DevEnv(enum.StrEnum):
     CLI = 'cli'
     AI = 'ai'
     PRECOMMIT = 'precommit'
-    CI_CD = 'cicd'
+    CI = 'ci'
 
 
 async def run_action(

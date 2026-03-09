@@ -12,7 +12,7 @@ class PrepareEnvsFailed(Exception):
 
 
 async def prepare_envs(
-    workdir_path: pathlib.Path, recreate: bool, own_server: bool = True, log_level: str = "INFO"
+    workdir_path: pathlib.Path, recreate: bool, own_server: bool = True, log_level: str = "INFO", dev_env: str = "cli"
 ) -> None:
     """Prepare all virtual environments for a workspace.
 
@@ -42,7 +42,7 @@ async def prepare_envs(
         client = ApiClient()
         await client.connect("127.0.0.1", port)
         try:
-            await _run(client, workdir_path, recreate)
+            await _run(client, workdir_path, recreate, dev_env)
         finally:
             await client.close()
     finally:
@@ -51,7 +51,7 @@ async def prepare_envs(
 
 
 async def _run(
-    client: ApiClient, workdir_path: pathlib.Path, recreate: bool
+    client: ApiClient, workdir_path: pathlib.Path, recreate: bool, dev_env: str = "cli"
 ) -> None:
     # Step 1 — discover projects without starting runners (envs may not exist).
     logger.info("Discovering projects...")
@@ -135,7 +135,7 @@ async def _run(
             options={
                 "result_formats": ["string"],
                 "trigger": "user",
-                "dev_env": "cli",
+                "dev_env": dev_env,
             },
         )
     except ApiError as exc:
@@ -168,7 +168,7 @@ async def _run(
                 "concurrently": False,
                 "result_formats": ["string"],
                 "trigger": "user",
-                "dev_env": "cli",
+                "dev_env": dev_env,
             },
         )
     except ApiError as exc:

@@ -58,6 +58,7 @@ python -m finecode run [options] <action> [<action> ...] [payload] [--config.<ke
 | `--log-level=<level>` | Set log level: `TRACE`, `DEBUG`, `INFO`, `WARNING`, `ERROR` (default: `INFO`) |
 | `--no-env-config` | Ignore `FINECODE_CONFIG_*` environment variables |
 | `--no-save-results` | Do not write action results to the cache directory |
+| `--dev-env=<env>` | Override the detected dev environment. One of: `ai`, `ci`, `cli`, `ide`, `precommit` (default: auto-detected — see [Dev environment detection](#dev-environment-detection)) |
 
 ### Payload
 
@@ -124,6 +125,7 @@ Must be run from the workspace or project root. Creates venvs under `.venvs/<env
 | `--recreate` | Delete and recreate all venvs from scratch |
 | `--log-level=<level>` | Set log level: `TRACE`, `DEBUG`, `INFO`, `WARNING`, `ERROR` (default: `INFO`) |
 | `--debug` | Wait for a debugpy client on port 5680 before starting |
+| `--dev-env=<env>` | Override the detected dev environment. One of: `ai`, `ci`, `cli`, `ide`, `precommit` (default: auto-detected) |
 
 ---
 
@@ -142,6 +144,34 @@ Output is written to `<cwd>/finecode_config_dump/`.
 | `--project=<name>` | **(Required)** Project to dump config for |
 | `--log-level=<level>` | Set log level: `TRACE`, `DEBUG`, `INFO`, `WARNING`, `ERROR` (default: `INFO`) |
 | `--debug` | Wait for a debugpy client on port 5680 |
+| `--dev-env=<env>` | Override the detected dev environment. One of: `ai`, `ci`, `cli`, `ide`, `precommit` (default: auto-detected) |
+
+---
+
+## Dev environment detection
+
+FineCode tracks which environment triggered an action run (e.g. IDE, CLI, CI/CD). This value is passed to handlers via `RunActionMeta.dev_env` and can be used to adjust behavior — for example, to emit machine-readable output in CI.
+
+The `run`, `prepare-envs`, and `dump-config` commands detect the environment automatically:
+
+| Condition | Detected value |
+|---|---|
+| `CI` environment variable is set (any non-empty value) | `ci` |
+| Default | `cli` |
+
+The `CI` variable is set automatically by GitHub Actions, GitLab CI, CircleCI, Travis CI, Bitbucket Pipelines, and most other CI systems.
+
+Use `--dev-env=<value>` on any command to override the detected value explicitly:
+
+```bash
+# Force CI/CD mode locally
+python -m finecode run --dev-env=ci lint
+
+# Mark as a pre-commit run
+python -m finecode run --dev-env=precommit lint
+```
+
+Valid values: `ai`, `ci`, `cli`, `ide`, `precommit`.
 
 ---
 

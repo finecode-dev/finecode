@@ -10,7 +10,7 @@ class DumpFailed(Exception):
 
 
 async def dump_config(
-    workdir_path: pathlib.Path, project_name: str, own_server: bool = True, log_level: str = "INFO"
+    workdir_path: pathlib.Path, project_name: str, own_server: bool = True, log_level: str = "INFO", dev_env: str = "cli"
 ):
     port_file = None
     try:
@@ -55,7 +55,7 @@ async def dump_config(
                     options={
                         "result_formats": ["string"],
                         "trigger": "user",
-                        "dev_env": "cli",
+                        "dev_env": dev_env,
                     },
                 )
             except ApiError as exc:

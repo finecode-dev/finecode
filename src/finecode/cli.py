@@ -16,6 +16,14 @@ from finecode.wm_server.config.config_models import ConfigurationError
 
 
 FINECODE_CONFIG_ENV_PREFIX = "FINECODE_CONFIG_"
+_VALID_DEV_ENVS = {"ide", "cli", "ai", "precommit", "ci"}
+
+
+def detect_dev_env() -> str:
+    """Detect dev environment from context. CI env var overrides the default 'cli'."""
+    if os.environ.get("CI"):
+        return "ci"
+    return "cli"
 
 # TODO: unify possibilities of CLI options and env vars
 def parse_handler_config_from_env() -> dict[str, dict[str, dict[str, str]]]:
@@ -252,6 +260,7 @@ def run(ctx) -> None:
     save_results: bool = True
     map_payload_fields: set[str] = set()
     shared_server: bool = False
+    dev_env: str = detect_dev_env()
 
     # finecode run parameters
     for arg in args:
@@ -283,6 +292,14 @@ def run(ctx) -> None:
             map_payload_fields = {f.replace("-", "_") for f in fields.split(",")}
         elif arg == "--shared-server":
             shared_server = True
+        elif arg.startswith("--dev-env"):
+            dev_env = arg.removeprefix("--dev-env=")
+            if dev_env not in _VALID_DEV_ENVS:
+                click.echo(
+                    f"Invalid --dev-env value '{dev_env}'. Valid values: {', '.join(sorted(_VALID_DEV_ENVS))}",
+                    err=True,
+                )
+                sys.exit(1)
         elif not arg.startswith("--"):
             break
         processed_args_count += 1
@@ -360,6 +377,7 @@ def run(ctx) -> None:
                 map_payload_fields,
                 own_server=not shared_server,
                 log_level=log_level,
+                dev_env=dev_env,
             )
         )
         click.echo(result.output)
@@ -389,7 +407,8 @@ def run(ctx) -> None:
 @click.option("--debug", "debug", is_flag=True, default=False)
 @click.option("--recreate", "recreate", is_flag=True, default=False)
 @click.option("--shared-server", "shared_server", is_flag=True, default=False)
-def prepare_envs(log_level: str, debug: bool, recreate: bool, shared_server: bool) -> None:
+@click.option("--dev-env", "dev_env", default=None, type=click.Choice(sorted(_VALID_DEV_ENVS)), help="Override detected dev environment")
+def prepare_envs(log_level: str, debug: bool, recreate: bool, shared_server: bool, dev_env: str | None) -> None:
     """
     `prepare-envs` should be called from workspace/project root directory.
     """
@@ -413,6 +432,7 @@ def prepare_envs(log_level: str, debug: bool, recreate: bool, shared_server: boo
                 recreate=recreate,
                 own_server=not shared_server,
                 log_level=log_level,
+                dev_env=dev_env or detect_dev_env(),
             )
         )
     except prepare_envs_cmd.PrepareEnvsFailed as exception:
@@ -429,7 +449,8 @@ def prepare_envs(log_level: str, debug: bool, recreate: bool, shared_server: boo
 @click.option("--debug", "debug", is_flag=True, default=False)
 @click.option("--project", "project", type=str)
 @click.option("--shared-server", "shared_server", is_flag=True, default=False)
-def dump_config(log_level: str, debug: bool, project: str | None, shared_server: bool):
+@click.option("--dev-env", "dev_env", default=None, type=click.Choice(sorted(_VALID_DEV_ENVS)), help="Override detected dev environment")
+def dump_config(log_level: str, debug: bool, project: str | None, shared_server: bool, dev_env: str | None):
     if debug is True:
         import debugpy
 
@@ -453,6 +474,7 @@ def dump_config(log_level: str, debug: bool, project: str | None, shared_server:
                 project_name=project,
                 own_server=not shared_server,
                 log_level=log_level,
+                dev_env=dev_env or detect_dev_env(),
             )
         )
     except dump_config_cmd.DumpFailed as exception:

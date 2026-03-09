@@ -29,7 +29,7 @@ class DevEnv(enum.StrEnum):
     CLI = "cli"
     AI = "ai"
     PRECOMMIT = "precommit"
-    CI_CD = "cicd"
+    CI = "ci"
 
 
 @dataclasses.dataclass

@@ -27,6 +27,7 @@ async def run_actions(
     map_payload_fields: set[str] | None = None,
     own_server: bool = False,
     log_level: str = "INFO",
+    dev_env: str = "cli",
 ) -> utils.RunActionsResult:
     port_file = None
     try:
@@ -78,7 +79,7 @@ async def run_actions(
                         "concurrently": concurrently,
                         "result_formats": result_formats,
                         "trigger": "user",
-                        "dev_env": "cli",
+                        "dev_env": dev_env,
                     },
                 )
             except ApiError as exc:
