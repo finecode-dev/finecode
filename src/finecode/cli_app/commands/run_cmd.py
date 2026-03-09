@@ -53,9 +53,10 @@ async def run_actions(
                         "Warning: --config overrides are ignored in --shared-server mode. ",
                         err=True,
                     )
-            # TODO: could it be optimized: if projects are provided, parse only them?
-            # the same also in other CLI commands
-            await client.add_dir(workdir_path)
+            await client.add_dir(
+                workdir_path,
+                projects=projects_names if own_server else None,
+            )
 
             params_by_project: dict[str, dict[str, typing.Any]] = {}
             if map_payload_fields:

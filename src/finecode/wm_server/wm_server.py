@@ -249,6 +249,11 @@ async def _handle_add_dir(
         When false, configs are read and actions collected without starting any
         runners. Useful when runner environments may not exist yet (e.g. before
         running prepare-envs).
+      projects: list[str] | null - optional list of project names to initialize.
+        Projects not in this list are discovered but not config-initialized or
+        started. Omit (or pass null) to initialize all projects.
+        Calling add_dir again for the same dir with a different filter (or no
+        filter) will initialize the previously skipped projects.
     """
     from finecode.wm_server.config import collect_actions, read_configs
     from finecode.wm_server.runner import runner_manager
@@ -257,15 +262,30 @@ async def _handle_add_dir(
     params = params or {}
     dir_path = pathlib.Path(params["dir_path"])
     start_runners: bool = params.get("start_runners", True)
+    projects_filter: set[str] | None = (
+        set(params["projects"]) if params.get("projects") else None
+    )
     logger.trace(f"Add ws dir: {dir_path}")
 
-    if dir_path in ws_context.ws_dirs_paths:
-        return {"projects": []}
+    if dir_path not in ws_context.ws_dirs_paths:
+        ws_context.ws_dirs_paths.append(dir_path)
 
-    ws_context.ws_dirs_paths.append(dir_path)
-    new_projects = await read_configs.read_projects_in_dir(dir_path, ws_context)
+    # Discover new projects in this dir (idempotent — skips already-known ones).
+    await read_configs.read_projects_in_dir(dir_path, ws_context)
 
-    for project in new_projects:
+    # Collect all projects in this dir that haven't been config-initialized yet.
+    # This covers both newly discovered projects and ones that were filtered out
+    # by a previous add_dir call with a projects filter.
+    projects_to_init = [
+        p for p in ws_context.ws_projects.values()
+        if p.dir_path.is_relative_to(dir_path)
+        and p.dir_path not in ws_context.ws_projects_raw_configs
+    ]
+
+    if projects_filter is not None:
+        projects_to_init = [p for p in projects_to_init if p.name in projects_filter]
+
+    for project in projects_to_init:
         await read_configs.read_project_config(
             project=project, ws_context=ws_context, resolve_presets=False
         )
@@ -273,7 +293,7 @@ async def _handle_add_dir(
     if not start_runners:
         # Collect actions directly from raw config without needing runners.
         from finecode.wm_server.config import config_models
-        for project in new_projects:
+        for project in projects_to_init:
             if project.status == domain.ProjectStatus.CONFIG_VALID:
                 try:
                     collect_actions.collect_actions(
@@ -283,11 +303,11 @@ async def _handle_add_dir(
                     logger.warning(
                         f"Failed to collect actions for {project.name}: {exc.message}"
                     )
-        return {"projects": [_project_to_dict(p) for p in new_projects]}
+        return {"projects": [_project_to_dict(p) for p in projects_to_init]}
 
     try:
         await runner_manager.start_runners_with_presets(
-            projects=new_projects,
+            projects=projects_to_init,
             ws_context=ws_context,
             initialize_all_handlers=True,
         )
@@ -300,12 +320,12 @@ async def _handle_add_dir(
 
     # If config overrides were set before this addDir call (e.g. standalone CLI mode),
     # apply them to the newly discovered projects and push to their running runners.
-    if ws_context.handler_config_overrides and new_projects:
+    if ws_context.handler_config_overrides and projects_to_init:
         action_names = list(ws_context.handler_config_overrides.keys())
-        _apply_config_overrides_to_projects(new_projects, action_names, ws_context.handler_config_overrides)
+        _apply_config_overrides_to_projects(projects_to_init, action_names, ws_context.handler_config_overrides)
         try:
             async with asyncio.TaskGroup() as tg:
-                for project in new_projects:
+                for project in projects_to_init:
                     runners = ws_context.ws_projects_extension_runners.get(project.dir_path, {})
                     for runner in runners.values():
                         if runner.status == RunnerStatus.RUNNING:
@@ -320,7 +340,7 @@ async def _handle_add_dir(
             for exc in eg.exceptions:
                 logger.warning(f"Failed to push config update to runner: {exc}")
 
-    return {"projects": [_project_to_dict(p) for p in new_projects]}
+    return {"projects": [_project_to_dict(p) for p in projects_to_init]}
 
 
 async def _handle_remove_dir(

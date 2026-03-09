@@ -236,17 +236,27 @@ class ApiClient:
             body["params"] = params
         return await self.request("actions/run", body)
 
-    async def add_dir(self, dir_path: pathlib.Path, start_runners: bool = True) -> dict:
+    async def add_dir(
+        self,
+        dir_path: pathlib.Path,
+        start_runners: bool = True,
+        projects: list[str] | None = None,
+    ) -> dict:
         """Add a workspace directory. Returns {projects: [...]}.
 
         When ``start_runners=False`` the server reads configs and collects
         actions without starting any extension runners.  Use this when runner
         environments may not exist yet (e.g. before ``prepare-envs``).
+
+        When ``projects`` is provided, only those projects (by name) will have
+        their configs read and runners started — the rest are still discovered
+        but not initialised.  Only use this in own-server mode where the server
+        lifetime matches a single CLI invocation.
         """
-        return await self.request(
-            "workspace/addDir",
-            {"dir_path": str(dir_path), "start_runners": start_runners},
-        )
+        body: dict = {"dir_path": str(dir_path), "start_runners": start_runners}
+        if projects is not None:
+            body["projects"] = projects
+        return await self.request("workspace/addDir", body)
 
     async def start_runners(self, projects: list[str] | None = None) -> None:
         """Start extension runners for all (or specified) projects.

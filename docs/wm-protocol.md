@@ -114,13 +114,25 @@ and optionally starts extension runners.
 **Params:**
 
 ```json
-{"dir_path": "/path/to/workspace", "start_runners": true}
+{"dir_path": "/path/to/workspace", "start_runners": true, "projects": ["my_project"]}
 ```
 
 `start_runners` is optional (default: `true`). When `false`, the server reads
 configs and collects actions without starting any extension runners. Use this
 when runner environments may not exist yet (e.g. before running `prepare-envs`).
 Actions are still available in the result so clients can validate the workspace.
+
+`projects` is optional. When provided, only the listed projects (by name) will
+be config-initialized and have their runners started. All other projects in the
+directory are still discovered (added to workspace state) but skipped for
+initialization. This avoids the cost of reading configs and spawning runner
+processes for projects that are not needed.
+
+Calling `workspace/addDir` again for the same `dir_path` with a different
+`projects` filter (or with `projects` omitted) will initialize the previously
+skipped projects — the call is **incremental**, not idempotent. Only projects
+that have not yet been config-initialized are processed on each call. This makes
+it safe to issue a filtered call followed by an unfiltered one.
 
 **Result:**
 
@@ -131,6 +143,9 @@ Actions are still available in the result so clients can validate the workspace.
   ]
 }
 ```
+
+The `projects` list contains only the projects initialized during **this call**,
+not all projects in the workspace.
 
 `status` values: `"CONFIG_VALID"`, `"CONFIG_INVALID"`
 

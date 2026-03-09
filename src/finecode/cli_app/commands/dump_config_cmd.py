@@ -30,7 +30,7 @@ async def dump_config(
         client = ApiClient()
         await client.connect("127.0.0.1", port)
         try:
-            result = await client.add_dir(workdir_path)
+            result = await client.add_dir(workdir_path, projects=[project_name])
             projects = result.get("projects", [])
             project = next(
                 (p for p in projects if p["name"] == project_name), None

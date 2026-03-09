@@ -80,5 +80,5 @@ nav:
       - LSP and MCP Architecture: reference/lsp-mcp-architecture.md
   - Development:
       - Overview: development.md
-      - API Protocol: api-protocol.md
+      - WM Protocol: wm-protocol.md
       - Developing FineCode: guides/developing-finecode.md
