@@ -1,5 +1,6 @@
 import asyncio
 import dataclasses
+import pathlib
 
 from finecode_extension_api import code_action
 from finecode_extension_api.actions import prepare_envs as prepare_envs_action, install_deps_in_env as install_deps_in_env_action
@@ -55,7 +56,8 @@ class PrepareEnvsInstallDepsHandler(
                     dependencies = []
 
                     process_raw_deps(
-                        env_raw_deps, env_deps_config, dependencies, deps_groups
+                        env_raw_deps, env_deps_config, dependencies, deps_groups,
+                        project_def_path=env.project_def_path
                     )
                     
                     install_deps_payload = install_deps_in_env_action.InstallDepsInEnvRunPayload(
@@ -86,13 +88,26 @@ class PrepareEnvsInstallDepsHandler(
 
 
 def process_raw_deps(
-    raw_deps: list, env_deps_config, dependencies, deps_groups
+    raw_deps: list, env_deps_config, dependencies, deps_groups,
+    project_def_path: pathlib.Path, _seen: set[str] | None = None
 ) -> None:
+    if _seen is None:
+        _seen = set()
     for raw_dep in raw_deps:
         if isinstance(raw_dep, str):
             name = dependency_config_utils.get_dependency_name(raw_dep)
-            version_or_source = raw_dep[len(name) :]
-            editable = env_deps_config.get(name, {}).get("editable", False)
+            if name in _seen:
+                continue
+            _seen.add(name)
+            dep_config = env_deps_config.get(name, {})
+            editable = dep_config.get("editable", False)
+            if editable and (raw_path := dep_config.get("path")):
+                resolved = pathlib.Path(raw_path)
+                if not resolved.is_absolute():
+                    resolved = (project_def_path.parent / resolved).resolve()
+                version_or_source = f" @ file://{resolved.as_posix()}"
+            else:
+                version_or_source = raw_dep[len(name):]
             dependencies.append(
                 {
                     "name": name,
@@ -103,5 +118,6 @@ def process_raw_deps(
         elif isinstance(raw_dep, dict) and "include-group" in raw_dep:
             included_group_deps = deps_groups.get(raw_dep["include-group"], [])
             process_raw_deps(
-                included_group_deps, env_deps_config, dependencies, deps_groups
+                included_group_deps, env_deps_config, dependencies, deps_groups,
+                project_def_path, _seen
             )
