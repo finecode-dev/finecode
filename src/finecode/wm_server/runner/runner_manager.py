@@ -418,7 +418,11 @@ async def start_runner(
                 f"Found problem in configuration of {project_def.dir_path}: {exception.message}"
             ) from exception
 
-    await update_runner_config(runner=runner, project=project_def, handlers_to_initialize=handlers_to_initialize)
+    if project_def.actions is not None:
+        # update runner config if project actions are already known, otherwise it will
+        # be done as separate step
+        await update_runner_config(runner=runner, project=project_def, handlers_to_initialize=handlers_to_initialize)
+    
     await _finish_runner_init(runner=runner, project=project_def, ws_context=ws_context)
 
     runner.status = runner_client.RunnerStatus.RUNNING

@@ -13,6 +13,7 @@ The extension:
 - Provides code actions and quick fixes
 - Supports formatting on save
 - Exposes FineCode actions in the sidebar
+- Integrates with the native VS Code Testing panel (discover and run tests)
 
 ### Requirements
 
@@ -22,6 +23,15 @@ The extension:
 ### Configuration
 
 The extension auto-discovers `.venvs/dev_workspace/`. No extra extension-side project configuration is required.
+
+### Testing integration
+
+The Testing panel (beaker icon) is populated automatically when the workspace loads. It is driven by two actions from `finecode_extension_api`:
+
+- `ListTestsAction` — discovers tests and builds the file → class → function tree
+- `RunTestsAction` — executes tests and reports pass/fail/skip/error per test case
+
+To use the Testing panel, you need handlers registered for both actions. The `fine_python_test` preset provides pytest-based handlers for both. If you are already using `fine_python_recommended`, testing support is included — no extra preset needed, since `fine_python_recommended` already pulls in `fine_python_test`.
 
 ## MCP setup for AI clients
 

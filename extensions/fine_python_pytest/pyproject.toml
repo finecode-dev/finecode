@@ -1,14 +1,15 @@
 [project]
-name = "fine_python_ast"
-version = "0.3.0a1"
+name = "fine_python_pytest"
+version = "0.1.0a0"
 description = ""
 authors = [{ name = "Vladyslav Hnatiuk", email = "aders1234@gmail.com" }]
 readme = "README.md"
 requires-python = ">=3.11, <= 3.14"
-dependencies = ["finecode_extension_api~=0.4.0a0"]
-
-[project.entry-points."finecode.activator"]
-fine_python_ast = "fine_python_ast.activator:Activator"
+dependencies = [
+    "finecode_extension_api~=0.4.0a0",
+    "pytest>=7.0.0,<9.0.0",
+    "pytest-json-report>=1.5.0",
+]
 
 [dependency-groups]
 dev_workspace = ["finecode~=0.4.0a0", "finecode_dev_common_preset~=0.3.0a0"]

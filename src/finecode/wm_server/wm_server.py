@@ -12,16 +12,14 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
 import pathlib
 import socket
-import subprocess
-import sys
 import typing
 
 from loguru import logger
 
 from finecode.wm_server import context, domain
+from finecode.wm_server.wm_lifecycle import discovery_file_path
 
 CONTENT_LENGTH_HEADER = "Content-Length: "
 DISCONNECT_TIMEOUT_SECONDS = 30
@@ -659,6 +657,21 @@ async def _handle_server_reset(
     return {}
 
 
+async def _handle_server_shutdown(
+    params: dict | None, ws_context: context.WorkspaceContext
+) -> dict:
+    """Shut down the WM server.
+
+    Responds with ``{}`` and then stops the server on the next event-loop
+    iteration, giving the transport layer time to flush the response.
+
+    Result: ``{}``
+    """
+    logger.info("FineCode API: shutdown requested by client")
+    asyncio.get_event_loop().call_soon(stop)
+    return {}
+
+
 async def _handle_set_config_overrides(
     params: dict | None, ws_context: context.WorkspaceContext
 ) -> dict:
@@ -986,7 +999,7 @@ _METHODS: dict[str, MethodHandler] = {
     # server/
     "server/getInfo": _handle_server_get_info,
     "server/reset": _handle_server_reset,
-    "server/shutdown": _stub("server/shutdown"),
+    "server/shutdown": _handle_server_shutdown,
 }
 
 _NOTIFICATIONS: dict[str, NotificationHandler] = {
@@ -1157,123 +1170,6 @@ def _find_free_port() -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.bind(("127.0.0.1", 0))
         return s.getsockname()[1]
-
-
-def _cache_dir() -> pathlib.Path:
-    """Return the FineCode cache directory inside the dev_workspace venv."""
-    return pathlib.Path(sys.executable).parent.parent / "cache" / "finecode"
-
-
-def discovery_file_path() -> pathlib.Path:
-    return _cache_dir() / "wm_port"
-
-
-def read_port() -> int | None:
-    """Read the WM server port from the discovery file. Returns None if not found."""
-    path = discovery_file_path()
-    if not path.exists():
-        return None
-    try:
-        return int(path.read_text().strip())
-    except (ValueError, OSError):
-        return None
-
-
-def is_running() -> bool:
-    """Check if a WM server is already listening (discovery file exists and port responds)."""
-    port = read_port()
-    if port is None:
-        return False
-    try:
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            s.settimeout(1)
-            s.connect(("127.0.0.1", port))
-            return True
-    except (ConnectionRefusedError, OSError):
-        return False
-
-
-def ensure_running(workdir: pathlib.Path) -> None:
-    """Start the WM server as a subprocess if not already running."""
-    if is_running():
-        return
-
-    python_cmd = sys.executable
-    logger.info(f"Starting FineCode WM server subprocess in {workdir}")
-    subprocess.Popen(
-        [python_cmd, "-m", "finecode", "start-wm-server", "--trace"],
-        cwd=str(workdir),
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
-
-
-async def wait_until_ready(timeout: float = 30) -> int:
-    """Wait for the WM server to become available. Returns the port."""
-    deadline = asyncio.get_event_loop().time() + timeout
-    while asyncio.get_event_loop().time() < deadline:
-        if is_running():
-            port = read_port()
-            if port is not None:
-                return port
-        await asyncio.sleep(0.5)
-    raise TimeoutError(
-        f"FineCode WM server did not start within {timeout}s. "
-        f"Check logs for errors."
-    )
-
-
-def start_own_server(workdir: pathlib.Path, log_level: str = "INFO") -> pathlib.Path:
-    """Start a dedicated WM server subprocess for exclusive use by one CLI call.
-
-    Unlike ``ensure_running()``, this always starts a *fresh* process and writes
-    the listening port to a temporary file (not the shared discovery file), so it
-    does not interfere with a concurrently running shared WM server (e.g. the one
-    used by the LSP/MCP clients).
-
-    Returns the path to the temporary port file.  Pass it to
-    ``wait_until_ready_from_file()`` to obtain the port and connect.
-    The server auto-stops ``AUTO_STOP_DELAY_SECONDS`` after the client disconnects.
-    """
-    import tempfile
-
-    fd, port_file_str = tempfile.mkstemp(suffix=".finecode_port")
-    os.close(fd)
-    port_file = pathlib.Path(port_file_str)
-    # Write empty content so the server knows to overwrite rather than append.
-    port_file.write_text("")
-
-    logger.info(f"Starting dedicated FineCode WM server in {workdir}")
-    subprocess.Popen(
-        [sys.executable, "-m", "finecode", "start-wm-server", "--port-file", str(port_file), "--log-level", log_level],
-        cwd=str(workdir),
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
-    return port_file
-
-
-async def wait_until_ready_from_file(
-    port_file: pathlib.Path, timeout: float = 30
-) -> int:
-    """Wait for a dedicated WM server using a custom port file. Returns the port."""
-    deadline = asyncio.get_event_loop().time() + timeout
-    while asyncio.get_event_loop().time() < deadline:
-        try:
-            content = port_file.read_text().strip()
-            if content:
-                port = int(content)
-                with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-                    s.settimeout(1)
-                    s.connect(("127.0.0.1", port))
-                    return port
-        except (FileNotFoundError, ValueError, OSError):
-            pass
-        await asyncio.sleep(0.5)
-    raise TimeoutError(
-        f"Dedicated FineCode WM server did not start within {timeout}s. "
-        "Check logs for errors."
-    )
 
 
 async def start(

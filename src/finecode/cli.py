@@ -8,10 +8,7 @@ import typing
 import click
 from loguru import logger
 
-import finecode.lsp_server.main as wm_lsp_server
 from finecode import logger_utils, user_messages
-from finecode.lsp_server import communication_utils
-from finecode.cli_app.commands import dump_config_cmd, prepare_envs_cmd, run_cmd
 from finecode.wm_server.config.config_models import ConfigurationError
 
 
@@ -202,6 +199,9 @@ def start_lsp(
     host: str | None,
     port: int | None,
 ):
+    import finecode.lsp_server.main as wm_lsp_server
+    from finecode.lsp_server import communication_utils
+
     if debug is True:
         import debugpy
 
@@ -249,6 +249,8 @@ def deserialize_action_payload(raw_payload: dict[str, str]) -> dict[str, typing.
 @cli.command(context_settings=dict(ignore_unknown_options=True, allow_extra_args=True))
 @click.pass_context
 def run(ctx) -> None:
+    from finecode.cli_app.commands import run_cmd
+
     args: list[str] = ctx.args
     actions_to_run: list[str] = []
     projects: list[str] | None = None
@@ -413,6 +415,8 @@ def prepare_envs(log_level: str, debug: bool, recreate: bool, shared_server: boo
     `prepare-envs` should be called from workspace/project root directory.
     """
     # idea: project parameter to allow to run from other directories?
+    from finecode.cli_app.commands import prepare_envs_cmd
+
     if debug is True:
         import debugpy
 
@@ -451,6 +455,8 @@ def prepare_envs(log_level: str, debug: bool, recreate: bool, shared_server: boo
 @click.option("--shared-server", "shared_server", is_flag=True, default=False)
 @click.option("--dev-env", "dev_env", default=None, type=click.Choice(sorted(_VALID_DEV_ENVS)), help="Override detected dev environment")
 def dump_config(log_level: str, debug: bool, project: str | None, shared_server: bool, dev_env: str | None):
+    from finecode.cli_app.commands import dump_config_cmd
+
     if debug is True:
         import debugpy
 

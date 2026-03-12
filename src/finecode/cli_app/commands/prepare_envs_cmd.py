@@ -3,7 +3,7 @@ import pathlib
 from loguru import logger
 
 from finecode.wm_client import ApiClient, ApiError
-from finecode.wm_server import wm_server
+from finecode.wm_server import wm_lifecycle
 
 
 class PrepareEnvsFailed(Exception):
@@ -27,15 +27,15 @@ async def prepare_envs(
     port_file = None
     try:
         if own_server:
-            port_file = wm_server.start_own_server(workdir_path, log_level=log_level)
+            port_file = wm_lifecycle.start_own_server(workdir_path, log_level=log_level)
             try:
-                port = await wm_server.wait_until_ready_from_file(port_file)
+                port = await wm_lifecycle.wait_until_ready_from_file(port_file)
             except TimeoutError as exc:
                 raise PrepareEnvsFailed(str(exc)) from exc
         else:
-            wm_server.ensure_running(workdir_path)
+            wm_lifecycle.ensure_running(workdir_path)
             try:
-                port = await wm_server.wait_until_ready()
+                port = await wm_lifecycle.wait_until_ready()
             except TimeoutError as exc:
                 raise PrepareEnvsFailed(str(exc)) from exc
 

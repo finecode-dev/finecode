@@ -82,12 +82,13 @@ jobs:
           python -m finecode run build_artifact
         shell: bash
 
-      # - name: Run unit tests
-      #   if: ${{ !cancelled() }}
-      #   run: |
-      #     source .venvs/dev_workspace/bin/activate
-      #     python -m finecode run test
-      #   shell: bash
+      - name: Run unit tests
+        if: ${{ !cancelled() }}
+        run: |
+          source .venvs/dev_workspace/bin/activate
+          # TODO: test with all supported python versions
+          python -m finecode run run_tests
+        shell: bash
 
       - name: Publish to TestPyPI and verify
         if: runner.os == 'Linux' && github.event_name == 'workflow_dispatch' && inputs.publish_testpypi

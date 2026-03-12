@@ -12,7 +12,9 @@ finecode_extension_runner = { path = "../../../finecode_extension_runner", edita
 finecode_extension_api = { path = "../../../finecode_extension_api", editable = true }
 
 [tool.finecode.env.dev.dependencies]
+finecode_extension_api = { path = "../../../finecode_extension_api", editable = true }
 finecode_extension_runner = { path = "../../../finecode_extension_runner", editable = true }
+fine_python_pytest = { path = "../../../extensions/fine_python_pytest", editable = true }
 
 [tool.finecode.env.dev_no_runtime.dependencies]
 finecode_extension_api = { path = "../../../finecode_extension_api", editable = true }

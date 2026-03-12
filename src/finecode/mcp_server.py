@@ -15,7 +15,7 @@ from contextlib import asynccontextmanager
 from loguru import logger
 from fastmcp import FastMCP
 
-from finecode.wm_server import wm_server
+from finecode.wm_server import wm_lifecycle
 from finecode.wm_client import ApiClient
 
 
@@ -89,16 +89,12 @@ def create_mcp_server(workdir: pathlib.Path, port: int) -> FastMCP:
 
 def start(workdir: pathlib.Path) -> None:
     """Start the MCP server on stdio, connecting to the FineCode API."""
-    if not wm_server.is_running():
-        logger.info("No running FineCode WM server found, starting one...")
-        wm_server.ensure_running(workdir)
-        try:
-            port = asyncio.run(wm_server.wait_until_ready())
-        except TimeoutError as exc:
-            logger.error(str(exc))
-            sys.exit(1)
-    else:
-        port = wm_server.read_port()
+    wm_lifecycle.ensure_running(workdir)
+    try:
+        port = asyncio.run(wm_lifecycle.wait_until_ready())
+    except TimeoutError as exc:
+        logger.error(str(exc))
+        sys.exit(1)
 
     mcp = create_mcp_server(workdir, port)
     mcp.run()

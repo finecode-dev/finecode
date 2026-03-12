@@ -8,7 +8,7 @@ from pygls.workspace import position_codec
 from pygls.lsp.server import LanguageServer
 from finecode_extension_runner.lsp_server import CustomLanguageServer
 
-from finecode.wm_server import wm_server
+from finecode.wm_server import wm_lifecycle
 from finecode.wm_client import ApiClient
 from finecode.lsp_server import global_state
 from finecode.lsp_server.endpoints import action_tree as action_tree_endpoints
@@ -121,6 +121,12 @@ def create_lsp_server() -> CustomLanguageServer:
         action_tree_endpoints.list_actions_for_position
     )
 
+    register_list_projects_cmd = server.command("finecode.listProjects")
+    register_list_projects_cmd(action_tree_endpoints.list_projects)
+
+    register_run_action_cmd = server.command("finecode.runAction")
+    register_run_action_cmd(action_tree_endpoints.run_action)
+
     register_run_action_on_file_cmd = server.command("finecode.runActionOnFile")
     register_run_action_on_file_cmd(action_tree_endpoints.run_action_on_file)
 
@@ -145,6 +151,9 @@ def create_lsp_server() -> CustomLanguageServer:
 
     register_shutdown_feature = server.feature(types.SHUTDOWN)
     register_shutdown_feature(_on_shutdown)
+
+    register_server_shutdown_feature = server.feature('server/shutdown')
+    register_server_shutdown_feature(_lsp_server_shutdown)
 
     return server
 
@@ -195,15 +204,12 @@ async def _on_initialized(ls: LanguageServer, params: types.InitializedParams):
 
     # Ensure the FineCode WM server is running and connect to it.
     # The TCP connection keeps the WM server alive for the LSP lifetime.
-    if not wm_server.is_running():
-        wm_server.ensure_running(workdir)
-        try:
-            port = await wm_server.wait_until_ready()
-        except TimeoutError as exc:
-            logger.warning(f"FineCode WM server did not start: {exc}")
-            port = None
-    else:
-        port = wm_server.read_port()
+    wm_lifecycle.ensure_running(workdir, log_level=global_state.wm_log_level)
+    try:
+        port = await wm_lifecycle.wait_until_ready()
+    except TimeoutError as exc:
+        logger.warning(f"FineCode WM server did not start: {exc}")
+        port = None
 
     if port is None:
         logger.error("Cannot connect to FineCode WM server — no port available")
@@ -352,6 +358,24 @@ def _on_shutdown(ls: LanguageServer, params):
     if global_state.wm_client is not None:
         asyncio.ensure_future(global_state.wm_client.close())
         global_state.wm_client = None
+
+
+async def _lsp_server_shutdown(ls: LanguageServer, params):
+    """Handle 'server/shutdown' — explicitly stop the WM server.
+
+    Forwards the shutdown request to the WM server and then closes the
+    WM client connection. Used by the IDE when it wants to restart the
+    WM server (as opposed to a normal disconnect on deactivation).
+    """
+    logger.info("server/shutdown request received, stopping WM server")
+    if global_state.wm_client is not None:
+        try:
+            await global_state.wm_client.request("server/shutdown", {})
+        except Exception:
+            logger.warning("WM server did not respond to shutdown request")
+        await global_state.wm_client.close()
+        global_state.wm_client = None
+    return {}
 
 
 async def reset(ls: LanguageServer, params):
