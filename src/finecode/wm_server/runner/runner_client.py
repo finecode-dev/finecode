@@ -37,33 +37,18 @@ class ActionRunStopped(jsonrpc_client.BaseRunnerRequestException): ...
 
 
 @dataclasses.dataclass
-class ExtensionRunnerInfo:
-    working_dir_path: pathlib.Path
-    env_name: str
-    status: RunnerStatus
+class ExtensionRunnerInfo(domain.ExtensionRunner):
     # NOTE: initialized doesn't mean the runner is running, check its status
-    initialized_event: asyncio.Event
+    initialized_event: asyncio.Event = dataclasses.field(default_factory=asyncio.Event)
     # e.g. if there is no venv for env, client can be None
     client: jsonrpc_client.JsonRpcClient | None = None
     partial_results: IterableSubscribe = dataclasses.field(
         default_factory=IterableSubscribe
     )
 
-    @property
-    def readable_id(self) -> str:
-        return f"{self.working_dir_path} ({self.env_name})"
 
-    @property
-    def logs_path(self) -> pathlib.Path:
-        return self.working_dir_path / ".venvs" / self.env_name / "logs" / "runner.log"
-
-
-class RunnerStatus(enum.Enum):
-    NO_VENV = enum.auto()
-    INITIALIZING = enum.auto()
-    FAILED = enum.auto()
-    RUNNING = enum.auto()
-    EXITED = enum.auto()
+# Alias for backward compatibility — status enum now lives in domain
+RunnerStatus = domain.ExtensionRunnerStatus
 
 
 # JSON object or text

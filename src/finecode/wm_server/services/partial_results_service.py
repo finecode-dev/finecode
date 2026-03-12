@@ -108,7 +108,7 @@ async def run_action_with_partial_results(
     runners_used: list[runner_client.ExtensionRunnerInfo] = []
 
     async def run_one(project: domain.CollectedProject) -> None:
-        logger.info(f"partial_results: run_one start project={project.name} action={action_name} token={partial_result_token}")
+        logger.trace(f"partial_results: run_one start project={project.name} action={action_name} token={partial_result_token}")
         async with run_with_partial_results(
             action_name=action_name,
             params=params,

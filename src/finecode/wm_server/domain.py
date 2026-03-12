@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import dataclasses
 import typing
 from enum import Enum, auto
 from pathlib import Path
@@ -250,6 +251,29 @@ AllActions = ActionsDict
 #         self.source = source
 
 
+class ExtensionRunnerStatus(Enum):
+    NO_VENV = auto()
+    INITIALIZING = auto()
+    FAILED = auto()
+    RUNNING = auto()
+    EXITED = auto()
+
+
+@dataclasses.dataclass
+class ExtensionRunner:
+    working_dir_path: Path
+    env_name: str
+    status: ExtensionRunnerStatus
+
+    @property
+    def readable_id(self) -> str:
+        return f"{self.working_dir_path} ({self.env_name})"
+
+    @property
+    def logs_path(self) -> Path:
+        return self.working_dir_path / ".venvs" / self.env_name / "logs" / "runner.log"
+
+
 class TextDocumentInfo:
     def __init__(self, uri: str, version: str | int) -> None:
         self.uri = uri
@@ -280,4 +304,6 @@ __all__ = [
     "TextDocumentInfo",
     "RunnerConfig",
     "EnvConfig",
+    "ExtensionRunnerStatus",
+    "ExtensionRunner",
 ]

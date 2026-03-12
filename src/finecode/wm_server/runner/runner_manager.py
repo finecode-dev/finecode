@@ -482,7 +482,7 @@ async def get_or_start_runner(
 
 
 async def _start_dev_workspace_runner(
-    project_def: domain.Project, ws_context: context.WorkspaceContext
+    project_def: domain.CollectedProject, ws_context: context.WorkspaceContext
 ) -> runner_client.ExtensionRunnerInfo:
     return await get_or_start_runner(
         project_def=project_def, env_name="dev_workspace", ws_context=ws_context
