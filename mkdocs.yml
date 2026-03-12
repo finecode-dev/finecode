@@ -82,4 +82,5 @@ nav:
   - Development:
       - Overview: development.md
       - WM Protocol: wm-protocol.md
+      - WM-ER Protocol: wm-er-protocol.md
       - Developing FineCode: guides/developing-finecode.md
