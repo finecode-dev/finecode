@@ -78,6 +78,7 @@ nav:
       - Built-in Actions: reference/actions.md
       - Extensions: reference/extensions.md
       - LSP and MCP Architecture: reference/lsp-mcp-architecture.md
+      - LSP Client Protocol: reference/lsp-protocol.md
   - Development:
       - Overview: development.md
       - WM Protocol: wm-protocol.md

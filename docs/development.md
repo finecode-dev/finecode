@@ -22,6 +22,7 @@ The FineCode documentation is organized into the following sections:
 - **Built-in Actions** (`reference/actions.md`)
 - **Extensions** (`reference/extensions.md`)
 - **LSP and MCP Architecture** (`reference/lsp-mcp-architecture.md`): Protocol and server lifecycle internals
+- **LSP Client Protocol** (`reference/lsp-protocol.md`): LSP client/server protocol details and custom commands
 
 ### Developer Documentation
 - **Overview** (`development.md`): Contributing to FineCode core development
