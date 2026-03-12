@@ -86,7 +86,7 @@ async def run_action_on_project(ls: LanguageServer, params):
     return response
 
 
-async def list_projects(ls: LanguageServer, _params):
+async def list_projects(ls: LanguageServer):
     logger.info("list_projects")
     await global_state.server_initialized.wait()
 
@@ -103,12 +103,11 @@ async def run_action(ls: LanguageServer, params):
     if global_state.wm_client is None:
         raise Exception()
 
-    params_dict = params[0]
     return await global_state.wm_client.run_action(
-        action=params_dict["action"],
-        project=params_dict["project"],
-        params=params_dict.get("params"),
-        options=params_dict.get("options", {"trigger": "user", "dev_env": "ide"}),
+        action=params["action"],
+        project=params["project"],
+        params=params.get("params"),
+        options=params.get("options", {"trigger": "user", "dev_env": "ide"}),
     )
 
 

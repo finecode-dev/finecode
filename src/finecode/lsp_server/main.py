@@ -11,7 +11,7 @@ async def start(
     port: int | None = None,
     log_level: str = "INFO",
 ) -> None:
-    logger_utils.init_logger(log_name="lsp_server", log_level=log_level)
+    global_state.lsp_log_file_path = logger_utils.init_logger(log_name="lsp_server", log_level=log_level)
     global_state.wm_log_level = log_level
     server = create_lsp_server()
     await server.start_io_async()

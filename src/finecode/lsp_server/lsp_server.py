@@ -223,6 +223,14 @@ async def _on_initialized(ls: LanguageServer, params: types.InitializedParams):
         global_state.wm_client = None
         return
 
+    if global_state.lsp_log_file_path:
+        ls.window_log_message(
+            types.LogMessageParams(
+                type=types.MessageType.Info,
+                message=f"FineCode LSP Server log: {global_state.lsp_log_file_path}",
+            )
+        )
+
     try:
         info = await global_state.wm_client.get_info()
         log_path = info.get("log_file_path")
