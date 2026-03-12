@@ -66,32 +66,30 @@ async def find_project_with_action_for_file(
 
     for project_dir_path in file_projects_pathes:
         project = ws_context.ws_projects[project_dir_path]
-        project_actions = project.actions
-        if project_actions is None:
+        if not isinstance(project, domain.CollectedProject):
             if project.status == domain.ProjectStatus.NO_FINECODE:
                 continue
-            else:
-                if project.status == domain.ProjectStatus.CONFIG_VALID:
-                    try:
-                        await runner_manager.get_or_start_runners_with_presets(
-                            project_dir_path=project_dir_path, ws_context=ws_context
-                        )
-                    except runner_manager.RunnerFailedToStart as exception:
-                        raise ValueError(
-                            f"Action is related to project {project_dir_path} but runner "
-                            f"with presets failed to start in it: {exception.message}"
-                        )
-
-                    assert project.actions is not None
-                    project_actions = project.actions
-                else:
-                    raise ValueError(
-                        f"Action is related to project {project_dir_path} but its action "
-                        f"cannot be resolved({project.status})"
+            elif project.status == domain.ProjectStatus.CONFIG_VALID:
+                try:
+                    await runner_manager.get_or_start_runners_with_presets(
+                        project_dir_path=project_dir_path, ws_context=ws_context
                     )
+                except runner_manager.RunnerFailedToStart as exception:
+                    raise ValueError(
+                        f"Action is related to project {project_dir_path} but runner "
+                        f"with presets failed to start in it: {exception.message}"
+                    )
+                # Re-fetch after preset resolution — now a CollectedProject
+                project = ws_context.ws_projects[project_dir_path]
+                assert isinstance(project, domain.CollectedProject)
+            else:
+                raise ValueError(
+                    f"Action is related to project {project_dir_path} but its action "
+                    f"cannot be resolved({project.status})"
+                )
 
         try:
-            next(action for action in project_actions if action.name == action_name)
+            next(action for action in project.actions if action.name == action_name)
         except StopIteration:
             continue
 

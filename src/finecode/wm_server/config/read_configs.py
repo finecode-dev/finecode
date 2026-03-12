@@ -38,7 +38,6 @@ async def read_projects_in_dir(
             continue
 
         status = domain.ProjectStatus.CONFIG_VALID
-        actions: list[domain.Action] | None = None
 
         with open(def_file, "rb") as pyproject_file:
             project_def = toml_loads(pyproject_file.read()).unwrap()
@@ -50,15 +49,12 @@ async def read_projects_in_dir(
         )
         if not finecode_in_dev_workspace:
             status = domain.ProjectStatus.NO_FINECODE
-            actions = []
 
         new_project = domain.Project(
             name=def_file.parent.name,
             dir_path=def_file.parent,
             def_path=def_file,
             status=status,
-            actions=actions,
-            env_configs={},
         )
         is_new_project = def_file.parent not in ws_context.ws_projects
         ws_context.ws_projects[def_file.parent] = new_project
@@ -175,9 +171,6 @@ async def read_project_config(
         merge_services_dependencies_into_groups(project_config)
 
         ws_context.ws_projects_raw_configs[project.dir_path] = project_config
-
-        env_configs = read_env_configs(project_config=project_config)
-        project.env_configs = env_configs
     else:
         logger.info(
             f"Project definition of type {project.def_path.name} is not supported yet"

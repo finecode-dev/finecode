@@ -297,7 +297,7 @@ async def _handle_add_dir(
         for project in projects_to_init:
             if project.status == domain.ProjectStatus.CONFIG_VALID:
                 try:
-                    collect_actions.collect_actions(
+                    collect_actions.collect_project(
                         project_path=project.dir_path, ws_context=ws_context
                     )
                 except config_models.ConfigurationError as exc:
@@ -383,7 +383,7 @@ async def _handle_list_actions(
     for project in ws_context.ws_projects.values():
         if project_filter and project.name != project_filter:
             continue
-        if project.actions is None:
+        if not isinstance(project, domain.CollectedProject):
             continue
         for action in project.actions:
             actions.append({
@@ -422,6 +422,11 @@ async def _handle_run_action(
 
     if project is None:
         raise ValueError(f"Project '{project_name}' not found")
+    if not isinstance(project, domain.CollectedProject):
+        raise ValueError(
+            f"Project '{project_name}' actions are not collected yet. "
+            "Ensure the project is initialized before running actions."
+        )
 
     # Import run_service here to avoid circular imports
     from finecode.wm_server.services import run_service
@@ -706,7 +711,7 @@ async def _handle_set_config_overrides(
         async with asyncio.TaskGroup() as tg:
             for project_path, runners_by_env in ws_context.ws_projects_extension_runners.items():
                 project = ws_context.ws_projects.get(project_path)
-                if project is None or project.actions is None:
+                if project is None or not isinstance(project, domain.CollectedProject):
                     continue
                 for runner in runners_by_env.values():
                     if runner.status == RunnerStatus.RUNNING:
@@ -739,7 +744,7 @@ def _apply_config_overrides_to_projects(
     originals: dict[pathlib.Path, dict[str, dict[str, typing.Any]]] = {}
     actions_set = set(actions)
     for project in projects:
-        if project.actions is None:
+        if not isinstance(project, domain.CollectedProject):
             continue
         originals[project.dir_path] = {
             source: dict(cfg)

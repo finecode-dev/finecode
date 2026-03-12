@@ -3,15 +3,21 @@ from typing import Any
 
 import finecode.wm_server.config.config_models as config_models
 from finecode.wm_server import context, domain
+from finecode.wm_server.config.read_configs import read_env_configs
 
 
-def collect_actions(
+def collect_project(
     project_path: Path,
     ws_context: context.WorkspaceContext,
-) -> list[domain.Action]:
-    # preconditions:
-    # - project raw config exists in ws_context if such project exists
-    # - project expected to include finecode
+) -> domain.CollectedProject:
+    """Collect actions, services, and handler configs from the project's raw config.
+
+    Constructs a :class:`~finecode.wm_server.domain.CollectedProject` and
+    replaces the existing entry in ``ws_context.ws_projects``.  The raw config
+    must already be present (call ``read_project_config`` first).
+
+    Note: presets are **not** resolved here.
+    """
     try:
         project = ws_context.ws_projects[project_path]
     except KeyError as exception:
@@ -26,34 +32,22 @@ def collect_actions(
         raise Exception("First you need to parse config of project") from exception
 
     actions = _collect_actions_in_config(config)
-    project.actions = actions
-
     action_handler_configs = _collect_action_handler_configs_in_config(config)
-    project.action_handler_configs = action_handler_configs
-
-    return actions
-
-
-def collect_services(
-    project_path: Path,
-    ws_context: context.WorkspaceContext,
-) -> list[domain.ServiceDeclaration]:
-    try:
-        project = ws_context.ws_projects[project_path]
-    except KeyError as exception:
-        raise ValueError(
-            f"Project {project_path} doesn't exist."
-            + f" Existing projects: {ws_context.ws_projects}"
-        ) from exception
-
-    try:
-        config = ws_context.ws_projects_raw_configs[project_path]
-    except KeyError as exception:
-        raise Exception("First you need to parse config of project") from exception
-
     services = _collect_services_in_config(config)
-    project.services = services
-    return services
+    env_configs = read_env_configs(project_config=config)
+
+    collected = domain.CollectedProject(
+        name=project.name,
+        dir_path=project.dir_path,
+        def_path=project.def_path,
+        status=project.status,
+        env_configs=env_configs,
+        actions=actions,
+        services=services,
+        action_handler_configs=action_handler_configs,
+    )
+    ws_context.ws_projects[project_path] = collected
+    return collected
 
 
 def _collect_services_in_config(

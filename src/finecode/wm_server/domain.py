@@ -107,29 +107,27 @@ class Action:
 
 
 class Project:
+    """A project discovered in the workspace.
+
+    This is the initial state: we know the project exists and have read its
+    basic identity (name, path, status), but actions and services have not
+    been collected yet.
+
+    Transitions:
+        Project → CollectedProject  via collect_actions.collect_project()
+    """
+
     def __init__(
         self,
         name: str,
         dir_path: Path,
         def_path: Path,
         status: ProjectStatus,
-        env_configs: dict[str, EnvConfig],
-        actions: list[Action] | None = None,
     ) -> None:
         self.name = name
         self.dir_path = dir_path
         self.def_path = def_path
         self.status = status
-        # None means actions were not collected yet
-        # if project.status is RUNNING, then actions are not None
-        self.actions = actions
-        self.services: list[ServiceDeclaration] = []
-        # config by handler source
-        self.action_handler_configs: dict[str, dict[str, typing.Any]] = {}
-        # config by env name
-        # it always contains configs for all environments, even if user hasn't provided
-        # one explicitly(=there is a default config)
-        self.env_configs: dict[str, EnvConfig] = env_configs
 
     def __str__(self) -> str:
         return (
@@ -139,18 +137,76 @@ class Project:
     def __repr__(self) -> str:
         return str(self)
 
+
+class CollectedProject(Project):
+    """A project whose actions and services have been collected from local config.
+
+    Presets are **not** yet resolved. This state is used during the bootstrap
+    phase: the dev-workspace Extension Runner is started with the locally
+    collected actions so that it can resolve presets.  Once presets are
+    resolved, the project is upgraded to :class:`ResolvedProject`.
+
+    Transitions:
+        Project          → CollectedProject  via collect_actions.collect_project()
+        CollectedProject → ResolvedProject   via ResolvedProject.from_collected()
+                                             (after re-reading config with presets)
+    """
+
+    def __init__(
+        self,
+        name: str,
+        dir_path: Path,
+        def_path: Path,
+        status: ProjectStatus,
+        env_configs: dict[str, EnvConfig],
+        actions: list[Action],
+        services: list[ServiceDeclaration],
+        action_handler_configs: dict[str, dict[str, typing.Any]],
+    ) -> None:
+        super().__init__(name, dir_path, def_path, status)
+        # config by env name — always contains configs for all environments, even if
+        # the user hasn't provided one explicitly (there is always a default config)
+        self.env_configs: dict[str, EnvConfig] = env_configs
+        self.actions: list[Action] = actions
+        self.services: list[ServiceDeclaration] = services
+        # config by handler source
+        self.action_handler_configs: dict[str, dict[str, typing.Any]] = (
+            action_handler_configs
+        )
+
     @property
     def envs(self) -> list[str]:
-        if self.actions is None:
-            raise ValueError("Actions are not collected yet")
-
         all_envs_set = ordered_set.OrderedSet([])
         for action in self.actions:
             action_envs = [handler.env for handler in action.handlers]
             all_envs_set |= ordered_set.OrderedSet(action_envs)
         all_envs_set |= ordered_set.OrderedSet([svc.env for svc in self.services])
-
         return list(all_envs_set)
+
+
+class ResolvedProject(CollectedProject):
+    """A project with fully resolved configuration, including all presets.
+
+    This is the normal operating state of a project.  Actions, services, and
+    handler configs include contributions from all presets.
+
+    Use :meth:`from_collected` to upgrade a :class:`CollectedProject` after
+    preset resolution.
+    """
+
+    @classmethod
+    def from_collected(cls, collected: CollectedProject) -> "ResolvedProject":
+        """Upgrade a CollectedProject to ResolvedProject after preset resolution."""
+        return cls(
+            name=collected.name,
+            dir_path=collected.dir_path,
+            def_path=collected.def_path,
+            status=collected.status,
+            env_configs=collected.env_configs,
+            actions=collected.actions,
+            services=collected.services,
+            action_handler_configs=collected.action_handler_configs,
+        )
 
 
 class ProjectStatus(Enum):
@@ -219,6 +275,8 @@ __all__ = [
     "Action",
     "ServiceDeclaration",
     "Project",
+    "CollectedProject",
+    "ResolvedProject",
     "TextDocumentInfo",
     "RunnerConfig",
     "EnvConfig",

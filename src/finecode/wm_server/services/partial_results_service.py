@@ -76,15 +76,21 @@ async def run_action_with_partial_results(
     aggregated result equivalent to what ``actions/run`` would return.
     """
 
-    # determine target project(s)
-    projects: list[domain.Project]
+    # determine target project(s) — only CollectedProject instances have actions
+    projects: list[domain.CollectedProject]
     if project_name:
-        projects = [p for p in ws_context.ws_projects.values() if p.name == project_name]
+        projects = [
+            p for p in ws_context.ws_projects.values()
+            if p.name == project_name and isinstance(p, domain.CollectedProject)
+        ]
         if not projects:
             raise ValueError(f"Project '{project_name}' not found")
     else:
         paths = find_all_projects_with_action(action_name, ws_context)
-        projects = [ws_context.ws_projects[p] for p in paths]
+        projects = [
+            p for path in paths
+            if isinstance(p := ws_context.ws_projects[path], domain.CollectedProject)
+        ]
 
     # start runners so that run_with_partial_results can attach
     await start_required_environments(
@@ -101,7 +107,7 @@ async def run_action_with_partial_results(
     return_codes: list[int] = []
     runners_used: list[runner_client.ExtensionRunnerInfo] = []
 
-    async def run_one(project: domain.Project) -> None:
+    async def run_one(project: domain.CollectedProject) -> None:
         logger.info(f"partial_results: run_one start project={project.name} action={action_name} token={partial_result_token}")
         async with run_with_partial_results(
             action_name=action_name,
@@ -143,7 +149,6 @@ async def run_action_with_partial_results(
                 stream.put({"result_by_format": result_by_format})
 
         # Collect a runner from this project to use for cross-project result merging.
-        assert project.actions is not None
         action = next((a for a in project.actions if a.name == action_name), None)
         if action and action.handlers:
             env_name = action.handlers[0].env

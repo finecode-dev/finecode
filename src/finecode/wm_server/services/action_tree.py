@@ -27,9 +27,7 @@ def _project_action_tree(project: domain.Project | None, ws_context: context.Wor
     if project is None:
         return actions_nodes
 
-    if project.status == domain.ProjectStatus.CONFIG_VALID:
-        assert project.actions is not None
-
+    if isinstance(project, domain.CollectedProject):
         action_nodes: list[dict] = []
         for action in project.actions:
             node_id = f"{project.dir_path.as_posix()}::{action.name}"

@@ -328,14 +328,9 @@ def find_all_projects_with_action(
 
     # exclude projects without valid config and projects without requested action
     for project_dir_path, project_def in relevant_projects.copy().items():
-        if project_def.status != domain.ProjectStatus.CONFIG_VALID:
-            # projects without valid config have no actions. Files of those projects
-            # will be not processed because we don't know whether it has one of expected
-            # actions
+        if not isinstance(project_def, domain.CollectedProject):
+            # projects without collected actions cannot be matched
             continue
-
-        # all running projects have actions
-        assert project_def.actions is not None
 
         try:
             next(action for action in project_def.actions if action.name == action_name)
@@ -365,7 +360,7 @@ async def start_required_environments(
     required_envs_by_project: dict[pathlib.Path, set[str]] = {}
     for project_dir_path, action_names in actions_by_projects.items():
         project = ws_context.ws_projects[project_dir_path]
-        if project.actions is not None:
+        if isinstance(project, domain.CollectedProject):
             project_required_envs = set()
             for action_name in action_names:
                 # find the action and collect envs from its handlers
@@ -594,6 +589,8 @@ def find_projects_with_actions(
     actions_set = ordered_set.OrderedSet(actions)
 
     for project in ws_context.ws_projects.values():
+        if not isinstance(project, domain.CollectedProject):
+            continue
         project_actions_names = [action.name for action in project.actions]
         # find which of requested actions are available in the project
         action_to_run_in_project = actions_set & ordered_set.OrderedSet(
@@ -615,7 +612,7 @@ DevEnv: typing.TypeAlias = runner_client.DevEnv
 async def run_action(
     action_name: str,
     params: dict[str, typing.Any],
-    project_def: domain.Project,
+    project_def: domain.CollectedProject,
     ws_context: context.WorkspaceContext,
     run_trigger: runner_client.RunActionTrigger,
     dev_env: runner_client.DevEnv,
@@ -656,7 +653,6 @@ async def run_action(
     # - mixed envs: action handlers are in different envs
     # -- concurrent execution of handlers
     # -- sequential execution of handlers
-    assert project_def.actions is not None
     action = next(
         action for action in project_def.actions if action.name == action_name
     )

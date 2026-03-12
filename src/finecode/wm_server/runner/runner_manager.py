@@ -106,9 +106,13 @@ async def _start_extension_runner_process(
         f"--project-path={runner.working_dir_path.as_posix()}",
         f"--env-name={runner.env_name}",
     ]
-    env_config = ws_context.ws_projects[runner.working_dir_path].env_configs[
-        runner.env_name
-    ]
+    _project = ws_context.ws_projects[runner.working_dir_path]
+    _default_env_config = domain.EnvConfig(runner_config=domain.RunnerConfig(debug=False))
+    env_config = (
+        _project.env_configs.get(runner.env_name, _default_env_config)
+        if isinstance(_project, domain.CollectedProject)
+        else _default_env_config
+    )
     runner_config = env_config.runner_config
 
     start_with_debug = debug or runner_config.debug
@@ -323,10 +327,7 @@ async def start_runners_with_presets(
             await read_configs.read_project_config(
                 project=project, ws_context=ws_context
             )
-            collect_actions.collect_actions(
-                project_path=project.dir_path, ws_context=ws_context
-            )
-            collect_actions.collect_services(
+            collected = collect_actions.collect_project(
                 project_path=project.dir_path, ws_context=ws_context
             )
         except config_models.ConfigurationError as exception:
@@ -334,18 +335,22 @@ async def start_runners_with_presets(
                 f"Reading project config with presets and collecting actions in {project.dir_path} failed: {exception.message}"
             ) from exception
 
+        # Upgrade to ResolvedProject — presets are now resolved in the raw config
+        resolved = domain.ResolvedProject.from_collected(collected)
+        ws_context.ws_projects[project.dir_path] = resolved
+
         # update config of dev_workspace runner, the new config contains resolved presets
         dev_workspace_runner = ws_context.ws_projects_extension_runners[
             project.dir_path
         ]["dev_workspace"]
         handlers_to_init = (
-            domain_helpers.collect_all_handlers_to_initialize(project, "dev_workspace")
+            domain_helpers.collect_all_handlers_to_initialize(resolved, "dev_workspace")
             if initialize_all_handlers
             else None
         )
         await update_runner_config(
             runner=dev_workspace_runner,
-            project=project,
+            project=resolved,
             handlers_to_initialize=handlers_to_init,
         )
 
@@ -398,16 +403,13 @@ async def start_runner(
 
     if (
         project_def.dir_path not in ws_context.ws_projects_raw_configs
-        or project_def.actions is None
+        or not isinstance(project_def, domain.CollectedProject)
     ):
         try:
             await read_configs.read_project_config(
                 project=project_def, ws_context=ws_context
             )
-            collect_actions.collect_actions(
-                project_path=project_def.dir_path, ws_context=ws_context
-            )
-            collect_actions.collect_services(
+            collect_actions.collect_project(
                 project_path=project_def.dir_path, ws_context=ws_context
             )
         except config_models.ConfigurationError as exception:
@@ -418,10 +420,12 @@ async def start_runner(
                 f"Found problem in configuration of {project_def.dir_path}: {exception.message}"
             ) from exception
 
-    if project_def.actions is not None:
+    # Re-fetch from context — may now be CollectedProject if collection just happened
+    current_project_def = ws_context.ws_projects[project_def.dir_path]
+    if isinstance(current_project_def, domain.CollectedProject):
         # update runner config if project actions are already known, otherwise it will
         # be done as separate step
-        await update_runner_config(runner=runner, project=project_def, handlers_to_initialize=handlers_to_initialize)
+        await update_runner_config(runner=runner, project=current_project_def, handlers_to_initialize=handlers_to_initialize)
     
     await _finish_runner_init(runner=runner, project=project_def, ws_context=ws_context)
 
@@ -515,10 +519,9 @@ async def _init_lsp_client(
 
 async def update_runner_config(
     runner: runner_client.ExtensionRunnerInfo,
-    project: domain.Project,
+    project: domain.CollectedProject,
     handlers_to_initialize: dict[str, list[str]] | None,
 ) -> None:
-    assert project.actions is not None
     config = runner_client.RunnerConfig(
         actions=project.actions,
         action_handler_configs=project.action_handler_configs,
