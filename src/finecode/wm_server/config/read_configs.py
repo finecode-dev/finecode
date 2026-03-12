@@ -50,16 +50,20 @@ async def read_projects_in_dir(
         if not finecode_in_dev_workspace:
             status = domain.ProjectStatus.NO_FINECODE
 
-        new_project = domain.Project(
-            name=def_file.parent.name,
-            dir_path=def_file.parent,
-            def_path=def_file,
-            status=status,
-        )
         is_new_project = def_file.parent not in ws_context.ws_projects
-        ws_context.ws_projects[def_file.parent] = new_project
         if is_new_project:
+            new_project = domain.Project(
+                name=def_file.parent.name,
+                dir_path=def_file.parent,
+                def_path=def_file,
+                status=status,
+            )
+            ws_context.ws_projects[def_file.parent] = new_project
             new_projects.append(new_project)
+        else:
+            # Preserve existing collected/resolved state — only update status in case
+            # the finecode dependency was added or removed since the last scan.
+            ws_context.ws_projects[def_file.parent].status = status
     return new_projects
 
 

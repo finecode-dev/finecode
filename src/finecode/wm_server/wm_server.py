@@ -908,7 +908,7 @@ async def _handle_run_with_partial_results(
     dev_env = run_service.DevEnv(options.get("dev_env", "ide"))
     result_formats = options.get("result_formats", ["json"])
 
-    logger.info(f"runWithPartialResults: action={action_name} project={project_name!r} token={token} formats={result_formats}")
+    logger.trace(f"runWithPartialResults: action={action_name} project={project_name!r} token={token} formats={result_formats}")
 
     stream = await partial_results_service.run_action_with_partial_results(
         action_name=action_name,
