@@ -8,9 +8,13 @@ A named operation (for example `lint`, `format`, `build_artifact`).
 
 A concrete implementation of an action. Multiple handlers can be registered for a single action, and they run sequentially or concurrently.
 
+## Service
+
+A long-lived dependency injected into handlers by interface.
+
 ## Source Artifact
 
-A unit of source code that build/publish-style actions operate on. It is identified by a **source artifact definition file** (for example `pyproject.toml` or `package.json`). This is what many tools call a “project”, but FineCode uses **source artifact** to be more concrete. Some actions accept `src_artifact_def_path` so they can target any source artifact, not only those with FineCode configuration.
+A unit of source code that build/publish-style actions operate on. It is identified by a **source artifact definition file** (for example `pyproject.toml` or `package.json`). This is what many tools call a “project”, but FineCode uses **source artifact** to be more concrete.
 
 ## Source Artifact Definition
 

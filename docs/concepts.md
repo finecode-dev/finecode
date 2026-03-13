@@ -15,9 +15,9 @@ class LintAction(code_action.Action[LintRunPayload, LintRunContext, LintRunResul
 
 Actions are identified by their **import path** (e.g. `finecode_extension_api.actions.lint.LintAction`), not by the name used in config. The config name is just a human-readable alias.
 
-## ActionHandler
+## Action Handler
 
-An **ActionHandler** is a concrete implementation of an action. Multiple handlers can be registered for a single action. For example, the `lint` action might have handlers for ruff, flake8, and mypy — each independently checking the code.
+An **Action Handler** is a concrete implementation of an action. Multiple handlers can be registered for a single action. For example, the `lint` action might have handlers for ruff, flake8, and mypy — each independently checking the code.
 
 Each handler:
 
@@ -54,6 +54,31 @@ flowchart LR
 **Sequential mode** (default): handlers run one after another. Each handler can read the accumulated result so far via `context.current_result`. Useful when handlers depend on each other's output (e.g. formatter → save-to-disk).
 
 **Concurrent mode** (`run_handlers_concurrently: true`): all handlers run in parallel and results are merged afterward. Accessing `context.current_result` in concurrent mode raises `RuntimeError`. Useful for independent linters.
+
+## Service
+
+A **Service** is a long-lived dependency that handlers (and other services) can request via dependency injection. The Extension Runner resolves services by type annotation and injects them into handler constructors.
+
+Service bindings are declared by interface and implementation:
+
+- `interface`: import path of the service protocol (e.g. `finecode_extension_api.interfaces.ihttpclient.IHttpClient`)
+- `source`: import path of the implementation class
+- `env`: virtualenv name to install the service dependencies into
+- `dependencies`: packages to install for that service
+
+Services are singletons per Extension Runner. `init()` runs on first use, and `DisposableService` instances are disposed when the last handler using them shuts down.
+
+Service declarations merge by `interface`, so a project can rebind a preset's service by declaring the same `interface` in `pyproject.toml`.
+
+```toml
+[[tool.finecode.service]]
+interface = "finecode_extension_api.interfaces.ihttpclient.IHttpClient"
+source = "finecode_httpclient.HttpClient"
+env = "dev_no_runtime"
+dependencies = ["finecode_httpclient~=0.1.0a1"]
+```
+
+See the [Services reference](reference/services.md) for the list of built-in services and which presets or extensions provide them.
 
 ## Preset
 

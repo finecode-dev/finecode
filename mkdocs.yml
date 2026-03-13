@@ -76,6 +76,7 @@ nav:
       - Multi-Project Workspace: guides/workspace.md
   - Reference:
       - Built-in Actions: reference/actions.md
+      - Services: reference/services.md
       - Extensions: reference/extensions.md
       - LSP and MCP Architecture: reference/lsp-mcp-architecture.md
       - LSP Client Protocol: reference/lsp-protocol.md
