@@ -74,11 +74,13 @@ When configuring an action in `pyproject.toml`, you can control how your configu
 - **`handlers_mode = "replace"`:** your handler list completely replaces the preset's handlers for that action.
 - **`enabled = false` on a handler entry:** disables that specific inherited handler.
 
-## Project
+## Source Artifact
 
-A **Project** is any directory containing a `pyproject.toml` with a `[tool.finecode]` section. FineCode discovers all projects under the workspace root automatically.
+A **Source Artifact** is a unit of source code that build/publish-style actions operate on. It is identified by a **source artifact definition file** (for example `pyproject.toml` or `package.json`). This is what many tools call a “project”, but FineCode uses **source artifact** to be more concrete.
 
-A project may belong to a **workspace** — a directory containing multiple projects. FineCode handles multi-project workspaces transparently: running `python -m finecode run lint` from the workspace root runs lint in all projects that define it.
+When a source artifact includes FineCode configuration — a `pyproject.toml` with a `[tool.finecode]` section — the Workspace Manager discovers it automatically under the workspace roots provided by the client. Some CLI flags and protocol fields still use the word “project” for compatibility.
+
+A source artifact may belong to a **workspace** — a set of related source artifacts, often a single directory root but sometimes multiple directories. FineCode handles multi-artifact workspaces transparently: running `python -m finecode run lint` from the workspace root runs lint in all source artifacts that define it.
 
 ## Workspace Manager and Extension Runner
 

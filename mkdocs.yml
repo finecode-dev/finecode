@@ -79,6 +79,7 @@ nav:
       - Extensions: reference/extensions.md
       - LSP and MCP Architecture: reference/lsp-mcp-architecture.md
       - LSP Client Protocol: reference/lsp-protocol.md
+      - Glossary: glossary.md
   - Development:
       - Overview: development.md
       - WM Protocol: wm-protocol.md

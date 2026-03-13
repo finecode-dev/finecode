@@ -6,7 +6,7 @@ All built-in actions are defined in `finecode_extension_api.actions`. Use their 
 
 ## `lint`
 
-Run linting on a project or specific files.
+Run linting on a source artifact or specific files.
 
 - **Source:** `finecode_extension_api.actions.lint.LintAction`
 - **Default handler execution:** concurrent
@@ -15,7 +15,7 @@ Run linting on a project or specific files.
 
 | Field | Type | Default | Description |
 |---|---|---|---|
-| `target` | `"project"` \| `"files"` | `"project"` | Lint the whole project or specific files |
+| `target` | `"project"` \| `"files"` | `"project"` | Lint the whole source artifact (`target="project"`) or specific files |
 | `file_paths` | `list[Path]` | `[]` | Files to lint (required when `target="files"`) |
 
 **Result:** list of diagnostics (file, line, column, message, severity)
@@ -35,7 +35,7 @@ Similar to `lint` but designed for language-aware per-file linting. Used interna
 
 ## `format`
 
-Format a project or specific files.
+Format a source artifact or specific files.
 
 - **Source:** `finecode_extension_api.actions.format.FormatAction`
 - **Default handler execution:** sequential
@@ -45,7 +45,7 @@ Format a project or specific files.
 | Field | Type | Default | Description |
 |---|---|---|---|
 | `save` | `bool` | `true` | Write formatted content back to disk |
-| `target` | `"project"` \| `"files"` | `"project"` | Format whole project or specific files |
+| `target` | `"project"` \| `"files"` | `"project"` | Format the whole source artifact (`target="project"`) or specific files |
 | `file_paths` | `list[Path]` | `[]` | Files to format (required when `target="files"`) |
 
 !!! note
@@ -84,7 +84,7 @@ Build a distributable artifact (e.g. a Python wheel).
 
 | Field | Type | Default | Description |
 |---|---|---|---|
-| `src_artifact_def_path` | `Path \| None` | `None` | Path to the artifact definition. If omitted, builds the current project. |
+| `src_artifact_def_path` | `Path \| None` | `None` | Path to the artifact definition. If omitted, builds the current source artifact. |
 
 **Result fields:**
 
@@ -189,7 +189,7 @@ Install dependencies into a specific environment.
 
 ## `dump_config`
 
-Dump the resolved configuration for a project.
+Dump the resolved configuration for a source artifact that includes FineCode configuration.
 
 - **Source:** `finecode_extension_api.actions.dump_config.DumpConfigAction`
 
