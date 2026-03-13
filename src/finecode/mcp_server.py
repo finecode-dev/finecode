@@ -1,8 +1,7 @@
-"""FineCode MCP Server — stdio proxy to the FineCode WM server.
+"""FineCode MCP Server — proxy to the FineCode WM server.
 
-Started by Claude Code (or other MCP clients) via .mcp.json. Connects to the
-FineCode WM server over TCP JSON-RPC and translates MCP tool calls into WM server
-requests. If no WM server is running, starts one as a subprocess.
+Connects to the FineCode WM server over TCP JSON-RPC and translates MCP tool calls into
+WM server requests. If no WM server is running, starts one as a subprocess.
 """
 
 from __future__ import annotations
@@ -87,14 +86,26 @@ def create_mcp_server(workdir: pathlib.Path, port: int) -> FastMCP:
     return mcp
 
 
-def start(workdir: pathlib.Path) -> None:
-    """Start the MCP server on stdio, connecting to the FineCode API."""
-    wm_lifecycle.ensure_running(workdir)
-    try:
-        port = asyncio.run(wm_lifecycle.wait_until_ready())
-    except TimeoutError as exc:
-        logger.error(str(exc))
-        sys.exit(1)
+def start(workdir: pathlib.Path, port_file: pathlib.Path | None = None) -> None:
+    """Start the MCP server on stdio, connecting to the FineCode API.
+
+    If *port_file* is given, a dedicated WM server is started that writes its
+    port to that file instead of the shared discovery file.
+    """
+    if port_file is not None:
+        wm_lifecycle.start_own_server(workdir, port_file=port_file)
+        try:
+            port = asyncio.run(wm_lifecycle.wait_until_ready_from_file(port_file))
+        except TimeoutError as exc:
+            logger.error(str(exc))
+            sys.exit(1)
+    else:
+        wm_lifecycle.ensure_running(workdir)
+        try:
+            port = asyncio.run(wm_lifecycle.wait_until_ready())
+        except TimeoutError as exc:
+            logger.error(str(exc))
+            sys.exit(1)
 
     mcp = create_mcp_server(workdir, port)
     mcp.run()

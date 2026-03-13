@@ -91,22 +91,30 @@ async def wait_until_ready(timeout: float = 30) -> int:
     )
 
 
-def start_own_server(workdir: pathlib.Path, log_level: str = "INFO") -> pathlib.Path:
-    """Start a dedicated WM server subprocess for exclusive use by one CLI call.
+def start_own_server(
+    workdir: pathlib.Path,
+    log_level: str = "INFO",
+    port_file: pathlib.Path | None = None,
+) -> pathlib.Path:
+    """Start a dedicated WM server subprocess for exclusive use by one client.
 
     Unlike ``ensure_running()``, this always starts a *fresh* process and writes
-    the listening port to a temporary file (not the shared discovery file), so it
+    the listening port to a dedicated file (not the shared discovery file), so it
     does not interfere with a concurrently running shared WM server (e.g. the one
     used by the LSP/MCP clients).
 
-    Returns the path to the temporary port file.  Pass it to
+    If *port_file* is given the server writes its port there; otherwise a
+    temporary file is created automatically.
+
+    Returns the path to the port file.  Pass it to
     ``wait_until_ready_from_file()`` to obtain the port and connect.
     The server auto-stops after the client disconnects.
     """
-    fd, port_file_str = tempfile.mkstemp(suffix=".finecode_port")
-    os.close(fd)
-    port_file = pathlib.Path(port_file_str)
-    # Write empty content so the server knows to overwrite rather than append.
+    if port_file is None:
+        fd, port_file_str = tempfile.mkstemp(suffix=".finecode_port")
+        os.close(fd)
+        port_file = pathlib.Path(port_file_str)
+    # Write empty content so the server overwrites rather than appends.
     port_file.write_text("")
 
     logger.info(f"Starting dedicated FineCode WM server in {workdir}")
