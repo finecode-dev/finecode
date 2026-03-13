@@ -1,8 +1,6 @@
 import asyncio
 import collections.abc
-from functools import partial
 from pathlib import Path
-from typing import Any
 
 from loguru import logger
 from lsprotocol import types
@@ -10,9 +8,9 @@ from pygls.workspace import position_codec
 from pygls.lsp.server import LanguageServer
 from finecode_extension_runner.lsp_server import CustomLanguageServer
 
-from finecode.services import shutdown_service
-from finecode.runner import runner_manager
-from finecode.lsp_server import global_state, schemas, services
+from finecode.wm_server import wm_lifecycle
+from finecode.wm_client import ApiClient
+from finecode.lsp_server import global_state
 from finecode.lsp_server.endpoints import action_tree as action_tree_endpoints
 from finecode.lsp_server.endpoints import code_actions as code_actions_endpoints
 from finecode.lsp_server.endpoints import code_lens as code_lens_endpoints
@@ -112,7 +110,7 @@ def create_lsp_server() -> CustomLanguageServer:
     register_inlay_hint_feature = server.feature(types.INLAY_HINT_RESOLVE)
     register_inlay_hint_feature(inlay_hints_endpoints.inlay_hint_resolve)
 
-    # Finecode
+    # Finecode commands exposed to the IDE
     register_list_actions_cmd = server.command("finecode.getActions")
     register_list_actions_cmd(action_tree_endpoints.list_actions)
 
@@ -123,11 +121,17 @@ def create_lsp_server() -> CustomLanguageServer:
         action_tree_endpoints.list_actions_for_position
     )
 
+    register_list_projects_cmd = server.command("finecode.listProjects")
+    register_list_projects_cmd(action_tree_endpoints.list_projects)
+
+    register_run_action_cmd = server.command("finecode.runAction")
+    register_run_action_cmd(action_tree_endpoints.run_action)
+
     register_run_action_on_file_cmd = server.command("finecode.runActionOnFile")
     register_run_action_on_file_cmd(action_tree_endpoints.run_action_on_file)
 
-    # register_run_action_on_project_cmd = server.command("finecode.runActionOnProject")
-    # register_run_action_on_project_cmd(action_tree_endpoints.run_action_on_project)
+    register_run_action_on_project_cmd = server.command("finecode.runActionOnProject")
+    register_run_action_on_project_cmd(action_tree_endpoints.run_action_on_project)
 
     register_reload_action_cmd = server.command("finecode.reloadAction")
     register_reload_action_cmd(action_tree_endpoints.reload_action)
@@ -139,7 +143,7 @@ def create_lsp_server() -> CustomLanguageServer:
         "finecode.restartExtensionRunner"
     )
     register_restart_extension_runner_cmd(restart_extension_runner)
-    
+
     register_restart_and_debug_extension_runner_cmd = server.command(
         "finecode.restartAndDebugExtensionRunner"
     )
@@ -147,6 +151,9 @@ def create_lsp_server() -> CustomLanguageServer:
 
     register_shutdown_feature = server.feature(types.SHUTDOWN)
     register_shutdown_feature(_on_shutdown)
+
+    register_server_shutdown_feature = server.feature('server/shutdown')
+    register_server_shutdown_feature(_lsp_server_shutdown)
 
     return server
 
@@ -189,37 +196,145 @@ async def _on_initialized(ls: LanguageServer, params: types.InitializedParams):
 
     logger.info("initialized, adding workspace directories")
 
-    async def apply_workspace_edit(params):
-        return await ls.workspace_apply_edit_async(params)
+    # Determine workspace root for WM server startup.
+    workdir = Path.cwd()
+    if ls.workspace.folders:
+        first_folder = next(iter(ls.workspace.folders.values()))
+        workdir = Path(first_folder.uri.replace("file://", ""))
 
-    services.register_workspace_edit_applier(apply_workspace_edit)
+    # Ensure the FineCode WM server is running and connect to it.
+    # The TCP connection keeps the WM server alive for the LSP lifetime.
+    wm_lifecycle.ensure_running(workdir, log_level=global_state.wm_log_level)
+    try:
+        port = await wm_lifecycle.wait_until_ready()
+    except TimeoutError as exc:
+        logger.warning(f"FineCode WM server did not start: {exc}")
+        port = None
 
-    services.register_project_changed_callback(
-        partial(action_tree_endpoints.notify_changed_action_node, ls)
-    )
-    services.register_send_user_message_notification_callback(
-        partial(send_user_message_notification, ls)
-    )
-    services.register_send_user_message_request_callback(
-        partial(send_user_message_request, ls)
-    )
+    if port is None:
+        logger.error("Cannot connect to FineCode WM server — no port available")
+        return
 
-    def report_progress(token: str | int, value: Any):
-        ls.progress(types.ProgressParams(token, value))
+    try:
+        global_state.wm_client = ApiClient()
+        await global_state.wm_client.connect("127.0.0.1", port)
+    except (ConnectionRefusedError, OSError) as exc:
+        logger.error(f"Could not connect to FineCode WM server: {exc}")
+        global_state.wm_client = None
+        return
 
-    services.register_progress_reporter(report_progress)
-    services.register_debug_session_starter(partial(start_debug_session, ls))
+    if global_state.lsp_log_file_path:
+        ls.window_log_message(
+            types.LogMessageParams(
+                type=types.MessageType.Info,
+                message=f"FineCode LSP Server log: {global_state.lsp_log_file_path}",
+            )
+        )
 
+    try:
+        info = await global_state.wm_client.get_info()
+        log_path = info.get("log_file_path")
+        if log_path:
+            ls.window_log_message(
+                types.LogMessageParams(
+                    type=types.MessageType.Info,
+                    message=f"FineCode WM Server log: {log_path}",
+                )
+            )
+    except Exception:
+        pass
+
+    # Register notification handlers for server→client push messages.
+    async def on_tree_changed(params: dict) -> None:
+        # TODO
+        ...
+        # node = schemas.ActionTreeNode(**params["node"])
+        # await action_tree_endpoints.notify_changed_action_node(ls, node)
+
+    async def on_user_message(params: dict) -> None:
+        await send_user_message_notification(ls, params["message"], params["type"])
+
+    global_state.wm_client.on_notification("actions/treeChanged", on_tree_changed)
+    global_state.wm_client.on_notification("server/userMessage", on_user_message)
+
+    # forward progress notifications to the LSP progress reporter
+    from finecode_extension_api.actions import lint as lint_action
+    from pydantic.dataclasses import dataclass as pydantic_dataclass
+    from finecode.lsp_server import pygls_types_utils
+    from finecode.lsp_server.endpoints.diagnostics import map_lint_message_to_diagnostic
+
+    def _map_lint_to_document_diagnostic_partial(lint_result: lint_action.LintRunResult) -> types.DocumentDiagnosticReportPartialResult:
+        related_documents = {}
+        for file_path_str, lint_messages in lint_result.messages.items():
+            file_report = types.FullDocumentDiagnosticReport(
+                items=[
+                    map_lint_message_to_diagnostic(lint_message)
+                    for lint_message in lint_messages
+                ]
+            )
+            uri = pygls_types_utils.path_to_uri_str(Path(file_path_str))
+            related_documents[uri] = file_report
+        
+        return types.DocumentDiagnosticReportPartialResult(related_documents=related_documents)
+
+    def _map_lint_to_workspace_diagnostic_partial(lint_result: lint_action.LintRunResult) -> types.WorkspaceDiagnosticReportPartialResult:
+        items = [
+            types.WorkspaceFullDocumentDiagnosticReport(
+                uri=pygls_types_utils.path_to_uri_str(Path(file_path_str)),
+                items=[
+                    map_lint_message_to_diagnostic(lint_message)
+                    for lint_message in lint_messages
+                ],
+            )
+            for file_path_str, lint_messages in lint_result.messages.items()
+        ]
+        return types.WorkspaceDiagnosticReportPartialResult(items=items)
+
+    async def on_partial_result(params: dict) -> None:
+        token = params.get("token")
+        value = params.get("value")
+
+        if token is None or value is None:
+            logger.error("Invalid partial result notification: missing token or value")
+            return
+
+        # TODO: remove mapping either after last partial or after final result
+        action, endpoint_type = global_state.partial_result_tokens.get(token, (None, None))
+        if not action or not endpoint_type:
+            logger.error(f"No mapping found for partial result token {token}")
+            return
+
+        if action == "lint":
+            result_by_format = value.get("resultByFormat") or {}
+            json_result = result_by_format.get("json")
+            if json_result is None:
+                logger.error(f"No json result in partial result for token {token}")
+                return
+            result_type = pydantic_dataclass(lint_action.LintRunResult)
+            lint_result: lint_action.LintRunResult = result_type(**json_result)
+            
+            if endpoint_type == "document_diagnostic":
+                lsp_partial = _map_lint_to_document_diagnostic_partial(lint_result)
+            elif endpoint_type == "workspace_diagnostic":
+                lsp_partial = _map_lint_to_workspace_diagnostic_partial(lint_result)
+            else:
+                logger.error(f"Unknown endpoint_type {endpoint_type} for action {action}")
+                return
+            
+            ls.progress(types.ProgressParams(token=token, value=lsp_partial))
+        else:
+            logger.warning(f"Unsupported action for partial results: {action}")
+
+    global_state.wm_client.on_notification("actions/partialResult", on_partial_result)
+
+    # Add workspace directories via the WM server.
     try:
         async with asyncio.TaskGroup() as tg:
             for ws_dir in ls.workspace.folders.values():
-                request = schemas.AddWorkspaceDirRequest(
-                    dir_path=ws_dir.uri.replace("file://", "")
-                )
-                tg.create_task(services.add_workspace_dir(request=request))
+                dir_path = Path(ws_dir.uri.replace("file://", ""))
+                tg.create_task(global_state.wm_client.add_dir(dir_path))
     except ExceptionGroup as error:
         logger.exception(error)
-        raise error from eg
 
     global_state.server_initialized.set()
     logger.trace("Workspace directories added, end of initialized handler")
@@ -229,53 +344,95 @@ async def _workspace_did_change_workspace_folders(
     ls: LanguageServer, params: types.DidChangeWorkspaceFoldersParams
 ):
     logger.trace(f"Workspace dirs were changed: {params}")
-    await services.handle_changed_ws_dirs(
-        added=[
+    if global_state.wm_client is None:
+        logger.warning("WM client not connected, ignoring workspace folder change")
+        return
+
+    for ws_folder in params.event.removed:
+        await global_state.wm_client.remove_dir(
             Path(ws_folder.uri.removeprefix("file://"))
-            for ws_folder in params.event.added
-        ],
-        removed=[
+        )
+
+    for ws_folder in params.event.added:
+        await global_state.wm_client.add_dir(
             Path(ws_folder.uri.removeprefix("file://"))
-            for ws_folder in params.event.removed
-        ],
-    )
+        )
 
 
 def _on_shutdown(ls: LanguageServer, params):
     logger.info("on shutdown handler", params)
-    shutdown_service.on_shutdown(global_state.ws_context)
+    # Close connection to the WM server. If this was the last client,
+    # the WM server will auto-stop after a short delay and clean up runners.
+    if global_state.wm_client is not None:
+        asyncio.ensure_future(global_state.wm_client.close())
+        global_state.wm_client = None
+
+
+async def _lsp_server_shutdown(ls: LanguageServer, params):
+    """Handle 'server/shutdown' — explicitly stop the WM server.
+
+    Forwards the shutdown request to the WM server and then closes the
+    WM client connection. Used by the IDE when it wants to restart the
+    WM server (as opposed to a normal disconnect on deactivation).
+    """
+    logger.info("server/shutdown request received, stopping WM server")
+    if global_state.wm_client is not None:
+        try:
+            await global_state.wm_client.request("server/shutdown", {})
+        except Exception:
+            logger.warning("WM server did not respond to shutdown request")
+        await global_state.wm_client.close()
+        global_state.wm_client = None
+    return {}
 
 
 async def reset(ls: LanguageServer, params):
     logger.info("Reset WM")
     await global_state.server_initialized.wait()
 
+    if global_state.wm_client is None:
+        logger.error("Reset requested but WM client not connected")
+        return
+
+    await global_state.wm_client.request("server/reset", {})
+
 
 async def restart_extension_runner(ls: LanguageServer, tree_node, param2):
     logger.info(f"restart extension runner {tree_node}")
     await global_state.server_initialized.wait()
 
+    if global_state.wm_client is None:
+        logger.error("Restart runner requested but WM client not connected")
+        return
+
     runner_id = tree_node['projectPath']
     splitted_runner_id = runner_id.split('::')
     runner_working_dir_str = splitted_runner_id[0]
-    runner_working_dir_path = Path(runner_working_dir_str)
     env_name = splitted_runner_id[-1]
 
-    await runner_manager.restart_extension_runner(runner_working_dir_path=runner_working_dir_path, env_name=env_name, ws_context=global_state.ws_context)
+    await global_state.wm_client.request(
+        "runners/restart",
+        {"runner_working_dir": runner_working_dir_str, "env_name": env_name},
+    )
 
 
 async def restart_and_debug_extension_runner(ls: LanguageServer, tree_node, params2):
     logger.info(f"restart and debug extension runner {tree_node} {params2}")
     await global_state.server_initialized.wait()
 
+    if global_state.wm_client is None:
+        logger.error("Restart+debug runner requested but WM client not connected")
+        return
+
     runner_id = tree_node['projectPath']
     splitted_runner_id = runner_id.split('::')
     runner_working_dir_str = splitted_runner_id[0]
-    runner_working_dir_path = Path(runner_working_dir_str)
     env_name = splitted_runner_id[-1]
 
-    logger.info(f'start debugging {runner_working_dir_path} {runner_id} {env_name}')
-    await runner_manager.restart_extension_runner(runner_working_dir_path=runner_working_dir_path, env_name=env_name, ws_context=global_state.ws_context, debug=True)
+    await global_state.wm_client.request(
+        "runners/restart",
+        {"runner_working_dir": runner_working_dir_str, "env_name": env_name, "debug": True},
+    )
 
 
 async def send_user_message_notification(

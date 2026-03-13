@@ -8,13 +8,19 @@ import typing
 import click
 from loguru import logger
 
-import finecode.lsp_server.main as wm_lsp_server
-from finecode import communication_utils, logger_utils, user_messages
-from finecode.cli_app.commands import dump_config_cmd, prepare_envs_cmd, run_cmd
-from finecode.config.config_models import ConfigurationError
+from finecode import logger_utils, user_messages
+from finecode.wm_server.config.config_models import ConfigurationError
 
 
 FINECODE_CONFIG_ENV_PREFIX = "FINECODE_CONFIG_"
+_VALID_DEV_ENVS = {"ide", "cli", "ai", "precommit", "ci"}
+
+
+def detect_dev_env() -> str:
+    """Detect dev environment from context. CI env var overrides the default 'cli'."""
+    if os.environ.get("CI"):
+        return "ci"
+    return "cli"
 
 # TODO: unify possibilities of CLI options and env vars
 def parse_handler_config_from_env() -> dict[str, dict[str, dict[str, str]]]:
@@ -171,7 +177,7 @@ def cli(): ...
 
 
 @cli.command()
-@click.option("--trace", "trace", is_flag=True, default=False)
+@click.option("--log-level", "log_level", default="INFO", type=click.Choice(["TRACE", "DEBUG", "INFO", "WARNING", "ERROR"], case_sensitive=False), show_default=True)
 @click.option("--debug", "debug", is_flag=True, default=False)
 @click.option(
     "--socket", "tcp", default=None, type=int, help="start a TCP server"
@@ -184,21 +190,18 @@ def cli(): ...
 @click.option(
     "--port", "port", default=None, type=int, help="Port for TCP and WS server"
 )
-@click.option("--mcp", "mcp", is_flag=True, default=False)
-@click.option(
-    "--mcp-port", "mcp_port", default=None, type=int, help="Port for MCP server"
-)
-def start_api(
-    trace: bool,
+def start_lsp(
+    log_level: str,
     debug: bool,
     tcp: int | None,
     ws: bool,
     stdio: bool,
     host: str | None,
     port: int | None,
-    mcp: bool,
-    mcp_port: int | None,
 ):
+    import finecode.lsp_server.main as wm_lsp_server
+    from finecode.lsp_server import communication_utils
+
     if debug is True:
         import debugpy
 
@@ -220,7 +223,7 @@ def start_api(
         raise ValueError("Specify either --tcp, --ws or --stdio")
 
     asyncio.run(
-        wm_lsp_server.start(comm_type=comm_type, host=host, port=port, trace=trace)
+        wm_lsp_server.start(comm_type=comm_type, host=host, port=port, log_level=log_level)
     )
 
 
@@ -246,16 +249,20 @@ def deserialize_action_payload(raw_payload: dict[str, str]) -> dict[str, typing.
 @cli.command(context_settings=dict(ignore_unknown_options=True, allow_extra_args=True))
 @click.pass_context
 def run(ctx) -> None:
+    from finecode.cli_app.commands import run_cmd
+
     args: list[str] = ctx.args
     actions_to_run: list[str] = []
     projects: list[str] | None = None
     workdir_path: pathlib.Path = pathlib.Path(os.getcwd())
     processed_args_count: int = 0
     concurrently: bool = False
-    trace: bool = False
+    log_level: str = "INFO"
     no_env_config: bool = False
     save_results: bool = True
     map_payload_fields: set[str] = set()
+    shared_server: bool = False
+    dev_env: str = detect_dev_env()
 
     # finecode run parameters
     for arg in args:
@@ -276,8 +283,8 @@ def run(ctx) -> None:
             projects.append(project)
         elif arg == "--concurrently":
             concurrently = True
-        elif arg == "--trace":
-            trace = True
+        elif arg.startswith("--log-level"):
+            log_level = arg.removeprefix("--log-level=").upper()
         elif arg == "--no-env-config":
             no_env_config = True
         elif arg == "--no-save-results":
@@ -285,11 +292,21 @@ def run(ctx) -> None:
         elif arg.startswith("--map-payload-fields"):
             fields = arg.removeprefix("--map-payload-fields=")
             map_payload_fields = {f.replace("-", "_") for f in fields.split(",")}
+        elif arg == "--shared-server":
+            shared_server = True
+        elif arg.startswith("--dev-env"):
+            dev_env = arg.removeprefix("--dev-env=")
+            if dev_env not in _VALID_DEV_ENVS:
+                click.echo(
+                    f"Invalid --dev-env value '{dev_env}'. Valid values: {', '.join(sorted(_VALID_DEV_ENVS))}",
+                    err=True,
+                )
+                sys.exit(1)
         elif not arg.startswith("--"):
             break
         processed_args_count += 1
 
-    logger_utils.init_logger(trace=trace, stdout=True)
+    logger_utils.init_logger(log_name="cli", log_level=log_level, stdout=True)
 
     # Parse handler config from env vars
     handler_config_overrides: dict[str, dict[str, dict[str, str]]] = {}
@@ -360,6 +377,9 @@ def run(ctx) -> None:
                 handler_config_overrides,
                 save_results,
                 map_payload_fields,
+                own_server=not shared_server,
+                log_level=log_level,
+                dev_env=dev_env,
             )
         )
         click.echo(result.output)
@@ -385,14 +405,18 @@ def run(ctx) -> None:
 
 
 @cli.command()
-@click.option("--trace", "trace", is_flag=True, default=False)
+@click.option("--log-level", "log_level", default="INFO", type=click.Choice(["TRACE", "DEBUG", "INFO", "WARNING", "ERROR"], case_sensitive=False), show_default=True)
 @click.option("--debug", "debug", is_flag=True, default=False)
 @click.option("--recreate", "recreate", is_flag=True, default=False)
-def prepare_envs(trace: bool, debug: bool, recreate: bool) -> None:
+@click.option("--shared-server", "shared_server", is_flag=True, default=False)
+@click.option("--dev-env", "dev_env", default=None, type=click.Choice(sorted(_VALID_DEV_ENVS)), help="Override detected dev environment")
+def prepare_envs(log_level: str, debug: bool, recreate: bool, shared_server: bool, dev_env: str | None) -> None:
     """
     `prepare-envs` should be called from workspace/project root directory.
     """
     # idea: project parameter to allow to run from other directories?
+    from finecode.cli_app.commands import prepare_envs_cmd
+
     if debug is True:
         import debugpy
 
@@ -402,17 +426,21 @@ def prepare_envs(trace: bool, debug: bool, recreate: bool) -> None:
         except Exception as e:
             logger.info(e)
 
-    logger_utils.init_logger(trace=trace, stdout=True)
+    logger_utils.init_logger(log_name="cli", log_level=log_level, stdout=True)
     user_messages._notification_sender = show_user_message
 
     try:
         asyncio.run(
             prepare_envs_cmd.prepare_envs(
-                workdir_path=pathlib.Path(os.getcwd()), recreate=recreate
+                workdir_path=pathlib.Path(os.getcwd()),
+                recreate=recreate,
+                own_server=not shared_server,
+                log_level=log_level,
+                dev_env=dev_env or detect_dev_env(),
             )
         )
     except prepare_envs_cmd.PrepareEnvsFailed as exception:
-        click.echo(exception.args[0], err=True)
+        click.echo(exception.message, err=True)
         sys.exit(1)
     except Exception as exception:
         logger.exception(exception)
@@ -421,10 +449,14 @@ def prepare_envs(trace: bool, debug: bool, recreate: bool) -> None:
 
 
 @cli.command()
-@click.option("--trace", "trace", is_flag=True, default=False)
+@click.option("--log-level", "log_level", default="INFO", type=click.Choice(["TRACE", "DEBUG", "INFO", "WARNING", "ERROR"], case_sensitive=False), show_default=True)
 @click.option("--debug", "debug", is_flag=True, default=False)
 @click.option("--project", "project", type=str)
-def dump_config(trace: bool, debug: bool, project: str | None):
+@click.option("--shared-server", "shared_server", is_flag=True, default=False)
+@click.option("--dev-env", "dev_env", default=None, type=click.Choice(sorted(_VALID_DEV_ENVS)), help="Override detected dev environment")
+def dump_config(log_level: str, debug: bool, project: str | None, shared_server: bool, dev_env: str | None):
+    from finecode.cli_app.commands import dump_config_cmd
+
     if debug is True:
         import debugpy
 
@@ -438,18 +470,70 @@ def dump_config(trace: bool, debug: bool, project: str | None):
         click.echo("--project parameter is required", err=True)
         return
 
-    logger_utils.init_logger(trace=trace, stdout=True)
+    logger_utils.init_logger(log_name="cli", log_level=log_level, stdout=True)
     user_messages._notification_sender = show_user_message
 
     try:
         asyncio.run(
             dump_config_cmd.dump_config(
-                workdir_path=pathlib.Path(os.getcwd()), project_name=project
+                workdir_path=pathlib.Path(os.getcwd()),
+                project_name=project,
+                own_server=not shared_server,
+                log_level=log_level,
+                dev_env=dev_env or detect_dev_env(),
             )
         )
     except dump_config_cmd.DumpFailed as exception:
         click.echo(exception.message, err=True)
         sys.exit(1)
+
+
+@cli.command()
+@click.option("--workdir", "workdir", default=None, type=str, help="Workspace root directory")
+@click.option("--log-level", "log_level", default="INFO", type=click.Choice(["TRACE", "DEBUG", "INFO", "WARNING", "ERROR"], case_sensitive=False), show_default=True)
+@click.option(
+    "--wm-port-file",
+    "wm_port_file",
+    default=None,
+    type=str,
+    help="Start a dedicated WM server and write its port to this file. ",
+)
+def start_mcp(workdir: str | None, log_level: str, wm_port_file: str | None):
+    """Start the FineCode MCP server (stdio). Connects to a running FineCode WM Server."""
+    from finecode import mcp_server
+
+    logger_utils.init_logger(log_name="mcp_server", log_level=log_level, stdout=False)
+    workdir_path = pathlib.Path(workdir) if workdir else pathlib.Path(os.getcwd())
+    port_file_path = pathlib.Path(wm_port_file) if wm_port_file else None
+    mcp_server.start(workdir_path, port_file=port_file_path)
+
+
+@cli.command()
+@click.option("--log-level", "log_level", default="INFO", type=click.Choice(["TRACE", "DEBUG", "INFO", "WARNING", "ERROR"], case_sensitive=False), show_default=True)
+@click.option(
+    "--port-file",
+    "port_file",
+    default=None,
+    type=str,
+    help="Write the listening port to this file instead of the shared discovery file. "
+         "Used by dedicated instances started without --shared-server.",
+)
+@click.option(
+    "--disconnect-timeout",
+    "disconnect_timeout",
+    default=30,
+    type=int,
+    show_default=True,
+    help="Seconds to wait after the last client disconnects before shutting down.",
+)
+def start_wm_server(log_level: str, port_file: str | None, disconnect_timeout: int):
+    """Start the FineCode WM Server standalone (TCP JSON-RPC). Auto-stops when all clients disconnect."""
+    from finecode.wm_server import wm_server
+
+    log_file_path = logger_utils.init_logger(log_name="wm_server", log_level=log_level, stdout=False)
+    wm_server._log_file_path = log_file_path
+    port_file_path = pathlib.Path(port_file) if port_file else None
+    asyncio.run(wm_server.start_standalone(port_file=port_file_path, disconnect_timeout=disconnect_timeout))
 
 
 if __name__ == "__main__":

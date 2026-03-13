@@ -1,19 +1,22 @@
 # Multi-Project Workspace
 
-FineCode natively supports workspaces containing multiple projects. This is common in monorepos where each package is a separate Python project.
+FineCode natively supports workspaces containing multiple source artifacts. This is common in monorepos where each package is a separate source artifact.
 
 ## Structure
 
-A workspace is a directory containing one or more projects. Each project has its own `pyproject.toml` with `[tool.finecode]`:
+A workspace is a set of related source artifacts. Often this is a single directory root, but IDEs and clients can provide multiple workspace roots. Each source artifact has its own `pyproject.toml` with `[tool.finecode]`:
+
+!!! note
+    The CLI uses a single workspace root (`cwd` or `--workdir`). IDEs/LSP clients can provide multiple roots, and the Workspace Manager treats them as one workspace.
 
 ```
 my_workspace/
     pyproject.toml             ← workspace-level (optional)
     package_a/
-        pyproject.toml         ← project A
+        pyproject.toml         ← source artifact A
         src/package_a/
     package_b/
-        pyproject.toml         ← project B
+        pyproject.toml         ← source artifact B
         src/package_b/
     common_preset/             ← shared preset package
         pyproject.toml
@@ -23,13 +26,13 @@ my_workspace/
 
 ## Running actions across all projects
 
-Run from the workspace root to target all projects:
+Run from the workspace root to target all source artifacts:
 
 ```bash
 python -m finecode run lint
 ```
 
-FineCode discovers all `pyproject.toml` files under the workspace root, finds those with `[tool.finecode]`, and runs the action in each.
+FineCode discovers all `pyproject.toml` files under the workspace root, finds those with `[tool.finecode]`, and runs the action in each source artifact.
 
 To run concurrently across projects:
 
@@ -37,25 +40,25 @@ To run concurrently across projects:
 python -m finecode run --concurrently lint check_formatting
 ```
 
-## Filtering to specific projects
+## Filtering to specific source artifacts
 
 ```bash
-# Single project
+# Single source artifact
 python -m finecode run --project=package_a lint
 
-# Multiple projects
+# Multiple source artifacts
 python -m finecode run --project=package_a --project=package_b lint
 ```
 
-When `--project` is specified, the action must exist in all listed projects.
+When `--project` is specified, the action must exist in all listed source artifacts.
 
-## Sharing configuration across projects
+## Sharing configuration across source artifacts
 
-The recommended approach for sharing config is a **local preset package** in the workspace. Each subproject installs it as a dependency and references it in `pyproject.toml`.
+The recommended approach for sharing config is a **local preset package** in the workspace. Each source artifact installs it as a dependency and references it in `pyproject.toml`.
 
 **Why a package, not hierarchical config?**
 
-- Subprojects don't depend on workspace directory structure — they can be moved or extracted without changing tool config
+- Source artifacts don't depend on workspace directory structure — they can be moved or extracted without changing tool config
 - Configuration is fully explicit: the complete config is visible inside each subproject
 - No implicit workspace-root lookup needed
 
@@ -90,7 +93,7 @@ presets = [{ source = "my_lint_config" }]
 
 ## Saving and reading action results
 
-Results of actions are saved to `<venv>/cache/finecode/results/<action>.json`, keyed by project path. This makes it easy to collect results from all projects in CI:
+Results of actions are saved to `<venv>/cache/finecode/results/<action>.json`, keyed by source artifact path. This makes it easy to collect results from all source artifacts in CI:
 
 ```bash
 python -m finecode run --concurrently lint check_formatting
@@ -106,7 +109,7 @@ python -m finecode run --no-save-results lint
 ## CI usage
 
 ```bash
-# Run lint and formatting check in all projects, fail if any fails
+# Run lint and formatting check in all source artifacts, fail if any fails
 python -m finecode run --concurrently lint check_formatting
 
 # Save results for later processing

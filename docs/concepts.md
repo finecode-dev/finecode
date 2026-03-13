@@ -15,15 +15,9 @@ class LintAction(code_action.Action[LintRunPayload, LintRunContext, LintRunResul
 
 Actions are identified by their **import path** (e.g. `finecode_extension_api.actions.lint.LintAction`), not by the name used in config. The config name is just a human-readable alias.
 
-Actions can be called from:
+## Action Handler
 
-- the CLI (`python -m finecode run lint`)
-- the IDE via the LSP server (diagnostics, code actions, formatting)
-- other handlers
-
-## ActionHandler
-
-An **ActionHandler** is a concrete implementation of an action. Multiple handlers can be registered for a single action. For example, the `lint` action might have handlers for ruff, flake8, and mypy — each independently checking the code.
+An **Action Handler** is a concrete implementation of an action. Multiple handlers can be registered for a single action. For example, the `lint` action might have handlers for ruff, flake8, and mypy — each independently checking the code.
 
 Each handler:
 
@@ -61,6 +55,31 @@ flowchart LR
 
 **Concurrent mode** (`run_handlers_concurrently: true`): all handlers run in parallel and results are merged afterward. Accessing `context.current_result` in concurrent mode raises `RuntimeError`. Useful for independent linters.
 
+## Service
+
+A **Service** is a long-lived dependency that handlers (and other services) can request via dependency injection. The Extension Runner resolves services by type annotation and injects them into handler constructors.
+
+Service bindings are declared by interface and implementation:
+
+- `interface`: import path of the service protocol (e.g. `finecode_extension_api.interfaces.ihttpclient.IHttpClient`)
+- `source`: import path of the implementation class
+- `env`: virtualenv name to install the service dependencies into
+- `dependencies`: packages to install for that service
+
+Services are singletons per Extension Runner. `init()` runs on first use, and `DisposableService` instances are disposed when the last handler using them shuts down.
+
+Service declarations merge by `interface`, so a project can rebind a preset's service by declaring the same `interface` in `pyproject.toml`.
+
+```toml
+[[tool.finecode.service]]
+interface = "finecode_extension_api.interfaces.ihttpclient.IHttpClient"
+source = "finecode_httpclient.HttpClient"
+env = "dev_no_runtime"
+dependencies = ["finecode_httpclient~=0.1.0a1"]
+```
+
+See the [Services reference](reference/services.md) for the list of built-in services and which presets or extensions provide them.
+
 ## Preset
 
 A **Preset** is a Python package that bundles action and handler declarations into a reusable, distributable configuration. Users install a preset as a `dev_workspace` dependency and reference it in `pyproject.toml`:
@@ -76,15 +95,17 @@ A preset contains a `preset.toml` file that declares which handlers to activate 
 
 When configuring an action in `pyproject.toml`, you can control how your configuration relates to preset handlers:
 
-- **Default (additive):** your handlers are added to the preset's handlers.
+- **`handlers_mode = "merge"`:** (default) your handlers are added to the preset's handlers.
 - **`handlers_mode = "replace"`:** your handler list completely replaces the preset's handlers for that action.
-- **`disabled = true` on a handler entry:** disables that specific inherited handler.
+- **`enabled = false` on a handler entry:** disables that specific inherited handler.
 
-## Project
+## Source Artifact
 
-A **Project** is any directory containing a `pyproject.toml` with a `[tool.finecode]` section. FineCode discovers all projects under the workspace root automatically.
+A **Source Artifact** is a unit of source code that build/publish-style actions operate on. It is identified by a **source artifact definition file** (for example `pyproject.toml` or `package.json`). This is what many tools call a “project”, but FineCode uses **source artifact** to be more concrete.
 
-A project may belong to a **workspace** — a directory containing multiple projects. FineCode handles multi-project workspaces transparently: running `python -m finecode run lint` from the workspace root runs lint in all projects that define it.
+When a source artifact includes FineCode configuration — a `pyproject.toml` with a `[tool.finecode]` section — the Workspace Manager discovers it automatically under the workspace roots provided by the client. Some CLI flags and protocol fields still use the word “project” for compatibility.
+
+A source artifact may belong to a **workspace** — a set of related source artifacts, often a single directory root but sometimes multiple directories. FineCode handles multi-artifact workspaces transparently: running `python -m finecode run lint` from the workspace root runs lint in all source artifacts that define it.
 
 ## Workspace Manager and Extension Runner
 

@@ -20,6 +20,7 @@ finecode_builtin_handlers = { path = "../finecode_builtin_handlers", editable = 
 fine_python_recommended = { path = "../presets/fine_python_recommended", editable = true }
 fine_python_lint = { path = "../presets/fine_python_lint", editable = true }
 fine_python_format = { path = "../presets/fine_python_format", editable = true }
+fine_python_test = { path = "../presets/fine_python_test", editable = true }
 
 [tool.finecode]
 presets = [{ source = "finecode_dev_common_preset" }]

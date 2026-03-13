@@ -18,7 +18,9 @@ from finecode_extension_api.interfaces import (
     icommandrunner,
     ilogger,
     iextensionrunnerinfoprovider,
+    iprojectinfoprovider,
 )
+from fine_python_ruff.ruff_lsp_service import RuffLspService
 
 
 @dataclasses.dataclass
@@ -28,6 +30,7 @@ class RuffFormatFilesHandlerConfig(code_action.ActionHandlerConfig):
     quote_style: str = "double"  # "double" or "single"
     target_version: str = "py38"  # minimum Python version
     preview: bool = False
+    use_cli: bool = False
 
 
 class RuffFormatFilesHandler(
@@ -42,14 +45,31 @@ class RuffFormatFilesHandler(
         logger: ilogger.ILogger,
         cache: icache.ICache,
         command_runner: icommandrunner.ICommandRunner,
+        project_info_provider: iprojectinfoprovider.IProjectInfoProvider,
+        lsp_service: RuffLspService,
     ) -> None:
         self.config = config
         self.logger = logger
         self.cache = cache
         self.command_runner = command_runner
         self.extension_runner_info_provider = extension_runner_info_provider
+        self.project_info_provider = project_info_provider
+        self.lsp_service = lsp_service
 
         self.ruff_bin_path = Path(sys.executable).parent / "ruff"
+
+        if not self.config.use_cli:
+            # reference: https://docs.astral.sh/ruff/editors/settings/
+            format_settings: dict[str, object] = {}
+            if self.config.preview:
+                format_settings["preview"] = True
+            settings: dict[str, object] = {
+                "lineLength": self.config.line_length,
+                "targetVersion": self.config.target_version,
+            }
+            if format_settings:
+                settings["format"] = format_settings
+            self.lsp_service.update_settings(settings)
 
     @override
     async def run(
@@ -57,13 +77,23 @@ class RuffFormatFilesHandler(
         payload: format_files_action.FormatFilesRunPayload,
         run_context: format_files_action.FormatFilesRunContext,
     ) -> format_files_action.FormatFilesRunResult:
+        if not self.config.use_cli:
+            root_uri = self.project_info_provider.get_current_project_dir_path().as_uri()
+            await self.lsp_service.ensure_started(root_uri)
+
         result_by_file_path: dict[Path, format_files_action.FormatRunFileResult] = {}
         for file_path in payload.file_paths:
             file_content, file_version = run_context.file_info_by_path[file_path]
 
-            new_file_content, file_changed = await self.format_one(
-                file_path, file_content
-            )
+            if self.config.use_cli:
+                new_file_content, file_changed = await self.format_one_cli(
+                    file_path, file_content
+                )
+            else:
+                new_file_content = await self.lsp_service.format_file(
+                    file_path, file_content
+                )
+                file_changed = new_file_content != file_content
 
             # save for next handlers
             run_context.file_info_by_path[file_path] = format_files_action.FileInfo(
@@ -78,8 +108,8 @@ class RuffFormatFilesHandler(
             result_by_file_path=result_by_file_path
         )
 
-    async def format_one(self, file_path: Path, file_content: str) -> tuple[str, bool]:
-        """Format a single file using ruff format"""
+    async def format_one_cli(self, file_path: Path, file_content: str) -> tuple[str, bool]:
+        """Format a single file using ruff format CLI"""
         # Build ruff format command
         cmd = [
             str(self.ruff_bin_path),

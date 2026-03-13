@@ -29,7 +29,9 @@ class InitRepositoryProviderRunResult(code_action.RunActionResult):
 
     def to_text(self) -> str | textstyler.StyledText:
         if self.initialized_repositories:
-            return f"Initialized repositories: {', '.join(self.initialized_repositories)}"
+            return (
+                f"Initialized repositories: {', '.join(self.initialized_repositories)}"
+            )
         return "No repositories initialized"
 
     @property

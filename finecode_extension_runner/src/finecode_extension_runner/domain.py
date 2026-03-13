@@ -54,11 +54,13 @@ class ActionExecInfo:
         self,
         payload_type: type[code_action.RunActionPayload] | None,
         run_context_type: type[code_action.RunActionContext] | None,
+        result_type: type[code_action.RunActionResult] | None = None,
     ) -> None:
         self.payload_type: type[code_action.RunActionPayload] | None = payload_type
         self.run_context_type: type[code_action.RunActionContext] | None = (
             run_context_type
         )
+        self.result_type: type[code_action.RunActionResult] | None = result_type
         # instantiation of process executor impl is cheap. To avoid analyzing all
         # action handlers and checking whether they need process executor, just
         # instantiate here. It will be started only if handlers need it.

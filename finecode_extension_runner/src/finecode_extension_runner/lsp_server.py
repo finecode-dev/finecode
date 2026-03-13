@@ -25,6 +25,7 @@ from pydantic.dataclasses import dataclass as pydantic_dataclass
 
 from finecode_extension_runner import schemas, services
 from finecode_extension_runner._services import run_action as run_action_service
+from finecode_extension_runner._services import merge_results as merge_results_service
 from finecode_extension_runner.di import resolver
 
 import sys
@@ -258,6 +259,9 @@ def create_lsp_server() -> lsp_server.LanguageServer:
     register_resolve_package_path_cmd = server.command("packages/resolvePath")
     register_resolve_package_path_cmd(resolve_package_path)
 
+    register_merge_results_cmd = server.command("actions/mergeResults")
+    register_merge_results_cmd(merge_results_cmd)
+
     def on_process_exit():
         logger.info("Exit extension runner")
         services.shutdown_all_action_handlers()
@@ -270,8 +274,8 @@ def create_lsp_server() -> lsp_server.LanguageServer:
     ) -> None:
         partial_result_dict = dataclasses.asdict(partial_result)
         partial_result_json = json.dumps(partial_result_dict)
-        logger.debug(
-            f"Send partial result for {token}, length {len(partial_result_json)}"
+        logger.trace(
+            f"send_partial_result: token={token}, length={len(partial_result_json)}, preview={partial_result_json[:200]}"
         )
         server.progress(types.ProgressParams(token=token, value=partial_result_json))
 
@@ -526,3 +530,13 @@ async def resolve_package_path(ls: lsp_server.LanguageServer, package_name: str)
     result = services.resolve_package_path(package_name)
     logger.trace(f"Resolved {package_name} to {result}")
     return {"packagePath": result}
+
+
+async def merge_results_cmd(ls: lsp_server.LanguageServer, action_name: str, results: list):
+    logger.trace(f"Merge results: action={action_name}, count={len(results)}")
+    try:
+        merged = await merge_results_service.merge_results(action_name=action_name, results=results)
+        return {"merged": merged}
+    except Exception as exception:
+        logger.exception(f"Merge results error: {exception}")
+        return {"error": str(exception)}

@@ -1,2 +1,6 @@
 [tool.finecode]
-presets = [{ source = "fine_python_format" }, { source = "fine_python_lint" }]
+presets = [
+    { source = "fine_python_format" },
+    { source = "fine_python_lint" },
+    { source = "fine_python_test" },
+]

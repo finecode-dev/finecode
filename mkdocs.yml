@@ -63,16 +63,26 @@ markdown_extensions:
       permalink: true
 
 nav:
-  - Home: index.md
-  - Getting Started: getting-started.md
+  - Getting Started:
+      - Welcome to FineCode: index.md
+      - Setup: getting-started.md
+      - IDE and MCP Setup: getting-started-ide-mcp.md
   - Concepts: concepts.md
   - Configuration: configuration.md
   - CLI Reference: cli.md
-  - IDE Integration: ide-integration.md
   - Guides:
       - Creating an Extension: guides/creating-extension.md
       - Creating a Preset: guides/creating-preset.md
       - Multi-Project Workspace: guides/workspace.md
   - Reference:
       - Built-in Actions: reference/actions.md
+      - Services: reference/services.md
       - Extensions: reference/extensions.md
+      - LSP and MCP Architecture: reference/lsp-mcp-architecture.md
+      - LSP Client Protocol: reference/lsp-protocol.md
+      - Glossary: glossary.md
+  - Development:
+      - Overview: development.md
+      - WM Protocol: wm-protocol.md
+      - WM-ER Protocol: wm-er-protocol.md
+      - Developing FineCode: guides/developing-finecode.md

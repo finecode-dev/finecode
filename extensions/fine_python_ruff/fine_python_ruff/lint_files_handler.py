@@ -201,8 +201,8 @@ def map_ruff_violation_to_lint_message(
 
     return lint_files_action.LintMessage(
         range=lint_files_action.Range(
-            start=lint_files_action.Position(line=start_line, character=start_column),
-            end=lint_files_action.Position(line=end_line, character=end_column),
+            start=lint_files_action.Position(line=start_line - 1, character=start_column),
+            end=lint_files_action.Position(line=end_line - 1, character=end_column),
         ),
         message=violation.get("message", ""),
         code=code,

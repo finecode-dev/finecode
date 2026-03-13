@@ -12,7 +12,14 @@ finecode_extension_runner = { path = "../../../finecode_extension_runner", edita
 finecode_extension_api = { path = "../../../finecode_extension_api", editable = true }
 
 [tool.finecode.env.dev.dependencies]
+finecode = { path = "../../..", editable = true }
+finecode_extension_api = { path = "../../../finecode_extension_api", editable = true }
 finecode_extension_runner = { path = "../../../finecode_extension_runner", editable = true }
+fine_python_pytest = { path = "../../../extensions/fine_python_pytest", editable = true }
+finecode_builtin_handlers = { path = "../../../finecode_builtin_handlers", editable = true }
+finecode_jsonrpc = { path = "../../../finecode_jsonrpc", editable = true }
+fine_python_pip = { path = "../../../extensions/fine_python_pip", editable = true }
+fine_python_virtualenv = { path = "../../../extensions/fine_python_virtualenv", editable = true }
 
 [tool.finecode.env.dev_no_runtime.dependencies]
 finecode_extension_api = { path = "../../../finecode_extension_api", editable = true }
@@ -29,6 +36,8 @@ fine_python_flake8 = { path = "../../../extensions/fine_python_flake8", editable
 fine_python_pyrefly = { path = "../../../extensions/fine_python_pyrefly", editable = true }
 fine_python_package_info = { path = "../../../extensions/fine_python_package_info", editable = true }
 fine_python_setuptools_scm = { path = "../../../extensions/fine_python_setuptools_scm", editable = true }
+fine_python_pip = { path = "../../../extensions/fine_python_pip", editable = true }
+fine_python_virtualenv = { path = "../../../extensions/fine_python_virtualenv", editable = true }
 
 # currently, all packages in finecode repository are pure python packages, reuse
 # setuptools build in all of them
