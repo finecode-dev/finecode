@@ -1,4 +1,3 @@
-# docs: docs/reference/actions.md
 import dataclasses
 import pathlib
 import sys
@@ -12,27 +11,26 @@ from finecode_extension_api import code_action, textstyler
 
 
 @dataclasses.dataclass
-class Dependency:
+class EnvInfo:
     name: str
-    version_or_source: str
-    editable: bool = False
+    venv_dir_path: pathlib.Path
+    project_def_path: pathlib.Path
 
 
 @dataclasses.dataclass
-class InstallDepsInEnvRunPayload(code_action.RunActionPayload):
-    env_name: str
-    venv_dir_path: pathlib.Path
-    project_dir_path: pathlib.Path
-    dependencies: list[Dependency]
+class CreateEnvsRunPayload(code_action.RunActionPayload):
+    # Explicit env list. When empty, handlers should discover envs.
+    envs: list[EnvInfo] = dataclasses.field(default_factory=list)
+    # Remove old env and create a new one from scratch even if the current one
+    # is valid.
+    recreate: bool = False
 
 
-class InstallDepsInEnvRunContext(
-    code_action.RunActionContext[InstallDepsInEnvRunPayload]
-):
+class CreateEnvsRunContext(code_action.RunActionContext[CreateEnvsRunPayload]):
     def __init__(
         self,
         run_id: int,
-        initial_payload: InstallDepsInEnvRunPayload,
+        initial_payload: CreateEnvsRunPayload,
         meta: code_action.RunActionMeta,
         info_provider: code_action.RunContextInfoProvider,
     ) -> None:
@@ -43,14 +41,20 @@ class InstallDepsInEnvRunContext(
             info_provider=info_provider,
         )
 
+        self.envs: list[EnvInfo] | None = None
+
+    async def init(self) -> None:
+        if self.initial_payload.envs:
+            self.envs = list(self.initial_payload.envs)
+
 
 @dataclasses.dataclass
-class InstallDepsInEnvRunResult(code_action.RunActionResult):
+class CreateEnvsRunResult(code_action.RunActionResult):
     errors: list[str]
 
     @override
     def update(self, other: code_action.RunActionResult) -> None:
-        if not isinstance(other, InstallDepsInEnvRunResult):
+        if not isinstance(other, CreateEnvsRunResult):
             return
         self.errors += other.errors
 
@@ -65,7 +69,11 @@ class InstallDepsInEnvRunResult(code_action.RunActionResult):
             return code_action.RunReturnCode.ERROR
 
 
-class InstallDepsInEnvAction(code_action.Action):
-    PAYLOAD_TYPE = InstallDepsInEnvRunPayload
-    RUN_CONTEXT_TYPE = InstallDepsInEnvRunContext
-    RESULT_TYPE = InstallDepsInEnvRunResult
+class CreateEnvsAction(
+    code_action.Action[
+        CreateEnvsRunPayload, CreateEnvsRunContext, CreateEnvsRunResult
+    ]
+):
+    PAYLOAD_TYPE = CreateEnvsRunPayload
+    RUN_CONTEXT_TYPE = CreateEnvsRunContext
+    RESULT_TYPE = CreateEnvsRunResult

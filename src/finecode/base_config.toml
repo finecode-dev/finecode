@@ -1,67 +1,89 @@
-[tool.finecode.action.prepare_envs]
-source = "finecode_extension_api.actions.prepare_envs.PrepareEnvsAction"
+[tool.finecode.action.create_env]
+source = "finecode_extension_api.actions.create_env.CreateEnvAction"
 
-[[tool.finecode.action.prepare_envs.handlers]]
-name = "prepare_envs_dump_configs"
-source = "finecode_builtin_handlers.PrepareEnvsReadConfigsHandler"
-env = "dev_workspace"
-dependencies = ["finecode_builtin_handlers~=0.2.0a0"]
-
-
-[[tool.finecode.action.prepare_envs.handlers]]
-name = "prepare_envs_install_deps"
-source = "finecode_builtin_handlers.PrepareEnvsInstallDepsHandler"
-env = "dev_workspace"
-dependencies = ["finecode_builtin_handlers~=0.2.0a0"]
-
-
-# preparing dev workspaces doesn't need dumping config for two reasons:
-# - dependencies in `dev_workspace` are expected to be simple and installable
-#   without dump
-# - dumping is modifiable as action, so it can be correctly done only in
-#   dev_workspace env of the project and we just create it here, it doesn't
-#   exist yet
-[tool.finecode.action.prepare_dev_workspaces_envs]
-source = "finecode_extension_api.actions.prepare_envs.PrepareEnvsAction"
-
-[[tool.finecode.action.prepare_dev_workspaces_envs.handlers]]
-name = "prepare_venvs"
-source = "fine_python_virtualenv.VirtualenvPrepareEnvHandler"
+[[tool.finecode.action.create_env.handlers]]
+name = "create_env_create_venv"
+source = "fine_python_virtualenv.VirtualenvCreateEnvHandler"
 env = "dev_workspace"
 dependencies = ["fine_python_virtualenv~=0.2.0a0"]
 
-[[tool.finecode.action.prepare_dev_workspaces_envs.handlers]]
-name = "prepare_envs_read_configs"
-source = "finecode_builtin_handlers.PrepareEnvsReadConfigsHandler"
+
+[tool.finecode.action.create_envs]
+source = "finecode_extension_api.actions.create_envs.CreateEnvsAction"
+
+[[tool.finecode.action.create_envs.handlers]]
+name = "create_envs_discover_envs"
+source = "finecode_builtin_handlers.CreateEnvsDiscoverEnvsHandler"
+env = "dev_workspace"
+dependencies = ["finecode_builtin_handlers~=0.2.0a0"]
+
+[[tool.finecode.action.create_envs.handlers]]
+name = "create_envs_dispatch"
+source = "finecode_builtin_handlers.CreateEnvsDispatchHandler"
 env = "dev_workspace"
 dependencies = ["finecode_builtin_handlers~=0.2.0a0"]
 
 
-[[tool.finecode.action.prepare_dev_workspaces_envs.handlers]]
-name = "prepare_envs_install_deps"
-source = "finecode_builtin_handlers.PrepareEnvsInstallDepsHandler"
+[tool.finecode.action.prepare_handler_env]
+source = "finecode_extension_api.actions.prepare_handler_env.PrepareHandlerEnvAction"
+
+[[tool.finecode.action.prepare_handler_env.handlers]]
+name = "prepare_handler_env_read_config"
+source = "finecode_builtin_handlers.PrepareHandlerEnvReadConfigHandler"
 env = "dev_workspace"
 dependencies = ["finecode_builtin_handlers~=0.2.0a0"]
 
-[tool.finecode.action.prepare_runners]
-source = "finecode_extension_api.actions.prepare_runners.PrepareRunnersAction"
-
-[[tool.finecode.action.prepare_runners.handlers]]
-name = "prepare_runners_venvs"
-source = "fine_python_virtualenv.VirtualenvPrepareRunnersHandler"
-env = "dev_workspace"
-dependencies = ["fine_python_virtualenv~=0.2.0a0"]
-
-[[tool.finecode.action.prepare_runners.handlers]]
-name = "prepare_runners_read_configs"
-source = "finecode_builtin_handlers.PrepareRunnersReadConfigsHandler"
+[[tool.finecode.action.prepare_handler_env.handlers]]
+name = "prepare_handler_env_install_deps"
+source = "finecode_builtin_handlers.PrepareHandlerEnvInstallDepsHandler"
 env = "dev_workspace"
 dependencies = ["finecode_builtin_handlers~=0.2.0a0"]
 
 
-[[tool.finecode.action.prepare_runners.handlers]]
-name = "prepare_runners_install_runner_and_presets"
-source = "finecode_builtin_handlers.PrepareRunnersInstallRunnerAndPresetsHandler"
+[tool.finecode.action.prepare_handler_envs]
+source = "finecode_extension_api.actions.prepare_handler_envs.PrepareHandlerEnvsAction"
+
+[[tool.finecode.action.prepare_handler_envs.handlers]]
+name = "prepare_handler_envs_discover_envs"
+source = "finecode_builtin_handlers.PrepareHandlerEnvsDiscoverEnvsHandler"
+env = "dev_workspace"
+dependencies = ["finecode_builtin_handlers~=0.2.0a0"]
+
+[[tool.finecode.action.prepare_handler_envs.handlers]]
+name = "prepare_handler_envs_dispatch"
+source = "finecode_builtin_handlers.PrepareHandlerEnvsDispatchHandler"
+env = "dev_workspace"
+dependencies = ["finecode_builtin_handlers~=0.2.0a0"]
+
+
+[tool.finecode.action.prepare_runner_env]
+source = "finecode_extension_api.actions.prepare_runner_env.PrepareRunnerEnvAction"
+
+[[tool.finecode.action.prepare_runner_env.handlers]]
+name = "prepare_runner_env_read_config"
+source = "finecode_builtin_handlers.PrepareRunnerEnvReadConfigHandler"
+env = "dev_workspace"
+dependencies = ["finecode_builtin_handlers~=0.2.0a0"]
+
+[[tool.finecode.action.prepare_runner_env.handlers]]
+name = "prepare_runner_env_install_runner_and_presets"
+source = "finecode_builtin_handlers.PrepareRunnerEnvInstallRunnerAndPresetsHandler"
+env = "dev_workspace"
+dependencies = ["finecode_builtin_handlers~=0.2.0a0"]
+
+
+[tool.finecode.action.prepare_runner_envs]
+source = "finecode_extension_api.actions.prepare_runner_envs.PrepareRunnerEnvsAction"
+
+[[tool.finecode.action.prepare_runner_envs.handlers]]
+name = "prepare_runner_envs_discover_envs"
+source = "finecode_builtin_handlers.PrepareRunnerEnvsDiscoverEnvsHandler"
+env = "dev_workspace"
+dependencies = ["finecode_builtin_handlers~=0.2.0a0"]
+
+[[tool.finecode.action.prepare_runner_envs.handlers]]
+name = "prepare_runner_envs_dispatch"
+source = "finecode_builtin_handlers.PrepareRunnerEnvsDispatchHandler"
 env = "dev_workspace"
 dependencies = ["finecode_builtin_handlers~=0.2.0a0"]
 

@@ -1,9 +1,10 @@
+# docs: docs/cli.md
+import asyncio
 import pathlib
-
-from loguru import logger
 
 from finecode.wm_client import ApiClient, ApiError
 from finecode.wm_server import wm_lifecycle
+from loguru import logger
 
 
 class PrepareEnvsFailed(Exception):
@@ -12,17 +13,28 @@ class PrepareEnvsFailed(Exception):
 
 
 async def prepare_envs(
-    workdir_path: pathlib.Path, recreate: bool, own_server: bool = True, log_level: str = "INFO", dev_env: str = "cli"
+    workdir_path: pathlib.Path,
+    recreate: bool,
+    own_server: bool = True,
+    log_level: str = "INFO",
+    dev_env: str = "cli",
+    env_names: list[str] | None = None,
+    project_names: list[str] | None = None,
 ) -> None:
     """Prepare all virtual environments for a workspace.
 
     Orchestration steps:
     1. Discover projects (without starting runners — envs may not exist yet).
     2. Check / remove dev_workspace environments as needed.
-    3. Run ``prepare_dev_workspaces_envs`` to create / update them.
+    3. Run ``create_envs`` + ``prepare_handler_envs`` to create / update dev_workspace envs.
     4. Start extension runners (resolves preset actions).
-    5. Run ``prepare_runners`` to set up handler environments.
-    6. Run ``prepare_envs`` to finalise environment setup.
+    5. Run ``create_envs`` to create all virtualenvs.
+    6. Run ``prepare_runner_envs`` to install Extension Runners.
+    7. Run ``prepare_handler_envs`` to install handler dependencies.
+
+    When ``env_names`` is given only those named environments are prepared in
+    step 7 (steps 5 and 6 still run for all envs).
+    When ``project_names`` is given only those projects are prepared in steps 3, 5, 6, and 7.
     """
     port_file = None
     try:
@@ -42,7 +54,9 @@ async def prepare_envs(
         client = ApiClient()
         await client.connect("127.0.0.1", port)
         try:
-            await _run(client, workdir_path, recreate, dev_env)
+            await _run(
+                client, workdir_path, recreate, dev_env, env_names, project_names
+            )
         finally:
             await client.close()
     finally:
@@ -50,8 +64,24 @@ async def prepare_envs(
             port_file.unlink(missing_ok=True)
 
 
+def _check_batch_result(batch_result: dict, error_prefix: str) -> None:
+    if batch_result.get("return_code", 0) != 0:
+        output_parts = []
+        for actions_result in batch_result.get("results", {}).values():
+            for response in actions_result.values():
+                text = (response.get("result_by_format") or {}).get("string", "")
+                if text:
+                    output_parts.append(text)
+        raise PrepareEnvsFailed(error_prefix + ":\n" + "\n".join(output_parts))
+
+
 async def _run(
-    client: ApiClient, workdir_path: pathlib.Path, recreate: bool, dev_env: str = "cli"
+    client: ApiClient,
+    workdir_path: pathlib.Path,
+    recreate: bool,
+    dev_env: str = "cli",
+    env_names: list[str] | None = None,
+    project_names: list[str] | None = None,
 ) -> None:
     # Step 1 — discover projects without starting runners (envs may not exist).
     logger.info("Discovering projects...")
@@ -59,22 +89,16 @@ async def _run(
     projects: list[dict] = result.get("projects", [])
 
     workdir_str = str(workdir_path)
-    current_project = next(
-        (p for p in projects if p["path"] == workdir_str), None
-    )
+    current_project = next((p for p in projects if p["path"] == workdir_str), None)
     if current_project is None:
         raise PrepareEnvsFailed(
             "prepare-envs can be run only from workspace/project root"
         )
 
-    invalid_status_projects = [
-        p for p in projects if p["status"] == "CONFIG_INVALID"
-    ]
+    invalid_status_projects = [p for p in projects if p["status"] == "CONFIG_INVALID"]
     if invalid_status_projects:
         names = [p["name"] for p in invalid_status_projects]
-        raise PrepareEnvsFailed(
-            f"Projects have invalid configuration: {names}"
-        )
+        raise PrepareEnvsFailed(f"Projects have invalid configuration: {names}")
 
     other_projects = [
         p
@@ -82,15 +106,22 @@ async def _run(
         if p["path"] != workdir_str and p["status"] == "CONFIG_VALID"
     ]
 
+    if project_names is not None:
+        unknown = [
+            n for n in project_names if not any(p["name"] == n for p in projects)
+        ]
+        if unknown:
+            raise PrepareEnvsFailed(f"Unknown project(s): {unknown}")
+        other_projects = [p for p in other_projects if p["name"] in project_names]
+
     logger.info(f"Found {len(projects)} project(s): {[p['name'] for p in projects]}")
 
-    # Step 2 — check / remove dev_workspace environments.
+    # Step 2 — check / remove dev_workspace environments (parallelized).
     logger.info("Checking dev workspace environments...")
-    for project in other_projects:
+
+    async def _check_or_remove_dw(project: dict) -> None:
         if recreate:
-            logger.trace(
-                f"Recreate env 'dev_workspace' in project '{project['name']}'"
-            )
+            logger.trace(f"Recreate env 'dev_workspace' in project '{project['name']}'")
             try:
                 await client.remove_env(project["name"], "dev_workspace")
             except ApiError as exc:
@@ -116,9 +147,16 @@ async def _run(
                         f"Failed to remove invalid env for '{project['name']}': {exc}"
                     ) from exc
 
+    try:
+        async with asyncio.TaskGroup() as tg:
+            for project in other_projects:
+                tg.create_task(_check_or_remove_dw(project))
+    except* PrepareEnvsFailed as eg:
+        raise eg.exceptions[0]
+
     # Step 3 — create / update dev_workspace environments.
     logger.info("Creating/updating dev workspace environments...")
-    envs = [
+    dw_envs = [
         {
             "name": "dev_workspace",
             "venv_dir_path": str(pathlib.Path(p["path"]) / ".venvs" / "dev_workspace"),
@@ -126,27 +164,46 @@ async def _run(
         }
         for p in other_projects
     ]
+    dw_options = {
+        "result_formats": ["string"],
+        "trigger": "user",
+        "dev_env": dev_env,
+    }
 
+    # Step 3a — create the dev_workspace virtualenvs.
+    try:
+        create_dw_result = await client.run_action(
+            action="create_envs",
+            project=current_project["name"],
+            # 'recreate' is handled for dev_workspace envs above, no need to pass here
+            params={"envs": dw_envs},
+            options=dw_options,
+        )
+    except ApiError as exc:
+        raise PrepareEnvsFailed(f"'create_envs' (dev_workspace) failed: {exc}") from exc
+    if create_dw_result.get("return_code", 0) != 0:
+        output = (create_dw_result.get("result_by_format") or {}).get("string", "")
+        raise PrepareEnvsFailed(
+            f"'create_envs' (dev_workspace) failed with return code "
+            f"{create_dw_result['return_code']}: {output}"
+        )
+
+    # Step 3b — install dev_workspace dependencies.
     try:
         prepare_dw_result = await client.run_action(
-            action="prepare_dev_workspaces_envs",
+            action="prepare_handler_envs",
             project=current_project["name"],
-            params={"envs": envs},
-            options={
-                "result_formats": ["string"],
-                "trigger": "user",
-                "dev_env": dev_env,
-            },
+            params={"envs": dw_envs},
+            options=dw_options,
         )
     except ApiError as exc:
         raise PrepareEnvsFailed(
-            f"'prepare_dev_workspaces_envs' failed: {exc}"
+            f"'prepare_handler_envs' (dev_workspace) failed: {exc}"
         ) from exc
-
     if prepare_dw_result.get("return_code", 0) != 0:
         output = (prepare_dw_result.get("result_by_format") or {}).get("string", "")
         raise PrepareEnvsFailed(
-            f"'prepare_dev_workspaces_envs' failed with return code "
+            f"'prepare_handler_envs' (dev_workspace) failed with return code "
             f"{prepare_dw_result['return_code']}: {output}"
         )
 
@@ -157,30 +214,50 @@ async def _run(
     except ApiError as exc:
         raise PrepareEnvsFailed(f"Starting runners failed: {exc}") from exc
 
-    # Steps 5 & 6 — run prepare_runners then prepare_envs on all projects.
-    logger.info("Preparing runner and handler environments...")
-    # Actions run sequentially within each project (prepare_runners before
-    # prepare_envs), while projects run concurrently.
+    # Steps 5, 6 & 7 — create envs, install runners, install handler deps.
+    logger.info("Creating envs and installing runner and handler dependencies...")
+    # Each step runs across all projects concurrently.
+    common_options = {
+        "concurrently": False,
+        "result_formats": ["string"],
+        "trigger": "user",
+        "dev_env": dev_env,
+    }
+
+    # Step 5 — create all virtualenvs (no env filter).
     try:
-        batch_result = await client.run_batch(
-            actions=["prepare_runners", "prepare_envs"],
-            options={
-                "concurrently": False,
-                "result_formats": ["string"],
-                "trigger": "user",
-                "dev_env": dev_env,
-            },
+        create_result = await client.run_batch(
+            actions=["create_envs"],
+            projects=project_names,
+            options=common_options,
         )
     except ApiError as exc:
-        raise PrepareEnvsFailed(f"'prepare_runners'/'prepare_envs' failed: {exc}") from exc
+        raise PrepareEnvsFailed(f"'create_envs' failed: {exc}") from exc
+    _check_batch_result(create_result, "'create_envs' failed")
 
-    if batch_result.get("return_code", 0) != 0:
-        output_parts = []
-        for actions_result in batch_result.get("results", {}).values():
-            for response in actions_result.values():
-                text = (response.get("result_by_format") or {}).get("string", "")
-                if text:
-                    output_parts.append(text)
-        raise PrepareEnvsFailed(
-            "'prepare_runners'/'prepare_envs' failed:\n" + "\n".join(output_parts)
+    # Step 6 — install Extension Runners (no env filter).
+    try:
+        runners_result = await client.run_batch(
+            actions=["prepare_runner_envs"],
+            projects=project_names,
+            options=common_options,
         )
+    except ApiError as exc:
+        raise PrepareEnvsFailed(f"'prepare_runner_envs' failed: {exc}") from exc
+    _check_batch_result(runners_result, "'prepare_runner_envs' failed")
+
+    # Step 7 — install handler dependencies (with optional env_names filter).
+    handler_params = {"env_names": env_names} if env_names is not None else {}
+    try:
+        batch_result = await client.run_batch(
+            actions=["prepare_handler_envs"],
+            projects=project_names,
+            params=handler_params,
+            options=common_options,
+        )
+    except ApiError as exc:
+        raise PrepareEnvsFailed(f"'prepare_handler_envs' failed: {exc}") from exc
+    _check_batch_result(batch_result, "'prepare_handler_envs' failed")
+
+
+__all__ = ["prepare_envs", "PrepareEnvsFailed"]

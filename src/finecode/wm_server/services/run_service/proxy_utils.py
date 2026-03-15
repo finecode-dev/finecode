@@ -16,7 +16,6 @@ from finecode.wm_server.runner import runner_client
 from finecode.wm_server.runner.runner_manager import RunnerFailedToStart
 from finecode.wm_server.runner.runner_client import RunResultFormat  # reexport
 
-from finecode.wm_server.services.run_service import payload_preprocessor
 from .exceptions import ActionRunFailed, StartingEnvironmentsFailed
 
 
@@ -71,7 +70,6 @@ async def find_action_project_and_run(
             params=params,
             project_def=project,
             ws_context=ws_context,
-            preprocess_payload=False,
             run_trigger=run_trigger,
             dev_env=dev_env,
             initialize_all_handlers=initialize_all_handlers,
@@ -617,7 +615,6 @@ async def run_action(
     run_trigger: runner_client.RunActionTrigger,
     dev_env: runner_client.DevEnv,
     result_formats: list[runner_client.RunResultFormat] | None = None,
-    preprocess_payload: bool = True,
     initialize_all_handlers: bool = False,
 ) -> RunActionResponse:
     formatted_params = str(params)
@@ -636,15 +633,7 @@ async def run_action(
             + " Please check logs."
         )
 
-    if preprocess_payload:
-        payload = await payload_preprocessor.preprocess_for_project(
-            action_name=action_name,
-            payload=params,
-            project_dir_path=project_def.dir_path,
-            ws_context=ws_context,
-        )
-    else:
-        payload = params
+    payload = params
 
     # cases:
     # - base: all action handlers are in one env

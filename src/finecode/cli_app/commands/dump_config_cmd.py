@@ -1,3 +1,4 @@
+# docs: docs/cli.md
 import pathlib
 
 from finecode.wm_client import ApiClient, ApiError

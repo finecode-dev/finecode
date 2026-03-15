@@ -1,3 +1,4 @@
+# docs: docs/cli.md
 """FineCode MCP Server — proxy to the FineCode WM server.
 
 Connects to the FineCode WM server over TCP JSON-RPC and translates MCP tool calls into

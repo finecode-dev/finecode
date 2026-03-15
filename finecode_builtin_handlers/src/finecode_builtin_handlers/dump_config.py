@@ -1,3 +1,4 @@
+# docs: docs/reference/actions.md
 import dataclasses
 
 from finecode_extension_api import code_action

@@ -1,3 +1,4 @@
+# docs: docs/configuration.md
 from pathlib import Path
 from typing import Any
 

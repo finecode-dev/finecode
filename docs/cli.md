@@ -120,6 +120,8 @@ python -m finecode prepare-envs [--recreate] [--log-level=<level>] [--debug]
 
 Must be run from the workspace or project root. Creates venvs under `.venvs/<env_name>/` and installs each handler's declared dependencies.
 
+See [Preparing Environments](guides/preparing-environments.md) for a full explanation of the three-step sequence and filtering options.
+
 | Option | Description |
 |---|---|
 | `--recreate` | Delete and recreate all venvs from scratch |

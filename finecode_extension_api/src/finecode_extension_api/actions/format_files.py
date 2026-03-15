@@ -1,3 +1,4 @@
+# docs: docs/reference/actions.md
 import dataclasses
 import sys
 from pathlib import Path

@@ -70,7 +70,7 @@ FineCode runs each tool handler in its own virtual environment. Set them up with
 python -m finecode prepare-envs
 ```
 
-This installs the handler dependencies (ruff, flake8, etc.) into isolated venvs under `.venvs/`.
+This creates purpose-specific venvs under `.venvs/` and installs handler dependencies (e.g. ruff, flake8, etc.) into them.
 
 ## 5. Run actions
 

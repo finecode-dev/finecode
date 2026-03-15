@@ -169,13 +169,29 @@ Group source files by language (internal, used by language-aware actions).
 
 ---
 
-## `prepare_envs`
+## `create_envs`
 
-Set up virtual environments for all handler dependencies.
+Create virtual environments for all envs discovered from the project's dependency-groups.
 
-- **Source:** `finecode_extension_api.actions.prepare_envs.PrepareEnvsAction`
+- **Source:** `finecode_extension_api.actions.create_envs.CreateEnvsAction`
 
-Also available as the `python -m finecode prepare-envs` CLI command.
+---
+
+## `prepare_runner_envs`
+
+Install Extension Runners into virtualenvs (internal, called by the Workspace Manager).
+
+- **Source:** `finecode_extension_api.actions.prepare_runner_envs.PrepareRunnerEnvsAction`
+
+---
+
+## `prepare_handler_envs`
+
+Install handler dependencies into virtualenvs.
+
+- **Source:** `finecode_extension_api.actions.prepare_handler_envs.PrepareHandlerEnvsAction`
+
+The `python -m finecode prepare-envs` CLI command runs `create_envs`, `prepare_runner_envs`, and `prepare_handler_envs` in sequence.
 
 ---
 
@@ -202,14 +218,6 @@ Also available as `python -m finecode dump-config`.
 Initialize a repository provider (used in artifact publishing flows).
 
 - **Source:** `finecode_extension_api.actions.init_repository_provider.InitRepositoryProviderAction`
-
----
-
-## `prepare_runners`
-
-Prepare Extension Runners (internal, called by the Workspace Manager).
-
-- **Source:** `finecode_extension_api.actions.prepare_runners.PrepareRunnersAction`
 
 ---
 

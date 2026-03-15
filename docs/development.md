@@ -77,8 +77,8 @@ The main package that:
 - Delegates tool execution to Extension Runners
 
 #### Extension Runner (`finecode_extension_runner/`)
-Executes tool handlers in isolated virtual environments:
-- Runs inside isolated venv per tool
+Executes tool handlers in purpose-specific virtual environments:
+- Runs inside a purpose-specific venv (e.g. `dev_no_runtime`)
 - Imports and executes handler code
 - Communicates with Workspace Manager via JSON-RPC/LSP
 

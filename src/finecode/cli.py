@@ -1,3 +1,4 @@
+# docs: docs/cli.md
 import asyncio
 import json
 import os
@@ -410,11 +411,12 @@ def run(ctx) -> None:
 @click.option("--recreate", "recreate", is_flag=True, default=False)
 @click.option("--shared-server", "shared_server", is_flag=True, default=False)
 @click.option("--dev-env", "dev_env", default=None, type=click.Choice(sorted(_VALID_DEV_ENVS)), help="Override detected dev environment")
-def prepare_envs(log_level: str, debug: bool, recreate: bool, shared_server: bool, dev_env: str | None) -> None:
+@click.option("--env", "env_names", multiple=True, metavar="ENV_NAME", help="Limit to specific environment(s). Can be specified multiple times.")
+@click.option("--project", "project_names", multiple=True, metavar="PROJECT_NAME", help="Limit to specific project(s). Can be specified multiple times.")
+def prepare_envs(log_level: str, debug: bool, recreate: bool, shared_server: bool, dev_env: str | None, env_names: tuple[str, ...], project_names: tuple[str, ...]) -> None:
     """
     `prepare-envs` should be called from workspace/project root directory.
     """
-    # idea: project parameter to allow to run from other directories?
     from finecode.cli_app.commands import prepare_envs_cmd
 
     if debug is True:
@@ -437,6 +439,8 @@ def prepare_envs(log_level: str, debug: bool, recreate: bool, shared_server: boo
                 own_server=not shared_server,
                 log_level=log_level,
                 dev_env=dev_env or detect_dev_env(),
+                env_names=list(env_names) if env_names else None,
+                project_names=list(project_names) if project_names else None,
             )
         )
     except prepare_envs_cmd.PrepareEnvsFailed as exception:

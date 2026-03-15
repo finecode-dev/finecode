@@ -1,3 +1,4 @@
+# docs: docs/cli.md
 from __future__ import annotations
 
 from finecode.lsp_server import communication_utils, global_state

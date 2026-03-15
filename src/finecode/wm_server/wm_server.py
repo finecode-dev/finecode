@@ -1,3 +1,4 @@
+# docs: docs/concepts.md, docs/cli.md
 """FineCode WM Server — TCP JSON-RPC server for external tool integration.
 
 The WM server is the shared backbone that holds the WorkspaceContext. Any client
@@ -449,7 +450,6 @@ async def _handle_run_action(
             run_trigger=trigger,
             dev_env=dev_env,
             result_formats=result_formats,
-            preprocess_payload=True,
             initialize_all_handlers=True,
         )
         return {

@@ -1,3 +1,4 @@
+# docs: docs/cli.md
 import json
 import pathlib
 import sys

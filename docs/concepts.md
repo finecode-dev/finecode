@@ -124,7 +124,7 @@ The `finecode` package. It:
 
 The `finecode_extension_runner` package. It:
 
-- runs inside an isolated virtual environment (e.g. `.venvs/dev_no_runtime`)
+- runs inside a purpose-specific virtual environment (e.g. `.venvs/dev_no_runtime`)
 - imports and executes handler code
 - communicates results back to the WM via LSP/JSON-RPC
 
