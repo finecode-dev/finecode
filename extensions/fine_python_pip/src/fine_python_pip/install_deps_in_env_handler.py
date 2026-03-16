@@ -93,19 +93,26 @@ class PipInstallDepsInEnvHandler(
     async def _run_pip_cmd(
         self, cmd: str, env_name: str, project_dir_path: pathlib.Path
     ) -> str | None:
+        self.logger.debug(f"Running pip: {cmd}")
         process = await self.command_runner.run(cmd, cwd=project_dir_path)
         await process.wait_for_end()
+        process_stdout = process.get_output()
+        process_stderr = process.get_error_output()
+        if process_stdout:
+            self.logger.trace(f"pip stdout:\n{process_stdout}")
+        if process_stderr:
+            self.logger.trace(f"pip stderr:\n{process_stderr}")
         if process.get_exit_code() != 0:
-            process_stdout = process.get_output()
-            process_stderr = process.get_error_output()
             logs = ""
-            if len(process_stdout) > 0 and len(process_stderr) > 0:
+            if process_stdout and process_stderr:
                 logs = f"stdout: {process_stdout}\nstderr: {process_stderr}"
-            elif len(process_stdout) > 0:
+            elif process_stdout:
                 logs = process_stdout
             else:
                 logs = process_stderr
 
-            return f'Installation of dependencies "{cmd}" in env {env_name} from {project_dir_path} failed:\n{logs}'
+            error = f'Installation of dependencies in env {env_name} from {project_dir_path} failed (cmd: {cmd}):\n{logs}'
+            self.logger.error(error)
+            return error
 
         return None
