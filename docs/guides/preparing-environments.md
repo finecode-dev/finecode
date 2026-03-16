@@ -96,7 +96,9 @@ Only prepares environments for the listed projects. Useful in a large workspaces
 python -m finecode prepare-envs --env-names=dev_no_runtime
 ```
 
-Restricts the `prepare_handler_envs` step (step 3) to the named environments. The `create_envs` and `prepare_runner_envs` steps still run for all envs — only the final dependency-installation step is filtered.
+Restricts the `prepare_handler_envs` step (step 3) to the named environments. The `create_envs` and `prepare_runner_envs` steps still run for **all** envs regardless of this flag.
+
+**Why?** Virtualenvs and runners must exist for every env — they are cheap to create and skip if already valid. Filtering at those steps would leave envs in a broken state if they don't exist yet.
 
 Useful when you've added a new handler in one env and want to update only that env without reinstalling everything.
 

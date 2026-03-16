@@ -55,12 +55,22 @@ finecode_jsonrpc = { path = "./finecode_jsonrpc", editable = true }
 fine_python_lint = { path = "./presets/fine_python_lint", editable = true }
 fine_python_format = { path = "./presets/fine_python_format", editable = true }
 fine_python_test = { path = "./presets/fine_python_test", editable = true }
-finecode_builtin_handlers = { path = "../finecode_builtin_handlers", editable = true }
+finecode_builtin_handlers = { path = "./finecode_builtin_handlers", editable = true }
+fine_python_pip = { path = "./extensions/fine_python_pip", editable = true }
+fine_python_virtualenv = { path = "./extensions/fine_python_virtualenv", editable = true }
+
 
 [tool.finecode.env.runtime.dependencies]
 finecode_extension_api = { path = "./finecode_extension_api", editable = true }
 finecode_jsonrpc = { path = "./finecode_jsonrpc", editable = true }
 finecode_builtin_handlers = { path = "./finecode_builtin_handlers", editable = true }
+
+[tool.finecode.env.docs.dependencies]
+finecode_extension_runner = { path = "./finecode_extension_runner", editable = true }
+finecode_extension_api = { path = "./finecode_extension_api", editable = true }
+finecode_jsonrpc = { path = "./finecode_jsonrpc", editable = true }
+finecode_builtin_handlers = { path = "./finecode_builtin_handlers", editable = true }
+
 
 [tool.importlinter]
 root_package = "finecode"

@@ -31,15 +31,16 @@ class CreateEnvsDispatchHandler(
         payload: create_envs_action.CreateEnvsRunPayload,
         run_context: create_envs_action.CreateEnvsRunContext,
     ) -> create_envs_action.CreateEnvsRunResult:
+        if run_context.envs is None:
+            raise code_action.ActionFailedException(
+                "envs must be either provided in payload or be discovered by previous `create_envs` handlers"
+            )
+
         create_env_action_instance = self.action_runner.get_action_by_name(
             name="create_env",
             expected_type=create_env_action.CreateEnvAction,
         )
 
-        if run_context.envs is None:
-            raise code_action.ActionFailedException(
-                "envs must be either provided in payload or be discovered by previous `create_envs` handlers"
-            )
         tasks: list[asyncio.Task[create_envs_action.CreateEnvsRunResult]] = []
         try:
             async with asyncio.TaskGroup() as tg:
