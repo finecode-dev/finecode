@@ -63,7 +63,7 @@ async def document_inlay_hint(
             action="text_document_inlay_hint",
             project=project_name,
             params=inlay_hint_params_to_dict(params),
-            options={"trigger": "system", "dev_env": "ide"},
+            options={"trigger": "system", "devEnv": "ide"},
         )
     except Exception as error:
         logger.error(f"Error getting document inlay hints {file_path}: {error}")

@@ -32,7 +32,7 @@ async def format_document(ls: LanguageServer, params: types.DocumentFormattingPa
             action="format",
             project=project_name,
             params={"file_paths": [str(file_path)], "save": False, "target": "files"},
-            options={"trigger": "user", "dev_env": "ide"},
+            options={"trigger": "user", "devEnv": "ide"},
         )
     except Exception as error:
         logger.error(f"Error document formatting {file_path}: {error}")

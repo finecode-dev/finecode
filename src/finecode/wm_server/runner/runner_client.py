@@ -129,8 +129,8 @@ async def run_action(
     if "error" in command_result:
         raise ActionRunFailed(command_result["error"])
 
-    return_code = command_result["return_code"]
-    stringified_result = command_result["result_by_format"]
+    return_code = command_result["returnCode"]
+    stringified_result = command_result["resultByFormat"]
     # currently result is always dumped to json even if response format is expected to
     # be a string. See docs of ER lsp server for more details.
     try:

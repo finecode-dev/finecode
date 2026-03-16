@@ -59,7 +59,7 @@ async def run_action_on_file(ls: LanguageServer, params):
         action=action_name,
         project=project_path_str,
         params=run_params,
-        options={"trigger": "user", "dev_env": "ide"},
+        options={"trigger": "user", "devEnv": "ide"},
     )
     return response
 
@@ -81,7 +81,7 @@ async def run_action_on_project(ls: LanguageServer, params):
         action=action_name,
         project=project_path_str,
         params={"target": "project"},
-        options={"trigger": "user", "dev_env": "ide"},
+        options={"trigger": "user", "devEnv": "ide"},
     )
     return response
 
@@ -96,6 +96,22 @@ async def list_projects(ls: LanguageServer):
     return await global_state.wm_client.list_projects()
 
 
+async def run_batch(ls: LanguageServer, params):
+    logger.info(f"run_batch {params}")
+    await global_state.server_initialized.wait()
+
+    if global_state.wm_client is None:
+        raise Exception()
+
+    return await global_state.wm_client.run_batch(
+        actions=params["actions"],
+        projects=params.get("projects"),
+        params=params.get("params"),
+        params_by_project=params.get("paramsByProject"),
+        options=params.get("options", {"trigger": "user", "devEnv": "ide"}),
+    )
+
+
 async def run_action(ls: LanguageServer, params):
     logger.info(f"run_action {params}")
     await global_state.server_initialized.wait()
@@ -107,7 +123,7 @@ async def run_action(ls: LanguageServer, params):
         action=params["action"],
         project=params["project"],
         params=params.get("params"),
-        options=params.get("options", {"trigger": "user", "dev_env": "ide"}),
+        options=params.get("options", {"trigger": "user", "devEnv": "ide"}),
     )
 
 
@@ -122,7 +138,7 @@ async def reload_action(ls: LanguageServer, params):
     action_node_id = params_dict["projectPath"]
 
     await global_state.wm_client.request(
-        "actions/reload", {"action_node_id": action_node_id}
+        "actions/reload", {"actionNodeId": action_node_id}
     )
     return {}
 

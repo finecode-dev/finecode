@@ -65,11 +65,11 @@ async def prepare_envs(
 
 
 def _check_batch_result(batch_result: dict, error_prefix: str) -> None:
-    if batch_result.get("return_code", 0) != 0:
+    if batch_result.get("returnCode", 0) != 0:
         output_parts = []
         for actions_result in batch_result.get("results", {}).values():
             for response in actions_result.values():
-                text = (response.get("result_by_format") or {}).get("string", "")
+                text = (response.get("resultByFormat") or {}).get("string", "")
                 if text:
                     output_parts.append(text)
         raise PrepareEnvsFailed(error_prefix + ":\n" + "\n".join(output_parts))
@@ -165,9 +165,9 @@ async def _run(
         for p in other_projects
     ]
     dw_options = {
-        "result_formats": ["string"],
+        "resultFormats": ["string"],
         "trigger": "user",
-        "dev_env": dev_env,
+        "devEnv": dev_env,
     }
 
     # Step 3a — create the dev_workspace virtualenvs.
@@ -181,11 +181,11 @@ async def _run(
         )
     except ApiError as exc:
         raise PrepareEnvsFailed(f"'create_envs' (dev_workspace) failed: {exc}") from exc
-    if create_dw_result.get("return_code", 0) != 0:
-        output = (create_dw_result.get("result_by_format") or {}).get("string", "")
+    if create_dw_result.get("returnCode", 0) != 0:
+        output = (create_dw_result.get("resultByFormat") or {}).get("string", "")
         raise PrepareEnvsFailed(
             f"'create_envs' (dev_workspace) failed with return code "
-            f"{create_dw_result['return_code']}: {output}"
+            f"{create_dw_result['returnCode']}: {output}"
         )
 
     # Step 3b — install dev_workspace dependencies.
@@ -200,11 +200,11 @@ async def _run(
         raise PrepareEnvsFailed(
             f"'prepare_handler_envs' (dev_workspace) failed: {exc}"
         ) from exc
-    if prepare_dw_result.get("return_code", 0) != 0:
-        output = (prepare_dw_result.get("result_by_format") or {}).get("string", "")
+    if prepare_dw_result.get("returnCode", 0) != 0:
+        output = (prepare_dw_result.get("resultByFormat") or {}).get("string", "")
         raise PrepareEnvsFailed(
             f"'prepare_handler_envs' (dev_workspace) failed with return code "
-            f"{prepare_dw_result['return_code']}: {output}"
+            f"{prepare_dw_result['returnCode']}: {output}"
         )
 
     # Step 4 — start runners with presets (resolves preset-defined actions).
@@ -219,9 +219,9 @@ async def _run(
     # Each step runs across all projects concurrently.
     common_options = {
         "concurrently": False,
-        "result_formats": ["string"],
+        "resultFormats": ["string"],
         "trigger": "user",
-        "dev_env": dev_env,
+        "devEnv": dev_env,
     }
 
     # Step 5 — create all virtualenvs (no env filter).

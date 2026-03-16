@@ -78,9 +78,9 @@ async def run_actions(
                     params_by_project=params_by_project or None,
                     options={
                         "concurrently": concurrently,
-                        "result_formats": result_formats,
+                        "resultFormats": result_formats,
                         "trigger": "user",
-                        "dev_env": dev_env,
+                        "devEnv": dev_env,
                     },
                 )
             except ApiError as exc:
@@ -97,7 +97,7 @@ async def run_actions(
 def _build_run_result(batch_result: dict) -> utils.RunActionsResult:
     """Convert the actions/runBatch API response to RunActionsResult."""
     raw_results: dict[str, dict] = batch_result.get("results", {})
-    overall_return_code: int = batch_result.get("return_code", 0)
+    overall_return_code: int = batch_result.get("returnCode", 0)
 
     result_by_project: dict[pathlib.Path, dict[str, runner_client.RunActionResponse]] = {}
     output_parts: list[str] = []
@@ -112,8 +112,8 @@ def _build_run_result(batch_result: dict) -> utils.RunActionsResult:
         run_many_actions = len(actions_results) > 1
 
         for action_name, action_data in actions_results.items():
-            result_by_format = action_data.get("result_by_format", {})
-            return_code = action_data.get("return_code", 0)
+            result_by_format = action_data.get("resultByFormat", {})
+            return_code = action_data.get("returnCode", 0)
 
             response = runner_client.RunActionResponse(
                 result_by_format=result_by_format,

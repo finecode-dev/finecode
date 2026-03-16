@@ -35,34 +35,8 @@ _log_file_path: pathlib.Path | None = None
 # ---------------------------------------------------------------------------
 
 
-def _snake_to_camel(s: str) -> str:
-    """Convert snake_case to camelCase."""
-    parts = s.split('_')
-    return parts[0] + ''.join(word.capitalize() for word in parts[1:])
-
-
-class _NoConvert:
-    """Wrap a value to prevent camelCase conversion of its contents."""
-    def __init__(self, value: typing.Any) -> None:
-        self.value = value
-
-
-def _convert_to_camel_case(obj: typing.Any) -> typing.Any:
-    """Recursively convert all snake_case keys to camelCase in dicts/lists."""
-    if isinstance(obj, _NoConvert):
-        return obj.value
-    if isinstance(obj, dict):
-        return {_snake_to_camel(k): _convert_to_camel_case(v) for k, v in obj.items()}
-    elif isinstance(obj, list):
-        return [_convert_to_camel_case(item) for item in obj]
-    else:
-        return obj
-
-
 def _jsonrpc_response(id: int | str, result: typing.Any) -> dict:
-    # Convert result to camelCase before embedding in response
-    camel_result = _convert_to_camel_case(result)
-    return {"jsonrpc": "2.0", "id": id, "result": camel_result}
+    return {"jsonrpc": "2.0", "id": id, "result": result}
 
 
 def _jsonrpc_error(
@@ -155,9 +129,7 @@ def _notification_stub(method_name: str) -> NotificationHandler:
 
 def _notify_all_clients(method: str, params: dict) -> None:
     """Broadcast a JSON-RPC notification to all connected clients."""
-    # Convert params to camelCase before sending
-    camel_params = _convert_to_camel_case(params)
-    msg = {"jsonrpc": "2.0", "method": method, "params": camel_params}
+    msg = {"jsonrpc": "2.0", "method": method, "params": params}
     for writer in list(_connected_clients):
         try:
             _write_message(writer, msg)
@@ -189,7 +161,7 @@ async def _handle_get_project_raw_config(
     """Return the resolved raw config for a project by name.
 
     Params: ``{"project": "project_name"}``
-    Result: ``{"raw_config": {...}}``
+    Result: ``{"rawConfig": {...}}``
     """
     params = params or {}
     project_name = params.get("project")
@@ -199,7 +171,7 @@ async def _handle_get_project_raw_config(
     for project_dir_path, project in ws_context.ws_projects.items():
         if project.name == project_name:
             raw_config = ws_context.ws_projects_raw_configs.get(project_dir_path, {})
-            return _NoConvert({"raw_config": raw_config})
+            return {"rawConfig": raw_config}
 
     raise ValueError(f"Project '{project_name}' not found")
 
@@ -213,12 +185,12 @@ async def _handle_find_project_for_file(
     workspace that actually "uses finecode" (i.e. has a valid config).  The
     project is determined purely based on path containment.
 
-    **Params:** ``{"file_path": "/abs/path/to/file"}``
+    **Params:** ``{"filePath": "/abs/path/to/file"}``
     **Result:** ``{"project": "project_name"}`` or ``{"project": null}`` if
     the file does not belong to any suitable project.
     """
 
-    file_path = pathlib.Path(params["file_path"])
+    file_path = pathlib.Path(params["filePath"])
 
     # iterate over known projects in reverse-sorted order so that nested/child
     # projects are considered before their parents.  This mirrors the behaviour
@@ -262,8 +234,8 @@ async def _handle_add_dir(
     from finecode.wm_server.runner.runner_client import RunnerStatus
 
     params = params or {}
-    dir_path = pathlib.Path(params["dir_path"])
-    start_runners: bool = params.get("start_runners", True)
+    dir_path = pathlib.Path(params["dirPath"])
+    start_runners: bool = params.get("startRunners", True)
     projects_filter: set[str] | None = (
         set(params["projects"]) if params.get("projects") else None
     )
@@ -351,7 +323,7 @@ async def _handle_remove_dir(
     """Remove a workspace directory. Stops runners, removes affected projects."""
     from finecode.wm_server.runner import runner_manager
 
-    dir_path = pathlib.Path(params["dir_path"])
+    dir_path = pathlib.Path(params["dirPath"])
     logger.trace(f'Remove ws dir: {dir_path}')
     ws_context.ws_dirs_paths.remove(dir_path)
 
@@ -432,14 +404,14 @@ async def _handle_run_action(
     # Import run_service here to avoid circular imports
     from finecode.wm_server.services import run_service
 
-    result_format_strs: list[str] = options.get("result_formats", ["json"])
+    result_format_strs: list[str] = options.get("resultFormats", ["json"])
     result_formats = [
         run_service.RunResultFormat(fmt)
         for fmt in result_format_strs
         if fmt in ("json", "string")
     ]
     trigger = run_service.RunActionTrigger(options.get("trigger", "unknown"))
-    dev_env = run_service.DevEnv(options.get("dev_env", "cli"))
+    dev_env = run_service.DevEnv(options.get("devEnv", "cli"))
 
     try:
         result = await run_service.run_action(
@@ -453,8 +425,8 @@ async def _handle_run_action(
             initialize_all_handlers=True,
         )
         return {
-            "result_by_format": _NoConvert(result.result_by_format),
-            "return_code": result.return_code,
+            "resultByFormat": result.result_by_format,
+            "returnCode": result.return_code,
         }
     except run_service.ActionRunFailed:
         raise
@@ -474,13 +446,13 @@ async def _handle_actions_reload(
 ) -> dict:
     """Reload an action's handlers in all relevant extension runners.
 
-    Params: ``{"action_node_id": "project_path::action_name"}``
+    Params: ``{"actionNodeId": "project_path::action_name"}``
     Result: ``{}``
     """
     from finecode.wm_server.runner import runner_client
 
     params = params or {}
-    action_node_id = params.get("action_node_id", "")
+    action_node_id = params.get("actionNodeId", "")
     parts = action_node_id.split("::")
     if len(parts) < 2:
         raise ValueError(f"Invalid action_node_id: {action_node_id!r}")
@@ -500,7 +472,7 @@ async def _handle_runners_list(
 ) -> dict:
     """List all extension runners and their status.
 
-    Result: ``{"runners": [{"project_path", "env_name", "status", "readable_id"}]}``
+    Result: ``{"runners": [{"projectPath", "envName", "status", "readableId"}]}``
     """
     from finecode.wm_server.runner import runner_client
 
@@ -508,10 +480,10 @@ async def _handle_runners_list(
     for project_path, runners_by_env in ws_context.ws_projects_extension_runners.items():
         for env_name, runner in runners_by_env.items():
             runners.append({
-                "project_path": str(project_path),
-                "env_name": env_name,
+                "projectPath": str(project_path),
+                "envName": env_name,
                 "status": runner.status.name,
-                "readable_id": runner.readable_id,
+                "readableId": runner.readable_id,
             })
     return {"runners": runners}
 
@@ -521,14 +493,14 @@ async def _handle_runners_restart(
 ) -> dict:
     """Restart a specific extension runner.
 
-    Params: ``{"runner_working_dir": "/abs/path", "env_name": "dev_workspace", "debug": false}``
+    Params: ``{"runnerWorkingDir": "/abs/path", "envName": "dev_workspace", "debug": false}``
     Result: ``{}``
     """
     from finecode.wm_server.runner import runner_manager
 
     params = params or {}
-    runner_working_dir = params.get("runner_working_dir")
-    env_name = params.get("env_name")
+    runner_working_dir = params.get("runnerWorkingDir")
+    env_name = params.get("envName")
     debug = params.get("debug", False)
 
     if not runner_working_dir or not env_name:
@@ -579,17 +551,17 @@ async def _handle_runners_check_env(
 ) -> dict:
     """Check whether an environment is valid for a given project.
 
-    Params: ``{"project": "project_name", "env_name": "dev_workspace"}``
+    Params: ``{"project": "project_name", "envName": "dev_workspace"}``
     Result: ``{"valid": bool}``
     """
     from finecode.wm_server.runner import runner_manager
 
     params = params or {}
     project_name = params.get("project")
-    env_name = params.get("env_name")
+    env_name = params.get("envName")
 
     if not project_name or not env_name:
-        raise ValueError("project and env_name are required")
+        raise ValueError("project and envName are required")
 
     project = next(
         (p for p in ws_context.ws_projects.values() if p.name == project_name), None
@@ -610,17 +582,17 @@ async def _handle_runners_remove_env(
 
     Stops the runner if running, then deletes the environment directory.
 
-    Params: ``{"project": "project_name", "env_name": "dev_workspace"}``
+    Params: ``{"project": "project_name", "envName": "dev_workspace"}``
     Result: ``{}``
     """
     from finecode.wm_server.runner import runner_manager
 
     params = params or {}
     project_name = params.get("project")
-    env_name = params.get("env_name")
+    env_name = params.get("envName")
 
     if not project_name or not env_name:
-        raise ValueError("project and env_name are required")
+        raise ValueError("project and envName are required")
 
     project = next(
         (p for p in ws_context.ws_projects.values() if p.name == project_name), None
@@ -646,9 +618,9 @@ async def _handle_server_get_info(
     Returns static information about the running WM Server instance,
     including the path to its log file.
     """
-    return _NoConvert({
-        "log_file_path": str(_log_file_path) if _log_file_path is not None else None,
-    })
+    return {
+        "logFilePath": str(_log_file_path) if _log_file_path is not None else None,
+    }
 
 
 async def _handle_server_reset(
@@ -784,9 +756,8 @@ async def _handle_run_batch(
         trigger: str - run trigger (default "user")
         dev_env: str - dev environment (default "cli")
 
-    Result: snake_case keys throughout (entire result is protected from camelCase conversion).
-      {"results": {project_path_str: {action_name: {"result_by_format": ..., "return_code": int}}},
-       "return_code": int}
+    Result: {"results": {project_path_str: {action_name: {"resultByFormat": ..., "returnCode": int}}},
+       "returnCode": int}
     """
     from finecode.wm_server.services import run_service
 
@@ -794,18 +765,18 @@ async def _handle_run_batch(
     actions: list[str] = params.get("actions", [])
     project_names: list[str] | None = params.get("projects")
     action_params: dict = params.get("params", {})
-    params_by_project: dict[str, dict] = params.get("params_by_project", {})
+    params_by_project: dict[str, dict] = params.get("paramsByProject", {})
     options: dict = params.get("options", {})
 
     concurrently: bool = options.get("concurrently", False)
-    result_format_strs: list[str] = options.get("result_formats", ["string"])
+    result_format_strs: list[str] = options.get("resultFormats", ["string"])
     result_formats = [
         run_service.RunResultFormat(fmt)
         for fmt in result_format_strs
         if fmt in ("json", "string")
     ]
     trigger = run_service.RunActionTrigger(options.get("trigger", "user"))
-    dev_env = run_service.DevEnv(options.get("dev_env", "cli"))
+    dev_env = run_service.DevEnv(options.get("devEnv", "cli"))
 
     if not actions:
         raise ValueError("actions list is required and must be non-empty")
@@ -848,18 +819,15 @@ async def _handle_run_batch(
         for action_name, response in actions_result.items():
             overall_return_code |= response.return_code
             project_results[action_name] = {
-                "result_by_format": response.result_by_format,
-                "return_code": response.return_code,
+                "resultByFormat": response.result_by_format,
+                "returnCode": response.return_code,
             }
         results[str(project_path)] = project_results
 
-    # Protect the entire result from camelCase conversion: action names like
-    # "check_formatting" must not become "checkFormatting", and nested keys
-    # (result_by_format, return_code) must stay snake_case for the CLI client.
-    return _NoConvert({
+    return {
         "results": results,
-        "return_code": overall_return_code,
-    })
+        "returnCode": overall_return_code,
+    }
 
 
 # -- helpers ---------------------------------------------------------------
@@ -871,8 +839,7 @@ def _notify_client(writer: asyncio.StreamWriter, method: str, params: dict) -> N
     which is useful for streaming partial results back to the request originator
     without broadcasting to every connected client.
     """
-    camel_params = _convert_to_camel_case(params)
-    msg = {"jsonrpc": "2.0", "method": method, "params": camel_params}
+    msg = {"jsonrpc": "2.0", "method": method, "params": params}
     try:
         _write_message(writer, msg)
     except Exception:
@@ -896,7 +863,7 @@ async def _handle_run_with_partial_results(
     if params is None:
         raise ValueError("params required")
     action_name = params.get("action")
-    token = params.get("partial_result_token")
+    token = params.get("partialResultToken")
     if not action_name or token is None:
         raise ValueError("action and partial_result_token are required")
     project_name = params.get("project", "")
@@ -905,8 +872,8 @@ async def _handle_run_with_partial_results(
     from finecode.wm_server.services import run_service, partial_results_service
 
     trigger = run_service.RunActionTrigger(options.get("trigger", "system"))
-    dev_env = run_service.DevEnv(options.get("dev_env", "ide"))
-    result_formats = options.get("result_formats", ["json"])
+    dev_env = run_service.DevEnv(options.get("devEnv", "ide"))
+    result_formats = options.get("resultFormats", ["json"])
 
     logger.trace(f"runWithPartialResults: action={action_name} project={project_name!r} token={token} formats={result_formats}")
 
@@ -925,23 +892,15 @@ async def _handle_run_with_partial_results(
     async for value in stream:
         partial_count += 1
         logger.trace(f"runWithPartialResults: sending partial #{partial_count} for token={token}, keys={list(value.keys()) if isinstance(value, dict) else type(value)}")
-        # Wrap the per-format action data to prevent camelCase conversion of result content.
-        protected_value = dict(value)
-        if "result_by_format" in protected_value:
-            protected_value["result_by_format"] = _NoConvert(protected_value["result_by_format"])
         _notify_client(
             writer,
             "actions/partialResult",
-            {"token": token, "value": protected_value},
+            {"token": token, "value": value},
         )
         await writer.drain()
 
     final = await stream.final_result()
     logger.trace(f"runWithPartialResults: done, sent {partial_count} partials, final keys={list(final.keys()) if isinstance(final, dict) else type(final)}")
-    # Protect action result data from camelCase conversion.
-    if "result_by_format" in final:
-        final = dict(final)
-        final["result_by_format"] = _NoConvert(final["result_by_format"])
     return final
 
 

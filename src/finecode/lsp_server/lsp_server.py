@@ -124,6 +124,9 @@ def create_lsp_server() -> CustomLanguageServer:
     register_list_projects_cmd = server.command("finecode.listProjects")
     register_list_projects_cmd(action_tree_endpoints.list_projects)
 
+    register_run_batch_cmd = server.command("finecode.runBatch")
+    register_run_batch_cmd(action_tree_endpoints.run_batch)
+
     register_run_action_cmd = server.command("finecode.runAction")
     register_run_action_cmd(action_tree_endpoints.run_action)
 
@@ -233,7 +236,7 @@ async def _on_initialized(ls: LanguageServer, params: types.InitializedParams):
 
     try:
         info = await global_state.wm_client.get_info()
-        log_path = info.get("log_file_path")
+        log_path = info.get("logFilePath")
         if log_path:
             ls.window_log_message(
                 types.LogMessageParams(
@@ -412,7 +415,7 @@ async def restart_extension_runner(ls: LanguageServer, tree_node, param2):
 
     await global_state.wm_client.request(
         "runners/restart",
-        {"runner_working_dir": runner_working_dir_str, "env_name": env_name},
+        {"runnerWorkingDir": runner_working_dir_str, "envName": env_name},
     )
 
 
@@ -431,7 +434,7 @@ async def restart_and_debug_extension_runner(ls: LanguageServer, tree_node, para
 
     await global_state.wm_client.request(
         "runners/restart",
-        {"runner_working_dir": runner_working_dir_str, "env_name": env_name, "debug": True},
+        {"runnerWorkingDir": runner_working_dir_str, "envName": env_name, "debug": True},
     )
 
 

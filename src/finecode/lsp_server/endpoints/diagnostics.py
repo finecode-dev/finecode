@@ -83,7 +83,7 @@ async def document_diagnostic_with_full_result(
                 "target": "files",
                 "file_paths": [str(file_path)],
             },
-            options={"trigger": "system", "dev_env": "ide"},
+            options={"trigger": "system", "devEnv": "ide"},
         )
     except Exception as error:  # catching any runtime error from client
         # don't throw error because vscode after a few sequential errors will stop
@@ -158,7 +158,7 @@ async def document_diagnostic_with_partial_results(
                 "project": project_name,
                 "params": {"file_paths": [str(file_path)]},
                 "partial_result_token": partial_result_token,
-                "options": {"result_formats": ["json"], "trigger": "system", "dev_env": "ide"},
+                "options": {"resultFormats": ["json"], "trigger": "system", "devEnv": "ide"},
             },
         )
     except Exception as error:
@@ -222,7 +222,7 @@ async def run_workspace_diagnostic_with_partial_results(
                 "project": "",  # empty project = all relevant projects
                 "params": {"target": "project"},
                 "partial_result_token": partial_result_token,
-                "options": {"result_formats": ["json"], "trigger": "system", "dev_env": "ide"},
+                "options": {"resultFormats": ["json"], "trigger": "system", "devEnv": "ide"},
             },
         )
     except Exception as error:
@@ -257,7 +257,7 @@ async def workspace_diagnostic_with_full_result() -> types.WorkspaceDiagnosticRe
             action="lint",
             project="",  # empty project = all relevant projects
             params={"target": "project"},
-            options={"trigger": "system", "dev_env": "ide"},
+            options={"trigger": "system", "devEnv": "ide"},
         )
     except Exception as error:
         logger.error(f"Error in workspace diagnostic: {error}")

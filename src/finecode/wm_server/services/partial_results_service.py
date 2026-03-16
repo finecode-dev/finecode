@@ -128,7 +128,7 @@ async def run_action_with_partial_results(
                 result_by_format: dict[str, domain.PartialResultRawValue] = {}
                 if "json" in requested_formats:
                     result_by_format["json"] = value
-                stream.put({"result_by_format": result_by_format})
+                stream.put({"resultByFormat": result_by_format})
             logger.trace(f"partial_results: partial iteration done for project={project.name}, got {partial_count} partials")
 
         # Responses collected by the context manager from runner tasks
@@ -146,7 +146,7 @@ async def run_action_with_partial_results(
                 if "json" in requested_formats:
                     result_by_format["json"] = json_result
                 logger.trace(f"partial_results: no partials received for project={project.name}, emitting final result as partial")
-                stream.put({"result_by_format": result_by_format})
+                stream.put({"resultByFormat": result_by_format})
 
         # Collect a runner from this project to use for cross-project result merging.
         action = next((a for a in project.actions if a.name == action_name), None)
@@ -168,5 +168,5 @@ async def run_action_with_partial_results(
     final_result_by_format: dict[str, dict] = {}
     if "json" in requested_formats:
         final_result_by_format["json"] = aggregated
-    stream.set_final({"result_by_format": final_result_by_format, "return_code": max(return_codes) if return_codes else 0})
+    stream.set_final({"resultByFormat": final_result_by_format, "returnCode": max(return_codes) if return_codes else 0})
     return stream

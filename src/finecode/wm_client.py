@@ -88,7 +88,7 @@ class ApiClient:
         logger.info(f"Connected to FineCode API at {host}:{port}")
         try:
             info = await self.get_info()
-            log_path = info.get("log_file_path")
+            log_path = info.get("logFilePath")
             if log_path:
                 logger.info(f"WM Server log file: {log_path}")
             else:
@@ -147,7 +147,7 @@ class ApiClient:
         ``workspace/findProjectForFile`` handler.
         """
         result = await self.request(
-            "workspace/findProjectForFile", {"file_path": file_path}
+            "workspace/findProjectForFile", {"filePath": file_path}
         )
         # server returns {"project": name | None}
         if not isinstance(result, dict):
@@ -161,12 +161,12 @@ class ApiClient:
         result = await self.request(
             "workspace/getProjectRawConfig", {"project": project}
         )
-        if not isinstance(result, dict) or "raw_config" not in result:
+        if not isinstance(result, dict) or "rawConfig" not in result:
             raise ApiResponseError(
                 "workspace/getProjectRawConfig",
-                f"missing 'raw_config' field, got {result!r}",
+                f"missing 'rawConfig' field, got {result!r}",
             )
-        return result["raw_config"]
+        return result["rawConfig"]
 
     async def list_actions(self, project: str | None = None) -> list[dict]:
         """List available actions, optionally filtered by project name."""
@@ -221,7 +221,7 @@ class ApiClient:
         """Run multiple actions across multiple (or all) projects.
 
         Results are keyed by project path string, then action name.
-        All result keys use snake_case (return_code, result_by_format).
+        All result keys use camelCase (returnCode, resultByFormat).
         """
         body: dict = {"actions": actions}
         if projects is not None:
@@ -229,7 +229,7 @@ class ApiClient:
         if params:
             body["params"] = params
         if params_by_project:
-            body["params_by_project"] = params_by_project
+            body["paramsByProject"] = params_by_project
         if options:
             body["options"] = options
         return await self.request("actions/runBatch", body)
@@ -268,7 +268,7 @@ class ApiClient:
         but not initialised.  Only use this in own-server mode where the server
         lifetime matches a single CLI invocation.
         """
-        body: dict = {"dir_path": str(dir_path), "start_runners": start_runners}
+        body: dict = {"dirPath": str(dir_path), "startRunners": start_runners}
         if projects is not None:
             body["projects"] = projects
         return await self.request("workspace/addDir", body)
@@ -287,7 +287,7 @@ class ApiClient:
     async def check_env(self, project: str, env_name: str) -> bool:
         """Return whether the named environment is valid for a project."""
         result = await self.request(
-            "runners/checkEnv", {"project": project, "env_name": env_name}
+            "runners/checkEnv", {"project": project, "envName": env_name}
         )
         if not isinstance(result, dict) or "valid" not in result:
             raise ApiResponseError(
@@ -298,12 +298,12 @@ class ApiClient:
     async def remove_env(self, project: str, env_name: str) -> None:
         """Remove the named environment for a project."""
         await self.request(
-            "runners/removeEnv", {"project": project, "env_name": env_name}
+            "runners/removeEnv", {"project": project, "envName": env_name}
         )
 
     async def remove_dir(self, dir_path: pathlib.Path) -> None:
         """Remove a workspace directory."""
-        await self.request("workspace/removeDir", {"dir_path": str(dir_path)})
+        await self.request("workspace/removeDir", {"dirPath": str(dir_path)})
 
     # -- Document notifications -------------------------------------------------
 

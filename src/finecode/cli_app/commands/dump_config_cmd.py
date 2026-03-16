@@ -54,9 +54,9 @@ async def dump_config(
                         "target_file_path": str(target_file_path),
                     },
                     options={
-                        "result_formats": ["string"],
+                        "resultFormats": ["string"],
                         "trigger": "user",
-                        "dev_env": dev_env,
+                        "devEnv": dev_env,
                     },
                 )
             except ApiError as exc:

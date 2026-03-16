@@ -513,8 +513,8 @@ async def run_action(
     result_str = json.dumps(converted_result_by_format, cls=CustomJSONEncoder)
     return {
         "status": status,
-        "result_by_format": result_str,
-        "return_code": response.return_code,
+        "resultByFormat": result_str,
+        "returnCode": response.return_code,
     }
 
 
