@@ -33,7 +33,7 @@ def _register_action_tools(mcp: FastMCP, actions: list[dict]) -> None:
 
         def _make_handler(action_name: str):
             async def handler(
-                project: str,
+                project: str,  # absolute path to the project directory (e.g. /home/user/myrepo)
                 file_paths: list[str] | None = None,
             ) -> dict:
                 return await _wm_client.run_action(

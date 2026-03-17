@@ -54,7 +54,7 @@ async def read_projects_in_dir(
         is_new_project = def_file.parent not in ws_context.ws_projects
         if is_new_project:
             new_project = domain.Project(
-                name=def_file.parent.name,
+                name=project_def.get("project", {}).get("name", def_file.parent.name),
                 dir_path=def_file.parent,
                 def_path=def_file,
                 status=status,

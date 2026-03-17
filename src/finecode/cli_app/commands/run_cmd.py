@@ -56,10 +56,21 @@ async def run_actions(
                         "Warning: --config overrides are ignored in --shared-server mode. ",
                         err=True,
                     )
-            await client.add_dir(
-                workdir_path,
-                projects=projects_names if own_server else None,
-            )
+            await client.add_dir(workdir_path)
+
+            # Resolve project names (CLI option) to paths (canonical API identifier).
+            project_paths: list[str] | None = None
+            if projects_names is not None:
+                all_projects = await client.list_projects()
+                unknown = [
+                    n for n in projects_names
+                    if not any(p["name"] == n for p in all_projects)
+                ]
+                if unknown:
+                    raise RunFailed(f"Unknown project(s): {unknown}")
+                project_paths = [
+                    p["path"] for p in all_projects if p["name"] in projects_names
+                ]
 
             params_by_project: dict[str, dict[str, typing.Any]] = {}
             if map_payload_fields:
@@ -73,7 +84,7 @@ async def run_actions(
             try:
                 batch_result = await client.run_batch(
                     actions=actions,
-                    projects=projects_names,
+                    projects=project_paths,
                     params=action_payload,
                     params_by_project=params_by_project or None,
                     options={

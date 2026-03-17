@@ -31,7 +31,7 @@ async def dump_config(
         client = ApiClient()
         await client.connect("127.0.0.1", port)
         try:
-            result = await client.add_dir(workdir_path, projects=[project_name])
+            result = await client.add_dir(workdir_path)
             projects = result.get("projects", [])
             project = next(
                 (p for p in projects if p["name"] == project_name), None
@@ -39,15 +39,16 @@ async def dump_config(
             if project is None:
                 raise DumpFailed(f"Project '{project_name}' not found")
 
-            project_dir_path = pathlib.Path(project["path"])
+            project_path = project["path"]
+            project_dir_path = pathlib.Path(project_path)
             source_file_path = project_dir_path / "pyproject.toml"
             target_file_path = project_dir_path / "finecode_config_dump" / "pyproject.toml"
 
             try:
-                project_raw_config = await client.get_project_raw_config(project_name)
+                project_raw_config = await client.get_project_raw_config(project_path)
                 await client.run_action(
                     action="dump_config",
-                    project=project_name,
+                    project=project_path,
                     params={
                         "source_file_path": str(source_file_path),
                         "project_raw_config": project_raw_config,

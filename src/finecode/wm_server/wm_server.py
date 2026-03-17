@@ -145,6 +145,13 @@ def _project_to_dict(project: domain.Project) -> dict:
     }
 
 
+def _find_project_by_path(
+    ws_context: context.WorkspaceContext, project_path: str
+) -> domain.Project | None:
+    """Look up a project by its absolute directory path (canonical external identifier)."""
+    return ws_context.ws_projects.get(pathlib.Path(project_path))
+
+
 # -- Implemented handlers --------------------------------------------------
 
 
@@ -158,22 +165,22 @@ async def _handle_list_projects(
 async def _handle_get_project_raw_config(
     params: dict | None, ws_context: context.WorkspaceContext
 ) -> dict:
-    """Return the resolved raw config for a project by name.
+    """Return the resolved raw config for a project by path.
 
-    Params: ``{"project": "project_name"}``
+    Params: ``{"project": "/abs/path/to/project"}``
     Result: ``{"rawConfig": {...}}``
     """
     params = params or {}
-    project_name = params.get("project")
-    if not project_name:
+    project_path = params.get("project")
+    if not project_path:
         raise ValueError("project parameter is required")
 
-    for project_dir_path, project in ws_context.ws_projects.items():
-        if project.name == project_name:
-            raw_config = ws_context.ws_projects_raw_configs.get(project_dir_path, {})
-            return {"rawConfig": raw_config}
+    project = _find_project_by_path(ws_context, project_path)
+    if project is None:
+        raise ValueError(f"Project '{project_path}' not found")
 
-    raise ValueError(f"Project '{project_name}' not found")
+    raw_config = ws_context.ws_projects_raw_configs.get(project.dir_path, {})
+    return {"rawConfig": raw_config}
 
 
 async def _handle_find_project_for_file(
@@ -223,7 +230,7 @@ async def _handle_add_dir(
         When false, configs are read and actions collected without starting any
         runners. Useful when runner environments may not exist yet (e.g. before
         running prepare-envs).
-      projects: list[str] | null - optional list of project names to initialize.
+      projects: list[str] | null - optional list of project paths (absolute) to initialize.
         Projects not in this list are discovered but not config-initialized or
         started. Omit (or pass null) to initialize all projects.
         Calling add_dir again for the same dir with a different filter (or no
@@ -257,7 +264,7 @@ async def _handle_add_dir(
     ]
 
     if projects_filter is not None:
-        projects_to_init = [p for p in projects_to_init if p.name in projects_filter]
+        projects_to_init = [p for p in projects_to_init if str(p.dir_path) in projects_filter]
 
     for project in projects_to_init:
         await read_configs.read_project_config(
@@ -350,11 +357,11 @@ async def _handle_remove_dir(
 async def _handle_list_actions(
     params: dict | None, ws_context: context.WorkspaceContext
 ) -> dict:
-    """List available actions, optionally filtered by project name."""
+    """List available actions, optionally filtered by project path."""
     project_filter = (params or {}).get("project")
     actions = []
     for project in ws_context.ws_projects.values():
-        if project_filter and project.name != project_filter:
+        if project_filter and str(project.dir_path) != project_filter:
             continue
         if not isinstance(project, domain.CollectedProject):
             continue
@@ -362,7 +369,7 @@ async def _handle_list_actions(
             actions.append({
                 "name": action.name,
                 "source": action.source,
-                "project": project.name,
+                "project": str(project.dir_path),
                 "handlers": [
                     {"name": h.name, "source": h.source, "env": h.env}
                     for h in action.handlers
@@ -386,12 +393,8 @@ async def _handle_run_action(
     if not project_name:
         raise ValueError("project parameter is required")
 
-    # Find the project
-    project = None
-    for proj in ws_context.ws_projects.values():
-        if proj.name == project_name:
-            project = proj
-            break
+    # Find the project by its absolute directory path (canonical external identifier)
+    project = _find_project_by_path(ws_context, project_name)
 
     if project is None:
         raise ValueError(f"Project '{project_name}' not found")
@@ -533,7 +536,7 @@ async def _handle_start_runners(
 
     projects = list(ws_context.ws_projects.values())
     if project_names is not None:
-        projects = [p for p in projects if p.name in project_names]
+        projects = [p for p in projects if str(p.dir_path) in project_names]
 
     try:
         await runner_manager.start_runners_with_presets(
@@ -551,7 +554,7 @@ async def _handle_runners_check_env(
 ) -> dict:
     """Check whether an environment is valid for a given project.
 
-    Params: ``{"project": "project_name", "envName": "dev_workspace"}``
+    Params: ``{"project": "/abs/path/to/project", "envName": "dev_workspace"}``
     Result: ``{"valid": bool}``
     """
     from finecode.wm_server.runner import runner_manager
@@ -563,9 +566,7 @@ async def _handle_runners_check_env(
     if not project_name or not env_name:
         raise ValueError("project and envName are required")
 
-    project = next(
-        (p for p in ws_context.ws_projects.values() if p.name == project_name), None
-    )
+    project = _find_project_by_path(ws_context, project_name)
     if project is None:
         raise ValueError(f"Project '{project_name}' not found")
 
@@ -582,7 +583,7 @@ async def _handle_runners_remove_env(
 
     Stops the runner if running, then deletes the environment directory.
 
-    Params: ``{"project": "project_name", "envName": "dev_workspace"}``
+    Params: ``{"project": "/abs/path/to/project", "envName": "dev_workspace"}``
     Result: ``{}``
     """
     from finecode.wm_server.runner import runner_manager
@@ -594,9 +595,7 @@ async def _handle_runners_remove_env(
     if not project_name or not env_name:
         raise ValueError("project and envName are required")
 
-    project = next(
-        (p for p in ws_context.ws_projects.values() if p.name == project_name), None
-    )
+    project = _find_project_by_path(ws_context, project_name)
     if project is None:
         raise ValueError(f"Project '{project_name}' not found")
 
@@ -747,7 +746,7 @@ async def _handle_run_batch(
 
     Params:
       actions: list[str] - action names to run
-      projects: list[str] | None - project names to filter; absent/null means all projects
+      projects: list[str] | None - project paths (absolute) to filter; absent/null means all projects
       params: dict - action payload shared across all projects
       params_by_project: dict[str, dict] - per-project payload overrides keyed by project path string
       options:
@@ -786,13 +785,10 @@ async def _handle_run_batch(
     # Build actions_by_project (path -> [action_names])
     if project_names is not None:
         actions_by_project: dict[pathlib.Path, list[str]] = {}
-        for project_name in project_names:
-            project = next(
-                (p for p in ws_context.ws_projects.values() if p.name == project_name),
-                None,
-            )
+        for project_path_str in project_names:
+            project = _find_project_by_path(ws_context, project_path_str)
             if project is None:
-                raise ValueError(f"Project '{project_name}' not found")
+                raise ValueError(f"Project '{project_path_str}' not found")
             actions_by_project[project.dir_path] = list(actions)
     else:
         actions_by_project = run_service.find_projects_with_actions(ws_context, actions)

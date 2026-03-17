@@ -52,7 +52,7 @@ python -m finecode run [options] <action> [<action> ...] [payload] [--config.<ke
 | Option | Description |
 |---|---|
 | `--workdir=<path>` | Use `<path>` as the workspace root instead of `cwd` |
-| `--project=<name>` | Run only in this project. Repeatable for multiple projects. |
+| `--project=<name>` | Run only in this project (matched by `[project].name` from `pyproject.toml`). Repeatable for multiple projects. |
 | `--concurrently` | Run actions concurrently within each project |
 | `--shared-server` | Connect to the shared persistent WM Server instead of starting a dedicated one |
 | `--log-level=<level>` | Set log level: `TRACE`, `DEBUG`, `INFO`, `WARNING`, `ERROR` (default: `INFO`) |
@@ -127,7 +127,7 @@ See [Preparing Environments](guides/preparing-environments.md) for a full explan
 |---|---|
 | `--recreate` | Delete and recreate all venvs from scratch |
 | `--env-names=<name>` | Restrict handler dependency installation to the named env(s). Repeatable. See note below. |
-| `--project=<name>` | Restrict preparation to the named project(s). Repeatable. |
+| `--project=<name>` | Restrict preparation to the named project(s) (matched by `[project].name` from `pyproject.toml`). Repeatable. |
 | `--log-level=<level>` | Set log level: `TRACE`, `DEBUG`, `INFO`, `WARNING`, `ERROR` (default: `INFO`) |
 | `--debug` | Wait for a debugpy client on port 5680 before starting |
 | `--dev-env=<env>` | Override the detected dev environment. One of: `ai`, `ci`, `cli`, `ide`, `precommit` (default: auto-detected) |
@@ -149,7 +149,7 @@ Output is written to `<cwd>/finecode_config_dump/`.
 
 | Option | Description |
 |---|---|
-| `--project=<name>` | **(Required)** Project to dump config for |
+| `--project=<name>` | **(Required)** Project to dump config for (matched by `[project].name` from `pyproject.toml`) |
 | `--log-level=<level>` | Set log level: `TRACE`, `DEBUG`, `INFO`, `WARNING`, `ERROR` (default: `INFO`) |
 | `--debug` | Wait for a debugpy client on port 5680 |
 | `--dev-env=<env>` | Override the detected dev environment. One of: `ai`, `ci`, `cli`, `ide`, `precommit` (default: auto-detected) |

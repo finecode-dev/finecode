@@ -106,6 +106,7 @@ async def _run(
         if p["path"] != workdir_str and p["status"] == "CONFIG_VALID"
     ]
 
+    project_paths: list[str] | None = None
     if project_names is not None:
         unknown = [
             n for n in project_names if not any(p["name"] == n for p in projects)
@@ -113,6 +114,8 @@ async def _run(
         if unknown:
             raise PrepareEnvsFailed(f"Unknown project(s): {unknown}")
         other_projects = [p for p in other_projects if p["name"] in project_names]
+        # Resolve names to paths for all subsequent API calls (canonical identifier)
+        project_paths = [p["path"] for p in projects if p["name"] in project_names]
 
     logger.info(f"Found {len(projects)} project(s): {[p['name'] for p in projects]}")
 
@@ -123,14 +126,14 @@ async def _run(
         if recreate:
             logger.trace(f"Recreate env 'dev_workspace' in project '{project['name']}'")
             try:
-                await client.remove_env(project["name"], "dev_workspace")
+                await client.remove_env(project["path"], "dev_workspace")
             except ApiError as exc:
                 raise PrepareEnvsFailed(
                     f"Failed to remove env for '{project['name']}': {exc}"
                 ) from exc
         else:
             try:
-                valid = await client.check_env(project["name"], "dev_workspace")
+                valid = await client.check_env(project["path"], "dev_workspace")
             except ApiError as exc:
                 raise PrepareEnvsFailed(
                     f"Failed to check env for '{project['name']}': {exc}"
@@ -141,7 +144,7 @@ async def _run(
                     f"invalid, recreating it"
                 )
                 try:
-                    await client.remove_env(project["name"], "dev_workspace")
+                    await client.remove_env(project["path"], "dev_workspace")
                 except ApiError as exc:
                     raise PrepareEnvsFailed(
                         f"Failed to remove invalid env for '{project['name']}': {exc}"
@@ -174,7 +177,7 @@ async def _run(
     try:
         create_dw_result = await client.run_action(
             action="create_envs",
-            project=current_project["name"],
+            project=current_project["path"],
             # 'recreate' is handled for dev_workspace envs above, no need to pass here
             params={"envs": dw_envs},
             options=dw_options,
@@ -192,7 +195,7 @@ async def _run(
     try:
         prepare_dw_result = await client.run_action(
             action="prepare_handler_envs",
-            project=current_project["name"],
+            project=current_project["path"],
             params={"envs": dw_envs},
             options=dw_options,
         )
@@ -228,7 +231,7 @@ async def _run(
     try:
         create_result = await client.run_batch(
             actions=["create_envs"],
-            projects=project_names,
+            projects=project_paths,
             options=common_options,
         )
     except ApiError as exc:
@@ -239,7 +242,7 @@ async def _run(
     try:
         runners_result = await client.run_batch(
             actions=["prepare_runner_envs"],
-            projects=project_names,
+            projects=project_paths,
             options=common_options,
         )
     except ApiError as exc:
@@ -251,7 +254,7 @@ async def _run(
     try:
         batch_result = await client.run_batch(
             actions=["prepare_handler_envs"],
-            projects=project_names,
+            projects=project_paths,
             params=handler_params,
             options=common_options,
         )
