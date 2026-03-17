@@ -253,7 +253,7 @@ async def notify_document_did_open(
                 uri=document_info.uri,
                 language_id="",
                 version=int(document_info.version),
-                text="",
+                text=document_info.text,
             )
         ),
     )

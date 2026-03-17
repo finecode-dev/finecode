@@ -1,9 +1,8 @@
-from loguru import logger
-from pygls.lsp.server import LanguageServer
-
 from finecode import user_messages
 from finecode.lsp_server import global_state, schemas
 from finecode.lsp_server.services import ActionNotFound, InternalError
+from loguru import logger
+from pygls.lsp.server import LanguageServer
 
 
 async def list_actions(ls: LanguageServer, params):
@@ -97,7 +96,9 @@ async def list_projects(ls: LanguageServer):
 
 
 async def run_batch(ls: LanguageServer, params):
-    logger.info(f"run_batch actions={params.get('actions')} options={params.get('options')}")
+    logger.info(
+        f"run_batch actions={params.get('actions')} options={params.get('options')}"
+    )
     await global_state.server_initialized.wait()
 
     if global_state.wm_client is None:
@@ -112,7 +113,9 @@ async def run_batch(ls: LanguageServer, params):
             params_by_project=params.get("paramsByProject"),
             options=params.get("options", {"trigger": "user", "devEnv": "ide"}),
         )
-        logger.info(f"run_batch done, projects={list(result.get('results', {}).keys())}")
+        logger.info(
+            f"run_batch done, projects={list(result.get('results', {}).keys())}"
+        )
         return result
     except Exception:
         logger.exception("run_batch: WM request failed")
@@ -200,7 +203,7 @@ async def reload_action(ls: LanguageServer, params):
 #                 project_path=project.dir_path,
 #                 action_name=action.name,
 #             )
-        
+
 #         node_id = f"{project.dir_path.as_posix()}::actions"
 #         actions_nodes.append(
 #             schemas.ActionTreeNode(
@@ -211,7 +214,7 @@ async def reload_action(ls: LanguageServer, params):
 #                 status="",
 #             )
 #         )
-        
+
 #         envs_nodes: list[schemas.ActionTreeNode] = []
 #         for env in project.envs:
 #             node_id = f"{project.dir_path.as_posix()}::envs::{env}"
@@ -224,7 +227,7 @@ async def reload_action(ls: LanguageServer, params):
 #                     status="",
 #                 )
 #             )
-        
+
 #         node_id = f"{project.dir_path.as_posix()}::envs"
 #         actions_nodes.append(
 #             schemas.ActionTreeNode(

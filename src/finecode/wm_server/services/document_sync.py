@@ -11,6 +11,7 @@ import pathlib
 from loguru import logger
 
 from finecode.wm_server import context, domain
+from finecode.wm_server.services import text_utils
 
 
 async def handle_documents_opened(
@@ -24,6 +25,7 @@ async def handle_documents_opened(
 
     uri = params.get("uri")
     version = params.get("version")
+    text = params.get("text", "")
     if not uri:
         return
 
@@ -35,7 +37,8 @@ async def handle_documents_opened(
         and file_path.is_relative_to(project_path)
     ]
 
-    document_info = domain.TextDocumentInfo(uri=uri, version=str(version or ""))
+    document_info = domain.TextDocumentInfo(uri=uri, version=str(version or ""), text=text)
+    ws_context.opened_documents[uri] = document_info
     try:
         async with asyncio.TaskGroup() as tg:
             for project_path in projects_paths:
@@ -67,6 +70,8 @@ async def handle_documents_closed(
     uri = params.get("uri")
     if not uri:
         return
+
+    ws_context.opened_documents.pop(uri, None)
 
     file_path = pathlib.Path(uri.replace("file://", ""))
     projects_paths = [
@@ -154,6 +159,12 @@ async def handle_documents_changed(
         ),
         content_changes=mapped_changes,
     )
+
+    # Keep the content cache current so runner restarts get the latest state.
+    cached = ws_context.opened_documents.get(uri)
+    if cached is not None:
+        cached.text = text_utils.apply_text_changes(cached.text, mapped_changes)
+        cached.version = str(version)
 
     try:
         async with asyncio.TaskGroup() as tg:

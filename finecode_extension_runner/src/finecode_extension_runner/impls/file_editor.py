@@ -231,8 +231,6 @@ class FileEditorSession(ifileeditor.IFileEditorSession):
             new_file_content = FileEditorSession.apply_change_to_file_content(
                 change=change, file_content=file_content
             )
-            self.logger.info(str(change))
-            self.logger.info(f"||{file_content}||{new_file_content}||")
             self._update_opened_file_info(
                 file_path=file_path, new_file_content=new_file_content
             )

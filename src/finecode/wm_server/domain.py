@@ -275,9 +275,10 @@ class ExtensionRunner:
 
 
 class TextDocumentInfo:
-    def __init__(self, uri: str, version: str | int) -> None:
+    def __init__(self, uri: str, version: str | int, text: str = "") -> None:
         self.uri = uri
         self.version = version
+        self.text = text
 
     def __str__(self) -> str:
         return f'TextDocumentInfo(uri="{self.uri}", version="{self.version}")'

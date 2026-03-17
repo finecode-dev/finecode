@@ -15,7 +15,9 @@ async def document_did_open(
         raise Exception("WM server not connected")
 
     await global_state.wm_client.notify_document_opened(
-        uri=params.text_document.uri, version=params.text_document.version
+        uri=params.text_document.uri,
+        version=params.text_document.version,
+        text=params.text_document.text,
     )
 
 

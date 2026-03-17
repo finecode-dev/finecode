@@ -308,10 +308,10 @@ class ApiClient:
     # -- Document notifications -------------------------------------------------
 
     async def notify_document_opened(
-        self, uri: str, version: int | str | None = None
+        self, uri: str, version: int | str | None = None, text: str = ""
     ) -> None:
         """Send document opened notification to the server."""
-        params = {"uri": uri}
+        params = {"uri": uri, "text": text}
         if version is not None:
             params["version"] = version
 
