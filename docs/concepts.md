@@ -105,7 +105,7 @@ A **Source Artifact** is a unit of source code that build/publish-style actions 
 
 When a source artifact includes FineCode configuration — a `pyproject.toml` with a `[tool.finecode]` section — the Workspace Manager discovers it automatically under the workspace roots provided by the client. Some CLI flags and protocol fields still use the word “project” for compatibility.
 
-### Soruce Artifact identification
+### Source Artifact identification
 
 The canonical external identifier for a source artifact is its **absolute directory path** (e.g. `/home/user/myrepo/my_package`). This is always unique, language-agnostic, and is what `list_projects` returns in the `path` field. All WM API consumers (LSP, MCP, JSON-RPC) use paths.
 
