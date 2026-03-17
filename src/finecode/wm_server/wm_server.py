@@ -781,6 +781,8 @@ async def _handle_run_batch(
     if not actions:
         raise ValueError("actions list is required and must be non-empty")
 
+    logger.debug(f"runBatch: actions={actions} projects={project_names} formats={result_format_strs}")
+
     # Build actions_by_project (path -> [action_names])
     if project_names is not None:
         actions_by_project: dict[pathlib.Path, list[str]] = {}
@@ -795,6 +797,17 @@ async def _handle_run_batch(
     else:
         actions_by_project = run_service.find_projects_with_actions(ws_context, actions)
         if not actions_by_project:
+            all_projects = list(ws_context.ws_projects.keys())
+            projects_with_actions = {
+                str(p): [a.name for a in proj.actions]
+                for p, proj in ws_context.ws_projects.items()
+                if hasattr(proj, "actions") and proj.actions
+            }
+            logger.warning(
+                f"runBatch: no projects found with actions={actions}. "
+                f"Known projects: {[str(p) for p in all_projects]}. "
+                f"Actions per project: {projects_with_actions}"
+            )
             raise ValueError(f"No projects found with actions: {actions}")
 
     await run_service.start_required_environments(
@@ -824,6 +837,7 @@ async def _handle_run_batch(
             }
         results[str(project_path)] = project_results
 
+    logger.debug(f"runBatch: done, projects_count={len(results)} returnCode={overall_return_code}")
     return {
         "results": results,
         "returnCode": overall_return_code,

@@ -157,7 +157,7 @@ async def document_diagnostic_with_partial_results(
                 "action": "lint",
                 "project": project_name,
                 "params": {"file_paths": [str(file_path)]},
-                "partial_result_token": partial_result_token,
+                "partialResultToken": partial_result_token,
                 "options": {"resultFormats": ["json"], "trigger": "system", "devEnv": "ide"},
             },
         )
@@ -221,7 +221,7 @@ async def run_workspace_diagnostic_with_partial_results(
                 "action": "lint",
                 "project": "",  # empty project = all relevant projects
                 "params": {"target": "project"},
-                "partial_result_token": partial_result_token,
+                "partialResultToken": partial_result_token,
                 "options": {"resultFormats": ["json"], "trigger": "system", "devEnv": "ide"},
             },
         )

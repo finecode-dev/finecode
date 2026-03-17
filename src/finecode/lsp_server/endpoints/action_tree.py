@@ -97,19 +97,26 @@ async def list_projects(ls: LanguageServer):
 
 
 async def run_batch(ls: LanguageServer, params):
-    logger.info(f"run_batch {params}")
+    logger.info(f"run_batch actions={params.get('actions')} options={params.get('options')}")
     await global_state.server_initialized.wait()
 
     if global_state.wm_client is None:
-        raise Exception()
+        logger.error("run_batch: wm_client is None")
+        raise Exception("WM client not available")
 
-    return await global_state.wm_client.run_batch(
-        actions=params["actions"],
-        projects=params.get("projects"),
-        params=params.get("params"),
-        params_by_project=params.get("paramsByProject"),
-        options=params.get("options", {"trigger": "user", "devEnv": "ide"}),
-    )
+    try:
+        result = await global_state.wm_client.run_batch(
+            actions=params["actions"],
+            projects=params.get("projects"),
+            params=params.get("params"),
+            params_by_project=params.get("paramsByProject"),
+            options=params.get("options", {"trigger": "user", "devEnv": "ide"}),
+        )
+        logger.info(f"run_batch done, projects={list(result.get('results', {}).keys())}")
+        return result
+    except Exception:
+        logger.exception("run_batch: WM request failed")
+        raise
 
 
 async def run_action(ls: LanguageServer, params):

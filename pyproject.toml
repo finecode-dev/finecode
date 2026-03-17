@@ -48,17 +48,18 @@ build-backend = "setuptools.build_meta"
 presets = [{ source = "finecode_dev_common_preset" }]
 
 [tool.finecode.env.dev_workspace.dependencies]
+finecode = { path = "./", editable = true }
 finecode_dev_common_preset = { path = "./finecode_dev_common_preset", editable = true }
 finecode_extension_runner = { path = "./finecode_extension_runner", editable = true }
 finecode_extension_api = { path = "./finecode_extension_api", editable = true }
 finecode_jsonrpc = { path = "./finecode_jsonrpc", editable = true }
+fine_python_recommended = { path = "./presets/fine_python_recommended", editable = true }
 fine_python_lint = { path = "./presets/fine_python_lint", editable = true }
 fine_python_format = { path = "./presets/fine_python_format", editable = true }
 fine_python_test = { path = "./presets/fine_python_test", editable = true }
 finecode_builtin_handlers = { path = "./finecode_builtin_handlers", editable = true }
 fine_python_pip = { path = "./extensions/fine_python_pip", editable = true }
 fine_python_virtualenv = { path = "./extensions/fine_python_virtualenv", editable = true }
-
 
 [tool.finecode.env.runtime.dependencies]
 finecode_extension_api = { path = "./finecode_extension_api", editable = true }
