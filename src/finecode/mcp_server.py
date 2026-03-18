@@ -71,6 +71,20 @@ async def list_tools() -> list[Tool]:
                 "required": ["project"],
             },
         ),
+        Tool(
+            name="dump_config",
+            description="Return the fully resolved project configuration with all presets applied and the presets key removed. Use this to understand the complete effective configuration a project runs with.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "project": {
+                        "type": "string",
+                        "description": "Absolute path to the project directory. Use the list_projects tool to see available projects.",
+                    }
+                },
+                "required": ["project"],
+            },
+        ),
     ]
 
     actions = await _wm_client.list_actions()
@@ -142,6 +156,22 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         project = arguments["project"]
         result = await _wm_client.get_project_raw_config(project)
         return [TextContent(type="text", text=json.dumps({"rawConfig": result}))]
+
+    if name == "dump_config":
+        project = arguments["project"]
+        project_path = pathlib.Path(project)
+        raw_config = await _wm_client.get_project_raw_config(project)
+        result = await _wm_client.run_action(
+            "dump_config",
+            project,
+            params={
+                "source_file_path": str(project_path / "pyproject.toml"),
+                "project_raw_config": raw_config,
+                "target_file_path": str(project_path / "finecode_config_dump" / "pyproject.toml"),
+            },
+            options={"resultFormats": ["json"], "trigger": "user", "devEnv": "ai"},
+        )
+        return [TextContent(type="text", text=json.dumps(result))]
 
     project = arguments.pop("project", None)
     options = {"resultFormats": ["json"], "trigger": "user", "devEnv": "ai"}
