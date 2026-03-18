@@ -352,6 +352,7 @@ async def start_runners_with_presets(
             runner=dev_workspace_runner,
             project=resolved,
             handlers_to_initialize=handlers_to_init,
+            ws_context=ws_context,
         )
 
 
@@ -425,7 +426,7 @@ async def start_runner(
     if isinstance(current_project_def, domain.CollectedProject):
         # update runner config if project actions are already known, otherwise it will
         # be done as separate step
-        await update_runner_config(runner=runner, project=current_project_def, handlers_to_initialize=handlers_to_initialize)
+        await update_runner_config(runner=runner, project=current_project_def, handlers_to_initialize=handlers_to_initialize, ws_context=ws_context)
     
     await _finish_runner_init(runner=runner, project=project_def, ws_context=ws_context)
 
@@ -521,6 +522,7 @@ async def update_runner_config(
     runner: runner_client.ExtensionRunnerInfo,
     project: domain.CollectedProject,
     handlers_to_initialize: dict[str, list[str]] | None,
+    ws_context: context.WorkspaceContext,
 ) -> None:
     config = runner_client.RunnerConfig(
         actions=project.actions,
@@ -538,6 +540,7 @@ async def update_runner_config(
             f"Runner failed to update config: {exception.message}"
         ) from exception
 
+    ws_context.ws_action_schemas.pop(project.dir_path, None)
     logger.debug(f"Updated config of runner {runner.readable_id}")
 
 

@@ -47,6 +47,8 @@ class InitRepositoryProviderAction(
         InitRepositoryProviderRunResult,
     ]
 ):
+    """Initialize repository credentials for package registries."""
+
     PAYLOAD_TYPE = InitRepositoryProviderRunPayload
     RUN_CONTEXT_TYPE = InitRepositoryProviderRunContext
     RESULT_TYPE = InitRepositoryProviderRunResult

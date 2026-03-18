@@ -39,6 +39,8 @@ class PublishArtifactToRegistryAction(
         PublishArtifactToRegistryRunResult,
     ]
 ):
+    """Publish a distribution artifact to a specific registry."""
+
     PAYLOAD_TYPE = PublishArtifactToRegistryRunPayload
     RUN_CONTEXT_TYPE = PublishArtifactToRegistryRunContext
     RESULT_TYPE = PublishArtifactToRegistryRunResult

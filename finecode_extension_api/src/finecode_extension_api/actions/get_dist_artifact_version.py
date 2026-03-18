@@ -40,6 +40,8 @@ class GetDistArtifactVersionAction(
         GetDistArtifactVersionRunResult,
     ]
 ):
+    """Read the version from a distribution artifact."""
+
     PAYLOAD_TYPE = GetDistArtifactVersionRunPayload
     RUN_CONTEXT_TYPE = GetDistArtifactVersionRunContext
     RESULT_TYPE = GetDistArtifactVersionRunResult

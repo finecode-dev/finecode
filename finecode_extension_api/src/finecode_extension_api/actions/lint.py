@@ -15,8 +15,9 @@ class LintTarget(enum.StrEnum):
 @dataclasses.dataclass
 class LintRunPayload(code_action.RunActionPayload):
     target: LintTarget = LintTarget.PROJECT
-    # optional, expected only with `target == LintTarget.FILES`
+    """Scope of linting: 'project' (default) lints the whole project, 'files' lints only file_paths."""
     file_paths: list[Path] = dataclasses.field(default_factory=list)
+    """Files to lint. Only used when target is 'files'. Empty list means lint the whole project."""
 
 
 @dataclasses.dataclass
@@ -29,6 +30,8 @@ class LintRunContext(
 
 
 class LintAction(code_action.Action[LintRunPayload, LintRunContext, LintRunResult]):
+    """Run linters on a project or specific files and report diagnostics."""
+
     PAYLOAD_TYPE = LintRunPayload
     RUN_CONTEXT_TYPE = LintRunContext
     RESULT_TYPE = LintRunResult

@@ -262,6 +262,9 @@ def create_lsp_server() -> lsp_server.LanguageServer:
     register_merge_results_cmd = server.command("actions/mergeResults")
     register_merge_results_cmd(merge_results_cmd)
 
+    register_get_payload_schemas_cmd = server.command("actions/getPayloadSchemas")
+    register_get_payload_schemas_cmd(get_payload_schemas_cmd)
+
     def on_process_exit():
         logger.info("Exit extension runner")
         services.shutdown_all_action_handlers()
@@ -530,6 +533,11 @@ async def resolve_package_path(ls: lsp_server.LanguageServer, package_name: str)
     result = services.resolve_package_path(package_name)
     logger.trace(f"Resolved {package_name} to {result}")
     return {"packagePath": result}
+
+
+async def get_payload_schemas_cmd(ls: lsp_server.LanguageServer):
+    logger.trace("Get payload schemas")
+    return services.get_payload_schemas()
 
 
 async def merge_results_cmd(ls: lsp_server.LanguageServer, action_name: str, results: list):

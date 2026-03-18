@@ -17,7 +17,7 @@ dependencies = [
     "finecode_builtin_handlers~=0.2.0a0",
     "finecode_jsonrpc~=0.1.0a0",
     "ordered-set==4.1.*",
-    "fastmcp==3.1.*",
+    "mcp>=1.0.0",
     "fine_python_virtualenv~=0.2.0a0",
     "fine_python_pip~=0.2.0a0",
     "culsans==0.11.*",

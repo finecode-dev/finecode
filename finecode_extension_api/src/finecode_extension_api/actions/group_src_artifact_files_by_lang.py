@@ -14,7 +14,9 @@ from finecode_extension_api import code_action, textstyler
 @dataclasses.dataclass
 class GroupSrcArtifactFilesByLangRunPayload(code_action.RunActionPayload):
     file_paths: list[pathlib.Path]
+    """Files to group by language."""
     langs: list[str] | None = None
+    """Language identifiers to include (e.g. ['python', 'javascript']). None means all languages."""
 
 
 class GroupSrcArtifactFilesByLangRunContext(
@@ -66,6 +68,8 @@ class GroupSrcArtifactFilesByLangAction(
         GroupSrcArtifactFilesByLangRunResult,
     ]
 ):
+    """Group a given list of files by programming language."""
+
     PAYLOAD_TYPE = GroupSrcArtifactFilesByLangRunPayload
     RUN_CONTEXT_TYPE = GroupSrcArtifactFilesByLangRunContext
     RESULT_TYPE = GroupSrcArtifactFilesByLangRunResult

@@ -19,11 +19,10 @@ class EnvInfo:
 
 @dataclasses.dataclass
 class CreateEnvsRunPayload(code_action.RunActionPayload):
-    # Explicit env list. When empty, handlers should discover envs.
     envs: list[EnvInfo] = dataclasses.field(default_factory=list)
-    # Remove old env and create a new one from scratch even if the current one
-    # is valid.
+    """Explicit list of environments to create. Empty means handlers discover envs."""
     recreate: bool = False
+    """Remove and recreate existing environments from scratch even if they are already valid."""
 
 
 class CreateEnvsRunContext(code_action.RunActionContext[CreateEnvsRunPayload]):
@@ -74,6 +73,8 @@ class CreateEnvsAction(
         CreateEnvsRunPayload, CreateEnvsRunContext, CreateEnvsRunResult
     ]
 ):
+    """Create environments for the workspace(without installing dependencies, only environment)."""
+
     PAYLOAD_TYPE = CreateEnvsRunPayload
     RUN_CONTEXT_TYPE = CreateEnvsRunContext
     RESULT_TYPE = CreateEnvsRunResult

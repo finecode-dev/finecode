@@ -310,6 +310,38 @@ All fields optional. If `project` is omitted, returns actions from all projects.
 
 ---
 
+#### `actions/getPayloadSchemas`
+
+Return payload schemas for the specified actions in a project. Used by the MCP
+server to build accurate `inputSchema` entries for each tool.
+
+- **Type:** request
+- **Clients:** MCP
+- **Status:** implemented
+
+**Params:**
+
+```json
+{ "project": "/abs/path/to/project", "action_names": ["lint", "format"] }
+```
+
+**Result:**
+
+```json
+{
+  "schemas": {
+    "lint":   { "properties": { "file_paths": {"type": "array", "items": {"type": "string"}}, "target": {"type": "string", "enum": ["project", "files"]} }, "required": [] },
+    "format": { "properties": { "save": {"type": "boolean"}, "target": {"type": "string"}, "file_paths": {"type": "array", "items": {"type": "string"}} }, "required": [] }
+  }
+}
+```
+
+Each schema value is `null` for actions whose class cannot be imported in any
+Extension Runner. Schemas are cached per project in the WM and invalidated
+whenever runner config is updated.
+
+---
+
 #### `actions/getTree`
 
 Get the hierarchical action tree for IDE sidebar display.

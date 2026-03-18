@@ -96,6 +96,14 @@ The protocol is LSP-shaped with a small set of custom commands.
     - Note: `result_by_format` is a JSON string (not a JSON object) due to
       LSP serialization constraints in the runner.
 
+  - `actions/getPayloadSchemas`
+    - Arguments: none
+    - Result: `{ action_name: JSON Schema fragment | null }`
+    - Returns a payload schema for every action currently known to the runner.
+      Each schema has `properties` (field name → JSON Schema type object) and
+      `required` (list of field names without defaults).
+      `null` means the action class could not be imported.
+
   - `actions/mergeResults`
     - Arguments: `[action_name, results]`
     - Result: `{ "merged": ... }` or `{ "error": "..." }`

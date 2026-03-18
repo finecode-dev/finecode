@@ -40,6 +40,8 @@ class CleanFinecodeLogsAction(
         CleanFinecodeLogsRunResult,
     ]
 ):
+    """Remove FineCode log files."""
+
     PAYLOAD_TYPE = CleanFinecodeLogsRunPayload
     RUN_CONTEXT_TYPE = CleanFinecodeLogsRunContext
     RESULT_TYPE = CleanFinecodeLogsRunResult

@@ -186,6 +186,27 @@ async def reload_action(runner: ExtensionRunnerInfo, action_name: str) -> None:
     )
 
 
+async def get_payload_schemas(runner: ExtensionRunnerInfo) -> dict[str, dict | None]:
+    """Fetch payload schemas for all actions known to the runner."""
+    if not runner.initialized_event.is_set():
+        await runner.initialized_event.wait()
+
+    if runner.status != RunnerStatus.RUNNING:
+        raise ActionRunFailed(
+            f"Runner {runner.readable_id} is not running: {runner.status}"
+        )
+
+    response = await runner.client.send_request(
+        method=_internal_client_types.WORKSPACE_EXECUTE_COMMAND,
+        params=_internal_client_types.ExecuteCommandParams(
+            command="actions/getPayloadSchemas",
+            arguments=[],
+        ),
+        timeout=None,
+    )
+    return response.result
+
+
 async def resolve_package_path(
     runner: ExtensionRunnerInfo, package_name: str
 ) -> dict[str, str]:
@@ -287,6 +308,7 @@ __all__ = [
     "run_action",
     "merge_results",
     "reload_action",
+    "get_payload_schemas",
     "resolve_package_path",
     "RunnerConfig",
     "update_config",

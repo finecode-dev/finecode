@@ -108,6 +108,8 @@ class FormatFilesAction(
         FormatFilesRunPayload, FormatFilesRunContext, FormatFilesRunResult
     ]
 ):
+    """Format specific files. Internal action dispatched by format."""
+
     PAYLOAD_TYPE = FormatFilesRunPayload
     RUN_CONTEXT_TYPE = FormatFilesRunContext
     RESULT_TYPE = FormatFilesRunResult

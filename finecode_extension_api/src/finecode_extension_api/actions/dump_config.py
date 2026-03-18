@@ -63,6 +63,8 @@ class DumpConfigRunResult(code_action.RunActionResult):
 class DumpConfigAction(
     code_action.Action[DumpConfigRunPayload, DumpConfigRunContext, DumpConfigRunResult]
 ):
+    """Resolve and dump the merged project configuration."""
+
     PAYLOAD_TYPE = DumpConfigRunPayload
     RUN_CONTEXT_TYPE = DumpConfigRunContext
     RESULT_TYPE = DumpConfigRunResult

@@ -180,6 +180,32 @@ class ApiClient:
             )
         return result["actions"]
 
+    async def get_payload_schemas(
+        self, project: str, action_names: list[str]
+    ) -> dict[str, dict | None]:
+        """Return payload schemas for the given actions in a project.
+
+        Delegates to the WM ``actions/getPayloadSchemas`` endpoint.
+
+        Args:
+            project: Absolute path to the project directory.
+            action_names: List of action names to fetch schemas for.
+
+        Returns:
+            Mapping of action name → JSON Schema fragment, or ``None``
+            for actions whose class could not be imported by the ER.
+        """
+        result = await self.request(
+            "actions/getPayloadSchemas",
+            {"project": project, "action_names": action_names},
+        )
+        if not isinstance(result, dict) or "schemas" not in result:
+            raise ApiResponseError(
+                "actions/getPayloadSchemas",
+                f"missing 'schemas' field, got {result!r}",
+            )
+        return result["schemas"]
+
     async def get_tree(self, parent_node_id: str | None = None) -> dict:
         """Retrieve the hierarchical action tree from the WM server.
 

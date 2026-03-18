@@ -143,6 +143,8 @@ class LintFilesAction(
         LintFilesRunResult,
     ]
 ):
+    """Run linters on specific files and report diagnostics. Internal action dispatched by lint."""
+
     PAYLOAD_TYPE = LintFilesRunPayload
     RUN_CONTEXT_TYPE = LintFilesRunContext
     RESULT_TYPE = LintFilesRunResult

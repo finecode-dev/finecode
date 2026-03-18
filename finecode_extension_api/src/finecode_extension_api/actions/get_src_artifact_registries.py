@@ -52,6 +52,8 @@ class GetSrcArtifactRegistriesAction(
         GetSrcArtifactRegistriesRunResult,
     ]
 ):
+    """List the registries configured for an artifact."""
+
     PAYLOAD_TYPE = GetSrcArtifactRegistriesRunPayload
     RUN_CONTEXT_TYPE = GetSrcArtifactRegistriesRunContext
     RESULT_TYPE = GetSrcArtifactRegistriesRunResult

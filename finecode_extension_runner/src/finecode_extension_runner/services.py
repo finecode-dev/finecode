@@ -10,7 +10,7 @@ from pathlib import Path
 from loguru import logger
 from finecode_extension_api import service
 
-from finecode_extension_runner import context, domain, global_state, schemas
+from finecode_extension_runner import context, domain, global_state, schemas, run_utils, schema_utils
 from finecode_extension_runner._services.run_action import (
     ActionFailedException,
     StopWithResponse,
@@ -354,3 +354,35 @@ def exit_all_action_handlers() -> None:
                         action_handler_name=handler_name, exec_info=exec_info
                     )
             action_cache.handler_cache_by_name = {}
+
+
+def get_payload_schemas() -> dict[str, dict | None]:
+    """Return a payload schema for every action currently known to the runner.
+
+    Called by the WM via the ``actions/getPayloadSchemas`` command to populate
+    the schema cache used when building MCP tool descriptions.
+
+    Returns a mapping of action name → JSON Schema fragment (or ``None`` if the
+    action class could not be imported or has no ``PAYLOAD_TYPE``).
+    """
+    if global_state.runner_context is None:
+        return {}
+
+    result: dict[str, dict | None] = {}
+    for action_name, action in global_state.runner_context.project.actions.items():
+        try:
+            action_cls = run_utils.import_module_member_by_source_str(action.source)
+            payload_cls = getattr(action_cls, "PAYLOAD_TYPE", None)
+            if payload_cls is None:
+                result[action_name] = None
+            else:
+                schema = schema_utils.extract_payload_schema(payload_cls)
+                doc = getattr(action_cls, "__doc__", None)
+                if doc:
+                    schema["description"] = doc.strip()
+                result[action_name] = schema
+        except Exception as exception:
+            logger.debug(f"Could not extract payload schema for action '{action_name}': {exception}")
+            result[action_name] = None
+
+    return result

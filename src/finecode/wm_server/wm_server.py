@@ -315,6 +315,7 @@ async def _handle_add_dir(
                                     runner=runner,
                                     project=project,
                                     handlers_to_initialize=None,
+                                    ws_context=ws_context,
                                 )
                             )
         except* Exception as eg:
@@ -691,6 +692,7 @@ async def _handle_set_config_overrides(
                                 runner=runner,
                                 project=project,
                                 handlers_to_initialize=None,
+                                ws_context=ws_context,
                             )
                         )
     except* Exception as eg:
@@ -947,6 +949,77 @@ async def _handle_run_with_partial_results_task(
         await writer.drain()
 
 
+async def _handle_get_payload_schemas(
+    params: dict | None, ws_context: context.WorkspaceContext
+) -> dict:
+    """Return payload schemas for the given actions in a project.
+
+    Params: ``{"project": "/abs/path/to/project", "action_names": ["lint", "format"]}``
+    Result: ``{"schemas": {"lint": {...} | null, "format": {...} | null}}``
+
+    Schemas are fetched on-demand from Extension Runners. The ``dev_workspace``
+    runner is tried first (fast path). For actions whose class is not importable
+    there, the runner for each handler env is tried as a fallback.
+
+    Results are cached in ``ws_context.ws_action_schemas``.
+    """
+    from finecode.wm_server.runner import runner_client
+
+    params = params or {}
+    project_path = params.get("project")
+    action_names: list[str] = params.get("action_names", [])
+
+    if not project_path:
+        raise ValueError("project parameter is required")
+
+    project = _find_project_by_path(ws_context, project_path)
+    if project is None:
+        raise ValueError(f"Project '{project_path}' not found")
+    if not isinstance(project, domain.CollectedProject):
+        raise ValueError(
+            f"Project '{project_path}' actions are not collected yet. "
+            "Ensure the project is initialized before requesting schemas."
+        )
+
+    cache = ws_context.ws_action_schemas.setdefault(project.dir_path, {})
+    missing = [name for name in action_names if name not in cache]
+
+    if missing:
+        runners_by_env = ws_context.ws_projects_extension_runners.get(project.dir_path, {})
+
+        # Phase 1: query dev_workspace runner (covers all finecode_extension_api actions)
+        dev_runner = runners_by_env.get("dev_workspace")
+        if dev_runner is not None and dev_runner.status == runner_client.RunnerStatus.RUNNING:
+            try:
+                schemas = await runner_client.get_payload_schemas(dev_runner)
+                cache.update(schemas)
+            except Exception as exc:
+                logger.debug(f"Failed to get payload schemas from dev_workspace runner: {exc}")
+
+        # Phase 2: for actions still None, try the handler env runners
+        still_missing = [name for name in missing if cache.get(name) is None]
+        for action_name in still_missing:
+            action = next((a for a in project.actions if a.name == action_name), None)
+            if action is None:
+                continue
+            envs_to_try = {h.env for h in action.handlers if h.env and h.env != "dev_workspace"}
+            for env_name in envs_to_try:
+                runner = runners_by_env.get(env_name)
+                if runner is None or runner.status != runner_client.RunnerStatus.RUNNING:
+                    continue
+                try:
+                    schemas = await runner_client.get_payload_schemas(runner)
+                    if schemas.get(action_name) is not None:
+                        cache[action_name] = schemas[action_name]
+                        break
+                except Exception as exc:
+                    logger.debug(
+                        f"Failed to get payload schemas from runner '{env_name}': {exc}"
+                    )
+
+    return {"schemas": {name: cache.get(name) for name in action_names}}
+
+
 # -- Method dispatch tables ------------------------------------------------
 
 _METHODS: dict[str, MethodHandler] = {
@@ -961,6 +1034,7 @@ _METHODS: dict[str, MethodHandler] = {
     # actions/
     "actions/list": _handle_list_actions,
     "actions/getTree": _handle_get_tree,
+    "actions/getPayloadSchemas": _handle_get_payload_schemas,
     "actions/run": _handle_run_action,
     "actions/runBatch": _handle_run_batch,
     # (runWithPartialResults is handled specially in _handle_client)
