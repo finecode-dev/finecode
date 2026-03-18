@@ -310,6 +310,15 @@ class ApiClient:
             params["projects"] = projects
         await self.request("workspace/startRunners", params)
 
+    async def list_runners(self) -> list[dict]:
+        """List all extension runners and their status."""
+        result = await self.request("runners/list")
+        if not isinstance(result, dict) or "runners" not in result:
+            raise ApiResponseError(
+                "runners/list", f"missing 'runners' field, got {result!r}"
+            )
+        return result["runners"]
+
     async def check_env(self, project: str, env_name: str) -> bool:
         """Return whether the named environment is valid for a project."""
         result = await self.request(

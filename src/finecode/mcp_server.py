@@ -38,7 +38,39 @@ async def list_tools() -> list[Tool]:
             name="list_projects",
             description="List all projects in the FineCode workspace with their names, paths, and statuses",
             inputSchema={"type": "object", "properties": {}},
-        )
+        ),
+        Tool(
+            name="list_runners",
+            description="List all extension runners and their status (running, stopped, error). Use this to diagnose failures when actions do not respond.",
+            inputSchema={"type": "object", "properties": {}},
+        ),
+        Tool(
+            name="list_actions",
+            description="List actions available in the workspace, optionally filtered to a single project. Returns action names and which projects expose them.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "project": {
+                        "type": "string",
+                        "description": "Absolute path to the project directory. Use the list_projects tool to see available projects. Omit to list actions across all projects.",
+                    }
+                },
+            },
+        ),
+        Tool(
+            name="get_project_raw_config",
+            description="Return the resolved (post-preset-merge) configuration for a project. Use this to understand what actions and handlers are configured.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "project": {
+                        "type": "string",
+                        "description": "Absolute path to the project directory. Use the list_projects tool to see available projects.",
+                    }
+                },
+                "required": ["project"],
+            },
+        ),
     ]
 
     actions = await _wm_client.list_actions()
@@ -96,6 +128,20 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
     if name == "list_projects":
         result = await _wm_client.list_projects()
         return [TextContent(type="text", text=json.dumps({"projects": result}))]
+
+    if name == "list_runners":
+        result = await _wm_client.list_runners()
+        return [TextContent(type="text", text=json.dumps({"runners": result}))]
+
+    if name == "list_actions":
+        project = arguments.get("project")
+        result = await _wm_client.list_actions(project=project)
+        return [TextContent(type="text", text=json.dumps({"actions": result}))]
+
+    if name == "get_project_raw_config":
+        project = arguments["project"]
+        result = await _wm_client.get_project_raw_config(project)
+        return [TextContent(type="text", text=json.dumps({"rawConfig": result}))]
 
     project = arguments.pop("project", None)
     options = {"resultFormats": ["json"], "trigger": "user", "devEnv": "ai"}
