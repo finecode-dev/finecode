@@ -192,6 +192,38 @@ class CustomLanguageServer(lsp_server.LanguageServer):
         except asyncio.CancelledError:
             logger.debug("Server was cancelled")
 
+    async def start_tcp_async(self, host: str, port: int) -> None:
+        """Starts TCP server from within an existing event loop."""
+        logger.info("Starting TCP server on %s:%s", host, port)
+
+        self._stop_event = stop_event = threading.Event()
+
+        async def lsp_connection(
+            reader: asyncio.StreamReader, writer: asyncio.StreamWriter
+        ):
+            logger.debug("Connected to client")
+            self.protocol.set_writer(writer)  # type: ignore
+            await run_async(
+                stop_event=stop_event,
+                reader=reader,
+                protocol=self.protocol,
+                logger=logger,
+                error_handler=self.report_server_error,
+            )
+            logger.debug("Main loop finished")
+            self.shutdown()
+
+        self._server = await asyncio.start_server(lsp_connection, host, port)
+
+        addrs = ", ".join(str(sock.getsockname()) for sock in self._server.sockets)
+        logger.info(f"Serving on {addrs}")
+
+        try:
+            async with self._server:
+                await self._server.serve_forever()
+        finally:
+            await self._finecode_exit_stack.aclose()
+
 
 
 def file_editor_file_change_to_lsp_text_edit(file_change: ifileeditor.FileChange) -> types.TextEdit:

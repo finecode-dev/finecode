@@ -186,14 +186,14 @@ async def _handle_get_project_raw_config(
 async def _handle_find_project_for_file(
     params: dict, ws_context: context.WorkspaceContext
 ) -> dict:
-    """Return project name containing a given file.
+    """Return project directory path containing a given file.
 
     It finds the *nearest* project in the
     workspace that actually "uses finecode" (i.e. has a valid config).  The
     project is determined purely based on path containment.
 
     **Params:** ``{"filePath": "/abs/path/to/file"}``
-    **Result:** ``{"project": "project_name"}`` or ``{"project": null}`` if
+    **Result:** ``{"project": "/abs/path/to/project"}`` or ``{"project": null}`` if
     the file does not belong to any suitable project.
     """
 
@@ -211,7 +211,7 @@ async def _handle_find_project_for_file(
         if file_path.is_relative_to(project_dir):
             project = ws_context.ws_projects[project_dir]
             if project.status == domain.ProjectStatus.CONFIG_VALID:
-                return {"project": project.name}
+                return {"project": str(project.dir_path)}
             # skip projects that aren't using finecode
             continue
 
@@ -1069,6 +1069,7 @@ _server: asyncio.Server | None = None
 _discovery_file: pathlib.Path | None = None
 _had_client: bool = False
 _running_partial_result_tasks: dict[asyncio.StreamWriter, set[asyncio.Task]] = {}
+_client_labels: dict[asyncio.StreamWriter, str] = {}
 _disconnect_timeout: int = DISCONNECT_TIMEOUT_SECONDS
 
 
@@ -1098,6 +1099,8 @@ async def _handle_client(
     global _auto_stop_task, _had_client, _no_client_timeout_task
 
     peer = writer.get_extra_info("peername")
+    label = str(peer)
+    _client_labels[writer] = label
     logger.info(f"FineCode API: client connected from {peer}")
     _connected_clients.add(writer)
     _had_client = True
@@ -1135,20 +1138,30 @@ async def _handle_client(
             if is_notification:
                 notification_handler = _NOTIFICATIONS.get(method)
                 if notification_handler is not None:
-                    logger.trace(f"Received notification {method}")
+                    logger.trace(f"[{label}] Received notification {method}")
                     try:
                         await notification_handler(params, ws_context)
                     except Exception as exc:
-                        logger.exception(f"FineCode API: error in notification {method}")
+                        logger.exception(f"FineCode API: error in notification {method} (client: {label})")
                 else:
-                    logger.trace(f"FineCode API: unknown notification {method}, ignoring")
+                    logger.trace(f"[{label}] FineCode API: unknown notification {method}, ignoring")
                 continue
 
             # Requests (has id) — dispatch and respond.
-            # ``actions/runWithPartialResults`` is handled specially because it
-            # needs access to the writer in order to stream notifications back to
-            # the requesting client only.  Any other method uses the generic
-            # _METHODS table.
+            # ``client/initialize`` and ``actions/runWithPartialResults`` are
+            # handled specially because they need access to the writer.
+            if method == "client/initialize":
+                new_label = (params or {}).get("clientId")
+                if new_label:
+                    logger.info(f"FineCode API: client {label} identified as '{new_label}'")
+                    _client_labels[writer] = new_label
+                    label = new_label
+                _write_message(writer, _jsonrpc_response(req_id, {
+                    "logFilePath": str(_log_file_path) if _log_file_path is not None else None,
+                }))
+                await writer.drain()
+                continue
+
             if method == "actions/runWithPartialResults":
                 # Spawn a task to handle this long-running request without blocking
                 # the client handler loop. This allows the client to send other
@@ -1184,7 +1197,7 @@ async def _handle_client(
                 )
                 await writer.drain()
             except Exception as exc:
-                logger.exception(f"FineCode API: error handling {method}")
+                logger.exception(f"FineCode API: error handling {method} (client: {label})")
                 _write_message(
                     writer, _jsonrpc_error(req_id, -32603, str(exc))
                 )
@@ -1192,9 +1205,10 @@ async def _handle_client(
     except (asyncio.IncompleteReadError, ConnectionResetError):
         pass
     finally:
-        logger.info(f"FineCode API: client disconnected ({peer})")
+        logger.info(f"FineCode API: client disconnected ({label})")
         _connected_clients.discard(writer)
-        
+        _client_labels.pop(writer, None)
+
         # Cancel any running partial result tasks for this client
         if writer in _running_partial_result_tasks:
             for task in _running_partial_result_tasks[writer]:

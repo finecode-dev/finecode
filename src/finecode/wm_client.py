@@ -79,22 +79,26 @@ class ApiClient:
             str, collections.abc.Callable[..., collections.abc.Coroutine]
         ] = {}
         self._reader_task: asyncio.Task | None = None
+        self.server_info: dict = {}
 
     # -- Connection lifecycle -----------------------------------------------
 
-    async def connect(self, host: str, port: int) -> None:
+    async def connect(self, host: str, port: int, client_id: str | None = None) -> None:
         self._reader, self._writer = await asyncio.open_connection(host, port)
         self._reader_task = asyncio.create_task(self._read_loop())
         logger.info(f"Connected to FineCode API at {host}:{port}")
         try:
-            info = await self.get_info()
-            log_path = info.get("logFilePath")
+            params: dict = {}
+            if client_id is not None:
+                params["clientId"] = client_id
+            self.server_info = await self.request("client/initialize", params) or {}
+            log_path = self.server_info.get("logFilePath")
             if log_path:
                 logger.info(f"WM Server log file: {log_path}")
             else:
                 logger.info("WM Server returned no log file path")
         except Exception as exception:
-            logger.info(f"Failed to get WM Server log file path: {exception}")
+            logger.info(f"Failed to initialize with WM Server: {exception}")
 
     async def close(self) -> None:
         if self._reader_task is not None:
@@ -140,7 +144,7 @@ class ApiClient:
         return await self.request("workspace/listProjects")
 
     async def find_project_for_file(self, file_path: str) -> str | None:
-        """Return the project name containing a given file.
+        """Return the absolute directory path of the project containing a given file.
 
         An empty string or null result indicates that the file does not belong to
         any project.  This mirrors the server's
@@ -276,6 +280,30 @@ class ApiClient:
         if params:
             body["params"] = params
         return await self.request("actions/run", body)
+
+    async def run_action_with_partial_results(
+        self,
+        action: str,
+        project: str,
+        partial_result_token: str,
+        params: dict | None = None,
+        options: dict | None = None,
+    ) -> dict:
+        """Run an action with streaming partial results via notifications.
+
+        Pass ``project=""`` to run across all projects that expose the action.
+        Partial results are delivered as ``actions/partialResult`` notifications
+        before this coroutine returns the aggregated final result.
+        """
+        body: dict = {
+            "action": action,
+            "project": project,
+            "partialResultToken": partial_result_token,
+            "options": options or {},
+        }
+        if params:
+            body["params"] = params
+        return await self.request("actions/runWithPartialResults", body)
 
     async def add_dir(
         self,

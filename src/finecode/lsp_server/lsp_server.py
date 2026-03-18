@@ -220,7 +220,7 @@ async def _on_initialized(ls: LanguageServer, params: types.InitializedParams):
 
     try:
         global_state.wm_client = ApiClient()
-        await global_state.wm_client.connect("127.0.0.1", port)
+        await global_state.wm_client.connect("127.0.0.1", port, client_id="lsp")
     except (ConnectionRefusedError, OSError) as exc:
         logger.error(f"Could not connect to FineCode WM server: {exc}")
         global_state.wm_client = None
@@ -234,18 +234,14 @@ async def _on_initialized(ls: LanguageServer, params: types.InitializedParams):
             )
         )
 
-    try:
-        info = await global_state.wm_client.get_info()
-        log_path = info.get("logFilePath")
-        if log_path:
-            ls.window_log_message(
-                types.LogMessageParams(
-                    type=types.MessageType.Info,
-                    message=f"FineCode WM Server log: {log_path}",
-                )
+    log_path = global_state.wm_client.server_info.get("logFilePath")
+    if log_path:
+        ls.window_log_message(
+            types.LogMessageParams(
+                type=types.MessageType.Info,
+                message=f"FineCode WM Server log: {log_path}",
             )
-    except Exception:
-        pass
+        )
 
     # Register notification handlers for server→client push messages.
     async def on_tree_changed(params: dict) -> None:

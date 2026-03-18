@@ -22,15 +22,15 @@ async def format_document(ls: LanguageServer, params: types.DocumentFormattingPa
         logger.error("Formatting requested but WM client not connected")
         return None
 
-    project_name = await global_state.wm_client.find_project_for_file(str(file_path))
-    if project_name is None:
+    project_dir = await global_state.wm_client.find_project_for_file(str(file_path))
+    if project_dir is None:
         logger.error(f"Cannot determine project for formatting: {file_path}")
         return []
 
     try:
         response = await global_state.wm_client.run_action(
             action="format",
-            project=project_name,
+            project=project_dir,
             params={"file_paths": [str(file_path)], "save": False, "target": "files"},
             options={"trigger": "user", "devEnv": "ide"},
         )

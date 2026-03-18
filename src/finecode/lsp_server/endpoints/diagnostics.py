@@ -12,8 +12,8 @@ from finecode.lsp_server import global_state, pygls_types_utils
 from finecode_extension_api.actions import lint as lint_action
 
 
-async def _find_project_name_for_file(file_path: Path) -> str | None:
-    """Return the project name containing *file_path*.
+async def _find_project_dir_for_file(file_path: Path) -> str | None:
+    """Return the absolute directory path of the project containing *file_path*.
 
     This helper delegates the lookup to the WM server via
     ``workspace/findProjectForFile``; the server applies the same logic that
@@ -70,15 +70,15 @@ async def document_diagnostic_with_full_result(
         logger.error("Diagnostics requested but WM client not connected")
         return None
 
-    project_name = await _find_project_name_for_file(file_path)
-    if project_name is None:
+    project_dir = await _find_project_dir_for_file(file_path)
+    if project_dir is None:
         logger.error(f"Cannot determine project for diagnostics: {file_path}")
         return None
 
     try:
         response = await global_state.wm_client.run_action(
             action="lint",
-            project=project_name,
+            project=project_dir,
             params={
                 "target": "files",
                 "file_paths": [str(file_path)],
@@ -142,8 +142,8 @@ async def document_diagnostic_with_partial_results(
         logger.error("Diagnostics requested but WM client not connected")
         return None
 
-    project_name = await _find_project_name_for_file(file_path)
-    if project_name is None:
+    project_dir = await _find_project_dir_for_file(file_path)
+    if project_dir is None:
         logger.error(f"Cannot determine project for diagnostics: {file_path}")
         return None
 
@@ -155,7 +155,7 @@ async def document_diagnostic_with_partial_results(
             "actions/runWithPartialResults",
             {
                 "action": "lint",
-                "project": project_name,
+                "project": project_dir,
                 "params": {"file_paths": [str(file_path)]},
                 "partialResultToken": partial_result_token,
                 "options": {"resultFormats": ["json"], "trigger": "system", "devEnv": "ide"},

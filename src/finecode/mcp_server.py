@@ -11,18 +11,78 @@ import asyncio
 import json
 import pathlib
 import sys
+import uuid
 
+from finecode.wm_client import ApiClient
+from finecode.wm_server import wm_lifecycle
 from loguru import logger
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
 from mcp.types import TextContent, Tool
 
-from finecode.wm_client import ApiClient
-from finecode.wm_server import wm_lifecycle
-
-
 _wm_client = ApiClient()
 server = Server("FineCode")
+
+_partial_result_queues: dict[str, asyncio.Queue] = {}
+
+
+def _setup_partial_result_forwarding() -> None:
+    """Register the WM partial-result notification handler.
+
+    Must be called once after ``_wm_client.connect()``.  Each ``actions/partialResult``
+    notification is routed by token to the matching per-call asyncio.Queue.
+    """
+
+    async def _on_partial_result(params: dict) -> None:
+        token = params.get("token")
+        value = params.get("value")
+        if token and value is not None:
+            queue = _partial_result_queues.get(token)
+            if queue is not None:
+                queue.put_nowait(value)
+
+    _wm_client.on_notification("actions/partialResult", _on_partial_result)
+
+
+async def _run_with_progress(
+    action: str,
+    project: str,
+    params: dict,
+    options: dict,
+    session,
+) -> dict:
+    """Run a WM action with streaming partial results forwarded as MCP log messages.
+
+    ``project`` may be ``""`` to run across all projects that expose the action.
+    Each ``actions/partialResult`` notification is forwarded to the MCP client as a
+    ``notifications/message`` log message while the call blocks waiting for the final result.
+    """
+    token = str(uuid.uuid4())
+    queue: asyncio.Queue = asyncio.Queue()
+    _partial_result_queues[token] = queue
+
+    async def _forward() -> None:
+        try:
+            while True:
+                value = await queue.get()
+                await session.send_log_message(
+                    level="info", data=value, logger="finecode"
+                )
+        except asyncio.CancelledError:
+            pass
+
+    result_task = asyncio.create_task(
+        _wm_client.run_action_with_partial_results(
+            action, project, token, params, options
+        )
+    )
+    forward_task = asyncio.create_task(_forward())
+    try:
+        return await result_task
+    finally:
+        forward_task.cancel()
+        await asyncio.gather(forward_task, return_exceptions=True)
+        _partial_result_queues.pop(token, None)
 
 
 @server.list_tools()
@@ -167,22 +227,22 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             params={
                 "source_file_path": str(project_path / "pyproject.toml"),
                 "project_raw_config": raw_config,
-                "target_file_path": str(project_path / "finecode_config_dump" / "pyproject.toml"),
+                "target_file_path": str(
+                    project_path / "finecode_config_dump" / "pyproject.toml"
+                ),
             },
             options={"resultFormats": ["json"], "trigger": "user", "devEnv": "ai"},
         )
         return [TextContent(type="text", text=json.dumps(result))]
 
+    from mcp.server.lowlevel.server import request_ctx
+
+    session = request_ctx.get().session
     project = arguments.pop("project", None)
     options = {"resultFormats": ["json"], "trigger": "user", "devEnv": "ai"}
-    if project is not None:
-        result = await _wm_client.run_action(
-            name, project, params=arguments or None, options=options
-        )
-    else:
-        result = await _wm_client.run_batch(
-            [name], params=arguments or None, options=options
-        )
+    result = await _run_with_progress(
+        name, project or "", arguments or {}, options, session
+    )
     return [TextContent(type="text", text=json.dumps(result))]
 
 
@@ -209,10 +269,13 @@ def start(workdir: pathlib.Path, port_file: pathlib.Path | None = None) -> None:
 
     async def _run() -> None:
         try:
-            await _wm_client.connect("127.0.0.1", port)
+            await _wm_client.connect("127.0.0.1", port, client_id="mcp")
         except (ConnectionRefusedError, OSError) as exc:
-            logger.error(f"Could not connect to FineCode WM server on port {port}: {exc}")
+            logger.error(
+                f"Could not connect to FineCode WM server on port {port}: {exc}"
+            )
             sys.exit(1)
+        _setup_partial_result_forwarding()
         logger.debug(f"Add dir to API Client: {workdir}")
         await _wm_client.add_dir(workdir)
         logger.debug("Added dir")

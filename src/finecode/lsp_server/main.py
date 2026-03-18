@@ -15,4 +15,7 @@ async def start(
     global_state.lsp_log_file_path = logger_utils.init_logger(log_name="lsp_server", log_level=log_level)
     global_state.wm_log_level = log_level
     server = create_lsp_server()
-    await server.start_io_async()
+    if comm_type == communication_utils.CommunicationType.TCP:
+        await server.start_tcp_async(host, port)
+    else:
+        await server.start_io_async()

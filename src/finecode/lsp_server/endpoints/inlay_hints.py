@@ -53,15 +53,15 @@ async def document_inlay_hint(
         logger.error("Inlay hints requested but WM client not connected")
         return None
 
-    project_name = await global_state.wm_client.find_project_for_file(str(file_path))
-    if project_name is None:
+    project_dir = await global_state.wm_client.find_project_for_file(str(file_path))
+    if project_dir is None:
         # Not all files belong to a project with this action — not an error.
         return []
 
     try:
         response = await global_state.wm_client.run_action(
             action="text_document_inlay_hint",
-            project=project_name,
+            project=project_dir,
             params=inlay_hint_params_to_dict(params),
             options={"trigger": "system", "devEnv": "ide"},
         )
