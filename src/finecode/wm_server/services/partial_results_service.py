@@ -8,6 +8,7 @@ async iterator produced here and write notifications back to the caller.
 from __future__ import annotations
 
 import asyncio
+import pathlib
 
 from loguru import logger
 
@@ -57,7 +58,7 @@ class PartialResultsStream:
 
 async def run_action_with_partial_results(
     action_name: str,
-    project_name: str,
+    project_path: str,
     params: dict,
     partial_result_token: str | int,
     run_trigger: RunActionTrigger,
@@ -67,8 +68,8 @@ async def run_action_with_partial_results(
 ) -> PartialResultsStream:
     """Run an action and return a stream of partial values.
 
-    If ``project_name`` is the empty string the action will be executed in all
-    projects that declare it; otherwise it is run only in the named project.
+    If ``project_path`` is the empty string the action will be executed in all
+    projects that declare it; otherwise it is run only in the project at that path.
 
     The returned :class:`PartialResultsStream` can be iterated to receive
     ``domain.PartialResultRawValue`` objects.  Once execution completes the
@@ -78,13 +79,11 @@ async def run_action_with_partial_results(
 
     # determine target project(s) — only CollectedProject instances have actions
     projects: list[domain.CollectedProject]
-    if project_name:
-        projects = [
-            p for p in ws_context.ws_projects.values()
-            if p.name == project_name and isinstance(p, domain.CollectedProject)
-        ]
-        if not projects:
-            raise ValueError(f"Project '{project_name}' not found")
+    if project_path:
+        project = ws_context.ws_projects.get(pathlib.Path(project_path))
+        if project is None or not isinstance(project, domain.CollectedProject):
+            raise ValueError(f"Project '{project_path}' not found")
+        projects = [project]
     else:
         paths = find_all_projects_with_action(action_name, ws_context)
         projects = [

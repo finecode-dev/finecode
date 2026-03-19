@@ -878,7 +878,7 @@ async def _handle_run_with_partial_results(
     token = params.get("partialResultToken")
     if not action_name or token is None:
         raise ValueError("action and partial_result_token are required")
-    project_name = params.get("project", "")
+    project_path = params.get("project", "")
     options = params.get("options", {})
 
     from finecode.wm_server.services import run_service, partial_results_service
@@ -887,11 +887,11 @@ async def _handle_run_with_partial_results(
     dev_env = run_service.DevEnv(options.get("devEnv", "ide"))
     result_formats = options.get("resultFormats", ["json"])
 
-    logger.trace(f"runWithPartialResults: action={action_name} project={project_name!r} token={token} formats={result_formats}")
+    logger.trace(f"runWithPartialResults: action={action_name} project={project_path!r} token={token} formats={result_formats}")
 
     stream = await partial_results_service.run_action_with_partial_results(
         action_name=action_name,
-        project_name=project_name,
+        project_path=project_path,
         params=params.get("params", {}),
         partial_result_token=token,
         run_trigger=trigger,
