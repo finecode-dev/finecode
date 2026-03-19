@@ -3,23 +3,23 @@ import dataclasses
 from finecode_extension_api import code_action
 from finecode_extension_api.actions import (
     install_deps_in_env as install_deps_in_env_action,
-    prepare_handler_env as prepare_handler_env_action,
+    install_env as install_env_action,
 )
-from finecode_extension_api.actions.prepare_handler_envs import (
-    PrepareHandlerEnvsRunResult,
+from finecode_extension_api.actions.install_envs import (
+    InstallEnvsRunResult,
 )
 from finecode_extension_api.interfaces import iactionrunner, ilogger
 from finecode_builtin_handlers.dependency_config_utils import process_raw_deps
 
 
 @dataclasses.dataclass
-class PrepareHandlerEnvInstallDepsHandlerConfig(code_action.ActionHandlerConfig): ...
+class InstallEnvInstallDepsHandlerConfig(code_action.ActionHandlerConfig): ...
 
 
-class PrepareHandlerEnvInstallDepsHandler(
+class InstallEnvInstallDepsHandler(
     code_action.ActionHandler[
-        prepare_handler_env_action.PrepareHandlerEnvAction,
-        PrepareHandlerEnvInstallDepsHandlerConfig,
+        install_env_action.InstallEnvAction,
+        InstallEnvInstallDepsHandlerConfig,
     ]
 ):
     def __init__(
@@ -30,14 +30,14 @@ class PrepareHandlerEnvInstallDepsHandler(
 
     async def run(
         self,
-        payload: prepare_handler_env_action.PrepareHandlerEnvRunPayload,
-        run_context: prepare_handler_env_action.PrepareHandlerEnvRunContext,
-    ) -> PrepareHandlerEnvsRunResult:
+        payload: install_env_action.InstallEnvRunPayload,
+        run_context: install_env_action.InstallEnvRunContext,
+    ) -> InstallEnvsRunResult:
         env = payload.env
         project_def = run_context.project_def
         if project_def is None:
             raise code_action.ActionFailedException(
-                "project_def must be set by PrepareHandlerEnvReadConfigHandler"
+                "project_def must be set by InstallEnvReadConfigHandler"
             )
 
         install_deps_in_env_action_instance = self.action_runner.get_action_by_name(
@@ -82,4 +82,4 @@ class PrepareHandlerEnvInstallDepsHandler(
             payload=install_deps_payload,
             meta=run_context.meta,
         )
-        return PrepareHandlerEnvsRunResult(errors=result.errors)
+        return InstallEnvsRunResult(errors=result.errors)

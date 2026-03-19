@@ -13,23 +13,21 @@ from finecode_extension_api.actions.create_envs import EnvInfo
 
 
 @dataclasses.dataclass
-class PrepareHandlerEnvsRunPayload(code_action.RunActionPayload):
+class InstallEnvsRunPayload(code_action.RunActionPayload):
     envs: list[EnvInfo] = dataclasses.field(default_factory=list)
-    """Explicit list of environments to prepare. Empty means handlers discover envs at run time."""
-    recreate: bool = False
-    """Remove and recreate existing environments from scratch even if they are already valid."""
+    """Explicit list of environments to install dependencies in. Empty means handlers discover envs at run time."""
     env_names: list[str] | None = None
-    """Filter: when set, only environments whose name is in this list are prepared. Applied during discovery only."""
-    
+    """Filter: when set, only in environments whose name is in this list dependencies will be installed. Applied during discovery only."""
 
 
-class PrepareHandlerEnvsRunContext(
-    code_action.RunActionContext[PrepareHandlerEnvsRunPayload]
+
+class InstallEnvsRunContext(
+    code_action.RunActionContext[InstallEnvsRunPayload]
 ):
     def __init__(
         self,
         run_id: int,
-        initial_payload: PrepareHandlerEnvsRunPayload,
+        initial_payload: InstallEnvsRunPayload,
         meta: code_action.RunActionMeta,
         info_provider: code_action.RunContextInfoProvider,
     ) -> None:
@@ -55,12 +53,12 @@ class PrepareHandlerEnvsRunContext(
 
 
 @dataclasses.dataclass
-class PrepareHandlerEnvsRunResult(code_action.RunActionResult):
+class InstallEnvsRunResult(code_action.RunActionResult):
     errors: list[str]
 
     @override
     def update(self, other: code_action.RunActionResult) -> None:
-        if not isinstance(other, PrepareHandlerEnvsRunResult):
+        if not isinstance(other, InstallEnvsRunResult):
             return
         self.errors += other.errors
 
@@ -75,16 +73,15 @@ class PrepareHandlerEnvsRunResult(code_action.RunActionResult):
             return code_action.RunReturnCode.ERROR
 
 
-class PrepareHandlerEnvsAction(
+class InstallEnvsAction(
     code_action.Action[
-        PrepareHandlerEnvsRunPayload,
-        PrepareHandlerEnvsRunContext,
-        PrepareHandlerEnvsRunResult,
+        InstallEnvsRunPayload,
+        InstallEnvsRunContext,
+        InstallEnvsRunResult,
     ]
 ):
-    """Install all dependencies into environments, which can be either provided or will
-    be discovered by handlers."""
+    """Install dependencies into all environments."""
 
-    PAYLOAD_TYPE = PrepareHandlerEnvsRunPayload
-    RUN_CONTEXT_TYPE = PrepareHandlerEnvsRunContext
-    RESULT_TYPE = PrepareHandlerEnvsRunResult
+    PAYLOAD_TYPE = InstallEnvsRunPayload
+    RUN_CONTEXT_TYPE = InstallEnvsRunContext
+    RESULT_TYPE = InstallEnvsRunResult

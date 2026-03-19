@@ -2,7 +2,7 @@ import dataclasses
 
 from finecode_extension_api import code_action
 from finecode_extension_api.actions import (
-    prepare_handler_envs as prepare_handler_envs_action,
+    install_envs as install_envs_action,
 )
 from finecode_extension_api.actions.create_envs import EnvInfo
 from finecode_extension_api.interfaces import (
@@ -13,13 +13,13 @@ from finecode_extension_api.interfaces import (
 
 
 @dataclasses.dataclass
-class PrepareHandlerEnvsDiscoverEnvsHandlerConfig(code_action.ActionHandlerConfig): ...
+class InstallEnvsDiscoverEnvsHandlerConfig(code_action.ActionHandlerConfig): ...
 
 
-class PrepareHandlerEnvsDiscoverEnvsHandler(
+class InstallEnvsDiscoverEnvsHandler(
     code_action.ActionHandler[
-        prepare_handler_envs_action.PrepareHandlerEnvsAction,
-        PrepareHandlerEnvsDiscoverEnvsHandlerConfig,
+        install_envs_action.InstallEnvsAction,
+        InstallEnvsDiscoverEnvsHandlerConfig,
     ]
 ):
     """Discover and populate run_context.envs from the current project's config.
@@ -42,9 +42,9 @@ class PrepareHandlerEnvsDiscoverEnvsHandler(
 
     async def run(
         self,
-        payload: prepare_handler_envs_action.PrepareHandlerEnvsRunPayload,
-        run_context: prepare_handler_envs_action.PrepareHandlerEnvsRunContext,
-    ) -> prepare_handler_envs_action.PrepareHandlerEnvsRunResult:
+        payload: install_envs_action.InstallEnvsRunPayload,
+        run_context: install_envs_action.InstallEnvsRunContext,
+    ) -> install_envs_action.InstallEnvsRunResult:
         if payload.envs:
             envs = list(payload.envs)
         else:
@@ -64,10 +64,10 @@ class PrepareHandlerEnvsDiscoverEnvsHandler(
                 )
                 for env_name in deps_groups
             ]
-            
+
             if payload.env_names is not None:
                 envs = [e for e in envs if e.name in payload.env_names]
 
         self.logger.debug(f"Discovered handler envs: {[e.name for e in envs]}")
         run_context.envs = envs
-        return prepare_handler_envs_action.PrepareHandlerEnvsRunResult(errors=[])
+        return install_envs_action.InstallEnvsRunResult(errors=[])

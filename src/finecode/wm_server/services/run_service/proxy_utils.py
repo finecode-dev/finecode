@@ -456,6 +456,7 @@ async def _start_runner_or_update_config(
                     runner=runner,
                     project=project,
                     handlers_to_initialize=handlers_to_initialize,
+                    ws_context=ws_context
                 )
             except RunnerFailedToStart as exception:
                 raise StartingEnvironmentsFailed(

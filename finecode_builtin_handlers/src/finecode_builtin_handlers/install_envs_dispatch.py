@@ -3,23 +3,23 @@ import dataclasses
 
 from finecode_extension_api import code_action
 from finecode_extension_api.actions import (
-    prepare_handler_env as prepare_handler_env_action,
-    prepare_handler_envs as prepare_handler_envs_action,
+    install_env as install_env_action,
+    install_envs as install_envs_action,
 )
 from finecode_extension_api.interfaces import iactionrunner, ilogger
 
 
 @dataclasses.dataclass
-class PrepareHandlerEnvsDispatchHandlerConfig(code_action.ActionHandlerConfig): ...
+class InstallEnvsDispatchHandlerConfig(code_action.ActionHandlerConfig): ...
 
 
-class PrepareHandlerEnvsDispatchHandler(
+class InstallEnvsDispatchHandler(
     code_action.ActionHandler[
-        prepare_handler_envs_action.PrepareHandlerEnvsAction,
-        PrepareHandlerEnvsDispatchHandlerConfig,
+        install_envs_action.InstallEnvsAction,
+        InstallEnvsDispatchHandlerConfig,
     ]
 ):
-    """Dispatch a prepare_handler_env call per environment concurrently."""
+    """Dispatch an install_env call per environment concurrently."""
 
     def __init__(
         self, action_runner: iactionrunner.IActionRunner, logger: ilogger.ILogger
@@ -29,12 +29,12 @@ class PrepareHandlerEnvsDispatchHandler(
 
     async def run(
         self,
-        payload: prepare_handler_envs_action.PrepareHandlerEnvsRunPayload,
-        run_context: prepare_handler_envs_action.PrepareHandlerEnvsRunContext,
-    ) -> prepare_handler_envs_action.PrepareHandlerEnvsRunResult:
-        prepare_handler_env_action_instance = self.action_runner.get_action_by_name(
-            name="prepare_handler_env",
-            expected_type=prepare_handler_env_action.PrepareHandlerEnvAction,
+        payload: install_envs_action.InstallEnvsRunPayload,
+        run_context: install_envs_action.InstallEnvsRunContext,
+    ) -> install_envs_action.InstallEnvsRunResult:
+        install_env_action_instance = self.action_runner.get_action_by_name(
+            name="install_env",
+            expected_type=install_env_action.InstallEnvAction,
         )
 
         if run_context.envs is None:
@@ -42,15 +42,15 @@ class PrepareHandlerEnvsDispatchHandler(
                 "envs must be populated must be provided in payload or populated by previous handlers"
             )
         tasks: list[
-            asyncio.Task[prepare_handler_envs_action.PrepareHandlerEnvsRunResult]
+            asyncio.Task[install_envs_action.InstallEnvsRunResult]
         ] = []
         try:
             async with asyncio.TaskGroup() as tg:
                 for env in run_context.envs:
                     task = tg.create_task(
                         self.action_runner.run_action(
-                            action=prepare_handler_env_action_instance,
-                            payload=prepare_handler_env_action.PrepareHandlerEnvRunPayload(
+                            action=install_env_action_instance,
+                            payload=install_env_action.InstallEnvRunPayload(
                                 env=env,
                             ),
                             meta=run_context.meta,
@@ -64,4 +64,4 @@ class PrepareHandlerEnvsDispatchHandler(
         errors: list[str] = []
         for task in tasks:
             errors += task.result().errors
-        return prepare_handler_envs_action.PrepareHandlerEnvsRunResult(errors=errors)
+        return install_envs_action.InstallEnvsRunResult(errors=errors)

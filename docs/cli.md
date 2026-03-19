@@ -133,7 +133,7 @@ See [Preparing Environments](guides/preparing-environments.md) for a full explan
 | `--dev-env=<env>` | Override the detected dev environment. One of: `ai`, `ci`, `cli`, `ide`, `precommit` (default: auto-detected) |
 
 
-!!! note `--env-names` restricts only the final `prepare_handler_envs` step. The `create_envs` and `prepare_runner_envs` steps still run for **all** envs regardless of this flag — envs and runners must exist for every env even when you only need to update dependencies in one of them.
+!!! note `--env-names` restricts only the `install_envs` step. The `create_envs` step still runs for **all** envs regardless of this flag — virtualenvs must exist for every env even when you only need to update dependencies in one of them.
 
 ---
 

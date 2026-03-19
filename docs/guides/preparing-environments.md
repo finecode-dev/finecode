@@ -2,12 +2,12 @@
 
 FineCode runs handlers in purpose-specific virtual environments. Handlers that share the same `env` name (e.g. `dev_no_runtime`) run in the same virtualenv. Before handlers can execute, their environments must exist and contain the right dependencies. This guide explains how that process works and how to control it.
 
-## The three-step sequence
+## The two-step sequence
 
-Environment preparation is split into three distinct actions that must run in order:
+Environment preparation is split into two distinct actions that must run in order:
 
 ```
-create_envs  →  prepare_runner_envs  →  prepare_handler_envs
+create_envs  →  install_envs
 ```
 
 ### Step 1 — `create_envs`
@@ -25,33 +25,40 @@ runtime          = ["fastapi>=0.100", ...]
 
 → Creates `.venvs/dev_workspace/`, `.venvs/dev_no_runtime/`, `.venvs/runtime/`.
 
-### Step 2 — `prepare_runner_envs`
+### Step 2 — `install_envs`
 
-Installs the **Extension Runner** (`finecode_extension_runner`) into each virtualenv. This is what lets FineCode start runners that can actually load handler code.
-
-Preset packages are only installed in `dev_workspace` (handled during the bootstrap phase — see below). Only the runner is installed into other envs here — not the full handler dependency trees.
-
-!!! note
-    `prepare_runner_envs` must run **after** `create_envs` and **before** runners are started. Runners are started automatically between steps 2 and 3 by the WM during `prepare-envs`.
-
-### Step 3 — `prepare_handler_envs`
-
-Installs the full dependency set for each handler into its declared `env` virtualenv. This reads the `dependency-groups` entries and calls `install_deps_in_env` for each env.
+Installs the full dependency set into each virtualenv. This reads the `dependency-groups` entries and calls `install_deps_in_env` for each env, including `finecode_extension_runner` and all handler tool dependencies (e.g. ruff, mypy).
 
 After this step every handler has all its dependencies available and can execute.
 
 ---
 
-## The `dev_workspace` bootstrap env
+## The `dev_workspace` bootstrap
 
-The `dev_workspace` env is special: it contains FineCode itself and the preset packages. This means the handlers that implement `prepare_runner_envs` and `prepare_handler_envs` *live inside* `dev_workspace`.
+The `dev_workspace` env is special: it contains FineCode itself and the preset packages. The handlers that implement `create_envs` and `install_envs` live inside `dev_workspace` — which creates a bootstrapping constraint.
 
-Because of this, `prepare-envs` handles `dev_workspace` separately, **before** starting runners:
+### Workspace root bootstrap (manual, one-time)
 
-1. `create_envs` (dev_workspace only) — create the venv if it doesn't exist
-2. `prepare_handler_envs` (dev_workspace only) — install FineCode + presets
+The workspace root's `dev_workspace` is the **seed** for everything. `prepare-envs` cannot run unless FineCode is already installed somewhere, so the workspace root's `dev_workspace` must be created manually on a fresh checkout:
 
-Only after this bootstrap are runners started, and only then can the remaining steps run across all envs.
+```bash
+python -m venv .venvs/dev_workspace
+source .venvs/dev_workspace/bin/activate   # Windows: .venvs\dev_workspace\Scripts\activate
+python -m pip install --group="dev_workspace"
+```
+
+This is the only step that cannot be automated by FineCode itself. See [Getting Started](../getting-started.md) for the full first-time setup sequence.
+
+### Subproject bootstrap (automated by `prepare-envs`)
+
+For subprojects in the workspace, `prepare-envs` creates their `dev_workspace` envs automatically — **before** starting any runners — using the workspace root's handler configuration:
+
+1. `create_envs` (subproject `dev_workspace` envs) — create the venvs
+2. `install_envs` (subproject `dev_workspace` envs) — install FineCode + presets
+
+**Requirement:** the workspace root's `create_envs` and `install_envs` configuration must produce a valid `dev_workspace` for every subproject. In practice this is rarely a constraint: `dev_workspace` envs exist only to run FineCode and preset packages, so their setup is uniform across projects. If a subproject genuinely requires different handler configuration for either action, its `dev_workspace` must be bootstrapped manually the same way as the workspace root's.
+
+Only after all `dev_workspace` envs exist are runners started, and only then can the remaining steps run across all envs.
 
 ---
 
@@ -66,11 +73,10 @@ python -m finecode prepare-envs
 This is the only command most users need. It:
 
 1. Discovers all projects in the workspace
-2. Bootstraps `dev_workspace` (steps 1–2 above) for each project
+2. Bootstraps `dev_workspace` for each subproject (`create_envs` + `install_envs`, using workspace root config)
 3. Starts Extension Runners
 4. Runs `create_envs` across all projects
-5. Runs `prepare_runner_envs` across all projects
-6. Runs `prepare_handler_envs` across all projects
+5. Runs `install_envs` across all projects
 
 See [CLI reference — prepare-envs](../cli.md#prepare-envs) for available options.
 
@@ -96,9 +102,9 @@ Only prepares environments for the listed projects. Useful in a large workspaces
 python -m finecode prepare-envs --env-names=dev_no_runtime
 ```
 
-Restricts the `prepare_handler_envs` step (step 3) to the named environments. The `create_envs` and `prepare_runner_envs` steps still run for **all** envs regardless of this flag.
+Restricts the `install_envs` step (step 2) to the named environments. The `create_envs` step still runs for **all** envs regardless of this flag.
 
-**Why?** Virtualenvs and runners must exist for every env — they are cheap to create and skip if already valid. Filtering at those steps would leave envs in a broken state if they don't exist yet.
+**Why?** Virtualenvs must exist for every env — they are cheap to create and skip if already valid. Filtering at that step would leave envs in a broken state if they don't exist yet.
 
 Useful when you've added a new handler in one env and want to update only that env without reinstalling everything.
 
@@ -106,12 +112,11 @@ Useful when you've added a new handler in one env and want to update only that e
 
 ## Calling actions directly
 
-The three actions (`create_envs`, `prepare_runner_envs`, `prepare_handler_envs`) are standard FineCode actions and can be invoked individually via the WM API or `python -m finecode run`. This is useful when writing custom orchestration.
+The two actions (`create_envs`, `install_envs`) are standard FineCode actions and can be invoked individually via the WM API or `python -m finecode run`. This is useful when writing custom orchestration.
 
 | Action | Source |
 |---|---|
 | `create_envs` | `finecode_extension_api.actions.create_envs.CreateEnvsAction` |
-| `prepare_runner_envs` | `finecode_extension_api.actions.prepare_runner_envs.PrepareRunnerEnvsAction` |
-| `prepare_handler_envs` | `finecode_extension_api.actions.prepare_handler_envs.PrepareHandlerEnvsAction` |
+| `install_envs` | `finecode_extension_api.actions.install_envs.InstallEnvsAction` |
 
 See [Built-in Actions reference](../reference/actions.md) for payload fields and result types.

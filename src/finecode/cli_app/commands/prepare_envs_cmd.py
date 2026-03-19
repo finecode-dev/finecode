@@ -26,15 +26,14 @@ async def prepare_envs(
     Orchestration steps:
     1. Discover projects (without starting runners — envs may not exist yet).
     2. Check / remove dev_workspace environments as needed.
-    3. Run ``create_envs`` + ``prepare_handler_envs`` to create / update dev_workspace envs.
-    4. Start extension runners (resolves preset actions).
+    3. Run ``create_envs`` + ``install_envs`` to create / update dev_workspace envs.
+    4. Start dev_workspace runners (resolves preset actions).
     5. Run ``create_envs`` to create all virtualenvs.
-    6. Run ``prepare_runner_envs`` to install Extension Runners.
-    7. Run ``prepare_handler_envs`` to install handler dependencies.
+    6. Run ``install_envs`` to install all dependencies.
 
     When ``env_names`` is given only those named environments are prepared in
-    step 7 (steps 5 and 6 still run for all envs).
-    When ``project_names`` is given only those projects are prepared in steps 3, 5, 6, and 7.
+    step 6 (step 5 still runs for all envs).
+    When ``project_names`` is given only those projects are prepared in steps 3, 5, and 6.
     """
     port_file = None
     try:
@@ -194,31 +193,31 @@ async def _run(
     # Step 3b — install dev_workspace dependencies.
     try:
         prepare_dw_result = await client.run_action(
-            action="prepare_handler_envs",
+            action="install_envs",
             project=current_project["path"],
             params={"envs": dw_envs},
             options=dw_options,
         )
     except ApiError as exc:
         raise PrepareEnvsFailed(
-            f"'prepare_handler_envs' (dev_workspace) failed: {exc}"
+            f"'install_envs' (dev_workspace) failed: {exc}"
         ) from exc
     if prepare_dw_result.get("returnCode", 0) != 0:
         output = (prepare_dw_result.get("resultByFormat") or {}).get("string", "")
         raise PrepareEnvsFailed(
-            f"'prepare_handler_envs' (dev_workspace) failed with return code "
+            f"'install_envs' (dev_workspace) failed with return code "
             f"{prepare_dw_result['returnCode']}: {output}"
         )
 
-    # Step 4 — start runners with presets (resolves preset-defined actions).
-    logger.info("Starting extension runners...")
+    # Step 4 — start dev_workspace runners (resolves preset-defined actions).
+    logger.info("Starting dev_workspace runners...")
     try:
         await client.start_runners()
     except ApiError as exc:
         raise PrepareEnvsFailed(f"Starting runners failed: {exc}") from exc
 
-    # Steps 5, 6 & 7 — create envs, install runners, install handler deps.
-    logger.info("Creating envs and installing runner and handler dependencies...")
+    # Steps 5 & 6 — create envs and install dependencies.
+    logger.info("Creating envs and installing dependencies...")
     # Each step runs across all projects concurrently.
     common_options = {
         "concurrently": False,
@@ -238,29 +237,18 @@ async def _run(
         raise PrepareEnvsFailed(f"'create_envs' failed: {exc}") from exc
     _check_batch_result(create_result, "'create_envs' failed")
 
-    # Step 6 — install Extension Runners (no env filter).
-    try:
-        runners_result = await client.run_batch(
-            actions=["prepare_runner_envs"],
-            projects=project_paths,
-            options=common_options,
-        )
-    except ApiError as exc:
-        raise PrepareEnvsFailed(f"'prepare_runner_envs' failed: {exc}") from exc
-    _check_batch_result(runners_result, "'prepare_runner_envs' failed")
-
-    # Step 7 — install handler dependencies (with optional env_names filter).
+    # Step 6 — install dependencies (with optional env_names filter).
     handler_params = {"env_names": env_names} if env_names is not None else {}
     try:
         batch_result = await client.run_batch(
-            actions=["prepare_handler_envs"],
+            actions=["install_envs"],
             projects=project_paths,
             params=handler_params,
             options=common_options,
         )
     except ApiError as exc:
-        raise PrepareEnvsFailed(f"'prepare_handler_envs' failed: {exc}") from exc
-    _check_batch_result(batch_result, "'prepare_handler_envs' failed")
+        raise PrepareEnvsFailed(f"'install_envs' failed: {exc}") from exc
+    _check_batch_result(batch_result, "'install_envs' failed")
 
 
 __all__ = ["prepare_envs", "PrepareEnvsFailed"]

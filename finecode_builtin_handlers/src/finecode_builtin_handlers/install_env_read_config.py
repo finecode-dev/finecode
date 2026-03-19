@@ -1,20 +1,24 @@
 import dataclasses
 
 from finecode_extension_api import code_action
-from finecode_extension_api.actions import prepare_runner_env as prepare_runner_env_action
-from finecode_extension_api.actions.prepare_runner_envs import PrepareRunnerEnvsRunResult
+from finecode_extension_api.actions import (
+    install_env as install_env_action,
+)
+from finecode_extension_api.actions.install_envs import (
+    InstallEnvsRunResult,
+)
 from finecode_extension_api.interfaces import ilogger, iprojectinfoprovider
 from finecode_builtin_handlers import dependency_config_utils
 
 
 @dataclasses.dataclass
-class PrepareRunnerEnvReadConfigHandlerConfig(code_action.ActionHandlerConfig): ...
+class InstallEnvReadConfigHandlerConfig(code_action.ActionHandlerConfig): ...
 
 
-class PrepareRunnerEnvReadConfigHandler(
+class InstallEnvReadConfigHandler(
     code_action.ActionHandler[
-        prepare_runner_env_action.PrepareRunnerEnvAction,
-        PrepareRunnerEnvReadConfigHandlerConfig,
+        install_env_action.InstallEnvAction,
+        InstallEnvReadConfigHandlerConfig,
     ]
 ):
     def __init__(
@@ -27,9 +31,9 @@ class PrepareRunnerEnvReadConfigHandler(
 
     async def run(
         self,
-        payload: prepare_runner_env_action.PrepareRunnerEnvRunPayload,
-        run_context: prepare_runner_env_action.PrepareRunnerEnvRunContext,
-    ) -> PrepareRunnerEnvsRunResult:
+        payload: install_env_action.InstallEnvRunPayload,
+        run_context: install_env_action.InstallEnvRunContext,
+    ) -> InstallEnvsRunResult:
         project_raw_config = await self.project_info_provider.get_project_raw_config(
             payload.env.project_def_path
         )
@@ -37,4 +41,4 @@ class PrepareRunnerEnvReadConfigHandler(
             project_raw_config, payload.env.project_def_path
         )
         run_context.project_def = project_raw_config
-        return PrepareRunnerEnvsRunResult(errors=[])
+        return InstallEnvsRunResult(errors=[])
