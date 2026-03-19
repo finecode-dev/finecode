@@ -25,7 +25,7 @@ class PrepareRunnerEnvsDiscoverEnvsHandler(
     """Discover and populate run_context.envs from the current project's config.
 
     Every dependency group defined in the project definition is included as an
-    env.
+    env, except ``dev_workspace`` which is handled separately by prepare-envs.
     """
 
     def __init__(
@@ -58,6 +58,7 @@ class PrepareRunnerEnvsDiscoverEnvsHandler(
                 project_def_path=project_def_path,
             )
             for env_name in deps_groups
+            if env_name != "dev_workspace"
         ]
 
         self.logger.debug(f"Discovered runner envs: {[e.name for e in envs]}")

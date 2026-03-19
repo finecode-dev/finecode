@@ -12,9 +12,8 @@ from finecode_extension_api.actions.create_envs import EnvInfo
 
 @dataclasses.dataclass
 class PrepareRunnerEnvsRunPayload(code_action.RunActionPayload):
-    # Remove old env and create a new one from scratch even if the current one
-    # is valid.
     recreate: bool = False
+    """Remove and recreate existing environments from scratch even if they are already valid."""
 
 
 class PrepareRunnerEnvsRunContext(
@@ -33,7 +32,7 @@ class PrepareRunnerEnvsRunContext(
             meta=meta,
             info_provider=info_provider,
         )
-        # Populated by PrepareRunnerEnvsDiscoverEnvsHandler
+        # Populated by handlers
         self.envs: list[EnvInfo] | None = None
 
     async def init(self) -> None:
@@ -68,6 +67,8 @@ class PrepareRunnerEnvsAction(
         PrepareRunnerEnvsRunResult,
     ]
 ):
+    """Install finecode_extension_runner in all environments."""
+
     PAYLOAD_TYPE = PrepareRunnerEnvsRunPayload
     RUN_CONTEXT_TYPE = PrepareRunnerEnvsRunContext
     RESULT_TYPE = PrepareRunnerEnvsRunResult

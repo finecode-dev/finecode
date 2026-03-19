@@ -40,6 +40,8 @@ class PrepareHandlerEnvAction(
         PrepareHandlerEnvsRunResult,
     ]
 ):
+    """Install all dependencies into a single environment."""
+
     PAYLOAD_TYPE = PrepareHandlerEnvRunPayload
     RUN_CONTEXT_TYPE = PrepareHandlerEnvRunContext
     RESULT_TYPE = PrepareHandlerEnvsRunResult

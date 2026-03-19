@@ -14,15 +14,12 @@ from finecode_extension_api.actions.create_envs import EnvInfo
 
 @dataclasses.dataclass
 class PrepareHandlerEnvsRunPayload(code_action.RunActionPayload):
-    # Explicit env list. When empty, handlers should discover envs at run time.
     envs: list[EnvInfo] = dataclasses.field(default_factory=list)
-    # Remove old env and create a new one from scratch even if the current one
-    # is valid.
+    """Explicit list of environments to prepare. Empty means handlers discover envs at run time."""
     recreate: bool = False
-    # Optional filter: when set, only envs whose name is in this list are
-    # prepared. Applied during discovery only — when envs is provided explicitly,
-    # filter before passing.
+    """Remove and recreate existing environments from scratch even if they are already valid."""
     env_names: list[str] | None = None
+    """Filter: when set, only environments whose name is in this list are prepared. Applied during discovery only."""
     
 
 
@@ -85,6 +82,9 @@ class PrepareHandlerEnvsAction(
         PrepareHandlerEnvsRunResult,
     ]
 ):
+    """Install all dependencies into environments, which can be either provided or will
+    be discovered by handlers."""
+
     PAYLOAD_TYPE = PrepareHandlerEnvsRunPayload
     RUN_CONTEXT_TYPE = PrepareHandlerEnvsRunContext
     RESULT_TYPE = PrepareHandlerEnvsRunResult

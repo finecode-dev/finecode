@@ -37,6 +37,8 @@ class PrepareRunnerEnvAction(
         PrepareRunnerEnvsRunResult,
     ]
 ):
+    """Install finecode_extension_runner in environment."""
+
     PAYLOAD_TYPE = PrepareRunnerEnvRunPayload
     RUN_CONTEXT_TYPE = PrepareRunnerEnvRunContext
     RESULT_TYPE = PrepareRunnerEnvsRunResult
