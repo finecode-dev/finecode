@@ -187,6 +187,10 @@ def cli(): ...
 @click.option(
     "--stdio", "stdio", is_flag=True, default=False, help="Use stdio communication"
 )
+@click.option(
+    "--tcp", "tcp_auto", is_flag=True, default=False,
+    help="Start TCP server on a random free port; prints 'port:<N>' to stdout for client discovery"
+)
 @click.option("--host", "host", default=None, help="Host for TCP and WS server")
 @click.option(
     "--port", "port", default=None, type=int, help="Port for TCP and WS server"
@@ -197,6 +201,7 @@ def start_lsp(
     tcp: int | None,
     ws: bool,
     stdio: bool,
+    tcp_auto: bool,
     host: str | None,
     port: int | None,
 ):
@@ -212,7 +217,11 @@ def start_lsp(
         except Exception as e:
             logger.info(e)
 
-    if tcp is not None:
+    if tcp_auto:
+        comm_type = communication_utils.CommunicationType.TCP
+        host = "127.0.0.1"
+        port = None  # main.start() will pick a free port and print it
+    elif tcp is not None:
         comm_type = communication_utils.CommunicationType.TCP
         port = tcp
         host = "127.0.0.1"
@@ -221,7 +230,7 @@ def start_lsp(
     elif stdio is True:
         comm_type = communication_utils.CommunicationType.STDIO
     else:
-        raise ValueError("Specify either --tcp, --ws or --stdio")
+        raise ValueError("Specify either --tcp, --socket, --ws or --stdio")
 
     asyncio.run(
         wm_lsp_server.start(comm_type=comm_type, host=host, port=port, log_level=log_level)
