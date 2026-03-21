@@ -1,0 +1,35 @@
+# Architecture Decision Records
+
+This directory captures architecturally significant decisions for FineCode
+using the [MADR](https://adr.github.io/madr/) (Markdown Any Decision Records)
+format — a lightweight, structured template that scales from simple to complex
+decisions.
+
+## What is an ADR?
+
+An Architecture Decision Record (ADR) is a short document that captures a
+single decision along with its context and consequences. ADRs are numbered
+sequentially, and once accepted they are **immutable** — if a decision changes,
+a new ADR supersedes the old one rather than editing it.
+
+## How to create a new ADR
+
+1. **Search first.** Look through the index below (filter by tags) and search
+   the `docs/adr/` directory for related decisions. Fill in the "Related ADRs
+   Considered" section with what you found — even if the answer is "None".
+2. Copy [template.md](template.md) to `NNNN-short-title.md` (next sequential number).
+   Use a title that states the decision, not just the topic —
+   "Auto-shutdown on disconnect timeout" rather than "WM server lifecycle".
+3. Fill in the required sections (Context, Related ADRs Considered, Decision, Consequences).
+4. Set status to `proposed` and open a PR for review.
+5. Once merged, update status to `accepted` and add a row to the index table below.
+
+## Index
+
+| #    | Title                                                                                                                          | Status   | Date       | Tags                           |
+|------|--------------------------------------------------------------------------------------------------------------------------------|----------|------------|--------------------------------|
+| 0001 | [Use ADRs for architecture decisions](0001-use-adr.md)                                                                         | accepted | 2026-03-19 | meta                           |
+| 0002 | [Port-file discovery for the WM server](0002-port-file-discovery-for-wm-server.md)                                             | accepted | 2026-03-19 | ipc, wm-server                 |
+| 0003 | [One Extension Runner process per execution environment](0003-process-isolation-per-extension-environment.md)                  | accepted | 2026-03-19 | architecture, extension-runner |
+| 0004 | [Auto-shutdown on disconnect timeout](0004-auto-shutdown-on-disconnect-timeout.md)                                             | accepted | 2026-03-19 | lifecycle, wm-server           |
+| 0005 | [Zero-based line numbers and ResourceUri fields in action payloads and results](0005-zero-based-lines-and-resourceuri-fields-in-action-payloads-and-results.md) | accepted | 2026-03-20 | actions, conventions           |

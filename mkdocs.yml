@@ -25,6 +25,9 @@ theme:
     - content.code.copy
     - content.code.annotate
 
+exclude_docs: |
+  adr/template.md
+
 plugins:
   - search
   - mkdocstrings:
@@ -86,3 +89,4 @@ nav:
       - WM Protocol: wm-protocol.md
       - WM-ER Protocol: wm-er-protocol.md
       - Developing FineCode: guides/developing-finecode.md
+      - Architecture Decisions: adr/README.md
