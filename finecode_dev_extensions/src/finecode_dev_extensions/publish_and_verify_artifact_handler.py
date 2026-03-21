@@ -2,10 +2,10 @@ import dataclasses
 import pathlib
 
 from finecode_extension_api import code_action
-from finecode_extension_api.actions import (
-    get_dist_artifact_version,
-    publish_artifact,
-    verify_artifact_published_to_registry,
+from finecode_extension_api.actions.publishing import (
+    get_dist_artifact_version_action,
+    publish_artifact_action,
+    verify_artifact_published_to_registry_action,
 )
 from finecode_extension_api.interfaces import iactionrunner, iprojectinfoprovider
 
@@ -50,9 +50,9 @@ class PublishAndVerifyArtifactHandler(
 
         # Publish the artifact
         publish_action = self.action_runner.get_action_by_name(
-            "publish_artifact", publish_artifact.PublishArtifactAction
+            "publish_artifact", publish_artifact_action.PublishArtifactAction
         )
-        publish_payload = publish_artifact.PublishArtifactRunPayload(
+        publish_payload = publish_artifact_action.PublishArtifactRunPayload(
             src_artifact_def_path=src_artifact_def_path,
             dist_artifact_paths=dist_artifact_paths,
             force=payload.force,
@@ -66,9 +66,9 @@ class PublishAndVerifyArtifactHandler(
         # Get version from the dist artifact
         get_version_action = self.action_runner.get_action_by_name(
             "get_dist_artifact_version",
-            get_dist_artifact_version.GetDistArtifactVersionAction,
+            get_dist_artifact_version_action.GetDistArtifactVersionAction,
         )
-        get_version_payload = get_dist_artifact_version.GetDistArtifactVersionRunPayload(
+        get_version_payload = get_dist_artifact_version_action.GetDistArtifactVersionRunPayload(
             dist_artifact_path=dist_artifact_paths[0]
         )
         get_version_result = await self.action_runner.run_action(
@@ -81,11 +81,11 @@ class PublishAndVerifyArtifactHandler(
         verification_errors: dict[str, list[str]] = {}
         verify_action = self.action_runner.get_action_by_name(
             "verify_artifact_published_to_registry",
-            verify_artifact_published_to_registry.VerifyArtifactPublishedToRegistryAction,
+            verify_artifact_published_to_registry_action.VerifyArtifactPublishedToRegistryAction,
         )
 
         for registry_name in published_registries:
-            verify_payload = verify_artifact_published_to_registry.VerifyArtifactPublishedToRegistryRunPayload(
+            verify_payload = verify_artifact_published_to_registry_action.VerifyArtifactPublishedToRegistryRunPayload(
                 dist_artifact_paths=dist_artifact_paths,
                 registry_name=registry_name,
                 version=version,

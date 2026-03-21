@@ -4,7 +4,7 @@ import enum
 from pathlib import Path
 
 from finecode_extension_api import code_action
-from finecode_extension_api.actions import lint_files
+from finecode_extension_api.actions.code_quality import lint_files_action
 
 
 class LintTarget(enum.StrEnum):
@@ -21,7 +21,7 @@ class LintRunPayload(code_action.RunActionPayload):
 
 
 @dataclasses.dataclass
-class LintRunResult(lint_files.LintFilesRunResult): ...
+class LintRunResult(lint_files_action.LintFilesRunResult): ...
 
 
 class LintRunContext(
@@ -38,4 +38,4 @@ class LintAction(code_action.Action[LintRunPayload, LintRunContext, LintRunResul
 
 
 # reexport
-LintMessage = lint_files.LintMessage
+LintMessage = lint_files_action.LintMessage

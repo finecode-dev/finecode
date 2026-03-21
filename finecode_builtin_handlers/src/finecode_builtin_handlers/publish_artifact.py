@@ -4,16 +4,15 @@ import dataclasses
 import pathlib
 
 from finecode_extension_api import code_action
-from finecode_extension_api.actions import \
-    get_src_artifact_registries as get_src_artifact_registries_action
-from finecode_extension_api.actions import \
-    get_src_artifact_version as get_src_artifact_version_action
-from finecode_extension_api.actions import \
-    is_artifact_published_to_registry as is_artifact_published_to_registry_action
-from finecode_extension_api.actions import \
-    publish_artifact as publish_artifact_action
-from finecode_extension_api.actions import \
-    publish_artifact_to_registry as publish_artifact_to_registry_action
+from finecode_extension_api.actions.artifact import (
+    get_src_artifact_registries_action,
+    get_src_artifact_version_action,
+)
+from finecode_extension_api.actions.publishing import (
+    is_artifact_published_to_registry_action,
+    publish_artifact_action,
+    publish_artifact_to_registry_action,
+)
 from finecode_extension_api.interfaces import (
     iactionrunner,
     ilogger,

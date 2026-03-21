@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any, override
 
 from finecode_extension_api import service
-from finecode_extension_api.actions import lint_files as lint_files_action
+from finecode_extension_api.actions.code_quality import lint_files_action
 from finecode_extension_api.interfaces import ifileeditor, ilogger, ilspclient
 
 

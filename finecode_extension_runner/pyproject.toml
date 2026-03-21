@@ -66,7 +66,7 @@ version_file = "src/finecode_extension_runner/_version.py"
 root = ".."
 
 [tool.finecode.action.get_src_artifact_version]
-source = "finecode_extension_api.actions.get_src_artifact_version.GetSrcArtifactVersionAction"
+source = "finecode_extension_api.actions.GetSrcArtifactVersionAction"
 handlers_mode = "replace"
 handlers = [
     { name = 'get_src_artifact_version_setuptools_scm', source = 'fine_python_setuptools_scm.GetSrcArtifactVersionSetuptoolsScmHandler', env = "dev_no_runtime", dependencies = [

@@ -1,5 +1,5 @@
 [tool.finecode.action.format_files_python]
-source = "finecode_extension_api.actions.format_files.FormatFilesAction"
+source = "finecode_extension_api.actions.FormatFilesAction"
 languages = ["python"]
 handlers = [
     { name = "ruff", source = "fine_python_ruff.RuffFormatFilesHandler", env = "dev_no_runtime", dependencies = [

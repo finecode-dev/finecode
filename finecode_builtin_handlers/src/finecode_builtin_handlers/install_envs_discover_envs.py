@@ -1,10 +1,8 @@
 import dataclasses
 
 from finecode_extension_api import code_action
-from finecode_extension_api.actions import (
-    install_envs as install_envs_action,
-)
-from finecode_extension_api.actions.create_envs import EnvInfo
+from finecode_extension_api.actions.environments import install_envs_action
+from finecode_extension_api.actions.environments.create_envs_action import EnvInfo
 from finecode_extension_api.interfaces import (
     iextensionrunnerinfoprovider,
     ilogger,

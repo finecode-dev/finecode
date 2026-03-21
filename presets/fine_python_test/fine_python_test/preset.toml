@@ -1,5 +1,5 @@
 [tool.finecode.action.run_tests]
-source = "finecode_extension_api.actions.run_tests.RunTestsAction"
+source = "finecode_extension_api.actions.RunTestsAction"
 handlers = [
     { name = "pytest", source = "fine_python_pytest.PytestRunTestsHandler", env = "dev", dependencies = [
         "fine_python_pytest~=0.1.0a0",
@@ -7,7 +7,7 @@ handlers = [
 ]
 
 [tool.finecode.action.list_tests]
-source = "finecode_extension_api.actions.list_tests.ListTestsAction"
+source = "finecode_extension_api.actions.ListTestsAction"
 handlers = [
     { name = "pytest", source = "fine_python_pytest.PytestListTestsHandler", env = "dev", dependencies = [
         "fine_python_pytest~=0.1.0a0",

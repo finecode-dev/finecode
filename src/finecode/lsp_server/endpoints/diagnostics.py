@@ -9,7 +9,7 @@ from lsprotocol import types
 from pydantic.dataclasses import dataclass as pydantic_dataclass
 
 from finecode.lsp_server import global_state, pygls_types_utils
-from finecode_extension_api.actions import lint as lint_action
+from finecode_extension_api.actions.code_quality import lint_action
 
 
 async def _find_project_dir_for_file(file_path: Path) -> str | None:

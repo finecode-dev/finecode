@@ -2,9 +2,7 @@
 import dataclasses
 
 from finecode_extension_api import code_action
-from finecode_extension_api.actions import (
-    init_repository_provider as init_repository_provider_action,
-)
+from finecode_extension_api.actions.publishing import init_repository_provider_action
 from finecode_extension_api.interfaces import irepositorycredentialsprovider
 
 

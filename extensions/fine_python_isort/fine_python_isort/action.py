@@ -7,7 +7,7 @@ from pathlib import Path
 import isort.api as isort_api
 import isort.settings as isort_settings
 from finecode_extension_api import code_action
-from finecode_extension_api.actions import format_files as format_files_action
+from finecode_extension_api.actions.code_quality import format_files_action
 from finecode_extension_api.interfaces import icache, ilogger, iprocessexecutor
 
 

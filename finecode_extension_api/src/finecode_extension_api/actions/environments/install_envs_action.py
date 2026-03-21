@@ -9,7 +9,7 @@ else:
     from typing_extensions import override
 
 from finecode_extension_api import code_action, textstyler
-from finecode_extension_api.actions.create_envs import EnvInfo
+from finecode_extension_api.actions.environments.create_envs_action import EnvInfo
 
 
 @dataclasses.dataclass

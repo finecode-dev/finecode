@@ -28,22 +28,22 @@ class ActionRunner(iactionrunner.IActionRunner):
         return self._actions_names_getter()
     
     @typing.override
-    def get_actions_by_source(self, source: str, expected_type: type[iactionrunner.ActionT]) -> list[iactionrunner.ActionDeclaration[iactionrunner.ActionT]]:
+    def get_actions_by_source(self, action_type: type[iactionrunner.ActionT]) -> list[iactionrunner.ActionDeclaration[iactionrunner.ActionT]]:
         return [
             action
             for name in self._actions_names_getter()
-            if (action := self._action_by_name_getter(name)).source == source
+            if (action := self._action_by_name_getter(name)).source.rsplit(".", 1)[-1] == action_type.__name__
         ]
 
     @typing.override
-    def get_action_by_name(self, name: str, expected_type: type[iactionrunner.ActionT]) -> iactionrunner.ActionDeclaration[iactionrunner.ActionT]:
+    def get_action_by_name(self, name: str, action_type: type[iactionrunner.ActionT]) -> iactionrunner.ActionDeclaration[iactionrunner.ActionT]:
         try:
             return self._action_by_name_getter(name)
         except KeyError as exception:
             raise iactionrunner.ActionNotFound(f"Action '{name}' not found") from exception
 
     @typing.override
-    def get_actions_for_language(self, source: str, language: str, expected_type: type[iactionrunner.ActionT]) -> list[iactionrunner.ActionDeclaration[iactionrunner.ActionT]]:
+    def get_actions_for_language(self, action_type: type[iactionrunner.ActionT], language: str) -> list[iactionrunner.ActionDeclaration[iactionrunner.ActionT]]:
         return [
-            action for action in self.get_actions_by_source(source=source, expected_type=expected_type) if action.name.endswith('_' + language)
+            action for action in self.get_actions_by_source(action_type=action_type) if action.name.endswith('_' + language)
         ]

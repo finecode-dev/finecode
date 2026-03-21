@@ -4,9 +4,7 @@ from setuptools_scm import Configuration
 from setuptools_scm._get_version_impl import _get_version
 
 from finecode_extension_api import code_action
-from finecode_extension_api.actions import (
-    get_src_artifact_version as get_src_artifact_version_action,
-)
+from finecode_extension_api.actions.artifact import get_src_artifact_version_action
 from finecode_extension_api.interfaces import iprojectinfoprovider, ilogger
 
 

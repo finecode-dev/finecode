@@ -1,5 +1,5 @@
 [tool.finecode.action.create_env]
-source = "finecode_extension_api.actions.create_env.CreateEnvAction"
+source = "finecode_extension_api.actions.CreateEnvAction"
 
 [[tool.finecode.action.create_env.handlers]]
 name = "create_env_create_venv"
@@ -9,7 +9,7 @@ dependencies = ["fine_python_virtualenv~=0.2.0a0"]
 
 
 [tool.finecode.action.create_envs]
-source = "finecode_extension_api.actions.create_envs.CreateEnvsAction"
+source = "finecode_extension_api.actions.CreateEnvsAction"
 
 [[tool.finecode.action.create_envs.handlers]]
 name = "create_envs_discover_envs"
@@ -25,7 +25,7 @@ dependencies = ["finecode_builtin_handlers~=0.2.0a0"]
 
 
 [tool.finecode.action.install_env]
-source = "finecode_extension_api.actions.install_env.InstallEnvAction"
+source = "finecode_extension_api.actions.InstallEnvAction"
 
 [[tool.finecode.action.install_env.handlers]]
 name = "install_env_read_config"
@@ -41,7 +41,7 @@ dependencies = ["finecode_builtin_handlers~=0.2.0a0"]
 
 
 [tool.finecode.action.install_envs]
-source = "finecode_extension_api.actions.install_envs.InstallEnvsAction"
+source = "finecode_extension_api.actions.InstallEnvsAction"
 
 [[tool.finecode.action.install_envs.handlers]]
 name = "install_envs_discover_envs"
@@ -57,7 +57,7 @@ dependencies = ["finecode_builtin_handlers~=0.2.0a0"]
 
 
 [tool.finecode.action.dump_config]
-source = "finecode_extension_api.actions.dump_config.DumpConfigAction"
+source = "finecode_extension_api.actions.DumpConfigAction"
 
 [[tool.finecode.action.dump_config.handlers]]
 name = "dump_config"
@@ -74,7 +74,7 @@ dependencies = ["finecode_builtin_handlers~=0.2.0a0"]
 
 
 [tool.finecode.action.install_deps_in_env]
-source = "finecode_extension_api.actions.install_deps_in_env.InstallDepsInEnvAction"
+source = "finecode_extension_api.actions.InstallDepsInEnvAction"
 
 [[tool.finecode.action.install_deps_in_env.handlers]]
 name = "install_deps_with_pip"
@@ -84,7 +84,7 @@ dependencies = ["fine_python_pip~=0.2.0a0"]
 
 
 [tool.finecode.action.list_src_artifact_files_by_lang]
-source = "finecode_extension_api.actions.list_src_artifact_files_by_lang.ListSrcArtifactFilesByLangAction"
+source = "finecode_extension_api.actions.ListSrcArtifactFilesByLangAction"
 
 [[tool.finecode.action.list_src_artifact_files_by_lang.handlers]]
 name = "list_src_artifact_files_by_lang_python"
@@ -93,7 +93,7 @@ env = "dev_no_runtime"
 dependencies = ["fine_python_package_info~=0.2.0a0"]
 
 [tool.finecode.action.group_src_artifact_files_by_lang]
-source = "finecode_extension_api.actions.group_src_artifact_files_by_lang.GroupSrcArtifactFilesByLangAction"
+source = "finecode_extension_api.actions.GroupSrcArtifactFilesByLangAction"
 
 [[tool.finecode.action.group_src_artifact_files_by_lang.handlers]]
 name = "group_src_artifact_files_by_lang_python"
@@ -103,7 +103,7 @@ dependencies = ["fine_python_package_info~=0.2.0a0"]
 
 
 [tool.finecode.action.lint]
-source = "finecode_extension_api.actions.lint.LintAction"
+source = "finecode_extension_api.actions.LintAction"
 
 [[tool.finecode.action.lint.handlers]]
 name = "lint"
@@ -112,7 +112,7 @@ env = "dev_no_runtime"
 dependencies = ["finecode_builtin_handlers~=0.2.0a0"]
 
 [tool.finecode.action.format]
-source = "finecode_extension_api.actions.format.FormatAction"
+source = "finecode_extension_api.actions.FormatAction"
 
 [[tool.finecode.action.format.handlers]]
 name = "format"
@@ -121,7 +121,7 @@ env = "dev_no_runtime"
 dependencies = ["finecode_builtin_handlers~=0.2.0a0"]
 
 [tool.finecode.action.clean_finecode_logs]
-source = "finecode_extension_api.actions.clean_finecode_logs.CleanFinecodeLogsAction"
+source = "finecode_extension_api.actions.CleanFinecodeLogsAction"
 
 [[tool.finecode.action.clean_finecode_logs.handlers]]
 name = "clean_finecode_logs_dev_workspace"

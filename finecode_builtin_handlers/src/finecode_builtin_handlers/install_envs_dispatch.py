@@ -2,9 +2,9 @@ import asyncio
 import dataclasses
 
 from finecode_extension_api import code_action
-from finecode_extension_api.actions import (
-    install_env as install_env_action,
-    install_envs as install_envs_action,
+from finecode_extension_api.actions.environments import (
+    install_env_action,
+    install_envs_action,
 )
 from finecode_extension_api.interfaces import iactionrunner, ilogger
 
@@ -34,7 +34,7 @@ class InstallEnvsDispatchHandler(
     ) -> install_envs_action.InstallEnvsRunResult:
         install_env_action_instance = self.action_runner.get_action_by_name(
             name="install_env",
-            expected_type=install_env_action.InstallEnvAction,
+            action_type=install_env_action.InstallEnvAction,
         )
 
         if run_context.envs is None:

@@ -4,11 +4,13 @@ import dataclasses
 import pathlib
 
 from finecode_extension_api import code_action
-from finecode_extension_api.actions import (
-    format as format_action,
-    format_files as format_files_action,
-    list_src_artifact_files_by_lang as list_src_artifact_files_by_lang_action,
-    group_src_artifact_files_by_lang as group_src_artifact_files_by_lang_action,
+from finecode_extension_api.actions.artifact import (
+    group_src_artifact_files_by_lang_action,
+    list_src_artifact_files_by_lang_action,
+)
+from finecode_extension_api.actions.code_quality import (
+    format_action,
+    format_files_action,
 )
 from finecode_extension_api.interfaces import (
     iactionrunner,

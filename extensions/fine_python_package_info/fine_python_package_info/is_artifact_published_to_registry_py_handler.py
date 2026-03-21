@@ -1,10 +1,8 @@
 import dataclasses
 
 from finecode_extension_api import code_action
-from finecode_extension_api.actions import \
-    get_src_artifact_registries as get_src_artifact_registries_action
-from finecode_extension_api.actions import \
-    is_artifact_published_to_registry as is_artifact_published_to_registry_action
+from finecode_extension_api.actions.artifact import get_src_artifact_registries_action
+from finecode_extension_api.actions.publishing import is_artifact_published_to_registry_action
 from finecode_extension_api.interfaces import (
     iactionrunner,
     ihttpclient,

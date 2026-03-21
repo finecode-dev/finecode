@@ -2,7 +2,7 @@
 import dataclasses
 
 from finecode_extension_api import code_action
-from finecode_extension_api.actions import format_files as format_files_actions
+from finecode_extension_api.actions.code_quality import format_files_action
 from finecode_extension_api.interfaces import ifileeditor, ilogger
 
 
@@ -12,7 +12,7 @@ class SaveFormatFilesHandlerConfig(code_action.ActionHandlerConfig): ...
 
 class SaveFormatFilesHandler(
     code_action.ActionHandler[
-        format_files_actions.FormatFilesAction, SaveFormatFilesHandlerConfig
+        format_files_action.FormatFilesAction, SaveFormatFilesHandlerConfig
     ]
 ):
     FILE_OPERATION_AUTHOR = ifileeditor.FileOperationAuthor(id="SaveFormatFilesHandler")
@@ -25,9 +25,9 @@ class SaveFormatFilesHandler(
 
     async def run(
         self,
-        payload: format_files_actions.FormatFilesRunPayload,
-        run_context: format_files_actions.FormatFilesRunContext,
-    ) -> format_files_actions.FormatFilesRunResult:
+        payload: format_files_action.FormatFilesRunPayload,
+        run_context: format_files_action.FormatFilesRunContext,
+    ) -> format_files_action.FormatFilesRunResult:
         file_paths = payload.file_paths
         save = payload.save
 
@@ -40,9 +40,9 @@ class SaveFormatFilesHandler(
                         file_path=file_path, file_content=file_content
                     )
 
-        result = format_files_actions.FormatFilesRunResult(
+        result = format_files_action.FormatFilesRunResult(
             result_by_file_path={
-                file_path: format_files_actions.FormatRunFileResult(
+                file_path: format_files_action.FormatRunFileResult(
                     changed=False,  # this handler doesn't change files, only saves them
                     code=run_context.file_info_by_path[file_path].file_content,
                 )

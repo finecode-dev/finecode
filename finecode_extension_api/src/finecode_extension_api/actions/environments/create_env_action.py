@@ -1,7 +1,7 @@
 import dataclasses
 
 from finecode_extension_api import code_action
-from finecode_extension_api.actions.create_envs import EnvInfo, CreateEnvsRunResult
+from finecode_extension_api.actions.environments.create_envs_action import EnvInfo, CreateEnvsRunResult
 
 
 @dataclasses.dataclass

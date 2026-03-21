@@ -2,9 +2,9 @@ import asyncio
 import dataclasses
 
 from finecode_extension_api import code_action
-from finecode_extension_api.actions import (
-    create_env as create_env_action,
-    create_envs as create_envs_action,
+from finecode_extension_api.actions.environments import (
+    create_env_action,
+    create_envs_action,
 )
 from finecode_extension_api.interfaces import iactionrunner, ilogger
 
@@ -38,7 +38,7 @@ class CreateEnvsDispatchHandler(
 
         create_env_action_instance = self.action_runner.get_action_by_name(
             name="create_env",
-            expected_type=create_env_action.CreateEnvAction,
+            action_type=create_env_action.CreateEnvAction,
         )
 
         tasks: list[asyncio.Task[create_envs_action.CreateEnvsRunResult]] = []

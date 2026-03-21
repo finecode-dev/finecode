@@ -7,8 +7,8 @@ from finecode_extension_api import code_action, textstyler
 
 @dataclasses.dataclass
 class BuildArtifactRunPayload(code_action.RunActionPayload):
-    # if not provided, current artifact will be built
     src_artifact_def_path: pathlib.Path | None = None
+    """Path to the artifact definition file (e.g. pyproject.toml). Defaults to the current project's artifact."""
 
 
 class BuildArtifactRunContext(
@@ -48,6 +48,8 @@ class BuildArtifactAction(
         BuildArtifactRunResult,
     ]
 ):
+    """Build an artifact from source."""
+
     PAYLOAD_TYPE = BuildArtifactRunPayload
     RUN_CONTEXT_TYPE = BuildArtifactRunContext
     RESULT_TYPE = BuildArtifactRunResult

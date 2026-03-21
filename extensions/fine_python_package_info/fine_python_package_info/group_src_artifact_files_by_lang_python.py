@@ -6,9 +6,7 @@ import dataclasses
 import pathlib
 
 from finecode_extension_api import code_action
-from finecode_extension_api.actions import (
-    group_src_artifact_files_by_lang as group_src_artifact_files_by_lang_action,
-)
+from finecode_extension_api.actions.artifact import group_src_artifact_files_by_lang_action
 
 from fine_python_package_info import ipypackagelayoutinfoprovider
 

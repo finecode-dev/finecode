@@ -4,11 +4,13 @@ import dataclasses
 import pathlib
 
 from finecode_extension_api import code_action
-from finecode_extension_api.actions import (
-    lint as lint_action,
-    lint_files as lint_files_action,
-    list_src_artifact_files_by_lang as list_src_artifact_files_by_lang_action,
-    group_src_artifact_files_by_lang as group_src_artifact_files_by_lang_action
+from finecode_extension_api.actions.artifact import (
+    group_src_artifact_files_by_lang_action,
+    list_src_artifact_files_by_lang_action,
+)
+from finecode_extension_api.actions.code_quality import (
+    lint_action,
+    lint_files_action,
 )
 from finecode_extension_api.interfaces import (
     iactionrunner,
@@ -100,7 +102,7 @@ class LintHandler(
                 for lang, lang_files in files_by_lang.items():
                     # TODO: handle errors
                     # TODO: handle KeyError?
-                    actions = self.action_runner.get_actions_for_language(source="finecode_extension_api.actions.lint_files.LintFilesAction", language=lang, expected_type=lint_files_action.LintFilesAction)
+                    actions = self.action_runner.get_actions_for_language(action_type=lint_files_action.LintFilesAction, language=lang)
                     lint_files_payload = lint_files_action.LintFilesRunPayload(file_paths=lang_files)
                     for action in actions:
                         lint_task = tg.create_task(self.action_runner.run_action(

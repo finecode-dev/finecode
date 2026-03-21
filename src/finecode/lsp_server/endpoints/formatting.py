@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from finecode.lsp_server import global_state, pygls_types_utils
-from finecode_extension_api.actions import format_files as format_files_action
+from finecode_extension_api.actions.code_quality import format_files_action
 from loguru import logger
 from lsprotocol import types
 from pydantic.dataclasses import dataclass as pydantic_dataclass

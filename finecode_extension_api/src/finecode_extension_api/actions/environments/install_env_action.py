@@ -2,8 +2,8 @@ import dataclasses
 import typing
 
 from finecode_extension_api import code_action
-from finecode_extension_api.actions.create_envs import EnvInfo
-from finecode_extension_api.actions.install_envs import (
+from finecode_extension_api.actions.environments.create_envs_action import EnvInfo
+from finecode_extension_api.actions.environments.install_envs_action import (
     InstallEnvsRunResult,
 )
 

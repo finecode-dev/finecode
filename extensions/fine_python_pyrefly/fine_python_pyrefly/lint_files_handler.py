@@ -6,7 +6,7 @@ import sys
 from pathlib import Path
 
 from finecode_extension_api import code_action
-from finecode_extension_api.actions import lint_files as lint_files_action
+from finecode_extension_api.actions.code_quality import lint_files_action
 from finecode_extension_api.interfaces import (
     icache,
     icommandrunner,

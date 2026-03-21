@@ -16,15 +16,15 @@ class ActionDeclaration(typing.Generic[ActionT]): ...
 
 class IActionRunner(service.Service, typing.Protocol):
     def get_actions_by_source(
-        self, source: str, expected_type: type[ActionT]
+        self, action_type: type[ActionT]
     ) -> list[ActionDeclaration[ActionT]]: ...
 
     def get_actions_for_language(
-        self, source: str, language: str, expected_type: type[ActionT]
+        self, action_type: type[ActionT], language: str
     ) -> list[ActionDeclaration[ActionT]]: ...
 
     def get_action_by_name(
-        self, name: str, expected_type: type[ActionT]
+        self, name: str, action_type: type[ActionT]
     ) -> ActionDeclaration[ActionT]:
         # use it only if you are sure you need it. In most cases get_actions_by_source
         # should be preferred

@@ -3,7 +3,7 @@ import re
 
 from loguru import logger
 
-from finecode_extension_api.actions.lint import (
+from finecode_extension_api.actions.code_quality.lint_files_action import (
     LintMessage,
     LintMessageSeverity,
     Position,

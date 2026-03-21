@@ -257,7 +257,7 @@ async def _on_initialized(ls: LanguageServer, params: types.InitializedParams):
     global_state.wm_client.on_notification("server/userMessage", on_user_message)
 
     # forward progress notifications to the LSP progress reporter
-    from finecode_extension_api.actions import lint as lint_action
+    from finecode_extension_api.actions.code_quality import lint_action
     from pydantic.dataclasses import dataclass as pydantic_dataclass
     from finecode.lsp_server import pygls_types_utils
     from finecode.lsp_server.endpoints.diagnostics import map_lint_message_to_diagnostic

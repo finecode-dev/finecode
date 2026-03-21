@@ -1,11 +1,11 @@
 import dataclasses
 
 from finecode_extension_api import code_action
-from finecode_extension_api.actions import (
-    install_deps_in_env as install_deps_in_env_action,
-    install_env as install_env_action,
+from finecode_extension_api.actions.environments import (
+    install_deps_in_env_action,
+    install_env_action,
 )
-from finecode_extension_api.actions.install_envs import (
+from finecode_extension_api.actions.environments.install_envs_action import (
     InstallEnvsRunResult,
 )
 from finecode_extension_api.interfaces import iactionrunner, ilogger
@@ -42,7 +42,7 @@ class InstallEnvInstallDepsHandler(
 
         install_deps_in_env_action_instance = self.action_runner.get_action_by_name(
             name="install_deps_in_env",
-            expected_type=install_deps_in_env_action.InstallDepsInEnvAction,
+            action_type=install_deps_in_env_action.InstallDepsInEnvAction,
         )
 
         deps_groups = project_def.get("dependency-groups", {})

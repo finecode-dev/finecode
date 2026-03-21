@@ -4,7 +4,7 @@ import enum
 from pathlib import Path
 
 from finecode_extension_api import code_action
-from finecode_extension_api.actions import format_files as format_files_action
+from finecode_extension_api.actions.code_quality import format_files_action
 
 
 class FormatTarget(enum.StrEnum):
