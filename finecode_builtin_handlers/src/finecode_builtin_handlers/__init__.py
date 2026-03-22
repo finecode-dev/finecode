@@ -6,6 +6,7 @@ from .create_envs_dispatch import CreateEnvsDispatchHandler
 from .dump_config import DumpConfigHandler
 from .dump_config_save import DumpConfigSaveHandler
 from .format import FormatHandler
+from .format_files_dispatch import FormatFilesDispatchHandler
 from .format_files_save_handler import SaveFormatFilesHandler
 from .init_repository_provider import InitRepositoryProviderHandler
 from .install_env_install_deps import InstallEnvInstallDepsHandler
@@ -16,6 +17,7 @@ from .install_env_read_config import InstallEnvReadConfigHandler
 from .install_envs_discover_envs import InstallEnvsDiscoverEnvsHandler
 from .install_envs_dispatch import InstallEnvsDispatchHandler
 from .lint import LintHandler
+from .lint_files_dispatch import LintFilesDispatchHandler
 from .publish_artifact import PublishArtifactHandler
 
 __all__ = [
@@ -24,6 +26,7 @@ __all__ = [
     "CreateEnvsDispatchHandler",
     "DumpConfigHandler",
     "DumpConfigSaveHandler",
+    "FormatFilesDispatchHandler",
     "FormatHandler",
     "InitRepositoryProviderHandler",
     "InstallEnvInstallDepsHandler",
@@ -31,6 +34,7 @@ __all__ = [
     "InstallEnvReadConfigHandler",
     "InstallEnvsDiscoverEnvsHandler",
     "InstallEnvsDispatchHandler",
+    "LintFilesDispatchHandler",
     "LintHandler",
     "PublishArtifactHandler",
     "SaveFormatFilesHandler",

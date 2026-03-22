@@ -1,11 +1,11 @@
 # docs: docs/reference/actions.md
 import dataclasses
-import pathlib
 
 from finecode_extension_api import code_action
 from finecode_extension_api.actions.artifact import list_src_artifact_files_by_lang_action
 from finecode_extension_api.actions.code_quality import format_action, format_files_action
 from finecode_extension_api.interfaces import iactionrunner, ifileeditor, ilogger
+from finecode_extension_api.resource_uri import ResourceUri, path_to_resource_uri
 
 
 @dataclasses.dataclass
@@ -31,7 +31,7 @@ class FormatHandler(
         run_context: format_action.FormatRunContext,
     ) -> format_action.FormatRunResult:
         run_meta = run_context.meta
-        file_paths: list[pathlib.Path]
+        file_uris: list[ResourceUri]
 
         if payload.target == format_action.FormatTarget.PROJECT:
             if (
@@ -40,7 +40,10 @@ class FormatHandler(
             ):
                 # Performance optimisation: when the IDE triggers a background project
                 # format automatically, only format the currently opened files.
-                file_paths = self.file_editor.get_opened_files()
+                file_uris = [
+                    path_to_resource_uri(p)
+                    for p in self.file_editor.get_opened_files()
+                ]
             else:
                 list_action = self.action_runner.get_action_by_source(
                     list_src_artifact_files_by_lang_action.ListSrcArtifactFilesByLangAction,
@@ -52,13 +55,13 @@ class FormatHandler(
                     ),
                     meta=run_meta,
                 )
-                file_paths = [
+                file_uris = [
                     f
                     for files in files_by_lang_result.files_by_lang.values()
                     for f in files
                 ]
         else:
-            file_paths = payload.file_paths
+            file_uris = payload.file_paths
 
         format_files_action_instance = self.action_runner.get_action_by_source(
             format_files_action.FormatFilesAction
@@ -66,7 +69,7 @@ class FormatHandler(
         format_result = await self.action_runner.run_action(
             action=format_files_action_instance,
             payload=format_files_action.FormatFilesRunPayload(
-                file_paths=file_paths,
+                file_paths=file_uris,
                 save=payload.save,
             ),
             meta=run_meta,

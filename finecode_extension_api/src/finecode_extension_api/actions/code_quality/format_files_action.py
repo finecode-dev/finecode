@@ -1,10 +1,10 @@
 # docs: docs/reference/actions.md
 import dataclasses
 import sys
-from pathlib import Path
 from typing import NamedTuple
 
 from finecode_extension_api.interfaces import ifileeditor
+from finecode_extension_api.resource_uri import ResourceUri, resource_uri_to_path
 
 if sys.version_info >= (3, 12):
     from typing import override
@@ -16,7 +16,7 @@ from finecode_extension_api import code_action, textstyler
 
 @dataclasses.dataclass
 class FormatFilesRunPayload(code_action.RunActionPayload):
-    file_paths: list[Path]
+    file_paths: list[ResourceUri]
     save: bool
 
 
@@ -45,7 +45,7 @@ class FormatFilesRunContext(code_action.RunActionContext[FormatFilesRunPayload])
         )
         self.file_editor = file_editor
 
-        self.file_info_by_path: dict[Path, FileInfo] = {}
+        self.file_info_by_path: dict[ResourceUri, FileInfo] = {}
         self.file_editor_session: ifileeditor.IFileEditorSession
 
     @override
@@ -53,13 +53,15 @@ class FormatFilesRunContext(code_action.RunActionContext[FormatFilesRunPayload])
         self.file_editor_session = await self.exit_stack.enter_async_context(
             self.file_editor.session(FILE_OPERATION_AUTHOR)
         )
-        for file_path in self.initial_payload.file_paths:
+        for file_uri in self.initial_payload.file_paths:
             file_info = await self.exit_stack.enter_async_context(
-                self.file_editor_session.read_file(file_path, block=True)
+                self.file_editor_session.read_file(
+                    resource_uri_to_path(file_uri), block=True
+                )
             )
             file_content = file_info.content
             file_version = file_info.version
-            self.file_info_by_path[file_path] = FileInfo(
+            self.file_info_by_path[file_uri] = FileInfo(
                 file_content=file_content, file_version=file_version
             )
 
@@ -73,7 +75,7 @@ class FormatRunFileResult:
 
 @dataclasses.dataclass
 class FormatFilesRunResult(code_action.RunActionResult):
-    result_by_file_path: dict[Path, FormatRunFileResult]
+    result_by_file_path: dict[ResourceUri, FormatRunFileResult]
 
     @override
     def update(self, other: code_action.RunActionResult) -> None:
@@ -88,10 +90,10 @@ class FormatFilesRunResult(code_action.RunActionResult):
         text: textstyler.StyledText = textstyler.StyledText()
         unchanged_counter: int = 0
 
-        for file_path, file_result in self.result_by_file_path.items():
+        for file_uri, file_result in self.result_by_file_path.items():
             if file_result.changed:
                 text.append("reformatted ")
-                text.append_styled(file_path.as_posix(), bold=True)
+                text.append_styled(file_uri, bold=True)
                 text.append("\n")
             else:
                 unchanged_counter += 1

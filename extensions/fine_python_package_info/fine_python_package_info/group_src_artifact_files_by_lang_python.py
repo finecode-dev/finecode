@@ -7,6 +7,7 @@ import pathlib
 
 from finecode_extension_api import code_action
 from finecode_extension_api.actions.artifact import group_src_artifact_files_by_lang_action
+from finecode_extension_api.resource_uri import ResourceUri, path_to_resource_uri
 
 from fine_python_package_info import ipypackagelayoutinfoprovider
 
@@ -77,6 +78,9 @@ class GroupSrcArtifactFilesByLangPythonHandler(
 
                 py_files += list(dir_absolute_path.rglob("*.py"))
 
+        py_uris: list[ResourceUri] = [
+            path_to_resource_uri(p) for p in py_files
+        ]
         return group_src_artifact_files_by_lang_action.GroupSrcArtifactFilesByLangRunResult(
-            files_by_lang={"python": py_files}
+            files_by_lang={"python": py_uris}
         )

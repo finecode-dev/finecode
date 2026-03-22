@@ -2,9 +2,9 @@
 import collections.abc
 import dataclasses
 import enum
-from pathlib import Path
 
 from finecode_extension_api import code_action, textstyler
+from finecode_extension_api.resource_uri import ResourceUri
 
 
 @dataclasses.dataclass
@@ -57,16 +57,16 @@ class LintMessage:
 
 @dataclasses.dataclass
 class LintFilesRunPayload(
-    code_action.RunActionPayload, collections.abc.AsyncIterable[Path]
+    code_action.RunActionPayload, collections.abc.AsyncIterable[ResourceUri]
 ):
-    file_paths: list[Path]
+    file_paths: list[ResourceUri]
 
-    def __aiter__(self) -> collections.abc.AsyncIterator[Path]:
+    def __aiter__(self) -> collections.abc.AsyncIterator[ResourceUri]:
         return LintFilesRunPayloadIterator(self)
 
 
 @dataclasses.dataclass
-class LintFilesRunPayloadIterator(collections.abc.AsyncIterator[Path]):
+class LintFilesRunPayloadIterator(collections.abc.AsyncIterator[ResourceUri]):
     def __init__(self, lint_files_run_payload: LintFilesRunPayload):
         self.lint_files_run_payload = lint_files_run_payload
         self.current_file_path_index = 0
@@ -74,7 +74,7 @@ class LintFilesRunPayloadIterator(collections.abc.AsyncIterator[Path]):
     def __aiter__(self):
         return self
 
-    async def __anext__(self) -> Path:
+    async def __anext__(self) -> ResourceUri:
         if len(self.lint_files_run_payload.file_paths) <= self.current_file_path_index:
             raise StopAsyncIteration()
         self.current_file_path_index += 1
@@ -85,11 +85,7 @@ class LintFilesRunPayloadIterator(collections.abc.AsyncIterator[Path]):
 class LintFilesRunResult(code_action.RunActionResult):
     # messages is a dict to support messages for multiple files because it could be the
     # case that linter checks given file and its dependencies.
-    #
-    # dict key should be Path, but pygls fails to handle slashes in dict keys, use
-    # strings with posix representation of path instead until the problem is properly
-    # solved
-    messages: dict[str, list[LintMessage]]
+    messages: dict[ResourceUri, list[LintMessage]]
 
     def update(self, other: code_action.RunActionResult) -> None:
         if not isinstance(other, LintFilesRunResult):

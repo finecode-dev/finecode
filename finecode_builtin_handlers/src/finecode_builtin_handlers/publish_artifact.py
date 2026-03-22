@@ -1,9 +1,9 @@
 # docs: docs/reference/actions.md
 import asyncio
 import dataclasses
-import pathlib
 
 from finecode_extension_api import code_action
+from finecode_extension_api.resource_uri import ResourceUri
 from finecode_extension_api.actions.artifact import (
     get_src_artifact_registries_action,
     get_src_artifact_version_action,
@@ -85,7 +85,7 @@ class PublishArtifactHandler(
             raise code_action.ActionFailedException("No registries are configured")
 
         # Build dict of paths to publish per registry
-        dist_paths_to_publish_by_registry: dict[str, list[pathlib.Path]]
+        dist_paths_to_publish_by_registry: dict[str, list[ResourceUri]]
         if payload.force:
             dist_paths_to_publish_by_registry = {
                 registry.name: dist_artifact_paths

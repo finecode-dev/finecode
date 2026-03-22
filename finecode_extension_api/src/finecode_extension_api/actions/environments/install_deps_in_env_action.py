@@ -1,6 +1,5 @@
 # docs: docs/reference/actions.md
 import dataclasses
-import pathlib
 import sys
 
 if sys.version_info >= (3, 12):
@@ -9,6 +8,7 @@ else:
     from typing_extensions import override
 
 from finecode_extension_api import code_action, textstyler
+from finecode_extension_api.resource_uri import ResourceUri
 
 
 @dataclasses.dataclass
@@ -21,8 +21,8 @@ class Dependency:
 @dataclasses.dataclass
 class InstallDepsInEnvRunPayload(code_action.RunActionPayload):
     env_name: str
-    venv_dir_path: pathlib.Path
-    project_dir_path: pathlib.Path
+    venv_dir_path: ResourceUri
+    project_dir_path: ResourceUri
     dependencies: list[Dependency]
 
 

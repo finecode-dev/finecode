@@ -1,11 +1,11 @@
 # docs: docs/reference/actions.md
 import dataclasses
-import pathlib
 
 from finecode_extension_api import code_action
 from finecode_extension_api.actions.artifact import list_src_artifact_files_by_lang_action
 from finecode_extension_api.actions.code_quality import lint_action, lint_files_action
 from finecode_extension_api.interfaces import iactionrunner, ifileeditor, ilogger
+from finecode_extension_api.resource_uri import ResourceUri, path_to_resource_uri
 
 
 @dataclasses.dataclass
@@ -33,7 +33,7 @@ class LintHandler(
         run_context: lint_action.LintRunContext,
     ) -> lint_action.LintRunResult:
         run_meta = run_context.meta
-        file_paths: list[pathlib.Path]
+        file_uris: list[ResourceUri]
 
         if payload.target == lint_action.LintTarget.PROJECT:
             if (
@@ -42,7 +42,10 @@ class LintHandler(
             ):
                 # Performance optimisation: when the IDE triggers a background project
                 # lint automatically, only lint the currently opened files.
-                file_paths = self.file_editor.get_opened_files()
+                file_uris = [
+                    path_to_resource_uri(p)
+                    for p in self.file_editor.get_opened_files()
+                ]
             else:
                 list_action = self.action_runner.get_action_by_source(
                     list_src_artifact_files_by_lang_action.ListSrcArtifactFilesByLangAction,
@@ -54,20 +57,20 @@ class LintHandler(
                     ),
                     meta=run_meta,
                 )
-                file_paths = [
+                file_uris = [
                     f
                     for files in files_by_lang_result.files_by_lang.values()
                     for f in files
                 ]
         else:
-            file_paths = payload.file_paths
+            file_uris = payload.file_paths
 
         lint_files_action_instance = self.action_runner.get_action_by_source(
             lint_files_action.LintFilesAction
         )
         lint_result = await self.action_runner.run_action(
             action=lint_files_action_instance,
-            payload=lint_files_action.LintFilesRunPayload(file_paths=file_paths),
+            payload=lint_files_action.LintFilesRunPayload(file_paths=file_uris),
             meta=run_meta,
         )
         return lint_action.LintRunResult(messages=lint_result.messages)

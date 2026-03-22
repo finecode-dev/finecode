@@ -1,13 +1,13 @@
 # docs: docs/reference/actions.md
 import dataclasses
-import pathlib
 
 from finecode_extension_api import code_action, textstyler
+from finecode_extension_api.resource_uri import ResourceUri
 
 
 @dataclasses.dataclass
 class GetDistArtifactVersionRunPayload(code_action.RunActionPayload):
-    dist_artifact_path: pathlib.Path
+    dist_artifact_path: ResourceUri
 
 
 class GetDistArtifactVersionRunContext(

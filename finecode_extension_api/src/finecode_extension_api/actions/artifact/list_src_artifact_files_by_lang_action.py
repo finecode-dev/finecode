@@ -1,6 +1,5 @@
 # docs: docs/reference/actions.md
 import dataclasses
-import pathlib
 import sys
 
 if sys.version_info >= (3, 12):
@@ -9,6 +8,7 @@ else:
     from typing_extensions import override
 
 from finecode_extension_api import code_action, textstyler
+from finecode_extension_api.resource_uri import ResourceUri
 
 
 @dataclasses.dataclass
@@ -37,7 +37,7 @@ class ListSrcArtifactFilesByLangRunContext(
 
 @dataclasses.dataclass
 class ListSrcArtifactFilesByLangRunResult(code_action.RunActionResult):
-    files_by_lang: dict[str, list[pathlib.Path]]
+    files_by_lang: dict[str, list[ResourceUri]]
 
     @override
     def update(self, other: code_action.RunActionResult) -> None:
@@ -54,8 +54,8 @@ class ListSrcArtifactFilesByLangRunResult(code_action.RunActionResult):
         formatted_result = textstyler.StyledText()
         for language, files in self.files_by_lang.items():
             formatted_result.append_styled(text=language + "\n", bold=True)
-            for file_path in files:
-                formatted_result.append(file_path.as_posix() + "\n")
+            for file_uri in files:
+                formatted_result.append(file_uri + "\n")
         return formatted_result
 
 

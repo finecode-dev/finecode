@@ -1,6 +1,5 @@
 # docs: docs/reference/actions.md
 import dataclasses
-import pathlib
 import sys
 
 if sys.version_info >= (3, 12):
@@ -9,12 +8,13 @@ else:
     from typing_extensions import override
 
 from finecode_extension_api import code_action, textstyler
+from finecode_extension_api.resource_uri import ResourceUri
 
 
 @dataclasses.dataclass
 class GroupSrcArtifactFilesByLangRunPayload(code_action.RunActionPayload):
-    file_paths: list[pathlib.Path]
-    """Files to group by language."""
+    file_paths: list[ResourceUri]
+    """Files to group by language (``file://`` URIs)."""
     langs: list[str] | None = None
     """Language identifiers to include (e.g. ['python', 'javascript']). None means all languages."""
 
@@ -39,7 +39,7 @@ class GroupSrcArtifactFilesByLangRunContext(
 
 @dataclasses.dataclass
 class GroupSrcArtifactFilesByLangRunResult(code_action.RunActionResult):
-    files_by_lang: dict[str, list[pathlib.Path]]
+    files_by_lang: dict[str, list[ResourceUri]]
 
     @override
     def update(self, other: code_action.RunActionResult) -> None:
@@ -56,8 +56,8 @@ class GroupSrcArtifactFilesByLangRunResult(code_action.RunActionResult):
         formatted_result = textstyler.StyledText()
         for language, files in self.files_by_lang.items():
             formatted_result.append_styled(text=language + "\n", bold=True)
-            for file_path in files:
-                formatted_result.append(file_path.as_posix() + "\n")
+            for file_uri in files:
+                formatted_result.append(file_uri + "\n")
         return formatted_result
 
 

@@ -20,6 +20,7 @@ from finecode_extension_api.interfaces import (
     iextensionrunnerinfoprovider,
     iprojectinfoprovider,
 )
+from finecode_extension_api.resource_uri import ResourceUri, resource_uri_to_path
 from fine_python_ruff.ruff_lsp_service import RuffLspService
 
 
@@ -81,9 +82,10 @@ class RuffFormatFilesHandler(
             root_uri = self.project_info_provider.get_current_project_dir_path().as_uri()
             await self.lsp_service.ensure_started(root_uri)
 
-        result_by_file_path: dict[Path, format_files_action.FormatRunFileResult] = {}
-        for file_path in payload.file_paths:
-            file_content, file_version = run_context.file_info_by_path[file_path]
+        result_by_file_path: dict[ResourceUri, format_files_action.FormatRunFileResult] = {}
+        for file_uri in payload.file_paths:
+            file_path = resource_uri_to_path(file_uri)
+            file_content, file_version = run_context.file_info_by_path[file_uri]
 
             if self.config.use_cli:
                 new_file_content, file_changed = await self.format_one_cli(
@@ -96,11 +98,11 @@ class RuffFormatFilesHandler(
                 file_changed = new_file_content != file_content
 
             # save for next handlers
-            run_context.file_info_by_path[file_path] = format_files_action.FileInfo(
+            run_context.file_info_by_path[file_uri] = format_files_action.FileInfo(
                 new_file_content, file_version
             )
 
-            result_by_file_path[file_path] = format_files_action.FormatRunFileResult(
+            result_by_file_path[file_uri] = format_files_action.FormatRunFileResult(
                 changed=file_changed, code=new_file_content
             )
 

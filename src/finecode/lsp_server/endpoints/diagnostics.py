@@ -75,13 +75,15 @@ async def document_diagnostic_with_full_result(
         logger.error(f"Cannot determine project for diagnostics: {file_path}")
         return None
 
+    file_uri = file_path.as_uri()
+
     try:
         response = await global_state.wm_client.run_action(
             action="lint",
             project=project_dir,
             params={
                 "target": "files",
-                "file_paths": [str(file_path)],
+                "file_paths": [file_uri],
             },
             options={"trigger": "system", "devEnv": "ide"},
         )
@@ -104,7 +106,7 @@ async def document_diagnostic_with_full_result(
     lint_result: lint_action.LintRunResult = result_type(**json_result)
 
     try:
-        requested_file_messages = lint_result.messages.pop(str(file_path))
+        requested_file_messages = lint_result.messages.pop(file_uri)
     except KeyError:
         requested_file_messages = []
     requested_files_diagnostic_items = [
@@ -116,17 +118,15 @@ async def document_diagnostic_with_full_result(
     )
 
     related_files_diagnostics: dict[str, types.FullDocumentDiagnosticReport] = {}
-    for file_path_str, file_lint_messages in lint_result.messages.items():
+    for related_file_uri, file_lint_messages in lint_result.messages.items():
         file_report = types.FullDocumentDiagnosticReport(
             items=[
                 map_lint_message_to_diagnostic(lint_message)
                 for lint_message in file_lint_messages
             ]
         )
-        file_path = Path(file_path_str)
-        related_files_diagnostics[pygls_types_utils.path_to_uri_str(file_path)] = (
-            file_report
-        )
+        # ResourceUri is already a file:// URI string — use directly
+        related_files_diagnostics[related_file_uri] = file_report
     response.related_documents = related_files_diagnostics
 
     logger.trace(f"Document diagnostic with full result for {file_path} finished")
@@ -156,7 +156,7 @@ async def document_diagnostic_with_partial_results(
             {
                 "action": "lint",
                 "project": project_dir,
-                "params": {"file_paths": [str(file_path)]},
+                "params": {"file_paths": [file_path.as_uri()]},
                 "partialResultToken": partial_result_token,
                 "options": {"resultFormats": ["json"], "trigger": "system", "devEnv": "ide"},
             },
@@ -276,9 +276,9 @@ async def workspace_diagnostic_with_full_result() -> types.WorkspaceDiagnosticRe
     lint_result: lint_action.LintRunResult = result_type(**json_result)
 
     items: list[types.WorkspaceDocumentDiagnosticReport] = []
-    for file_path_str, lint_messages in lint_result.messages.items():
+    for file_uri, lint_messages in lint_result.messages.items():
         new_report = types.WorkspaceFullDocumentDiagnosticReport(
-            uri=pygls_types_utils.path_to_uri_str(Path(file_path_str)),
+            uri=file_uri,  # ResourceUri is already a file:// URI string
             items=[
                 map_lint_message_to_diagnostic(lint_message)
                 for lint_message in lint_messages

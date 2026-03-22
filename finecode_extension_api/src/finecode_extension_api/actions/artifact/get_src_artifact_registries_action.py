@@ -1,8 +1,8 @@
 # docs: docs/reference/actions.md
 import dataclasses
-import pathlib
 
 from finecode_extension_api import code_action, textstyler
+from finecode_extension_api.resource_uri import ResourceUri
 
 
 @dataclasses.dataclass
@@ -13,7 +13,7 @@ class Registry:
 
 @dataclasses.dataclass
 class GetSrcArtifactRegistriesRunPayload(code_action.RunActionPayload):
-    src_artifact_def_path: pathlib.Path
+    src_artifact_def_path: ResourceUri
 
 
 class GetSrcArtifactRegistriesRunContext(

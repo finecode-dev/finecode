@@ -1,13 +1,13 @@
 # docs: docs/reference/actions.md
 import dataclasses
-import pathlib
 
 from finecode_extension_api import code_action, textstyler
+from finecode_extension_api.resource_uri import ResourceUri
 
 
 @dataclasses.dataclass
 class VerifyArtifactPublishedToRegistryRunPayload(code_action.RunActionPayload):
-    dist_artifact_paths: list[pathlib.Path]
+    dist_artifact_paths: list[ResourceUri]
     registry_name: str
     version: str
 

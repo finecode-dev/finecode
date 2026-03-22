@@ -1,10 +1,10 @@
 # docs: docs/reference/actions.md
 import dataclasses
 import enum
-from pathlib import Path
 
 from finecode_extension_api import code_action
 from finecode_extension_api.actions.code_quality import lint_files_action
+from finecode_extension_api.resource_uri import ResourceUri
 
 
 class LintTarget(enum.StrEnum):
@@ -16,8 +16,8 @@ class LintTarget(enum.StrEnum):
 class LintRunPayload(code_action.RunActionPayload):
     target: LintTarget = LintTarget.PROJECT
     """Scope of linting: 'project' (default) lints the whole project, 'files' lints only file_paths."""
-    file_paths: list[Path] = dataclasses.field(default_factory=list)
-    """Files to lint. Only used when target is 'files'. Empty list means lint the whole project."""
+    file_paths: list[ResourceUri] = dataclasses.field(default_factory=list)
+    """Files to lint (``file://`` URIs). Only used when target is 'files'."""
 
 
 @dataclasses.dataclass

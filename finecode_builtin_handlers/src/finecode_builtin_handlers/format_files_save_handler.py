@@ -4,6 +4,7 @@ import dataclasses
 from finecode_extension_api import code_action
 from finecode_extension_api.actions.code_quality import format_files_action
 from finecode_extension_api.interfaces import ifileeditor, ilogger
+from finecode_extension_api.resource_uri import resource_uri_to_path
 
 
 @dataclasses.dataclass
@@ -28,25 +29,26 @@ class SaveFormatFilesHandler(
         payload: format_files_action.FormatFilesRunPayload,
         run_context: format_files_action.FormatFilesRunContext,
     ) -> format_files_action.FormatFilesRunResult:
-        file_paths = payload.file_paths
+        file_uris = payload.file_paths
         save = payload.save
 
         if save is True:
             async with self.file_editor.session(self.FILE_OPERATION_AUTHOR) as session:
-                for file_path in file_paths:
-                    file_content = run_context.file_info_by_path[file_path].file_content
+                for file_uri in file_uris:
+                    file_content = run_context.file_info_by_path[file_uri].file_content
                     # TODO: only if changed?
                     await session.save_file(
-                        file_path=file_path, file_content=file_content
+                        file_path=resource_uri_to_path(file_uri),
+                        file_content=file_content,
                     )
 
         result = format_files_action.FormatFilesRunResult(
             result_by_file_path={
-                file_path: format_files_action.FormatRunFileResult(
+                file_uri: format_files_action.FormatRunFileResult(
                     changed=False,  # this handler doesn't change files, only saves them
-                    code=run_context.file_info_by_path[file_path].file_content,
+                    code=run_context.file_info_by_path[file_uri].file_content,
                 )
-                for file_path in file_paths
+                for file_uri in file_uris
             }
         )
         return result

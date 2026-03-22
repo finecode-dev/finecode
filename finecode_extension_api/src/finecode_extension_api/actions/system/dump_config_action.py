@@ -1,6 +1,5 @@
 # docs: docs/reference/actions.md
 import dataclasses
-import pathlib
 import pprint
 import sys
 import typing
@@ -11,6 +10,7 @@ else:
     from typing_extensions import override
 
 from finecode_extension_api import code_action, textstyler
+from finecode_extension_api.resource_uri import ResourceUri
 
 
 @dataclasses.dataclass
@@ -18,9 +18,9 @@ class DumpConfigRunPayload(code_action.RunActionPayload):
     # `source_file_path` is not for reading, config is already read and its content is
     # in `project_raw_config`, but for providing config path to allow for example to
     # resolve relative pathes in project config
-    source_file_path: pathlib.Path
+    source_file_path: ResourceUri
     project_raw_config: dict[str, typing.Any]
-    target_file_path: pathlib.Path
+    target_file_path: ResourceUri
 
 
 class DumpConfigRunContext(code_action.RunActionContext[DumpConfigRunPayload]):

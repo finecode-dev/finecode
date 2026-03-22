@@ -1,5 +1,4 @@
 import dataclasses
-import pathlib
 import sys
 import typing
 
@@ -10,6 +9,7 @@ else:
 
 from finecode_extension_api import code_action, textstyler
 from finecode_extension_api.actions.environments.create_envs_action import EnvInfo
+from finecode_extension_api.resource_uri import ResourceUri
 
 
 @dataclasses.dataclass
@@ -39,9 +39,9 @@ class InstallEnvsRunContext(
         )
 
         self.envs: list[EnvInfo] | None = None
-        self.project_def_path_by_venv_dir_path: dict[pathlib.Path, pathlib.Path] = {}
+        self.project_def_path_by_venv_dir_path: dict[ResourceUri, ResourceUri] = {}
         self.project_def_by_venv_dir_path: dict[
-            pathlib.Path, dict[str, typing.Any]
+            ResourceUri, dict[str, typing.Any]
         ] = {}
 
     async def init(self) -> None:

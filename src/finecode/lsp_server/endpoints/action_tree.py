@@ -50,7 +50,7 @@ async def run_action_on_file(ls: LanguageServer, params):
     if document_meta is None:
         return None
 
-    run_params: dict = {"file_paths": [document_meta.uri.path], "target": "files"}
+    run_params: dict = {"file_paths": [document_meta.uri], "target": "files"}
     if action_name == "format":
         run_params["save"] = False
 

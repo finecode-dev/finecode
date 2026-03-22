@@ -1,14 +1,14 @@
 # docs: docs/reference/actions.md
 import dataclasses
-import pathlib
 
 from finecode_extension_api import code_action, textstyler
+from finecode_extension_api.resource_uri import ResourceUri
 
 
 @dataclasses.dataclass
 class BuildArtifactRunPayload(code_action.RunActionPayload):
-    src_artifact_def_path: pathlib.Path | None = None
-    """Path to the artifact definition file (e.g. pyproject.toml). Defaults to the current project's artifact."""
+    src_artifact_def_path: ResourceUri | None = None
+    """``file://`` URI of the artifact definition file (e.g. pyproject.toml). Defaults to the current project's artifact."""
 
 
 class BuildArtifactRunContext(
@@ -18,8 +18,8 @@ class BuildArtifactRunContext(
 
 @dataclasses.dataclass
 class BuildArtifactRunResult(code_action.RunActionResult):
-    src_artifact_def_path: pathlib.Path
-    build_output_paths: list[pathlib.Path]
+    src_artifact_def_path: ResourceUri
+    build_output_paths: list[ResourceUri]
 
     def update(self, other: code_action.RunActionResult) -> None:
         if not isinstance(other, BuildArtifactRunResult):
@@ -33,7 +33,7 @@ class BuildArtifactRunResult(code_action.RunActionResult):
         self.build_output_paths = other.build_output_paths
 
     def to_text(self) -> str | textstyler.StyledText:
-        paths_str = "\n  ".join(str(p) for p in self.build_output_paths)
+        paths_str = "\n  ".join(self.build_output_paths)
         return f"Built artifact at:\n  {paths_str}"
 
     @property

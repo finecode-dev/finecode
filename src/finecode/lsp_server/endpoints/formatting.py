@@ -27,11 +27,13 @@ async def format_document(ls: LanguageServer, params: types.DocumentFormattingPa
         logger.error(f"Cannot determine project for formatting: {file_path}")
         return []
 
+    file_uri = file_path.as_uri()
+
     try:
         response = await global_state.wm_client.run_action(
             action="format",
             project=project_dir,
-            params={"file_paths": [str(file_path)], "save": False, "target": "files"},
+            params={"file_paths": [file_uri], "save": False, "target": "files"},
             options={"trigger": "user", "devEnv": "ide"},
         )
     except Exception as error:
@@ -48,7 +50,7 @@ async def format_document(ls: LanguageServer, params: types.DocumentFormattingPa
     result_type = pydantic_dataclass(format_files_action.FormatFilesRunResult)
     format_result: format_files_action.FormatFilesRunResult = result_type(**json_result)
 
-    response_for_file = format_result.result_by_file_path.get(file_path)
+    response_for_file = format_result.result_by_file_path.get(file_uri)
     if response_for_file is None:
         return []
 

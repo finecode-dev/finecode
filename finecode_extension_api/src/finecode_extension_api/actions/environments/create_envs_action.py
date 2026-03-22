@@ -1,5 +1,4 @@
 import dataclasses
-import pathlib
 import sys
 
 if sys.version_info >= (3, 12):
@@ -8,13 +7,14 @@ else:
     from typing_extensions import override
 
 from finecode_extension_api import code_action, textstyler
+from finecode_extension_api.resource_uri import ResourceUri
 
 
 @dataclasses.dataclass
 class EnvInfo:
     name: str
-    venv_dir_path: pathlib.Path
-    project_def_path: pathlib.Path
+    venv_dir_path: ResourceUri
+    project_def_path: ResourceUri
 
 
 @dataclasses.dataclass
