@@ -6,7 +6,7 @@ import contextlib
 import dataclasses
 import enum
 import typing
-from typing import Generic, Protocol, TypeVar
+from typing import ClassVar, Generic, Protocol, TypeVar
 
 from finecode_extension_api import partialresultscheduler, textstyler
 
@@ -168,6 +168,8 @@ class Action(Generic[RunPayloadType, RunContextType, RunResultType]):
     RUN_CONTEXT_TYPE: type[RunActionContext[RunPayloadType]] = RunActionContext
     RESULT_TYPE: type[RunActionResult] = RunActionResult
     CONFIG_TYPE: type[ActionConfig] = ActionConfig
+    LANGUAGE: ClassVar[str | None] = None
+    PARENT_ACTION: ClassVar[type[Action] | None] = None
 
 
 class StopActionRunWithResult(Exception):

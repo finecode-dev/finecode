@@ -3,7 +3,7 @@ import typing
 from finecode_extension_api import code_action
 from finecode_extension_api.interfaces import iactionrunner
 
-from finecode_extension_runner import domain
+from finecode_extension_runner import domain, run_utils
 
 
 class ActionRunner(iactionrunner.IActionRunner):
@@ -43,6 +43,25 @@ class ActionRunner(iactionrunner.IActionRunner):
             raise iactionrunner.ActionNotFound(f"Action '{name}' not found") from exception
 
     @typing.override
-    def get_actions_for_language(self, action_type: type[iactionrunner.ActionT], language: str) -> list[iactionrunner.ActionDeclaration[iactionrunner.ActionT]]:
-        action = self.get_action_by_source(action_type=action_type)
-        return [action] if action.name.endswith('_' + language) else []
+    def get_actions_for_parent(
+        self, parent_action_type: type[iactionrunner.ActionT]
+    ) -> dict[str, iactionrunner.ActionDeclaration[iactionrunner.ActionT]]:
+        result: dict[str, iactionrunner.ActionDeclaration[iactionrunner.ActionT]] = {}
+        for name in self._actions_names_getter():
+            action = self._action_by_name_getter(name)
+            try:
+                cls = run_utils.import_module_member_by_source_str(action.source)
+            except Exception:
+                continue
+            if getattr(cls, "PARENT_ACTION", None) is parent_action_type:
+                lang = getattr(cls, "LANGUAGE", None)
+                if lang is not None:
+                    result[lang] = action
+        return result
+
+    @typing.override
+    def get_actions_for_language(
+        self, action_type: type[iactionrunner.ActionT], language: str
+    ) -> list[iactionrunner.ActionDeclaration[iactionrunner.ActionT]]:
+        action = self.get_actions_for_parent(action_type).get(language)
+        return [action] if action is not None else []

@@ -1,5 +1,6 @@
 from finecode_extension_api import code_action
 from finecode_extension_api.actions.code_quality.lint_files_action import (
+    LintFilesAction,
     LintFilesRunContext,
     LintFilesRunPayload,
     LintFilesRunResult,
@@ -18,3 +19,5 @@ class LintPythonFilesAction(
     PAYLOAD_TYPE = LintFilesRunPayload
     RUN_CONTEXT_TYPE = LintFilesRunContext
     RESULT_TYPE = LintFilesRunResult
+    LANGUAGE = "python"
+    PARENT_ACTION = LintFilesAction

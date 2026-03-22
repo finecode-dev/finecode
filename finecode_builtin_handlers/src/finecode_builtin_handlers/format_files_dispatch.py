@@ -37,16 +37,12 @@ class FormatFilesDispatchHandler(
         payload: format_files_action.FormatFilesRunPayload,
         run_context: format_files_action.FormatFilesRunContext,
     ) -> format_files_action.FormatFilesRunResult:
-        # Discover registered format_{lang}_files subactions by naming convention.
-        all_names = self.action_runner.get_actions_names()
-        lang_to_action_name: dict[str, str] = {
-            name[len("format_") : -len("_files")]: name
-            for name in all_names
-            if name.startswith("format_") and name.endswith("_files") and name != "format_files"
-        }
+        subactions_by_lang = self.action_runner.get_actions_for_parent(
+            format_files_action.FormatFilesAction
+        )
 
-        if not lang_to_action_name:
-            self.logger.debug(f"FormatFilesDispatchHandler: no format_{lang}_files actions registered")
+        if not subactions_by_lang:
+            self.logger.debug("FormatFilesDispatchHandler: no language subactions registered")
             return format_files_action.FormatFilesRunResult(result_by_file_path={})
 
         # Group files by language — single pass, O(files).
@@ -57,7 +53,7 @@ class FormatFilesDispatchHandler(
             action=group_action,
             payload=group_src_artifact_files_by_lang_action.GroupSrcArtifactFilesByLangRunPayload(
                 file_paths=payload.file_paths,
-                langs=list(lang_to_action_name.keys()),
+                langs=list(subactions_by_lang.keys()),
             ),
             meta=run_context.meta,
         )
@@ -70,14 +66,10 @@ class FormatFilesDispatchHandler(
                 for lang, files in files_by_lang.items():
                     if not files:
                         continue
-                    subaction = self.action_runner.get_action_by_name(
-                        lang_to_action_name[lang],
-                        format_files_action.FormatFilesAction,
-                    )
                     format_tasks.append(
                         tg.create_task(
                             self.action_runner.run_action(
-                                action=subaction,
+                                action=subactions_by_lang[lang],
                                 payload=format_files_action.FormatFilesRunPayload(
                                     file_paths=files,
                                     save=payload.save,

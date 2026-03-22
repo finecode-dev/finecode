@@ -37,16 +37,12 @@ class LintFilesDispatchHandler(
         payload: lint_files_action.LintFilesRunPayload,
         run_context: lint_files_action.LintFilesRunContext,
     ) -> lint_files_action.LintFilesRunResult:
-        # Discover registered lint_{lang}_files subactions by naming convention.
-        all_names = self.action_runner.get_actions_names()
-        lang_to_action_name: dict[str, str] = {
-            name[len("lint_") : -len("_files")]: name
-            for name in all_names
-            if name.startswith("lint_") and name.endswith("_files") and name != "lint_files"
-        }
+        subactions_by_lang = self.action_runner.get_actions_for_parent(
+            lint_files_action.LintFilesAction
+        )
 
-        if not lang_to_action_name:
-            self.logger.debug(f"LintFilesDispatchHandler: no lint_{lang}_files actions registered")
+        if not subactions_by_lang:
+            self.logger.debug("LintFilesDispatchHandler: no language subactions registered")
             return lint_files_action.LintFilesRunResult(messages={})
 
         # Group files by language — single pass, O(files).
@@ -57,7 +53,7 @@ class LintFilesDispatchHandler(
             action=group_action,
             payload=group_src_artifact_files_by_lang_action.GroupSrcArtifactFilesByLangRunPayload(
                 file_paths=payload.file_paths,
-                langs=list(lang_to_action_name.keys()),
+                langs=list(subactions_by_lang.keys()),
             ),
             meta=run_context.meta,
         )
@@ -70,14 +66,10 @@ class LintFilesDispatchHandler(
                 for lang, files in files_by_lang.items():
                     if not files:
                         continue
-                    subaction = self.action_runner.get_action_by_name(
-                        lang_to_action_name[lang],
-                        lint_files_action.LintFilesAction,
-                    )
                     lint_tasks.append(
                         tg.create_task(
                             self.action_runner.run_action(
-                                action=subaction,
+                                action=subactions_by_lang[lang],
                                 payload=lint_files_action.LintFilesRunPayload(file_paths=files),
                                 meta=run_context.meta,
                             )
