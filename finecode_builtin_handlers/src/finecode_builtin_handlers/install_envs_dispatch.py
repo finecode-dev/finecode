@@ -32,9 +32,8 @@ class InstallEnvsDispatchHandler(
         payload: install_envs_action.InstallEnvsRunPayload,
         run_context: install_envs_action.InstallEnvsRunContext,
     ) -> install_envs_action.InstallEnvsRunResult:
-        install_env_action_instance = self.action_runner.get_action_by_name(
-            name="install_env",
-            action_type=install_env_action.InstallEnvAction,
+        install_env_action_instance = self.action_runner.get_action_by_source(
+            install_env_action.InstallEnvAction,
         )
 
         if run_context.envs is None:

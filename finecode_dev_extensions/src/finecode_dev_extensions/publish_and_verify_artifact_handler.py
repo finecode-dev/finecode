@@ -49,8 +49,8 @@ class PublishAndVerifyArtifactHandler(
         dist_artifact_paths: list[pathlib.Path] = payload.dist_artifact_paths
 
         # Publish the artifact
-        publish_action = self.action_runner.get_action_by_name(
-            "publish_artifact", publish_artifact_action.PublishArtifactAction
+        publish_action = self.action_runner.get_action_by_source(
+            publish_artifact_action.PublishArtifactAction
         )
         publish_payload = publish_artifact_action.PublishArtifactRunPayload(
             src_artifact_def_path=src_artifact_def_path,
@@ -64,8 +64,7 @@ class PublishAndVerifyArtifactHandler(
 
         # TODO: impl verify of each dist file. NOTE; they can have different versions
         # Get version from the dist artifact
-        get_version_action = self.action_runner.get_action_by_name(
-            "get_dist_artifact_version",
+        get_version_action = self.action_runner.get_action_by_source(
             get_dist_artifact_version_action.GetDistArtifactVersionAction,
         )
         get_version_payload = get_dist_artifact_version_action.GetDistArtifactVersionRunPayload(
@@ -79,8 +78,7 @@ class PublishAndVerifyArtifactHandler(
         
         # Verify each published registry
         verification_errors: dict[str, list[str]] = {}
-        verify_action = self.action_runner.get_action_by_name(
-            "verify_artifact_published_to_registry",
+        verify_action = self.action_runner.get_action_by_source(
             verify_artifact_published_to_registry_action.VerifyArtifactPublishedToRegistryAction,
         )
 

@@ -36,9 +36,8 @@ class CreateEnvsDispatchHandler(
                 "envs must be either provided in payload or be discovered by previous `create_envs` handlers"
             )
 
-        create_env_action_instance = self.action_runner.get_action_by_name(
-            name="create_env",
-            action_type=create_env_action.CreateEnvAction,
+        create_env_action_instance = self.action_runner.get_action_by_source(
+            create_env_action.CreateEnvAction,
         )
 
         tasks: list[asyncio.Task[create_envs_action.CreateEnvsRunResult]] = []

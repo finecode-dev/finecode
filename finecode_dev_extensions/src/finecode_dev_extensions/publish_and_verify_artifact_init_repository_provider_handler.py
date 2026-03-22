@@ -47,8 +47,7 @@ class PublishAndVerifyArtifactInitRepositoryProviderHandler(
     ) -> PublishAndVerifyArtifactRunResult:
         run_meta = run_context.meta
 
-        init_action = self.action_runner.get_action_by_name(
-            "init_repository_provider_action",
+        init_action = self.action_runner.get_action_by_source(
             init_repository_provider_action.InitRepositoryProviderAction,
         )
         init_payload = init_repository_provider_action.InitRepositoryProviderRunPayload(

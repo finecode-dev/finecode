@@ -40,9 +40,8 @@ class InstallEnvInstallDepsHandler(
                 "project_def must be set by InstallEnvReadConfigHandler"
             )
 
-        install_deps_in_env_action_instance = self.action_runner.get_action_by_name(
-            name="install_deps_in_env",
-            action_type=install_deps_in_env_action.InstallDepsInEnvAction,
+        install_deps_in_env_action_instance = self.action_runner.get_action_by_source(
+            install_deps_in_env_action.InstallDepsInEnvAction,
         )
 
         deps_groups = project_def.get("dependency-groups", {})

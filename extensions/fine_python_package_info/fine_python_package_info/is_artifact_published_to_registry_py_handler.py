@@ -62,8 +62,8 @@ class IsArtifactPublishedToRegistryPyHandler(
         package_name = package_name.replace('_', '-')
 
         # Get registries using the action
-        get_registries_action = self.action_runner.get_action_by_name(
-            "get_src_artifact_registries", get_src_artifact_registries_action.GetSrcArtifactRegistriesAction
+        get_registries_action = self.action_runner.get_action_by_source(
+            get_src_artifact_registries_action.GetSrcArtifactRegistriesAction
         )
         registries_payload = (
             get_src_artifact_registries_action.GetSrcArtifactRegistriesRunPayload(

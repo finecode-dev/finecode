@@ -60,6 +60,17 @@ async def update_config(
             handlers=handlers,
             source=action_schema_obj.source,
         )
+        if action_schema_obj.source is not None:
+            duplicate = next(
+                (a for a in actions.values() if a.source == action.source),
+                None,
+            )
+            if duplicate is not None:
+                raise ValueError(
+                    f"Action source '{action.source}' is already registered as "
+                    f"'{duplicate.name}'. Each action class may only be registered "
+                    f"once (ADR-0007)."
+                )
         actions[action_name] = action
 
     global_state.runner_context = context.RunnerContext(

@@ -15,9 +15,9 @@ class ActionDeclaration(typing.Generic[ActionT]): ...
 
 
 class IActionRunner(service.Service, typing.Protocol):
-    def get_actions_by_source(
+    def get_action_by_source(
         self, action_type: type[ActionT]
-    ) -> list[ActionDeclaration[ActionT]]: ...
+    ) -> ActionDeclaration[ActionT]: ...
 
     def get_actions_for_language(
         self, action_type: type[ActionT], language: str
@@ -26,8 +26,7 @@ class IActionRunner(service.Service, typing.Protocol):
     def get_action_by_name(
         self, name: str, action_type: type[ActionT]
     ) -> ActionDeclaration[ActionT]:
-        # use it only if you are sure you need it. In most cases get_actions_by_source
-        # should be preferred
+        """Prefer `get_action_by_source`"""
         ...
 
     async def run_action(
