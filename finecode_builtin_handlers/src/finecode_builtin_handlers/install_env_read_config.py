@@ -6,6 +6,7 @@ from finecode_extension_api.actions.environments.install_envs_action import (
     InstallEnvsRunResult,
 )
 from finecode_extension_api.interfaces import ilogger, iprojectinfoprovider
+from finecode_extension_api.resource_uri import resource_uri_to_path
 from finecode_builtin_handlers import dependency_config_utils
 
 
@@ -32,11 +33,12 @@ class InstallEnvReadConfigHandler(
         payload: install_env_action.InstallEnvRunPayload,
         run_context: install_env_action.InstallEnvRunContext,
     ) -> InstallEnvsRunResult:
+        project_def_path = resource_uri_to_path(payload.env.project_def_path)
         project_raw_config = await self.project_info_provider.get_project_raw_config(
-            payload.env.project_def_path
+            project_def_path
         )
         dependency_config_utils.make_project_config_pip_compatible(
-            project_raw_config, payload.env.project_def_path
+            project_raw_config, project_def_path
         )
         run_context.project_def = project_raw_config
         return InstallEnvsRunResult(errors=[])

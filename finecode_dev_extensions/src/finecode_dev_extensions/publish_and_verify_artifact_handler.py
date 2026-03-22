@@ -1,5 +1,4 @@
 import dataclasses
-import pathlib
 
 from finecode_extension_api import code_action
 from finecode_extension_api.actions.publishing import (
@@ -45,8 +44,8 @@ class PublishAndVerifyArtifactHandler(
     ) -> PublishAndVerifyArtifactRunResult:
         run_meta = run_context.meta
 
-        src_artifact_def_path: pathlib.Path = payload.src_artifact_def_path
-        dist_artifact_paths: list[pathlib.Path] = payload.dist_artifact_paths
+        src_artifact_def_path = payload.src_artifact_def_path
+        dist_artifact_paths = payload.dist_artifact_paths
 
         # Publish the artifact
         publish_action = self.action_runner.get_action_by_source(

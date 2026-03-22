@@ -9,7 +9,7 @@ connect to it.
 - TCP on `127.0.0.1`, random free port
 - Content-Length framing (same as LSP): `Content-Length: N\r\n\r\n{json_body}`
 - Discovery: port written to `.venvs/dev_workspace/cache/finecode/wm_port`
-- Auto-stops when the last client disconnects (after a 5s grace period) or if no client connects 30 seconds after start of WM Server
+- Auto-stops when the last client disconnects (after a 30s grace period by default, configurable via `--disconnect-timeout`) or if no client connects within 30 seconds after WM Server startup
 
 ## JSON-RPC 2.0
 
@@ -715,11 +715,13 @@ Clients can log or display this path so the user can open the file directly when
 
 #### `server/shutdown`
 
-Explicitly shut down the WM Server.
+Explicitly shut down the WM Server. Clients can use this when they intentionally
+want the WM to stop or restart, rather than waiting for disconnect-timeout
+auto-shutdown.
 
 - **Type:** request
 - **Clients:** any
-- **Status:** stub
+- **Status:** implemented
 
 **Params:** `{}`
 

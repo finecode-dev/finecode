@@ -9,6 +9,7 @@ from finecode_extension_api.actions.environments.install_envs_action import (
     InstallEnvsRunResult,
 )
 from finecode_extension_api.interfaces import iactionrunner, ilogger
+from finecode_extension_api.resource_uri import path_to_resource_uri, resource_uri_to_path
 from finecode_builtin_handlers.dependency_config_utils import process_raw_deps
 
 
@@ -53,19 +54,20 @@ class InstallEnvInstallDepsHandler(
             .get(env.name, {})
             .get("dependencies", {})
         )
+        project_def_path = resource_uri_to_path(env.project_def_path)
         dependencies: list[dict] = []
         process_raw_deps(
             env_raw_deps,
             env_deps_config,
             dependencies,
             deps_groups,
-            project_def_path=env.project_def_path,
+            project_def_path=project_def_path,
         )
 
         install_deps_payload = install_deps_in_env_action.InstallDepsInEnvRunPayload(
             env_name=env.name,
             venv_dir_path=env.venv_dir_path,
-            project_dir_path=env.project_def_path.parent,
+            project_dir_path=path_to_resource_uri(project_def_path.parent),
             dependencies=[
                 install_deps_in_env_action.Dependency(
                     name=dep["name"],

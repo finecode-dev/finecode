@@ -7,6 +7,7 @@ from finecode_extension_api.interfaces import (
     ilogger,
     iprojectinfoprovider,
 )
+from finecode_extension_api.resource_uri import path_to_resource_uri
 
 
 @dataclasses.dataclass
@@ -52,10 +53,10 @@ class CreateEnvsDiscoverEnvsHandler(
             envs = [
                 create_envs_action.EnvInfo(
                     name=env_name,
-                    venv_dir_path=self.runner_info_provider.get_venv_dir_path_of_env(
-                        env_name
+                    venv_dir_path=path_to_resource_uri(
+                        self.runner_info_provider.get_venv_dir_path_of_env(env_name)
                     ),
-                    project_def_path=project_def_path,
+                    project_def_path=path_to_resource_uri(project_def_path),
                 )
                 for env_name in deps_groups
             ]

@@ -1,13 +1,13 @@
 import dataclasses
-import pathlib
 
 from finecode_extension_api import code_action, textstyler
+from finecode_extension_api.resource_uri import ResourceUri
 
 
 @dataclasses.dataclass
 class PublishAndVerifyArtifactRunPayload(code_action.RunActionPayload):
-    src_artifact_def_path: pathlib.Path
-    dist_artifact_paths: list[pathlib.Path]
+    src_artifact_def_path: ResourceUri
+    dist_artifact_paths: list[ResourceUri]
     force: bool = False
 
 
