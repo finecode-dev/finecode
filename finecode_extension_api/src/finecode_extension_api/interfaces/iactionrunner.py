@@ -19,10 +19,6 @@ class IActionRunner(service.Service, typing.Protocol):
         self, action_type: type[ActionT]
     ) -> ActionDeclaration[ActionT]: ...
 
-    def get_actions_for_language(
-        self, action_type: type[ActionT], language: str
-    ) -> list[ActionDeclaration[ActionT]]: ...
-
     def get_actions_for_parent(
         self, parent_action_type: type[ActionT]
     ) -> dict[str, ActionDeclaration[ActionT]]: ...

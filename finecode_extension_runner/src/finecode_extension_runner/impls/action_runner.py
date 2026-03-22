@@ -8,11 +8,18 @@ from finecode_extension_runner import domain, run_utils
 
 class ActionRunner(iactionrunner.IActionRunner):
     def __init__(self, run_action_func: typing.Callable[[domain.ActionDeclaration, code_action.RunActionPayload, code_action.RunActionMeta], collections.abc.Coroutine[None, None, code_action.RunActionResult]],
-                 actions_names_getter: typing.Callable[[], list[str]],
-    action_by_name_getter: typing.Callable[[str], domain.ActionDeclaration]):
+                 actions_getter: typing.Callable[[], dict[str, domain.ActionDeclaration]]):
         self._run_action_func = run_action_func
-        self._actions_names_getter = actions_names_getter
-        self._action_by_name_getter = action_by_name_getter
+        self._actions_getter = actions_getter
+        self._source_cls_cache: dict[str, type] = {}
+
+    def _get_cls(self, source: str) -> type:
+        # TODO: reset cache on ER config update?
+        cls = self._source_cls_cache.get(source)
+        if cls is None:
+            cls = run_utils.import_module_member_by_source_str(source)
+            self._source_cls_cache[source] = cls
+        return cls
 
     @typing.override
     async def run_action(
@@ -25,32 +32,34 @@ class ActionRunner(iactionrunner.IActionRunner):
 
     @typing.override
     def get_actions_names(self) -> list[str]:
-        return self._actions_names_getter()
-    
+        return list(self._actions_getter().keys())
+
     @typing.override
     def get_action_by_source(self, action_type: type[iactionrunner.ActionT]) -> iactionrunner.ActionDeclaration[iactionrunner.ActionT]:
-        for name in self._actions_names_getter():
-            action = self._action_by_name_getter(name)
-            if action.source.rsplit(".", 1)[-1] == action_type.__name__:
+        for action in self._actions_getter().values():
+            try:
+                cls = self._get_cls(action.source)
+            except Exception:
+                continue
+            if cls is action_type:
                 return action
         raise iactionrunner.ActionNotFound(f"Action '{action_type.__name__}' not found")
 
     @typing.override
     def get_action_by_name(self, name: str, action_type: type[iactionrunner.ActionT]) -> iactionrunner.ActionDeclaration[iactionrunner.ActionT]:
-        try:
-            return self._action_by_name_getter(name)
-        except KeyError as exception:
-            raise iactionrunner.ActionNotFound(f"Action '{name}' not found") from exception
+        actions = self._actions_getter()
+        if name not in actions:
+            raise iactionrunner.ActionNotFound(f"Action '{name}' not found")
+        return actions[name]
 
     @typing.override
     def get_actions_for_parent(
         self, parent_action_type: type[iactionrunner.ActionT]
     ) -> dict[str, iactionrunner.ActionDeclaration[iactionrunner.ActionT]]:
         result: dict[str, iactionrunner.ActionDeclaration[iactionrunner.ActionT]] = {}
-        for name in self._actions_names_getter():
-            action = self._action_by_name_getter(name)
+        for action in self._actions_getter().values():
             try:
-                cls = run_utils.import_module_member_by_source_str(action.source)
+                cls = self._get_cls(action.source)
             except Exception:
                 continue
             if getattr(cls, "PARENT_ACTION", None) is parent_action_type:
@@ -58,10 +67,3 @@ class ActionRunner(iactionrunner.IActionRunner):
                 if lang is not None:
                     result[lang] = action
         return result
-
-    @typing.override
-    def get_actions_for_language(
-        self, action_type: type[iactionrunner.ActionT], language: str
-    ) -> list[iactionrunner.ActionDeclaration[iactionrunner.ActionT]]:
-        action = self.get_actions_for_parent(action_type).get(language)
-        return [action] if action is not None else []

@@ -104,13 +104,9 @@ async def update_config(
     def current_project_raw_config_version_getter() -> int:
         return global_state.runner_context.project_config_version
 
-    def actions_names_getter() -> list[str]:
+    def actions_getter() -> dict[str, domain.ActionDeclaration]:
         assert global_state.runner_context is not None
-        return list(global_state.runner_context.project.actions.keys())
-
-    def action_by_name_getter(action_name: str) -> domain.ActionDeclaration:
-        assert global_state.runner_context is not None
-        return global_state.runner_context.project.actions[action_name]
+        return global_state.runner_context.project.actions
 
     def current_env_name_getter() -> str:
         return global_state.env_name
@@ -128,8 +124,7 @@ async def update_config(
         project_raw_config_getter=project_raw_config_getter,
         cache_dir_path_getter=cache_dir_path_getter,
         current_project_raw_config_version_getter=current_project_raw_config_version_getter,
-        actions_names_getter=actions_names_getter,
-        action_by_name_getter=action_by_name_getter,
+        actions_getter=actions_getter,
         current_env_name_getter=current_env_name_getter,
         handler_packages=handler_packages,
         service_declarations=request.services,
