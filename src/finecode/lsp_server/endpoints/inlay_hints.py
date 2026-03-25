@@ -53,7 +53,10 @@ async def document_inlay_hint(
             file_path=file_path,
             action_name="text_document_inlay_hint",
             params=inlay_hint_params_to_dict(params),
+            run_trigger=run_service.RunActionTrigger.SYSTEM,
+            dev_env=run_service.DevEnv.IDE,
             ws_context=global_state.ws_context,
+            initialize_all_handlers=True,
         )
     except find_project.FileHasNotActionException:
         # ignore this exception because client requests inlay hints for all workspace
@@ -67,7 +70,7 @@ async def document_inlay_hint(
     if response is None:
         return []
 
-    hints = response.result.get("hints", None)
+    hints = response.json().get("hints", None)
     return [dict_to_inlay_hint(hint) for hint in hints] if hints is not None else None
 
 

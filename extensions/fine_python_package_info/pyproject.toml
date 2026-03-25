@@ -1,14 +1,22 @@
 [project]
 name = "fine_python_package_info"
-version = "0.1.0"
+version = "0.2.0a1"
 description = ""
 authors = [{ name = "Vladyslav Hnatiuk", email = "aders1234@gmail.com" }]
 readme = "README.md"
 requires-python = ">=3.11, <= 3.14"
-dependencies = ["finecode_extension_api==0.3.*", "tomlkit==0.11.*"]
+dependencies = [
+    "finecode_extension_api~=0.4.0a0",
+    "tomlkit==0.11.*",
+    "twine==6.2.*",
+    "build==1.4.*",
+]
+
+[project.entry-points."finecode.activator"]
+fine_python_package_info = "fine_python_package_info.activator:Activator"
 
 [dependency-groups]
-dev_workspace = ["finecode==0.3.*", "finecode_dev_common_preset==0.2.*"]
+dev_workspace = ["finecode~=0.4.0a0", "finecode_dev_common_preset~=0.3.0a0"]
 
 [tool.finecode]
 presets = [{ source = "finecode_dev_common_preset" }]
@@ -18,3 +26,8 @@ finecode_dev_common_preset = { path = "../../finecode_dev_common_preset", editab
 finecode = { path = "../../", editable = true }
 finecode_extension_runner = { path = "../../finecode_extension_runner", editable = true }
 finecode_extension_api = { path = "../../finecode_extension_api", editable = true }
+finecode_jsonrpc = { path = "../../finecode_jsonrpc", editable = true }
+finecode_builtin_handlers = { path = "../../finecode_builtin_handlers", editable = true }
+fine_python_recommended = { path = "../../presets/fine_python_recommended", editable = true }
+fine_python_lint = { path = "../../presets/fine_python_lint", editable = true }
+fine_python_format = { path = "../../presets/fine_python_format", editable = true }

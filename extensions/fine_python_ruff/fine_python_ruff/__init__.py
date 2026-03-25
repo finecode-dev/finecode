@@ -1,9 +1,9 @@
-from .format_handler import RuffFormatHandler, RuffFormatHandlerConfig
-from .lint_handler import RuffLintHandler, RuffLintHandlerConfig
+from .format_files_handler import RuffFormatFilesHandler, RuffFormatFilesHandlerConfig
+from .lint_files_handler import RuffLintFilesHandler, RuffLintFilesHandlerConfig
 
 __all__ = [
-    "RuffFormatHandler",
-    "RuffFormatHandlerConfig",
-    "RuffLintHandler",
-    "RuffLintHandlerConfig",
+    "RuffFormatFilesHandler",
+    "RuffFormatFilesHandlerConfig",
+    "RuffLintFilesHandler",
+    "RuffLintFilesHandlerConfig",
 ]

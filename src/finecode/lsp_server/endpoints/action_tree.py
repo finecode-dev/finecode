@@ -17,7 +17,9 @@ async def list_actions(ls: LanguageServer, params):
     logger.info(f"list_actions {params}")
     await global_state.server_initialized.wait()
 
-    parent_node_id = params[0]
+    # params is expected to be a list, but pygls seems to pass the first element of list
+    # if the list contains only one element. Test after migration from pygls
+    parent_node_id = params # params[0]
     request = schemas.ListActionsRequest(parent_node_id=parent_node_id)
     result = await _list_actions(request=request)
     return result.model_dump(by_alias=True)
@@ -40,6 +42,7 @@ def get_project_action_tree(
     actions_nodes: list[schemas.ActionTreeNode] = []
     if project.status == domain.ProjectStatus.CONFIG_VALID:
         assert project.actions is not None
+        action_nodes: list[schemas.ActionTreeNode] = []
         for action in project.actions:
             node_id = f"{project.dir_path.as_posix()}::{action.name}"
             handlers_nodes = [
@@ -52,7 +55,7 @@ def get_project_action_tree(
                 )
                 for handler in action.handlers
             ]
-            actions_nodes.append(
+            action_nodes.append(
                 schemas.ActionTreeNode(
                     node_id=node_id,
                     name=action.name,
@@ -66,6 +69,41 @@ def get_project_action_tree(
                 project_path=project.dir_path,
                 action_name=action.name,
             )
+        
+        node_id = f"{project.dir_path.as_posix()}::actions"
+        actions_nodes.append(
+            schemas.ActionTreeNode(
+                node_id=node_id,
+                name="Actions",
+                node_type=schemas.ActionTreeNode.NodeType.ACTION_GROUP,
+                subnodes=action_nodes,
+                status="",
+            )
+        )
+        
+        envs_nodes: list[schemas.ActionTreeNode] = []
+        for env in project.envs:
+            node_id = f"{project.dir_path.as_posix()}::envs::{env}"
+            envs_nodes.append(
+                schemas.ActionTreeNode(
+                    node_id=node_id,
+                    name=env,
+                    node_type=schemas.ActionTreeNode.NodeType.ENV,
+                    subnodes=[],
+                    status="",
+                )
+            )
+        
+        node_id = f"{project.dir_path.as_posix()}::envs"
+        actions_nodes.append(
+            schemas.ActionTreeNode(
+                node_id=node_id,
+                name="Environments",
+                node_type=schemas.ActionTreeNode.NodeType.ENV_GROUP,
+                subnodes=envs_nodes,
+                status="",
+            )
+        )
     else:
         logger.info(
             f"Project has no valid config and finecode: {project.dir_path}, no actions will be shown"
@@ -85,19 +123,16 @@ def create_node_list_for_ws(
 
     all_projects_paths = list(ws_context.ws_projects.keys())
     all_projects_paths.sort()
+    # use sets to assign each project path to a single workspace directory
+    all_projects_paths_set = ordered_set.OrderedSet(all_projects_paths)
 
-    while len(all_ws_dirs) > 0:
-        ws_dir = all_ws_dirs.pop()
-        projects_by_ws_dir[ws_dir] = []
+    for ws_dir in all_ws_dirs:
+        ws_dir_project_paths = [project_path for project_path in all_projects_paths_set if project_path.is_relative_to(ws_dir)]
+        projects_by_ws_dir[ws_dir] = ws_dir_project_paths
+        all_projects_paths_set -= ordered_set.OrderedSet(ws_dir_project_paths)
 
-        while True:
-            project_path = all_projects_paths[0]
-            if project_path.is_relative_to(ws_dir):
-                projects_by_ws_dir[ws_dir].append(project_path)
-                all_projects_paths.pop(0)
-
-            if len(all_projects_paths) == 0:
-                break
+    if len(all_projects_paths_set) > 0:
+        logger.warning(f"Unexpected setup: these projects {all_projects_paths_set} don't belong to any of workspace dirs: {all_ws_dirs}")
 
     # build node tree so that:
     # - all ws dirs are in tree either as project or directory

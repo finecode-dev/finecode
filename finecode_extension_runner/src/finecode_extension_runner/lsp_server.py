@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import atexit
+import collections.abc
 import dataclasses
 import functools
 import json
@@ -13,18 +14,23 @@ import pathlib
 import typing
 
 import pygls.exceptions as pygls_exceptions
+from pygls.workspace import position_codec
 from loguru import logger
 from lsprotocol import types
 from pygls.lsp import server as lsp_server
 from pygls.io_ import StdoutWriter, run_async
-
 from finecode_extension_api import code_action
-from finecode_extension_runner import domain, schemas, services
+from finecode_extension_api.interfaces import ifileeditor
+from pydantic.dataclasses import dataclass as pydantic_dataclass
+
+from finecode_extension_runner import schemas, services
 from finecode_extension_runner._services import run_action as run_action_service
+from finecode_extension_runner.di import resolver
 
 import sys
 import io
 import threading
+import contextlib
 import asyncio
 
 
@@ -59,6 +65,8 @@ class StdinAsyncReader:
                 return line
             except TimeoutError:
                 ...
+            except ValueError as exception:
+                logger.warning(str(exception))
         return bytes()
 
     async def readexactly(self, n: int) -> bytes:
@@ -88,11 +96,26 @@ class StdinAsyncReader:
 
 
 class CustomLanguageServer(lsp_server.LanguageServer):
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+
+        self._finecode_async_tasks: list[asyncio.Task] = []
+        self._finecode_exit_stack = contextlib.AsyncExitStack()
+        self._finecode_file_editor_session: ifileeditor.IFileEditorSession
+        self._finecode_file_operation_author = ifileeditor.FileOperationAuthor(id=self.name)
+
     def report_server_error(self, error: Exception, source: lsp_server.ServerErrors):
+        logger.info(f'->1 {self._stop_event.is_set()}')
         # return logging of error (`lsp_server.LanguageServer` overwrites it)
         super(lsp_server.LanguageServer, self).report_server_error(error, source)
+        logger.info(f'->2 {self._stop_event.is_set()}')
+        # log traceback of exception for easier analysis
+        logger.exception(error)
         # send to client
-        super().report_server_error(error, source)
+        if not isinstance(error, ValueError):
+            # TODO: check message 'write to closed file'
+            super().report_server_error(error, source)
+            logger.info(f'->3 {self._stop_event.is_set()}')
 
     async def start_io_async(
         self, stdin: io.BinaryIO | None = None, stdout: io.BinaryIO | None = None
@@ -120,11 +143,89 @@ class CustomLanguageServer(lsp_server.LanguageServer):
             logger.info("exception handler in json rpc server")
             pass
         finally:
+            logger.info(f'->5 {self._stop_event.is_set()}')
             reader.stop()
             self.shutdown()
 
+            # shutdown is synchronous, so close exit stack here
+            await self._finecode_exit_stack.aclose()
+            logger.debug("Finecode async exit stack closed")
+
+    def start_tcp(self, host: str, port: int) -> None:
+        """Starts TCP server."""
+        logger.info("Starting TCP server on %s:%s", host, port)
+
+        self._stop_event = stop_event = threading.Event()
+
+        async def lsp_connection(
+            reader: asyncio.StreamReader, writer: asyncio.StreamWriter
+        ):
+            logger.debug("Connected to client")
+            self.protocol.set_writer(writer)  # type: ignore
+            await run_async(
+                stop_event=stop_event,
+                reader=reader,
+                protocol=self.protocol,
+                logger=logger,
+                error_handler=self.report_server_error,
+            )
+            logger.debug("Main loop finished")
+            self.shutdown()
+
+        async def tcp_server(h: str, p: int):
+            self._server = await asyncio.start_server(lsp_connection, h, p)
+
+            addrs = ", ".join(str(sock.getsockname()) for sock in self._server.sockets)
+            logger.info(f"Serving on {addrs}")
+
+            try:
+                async with self._server:
+                    await self._server.serve_forever()
+            finally:
+                # shutdown is synchronous, so close exit stack here
+                # TODO: test
+                await self._finecode_exit_stack.aclose()
+
+        try:
+            asyncio.run(tcp_server(host, port))
+        except asyncio.CancelledError:
+            logger.debug("Server was cancelled")
+
+
+
+def file_editor_file_change_to_lsp_text_edit(file_change: ifileeditor.FileChange) -> types.TextEdit:
+    if isinstance(file_change, ifileeditor.FileChangeFull):
+        # temporary workaround until we extend "applyWorkspaceEdit" from LSP with
+        # proper full document replacement without knowing original range
+        range_start_line = 0
+        range_start_char = 0
+        range_end_line = 999999
+        range_end_char = 999999
+    else:
+        range_start_line = file_change.range.start.line
+        range_start_char = file_change.range.start.character
+        range_end_line = file_change.range.end.line
+        range_end_char = file_change.range.end.character
+    
+    return types.TextEdit(
+        range=types.Range(
+            start=types.Position(line=range_start_line, character=range_start_char),
+            end=types.Position(line=range_end_line, character=range_end_char)
+        ),
+        new_text=file_change.text
+    )
+
+
+def position_from_client_units(
+    self, lines: collections.abc.Sequence[str], position: types.Position
+) -> types.Position:
+    return position
+
 
 def create_lsp_server() -> lsp_server.LanguageServer:
+    # avoid recalculating of positions by pygls
+    position_codec.PositionCodec.position_from_client_units = position_from_client_units
+    
     server = CustomLanguageServer("FineCode_Extension_Runner_Server", "v1")
 
     register_initialized_feature = server.feature(types.INITIALIZED)
@@ -141,6 +242,9 @@ def create_lsp_server() -> lsp_server.LanguageServer:
 
     register_document_did_close_feature = server.feature(types.TEXT_DOCUMENT_DID_CLOSE)
     register_document_did_close_feature(_document_did_close)
+    
+    register_document_did_change_feature = server.feature(types.TEXT_DOCUMENT_DID_CHANGE)
+    register_document_did_change_feature(_document_did_change)
 
     register_update_config_feature = server.command("finecodeRunner/updateConfig")
     register_update_config_feature(update_config)
@@ -172,17 +276,24 @@ def create_lsp_server() -> lsp_server.LanguageServer:
         server.progress(types.ProgressParams(token=token, value=partial_result_json))
 
     run_action_service.set_partial_result_sender(send_partial_result)
-
+    
     return server
 
 
-def _on_initialized(ls: lsp_server.LanguageServer, params: types.InitializedParams):
+def _on_initialized(ls: CustomLanguageServer, params: types.InitializedParams):
     logger.info(f"initialized {params}")
 
 
-def _on_shutdown(ls: lsp_server.LanguageServer, params):
+def _on_shutdown(ls: CustomLanguageServer, params):
     logger.info("Shutdown extension runner")
     services.shutdown_all_action_handlers()
+    
+    logger.debug("Stop Finecode async tasks")
+    for task in ls._finecode_async_tasks:
+        if not task.done():
+            task.cancel()
+    ls._finecode_async_tasks = []
+
     logger.info("Shutdown end")
     return None
 
@@ -191,73 +302,48 @@ def _on_exit(ls: lsp_server.LanguageServer, params):
     logger.info("Exit extension runner")
 
 
-def _document_did_open(
-    ls: lsp_server.LanguageServer, params: types.DidOpenTextDocumentParams
+def uri_to_path(uri: str) -> pathlib.Path:
+    return pathlib.Path(uri.removeprefix('file://'))
+
+
+async def _document_did_open(
+    ls: CustomLanguageServer, params: types.DidOpenTextDocumentParams
 ):
     logger.info(f"document did open: {params.text_document.uri}")
-    services.document_did_open(params.text_document.uri)
+    # services.document_did_open(params.text_document.uri)
+    file_path = uri_to_path(uri=params.text_document.uri)
+    
+    await ls._finecode_file_editor_session.open_file(file_path=file_path)
 
 
-def _document_did_close(
-    ls: lsp_server.LanguageServer, params: types.DidCloseTextDocumentParams
+async def _document_did_close(
+    ls: CustomLanguageServer, params: types.DidCloseTextDocumentParams
 ):
     logger.info(f"document did close: {params.text_document.uri}")
-    services.document_did_close(params.text_document.uri)
+    file_path = uri_to_path(uri=params.text_document.uri)
+    
+    await ls._finecode_file_editor_session.close_file(file_path=file_path)
 
 
-async def document_requester(server: lsp_server.LanguageServer, uri: str):
-    try:
-        document = await asyncio.wait_for(
-            server.protocol.send_request_async("documents/get", params={"uri": uri}), 10
-        )
-    except TimeoutError as error:
-        raise error
-    except pygls_exceptions.JsonRpcInternalError as error:
-        if error.message == "Exception: Document is not opened":
-            raise domain.TextDocumentNotOpened()
-        else:
-            raise error
-
-    return domain.TextDocumentInfo(
-        uri=document.uri, version=document.version, text=document.text
-    )
+def lsp_document_change_to_file_editor_change(lsp_change: types.TextDocumentContentChangeEvent) -> ifileeditor.FileChange:
+    if isinstance(lsp_change, types.TextDocumentContentChangePartial):
+        return ifileeditor.FileChangePartial(range=ifileeditor.Range(start=ifileeditor.Position(line=lsp_change.range.start.line, character=lsp_change.range.start.character), end=ifileeditor.Position(line=lsp_change.range.end.line, character=lsp_change.range.end.character)), text=lsp_change.text)
+    elif isinstance(lsp_change, types.TextDocumentContentChangeWholeDocument):
+        return ifileeditor.FileChangeFull(text=lsp_change.text)
+    else:
+        logger.error(f"Unexpected type of document change from LSP client: {type(lsp_change)}")
 
 
-async def document_saver(server: lsp_server.LanguageServer, uri: str, content: str):
-    try:
-        document = await asyncio.wait_for(
-            server.protocol.send_request_async("documents/get", params={"uri": uri}), 10
-        )
-    except TimeoutError as error:
-        raise error
+async def _document_did_change(
+    ls: CustomLanguageServer, params: types.DidChangeTextDocumentParams
+):
+    logger.info(f"document did change: {params.text_document.uri} {params.text_document.version}")
+    file_path = uri_to_path(uri=params.text_document.uri)
 
-    document_lines = document.text.split("\n")
-    params = types.ApplyWorkspaceEditParams(
-        edit=types.WorkspaceEdit(
-            # dict seems to be incorrectly unstructured on client(pygls issue?)
-            # use document_changes instead of changes
-            document_changes=[
-                types.TextDocumentEdit(
-                    text_document=types.OptionalVersionedTextDocumentIdentifier(
-                        uri=uri
-                    ),
-                    edits=[
-                        types.TextEdit(
-                            range=types.Range(
-                                start=types.Position(line=0, character=0),
-                                end=types.Position(
-                                    line=len(document_lines),
-                                    character=len(document_lines[-1]),
-                                ),
-                            ),
-                            new_text=content,
-                        )
-                    ],
-                )
-            ]
-        )
-    )
-    await server.workspace_apply_edit_async(params)
+    for change in params.content_changes:
+        logger.trace(str(change))
+        file_editor_change = lsp_document_change_to_file_editor_change(lsp_change=change)
+        await ls._finecode_file_editor_session.change_file(file_path=file_path, change=file_editor_change)
 
 
 async def get_project_raw_config(
@@ -279,7 +365,7 @@ async def get_project_raw_config(
 
 
 async def update_config(
-    ls: lsp_server.LanguageServer,
+    ls: CustomLanguageServer,
     working_dir: pathlib.Path,
     project_name: str,
     project_def_path: pathlib.Path,
@@ -311,13 +397,48 @@ async def update_config(
                 for action in actions
             },
             action_handler_configs=action_handler_configs,
+            services=[
+                schemas.ServiceDeclaration(
+                    interface=svc["interface"],
+                    source=svc["source"],
+                )
+                for svc in config.get("services", [])
+            ],
+            handlers_to_initialize=config.get("handlers_to_initialize"),
         )
         response = await services.update_config(
             request=request,
-            document_requester=functools.partial(document_requester, ls),
-            document_saver=functools.partial(document_saver, ls),
             project_raw_config_getter=functools.partial(get_project_raw_config, ls),
         )
+        # update_config calls DI bootstrap, we can instantiate file_editor_session first
+        # here
+        file_editor = await resolver.get_service_instance(ifileeditor.IFileEditor)
+        ls._finecode_file_editor_session = await ls._finecode_exit_stack.enter_async_context(file_editor.session(author=ls._finecode_file_operation_author))
+
+        # asyncio event loop is currently available only in handlers, not in server factory,
+        # so start task here
+        async def send_changed_files_to_lsp_client() -> None:
+            async with ls._finecode_file_editor_session.subscribe_to_changes_of_opened_files() as file_change_events:
+                async for file_change_event in file_change_events:
+                    if file_change_event.author != ls._finecode_file_operation_author:
+                        # someone else changed the file, send these changes to LSP client
+                        params = types.ApplyWorkspaceEditParams(
+                            edit=types.WorkspaceEdit(
+                                document_changes=[
+                                    types.TextDocumentEdit(
+                                    text_document=types.OptionalVersionedTextDocumentIdentifier(uri=f'file://{file_change_event.file_path.as_posix()}'),
+                                    edits=[
+                                        file_editor_file_change_to_lsp_text_edit(file_change=file_change_event.change)
+                                    ]
+                                    ),
+                                ]
+                            )
+                        )
+                        await ls.workspace_apply_edit_async(params)
+
+        send_changed_files_task = asyncio.create_task(send_changed_files_to_lsp_client())
+        ls._finecode_async_tasks.append(send_changed_files_task)
+
         return response.to_dict()
     except Exception as e:
         logger.exception(f"Update config error: {e}")
@@ -350,11 +471,16 @@ async def run_action(
 ):
     logger.trace(f"Run action: {action_name}")
     request = schemas.RunActionRequest(action_name=action_name, params=params)
-    options_schema = schemas.RunActionOptions(**options if options is not None else {})
+    
+    # use pydantic dataclass to convert dict to dataclass instance recursively
+    # (default dataclass constructor doesn't handle nested items, it stores them just
+    # as dict)
+    options_type = pydantic_dataclass(schemas.RunActionOptions)
+    options_schema = options_type(**options if options is not None else {})
     status: str = "success"
 
     try:
-        response = await services.run_action(request=request, options=options_schema)
+        response = await services.run_action_raw(request=request, options=options_schema)
     except Exception as exception:
         if isinstance(exception, services.StopWithResponse):
             status = "stopped"
@@ -375,12 +501,15 @@ async def run_action(
     #
     # custom json encoder converts dict values and `convert_path_keys` is used to
     # convert dict keys
-    result_dict = convert_path_keys(response.to_dict()["result"])
-    result_str = json.dumps(result_dict, cls=CustomJSONEncoder)
+    result_by_format = response.to_dict()["result_by_format"]
+    converted_result_by_format = {
+        fmt: convert_path_keys(result) if isinstance(result, dict) else result
+        for fmt, result in result_by_format.items()
+    }
+    result_str = json.dumps(converted_result_by_format, cls=CustomJSONEncoder)
     return {
         "status": status,
-        "result": result_str,
-        "format": response.format,
+        "result_by_format": result_str,
         "return_code": response.return_code,
     }
 

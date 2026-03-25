@@ -11,6 +11,12 @@ class Preset:
     def __init__(self, source: str) -> None:
         self.source = source
 
+    def __str__(self) -> str:
+        return f'Preset(source="{self.source}")'
+
+    def __repr__(self) -> str:
+        return str(self)
+
 
 class ActionHandler:
     def __init__(
@@ -27,11 +33,45 @@ class ActionHandler:
         self.env: str = env
         self.dependencies: list[str] = dependencies
 
+    def __str__(self) -> str:
+        return f'ActionHandler(name="{self.name}", source="{self.source}", env="{self.env}")'
+
+    def __repr__(self) -> str:
+        return str(self)
+
     def to_dict(self) -> dict[str, typing.Any]:
         return {
             "name": self.name,
             "source": self.source,
             "config": self.config,
+            "env": self.env,
+            "dependencies": self.dependencies,
+        }
+
+
+class ServiceDeclaration:
+    def __init__(
+        self,
+        interface: str,
+        source: str,
+        env: str,
+        dependencies: list[str],
+    ):
+        self.interface = interface
+        self.source = source
+        self.env = env
+        self.dependencies = dependencies
+
+    def __str__(self) -> str:
+        return f'ServiceDeclaration(interface="{self.interface}", source="{self.source}", env="{self.env}")'
+
+    def __repr__(self) -> str:
+        return str(self)
+
+    def to_dict(self) -> dict[str, typing.Any]:
+        return {
+            "interface": self.interface,
+            "source": self.source,
             "env": self.env,
             "dependencies": self.dependencies,
         }
@@ -49,6 +89,13 @@ class Action:
         self.source: str = source
         self.handlers: list[ActionHandler] = handlers
         self.config = config
+
+    def __str__(self) -> str:
+        handler_names = [h.name for h in self.handlers]
+        return f'Action(name="{self.name}", handlers={handler_names})'
+
+    def __repr__(self) -> str:
+        return str(self)
 
     def to_dict(self) -> dict[str, typing.Any]:
         return {
@@ -76,6 +123,7 @@ class Project:
         # None means actions were not collected yet
         # if project.status is RUNNING, then actions are not None
         self.actions = actions
+        self.services: list[ServiceDeclaration] = []
         # config by handler source
         self.action_handler_configs: dict[str, dict[str, typing.Any]] = {}
         # config by env name
@@ -100,6 +148,7 @@ class Project:
         for action in self.actions:
             action_envs = [handler.env for handler in action.handlers]
             all_envs_set |= ordered_set.OrderedSet(action_envs)
+        all_envs_set |= ordered_set.OrderedSet([svc.env for svc in self.services])
 
         return list(all_envs_set)
 
@@ -116,10 +165,22 @@ class RunnerConfig:
     def __init__(self, debug: bool) -> None:
         self.debug = debug
 
+    def __str__(self) -> str:
+        return f"RunnerConfig(debug={self.debug})"
+
+    def __repr__(self) -> str:
+        return str(self)
+
 
 class EnvConfig:
     def __init__(self, runner_config: RunnerConfig) -> None:
         self.runner_config = runner_config
+
+    def __str__(self) -> str:
+        return f"EnvConfig(runner_config={self.runner_config})"
+
+    def __repr__(self) -> str:
+        return str(self)
 
 
 RootActions = list[str]
@@ -134,7 +195,7 @@ AllActions = ActionsDict
 
 
 class TextDocumentInfo:
-    def __init__(self, uri: str, version: str) -> None:
+    def __init__(self, uri: str, version: str | int) -> None:
         self.uri = uri
         self.version = version
 
@@ -156,6 +217,7 @@ __all__ = [
     "ActionsDict",
     "AllActions",
     "Action",
+    "ServiceDeclaration",
     "Project",
     "TextDocumentInfo",
     "RunnerConfig",

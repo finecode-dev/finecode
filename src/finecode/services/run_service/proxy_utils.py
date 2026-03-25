@@ -9,7 +9,7 @@ import typing
 import ordered_set
 from loguru import logger
 
-from finecode import context, domain, find_project, user_messages
+from finecode import context, domain, domain_helpers, find_project, user_messages
 from finecode.runner import runner_manager
 from finecode.runner import runner_client
 from finecode.runner.runner_manager import RunnerFailedToStart
@@ -40,11 +40,11 @@ async def find_action_project(
     if project_status != domain.ProjectStatus.CONFIG_VALID:
         logger.info(
             f"Extension runner {project_path} has no valid config with finecode, "
-            f"status: {project_status.name}"
+            + f"status: {project_status.name}"
         )
         raise ActionRunFailed(
             f"Project {project_path} has no valid config with finecode,"
-            f"status: {project_status.name}"
+            + f"status: {project_status.name}"
         )
 
     return project_path
@@ -54,7 +54,10 @@ async def find_action_project_and_run(
     file_path: pathlib.Path,
     action_name: str,
     params: dict[str, typing.Any],
+    run_trigger: runner_client.RunActionTrigger,
+    dev_env: runner_client.DevEnv,
     ws_context: context.WorkspaceContext,
+    initialize_all_handlers: bool = False,
 ) -> runner_client.RunActionResponse:
     project_path = await find_action_project(
         file_path=file_path, action_name=action_name, ws_context=ws_context
@@ -68,6 +71,9 @@ async def find_action_project_and_run(
             project_def=project,
             ws_context=ws_context,
             preprocess_payload=False,
+            run_trigger=run_trigger,
+            dev_env=dev_env,
+            initialize_all_handlers=initialize_all_handlers,
         )
     except ActionRunFailed as exception:
         raise exception
@@ -85,9 +91,9 @@ async def run_action_in_runner(
         response = await runner_client.run_action(
             runner=runner, action_name=action_name, params=params, options=options
         )
-    except runner_client.BaseRunnerRequestException as error:
-        logger.error(f"Error on running action {action_name}: {error.message}")
-        raise ActionRunFailed(error.message)
+    except runner_client.BaseRunnerRequestException as exception:
+        logger.error(f"Error on running action {action_name}: {exception.message}")
+        raise ActionRunFailed(exception.message) from exception
 
     return response
 
@@ -142,13 +148,18 @@ async def run_action_and_notify(
     runner: runner_client.ExtensionRunnerInfo,
     result_list: AsyncList,
     partial_results_task: asyncio.Task,
+    run_trigger: runner_client.RunActionTrigger,
+    dev_env: runner_client.DevEnv,
 ) -> runner_client.RunActionResponse:
     try:
         return await run_action_in_runner(
             action_name=action_name,
             params=params,
             runner=runner,
-            options={"partial_result_token": partial_result_token},
+            options={
+                "partial_result_token": partial_result_token,
+                "meta": {"trigger": run_trigger.value, "dev_env": dev_env.value},
+            },
         )
     finally:
         result_list.end()
@@ -173,7 +184,10 @@ async def run_with_partial_results(
     params: dict[str, typing.Any],
     partial_result_token: int | str,
     project_dir_path: pathlib.Path,
+    run_trigger: runner_client.RunActionTrigger,
+    dev_env: runner_client.DevEnv,
     ws_context: context.WorkspaceContext,
+    initialize_all_handlers: bool = False,
 ) -> collections.abc.AsyncIterator[
     collections.abc.AsyncIterable[domain.PartialResultRawValue]
 ]:
@@ -197,7 +211,11 @@ async def run_with_partial_results(
             for env_name in action_envs:
                 try:
                     runner = await runner_manager.get_or_start_runner(
-                        project_def=project, env_name=env_name, ws_context=ws_context
+                        project_def=project,
+                        env_name=env_name,
+                        ws_context=ws_context,
+                        initialize_all_handlers=initialize_all_handlers,
+                        action_names_to_initialize=[action_name],
                     )
                 except runner_manager.RunnerFailedToStart as exception:
                     raise ActionRunFailed(
@@ -212,6 +230,8 @@ async def run_with_partial_results(
                         runner=runner,
                         result_list=result,
                         partial_results_task=partial_results_task,
+                        run_trigger=run_trigger,
+                        dev_env=dev_env,
                     )
                 )
 
@@ -228,7 +248,7 @@ async def run_with_partial_results(
         errors_str = ", ".join(errors)
         raise ActionRunFailed(
             f"Run of {action_name} in {project.dir_path} failed: {errors_str}. See logs for more details"
-        )
+        ) from eg
 
 
 @contextlib.asynccontextmanager
@@ -237,7 +257,10 @@ async def find_action_project_and_run_with_partial_results(
     action_name: str,
     params: dict[str, typing.Any],
     partial_result_token: int | str,
+    run_trigger: runner_client.RunActionTrigger,
+    dev_env: runner_client.DevEnv,
     ws_context: context.WorkspaceContext,
+    initialize_all_handlers: bool = False,
 ) -> collections.abc.AsyncIterator[runner_client.RunActionRawResult]:
     logger.trace(f"Run {action_name} on {file_path}")
     project_path = await find_action_project(
@@ -248,7 +271,10 @@ async def find_action_project_and_run_with_partial_results(
         params=params,
         partial_result_token=partial_result_token,
         project_dir_path=project_path,
+        run_trigger=run_trigger,
+        dev_env=dev_env,
         ws_context=ws_context,
+        initialize_all_handlers=initialize_all_handlers,
     )
 
 
@@ -287,8 +313,17 @@ async def start_required_environments(
     actions_by_projects: dict[pathlib.Path, list[str]],
     ws_context: context.WorkspaceContext,
     update_config_in_running_runners: bool = False,
+    initialize_handlers: bool = True,
+    initialize_all_handlers: bool = False,
 ) -> None:
-    """Collect all required envs from actions that will be run and start them."""
+    """Collect all required envs from actions that will be run and start them.
+
+    Args:
+        initialize_handlers: Initialize handlers for the specified actions.
+        initialize_all_handlers: Initialize all handlers in the environment,
+            not just those for the specified actions. Takes precedence over
+            initialize_handlers.
+    """
     required_envs_by_project: dict[pathlib.Path, set[str]] = {}
     for project_dir_path, action_names in actions_by_projects.items():
         project = ws_context.ws_projects[project_dir_path]
@@ -312,8 +347,23 @@ async def start_required_environments(
                 existing_runners = ws_context.ws_projects_extension_runners.get(
                     project_dir_path, {}
                 )
+                action_names = actions_by_projects[project_dir_path]
 
                 for env_name in required_envs:
+                    if initialize_all_handlers:
+                        handlers_to_init = (
+                            domain_helpers.collect_all_handlers_to_initialize(
+                                project, env_name
+                            )
+                        )
+                    elif initialize_handlers:
+                        handlers_to_init = (
+                            domain_helpers.collect_handlers_to_initialize_for_actions(
+                                project, env_name, action_names
+                            )
+                        )
+                    else:
+                        handlers_to_init = None
                     tg.create_task(
                         _start_runner_or_update_config(
                             env_name=env_name,
@@ -321,6 +371,7 @@ async def start_required_environments(
                             project=project,
                             update_config_in_running_runners=update_config_in_running_runners,
                             ws_context=ws_context,
+                            handlers_to_initialize=handlers_to_init,
                         )
                     )
     except ExceptionGroup as eg:
@@ -330,7 +381,7 @@ async def start_required_environments(
                 errors.append(exception.message)
             else:
                 errors.append(str(exception))
-        raise StartingEnvironmentsFailed(".".join(errors))
+        raise StartingEnvironmentsFailed(".".join(errors)) from eg
 
 
 async def _start_runner_or_update_config(
@@ -339,19 +390,24 @@ async def _start_runner_or_update_config(
     project: domain.Project,
     update_config_in_running_runners: bool,
     ws_context: context.WorkspaceContext,
+    handlers_to_initialize: dict[str, list[str]] | None,
 ):
     runner_exist = env_name in existing_runners
     start_runner = True
     if runner_exist:
+        runner = existing_runners[env_name]
+        if runner.status == runner_client.RunnerStatus.INITIALIZING:
+            await runner.initialized_event.wait()
+
         runner_is_running = (
-            existing_runners[env_name].status == runner_client.RunnerStatus.RUNNING
+            runner.status == runner_client.RunnerStatus.RUNNING
         )
         start_runner = not runner_is_running
 
     if start_runner:
         try:
             await runner_manager.start_runner(
-                project_def=project, env_name=env_name, ws_context=ws_context
+                project_def=project, env_name=env_name, handlers_to_initialize=handlers_to_initialize, ws_context=ws_context
             )
         except runner_manager.RunnerFailedToStart as exception:
             raise StartingEnvironmentsFailed(
@@ -366,7 +422,9 @@ async def _start_runner_or_update_config(
 
             try:
                 await runner_manager.update_runner_config(
-                    runner=runner, project=project
+                    runner=runner,
+                    project=project,
+                    handlers_to_initialize=handlers_to_initialize,
                 )
             except RunnerFailedToStart as exception:
                 raise StartingEnvironmentsFailed(
@@ -380,7 +438,9 @@ async def run_actions_in_running_project(
     project: domain.Project,
     ws_context: context.WorkspaceContext,
     concurrently: bool,
-    result_format: RunResultFormat,
+    result_formats: list[RunResultFormat],
+    run_trigger: runner_client.RunActionTrigger,
+    dev_env: runner_client.DevEnv,
 ) -> dict[str, RunActionResponse]:
     result_by_action: dict[str, RunActionResponse] = {}
 
@@ -395,7 +455,9 @@ async def run_actions_in_running_project(
                             params=action_payload,
                             project_def=project,
                             ws_context=ws_context,
-                            result_format=result_format,
+                            run_trigger=run_trigger,
+                            dev_env=dev_env,
+                            result_formats=result_formats,
                         )
                     )
                     run_tasks.append(run_task)
@@ -406,7 +468,7 @@ async def run_actions_in_running_project(
                 else:
                     logger.error("Unexpected exception:")
                     logger.exception(exception)
-            raise ActionRunFailed(f"Running of actions {actions} failed")
+            raise ActionRunFailed(f"Running of actions {actions} failed") from eg
 
         for idx, run_task in enumerate(run_tasks):
             run_result = run_task.result()
@@ -420,18 +482,20 @@ async def run_actions_in_running_project(
                     params=action_payload,
                     project_def=project,
                     ws_context=ws_context,
-                    result_format=result_format,
+                    run_trigger=run_trigger,
+                    dev_env=dev_env,
+                    result_formats=result_formats,
                 )
             except ActionRunFailed as exception:
                 raise ActionRunFailed(
                     f"Running of action {action_name} failed: {exception.message}"
-                )
+                ) from exception
             except Exception as error:
                 logger.error("Unexpected exception")
                 logger.exception(error)
                 raise ActionRunFailed(
                     f"Running of action {action_name} failed with unexpected exception"
-                )
+                ) from error
 
             result_by_action[action_name] = run_result
 
@@ -443,28 +507,38 @@ async def run_actions_in_projects(
     action_payload: dict[str, str],
     ws_context: context.WorkspaceContext,
     concurrently: bool,
-    result_format: RunResultFormat,
+    result_formats: list[RunResultFormat],
+    run_trigger: runner_client.RunActionTrigger,
+    dev_env: runner_client.DevEnv,
+    payload_overrides_by_project: dict[str, dict[str, typing.Any]] | None = None,
 ) -> dict[pathlib.Path, dict[str, RunActionResponse]]:
+    _payload_overrides_by_project = payload_overrides_by_project or {}
     project_handler_tasks: list[asyncio.Task] = []
     try:
         async with asyncio.TaskGroup() as tg:
             for project_dir_path, actions_to_run in actions_by_project.items():
                 project = ws_context.ws_projects[project_dir_path]
+                project_payload = {
+                    **action_payload,
+                    **_payload_overrides_by_project.get(str(project_dir_path), {}),
+                }
                 project_task = tg.create_task(
                     run_actions_in_running_project(
                         actions=actions_to_run,
-                        action_payload=action_payload,
+                        action_payload=project_payload,
                         project=project,
                         ws_context=ws_context,
                         concurrently=concurrently,
-                        result_format=result_format,
+                        result_formats=result_formats,
+                        run_trigger=run_trigger,
+                        dev_env=dev_env,
                     )
                 )
                 project_handler_tasks.append(project_task)
     except ExceptionGroup as eg:
         for exception in eg.exceptions:
             # TODO: merge all in one?
-            raise exception
+            raise exception from eg
 
     results = {}
     projects_paths = list(actions_by_project.keys())
@@ -494,8 +568,10 @@ def find_projects_with_actions(
     return actions_by_project
 
 
-RunResultFormat = runner_client.RunResultFormat
-RunActionResponse = runner_client.RunActionResponse
+RunResultFormat: typing.TypeAlias = runner_client.RunResultFormat
+RunActionResponse: typing.TypeAlias = runner_client.RunActionResponse
+RunActionTrigger: typing.TypeAlias = runner_client.RunActionTrigger
+DevEnv: typing.TypeAlias = runner_client.DevEnv
 
 
 async def run_action(
@@ -503,18 +579,26 @@ async def run_action(
     params: dict[str, typing.Any],
     project_def: domain.Project,
     ws_context: context.WorkspaceContext,
-    result_format: RunResultFormat = RunResultFormat.JSON,
+    run_trigger: runner_client.RunActionTrigger,
+    dev_env: runner_client.DevEnv,
+    result_formats: list[runner_client.RunResultFormat] | None = None,
     preprocess_payload: bool = True,
+    initialize_all_handlers: bool = False,
 ) -> RunActionResponse:
     formatted_params = str(params)
     if len(formatted_params) > 100:
         formatted_params = f"{formatted_params[:100]}..."
     logger.trace(f"Execute action {action_name} with {formatted_params}")
+    
+    if result_formats is None:
+        _result_formats = [RunResultFormat.JSON]
+    else:
+        _result_formats = result_formats
 
     if project_def.status != domain.ProjectStatus.CONFIG_VALID:
         raise ActionRunFailed(
             f"Project {project_def.dir_path} has no valid configuration and finecode."
-            " Please check logs."
+            + " Please check logs."
         )
 
     if preprocess_payload:
@@ -551,7 +635,10 @@ async def run_action(
             env_name=env_name,
             project_def=project_def,
             ws_context=ws_context,
-            result_format=result_format,
+            run_trigger=run_trigger,
+            dev_env=dev_env,
+            result_formats=_result_formats,
+            initialize_all_handlers=initialize_all_handlers,
         )
     else:
         # TODO: concurrent vs sequential, this value should be taken from action config
@@ -568,7 +655,10 @@ async def run_action(
                     env_name=handler.env,
                     project_def=project_def,
                     ws_context=ws_context,
-                    result_format=result_format,
+                    run_trigger=run_trigger,
+                    dev_env=dev_env,
+                    result_formats=_result_formats,
+                    initialize_all_handlers=initialize_all_handlers,
                 )
 
     return response
@@ -580,23 +670,33 @@ async def _run_action_in_env_runner(
     env_name: str,
     project_def: domain.Project,
     ws_context: context.WorkspaceContext,
-    result_format: RunResultFormat = RunResultFormat.JSON,
+    run_trigger: runner_client.RunActionTrigger,
+    dev_env: runner_client.DevEnv,
+    result_formats: list[runner_client.RunResultFormat],
+    initialize_all_handlers: bool = False,
 ):
     try:
         runner = await runner_manager.get_or_start_runner(
-            project_def=project_def, env_name=env_name, ws_context=ws_context
+            project_def=project_def,
+            env_name=env_name,
+            ws_context=ws_context,
+            initialize_all_handlers=initialize_all_handlers,
+            action_names_to_initialize=[action_name],
         )
     except runner_manager.RunnerFailedToStart as exception:
         raise ActionRunFailed(
             f"Runner {env_name} in project {project_def.dir_path} failed: {exception.message}"
-        )
+        ) from exception
 
     try:
         response = await runner_client.run_action(
             runner=runner,
             action_name=action_name,
             params=payload,
-            options={"result_format": result_format},
+            options={
+                "result_formats": result_formats,
+                "meta": {"trigger": run_trigger.value, "dev_env": dev_env.value},
+            },
         )
     except runner_client.BaseRunnerRequestException as error:
         await user_messages.error(
