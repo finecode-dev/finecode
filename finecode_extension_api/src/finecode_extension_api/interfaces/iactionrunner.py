@@ -1,3 +1,4 @@
+import collections.abc
 import typing
 
 from finecode_extension_api import code_action, service
@@ -35,6 +36,13 @@ class IActionRunner(service.Service, typing.Protocol):
         payload: PayloadT,
         meta: code_action.RunActionMeta,
     ) -> ResultT: ...
+
+    def run_action_iter(
+        self,
+        action: ActionDeclaration[code_action.Action[PayloadT, typing.Any, ResultT]],
+        payload: PayloadT,
+        meta: code_action.RunActionMeta,
+    ) -> collections.abc.AsyncIterator[ResultT]: ...
 
     def get_actions_names(self) -> list[str]: ...
 

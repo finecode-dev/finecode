@@ -29,7 +29,7 @@ class FormatHandler(
         self,
         payload: format_action.FormatRunPayload,
         run_context: format_action.FormatRunContext,
-    ) -> format_action.FormatRunResult:
+    ):
         run_meta = run_context.meta
         file_uris: list[ResourceUri]
 
@@ -66,14 +66,14 @@ class FormatHandler(
         format_files_action_instance = self.action_runner.get_action_by_source(
             format_files_action.FormatFilesAction
         )
-        format_result = await self.action_runner.run_action(
+        async for partial in self.action_runner.run_action_iter(
             action=format_files_action_instance,
             payload=format_files_action.FormatFilesRunPayload(
                 file_paths=file_uris,
                 save=payload.save,
             ),
             meta=run_meta,
-        )
-        return format_action.FormatRunResult(
-            result_by_file_path=format_result.result_by_file_path
-        )
+        ):
+            yield format_action.FormatRunResult(
+                result_by_file_path=partial.result_by_file_path
+            )

@@ -1,9 +1,12 @@
+import asyncio
 import collections.abc
 import typing
 from finecode_extension_api import code_action
 from finecode_extension_api.interfaces import iactionrunner
 
 from finecode_extension_runner import domain, run_utils
+
+_SENTINEL = object()
 
 
 class ActionRunner(iactionrunner.IActionRunner):
@@ -29,6 +32,36 @@ class ActionRunner(iactionrunner.IActionRunner):
             return await self._run_action_func(action, payload, meta)
         except Exception as exception:
             raise iactionrunner.ActionRunFailed(str(exception)) from exception
+
+    @typing.override
+    async def run_action_iter(
+        self,
+        action: iactionrunner.ActionDeclaration[iactionrunner.ActionT],
+        payload: code_action.RunActionPayload,
+        meta: code_action.RunActionMeta,
+    ) -> collections.abc.AsyncIterator[code_action.RunActionResult]:
+        queue: asyncio.Queue = asyncio.Queue()
+
+        async def producer():
+            try:
+                await self._run_action_func(action, payload, meta, partial_result_queue=queue)
+            finally:
+                await queue.put(_SENTINEL)
+
+        task = asyncio.create_task(producer())
+        try:
+            while True:
+                item = await queue.get()
+                if item is _SENTINEL:
+                    break
+                yield item
+        finally:
+            if not task.done():
+                task.cancel()
+                try:
+                    await task
+                except (asyncio.CancelledError, Exception):
+                    pass
 
     @typing.override
     def get_actions_names(self) -> list[str]:

@@ -31,7 +31,7 @@ class LintHandler(
         self,
         payload: lint_action.LintRunPayload,
         run_context: lint_action.LintRunContext,
-    ) -> lint_action.LintRunResult:
+    ):
         run_meta = run_context.meta
         file_uris: list[ResourceUri]
 
@@ -68,9 +68,9 @@ class LintHandler(
         lint_files_action_instance = self.action_runner.get_action_by_source(
             lint_files_action.LintFilesAction
         )
-        lint_result = await self.action_runner.run_action(
+        async for partial in self.action_runner.run_action_iter(
             action=lint_files_action_instance,
             payload=lint_files_action.LintFilesRunPayload(file_paths=file_uris),
             meta=run_meta,
-        )
-        return lint_action.LintRunResult(messages=lint_result.messages)
+        ):
+            yield lint_action.LintRunResult(messages=partial.messages)

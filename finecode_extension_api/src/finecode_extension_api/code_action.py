@@ -88,6 +88,20 @@ class RunContextInfoProvider:
             self._current_result.update(result)
 
 
+class PartialResultSender(typing.Protocol):
+    """Handler-facing interface for sending partial results to the client."""
+
+    async def send(self, result: RunActionResult) -> None: ...
+
+
+class _NoOpPartialResultSender:
+    async def send(self, result: RunActionResult) -> None:
+        pass
+
+
+_NOOP_SENDER = _NoOpPartialResultSender()
+
+
 class RunActionContext(typing.Generic[RunPayloadType]):
     # data object to save data between action steps(only during one run, after run data
     # is removed). Keep it simple, without business logic, just data storage, but you
@@ -101,12 +115,14 @@ class RunActionContext(typing.Generic[RunPayloadType]):
         initial_payload: RunPayloadType,
         meta: RunActionMeta,
         info_provider: RunContextInfoProvider,
+        partial_result_sender: PartialResultSender = _NOOP_SENDER,
     ) -> None:
         self.run_id = run_id
         self.initial_payload = initial_payload
         self.meta = meta
         self.exit_stack = contextlib.AsyncExitStack()
         self._info_provider = info_provider
+        self.partial_result_sender = partial_result_sender
 
     @property
     def current_result(self) -> RunActionResult | None:
@@ -148,12 +164,14 @@ class RunActionWithPartialResultsContext(RunActionContext[RunPayloadType]):
         initial_payload: RunPayloadType,
         meta: RunActionMeta,
         info_provider: RunContextInfoProvider,
+        partial_result_sender: PartialResultSender = _NOOP_SENDER,
     ) -> None:
         super().__init__(
             run_id=run_id,
             initial_payload=initial_payload,
             meta=meta,
             info_provider=info_provider,
+            partial_result_sender=partial_result_sender,
         )
         self.partial_result_scheduler = partialresultscheduler.PartialResultScheduler()
 

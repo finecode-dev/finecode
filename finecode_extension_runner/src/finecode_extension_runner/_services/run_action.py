@@ -40,6 +40,25 @@ class StopWithResponse(Exception):
         self.response = response
 
 
+class _TrackingPartialResultSender:
+    """Wraps partial_result_sender.schedule_sending with state tracking."""
+
+    def __init__(
+        self,
+        token: int | str,
+        send_func: collections.abc.Callable[
+            [int | str, code_action.RunActionResult], collections.abc.Awaitable[None]
+        ],
+    ) -> None:
+        self._token = token
+        self._send_func = send_func
+        self.has_sent = False
+
+    async def send(self, result: code_action.RunActionResult) -> None:
+        self.has_sent = True
+        await self._send_func(self._token, result)
+
+
 def set_partial_result_sender(send_func: typing.Callable) -> None:
     global partial_result_sender
     partial_result_sender = partial_result_sender_module.PartialResultSender(
@@ -60,6 +79,7 @@ async def run_action(
     meta: code_action.RunActionMeta,
     partial_result_token: int | str | None = None,
     run_id: int | None = None,
+    partial_result_queue: asyncio.Queue | None = None,
 ) -> code_action.RunActionResult | None:
     # design decisions:
     # - keep payload unchanged between all subaction runs.
@@ -105,6 +125,13 @@ async def run_action(
 
     run_context: code_action.RunActionContext | AsyncPlaceholderContext
     run_context_info = code_action.RunContextInfoProvider(is_concurrent_execution=execute_handlers_concurrently)
+    if partial_result_token is not None:
+        tracking_sender = _TrackingPartialResultSender(
+            token=partial_result_token,
+            send_func=partial_result_sender.schedule_sending,
+        )
+    else:
+        tracking_sender = None
     if action_exec_info.run_context_type is not None:
         constructor_args = await resolve_func_args_with_di(
             action_exec_info.run_context_type.__init__,
@@ -112,7 +139,8 @@ async def run_action(
                 "run_id": lambda _: run_id,
                 "initial_payload": lambda _: payload,
                 "meta": lambda _: meta,
-                "info_provider": lambda _: run_context_info
+                "info_provider": lambda _: run_context_info,
+                "partial_result_sender": lambda _: tracking_sender or code_action._NOOP_SENDER,
             },
             params_to_ignore=["self"],
         )
@@ -163,6 +191,8 @@ async def run_action(
                         action_cache=action_cache,
                         action_exec_info=action_exec_info,
                         runner_context=runner_context,
+                        partial_result_token=partial_result_token,
+                        tracking_sender=tracking_sender,
                     )
 
                 parts = [part async for part in payload]
@@ -181,6 +211,12 @@ async def run_action(
                 try:
                     async with asyncio.TaskGroup() as tg:
                         for part in parts:
+                            if part not in run_context.partial_result_scheduler.coroutines_by_key:
+                                logger.warning(
+                                    f"R{run_id} | No coroutines scheduled for part {part} "
+                                    f"of action '{action_def.name}', skipping"
+                                )
+                                continue
                             part_coros = (
                                 run_context.partial_result_scheduler.coroutines_by_key[part]
                             )
@@ -193,6 +229,7 @@ async def run_action(
                                     partial_result_sender,
                                     action_def.name,
                                     run_id,
+                                    partial_result_queue=partial_result_queue,
                                 )
                             else:
                                 coro = run_subresult_coros_sequentially(
@@ -202,6 +239,7 @@ async def run_action(
                                     partial_result_sender,
                                     action_def.name,
                                     run_id,
+                                    partial_result_queue=partial_result_queue,
                                 )
                             subresult_task = tg.create_task(coro)
                             subresults_tasks.append(subresult_task)
@@ -246,6 +284,8 @@ async def run_action(
                                         action_cache=action_cache,
                                         action_exec_info=action_exec_info,
                                         runner_context=runner_context,
+                                        partial_result_token=partial_result_token,
+                                        tracking_sender=tracking_sender,
                                     )
                                 )
                                 handlers_tasks.append(handler_task)
@@ -276,6 +316,8 @@ async def run_action(
                                 action_cache=action_cache,
                                 action_exec_info=action_exec_info,
                                 runner_context=runner_context,
+                                partial_result_token=partial_result_token,
+                                tracking_sender=tracking_sender,
                             )
                         except ActionFailedException as exception:
                             raise exception
@@ -313,6 +355,10 @@ async def run_action(
         raise ActionFailedException(
             f"Unexpected result type: {type(action_result).__name__}"
         )
+
+    if partial_result_queue is not None and action_result is not None:
+        await partial_result_queue.put(action_result)
+        return None
 
     return action_result
 
@@ -592,6 +638,8 @@ async def execute_action_handler(
     action_exec_info: domain.ActionExecInfo,
     action_cache: domain.ActionCache,
     runner_context: context.RunnerContext,
+    partial_result_token: int | str | None = None,
+    tracking_sender: _TrackingPartialResultSender | None = None,
 ) -> code_action.RunActionResult:
     logger.trace(f"R{run_id} | Run {handler.name} on {str(payload)[:100]}...")
     if handler.name in action_cache.handler_cache_by_name:
@@ -647,8 +695,30 @@ async def execute_action_handler(
         # there is also `inspect.iscoroutinefunction` but it cannot recognize coroutine
         # functions which are class methods. Use `isawaitable` on result instead.
         call_result = handler_run_func(**args)
-        if inspect.isawaitable(call_result):
-            execution_result = await call_result
+        if inspect.isasyncgen(call_result):
+            execution_result = None
+            async for partial_result in call_result:
+                if partial_result_token is not None:
+                    await partial_result_sender.schedule_sending(
+                        partial_result_token, partial_result
+                    )
+                if execution_result is None:
+                    result_type_pydantic = pydantic_dataclass(type(partial_result))
+                    execution_result = result_type_pydantic(
+                        **dataclasses.asdict(partial_result)
+                    )
+                else:
+                    execution_result.update(partial_result)
+            if partial_result_token is not None:
+                await partial_result_sender.send_all_immediately()
+                execution_result = None  # partials already sent
+        elif inspect.isawaitable(call_result):
+            handler_result = await call_result
+            if tracking_sender is not None and tracking_sender.has_sent:
+                await partial_result_sender.send_all_immediately()
+                execution_result = None
+            else:
+                execution_result = handler_result
         else:
             execution_result = call_result
     except Exception as exception:
@@ -684,6 +754,7 @@ async def run_subresult_coros_concurrently(
     partial_result_sender: partial_result_sender_module.PartialResultSender,
     action_name: str,
     run_id: int,
+    partial_result_queue: asyncio.Queue | None = None,
 ) -> code_action.RunActionResult | None:
     coros_tasks: list[asyncio.Task] = []
     try:
@@ -725,7 +796,10 @@ async def run_subresult_coros_concurrently(
             else:
                 action_subresult.update(coro_result)
 
-    if send_partial_results:
+    if partial_result_queue is not None:
+        await partial_result_queue.put(action_subresult)
+        return None
+    elif send_partial_results:
         await partial_result_sender.schedule_sending(
             partial_result_token, action_subresult
         )
@@ -741,6 +815,7 @@ async def run_subresult_coros_sequentially(
     partial_result_sender: partial_result_sender_module.PartialResultSender,
     action_name: str,
     run_id: int,
+    partial_result_queue: asyncio.Queue | None = None,
 ) -> code_action.RunActionResult | None:
     action_subresult: code_action.RunActionResult | None = None
     for coro in coros:
@@ -761,7 +836,10 @@ async def run_subresult_coros_sequentially(
             else:
                 action_subresult.update(coro_result)
 
-    if send_partial_results:
+    if partial_result_queue is not None:
+        await partial_result_queue.put(action_subresult)
+        return None
+    elif send_partial_results:
         await partial_result_sender.schedule_sending(
             partial_result_token, action_subresult
         )
