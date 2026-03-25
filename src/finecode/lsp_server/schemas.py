@@ -15,20 +15,6 @@ class BaseModel(pydantic.BaseModel):
     )
 
 
-class AddWorkspaceDirRequest(BaseModel):
-    dir_path: str
-
-
-class AddWorkspaceDirResponse(BaseModel): ...
-
-
-class DeleteWorkspaceDirRequest(BaseModel):
-    dir_path: str
-
-
-class DeleteWorkspaceDirResponse(BaseModel): ...
-
-
 class ListActionsRequest(BaseModel):
     parent_node_id: str = ""
 

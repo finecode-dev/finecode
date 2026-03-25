@@ -1,8 +1,7 @@
 import dataclasses
 
 from finecode_extension_api import code_action
-from finecode_extension_api.actions import \
-    get_src_artifact_version as get_src_artifact_version_action
+from finecode_extension_api.actions.artifact import get_src_artifact_version_action
 from finecode_extension_api.interfaces import ilogger, iprojectinfoprovider
 
 

@@ -1,0 +1,75 @@
+# docs: docs/reference/actions.md
+import dataclasses
+import sys
+
+if sys.version_info >= (3, 12):
+    from typing import override
+else:
+    from typing_extensions import override
+
+from finecode_extension_api import code_action, textstyler
+from finecode_extension_api.resource_uri import ResourceUri
+
+
+@dataclasses.dataclass
+class GroupSrcArtifactFilesByLangRunPayload(code_action.RunActionPayload):
+    file_paths: list[ResourceUri]
+    """Files to group by language (``file://`` URIs)."""
+    langs: list[str] | None = None
+    """Language identifiers to include (e.g. ['python', 'javascript']). None means all languages."""
+
+
+class GroupSrcArtifactFilesByLangRunContext(
+    code_action.RunActionContext[GroupSrcArtifactFilesByLangRunPayload]
+):
+    def __init__(
+        self,
+        run_id: int,
+        initial_payload: GroupSrcArtifactFilesByLangRunPayload,
+        meta: code_action.RunActionMeta,
+        info_provider: code_action.RunContextInfoProvider,
+    ) -> None:
+        super().__init__(
+            run_id=run_id,
+            initial_payload=initial_payload,
+            meta=meta,
+            info_provider=info_provider,
+        )
+
+
+@dataclasses.dataclass
+class GroupSrcArtifactFilesByLangRunResult(code_action.RunActionResult):
+    files_by_lang: dict[str, list[ResourceUri]]
+
+    @override
+    def update(self, other: code_action.RunActionResult) -> None:
+        if not isinstance(other, GroupSrcArtifactFilesByLangRunResult):
+            return
+
+        for lang, files in other.files_by_lang.items():
+            if lang not in self.files_by_lang:
+                self.files_by_lang[lang] = files
+            else:
+                self.files_by_lang[lang] += files
+
+    def to_text(self) -> str | textstyler.StyledText:
+        formatted_result = textstyler.StyledText()
+        for language, files in self.files_by_lang.items():
+            formatted_result.append_styled(text=language + "\n", bold=True)
+            for file_uri in files:
+                formatted_result.append(file_uri + "\n")
+        return formatted_result
+
+
+class GroupSrcArtifactFilesByLangAction(
+    code_action.Action[
+        GroupSrcArtifactFilesByLangRunPayload,
+        GroupSrcArtifactFilesByLangRunContext,
+        GroupSrcArtifactFilesByLangRunResult,
+    ]
+):
+    """Group a given list of files by programming language."""
+
+    PAYLOAD_TYPE = GroupSrcArtifactFilesByLangRunPayload
+    RUN_CONTEXT_TYPE = GroupSrcArtifactFilesByLangRunContext
+    RESULT_TYPE = GroupSrcArtifactFilesByLangRunResult

@@ -231,8 +231,6 @@ class FileEditorSession(ifileeditor.IFileEditorSession):
             new_file_content = FileEditorSession.apply_change_to_file_content(
                 change=change, file_content=file_content
             )
-            self.logger.info(str(change))
-            self.logger.info(f"||{file_content}||{new_file_content}||")
             self._update_opened_file_info(
                 file_path=file_path, new_file_content=new_file_content
             )
@@ -368,7 +366,7 @@ class FileEditorSession(ifileeditor.IFileEditorSession):
         file_change_event = ifileeditor.FileChangeEvent(
             file_path=file_path, author=self.author, change=change
         )
-        for subscription in self._file_change_subscriptions[file_path].values():
+        for subscription in self._file_change_subscriptions.get(file_path, {}).values():
             subscription.event_queue.put_nowait(file_change_event)
         
         for subscription in self._all_events_subscriptions.values():

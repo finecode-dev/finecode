@@ -12,22 +12,23 @@ from flake8.api import legacy as flake8
 from flake8.plugins import finder
 
 from finecode_extension_api import code_action
-from finecode_extension_api.actions import lint_files as lint_files_action
+from finecode_extension_api.actions.code_quality import lint_files_action
 from finecode_extension_api.interfaces import (
     icache,
     ifileeditor,
     ilogger,
     iprocessexecutor,
 )
+from finecode_extension_api.resource_uri import ResourceUri, resource_uri_to_path
 
 
 def map_flake8_check_result_to_lint_message(result: tuple) -> lint_files_action.LintMessage:
     error_code, line_number, column, text, physical_line = result
     return lint_files_action.LintMessage(
         range=lint_files_action.Range(
-            start=lint_files_action.Position(line=line_number, character=column),
+            start=lint_files_action.Position(line=line_number - 1, character=column),
             end=lint_files_action.Position(
-                line=line_number,
+                line=line_number - 1,
                 character=len(physical_line) if physical_line is not None else column,
             ),
         ),
@@ -147,14 +148,15 @@ class Flake8LintFilesHandler(
         self.logger.disable("bugbear")
 
     async def run_on_single_file(
-        self, file_path: Path
+        self, file_uri: ResourceUri
     ) -> lint_files_action.LintFilesRunResult | None:
-        messages = {}
+        file_path = resource_uri_to_path(file_uri)
+        messages: dict[ResourceUri, list[lint_files_action.LintMessage]] = {}
         try:
             cached_lint_messages = await self.cache.get_file_cache(
                 file_path, self.CACHE_KEY
             )
-            messages[str(file_path)] = cached_lint_messages
+            messages[file_uri] = cached_lint_messages
             return lint_files_action.LintFilesRunResult(messages=messages)
         except icache.CacheMissException:
             pass
@@ -178,7 +180,7 @@ class Flake8LintFilesHandler(
             file_ast=file_ast,
             config=self.config,
         )
-        messages[str(file_path)] = lint_messages
+        messages[file_uri] = lint_messages
         await self.cache.save_file_cache(
             file_path, file_version, self.CACHE_KEY, lint_messages
         )
@@ -193,12 +195,12 @@ class Flake8LintFilesHandler(
         if self.config.select is not None and len(self.config.select) == 0:
             # empty set of rules is selected, no need to run flake8
             return None
-        
-        file_paths = [file_path async for file_path in payload]
 
-        for file_path in file_paths:
+        file_uris = [file_uri async for file_uri in payload]
+
+        for file_uri in file_uris:
             run_context.partial_result_scheduler.schedule(
-                file_path, self.run_on_single_file(file_path)
+                file_uri, self.run_on_single_file(file_uri)
             )
 
 

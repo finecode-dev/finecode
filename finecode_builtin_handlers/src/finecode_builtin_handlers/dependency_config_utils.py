@@ -96,8 +96,49 @@ def raw_dep_to_dep_dict(raw_dep: str, env_deps_config: dict) -> dict[str, str | 
     return dep_dict
 
 
+def process_raw_deps(
+    raw_deps: list,
+    env_deps_config: dict,
+    dependencies: list,
+    deps_groups: dict,
+    project_def_path: pathlib.Path,
+    _seen: set[str] | None = None,
+) -> None:
+    if _seen is None:
+        _seen = set()
+    for raw_dep in raw_deps:
+        if isinstance(raw_dep, str):
+            name = get_dependency_name(raw_dep)
+            if name in _seen:
+                continue
+            _seen.add(name)
+            dep_config = env_deps_config.get(name, {})
+            editable = dep_config.get("editable", False)
+            if editable and (raw_path := dep_config.get("path")):
+                resolved = pathlib.Path(raw_path)
+                if not resolved.is_absolute():
+                    resolved = (project_def_path.parent / resolved).resolve()
+                version_or_source = f" @ file://{resolved.as_posix()}"
+            else:
+                version_or_source = raw_dep[len(name):]
+            dependencies.append(
+                {
+                    "name": name,
+                    "version_or_source": version_or_source,
+                    "editable": editable,
+                }
+            )
+        elif isinstance(raw_dep, dict) and "include-group" in raw_dep:
+            included_group_deps = deps_groups.get(raw_dep["include-group"], [])
+            process_raw_deps(
+                included_group_deps, env_deps_config, dependencies, deps_groups,
+                project_def_path, _seen,
+            )
+
+
 __all__ = [
     "make_project_config_pip_compatible",
     "get_dependency_name",
+    "process_raw_deps",
     "raw_dep_to_dep_dict",
 ]

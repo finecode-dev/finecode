@@ -60,6 +60,7 @@ def start(
         / ".venvs"
         / env_name
         / "logs"
+        / "runner"
         / "runner.log")
     
     logs.setup_logging(log_level="INFO" if trace is False else "TRACE", log_file_path=log_file_path)

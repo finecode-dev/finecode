@@ -1,7 +1,7 @@
 import dataclasses
 
 from finecode_extension_api import code_action
-from finecode_extension_api.actions import build_artifact_action
+from finecode_extension_api.actions.artifact import build_artifact_action
 from finecode_extension_api.interfaces import (
     icommandrunner,
     iextensionrunnerinfoprovider,

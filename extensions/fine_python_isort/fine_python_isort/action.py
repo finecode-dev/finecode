@@ -2,13 +2,13 @@ from __future__ import annotations
 
 import dataclasses
 from io import StringIO
-from pathlib import Path
 
 import isort.api as isort_api
 import isort.settings as isort_settings
 from finecode_extension_api import code_action
-from finecode_extension_api.actions import format_files as format_files_action
+from finecode_extension_api.actions.code_quality import format_files_action
 from finecode_extension_api.interfaces import icache, ilogger, iprocessexecutor
+from finecode_extension_api.resource_uri import ResourceUri
 
 
 @dataclasses.dataclass
@@ -45,20 +45,20 @@ class IsortFormatFilesHandler(
         payload: format_files_action.FormatFilesRunPayload,
         run_context: format_files_action.FormatFilesRunContext,
     ) -> format_files_action.FormatFilesRunResult:
-        result_by_file_path: dict[Path, format_files_action.FormatRunFileResult] = {}
-        for file_path in payload.file_paths:
-            file_content, file_version = run_context.file_info_by_path[file_path]
+        result_by_file_path: dict[ResourceUri, format_files_action.FormatRunFileResult] = {}
+        for file_uri in payload.file_paths:
+            file_content, file_version = run_context.file_info_by_path[file_uri]
 
             new_file_content, file_changed = await self.process_executor.submit(
                 format_one, file_content, dataclasses.asdict(self.config)
             )
 
             # save for next handlers
-            run_context.file_info_by_path[file_path] = format_files_action.FileInfo(
+            run_context.file_info_by_path[file_uri] = format_files_action.FileInfo(
                 new_file_content, file_version
             )
 
-            result_by_file_path[file_path] = format_files_action.FormatRunFileResult(
+            result_by_file_path[file_uri] = format_files_action.FormatRunFileResult(
                 changed=file_changed, code=new_file_content
             )
 

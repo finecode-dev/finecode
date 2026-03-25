@@ -1,7 +1,7 @@
 import dataclasses
 
 from finecode_extension_api import code_action
-from finecode_extension_api.actions import init_repository_provider
+from finecode_extension_api.actions.publishing import init_repository_provider_action
 from finecode_extension_api.interfaces import iactionrunner
 from finecode_extension_api.interfaces.irepositorycredentialsprovider import (
     Repository,
@@ -47,11 +47,10 @@ class PublishAndVerifyArtifactInitRepositoryProviderHandler(
     ) -> PublishAndVerifyArtifactRunResult:
         run_meta = run_context.meta
 
-        init_action = self.action_runner.get_action_by_name(
-            "init_repository_provider",
-            init_repository_provider.InitRepositoryProviderAction,
+        init_action = self.action_runner.get_action_by_source(
+            init_repository_provider_action.InitRepositoryProviderAction,
         )
-        init_payload = init_repository_provider.InitRepositoryProviderRunPayload(
+        init_payload = init_repository_provider_action.InitRepositoryProviderRunPayload(
             repositories=self.config.repositories,
             credentials_by_repository=self.config.credentials_by_repository,
         )

@@ -12,7 +12,14 @@ finecode_extension_runner = { path = "../../../finecode_extension_runner", edita
 finecode_extension_api = { path = "../../../finecode_extension_api", editable = true }
 
 [tool.finecode.env.dev.dependencies]
+finecode = { path = "../../..", editable = true }
+finecode_extension_api = { path = "../../../finecode_extension_api", editable = true }
 finecode_extension_runner = { path = "../../../finecode_extension_runner", editable = true }
+fine_python_pytest = { path = "../../../extensions/fine_python_pytest", editable = true }
+finecode_builtin_handlers = { path = "../../../finecode_builtin_handlers", editable = true }
+finecode_jsonrpc = { path = "../../../finecode_jsonrpc", editable = true }
+fine_python_pip = { path = "../../../extensions/fine_python_pip", editable = true }
+fine_python_virtualenv = { path = "../../../extensions/fine_python_virtualenv", editable = true }
 
 [tool.finecode.env.dev_no_runtime.dependencies]
 finecode_extension_api = { path = "../../../finecode_extension_api", editable = true }
@@ -29,6 +36,8 @@ fine_python_flake8 = { path = "../../../extensions/fine_python_flake8", editable
 fine_python_pyrefly = { path = "../../../extensions/fine_python_pyrefly", editable = true }
 fine_python_package_info = { path = "../../../extensions/fine_python_package_info", editable = true }
 fine_python_setuptools_scm = { path = "../../../extensions/fine_python_setuptools_scm", editable = true }
+fine_python_pip = { path = "../../../extensions/fine_python_pip", editable = true }
+fine_python_virtualenv = { path = "../../../extensions/fine_python_virtualenv", editable = true }
 
 # currently, all packages in finecode repository are pure python packages, reuse
 # setuptools build in all of them
@@ -52,7 +61,7 @@ source = "fine_python_pyrefly.PyreflyLintFilesHandler"
 config.python_version = '3.11'
 
 [tool.finecode.action.init_repository_provider]
-source = "finecode_extension_api.actions.init_repository_provider.InitRepositoryProviderAction"
+source = "finecode_extension_api.actions.InitRepositoryProviderAction"
 handlers = [
     { name = 'init_repository_provider', source = 'finecode_builtin_handlers.InitRepositoryProviderHandler', env = "dev_no_runtime", dependencies = [
         "finecode_builtin_handlers~=0.2.0a0",
@@ -60,7 +69,7 @@ handlers = [
 ]
 
 [tool.finecode.action.publish_artifact]
-source = "finecode_extension_api.actions.publish_artifact.PublishArtifactAction"
+source = "finecode_extension_api.actions.PublishArtifactAction"
 handlers = [
     { name = 'publish_artifact', source = 'finecode_builtin_handlers.PublishArtifactHandler', env = "dev_no_runtime", dependencies = [
         "finecode_builtin_handlers~=0.2.0a0",
@@ -68,7 +77,7 @@ handlers = [
 ]
 
 [tool.finecode.action.get_src_artifact_version]
-source = "finecode_extension_api.actions.get_src_artifact_version.GetSrcArtifactVersionAction"
+source = "finecode_extension_api.actions.GetSrcArtifactVersionAction"
 handlers = [
     { name = 'get_src_artifact_version_py', source = 'fine_python_package_info.GetSrcArtifactVersionPyHandler', env = "dev_no_runtime", dependencies = [
         "fine_python_package_info~=0.2.0a1",
@@ -76,7 +85,7 @@ handlers = [
 ]
 
 [tool.finecode.action.get_dist_artifact_version]
-source = "finecode_extension_api.actions.get_dist_artifact_version.GetDistArtifactVersionAction"
+source = "finecode_extension_api.actions.GetDistArtifactVersionAction"
 handlers = [
     { name = 'get_dist_artifact_version_py', source = 'fine_python_package_info.GetDistArtifactVersionPyHandler', env = "dev_no_runtime", dependencies = [
         "fine_python_package_info~=0.2.0a1",
@@ -84,7 +93,7 @@ handlers = [
 ]
 
 [tool.finecode.action.get_src_artifact_registries]
-source = "finecode_extension_api.actions.get_src_artifact_registries.GetSrcArtifactRegistriesAction"
+source = "finecode_extension_api.actions.GetSrcArtifactRegistriesAction"
 handlers = [
     { name = 'get_src_artifact_registries_py', source = 'fine_python_package_info.GetSrcArtifactRegistriesPyHandler', env = "dev_no_runtime", dependencies = [
         "fine_python_package_info~=0.2.0a1",
@@ -92,7 +101,7 @@ handlers = [
 ]
 
 [tool.finecode.action.publish_artifact_to_registry]
-source = "finecode_extension_api.actions.publish_artifact_to_registry.PublishArtifactToRegistryAction"
+source = "finecode_extension_api.actions.PublishArtifactToRegistryAction"
 handlers = [
     { name = 'publish_artifact_to_registry_py', source = 'fine_python_package_info.PublishArtifactToRegistryPyHandler', env = "dev_no_runtime", dependencies = [
         "fine_python_package_info~=0.2.0a1",
@@ -100,7 +109,7 @@ handlers = [
 ]
 
 [tool.finecode.action.is_artifact_published_to_registry]
-source = "finecode_extension_api.actions.is_artifact_published_to_registry.IsArtifactPublishedToRegistryAction"
+source = "finecode_extension_api.actions.IsArtifactPublishedToRegistryAction"
 handlers = [
     { name = 'is_artifact_published_to_registry_py', source = 'fine_python_package_info.IsArtifactPublishedToRegistryPyHandler', env = "dev_no_runtime", dependencies = [
         "fine_python_package_info~=0.2.0a1",
@@ -108,7 +117,7 @@ handlers = [
 ]
 
 [tool.finecode.action.build_artifact]
-source = "finecode_extension_api.actions.build_artifact_action.BuildArtifactAction"
+source = "finecode_extension_api.actions.BuildArtifactAction"
 handlers = [
     { name = 'build_artifact_py', source = 'fine_python_package_info.BuildArtifactPyHandler', env = "dev_no_runtime", dependencies = [
         "fine_python_package_info~=0.2.0a1",
@@ -116,7 +125,7 @@ handlers = [
 ]
 
 [tool.finecode.action.verify_artifact_published_to_registry]
-source = "finecode_extension_api.actions.verify_artifact_published_to_registry.VerifyArtifactPublishedToRegistryAction"
+source = "finecode_extension_api.actions.VerifyArtifactPublishedToRegistryAction"
 # TODO: install, try to import etc
 handlers = []
 

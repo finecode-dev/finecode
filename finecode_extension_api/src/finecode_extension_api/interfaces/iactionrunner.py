@@ -1,3 +1,4 @@
+import collections.abc
 import typing
 
 from finecode_extension_api import code_action, service
@@ -15,19 +16,18 @@ class ActionDeclaration(typing.Generic[ActionT]): ...
 
 
 class IActionRunner(service.Service, typing.Protocol):
-    def get_actions_by_source(
-        self, source: str, expected_type: type[ActionT]
-    ) -> list[ActionDeclaration[ActionT]]: ...
+    def get_action_by_source(
+        self, action_type: type[ActionT]
+    ) -> ActionDeclaration[ActionT]: ...
 
-    def get_actions_for_language(
-        self, source: str, language: str, expected_type: type[ActionT]
-    ) -> list[ActionDeclaration[ActionT]]: ...
+    def get_actions_for_parent(
+        self, parent_action_type: type[ActionT]
+    ) -> dict[str, ActionDeclaration[ActionT]]: ...
 
     def get_action_by_name(
-        self, name: str, expected_type: type[ActionT]
+        self, name: str, action_type: type[ActionT]
     ) -> ActionDeclaration[ActionT]:
-        # use it only if you are sure you need it. In most cases get_actions_by_source
-        # should be preferred
+        """Prefer `get_action_by_source`"""
         ...
 
     async def run_action(
@@ -36,6 +36,13 @@ class IActionRunner(service.Service, typing.Protocol):
         payload: PayloadT,
         meta: code_action.RunActionMeta,
     ) -> ResultT: ...
+
+    def run_action_iter(
+        self,
+        action: ActionDeclaration[code_action.Action[PayloadT, typing.Any, ResultT]],
+        payload: PayloadT,
+        meta: code_action.RunActionMeta,
+    ) -> collections.abc.AsyncIterator[ResultT]: ...
 
     def get_actions_names(self) -> list[str]: ...
 

@@ -36,6 +36,9 @@ finecode_builtin_handlers = { path = "../finecode_builtin_handlers", editable = 
 fine_python_recommended = { path = "../presets/fine_python_recommended", editable = true }
 fine_python_lint = { path = "../presets/fine_python_lint", editable = true }
 fine_python_format = { path = "../presets/fine_python_format", editable = true }
+fine_python_test = { path = "../presets/fine_python_test", editable = true }
+fine_python_pip = { path = "../extensions/fine_python_pip", editable = true }
+fine_python_virtualenv = { path = "../extensions/fine_python_virtualenv", editable = true }
 
 [build-system]
 requires = ["setuptools>=64", "setuptools-scm>=8"]
@@ -63,7 +66,7 @@ version_file = "src/finecode_extension_runner/_version.py"
 root = ".."
 
 [tool.finecode.action.get_src_artifact_version]
-source = "finecode_extension_api.actions.get_src_artifact_version.GetSrcArtifactVersionAction"
+source = "finecode_extension_api.actions.GetSrcArtifactVersionAction"
 handlers_mode = "replace"
 handlers = [
     { name = 'get_src_artifact_version_setuptools_scm', source = 'fine_python_setuptools_scm.GetSrcArtifactVersionSetuptoolsScmHandler', env = "dev_no_runtime", dependencies = [

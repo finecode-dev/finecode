@@ -17,7 +17,7 @@ dependencies = [
     "finecode_builtin_handlers~=0.2.0a0",
     "finecode_jsonrpc~=0.1.0a0",
     "ordered-set==4.1.*",
-    "mcp==1.13.*",
+    "mcp>=1.0.0",
     "fine_python_virtualenv~=0.2.0a0",
     "fine_python_pip~=0.2.0a0",
     "culsans==0.11.*",
@@ -48,18 +48,30 @@ build-backend = "setuptools.build_meta"
 presets = [{ source = "finecode_dev_common_preset" }]
 
 [tool.finecode.env.dev_workspace.dependencies]
+finecode = { path = "./", editable = true }
 finecode_dev_common_preset = { path = "./finecode_dev_common_preset", editable = true }
 finecode_extension_runner = { path = "./finecode_extension_runner", editable = true }
 finecode_extension_api = { path = "./finecode_extension_api", editable = true }
 finecode_jsonrpc = { path = "./finecode_jsonrpc", editable = true }
+fine_python_recommended = { path = "./presets/fine_python_recommended", editable = true }
 fine_python_lint = { path = "./presets/fine_python_lint", editable = true }
 fine_python_format = { path = "./presets/fine_python_format", editable = true }
-finecode_builtin_handlers = { path = "../finecode_builtin_handlers", editable = true }
+fine_python_test = { path = "./presets/fine_python_test", editable = true }
+finecode_builtin_handlers = { path = "./finecode_builtin_handlers", editable = true }
+fine_python_pip = { path = "./extensions/fine_python_pip", editable = true }
+fine_python_virtualenv = { path = "./extensions/fine_python_virtualenv", editable = true }
 
 [tool.finecode.env.runtime.dependencies]
 finecode_extension_api = { path = "./finecode_extension_api", editable = true }
 finecode_jsonrpc = { path = "./finecode_jsonrpc", editable = true }
 finecode_builtin_handlers = { path = "./finecode_builtin_handlers", editable = true }
+
+[tool.finecode.env.docs.dependencies]
+finecode_extension_runner = { path = "./finecode_extension_runner", editable = true }
+finecode_extension_api = { path = "./finecode_extension_api", editable = true }
+finecode_jsonrpc = { path = "./finecode_jsonrpc", editable = true }
+finecode_builtin_handlers = { path = "./finecode_builtin_handlers", editable = true }
+
 
 [tool.importlinter]
 root_package = "finecode"
@@ -100,7 +112,7 @@ finecode = ["base_config.toml"]
 reportUnusedCallResult = false
 
 [tool.finecode.action.get_src_artifact_version]
-source = "finecode_extension_api.actions.get_src_artifact_version.GetSrcArtifactVersionAction"
+source = "finecode_extension_api.actions.GetSrcArtifactVersionAction"
 handlers_mode = "replace"
 handlers = [
     { name = 'get_src_artifact_version_setuptools_scm', source = 'fine_python_setuptools_scm.GetSrcArtifactVersionSetuptoolsScmHandler', env = "dev_no_runtime", dependencies = [

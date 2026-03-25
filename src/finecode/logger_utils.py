@@ -1,3 +1,4 @@
+# docs: docs/guides/developing-finecode.md
 import inspect
 import logging
 import sys
@@ -8,7 +9,7 @@ from loguru import logger
 from finecode_extension_runner import logs
 
 
-def init_logger(trace: bool, stdout: bool = False):
+def init_logger(log_name: str, log_level: str = "INFO", stdout: bool = False) -> Path:
     venv_dir_path = Path(sys.executable).parent.parent
     logs_dir_path = venv_dir_path / "logs"
 
@@ -23,9 +24,9 @@ def init_logger(trace: bool, stdout: bool = False):
         ]
     )
     logs.set_log_level_for_group(group="finecode_jsonrpc.client", level=logs.LogLevel.INFO)
-    logs.save_logs_to_file(
-        file_path=logs_dir_path / "workspace_manager.log",
-        log_level="TRACE" if trace else "INFO",
+    log_file_path = logs.save_logs_to_file(
+        file_path=logs_dir_path / log_name / f"{log_name}.log",
+        log_level=log_level,
         stdout=stdout,
     )
 
@@ -52,3 +53,5 @@ def init_logger(trace: bool, stdout: bool = False):
             )
 
     logging.basicConfig(handlers=[InterceptHandler()], level=0, force=True)
+
+    return log_file_path

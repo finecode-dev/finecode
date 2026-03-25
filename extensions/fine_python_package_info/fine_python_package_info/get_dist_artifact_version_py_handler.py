@@ -1,8 +1,7 @@
 import dataclasses
 
 from finecode_extension_api import code_action
-from finecode_extension_api.actions import \
-    get_dist_artifact_version as get_dist_artifact_version_action
+from finecode_extension_api.actions.publishing import get_dist_artifact_version_action
 from finecode_extension_api.interfaces import ilogger
 
 

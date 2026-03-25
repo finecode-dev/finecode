@@ -9,7 +9,7 @@ from pathlib import Path
 import fine_python_mypy.output_parser as output_parser
 
 from finecode_extension_api import code_action
-from finecode_extension_api.actions import lint as lint_action
+from finecode_extension_api.actions.code_quality import lint_action
 from finecode_extension_api.interfaces import (
     icache,
     icommandrunner,

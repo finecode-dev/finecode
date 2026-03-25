@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "finecode": {
+      "type": "stdio",
+      "command": ".venvs/dev_workspace/bin/python",
+      "args": ["-m", "finecode", "start-mcp"]
+    }
+  }
+}

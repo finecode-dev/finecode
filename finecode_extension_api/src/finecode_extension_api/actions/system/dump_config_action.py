@@ -1,0 +1,70 @@
+# docs: docs/reference/actions.md
+import dataclasses
+import pprint
+import sys
+import typing
+
+if sys.version_info >= (3, 12):
+    from typing import override
+else:
+    from typing_extensions import override
+
+from finecode_extension_api import code_action, textstyler
+from finecode_extension_api.resource_uri import ResourceUri
+
+
+@dataclasses.dataclass
+class DumpConfigRunPayload(code_action.RunActionPayload):
+    # `source_file_path` is not for reading, config is already read and its content is
+    # in `project_raw_config`, but for providing config path to allow for example to
+    # resolve relative pathes in project config
+    source_file_path: ResourceUri
+    project_raw_config: dict[str, typing.Any]
+    target_file_path: ResourceUri
+
+
+class DumpConfigRunContext(code_action.RunActionContext[DumpConfigRunPayload]):
+    def __init__(
+        self,
+        run_id: int,
+        initial_payload: DumpConfigRunPayload,
+        meta: code_action.RunActionMeta,
+        info_provider: code_action.RunContextInfoProvider,
+    ) -> None:
+        super().__init__(
+            run_id=run_id,
+            initial_payload=initial_payload,
+            meta=meta,
+            info_provider=info_provider,
+        )
+
+        self.raw_config_dump: dict[str, typing.Any] = {}
+
+    async def init(self) -> None:
+        self.raw_config_dump = self.initial_payload.project_raw_config
+
+
+@dataclasses.dataclass
+class DumpConfigRunResult(code_action.RunActionResult):
+    config_dump: dict[str, typing.Any]
+
+    @override
+    def update(self, other: code_action.RunActionResult) -> None:
+        if not isinstance(other, DumpConfigRunResult):
+            return
+
+        self.config_dump = other.config_dump
+
+    def to_text(self) -> str | textstyler.StyledText:
+        formatted_dump_str = pprint.pformat(self.config_dump)
+        return formatted_dump_str
+
+
+class DumpConfigAction(
+    code_action.Action[DumpConfigRunPayload, DumpConfigRunContext, DumpConfigRunResult]
+):
+    """Resolve and dump the merged project configuration."""
+
+    PAYLOAD_TYPE = DumpConfigRunPayload
+    RUN_CONTEXT_TYPE = DumpConfigRunContext
+    RESULT_TYPE = DumpConfigRunResult
