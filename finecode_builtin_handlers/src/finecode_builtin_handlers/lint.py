@@ -9,7 +9,10 @@ from finecode_extension_api.resource_uri import ResourceUri, path_to_resource_ur
 
 
 @dataclasses.dataclass
-class LintHandlerConfig(code_action.ActionHandlerConfig): ...
+class LintHandlerConfig(code_action.ActionHandlerConfig):
+    lint_opened_files_only_in_ide: bool = True
+    """When True (default), background IDE lints triggered automatically only lint
+    currently opened files for performance. Set to False to always lint the full project."""
 
 
 class LintHandler(
@@ -19,10 +22,12 @@ class LintHandler(
 ):
     def __init__(
         self,
+        config: LintHandlerConfig,
         action_runner: iactionrunner.IActionRunner,
         logger: ilogger.ILogger,
         file_editor: ifileeditor.IFileEditor,
     ) -> None:
+        self.config = config
         self.action_runner = action_runner
         self.file_editor = file_editor
         self.logger = logger
@@ -37,7 +42,8 @@ class LintHandler(
 
         if payload.target == lint_action.LintTarget.PROJECT:
             if (
-                run_meta.dev_env == code_action.DevEnv.IDE
+                self.config.lint_opened_files_only_in_ide
+                and run_meta.dev_env == code_action.DevEnv.IDE
                 and run_meta.trigger == code_action.RunActionTrigger.SYSTEM
             ):
                 # Performance optimisation: when the IDE triggers a background project
