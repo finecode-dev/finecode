@@ -6,7 +6,7 @@ import sys
 from pathlib import Path
 
 from finecode_extension_api import code_action
-from finecode_extension_api.actions import lint_files as lint_files_action
+from finecode_extension_api.actions.code_quality import lint_files_action
 from finecode_extension_api.interfaces import (
     icache,
     icommandrunner,
@@ -16,6 +16,7 @@ from finecode_extension_api.interfaces import (
     isrcartifactfileclassifier,
     iextensionrunnerinfoprovider,
 )
+from finecode_extension_api.resource_uri import ResourceUri, resource_uri_to_path
 from fine_python_pyrefly.pyrefly_lsp_service import PyreflyLspService
 
 
@@ -82,18 +83,19 @@ class PyreflyLintFilesHandler(
             })
 
     async def run_on_single_file(
-        self, file_path: Path
+        self, file_uri: ResourceUri
     ) -> lint_files_action.LintFilesRunResult:
-        messages = {}
+        file_path = resource_uri_to_path(file_uri)
+        messages: dict[ResourceUri, list[lint_files_action.LintMessage]] = {}
         try:
             cached_lint_messages = await self.cache.get_file_cache(
                 file_path, self.CACHE_KEY
             )
-            messages[str(file_path)] = cached_lint_messages
+            messages[file_uri] = cached_lint_messages
             return lint_files_action.LintFilesRunResult(messages=messages)
         except icache.CacheMissException:
             pass
-        
+
         async with self.file_editor.session(
             author=self.FILE_OPERATION_AUTHOR
         ) as session:
@@ -107,7 +109,7 @@ class PyreflyLintFilesHandler(
 
             lint_messages = await self.lsp_service.check_file(file_path)
 
-        messages[str(file_path)] = lint_messages
+        messages[file_uri] = lint_messages
         await self.cache.save_file_cache(
             file_path, file_version, self.CACHE_KEY, lint_messages
         )
@@ -119,12 +121,12 @@ class PyreflyLintFilesHandler(
         payload: lint_files_action.LintFilesRunPayload,
         run_context: lint_files_action.LintFilesRunContext,
     ) -> None:
-        file_paths = [file_path async for file_path in payload]
+        file_uris = [file_uri async for file_uri in payload]
 
-        for file_path in file_paths:
+        for file_uri in file_uris:
             run_context.partial_result_scheduler.schedule(
-                file_path,
-                self.run_on_single_file(file_path),
+                file_uri,
+                self.run_on_single_file(file_uri),
             )
 
     async def run_pyrefly_lint_on_single_file(
@@ -217,8 +219,8 @@ def map_pyrefly_error_to_lint_message(error: dict) -> lint_files_action.LintMess
 
     return lint_files_action.LintMessage(
         range=lint_files_action.Range(
-            start=lint_files_action.Position(line=start_line, character=start_column),
-            end=lint_files_action.Position(line=end_line, character=end_column),
+            start=lint_files_action.Position(line=start_line - 1, character=start_column),
+            end=lint_files_action.Position(line=end_line - 1, character=end_column),
         ),
         message=error.get("description", ""),
         code=error_code,

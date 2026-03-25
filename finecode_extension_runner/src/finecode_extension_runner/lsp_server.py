@@ -25,6 +25,7 @@ from pydantic.dataclasses import dataclass as pydantic_dataclass
 
 from finecode_extension_runner import schemas, services
 from finecode_extension_runner._services import run_action as run_action_service
+from finecode_extension_runner._services import merge_results as merge_results_service
 from finecode_extension_runner.di import resolver
 
 import sys
@@ -191,6 +192,38 @@ class CustomLanguageServer(lsp_server.LanguageServer):
         except asyncio.CancelledError:
             logger.debug("Server was cancelled")
 
+    async def start_tcp_async(self, host: str, port: int) -> None:
+        """Starts TCP server from within an existing event loop."""
+        logger.info("Starting TCP server on %s:%s", host, port)
+
+        self._stop_event = stop_event = threading.Event()
+
+        async def lsp_connection(
+            reader: asyncio.StreamReader, writer: asyncio.StreamWriter
+        ):
+            logger.debug("Connected to client")
+            self.protocol.set_writer(writer)  # type: ignore
+            await run_async(
+                stop_event=stop_event,
+                reader=reader,
+                protocol=self.protocol,
+                logger=logger,
+                error_handler=self.report_server_error,
+            )
+            logger.debug("Main loop finished")
+            self.shutdown()
+
+        self._server = await asyncio.start_server(lsp_connection, host, port)
+
+        addrs = ", ".join(str(sock.getsockname()) for sock in self._server.sockets)
+        logger.info(f"Serving on {addrs}")
+
+        try:
+            async with self._server:
+                await self._server.serve_forever()
+        finally:
+            await self._finecode_exit_stack.aclose()
+
 
 
 def file_editor_file_change_to_lsp_text_edit(file_change: ifileeditor.FileChange) -> types.TextEdit:
@@ -258,6 +291,12 @@ def create_lsp_server() -> lsp_server.LanguageServer:
     register_resolve_package_path_cmd = server.command("packages/resolvePath")
     register_resolve_package_path_cmd(resolve_package_path)
 
+    register_merge_results_cmd = server.command("actions/mergeResults")
+    register_merge_results_cmd(merge_results_cmd)
+
+    register_get_payload_schemas_cmd = server.command("actions/getPayloadSchemas")
+    register_get_payload_schemas_cmd(get_payload_schemas_cmd)
+
     def on_process_exit():
         logger.info("Exit extension runner")
         services.shutdown_all_action_handlers()
@@ -270,8 +309,8 @@ def create_lsp_server() -> lsp_server.LanguageServer:
     ) -> None:
         partial_result_dict = dataclasses.asdict(partial_result)
         partial_result_json = json.dumps(partial_result_dict)
-        logger.debug(
-            f"Send partial result for {token}, length {len(partial_result_json)}"
+        logger.trace(
+            f"send_partial_result: token={token}, length={len(partial_result_json)}, preview={partial_result_json[:200]}"
         )
         server.progress(types.ProgressParams(token=token, value=partial_result_json))
 
@@ -509,8 +548,8 @@ async def run_action(
     result_str = json.dumps(converted_result_by_format, cls=CustomJSONEncoder)
     return {
         "status": status,
-        "result_by_format": result_str,
-        "return_code": response.return_code,
+        "resultByFormat": result_str,
+        "returnCode": response.return_code,
     }
 
 
@@ -526,3 +565,18 @@ async def resolve_package_path(ls: lsp_server.LanguageServer, package_name: str)
     result = services.resolve_package_path(package_name)
     logger.trace(f"Resolved {package_name} to {result}")
     return {"packagePath": result}
+
+
+async def get_payload_schemas_cmd(ls: lsp_server.LanguageServer):
+    logger.trace("Get payload schemas")
+    return services.get_payload_schemas()
+
+
+async def merge_results_cmd(ls: lsp_server.LanguageServer, action_name: str, results: list):
+    logger.trace(f"Merge results: action={action_name}, count={len(results)}")
+    try:
+        merged = await merge_results_service.merge_results(action_name=action_name, results=results)
+        return {"merged": merged}
+    except Exception as exception:
+        logger.exception(f"Merge results error: {exception}")
+        return {"error": str(exception)}

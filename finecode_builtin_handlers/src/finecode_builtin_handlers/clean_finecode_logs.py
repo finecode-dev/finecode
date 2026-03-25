@@ -1,9 +1,8 @@
+# docs: docs/reference/actions.md
 import dataclasses
 
 from finecode_extension_api import code_action
-from finecode_extension_api.actions import (
-    clean_finecode_logs as clean_finecode_logs_action,
-)
+from finecode_extension_api.actions.system import clean_finecode_logs_action
 from finecode_extension_api.interfaces import ilogger, iextensionrunnerinfoprovider
 
 

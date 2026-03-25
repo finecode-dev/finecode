@@ -160,6 +160,7 @@ class JsonRpcClient:
         self._stop_event: typing.Final = threading.Event()
         self._sync_request_futures: dict[str, concurrent.futures.Future] = {}
         self._async_request_futures: dict[str, asyncio.Future] = {}
+        self._stderr_buffer: list[str] = []
         self._expected_result_type_by_msg_id: dict[str, typing.Any] = {}
 
         self.feature_impls: dict[str, collections.abc.Callable] = {}
@@ -192,6 +193,7 @@ class JsonRpcClient:
                 full_cmd=server_cmd,
                 io_thread=io_thread,
                 debug_port_future=debug_port_future,
+                stderr_buffer=self._stderr_buffer,
             )
             if connect:
                 await self.connect_to_server(io_thread=io_thread)
@@ -206,6 +208,7 @@ class JsonRpcClient:
         full_cmd: str,
         io_thread: _io_thread.AsyncIOThread,
         debug_port_future: concurrent.futures.Future[int] | None,
+        stderr_buffer: list[str] | None = None,
     ) -> None:
         server_future = io_thread.run_coroutine(
             start_server(
@@ -217,6 +220,7 @@ class JsonRpcClient:
                 server_id=self.readable_id,
                 async_tasks=self._async_tasks_in_io_thread,
                 debug_port_future=debug_port_future,
+                stderr_buffer=stderr_buffer,
             )
         )
 
@@ -782,8 +786,12 @@ class JsonRpcClient:
                 for task in self._async_tasks_in_io_thread:
                     task.cancel()
 
+                stderr_hint = ""
+                if self._stderr_buffer:
+                    recent = "\n".join(self._stderr_buffer[-30:])
+                    stderr_hint = f"\nRunner stderr output:\n{recent}"
                 raise RunnerFailedToStart(
-                    "Didn't get port in 30 seconds"
+                    f"Didn't get port in 30 seconds{stderr_hint}"
                 ) from exception
 
             port = self._tcp_port_future.result()
@@ -846,6 +854,7 @@ async def start_server(
     server_id: str,
     async_tasks: list[asyncio.Task[typing.Any]],
     debug_port_future: concurrent.futures.Future[int] | None,
+    stderr_buffer: list[str] | None = None,
 ) -> tuple[
     asyncio.StreamReader | None, asyncio.StreamWriter | None, asyncio.Future[int] | None
 ]:
@@ -890,7 +899,7 @@ async def start_server(
 
     logger.debug(f"{server_id} - process id: {server.pid}")
 
-    task = asyncio.create_task(log_stderr(server.stderr, stop_event))
+    task = asyncio.create_task(log_stderr(server.stderr, stop_event, stderr_buffer))
     task.add_done_callback(
         functools.partial(task_done_log_callback, task_id=f"log_stderr|{server_id}")
     )
@@ -983,7 +992,11 @@ async def wait_for_stop_event_and_clean(
     logger.debug("Cleaned resources of client")
 
 
-async def log_stderr(stderr: asyncio.StreamReader, stop_event: threading.Event) -> None:
+async def log_stderr(
+    stderr: asyncio.StreamReader,
+    stop_event: threading.Event,
+    stderr_buffer: list[str] | None = None,
+) -> None:
     """Read and log stderr output from the subprocess."""
     logger.debug("Start reading logs from stderr")
     try:
@@ -991,9 +1004,9 @@ async def log_stderr(stderr: asyncio.StreamReader, stop_event: threading.Event) 
             line = await stderr.readline()
             if not line:
                 break
-            logger.debug(
-                f"Server stderr: {line.decode('utf-8', errors='replace').rstrip()}"
-            )
+            decoded = line.decode("utf-8", errors="replace").rstrip()
+            if stderr_buffer is not None:
+                stderr_buffer.append(decoded)
     except asyncio.CancelledError:
         pass
 

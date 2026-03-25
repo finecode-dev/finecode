@@ -55,7 +55,7 @@ handlers = [
 ```toml
 [tool.finecode.action.lint]
 handlers = [
-    { name = "flake8", disabled = true },
+    { name = "flake8", enabled = false },
 ]
 ```
 
@@ -73,6 +73,28 @@ config.line_length = 100
 source = "fine_python_flake8.Flake8LintFilesHandler"
 config.max_line_length = 88
 config.extend_ignore = ["E203", "E501"]
+```
+
+### Declaring services
+
+Services are shared, long-lived dependencies used by handlers. Declare service bindings with `[[tool.finecode.service]]` entries:
+
+```toml
+[[tool.finecode.service]]
+interface = "finecode_extension_api.interfaces.ilspclient.ILspClient"
+source = "finecode_extension_runner.impls.lsp_client.LspClientImpl"
+env = "dev_no_runtime"
+dependencies = []
+```
+
+Service declarations are merged by `interface`. If a preset declares a service, you can rebind it in your project by declaring the same `interface` with a different `source`:
+
+```toml
+[[tool.finecode.service]]
+interface = "finecode_extension_api.interfaces.ihttpclient.IHttpClient"
+source = "my_company_http.MyHttpClient"
+env = "dev_no_runtime"
+dependencies = ["my_company_http~=1.2.0"]
 ```
 
 ### Environment-specific dependencies

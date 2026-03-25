@@ -6,8 +6,8 @@ from pathlib import Path
 from typing import Any, override
 
 from finecode_extension_api import service
-from finecode_extension_api.actions import lint_files as lint_files_action
-from finecode_extension_api.interfaces import ifileeditor, ilspclient, ilogger
+from finecode_extension_api.actions.code_quality import lint_files_action
+from finecode_extension_api.interfaces import ifileeditor, ilogger, ilspclient
 
 
 class LspService(service.DisposableService):
@@ -116,7 +116,9 @@ class LspService(service.DisposableService):
             cmd=self._cmd,
             root_uri=root_uri,
             workspace_folders=[{"uri": root_uri, "name": root_uri}],
-            initialization_options={"settings": self._settings} if self._settings else None,
+            initialization_options={"settings": self._settings}
+            if self._settings
+            else None,
             readable_id=self._readable_id,
         )
         await session.__aenter__()
@@ -214,9 +216,7 @@ class LspService(service.DisposableService):
 
         was_set = await asyncio.to_thread(event.wait, timeout)
         if not was_set:
-            self._logger.warning(
-                f"Timeout waiting for LSP diagnostics for {file_path}"
-            )
+            self._logger.warning(f"Timeout waiting for LSP diagnostics for {file_path}")
         elif not self._diagnostics_data.get(uri):
             # Got empty initial diagnostics; some servers (e.g. pyrefly) send
             # an empty ack first, then the real diagnostics after analysis.
@@ -234,6 +234,65 @@ class LspService(service.DisposableService):
             self._open_documents.discard(uri)
 
         return self._diagnostics_data.get(uri, [])
+
+    async def format_file(
+        self,
+        file_path: Path,
+        content: str,
+        options: dict[str, Any] | None = None,
+        timeout: float = 30.0,
+    ) -> list[dict[str, Any]]:
+        """Format a file and return raw LSP TextEdits.
+
+        ``content`` is the file text to format — callers provide it explicitly
+        so that the LSP server sees the same content the caller is working with
+        (e.g. from the run context after a previous handler already modified it).
+        """
+        assert self._session is not None, "LspService not started"
+
+        uri = file_path.as_uri()
+
+        lsp_version = self._next_version(uri)
+        if uri not in self._open_documents:
+            await self._session.send_notification(
+                "textDocument/didOpen",
+                {
+                    "textDocument": {
+                        "uri": uri,
+                        "languageId": self._language_id,
+                        "version": lsp_version,
+                        "text": content,
+                    },
+                },
+            )
+            self._open_documents.add(uri)
+        else:
+            await self._session.send_notification(
+                "textDocument/didChange",
+                {
+                    "textDocument": {"uri": uri, "version": lsp_version},
+                    "contentChanges": [{"text": content}],
+                },
+            )
+
+        formatting_options = options or {"tabSize": 4, "insertSpaces": True}
+        result = await self._session.send_request(
+            "textDocument/formatting",
+            {
+                "textDocument": {"uri": uri},
+                "options": formatting_options,
+            },
+            timeout=timeout,
+        )
+
+        if file_path not in self._file_editor.get_opened_files():
+            await self._session.send_notification(
+                "textDocument/didClose",
+                {"textDocument": {"uri": uri}},
+            )
+            self._open_documents.discard(uri)
+
+        return result or []
 
     async def _run_event_loop(self, ready: asyncio.Event) -> None:
         async with self._file_editor.session(
@@ -407,3 +466,37 @@ def map_diagnostics_to_lint_messages(
             )
         )
     return messages
+
+
+def apply_text_edits(content: str, edits: list[dict[str, Any]]) -> str:
+    """Apply LSP TextEdits to content and return the new text.
+
+    Edits are applied in reverse order (bottom-to-top) so that earlier
+    offsets remain valid after each replacement.
+    """
+    lines = content.split("\n")
+
+    def offset_of(pos: dict[str, int]) -> int:
+        line = pos.get("line", 0)
+        char = pos.get("character", 0)
+        o = sum(len(lines[i]) + 1 for i in range(min(line, len(lines))))
+        if line < len(lines):
+            o += min(char, len(lines[line]))
+        return o
+
+    sorted_edits = sorted(
+        edits,
+        key=lambda e: (
+            e["range"]["start"]["line"],
+            e["range"]["start"]["character"],
+        ),
+        reverse=True,
+    )
+
+    result = content
+    for edit in sorted_edits:
+        start = offset_of(edit["range"]["start"])
+        end = offset_of(edit["range"]["end"])
+        result = result[:start] + edit["newText"] + result[end:]
+
+    return result

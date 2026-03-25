@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import override
 
 from finecode_extension_api import service
-from finecode_extension_api.actions import lint_files as lint_files_action
+from finecode_extension_api.actions.code_quality import lint_files_action
 from finecode_extension_api.interfaces import ifileeditor, ilspclient, ilogger
 from finecode_extension_api.contrib.lsp_service import LspService, map_diagnostics_to_lint_messages
 

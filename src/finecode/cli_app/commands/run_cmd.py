@@ -1,16 +1,14 @@
+# docs: docs/cli.md
 import json
 import pathlib
 import sys
 import typing
 
-import ordered_set
-from loguru import logger
+import click
 
-from finecode import context, domain
-from finecode.services import run_service, shutdown_service
-from finecode.config import collect_actions, config_models, read_configs
-from finecode.runner import runner_manager
-
+from finecode.wm_client import ApiClient, ApiError
+from finecode.wm_server import wm_lifecycle
+from finecode.wm_server.runner import runner_client
 from finecode.cli_app import utils
 
 
@@ -23,207 +21,151 @@ async def run_actions(
     workdir_path: pathlib.Path,
     projects_names: list[str] | None,
     actions: list[str],
-    action_payload: dict[str, str],
+    action_payload: dict[str, typing.Any],
     concurrently: bool,
     handler_config_overrides: dict[str, dict[str, dict[str, str]]] | None = None,
     save_results: bool = True,
     map_payload_fields: set[str] | None = None,
+    own_server: bool = False,
+    log_level: str = "INFO",
+    dev_env: str = "cli",
 ) -> utils.RunActionsResult:
-    ws_context = context.WorkspaceContext([workdir_path])
-    if handler_config_overrides:
-        ws_context.handler_config_overrides = handler_config_overrides
-    await read_configs.read_projects_in_dir(
-        dir_path=workdir_path, ws_context=ws_context
+    port_file = None
+    try:
+        if own_server:
+            port_file = wm_lifecycle.start_own_server(workdir_path, log_level=log_level)
+            try:
+                port = await wm_lifecycle.wait_until_ready_from_file(port_file)
+            except TimeoutError as exc:
+                raise RunFailed(str(exc)) from exc
+        else:
+            wm_lifecycle.ensure_running(workdir_path)
+            try:
+                port = await wm_lifecycle.wait_until_ready()
+            except TimeoutError as exc:
+                raise RunFailed(str(exc)) from exc
+
+        client = ApiClient()
+        await client.connect("127.0.0.1", port)
+        try:
+            if handler_config_overrides:
+                if own_server:
+                    await client.set_config_overrides(handler_config_overrides)
+                else:
+                    click.echo(
+                        "Warning: --config overrides are ignored in --shared-server mode. ",
+                        err=True,
+                    )
+            await client.add_dir(workdir_path)
+
+            # Resolve project names (CLI option) to paths (canonical API identifier).
+            project_paths: list[str] | None = None
+            if projects_names is not None:
+                all_projects = await client.list_projects()
+                unknown = [
+                    n for n in projects_names
+                    if not any(p["name"] == n for p in all_projects)
+                ]
+                if unknown:
+                    raise RunFailed(f"Unknown project(s): {unknown}")
+                project_paths = [
+                    p["path"] for p in all_projects if p["name"] in projects_names
+                ]
+
+            params_by_project: dict[str, dict[str, typing.Any]] = {}
+            if map_payload_fields:
+                params_by_project = _resolve_mapped_payload_fields(
+                    map_payload_fields=map_payload_fields,
+                    action_payload=action_payload,
+                )
+
+            result_formats = ["string", "json"] if save_results else ["string"]
+
+            try:
+                batch_result = await client.run_batch(
+                    actions=actions,
+                    projects=project_paths,
+                    params=action_payload,
+                    params_by_project=params_by_project or None,
+                    options={
+                        "concurrently": concurrently,
+                        "resultFormats": result_formats,
+                        "trigger": "user",
+                        "devEnv": dev_env,
+                    },
+                )
+            except ApiError as exc:
+                raise RunFailed(str(exc)) from exc
+
+            return _build_run_result(batch_result)
+        finally:
+            await client.close()
+    finally:
+        if port_file is not None and port_file.exists():
+            port_file.unlink(missing_ok=True)
+
+
+def _build_run_result(batch_result: dict) -> utils.RunActionsResult:
+    """Convert the actions/runBatch API response to RunActionsResult."""
+    raw_results: dict[str, dict] = batch_result.get("results", {})
+    overall_return_code: int = batch_result.get("returnCode", 0)
+
+    result_by_project: dict[pathlib.Path, dict[str, runner_client.RunActionResponse]] = {}
+    output_parts: list[str] = []
+
+    run_in_many_projects = len(raw_results) > 1
+
+    for project_path_str, actions_results in raw_results.items():
+        project_path = pathlib.Path(project_path_str)
+        project_responses: dict[str, runner_client.RunActionResponse] = {}
+
+        project_output_parts: list[str] = []
+        run_many_actions = len(actions_results) > 1
+
+        for action_name, action_data in actions_results.items():
+            result_by_format = action_data.get("resultByFormat", {})
+            return_code = action_data.get("returnCode", 0)
+
+            response = runner_client.RunActionResponse(
+                result_by_format=result_by_format,
+                return_code=return_code,
+            )
+            project_responses[action_name] = response
+
+            action_output = ""
+            if run_many_actions:
+                action_output += f"{click.style(action_name, bold=True)}:"
+            action_output += utils.run_result_to_str(response.text(), action_name)
+            project_output_parts.append(action_output)
+
+        result_by_project[project_path] = project_responses
+
+        project_block = "".join(project_output_parts)
+        if run_in_many_projects:
+            project_block = (
+                f"{click.style(project_path_str, bold=True, underline=True)}\n"
+                + project_block
+            )
+        output_parts.append(project_block)
+
+    return utils.RunActionsResult(
+        output="\n".join(output_parts),
+        return_code=overall_return_code,
+        result_by_project=result_by_project,
     )
 
-    if projects_names is not None:
-        # projects are provided. Filter out other projects if there are more, they would
-        # not be used (run can be started in a workspace with also other projects)
-        ws_context.ws_projects = {
-            project_dir_path: project
-            for project_dir_path, project in ws_context.ws_projects.items()
-            if project.name in projects_names
-        }
 
-        # make sure all projects use finecode
-        config_problem_found = False
-        for project in ws_context.ws_projects.values():
-            if project.status != domain.ProjectStatus.CONFIG_VALID:
-                if project.status == domain.ProjectStatus.NO_FINECODE:
-                    logger.error(
-                        f"You asked to run action in project '{project.name}', but finecode is not used in it(=there is no 'dev_workspace' environment with 'finecode' package in it)"
-                    )
-                    config_problem_found = True
-                elif project.status == domain.ProjectStatus.CONFIG_INVALID:
-                    logger.error(
-                        f"You asked to run action in project '{project.name}', but its configuration is invalid(see logs above for more details)"
-                    )
-                    config_problem_found = True
-                else:
-                    logger.error(
-                        f"You asked to run action in project '{project.name}', but it has unexpected status: {project.status}"
-                    )
-                    config_problem_found = True
-
-        if config_problem_found:
-            raise RunFailed(
-                "There is a problem with configuration. See previous messages for more details"
-            )
-    else:
-        # filter out packages that don't use finecode
-        ws_context.ws_projects = {
-            project_dir_path: project
-            for project_dir_path, project in ws_context.ws_projects.items()
-            if project.status != domain.ProjectStatus.NO_FINECODE
-        }
-
-        # check that configuration of packages that use finecode is valid
-        config_problem_found = False
-        for project in ws_context.ws_projects.values():
-            if project.status == domain.ProjectStatus.CONFIG_VALID:
-                continue
-            elif project.status == domain.ProjectStatus.CONFIG_INVALID:
-                logger.error(
-                    f"Project '{project.name}' has invalid config, see messages above for more details"
-                )
-                config_problem_found = True
-            else:
-                logger.error(
-                    f"Project '{project.name}' has unexpected status: {project.status}"
-                )
-                config_problem_found = True
-
-        if config_problem_found:
-            raise RunFailed(
-                "There is a problem with configuration. See previous messages for more details"
-            )
-
-    projects: list[domain.Project] = []
-    if projects_names is not None:
-        projects = get_projects_by_names(projects_names, ws_context, workdir_path)
-    else:
-        projects = list(ws_context.ws_projects.values())
-
-    # first read configs without presets to be able to start runners with presets
-    for project in projects:
-        try:
-            await read_configs.read_project_config(
-                project=project, ws_context=ws_context, resolve_presets=False
-            )
-            collect_actions.collect_actions(
-                project_path=project.dir_path, ws_context=ws_context
-            )
-        except config_models.ConfigurationError as exception:
-            raise RunFailed(
-                f"Reading project config and collecting actions in {project.dir_path} failed: {exception.message}"
-            ) from exception
-
-    try:
-        # 1. Start runners with presets to be able to resolve presets. Presets are
-        # required to be able to collect all actions, actions handlers and configs.
-        try:
-            await runner_manager.start_runners_with_presets(projects, ws_context)
-        except runner_manager.RunnerFailedToStart as exception:
-            raise RunFailed(
-                "One or more projects are misconfigured, runners for them didn't"
-                + f" start: {exception.message}. Check logs for details."
-            ) from exception
-        except Exception as exception:
-            logger.error("Unexpected exception:")
-            logger.exception(exception)
-
-        actions_by_projects: dict[pathlib.Path, list[str]] = {}
-        if projects_names is not None:
-            # check that all projects have all actions to detect problem and provide
-            # feedback as early as possible
-            actions_set: ordered_set.OrderedSet[str] = ordered_set.OrderedSet(actions)
-            for project in projects:
-                project_actions_set: ordered_set.OrderedSet[str] = (
-                    ordered_set.OrderedSet([action.name for action in project.actions])
-                )
-                missing_actions = actions_set - project_actions_set
-                if len(missing_actions) > 0:
-                    raise RunFailed(
-                        f"Actions {', '.join(missing_actions)} not found in project '{project.name}'"
-                    )
-                actions_by_projects[project.dir_path] = actions
-        else:
-            # no explicit project, run in `workdir`, it's expected to be a ws dir and
-            # actions will be run in all projects inside
-            actions_by_projects = run_service.find_projects_with_actions(
-                ws_context, actions
-            )
-
-        try:
-            await run_service.start_required_environments(
-                actions_by_projects,
-                ws_context,
-                update_config_in_running_runners=True,
-            )
-        except run_service.StartingEnvironmentsFailed as exception:
-            raise RunFailed(
-                f"Failed to start environments for running actions: {exception.message}"
-            ) from exception
-
-        payload_overrides_by_project: dict[str, dict[str, typing.Any]] = {}
-        if map_payload_fields:
-            payload_overrides_by_project = resolve_mapped_payload_fields(
-                map_payload_fields=map_payload_fields,
-                action_payload=action_payload,
-            )
-
-        try:
-            return await utils.run_actions_in_projects_and_concat_results(
-                actions_by_projects,
-                action_payload,
-                ws_context,
-                concurrently,
-                run_trigger=run_service.RunActionTrigger.USER,
-                dev_env=run_service.DevEnv.CLI,
-                output_json=save_results,
-                payload_overrides_by_project=payload_overrides_by_project,
-            )
-        except run_service.ActionRunFailed as exception:
-            raise RunFailed(
-                f"Failed to run actions: {exception.message}"
-            ) from exception
-    finally:
-        shutdown_service.on_shutdown(ws_context)
-
-
-def get_projects_by_names(
-    projects_names: list[str],
-    ws_context: context.WorkspaceContext,
-    workdir_path: pathlib.Path,
-) -> list[domain.Project]:
-    projects: list[domain.Project] = []
-    for project_name in projects_names:
-        try:
-            project = next(
-                project
-                for project in ws_context.ws_projects.values()
-                if project.name == project_name
-            )
-        except StopIteration as exception:
-            raise RunFailed(
-                f"Project '{projects_names}' not found in working directory '{workdir_path}'"
-            ) from exception
-
-        projects.append(project)
-    return projects
-
-
-def resolve_mapped_payload_fields(
+def _resolve_mapped_payload_fields(
     map_payload_fields: set[str],
     action_payload: dict[str, typing.Any],
 ) -> dict[str, dict[str, typing.Any]]:
-    """Resolve mapped payload fields from saved results.
+    """Resolve mapped payload fields from saved action results.
 
     Returns a dict keyed by project path string, where each value is a dict
     of field overrides for that project.
     """
     results_dir = pathlib.Path(sys.executable).parent.parent / "cache" / "finecode" / "results"
-    payload_overrides_by_project: dict[str, dict[str, typing.Any]] = {}
+    params_by_project: dict[str, dict[str, typing.Any]] = {}
 
     for field_name in map_payload_fields:
         raw_value = action_payload.get(field_name)
@@ -245,15 +187,16 @@ def resolve_mapped_payload_fields(
             for key in field_path.split("."):
                 if not isinstance(resolved_value, dict):
                     raise RunFailed(
-                        f"Cannot resolve '{field_path}' in results of '{action_name}' for project '{project_path}'"
+                        f"Cannot resolve '{field_path}' in results of '{action_name}'"
+                        f" for project '{project_path}'"
                     )
                 resolved_value = resolved_value.get(key)
 
-            if project_path not in payload_overrides_by_project:
-                payload_overrides_by_project[project_path] = {}
-            payload_overrides_by_project[project_path][field_name] = resolved_value
+            if project_path not in params_by_project:
+                params_by_project[project_path] = {}
+            params_by_project[project_path][field_name] = resolved_value
 
-    return payload_overrides_by_project
+    return params_by_project
 
 
 __all__ = ["run_actions"]

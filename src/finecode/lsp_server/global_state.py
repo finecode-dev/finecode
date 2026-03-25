@@ -1,9 +1,10 @@
 import asyncio
-import collections.abc
-from typing import Any
+from pathlib import Path
 
-from finecode import context
+from finecode.wm_client import ApiClient
 
-ws_context = context.WorkspaceContext([])
 server_initialized = asyncio.Event()
-progress_reporter: collections.abc.Callable[[str | int, Any], None] | None = None
+wm_client: ApiClient | None = None
+partial_result_tokens: dict[str | int, tuple[str, str]] = {}
+wm_log_level: str = "INFO"
+lsp_log_file_path: Path | None = None

@@ -6,8 +6,7 @@ from twine import settings as twine_settings
 from twine.commands import upload as twine_upload
 
 from finecode_extension_api import code_action
-from finecode_extension_api.actions import \
-    publish_artifact_to_registry as publish_artifact_to_registry_action
+from finecode_extension_api.actions.publishing import publish_artifact_to_registry_action
 from finecode_extension_api.interfaces import (
     icommandrunner,
     ilogger,

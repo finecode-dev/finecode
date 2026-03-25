@@ -1,10 +1,9 @@
 import dataclasses
 
 from finecode_extension_api import code_action
-from finecode_extension_api.actions import \
-    get_src_artifact_registries as get_src_artifact_registries_action
-from finecode_extension_api.actions import \
-    is_artifact_published_to_registry as is_artifact_published_to_registry_action
+from finecode_extension_api.actions.artifact import get_src_artifact_registries_action
+from finecode_extension_api.actions.publishing import is_artifact_published_to_registry_action
+from finecode_extension_api.resource_uri import resource_uri_to_path
 from finecode_extension_api.interfaces import (
     iactionrunner,
     ihttpclient,
@@ -64,8 +63,8 @@ class IsArtifactPublishedToRegistryPyHandler(
         package_name = package_name.replace('_', '-')
 
         # Get registries using the action
-        get_registries_action = self.action_runner.get_action_by_name(
-            "get_src_artifact_registries", get_src_artifact_registries_action.GetSrcArtifactRegistriesAction
+        get_registries_action = self.action_runner.get_action_by_source(
+            get_src_artifact_registries_action.GetSrcArtifactRegistriesAction
         )
         registries_payload = (
             get_src_artifact_registries_action.GetSrcArtifactRegistriesRunPayload(
@@ -134,7 +133,7 @@ class IsArtifactPublishedToRegistryPyHandler(
             except KeyError as exception:
                 raise code_action.ActionFailedException("File object has no 'filename' key") from exception
 
-            is_published_by_dist_path = {dist_path: dist_path.name in published_file_names for dist_path in dist_artifact_paths}
+            is_published_by_dist_path = {dist_path: resource_uri_to_path(dist_path).name in published_file_names for dist_path in dist_artifact_paths}
         else:
             is_published_by_dist_path = {dist_path: False for dist_path in dist_artifact_paths}
 

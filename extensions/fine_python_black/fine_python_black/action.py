@@ -23,7 +23,7 @@ import black
 from black.mode import Mode, TargetVersion
 
 from finecode_extension_api import code_action
-from finecode_extension_api.actions import format as format_action
+from finecode_extension_api.actions.code_quality import format_action
 from finecode_extension_api.interfaces import icache, ilogger, iprocessexecutor
 
 

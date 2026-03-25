@@ -1,9 +1,10 @@
+# docs: docs/reference/actions.md
 import dataclasses
 
 import tomlkit
 
 from finecode_extension_api import code_action
-from finecode_extension_api.actions import dump_config as dump_config_action
+from finecode_extension_api.actions.system import dump_config_action
 from finecode_extension_api.interfaces import ifilemanager, ifileeditor
 
 

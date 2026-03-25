@@ -10,7 +10,7 @@ from pathlib import Path
 from loguru import logger
 from finecode_extension_api import service
 
-from finecode_extension_runner import context, domain, global_state, schemas
+from finecode_extension_runner import context, domain, global_state, schemas, run_utils, schema_utils
 from finecode_extension_runner._services.run_action import (
     ActionFailedException,
     StopWithResponse,
@@ -60,6 +60,17 @@ async def update_config(
             handlers=handlers,
             source=action_schema_obj.source,
         )
+        if action_schema_obj.source is not None:
+            duplicate = next(
+                (a for a in actions.values() if a.source == action.source),
+                None,
+            )
+            if duplicate is not None:
+                raise ValueError(
+                    f"Action source '{action.source}' is already registered as "
+                    f"'{duplicate.name}'. Each action class may only be registered "
+                    f"once (ADR-0007)."
+                )
         actions[action_name] = action
 
     global_state.runner_context = context.RunnerContext(
@@ -93,13 +104,9 @@ async def update_config(
     def current_project_raw_config_version_getter() -> int:
         return global_state.runner_context.project_config_version
 
-    def actions_names_getter() -> list[str]:
+    def actions_getter() -> dict[str, domain.ActionDeclaration]:
         assert global_state.runner_context is not None
-        return list(global_state.runner_context.project.actions.keys())
-
-    def action_by_name_getter(action_name: str) -> domain.ActionDeclaration:
-        assert global_state.runner_context is not None
-        return global_state.runner_context.project.actions[action_name]
+        return global_state.runner_context.project.actions
 
     def current_env_name_getter() -> str:
         return global_state.env_name
@@ -117,8 +124,7 @@ async def update_config(
         project_raw_config_getter=project_raw_config_getter,
         cache_dir_path_getter=cache_dir_path_getter,
         current_project_raw_config_version_getter=current_project_raw_config_version_getter,
-        actions_names_getter=actions_names_getter,
-        action_by_name_getter=action_by_name_getter,
+        actions_getter=actions_getter,
         current_env_name_getter=current_env_name_getter,
         handler_packages=handler_packages,
         service_declarations=request.services,
@@ -354,3 +360,35 @@ def exit_all_action_handlers() -> None:
                         action_handler_name=handler_name, exec_info=exec_info
                     )
             action_cache.handler_cache_by_name = {}
+
+
+def get_payload_schemas() -> dict[str, dict | None]:
+    """Return a payload schema for every action currently known to the runner.
+
+    Called by the WM via the ``actions/getPayloadSchemas`` command to populate
+    the schema cache used when building MCP tool descriptions.
+
+    Returns a mapping of action name → JSON Schema fragment (or ``None`` if the
+    action class could not be imported or has no ``PAYLOAD_TYPE``).
+    """
+    if global_state.runner_context is None:
+        return {}
+
+    result: dict[str, dict | None] = {}
+    for action_name, action in global_state.runner_context.project.actions.items():
+        try:
+            action_cls = run_utils.import_module_member_by_source_str(action.source)
+            payload_cls = getattr(action_cls, "PAYLOAD_TYPE", None)
+            if payload_cls is None:
+                result[action_name] = None
+            else:
+                schema = schema_utils.extract_payload_schema(payload_cls)
+                doc = getattr(action_cls, "__doc__", None)
+                if doc:
+                    schema["description"] = doc.strip()
+                result[action_name] = schema
+        except Exception as exception:
+            logger.debug(f"Could not extract payload schema for action '{action_name}': {exception}")
+            result[action_name] = None
+
+    return result

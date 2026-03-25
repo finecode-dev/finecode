@@ -45,8 +45,7 @@ def bootstrap(
     ],
     current_project_raw_config_version_getter: Callable[[], int],
     cache_dir_path_getter: Callable[[], pathlib.Path],
-    actions_names_getter: Callable[[], list[str]],
-    action_by_name_getter: Callable[[str], domain.ActionDeclaration],
+    actions_getter: Callable[[], dict[str, domain.ActionDeclaration]],
     current_env_name_getter: Callable[[], str],
     handler_packages: set[str],
     service_declarations: list,
@@ -67,8 +66,7 @@ def bootstrap(
     )
     action_runner_instance = action_runner.ActionRunner(
         run_action_func=run_action.run_action,
-        actions_names_getter=actions_names_getter,
-        action_by_name_getter=action_by_name_getter,
+        actions_getter=actions_getter,
     )
     _state.container[ilogger.ILogger] = logger_instance
     _state.container[icommandrunner.ICommandRunner] = command_runner_instance

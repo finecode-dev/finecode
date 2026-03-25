@@ -43,7 +43,7 @@ def save_logs_to_file(
     rotation: str = "10 MB",
     retention: int = 3,
     stdout: bool = True,
-):
+) -> Path:
     if stdout is True:
         if isinstance(sys.stdout, io.TextIOWrapper):
             # reconfigure to be able to handle special symbols
@@ -54,21 +54,24 @@ def save_logs_to_file(
     # Find the file with the largest ID in the log directory
     log_dir_path = file_path.parent
     max_id = 0
+    base_stem = file_path.stem  # e.g., "my_logfile"
 
     log_files_with_ids: list[tuple[int, Path]] = []
     if log_dir_path.exists():
         for log_file in log_dir_path.iterdir():
-            if log_file.is_file() and log_file.suffix == '.log':
-                # Extract numeric ID from the end of the filename (before extension)
-                # first split by dot because loguru adds datetime after dot:
-                # <stem>.<datetime>.log , we need stem without datetime
-                stem = log_file.stem.split('.')[0]
-                parts = stem.split('_')
-                last_part = parts[-1]
-                if last_part.isdigit():
-                    file_id = int(last_part)
-                    max_id = max(max_id, file_id)
-                    log_files_with_ids.append((file_id, log_file))
+            if log_file.is_file():
+                stem = log_file.stem
+                # Extract numeric ID from the pattern: base_stem_<number>
+                # stem might be something like "my_logfile_1.2025-03-04_12-00-00"
+                if stem.startswith(base_stem + '_'):
+                    # Get the part after "base_stem_"
+                    id_part = stem[len(base_stem) + 1:]
+                    # Split by '.' to handle datetime added by loguru
+                    potential_id = id_part.split('.')[0]
+                    if potential_id.isdigit():
+                        file_id = int(potential_id)
+                        max_id = max(max_id, file_id)
+                        log_files_with_ids.append((file_id, log_file))
 
     # Remove the oldest files if there are more than 10
     if len(log_files_with_ids) >= 10:
@@ -98,7 +101,8 @@ def save_logs_to_file(
         encoding="utf8",
         filter=filter_logs,
     )
-    logger.trace(f"Log file: {file_path}")
+    logger.trace(f"Log file: {file_path_with_id}")
+    return file_path_with_id
 
 
 def set_log_level_for_group(group: str, level: LogLevel | None):

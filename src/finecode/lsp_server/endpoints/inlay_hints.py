@@ -5,9 +5,7 @@ from typing import TYPE_CHECKING, Any
 from loguru import logger
 from lsprotocol import types
 
-from finecode import find_project, pygls_types_utils
-from finecode.services import run_service
-from finecode.lsp_server import global_state
+from finecode.lsp_server import global_state, pygls_types_utils
 
 if TYPE_CHECKING:
     from pygls.lsp.server import LanguageServer
@@ -47,31 +45,39 @@ async def document_inlay_hint(
     ls: LanguageServer, params: types.InlayHintParams
 ) -> types.InlayHintResult:
     logger.trace(f"Document inlay hints requested: {params}")
+    await global_state.server_initialized.wait()
+
     file_path = pygls_types_utils.uri_str_to_path(params.text_document.uri)
-    try:
-        response = await run_service.find_action_project_and_run(
-            file_path=file_path,
-            action_name="text_document_inlay_hint",
-            params=inlay_hint_params_to_dict(params),
-            run_trigger=run_service.RunActionTrigger.SYSTEM,
-            dev_env=run_service.DevEnv.IDE,
-            ws_context=global_state.ws_context,
-            initialize_all_handlers=True,
-        )
-    except find_project.FileHasNotActionException:
-        # ignore this exception because client requests inlay hints for all workspace
-        # files and not neccessary all projects in ws have this action. So this is not
-        # an real error.
+
+    if global_state.wm_client is None:
+        logger.error("Inlay hints requested but WM client not connected")
+        return None
+
+    project_dir = await global_state.wm_client.find_project_for_file(str(file_path))
+    if project_dir is None:
+        # Not all files belong to a project with this action — not an error.
         return []
-    except Exception as error:  # TODO
+
+    try:
+        response = await global_state.wm_client.run_action(
+            action="text_document_inlay_hint",
+            project=project_dir,
+            params=inlay_hint_params_to_dict(params),
+            options={"trigger": "system", "devEnv": "ide"},
+        )
+    except Exception as error:
         logger.error(f"Error getting document inlay hints {file_path}: {error}")
         return None
 
     if response is None:
         return []
 
-    hints = response.json().get("hints", None)
-    return [dict_to_inlay_hint(hint) for hint in hints] if hints is not None else None
+    json_result = (response.get("resultByFormat") or {}).get("json")
+    if json_result is None:
+        return []
+
+    hints = json_result.get("hints")
+    return [dict_to_inlay_hint(hint) for hint in hints] if hints is not None else []
 
 
 async def inlay_hint_resolve(
