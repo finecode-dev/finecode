@@ -462,6 +462,43 @@ def prepare_envs(log_level: str, debug: bool, recreate: bool, shared_server: boo
 
 
 @cli.command()
+@click.option("--recreate", is_flag=True, default=False,
+              help="Delete and recreate dev_workspace if it already exists.")
+@click.option("--log-level", "log_level", default="INFO",
+              type=click.Choice(["TRACE", "DEBUG", "INFO", "WARNING", "ERROR"],
+              case_sensitive=False), show_default=True)
+def bootstrap(recreate: bool, log_level: str) -> None:
+    """Create the dev_workspace environment for the workspace root.
+
+    Intended as a one-time setup step before running prepare-envs.
+    Can be run via ``pipx run finecode bootstrap`` or ``uvx finecode bootstrap``
+    without a pre-existing virtualenv.
+    """
+    import asyncio
+
+    from finecode.cli_app.commands import bootstrap_cmd
+
+    logger_utils.init_logger(log_name="cli", log_level=log_level, stdout=True)
+    user_messages._notification_sender = show_user_message
+
+    try:
+        asyncio.run(
+            bootstrap_cmd.bootstrap(
+                workdir_path=pathlib.Path(os.getcwd()),
+                recreate=recreate,
+                log_level=log_level,
+            )
+        )
+    except bootstrap_cmd.BootstrapFailed as exception:
+        click.echo(exception.message, err=True)
+        sys.exit(1)
+    except Exception as exception:
+        logger.exception(exception)
+        click.echo("Unexpected error, see logs in file for more details", err=True)
+        sys.exit(2)
+
+
+@cli.command()
 @click.option("--log-level", "log_level", default="INFO", type=click.Choice(["TRACE", "DEBUG", "INFO", "WARNING", "ERROR"], case_sensitive=False), show_default=True)
 @click.option("--debug", "debug", is_flag=True, default=False)
 @click.option("--project", "project", type=str)

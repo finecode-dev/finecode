@@ -45,6 +45,7 @@ class ExtensionRunnerInfo(domain.ExtensionRunner):
     partial_results: IterableSubscribe = dataclasses.field(
         default_factory=IterableSubscribe
     )
+    cmd_override: str | None = None
 
 
 # Alias for backward compatibility — status enum now lives in domain

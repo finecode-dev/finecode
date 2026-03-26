@@ -6,6 +6,7 @@ from finecode_extension_api import code_action
 from finecode_extension_api.actions.environments import create_env_action
 from finecode_extension_api.actions.environments.create_envs_action import CreateEnvsRunResult
 from finecode_extension_api.interfaces import ifilemanager, ilogger
+from finecode_extension_api.resource_uri import resource_uri_to_path
 
 
 @dataclasses.dataclass
@@ -33,15 +34,21 @@ class VirtualenvCreateEnvHandler(
         run_context: create_env_action.CreateEnvRunContext,
     ) -> CreateEnvsRunResult:
         env_info = payload.env
-        if payload.recreate and env_info.venv_dir_path.exists():
-            self.logger.debug(f"Remove virtualenv dir {env_info.venv_dir_path}")
-            await self.file_manager.remove_dir(env_info.venv_dir_path)
+        venv_dir_path = resource_uri_to_path(env_info.venv_dir_path)
+        if payload.recreate and venv_dir_path.exists():
+            self.logger.debug(f"Remove virtualenv dir {venv_dir_path}")
+            await self.file_manager.remove_dir(venv_dir_path)
 
-        self.logger.info(f"Creating virtualenv {env_info.venv_dir_path}")
-        if not env_info.venv_dir_path.exists():
+        self.logger.info(f"Creating virtualenv {venv_dir_path}")
+        # Check for pyvenv.cfg rather than the directory itself — the runner
+        # may have already created a logs/ subdirectory inside this path before
+        # the venv is set up, which would cause a directory-existence check to
+        # incorrectly skip venv creation.
+        venv_valid = (venv_dir_path / "pyvenv.cfg").exists()
+        if not venv_valid:
             try:
                 virtualenv.cli_run(
-                    [env_info.venv_dir_path.as_posix()],
+                    [venv_dir_path.as_posix()],
                     options=None,
                     setup_logging=False,
                     env=None,
@@ -49,7 +56,7 @@ class VirtualenvCreateEnvHandler(
             except Exception as exc:
                 return CreateEnvsRunResult(
                     errors=[
-                        f"Failed to create virtualenv {env_info.venv_dir_path}: {exc}"
+                        f"Failed to create virtualenv {venv_dir_path}: {exc}"
                     ]
                 )
         else:

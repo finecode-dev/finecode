@@ -4,11 +4,16 @@ This guide walks you through installing FineCode, applying an existing preset, a
 
 ## Prerequisites
 
-- Python 3.11–3.14
-- pip 25.1 or newer (for `--group` support)
+- Python 3.11–3.14 **or** [uv](https://docs.astral.sh/uv/) (which can install Python for you)
+
+No Python yet? Install `uv` (a single binary, no Python needed):
 
 ```bash
-python -m pip install --upgrade pip
+# Linux / macOS
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# Windows
+powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
 ```
 
 ## 1. Add FineCode to your project
@@ -22,7 +27,19 @@ Add the `dev_workspace` dependency group to your `pyproject.toml`:
 dev_workspace = ["finecode==0.3.*"]
 ```
 
-Create the venv and install:
+Bootstrap the `dev_workspace` environment:
+
+```bash
+# Recommended — works with pipx (bundled with Python 3.13+) or uv:
+pipx run finecode bootstrap
+# or
+uvx finecode bootstrap
+```
+
+This creates `.venvs/dev_workspace/` with FineCode installed, using the exact
+versions specified in your `pyproject.toml`.
+
+**Manual alternative** (if you prefer not to use pipx/uvx — requires pip 25.1+):
 
 ```bash
 python -m venv .venvs/dev_workspace

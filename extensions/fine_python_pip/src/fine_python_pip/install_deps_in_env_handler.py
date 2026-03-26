@@ -4,6 +4,7 @@ import pathlib
 from finecode_extension_api import code_action
 from finecode_extension_api.actions.environments import install_deps_in_env_action
 from finecode_extension_api.interfaces import icommandrunner, ilogger
+from finecode_extension_api.resource_uri import resource_uri_to_path
 
 
 @dataclasses.dataclass
@@ -35,8 +36,8 @@ class PipInstallDepsInEnvHandler(
     ) -> install_deps_in_env_action.InstallDepsInEnvRunResult:
         env_name = payload.env_name
         dependencies = payload.dependencies
-        venv_dir_path = payload.venv_dir_path
-        project_dir_path = payload.project_dir_path
+        venv_dir_path = resource_uri_to_path(payload.venv_dir_path)
+        project_dir_path = resource_uri_to_path(payload.project_dir_path)
         python_executable = venv_dir_path / "bin" / "python"
 
         cmd = self._construct_pip_install_cmd(

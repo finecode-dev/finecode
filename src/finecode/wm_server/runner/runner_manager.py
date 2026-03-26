@@ -77,9 +77,12 @@ async def _start_extension_runner_process(
     runner: runner_client.ExtensionRunnerInfo, ws_context: context.WorkspaceContext, debug: bool = False
 ) -> None:
     try:
-        python_cmd = finecode_cmd.get_python_cmd(
-            runner.working_dir_path, runner.env_name
-        )
+        if runner.cmd_override:
+            python_cmd = runner.cmd_override
+        else:
+            python_cmd = finecode_cmd.get_python_cmd(
+                runner.working_dir_path, runner.env_name
+            )
     except ValueError as exception:
         try:
             runner.status = runner_client.RunnerStatus.NO_VENV
@@ -259,6 +262,7 @@ async def start_runners_with_presets(
     projects: list[domain.Project],
     ws_context: context.WorkspaceContext,
     initialize_all_handlers: bool = False,
+    python_overrides: dict[str, str] | None = None,
 ) -> None:
     # start runners with presets in projects, resolve presets and read project actions
     new_runners_tasks: list[asyncio.Task] = []
@@ -292,9 +296,10 @@ async def start_runners_with_presets(
                         start_new_runner = False
 
                     if start_new_runner:
+                        cmd_override = (python_overrides or {}).get("dev_workspace")
                         task = tg.create_task(
                             _start_dev_workspace_runner(
-                                project_def=project, ws_context=ws_context
+                                project_def=project, ws_context=ws_context, cmd_override=cmd_override
                             )
                         )
                         new_runners_tasks.append(task)
@@ -381,7 +386,7 @@ async def get_or_start_runners_with_presets(
 
 
 async def start_runner(
-    project_def: domain.Project, env_name: str, handlers_to_initialize: dict[str, list[str]] | None, ws_context: context.WorkspaceContext, debug: bool = False
+    project_def: domain.Project, env_name: str, handlers_to_initialize: dict[str, list[str]] | None, ws_context: context.WorkspaceContext, debug: bool = False, cmd_override: str | None = None
 ) -> runner_client.ExtensionRunnerInfo:
     # this function manages status of the runner and initialized event
     runner = runner_client.ExtensionRunnerInfo(
@@ -390,6 +395,7 @@ async def start_runner(
         status=runner_client.RunnerStatus.INITIALIZING,
         initialized_event=asyncio.Event(),
         client=None,
+        cmd_override=cmd_override,
     )
     save_runner_in_context(runner=runner, ws_context=ws_context)
     await _start_extension_runner_process(runner=runner, ws_context=ws_context, debug=debug)
@@ -443,6 +449,7 @@ async def get_or_start_runner(
     ws_context: context.WorkspaceContext,
     initialize_all_handlers: bool = False,
     action_names_to_initialize: list[str] | None = None,
+    cmd_override: str | None = None,
 ) -> runner_client.ExtensionRunnerInfo:
     try:
         runners_by_env = ws_context.ws_projects_extension_runners[project_def.dir_path]
@@ -461,7 +468,7 @@ async def get_or_start_runner(
         else:
             handlers_to_initialize = None
         runner = await start_runner(
-            project_def=project_def, env_name=env_name, handlers_to_initialize=handlers_to_initialize, ws_context=ws_context
+            project_def=project_def, env_name=env_name, handlers_to_initialize=handlers_to_initialize, ws_context=ws_context, cmd_override=cmd_override
         )
 
     if runner.status != runner_client.RunnerStatus.RUNNING:
@@ -483,10 +490,10 @@ async def get_or_start_runner(
 
 
 async def _start_dev_workspace_runner(
-    project_def: domain.CollectedProject, ws_context: context.WorkspaceContext
+    project_def: domain.CollectedProject, ws_context: context.WorkspaceContext, cmd_override: str | None = None
 ) -> runner_client.ExtensionRunnerInfo:
     return await get_or_start_runner(
-        project_def=project_def, env_name="dev_workspace", ws_context=ws_context
+        project_def=project_def, env_name="dev_workspace", ws_context=ws_context, cmd_override=cmd_override
     )
 
 

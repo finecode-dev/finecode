@@ -4,6 +4,7 @@ import pathlib
 
 from finecode.wm_client import ApiClient, ApiError
 from finecode.wm_server import wm_lifecycle
+from finecode.cli_app.commands._env_setup import create_and_install_envs, EnvSetupFailed
 from loguru import logger
 
 
@@ -161,53 +162,23 @@ async def _run(
     dw_envs = [
         {
             "name": "dev_workspace",
-            "venv_dir_path": str(pathlib.Path(p["path"]) / ".venvs" / "dev_workspace"),
-            "project_def_path": str(pathlib.Path(p["path"]) / "pyproject.toml"),
+            "venv_dir_path": (pathlib.Path(p["path"]) / ".venvs" / "dev_workspace").as_uri(),
+            "project_def_path": (pathlib.Path(p["path"]) / "pyproject.toml").as_uri(),
         }
         for p in other_projects
     ]
-    dw_options = {
-        "resultFormats": ["string"],
-        "trigger": "user",
-        "devEnv": dev_env,
-    }
 
-    # Step 3a — create the dev_workspace virtualenvs.
+    # Steps 3a + 3b — create virtualenvs and install deps via shared helper.
+    # ('recreate' for dev_workspace envs is handled above via remove_env, no need to pass here)
     try:
-        create_dw_result = await client.run_action(
-            action="create_envs",
-            project=current_project["path"],
-            # 'recreate' is handled for dev_workspace envs above, no need to pass here
-            params={"envs": dw_envs},
-            options=dw_options,
+        await create_and_install_envs(
+            client=client,
+            project_path=current_project["path"],
+            envs=dw_envs,
+            dev_env=dev_env,
         )
-    except ApiError as exc:
-        raise PrepareEnvsFailed(f"'create_envs' (dev_workspace) failed: {exc}") from exc
-    if create_dw_result.get("returnCode", 0) != 0:
-        output = (create_dw_result.get("resultByFormat") or {}).get("string", "")
-        raise PrepareEnvsFailed(
-            f"'create_envs' (dev_workspace) failed with return code "
-            f"{create_dw_result['returnCode']}: {output}"
-        )
-
-    # Step 3b — install dev_workspace dependencies.
-    try:
-        prepare_dw_result = await client.run_action(
-            action="install_envs",
-            project=current_project["path"],
-            params={"envs": dw_envs},
-            options=dw_options,
-        )
-    except ApiError as exc:
-        raise PrepareEnvsFailed(
-            f"'install_envs' (dev_workspace) failed: {exc}"
-        ) from exc
-    if prepare_dw_result.get("returnCode", 0) != 0:
-        output = (prepare_dw_result.get("resultByFormat") or {}).get("string", "")
-        raise PrepareEnvsFailed(
-            f"'install_envs' (dev_workspace) failed with return code "
-            f"{prepare_dw_result['returnCode']}: {output}"
-        )
+    except EnvSetupFailed as exc:
+        raise PrepareEnvsFailed(f"dev_workspace setup failed: {exc.message}") from exc
 
     # Step 4 — start dev_workspace runners (resolves preset-defined actions).
     logger.info("Starting dev_workspace runners...")

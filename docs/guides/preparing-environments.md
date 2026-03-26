@@ -37,9 +37,29 @@ After this step every handler has all its dependencies available and can execute
 
 The `dev_workspace` env is special: it contains FineCode itself and the preset packages. The handlers that implement `create_envs` and `install_envs` live inside `dev_workspace` — which creates a bootstrapping constraint.
 
-### Workspace root bootstrap (manual, one-time)
+### Workspace root bootstrap (one-time)
 
-The workspace root's `dev_workspace` is the **seed** for everything. `prepare-envs` cannot run unless FineCode is already installed somewhere, so the workspace root's `dev_workspace` must be created manually on a fresh checkout:
+The workspace root's `dev_workspace` is the **seed** for everything. `prepare-envs` cannot run unless FineCode is already installed somewhere, so the workspace root's `dev_workspace` must be created before `prepare-envs` can run.
+
+Use the `bootstrap` command — it handles this automatically using the invoking Python (e.g. the pipx/uvx ephemeral environment):
+
+```bash
+# With pipx (bundled with Python 3.13+):
+pipx run finecode bootstrap
+
+# With uv (also works when you have no Python — uv installs it):
+uvx finecode bootstrap
+```
+
+> **Note:** `bootstrap` uses the built-in default handlers: `virtualenv` for environment creation and `pip` for dependency installation. If your project requires custom handlers for either action (e.g. a different package manager or venv backend), `bootstrap` is not suitable — you must bootstrap the `dev_workspace` manually (see the **Manual alternative** below) or via your own tooling.
+
+To delete and recreate an existing `dev_workspace`:
+
+```bash
+pipx run finecode bootstrap --recreate
+```
+
+**Manual alternative** (requires pip 25.1+):
 
 ```bash
 python -m venv .venvs/dev_workspace
@@ -47,7 +67,7 @@ source .venvs/dev_workspace/bin/activate   # Windows: .venvs\dev_workspace\Scrip
 python -m pip install --group="dev_workspace"
 ```
 
-This is the only step that cannot be automated by FineCode itself. See [Getting Started](../getting-started.md) for the full first-time setup sequence.
+See [Getting Started](../getting-started.md) for the full first-time setup sequence.
 
 ### Subproject bootstrap (automated by `prepare-envs`)
 

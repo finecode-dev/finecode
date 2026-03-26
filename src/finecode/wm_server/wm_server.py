@@ -534,6 +534,7 @@ async def _handle_start_runners(
 
     params = params or {}
     project_names: list[str] | None = params.get("projects")
+    python_overrides: dict[str, str] | None = params.get("pythonOverrides")
 
     projects = list(ws_context.ws_projects.values())
     if project_names is not None:
@@ -543,6 +544,7 @@ async def _handle_start_runners(
         await runner_manager.start_runners_with_presets(
             projects=projects,
             ws_context=ws_context,
+            python_overrides=python_overrides,
         )
     except runner_manager.RunnerFailedToStart as exc:
         raise ValueError(f"Starting runners failed: {exc.message}") from exc

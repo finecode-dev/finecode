@@ -327,15 +327,26 @@ class ApiClient:
             body["projects"] = projects
         return await self.request("workspace/addDir", body)
 
-    async def start_runners(self, projects: list[str] | None = None) -> None:
+    async def start_runners(
+        self,
+        projects: list[str] | None = None,
+        python_overrides: dict[str, str] | None = None,
+    ) -> None:
         """Start extension runners for all (or specified) projects.
 
         Complements any already-running runners — only missing runners are
         started.  Also resolves presets so ``project.actions`` is up to date.
+
+        ``python_overrides`` maps env_name to an absolute Python executable path,
+        overriding the venv-resolved Python for that env.  Used by bootstrap to
+        start the dev_workspace runner with the invoking Python (sys.executable)
+        before the venv exists.
         """
         params: dict = {}
         if projects is not None:
             params["projects"] = projects
+        if python_overrides is not None:
+            params["pythonOverrides"] = python_overrides
         await self.request("workspace/startRunners", params)
 
     async def list_runners(self) -> list[dict]:

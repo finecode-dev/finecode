@@ -24,6 +24,9 @@ dependencies = [
     "apischema==0.19.*",
 ]
 
+[project.scripts]
+finecode = "finecode.cli:cli"
+
 [dependency-groups]
 dev_workspace = [
     "build==1.2.2.post1",
