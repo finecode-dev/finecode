@@ -60,6 +60,7 @@ class RunActionRequest(BaseSchema):
 class RunActionOptions(BaseSchema):
     meta: code_action.RunActionMeta
     partial_result_token: int | str | None = None
+    progress_token: int | str | None = None
     result_formats: list[Literal["json"] | Literal["string"]] = field(default_factory=lambda: ["json"])
 
 

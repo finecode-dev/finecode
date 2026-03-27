@@ -326,6 +326,38 @@ async def _on_initialized(ls: LanguageServer, params: types.InitializedParams):
 
     global_state.wm_client.on_notification("actions/partialResult", on_partial_result)
 
+    async def on_progress_notification(params: dict) -> None:
+        token = params.get("token")
+        value = params.get("value")
+        if token is None or value is None:
+            logger.error("Invalid progress notification: missing token or value")
+            return
+
+        progress_type = value.get("type")
+        if progress_type == "begin":
+            lsp_value = types.WorkDoneProgressBegin(
+                title=value.get("title", ""),
+                message=value.get("message"),
+                percentage=value.get("percentage"),
+                cancellable=value.get("cancellable", False),
+            )
+        elif progress_type == "report":
+            lsp_value = types.WorkDoneProgressReport(
+                message=value.get("message"),
+                percentage=value.get("percentage"),
+            )
+        elif progress_type == "end":
+            lsp_value = types.WorkDoneProgressEnd(
+                message=value.get("message"),
+            )
+        else:
+            logger.error(f"Unknown progress type: {progress_type}")
+            return
+
+        ls.progress(types.ProgressParams(token=token, value=lsp_value))
+
+    global_state.wm_client.on_notification("actions/progress", on_progress_notification)
+
     # Add workspace directories via the WM server.
     try:
         async with asyncio.TaskGroup() as tg:

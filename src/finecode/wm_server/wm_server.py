@@ -891,6 +891,8 @@ async def _handle_run_with_partial_results(
 
     logger.trace(f"runWithPartialResults: action={action_name} project={project_path!r} token={token} formats={result_formats}")
 
+    progress_token = params.get("progressToken")
+
     stream = await partial_results_service.run_action_with_partial_results(
         action_name=action_name,
         project_path=project_path,
@@ -900,18 +902,39 @@ async def _handle_run_with_partial_results(
         dev_env=dev_env,
         ws_context=ws_context,
         result_formats=result_formats,
+        progress_token=progress_token,
     )
 
+    async def _forward_partials() -> int:
+        count = 0
+        async for value in stream:
+            count += 1
+            logger.trace(f"runWithPartialResults: sending partial #{count} for token={token}, keys={list(value.keys()) if isinstance(value, dict) else type(value)}")
+            _notify_client(
+                writer,
+                "actions/partialResult",
+                {"token": token, "value": value},
+            )
+            await writer.drain()
+        return count
+
+    async def _forward_progress() -> None:
+        if stream.progress_stream is None or progress_token is None:
+            return
+        async for value in stream.progress_stream:
+            logger.trace(f"runWithPartialResults: sending progress type={value.get('type')} for token={progress_token}")
+            _notify_client(
+                writer,
+                "actions/progress",
+                {"token": progress_token, "value": value},
+            )
+            await writer.drain()
+
     partial_count = 0
-    async for value in stream:
-        partial_count += 1
-        logger.trace(f"runWithPartialResults: sending partial #{partial_count} for token={token}, keys={list(value.keys()) if isinstance(value, dict) else type(value)}")
-        _notify_client(
-            writer,
-            "actions/partialResult",
-            {"token": token, "value": value},
-        )
-        await writer.drain()
+    async with asyncio.TaskGroup() as forward_tg:
+        partials_task = forward_tg.create_task(_forward_partials())
+        forward_tg.create_task(_forward_progress())
+    partial_count = partials_task.result()
 
     final = await stream.final_result()
     logger.trace(f"runWithPartialResults: done, sent {partial_count} partials, final keys={list(final.keys()) if isinstance(final, dict) else type(final)}")

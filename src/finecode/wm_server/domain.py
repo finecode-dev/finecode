@@ -293,6 +293,15 @@ class PartialResult(typing.NamedTuple):
     value: PartialResultRawValue
 
 
+# json object with "type" field: "begin", "report", or "end"
+type ProgressRawValue = dict[str, typing.Any]
+
+
+class ProgressNotification(typing.NamedTuple):
+    token: int | str
+    value: ProgressRawValue
+
+
 __all__ = [
     "RootActions",
     "ActionsDict",

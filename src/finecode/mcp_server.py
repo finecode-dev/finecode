@@ -24,6 +24,7 @@ _wm_client = ApiClient()
 server = Server("FineCode")
 
 _partial_result_queues: dict[str, asyncio.Queue] = {}
+_progress_queues: dict[str, asyncio.Queue] = {}
 
 
 def _setup_partial_result_forwarding() -> None:
@@ -44,6 +45,24 @@ def _setup_partial_result_forwarding() -> None:
     _wm_client.on_notification("actions/partialResult", _on_partial_result)
 
 
+def _setup_progress_forwarding() -> None:
+    """Register the WM progress notification handler.
+
+    Must be called once after ``_wm_client.connect()``.  Each ``actions/progress``
+    notification is routed by token to the matching per-call asyncio.Queue.
+    """
+
+    async def _on_progress(params: dict) -> None:
+        token = params.get("token")
+        value = params.get("value")
+        if token and value is not None:
+            queue = _progress_queues.get(token)
+            if queue is not None:
+                queue.put_nowait(value)
+
+    _wm_client.on_notification("actions/progress", _on_progress)
+
+
 async def _run_with_progress(
     action: str,
     project: str,
@@ -51,17 +70,21 @@ async def _run_with_progress(
     options: dict,
     session,
 ) -> dict:
-    """Run a WM action with streaming partial results forwarded as MCP log messages.
+    """Run a WM action with streaming partial results and progress forwarded as MCP messages.
 
     ``project`` may be ``""`` to run across all projects that expose the action.
     Each ``actions/partialResult`` notification is forwarded to the MCP client as a
     ``notifications/message`` log message while the call blocks waiting for the final result.
+    Progress notifications are forwarded as log messages with the progress metadata.
     """
     token = str(uuid.uuid4())
+    progress_token = str(uuid.uuid4())
     queue: asyncio.Queue = asyncio.Queue()
+    progress_queue: asyncio.Queue = asyncio.Queue()
     _partial_result_queues[token] = queue
+    _progress_queues[progress_token] = progress_queue
 
-    async def _forward() -> None:
+    async def _forward_partials() -> None:
         try:
             while True:
                 value = await queue.get()
@@ -71,18 +94,38 @@ async def _run_with_progress(
         except asyncio.CancelledError:
             pass
 
+    async def _forward_progress() -> None:
+        try:
+            while True:
+                value = await progress_queue.get()
+                progress_type = value.get("type", "")
+                message = value.get("message") or value.get("title") or ""
+                percentage = value.get("percentage")
+                log_data = {"progress_type": progress_type, "message": message}
+                if percentage is not None:
+                    log_data["percentage"] = percentage
+                await session.send_log_message(
+                    level="info", data=log_data, logger="finecode.progress"
+                )
+        except asyncio.CancelledError:
+            pass
+
     result_task = asyncio.create_task(
         _wm_client.run_action_with_partial_results(
-            action, project, token, params, options
+            action, project, token, params, options,
+            progress_token=progress_token,
         )
     )
-    forward_task = asyncio.create_task(_forward())
+    forward_task = asyncio.create_task(_forward_partials())
+    progress_forward_task = asyncio.create_task(_forward_progress())
     try:
         return await result_task
     finally:
         forward_task.cancel()
-        await asyncio.gather(forward_task, return_exceptions=True)
+        progress_forward_task.cancel()
+        await asyncio.gather(forward_task, progress_forward_task, return_exceptions=True)
         _partial_result_queues.pop(token, None)
+        _progress_queues.pop(progress_token, None)
 
 
 @server.list_tools()
@@ -276,6 +319,7 @@ def start(workdir: pathlib.Path, port_file: pathlib.Path | None = None) -> None:
             )
             sys.exit(1)
         _setup_partial_result_forwarding()
+        _setup_progress_forwarding()
         logger.debug(f"Add dir to API Client: {workdir}")
         await _wm_client.add_dir(workdir)
         logger.debug("Added dir")

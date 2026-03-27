@@ -198,10 +198,17 @@ async def _start_extension_runner_process(
             logger.error(f"Failed to decode partial result value json: {exception}")
             return
 
-        partial_result = domain.PartialResult(
-            token=params.token, value=result_value
-        )
-        runner.partial_results.publish(partial_result)
+        # Distinguish progress notifications (begin/report/end) from partial results
+        if isinstance(result_value, dict) and result_value.get("type") in ("begin", "report", "end"):
+            progress_notification = domain.ProgressNotification(
+                token=params.token, value=result_value
+            )
+            runner.progress_notifications.publish(progress_notification)
+        else:
+            partial_result = domain.PartialResult(
+                token=params.token, value=result_value
+            )
+            runner.partial_results.publish(partial_result)
 
     runner.client.feature(_internal_client_types.PROGRESS, on_progress)
 

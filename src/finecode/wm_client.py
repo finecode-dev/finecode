@@ -288,12 +288,15 @@ class ApiClient:
         partial_result_token: str,
         params: dict | None = None,
         options: dict | None = None,
+        progress_token: str | None = None,
     ) -> dict:
         """Run an action with streaming partial results via notifications.
 
         Pass ``project=""`` to run across all projects that expose the action.
         Partial results are delivered as ``actions/partialResult`` notifications
         before this coroutine returns the aggregated final result.
+        Progress is delivered as ``actions/progress`` notifications if
+        ``progress_token`` is provided.
         """
         body: dict = {
             "action": action,
@@ -303,6 +306,8 @@ class ApiClient:
         }
         if params:
             body["params"] = params
+        if progress_token is not None:
+            body["progressToken"] = progress_token
         return await self.request("actions/runWithPartialResults", body)
 
     async def add_dir(

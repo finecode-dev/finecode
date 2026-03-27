@@ -45,6 +45,9 @@ class ExtensionRunnerInfo(domain.ExtensionRunner):
     partial_results: IterableSubscribe = dataclasses.field(
         default_factory=IterableSubscribe
     )
+    progress_notifications: IterableSubscribe = dataclasses.field(
+        default_factory=IterableSubscribe
+    )
     cmd_override: str | None = None
 
 
