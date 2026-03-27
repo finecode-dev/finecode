@@ -57,3 +57,4 @@ keep the same decision, would the ADR still read correctly?
 | 0004 | [Auto-shutdown on disconnect timeout](0004-auto-shutdown-on-disconnect-timeout.md)                                             | accepted | 2026-03-19 | lifecycle, wm-server           |
 | 0005 | [Zero-based line numbers and ResourceUri fields in action payloads and results](0005-zero-based-lines-and-resourceuri-fields-in-action-payloads-and-results.md) | accepted | 2026-03-20 | actions, conventions           |
 | 0006 | [Shared action types as the action identity contract](0006-shared-action-types-as-the-action-identity-contract.md)            | accepted | 2026-03-21 | actions, api, architecture, environments     |
+| 0007 | [Single registration per action definition](0007-single-registration-per-action-definition.md)                                | proposed | 2026-03-21 | actions, architecture          |
