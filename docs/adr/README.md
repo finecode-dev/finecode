@@ -24,6 +24,29 @@ a new ADR supersedes the old one rather than editing it.
 4. Set status to `proposed` and open a PR for review.
 5. Once merged, update status to `accepted` and add a row to the index table below.
 
+## How to write a good ADR
+
+ADRs should capture the **durable architectural decision**, not the current
+implementation shape. A useful test is: if we refactor the API next month but
+keep the same decision, would the ADR still read correctly?
+
+- Write the decision at the level of architecture, contracts, boundaries,
+  ownership, compatibility, or policy.
+- Prefer titles that describe the enduring rule, not the current mechanism.
+- Record the forces and constraints that make the decision necessary, not just
+  the selected solution.
+- Use one primary term consistently throughout the ADR. If a language-specific
+  implementation term is helpful, introduce it once as an example rather than
+  switching terms back and forth.
+- Keep method names, function signatures, field layouts, and matching logic out
+  of the main narrative unless they are themselves the architectural decision.
+- Put narrow implementation details in `Implementation Notes` only when they are
+  needed to avoid ambiguity.
+- If an alternative is deferred rather than rejected, say when the decision
+  should be revisited and what condition would trigger that review.
+- Keep examples short. Prefer explaining the rule and trade-off over documenting
+  the present code structure.
+
 ## Index
 
 | #    | Title                                                                                                                          | Status   | Date       | Tags                           |
@@ -33,3 +56,4 @@ a new ADR supersedes the old one rather than editing it.
 | 0003 | [One Extension Runner process per execution environment](0003-process-isolation-per-extension-environment.md)                  | accepted | 2026-03-19 | architecture, extension-runner |
 | 0004 | [Auto-shutdown on disconnect timeout](0004-auto-shutdown-on-disconnect-timeout.md)                                             | accepted | 2026-03-19 | lifecycle, wm-server           |
 | 0005 | [Zero-based line numbers and ResourceUri fields in action payloads and results](0005-zero-based-lines-and-resourceuri-fields-in-action-payloads-and-results.md) | accepted | 2026-03-20 | actions, conventions           |
+| 0006 | [Shared action types as the action identity contract](0006-shared-action-types-as-the-action-identity-contract.md)            | accepted | 2026-03-21 | actions, api, architecture, environments     |

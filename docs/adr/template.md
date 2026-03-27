@@ -28,6 +28,14 @@ What becomes easier or harder as a result of this decision? What are the
 trade-offs?
 
 <!--
+Authoring checklist:
+- Does the title describe the enduring decision rather than the current implementation?
+- Would this ADR still be correct if the API or method names changed next month?
+- Is the "Decision" section framed as an architectural rule, contract, or boundary?
+- Are implementation details kept out of the main narrative unless they are the decision?
+- Is one primary term used consistently throughout the document?
+- If an alternative is deferred, does the ADR say when to revisit it?
+
 ## Optional sections
 
 The sections above are the minimal required set. Add any of the following
