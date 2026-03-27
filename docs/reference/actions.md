@@ -1,6 +1,6 @@
 # Built-in Actions
 
-All built-in actions are defined in `finecode_extension_api.actions`. Use their import paths as the `source` when declaring actions in `pyproject.toml` or `preset.toml`.
+All built-in actions are re-exported from `finecode_extension_api.actions`. Use the short form `finecode_extension_api.actions.<ClassName>` as the `source` when declaring actions in `pyproject.toml` or `preset.toml`.
 
 ---
 
@@ -8,7 +8,7 @@ All built-in actions are defined in `finecode_extension_api.actions`. Use their 
 
 Run linting on a source artifact or specific files.
 
-- **Source:** `finecode_extension_api.actions.lint.LintAction`
+- **Source:** `finecode_extension_api.actions.LintAction`
 - **Default handler execution:** concurrent
 
 **Payload fields:**
@@ -24,12 +24,25 @@ Run linting on a source artifact or specific files.
 
 ## `lint_files`
 
-Lint a specific set of files, with language filtering.
+Lint a specific set of files. Internal action dispatched by `lint`.
 
-- **Source:** `finecode_extension_api.actions.lint_files.LintFilesAction`
+- **Source:** `finecode_extension_api.actions.LintFilesAction`
 - **Default handler execution:** concurrent
 
-Similar to `lint` but designed for language-aware per-file linting. Used internally by the LSP server for real-time diagnostics.
+The built-in `LintFilesDispatchHandler` groups the given files by language and dispatches each file individually to the matching language subaction — any action declaring `PARENT_ACTION = LintFilesAction` and the corresponding `LANGUAGE`. Files of unknown language are skipped.
+
+---
+
+## `lint_python_files`
+
+Lint Python source files and report diagnostics. Language-specific subaction of `lint_files`.
+
+- **Source:** `finecode_extension_api.actions.LintPythonFilesAction`
+- **Default handler execution:** concurrent
+
+**Payload fields:** same as `lint_files`.
+
+Register Python linting tools (ruff, mypy, …) as handlers for this action.
 
 ---
 
@@ -37,7 +50,7 @@ Similar to `lint` but designed for language-aware per-file linting. Used interna
 
 Format a source artifact or specific files.
 
-- **Source:** `finecode_extension_api.actions.format.FormatAction`
+- **Source:** `finecode_extension_api.actions.FormatAction`
 - **Default handler execution:** sequential
 
 **Payload fields:**
@@ -55,22 +68,25 @@ Format a source artifact or specific files.
 
 ## `format_files`
 
-Format a specific set of files, with language filtering.
+Format a specific set of files. Internal action dispatched by `format`.
 
-- **Source:** `finecode_extension_api.actions.format_files.FormatFilesAction`
+- **Source:** `finecode_extension_api.actions.FormatFilesAction`
 - **Default handler execution:** sequential
 
-Used internally by the LSP server for on-save formatting.
+The built-in `FormatFilesDispatchHandler` groups the given files by language and dispatches each language's batch to the matching language subaction — any action declaring `PARENT_ACTION = FormatFilesAction` and the corresponding `LANGUAGE`.
 
 ---
 
-## `check_formatting`
+## `format_python_files`
 
-Check whether files are formatted correctly, without modifying them.
+Format Python source files. Language-specific subaction of `format_files`.
 
-- **Source:** `finecode_extension_api.actions.check_formatting.CheckFormattingAction`
+- **Source:** `finecode_extension_api.actions.FormatPythonFilesAction`
+- **Default handler execution:** sequential
 
-Returns a non-zero exit code if any file is not properly formatted.
+**Payload fields:** same as `format_files`.
+
+Register Python formatting tools (ruff, black, …) as handlers for this action.
 
 ---
 
@@ -78,7 +94,7 @@ Returns a non-zero exit code if any file is not properly formatted.
 
 Build a distributable artifact (e.g. a Python wheel).
 
-- **Source:** `finecode_extension_api.actions.build_artifact_action.BuildArtifactAction`
+- **Source:** `finecode_extension_api.actions.BuildArtifactAction`
 
 **Payload fields:**
 
@@ -99,7 +115,7 @@ Build a distributable artifact (e.g. a Python wheel).
 
 Get the current version of a source artifact.
 
-- **Source:** `finecode_extension_api.actions.get_src_artifact_version.GetSrcArtifactVersionAction`
+- **Source:** `finecode_extension_api.actions.GetSrcArtifactVersionAction`
 
 Default handler in this repo: `fine_python_setuptools_scm.GetSrcArtifactVersionSetuptoolsScmHandler`
 
@@ -109,7 +125,27 @@ Default handler in this repo: `fine_python_setuptools_scm.GetSrcArtifactVersionS
 
 Get the version of a distributable artifact.
 
-- **Source:** `finecode_extension_api.actions.get_dist_artifact_version.GetDistArtifactVersionAction`
+- **Source:** `finecode_extension_api.actions.GetDistArtifactVersionAction`
+
+---
+
+## `get_src_artifact_language`
+
+Get the primary programming language of a source artifact. Used by language-aware dispatch handlers (e.g. `lock_dependencies`) to route to the appropriate language-specific subaction.
+
+- **Source:** `finecode_extension_api.actions.GetSrcArtifactLanguageAction`
+
+**Payload fields:**
+
+| Field | Type | Description |
+|---|---|---|
+| `src_artifact_def_path` | `Path` | Path to the artifact definition file |
+
+**Result fields:**
+
+| Field | Type | Description |
+|---|---|---|
+| `language` | `str` | Language identifier, e.g. `"python"`, `"javascript"`, `"rust"` |
 
 ---
 
@@ -117,7 +153,7 @@ Get the version of a distributable artifact.
 
 List available registries for publishing an artifact.
 
-- **Source:** `finecode_extension_api.actions.get_src_artifact_registries.GetSrcArtifactRegistriesAction`
+- **Source:** `finecode_extension_api.actions.GetSrcArtifactRegistriesAction`
 
 ---
 
@@ -125,7 +161,7 @@ List available registries for publishing an artifact.
 
 Publish a built artifact.
 
-- **Source:** `finecode_extension_api.actions.publish_artifact.PublishArtifactAction`
+- **Source:** `finecode_extension_api.actions.PublishArtifactAction`
 
 ---
 
@@ -133,7 +169,7 @@ Publish a built artifact.
 
 Publish an artifact to a specific registry.
 
-- **Source:** `finecode_extension_api.actions.publish_artifact_to_registry.PublishArtifactToRegistryAction`
+- **Source:** `finecode_extension_api.actions.PublishArtifactToRegistryAction`
 
 ---
 
@@ -141,7 +177,7 @@ Publish an artifact to a specific registry.
 
 Check whether a specific version of an artifact is already published.
 
-- **Source:** `finecode_extension_api.actions.is_artifact_published_to_registry.IsArtifactPublishedToRegistryAction`
+- **Source:** `finecode_extension_api.actions.IsArtifactPublishedToRegistryAction`
 
 ---
 
@@ -149,7 +185,7 @@ Check whether a specific version of an artifact is already published.
 
 Verify that publishing succeeded by checking the registry.
 
-- **Source:** `finecode_extension_api.actions.verify_artifact_published_to_registry.VerifyArtifactPublishedToRegistryAction`
+- **Source:** `finecode_extension_api.actions.VerifyArtifactPublishedToRegistryAction`
 
 ---
 
@@ -157,7 +193,7 @@ Verify that publishing succeeded by checking the registry.
 
 List source files grouped by programming language.
 
-- **Source:** `finecode_extension_api.actions.list_src_artifact_files_by_lang.ListSrcArtifactFilesByLangAction`
+- **Source:** `finecode_extension_api.actions.ListSrcArtifactFilesByLangAction`
 
 ---
 
@@ -165,7 +201,7 @@ List source files grouped by programming language.
 
 Group source files by language (internal, used by language-aware actions).
 
-- **Source:** `finecode_extension_api.actions.group_src_artifact_files_by_lang.GroupSrcArtifactFilesByLangAction`
+- **Source:** `finecode_extension_api.actions.GroupSrcArtifactFilesByLangAction`
 
 ---
 
@@ -173,25 +209,17 @@ Group source files by language (internal, used by language-aware actions).
 
 Create virtual environments for all envs discovered from the project's dependency-groups.
 
-- **Source:** `finecode_extension_api.actions.create_envs.CreateEnvsAction`
+- **Source:** `finecode_extension_api.actions.CreateEnvsAction`
 
 ---
 
-## `prepare_runner_envs`
-
-Install Extension Runners into virtualenvs (internal, called by the Workspace Manager).
-
-- **Source:** `finecode_extension_api.actions.prepare_runner_envs.PrepareRunnerEnvsAction`
-
----
-
-## `prepare_handler_envs`
+## `install_envs`
 
 Install handler dependencies into virtualenvs.
 
-- **Source:** `finecode_extension_api.actions.prepare_handler_envs.PrepareHandlerEnvsAction`
+- **Source:** `finecode_extension_api.actions.InstallEnvsAction`
 
-The `python -m finecode prepare-envs` CLI command runs `create_envs`, `prepare_runner_envs`, and `prepare_handler_envs` in sequence.
+The `python -m finecode prepare-envs` CLI command runs `create_envs` and `install_envs` in sequence.
 
 ---
 
@@ -199,7 +227,7 @@ The `python -m finecode prepare-envs` CLI command runs `create_envs`, `prepare_r
 
 Install dependencies into a specific environment.
 
-- **Source:** `finecode_extension_api.actions.install_deps_in_env.InstallDepsInEnvAction`
+- **Source:** `finecode_extension_api.actions.InstallDepsInEnvAction`
 
 ---
 
@@ -207,7 +235,7 @@ Install dependencies into a specific environment.
 
 Dump the resolved configuration for a source artifact that includes FineCode configuration.
 
-- **Source:** `finecode_extension_api.actions.dump_config.DumpConfigAction`
+- **Source:** `finecode_extension_api.actions.DumpConfigAction`
 
 Also available as `python -m finecode dump-config`.
 
@@ -217,7 +245,7 @@ Also available as `python -m finecode dump-config`.
 
 Initialize a repository provider (used in artifact publishing flows).
 
-- **Source:** `finecode_extension_api.actions.init_repository_provider.InitRepositoryProviderAction`
+- **Source:** `finecode_extension_api.actions.InitRepositoryProviderAction`
 
 ---
 
@@ -225,4 +253,4 @@ Initialize a repository provider (used in artifact publishing flows).
 
 Remove FineCode log files.
 
-- **Source:** `finecode_extension_api.actions.clean_finecode_logs.CleanFineCodeLogsAction`
+- **Source:** `finecode_extension_api.actions.CleanFinecodeLogsAction`

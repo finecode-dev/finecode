@@ -4,7 +4,7 @@ Understanding a few core concepts makes the rest of FineCode straightforward.
 
 ## Action
 
-An **Action** is a named operation — `lint`, `format`, `build_artifact`, etc. It is defined as a Python class that declares the types of its payload, execution context, and result:
+An **Action** is a named operation — `lint`, `format`, `build_artifact`, etc. For an accessible introduction to why the model is designed this way, see [Why the Action Model Works](theory/why-action-model.md).
 
 ```python
 class LintAction(code_action.Action[LintRunPayload, LintRunContext, LintRunResult]):

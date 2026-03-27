@@ -33,7 +33,7 @@ Import the action you want to handle and subclass `ActionHandler`:
 ```python
 # my_linter/handler.py
 from finecode_extension_api import code_action
-from finecode_extension_api.actions.lint_files import (
+from finecode_extension_api.actions.code_quality.lint_files_action import (
     LintFilesAction,
     LintFilesRunPayload,
     LintFilesRunContext,
@@ -79,7 +79,7 @@ Add the handler to the target action in `pyproject.toml`:
 
 ```toml
 [tool.finecode.action.lint]
-source = "finecode_extension_api.actions.lint.LintAction"
+source = "finecode_extension_api.actions.LintAction"
 handlers = [
     {
         name = "my_linter",
@@ -92,6 +92,18 @@ handlers = [
 
 Then run `python -m finecode prepare-envs` to install your handler into the venv.
 
+## Source strings
+
+Every `source =` value in TOML config is resolved at runtime as import path.
+
+**Built-in action classes** are all re-exported from `finecode_extension_api.actions`, so
+their source strings take the short form `finecode_extension_api.actions.<ClassName>` — you
+do not need to know which subgroup (`code_quality/`, `environments/`, etc.) a class lives in.
+See the [Built-in Actions reference](../reference/actions.md) for the full list.
+
+**Handler classes** are referenced by their full import path:
+`my_linter.MyLinterHandler` (module `my_linter`, member `MyLinterHandler`).
+
 ## Handler configuration
 
 To make your handler configurable, define a config model and declare `CONFIG_TYPE`:
@@ -99,7 +111,7 @@ To make your handler configurable, define a config model and declare `CONFIG_TYP
 ```python
 import dataclasses
 from finecode_extension_api import code_action
-from finecode_extension_api.actions.lint_files import (
+from finecode_extension_api.actions.code_quality.lint_files_action import (
     LintFilesAction, LintFilesRunPayload, LintFilesRunContext, LintFilesRunResult,
 )
 
@@ -176,3 +188,5 @@ async def run(self, payload, context):
 ## Available actions to handle
 
 See the [Built-in Actions reference](../reference/actions.md) for the full list of action classes, payload types, and result types you can implement handlers for.
+
+If you are defining a new action (not just a handler), see [Designing Actions](designing-actions.md) for principles on inter-language design, language-specific subactions, and where to place parameters.
