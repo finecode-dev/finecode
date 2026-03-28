@@ -61,8 +61,6 @@ The important property: merge strategies are **associative**. Merging result A w
 
 In practical terms: when an action's merge is associative and handlers don't depend on each other's output (like independent linters), FineCode can run them **in parallel or sequentially — same result either way**. The framework makes this decision transparently. Handlers don't need to know.
 
-For the formal definition of these properties — associativity, identity elements, and the exact conditions under which parallel and sequential execution are equivalent — see [The Action Model](action-model.md#result-algebra).
-
 ## Three levels of specificity: why swapping tools is painless
 
 This is the design decision that has the most direct impact on day-to-day configuration.
