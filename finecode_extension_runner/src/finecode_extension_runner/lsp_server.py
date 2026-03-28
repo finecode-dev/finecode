@@ -172,6 +172,13 @@ class CustomLanguageServer(lsp_server.LanguageServer):
             )
             logger.debug("Main loop finished")
             self.shutdown()
+            # Close the writer so the transport is removed from the server's
+            # active-client set (_clients). Without this, eof_received() returns
+            # True (half-close) and the transport lingers, causing wait_closed()
+            # inside serve_forever() to block indefinitely — the ghost-process
+            # scenario when the IDE closes without a clean LSP shutdown.
+            writer.close()
+            self._server.close()
 
         async def tcp_server(h: str, p: int):
             self._server = await asyncio.start_server(lsp_connection, h, p)
@@ -212,6 +219,13 @@ class CustomLanguageServer(lsp_server.LanguageServer):
             )
             logger.debug("Main loop finished")
             self.shutdown()
+            # Close the writer so the transport is removed from the server's
+            # active-client set (_clients). Without this, eof_received() returns
+            # True (half-close) and the transport lingers, causing wait_closed()
+            # inside serve_forever() to block indefinitely — the ghost-process
+            # scenario when the IDE closes without a clean LSP shutdown/exit.
+            writer.close()
+            self._server.close()
 
         self._server = await asyncio.start_server(lsp_connection, host, port)
 
@@ -221,6 +235,8 @@ class CustomLanguageServer(lsp_server.LanguageServer):
         try:
             async with self._server:
                 await self._server.serve_forever()
+        except asyncio.CancelledError:
+            logger.debug("TCP server closed after client disconnect")
         finally:
             await self._finecode_exit_stack.aclose()
 
@@ -297,6 +313,9 @@ def create_lsp_server() -> lsp_server.LanguageServer:
     register_get_payload_schemas_cmd = server.command("actions/getPayloadSchemas")
     register_get_payload_schemas_cmd(get_payload_schemas_cmd)
 
+    register_get_runner_info_cmd = server.command("finecodeRunner/getInfo")
+    register_get_runner_info_cmd(get_runner_info)
+
     def on_process_exit():
         logger.info("Exit extension runner")
         services.shutdown_all_action_handlers()
@@ -315,6 +334,15 @@ def create_lsp_server() -> lsp_server.LanguageServer:
         server.progress(types.ProgressParams(token=token, value=partial_result_json))
 
     run_action_service.set_partial_result_sender(send_partial_result)
+
+    def send_progress(token: int | str, value_dict: dict) -> None:
+        value_json = json.dumps(value_dict)
+        logger.trace(
+            f"send_progress: token={token}, type={value_dict.get('type')}, preview={value_json[:200]}"
+        )
+        server.progress(types.ProgressParams(token=token, value=value_json))
+
+    run_action_service.set_progress_sender(send_progress)
     
     return server
 
@@ -580,3 +608,9 @@ async def merge_results_cmd(ls: lsp_server.LanguageServer, action_name: str, res
     except Exception as exception:
         logger.exception(f"Merge results error: {exception}")
         return {"error": str(exception)}
+
+
+async def get_runner_info(ls: lsp_server.LanguageServer):
+    from finecode_extension_runner import global_state
+    log_path = global_state.log_file_path
+    return {"logFilePath": str(log_path) if log_path is not None else None}

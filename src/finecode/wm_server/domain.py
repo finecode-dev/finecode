@@ -264,14 +264,15 @@ class ExtensionRunner:
     working_dir_path: Path
     env_name: str
     status: ExtensionRunnerStatus
+    log_file_path: Path | None = None
 
     @property
     def readable_id(self) -> str:
         return f"{self.working_dir_path} ({self.env_name})"
 
     @property
-    def logs_path(self) -> Path:
-        return self.working_dir_path / ".venvs" / self.env_name / "logs" / "runner.log"
+    def logs_path(self) -> Path | None:
+        return self.log_file_path
 
 
 class TextDocumentInfo:

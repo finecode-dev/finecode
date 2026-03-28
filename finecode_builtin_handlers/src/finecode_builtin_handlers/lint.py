@@ -74,9 +74,15 @@ class LintHandler(
         lint_files_action_instance = self.action_runner.get_action_by_source(
             lint_files_action.LintFilesAction
         )
-        async for partial in self.action_runner.run_action_iter(
-            action=lint_files_action_instance,
-            payload=lint_files_action.LintFilesRunPayload(file_paths=file_uris),
-            meta=run_meta,
-        ):
-            yield lint_action.LintRunResult(messages=partial.messages)
+        async with run_context.progress("Linting files", total=len(file_uris)) as progress:
+            async for partial in self.action_runner.run_action_iter(
+                action=lint_files_action_instance,
+                payload=lint_files_action.LintFilesRunPayload(file_paths=file_uris),
+                meta=run_meta,
+            ):
+                uris = list(partial.messages)
+                msg = str(uris[0]) if uris else None
+                if len(uris) > 1:
+                    msg += f" and {len(uris) - 1} related"
+                await progress.advance(message=msg)
+                yield lint_action.LintRunResult(messages=partial.messages)

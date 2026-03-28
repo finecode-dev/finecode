@@ -66,6 +66,60 @@ def set_partial_result_sender(send_func: typing.Callable) -> None:
     )
 
 
+progress_sender_func: typing.Callable | None = None
+
+
+def set_progress_sender(send_func: typing.Callable) -> None:
+    global progress_sender_func
+    progress_sender_func = send_func
+
+
+class _ERProgressSender:
+    """Concrete ProgressSender that sends notifications via the ER LSP server."""
+
+    def __init__(
+        self,
+        token: int | str,
+        send_func: typing.Callable[[int | str, dict], None],
+    ) -> None:
+        self._token = token
+        self._send_func = send_func
+
+    async def begin(
+        self,
+        title: str,
+        message: str | None = None,
+        percentage: int | None = None,
+        cancellable: bool = False,
+        total: int | None = None,
+    ) -> None:
+        self._send_func(self._token, {
+            "type": "begin",
+            "title": title,
+            "message": message,
+            "percentage": percentage,
+            "cancellable": cancellable,
+            "total": total,
+        })
+
+    async def report(
+        self,
+        message: str | None = None,
+        percentage: int | None = None,
+    ) -> None:
+        self._send_func(self._token, {
+            "type": "report",
+            "message": message,
+            "percentage": percentage,
+        })
+
+    async def end(self, message: str | None = None) -> None:
+        self._send_func(self._token, {
+            "type": "end",
+            "message": message,
+        })
+
+
 class AsyncPlaceholderContext:
     async def __aenter__(self):
         return self
@@ -78,6 +132,7 @@ async def run_action(
     payload: code_action.RunActionPayload | None,
     meta: code_action.RunActionMeta,
     partial_result_token: int | str | None = None,
+    progress_token: int | str | None = None,
     run_id: int | None = None,
     partial_result_queue: asyncio.Queue | None = None,
 ) -> code_action.RunActionResult | None:
@@ -132,6 +187,15 @@ async def run_action(
         )
     else:
         tracking_sender = None
+
+    if progress_token is not None and progress_sender_func is not None:
+        er_progress_sender: code_action.ProgressSender = _ERProgressSender(
+            token=progress_token,
+            send_func=progress_sender_func,
+        )
+    else:
+        er_progress_sender = code_action._NOOP_PROGRESS_SENDER
+
     if action_exec_info.run_context_type is not None:
         constructor_args = await resolve_func_args_with_di(
             action_exec_info.run_context_type.__init__,
@@ -141,6 +205,7 @@ async def run_action(
                 "meta": lambda _: meta,
                 "info_provider": lambda _: run_context_info,
                 "partial_result_sender": lambda _: tracking_sender or code_action._NOOP_SENDER,
+                "progress_sender": lambda _: er_progress_sender,
             },
             params_to_ignore=["self"],
         )
@@ -414,6 +479,7 @@ async def run_action_raw(
         payload=payload,
         meta=options.meta,
         partial_result_token=options.partial_result_token,
+        progress_token=options.progress_token,
         run_id=run_id,
     )
 

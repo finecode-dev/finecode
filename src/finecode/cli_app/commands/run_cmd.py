@@ -2,7 +2,9 @@
 import json
 import pathlib
 import sys
+import time
 import typing
+import uuid
 
 import click
 
@@ -15,6 +17,64 @@ from finecode.cli_app import utils
 class RunFailed(Exception):
     def __init__(self, message: str) -> None:
         self.message = message
+
+
+def _make_progress_handler(is_tty: bool) -> typing.Callable:
+    """Return an async ``actions/progress`` notification handler.
+
+    TTY: overwrites the current line in-place using ANSI escape sequences.
+    Non-TTY: prints plain-text lines to stderr, throttled to avoid log flooding.
+    """
+    last_message: list[str] = [""]
+    last_print_time: list[float] = [0.0]
+
+    async def handler(params: dict) -> None:
+        value = params.get("value", {}) if params else {}
+        progress_type = value.get("type")
+
+        if progress_type == "begin":
+            title = value.get("title", "")
+            if is_tty:
+                click.echo(f"\r\033[K{title}...", nl=False, err=True)
+            else:
+                click.echo(f"Starting: {title}", err=True)
+            last_message[0] = title
+
+        elif progress_type == "report":
+            message = value.get("message") or ""
+            percentage = value.get("percentage")
+            if not message:
+                return
+            now = time.monotonic()
+            # Throttle to at most once per second for TTY; always print for non-TTY
+            # unless the message hasn't changed.
+            if is_tty:
+                if now - last_print_time[0] < 1.0:
+                    return
+                last_print_time[0] = now
+                if percentage is not None:
+                    click.echo(f"\r\033[K{percentage}% {message}", nl=False, err=True)
+                else:
+                    click.echo(f"\r\033[K{message}", nl=False, err=True)
+            else:
+                if message == last_message[0] and now - last_print_time[0] < 1.0:
+                    return
+                last_print_time[0] = now
+                last_message[0] = message
+                if percentage is not None:
+                    click.echo(f"{percentage}% {message}", err=True)
+                else:
+                    click.echo(message, err=True)
+
+        elif progress_type == "end":
+            if is_tty:
+                click.echo("\r\033[K", nl=False, err=True)
+            else:
+                end_message = value.get("message")
+                if end_message:
+                    click.echo(f"Done: {end_message}", err=True)
+
+    return handler
 
 
 async def run_actions(
@@ -56,6 +116,14 @@ async def run_actions(
                         "Warning: --config overrides are ignored in --shared-server mode. ",
                         err=True,
                     )
+            # Tree-change notifications are irrelevant in CLI (run-and-exit) mode;
+            # register a no-op before add_dir so notifications fired during project
+            # loading don't hit the "unhandled notification" fallback.
+            async def _ignore_tree_changed(params: dict) -> None:
+                pass
+
+            client.on_notification("actions/treeChanged", _ignore_tree_changed)
+
             await client.add_dir(workdir_path)
 
             # Resolve project names (CLI option) to paths (canonical API identifier).
@@ -81,6 +149,12 @@ async def run_actions(
 
             result_formats = ["string", "json"] if save_results else ["string"]
 
+            progress_token = str(uuid.uuid4())
+            client.on_notification(
+                "actions/progress",
+                _make_progress_handler(sys.stderr.isatty()),
+            )
+
             try:
                 batch_result = await client.run_batch(
                     actions=actions,
@@ -93,6 +167,7 @@ async def run_actions(
                         "trigger": "user",
                         "devEnv": dev_env,
                     },
+                    progress_token=progress_token,
                 )
             except ApiError as exc:
                 raise RunFailed(str(exc)) from exc

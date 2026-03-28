@@ -94,12 +94,107 @@ class PartialResultSender(typing.Protocol):
     async def send(self, result: RunActionResult) -> None: ...
 
 
-class _NoOpPartialResultSender:
+class _NoOpPartialResultSender(PartialResultSender):
     async def send(self, result: RunActionResult) -> None:
         pass
 
 
 _NOOP_SENDER = _NoOpPartialResultSender()
+
+
+class ProgressSender(typing.Protocol):
+    """Framework-internal interface for sending progress notifications."""
+
+    async def begin(
+        self,
+        title: str,
+        message: str | None = None,
+        percentage: int | None = None,
+        cancellable: bool = False,
+        total: int | None = None,
+    ) -> None: ...
+
+    async def report(
+        self,
+        message: str | None = None,
+        percentage: int | None = None,
+    ) -> None: ...
+
+    async def end(self, message: str | None = None) -> None: ...
+
+
+class _NoOpProgressSender(ProgressSender):
+    async def begin(
+        self,
+        title: str,
+        message: str | None = None,
+        percentage: int | None = None,
+        cancellable: bool = False,
+        total: int | None = None,
+    ) -> None:
+        pass
+
+    async def report(
+        self,
+        message: str | None = None,
+        percentage: int | None = None,
+    ) -> None:
+        pass
+
+    async def end(self, message: str | None = None) -> None:
+        pass
+
+
+_NOOP_PROGRESS_SENDER = _NoOpProgressSender()
+
+
+class ProgressContext:
+    """Async context manager for reporting progress from handlers.
+
+    Two methods serve different use cases:
+    - ``advance(steps, message)`` — the common "N of M" pattern; auto-calculates percentage.
+    - ``report(message, percentage)`` — freeform; for indeterminate progress or custom logic.
+    """
+
+    def __init__(
+        self,
+        sender: ProgressSender,
+        title: str,
+        *,
+        total: int | None = None,
+        cancellable: bool = False,
+    ) -> None:
+        self._sender = sender
+        self._title = title
+        self._total = total
+        self._cancellable = cancellable
+        self._completed = 0
+
+    async def __aenter__(self) -> ProgressContext:
+        percentage = 0 if self._total is not None else None
+        await self._sender.begin(
+            self._title,
+            percentage=percentage,
+            cancellable=self._cancellable,
+            total=self._total,
+        )
+        return self
+
+    async def __aexit__(self, *exc) -> bool:
+        await self._sender.end()
+        return False
+
+    async def advance(self, steps: int = 1, message: str | None = None) -> None:
+        """Step-based progress. Auto-calculates percentage from total."""
+        self._completed += steps
+        percentage = None
+        if self._total is not None:
+            percentage = min(int(self._completed / self._total * 100), 100)
+        await self._sender.report(message=message, percentage=percentage)
+
+    async def report(self, message: str | None = None, percentage: int | None = None) -> None:
+        """Freeform progress. Caller controls the percentage directly."""
+        await self._sender.report(message=message, percentage=percentage)
 
 
 class RunActionContext(typing.Generic[RunPayloadType]):
@@ -116,6 +211,7 @@ class RunActionContext(typing.Generic[RunPayloadType]):
         meta: RunActionMeta,
         info_provider: RunContextInfoProvider,
         partial_result_sender: PartialResultSender = _NOOP_SENDER,
+        progress_sender: ProgressSender = _NOOP_PROGRESS_SENDER,
     ) -> None:
         self.run_id = run_id
         self.initial_payload = initial_payload
@@ -123,6 +219,19 @@ class RunActionContext(typing.Generic[RunPayloadType]):
         self.exit_stack = contextlib.AsyncExitStack()
         self._info_provider = info_provider
         self.partial_result_sender = partial_result_sender
+        self._progress_sender = progress_sender
+
+    def progress(
+        self,
+        title: str,
+        *,
+        total: int | None = None,
+        cancellable: bool = False,
+    ) -> ProgressContext:
+        """Create a progress context manager for reporting progress to the client."""
+        return ProgressContext(
+            self._progress_sender, title, total=total, cancellable=cancellable
+        )
 
     @property
     def current_result(self) -> RunActionResult | None:
@@ -165,6 +274,7 @@ class RunActionWithPartialResultsContext(RunActionContext[RunPayloadType]):
         meta: RunActionMeta,
         info_provider: RunContextInfoProvider,
         partial_result_sender: PartialResultSender = _NOOP_SENDER,
+        progress_sender: ProgressSender = _NOOP_PROGRESS_SENDER,
     ) -> None:
         super().__init__(
             run_id=run_id,
@@ -172,6 +282,7 @@ class RunActionWithPartialResultsContext(RunActionContext[RunPayloadType]):
             meta=meta,
             info_provider=info_provider,
             partial_result_sender=partial_result_sender,
+            progress_sender=progress_sender,
         )
         self.partial_result_scheduler = partialresultscheduler.PartialResultScheduler()
 

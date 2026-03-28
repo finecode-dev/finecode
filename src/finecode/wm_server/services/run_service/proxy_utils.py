@@ -145,32 +145,28 @@ async def run_action_and_notify(
     params: dict[str, typing.Any],
     partial_result_token: int | str,
     runner: runner_client.ExtensionRunnerInfo,
-    result_list: AsyncList,
-    partial_results_task: asyncio.Task,
     run_trigger: runner_client.RunActionTrigger,
     dev_env: runner_client.DevEnv,
     result_formats: list[runner_client.RunResultFormat] | None = None,
+    progress_token: int | str | None = None,
 ) -> runner_client.RunActionResponse:
-    try:
-        options: dict[str, typing.Any] = {
-            "partial_result_token": partial_result_token,
-            "meta": {"trigger": run_trigger.value, "dev_env": dev_env.value},
-        }
-        if result_formats is not None:
-            options["result_formats"] = result_formats
-        logger.trace(f"run_action_and_notify: sending to runner {runner.readable_id}, action={action_name}, token={partial_result_token}, options_keys={list(options.keys())}")
-        response = await run_action_in_runner(
-            action_name=action_name,
-            params=params,
-            runner=runner,
-            options=options,
-        )
-        logger.trace(f"run_action_and_notify: got response from runner {runner.readable_id}, return_code={response.return_code}, result_formats={list(response.result_by_format.keys())}")
-        return response
-    finally:
-        logger.trace(f"run_action_and_notify: ending result_list, cancelling partial_results_task for token={partial_result_token}")
-        result_list.end()
-        partial_results_task.cancel("Got final result")
+    options: dict[str, typing.Any] = {
+        "partial_result_token": partial_result_token,
+        "meta": {"trigger": run_trigger.value, "dev_env": dev_env.value},
+    }
+    if progress_token is not None:
+        options["progress_token"] = progress_token
+    if result_formats is not None:
+        options["result_formats"] = result_formats
+    logger.trace(f"run_action_and_notify: sending to runner {runner.readable_id}, action={action_name}, token={partial_result_token}, options_keys={list(options.keys())}")
+    response = await run_action_in_runner(
+        action_name=action_name,
+        params=params,
+        runner=runner,
+        options=options,
+    )
+    logger.trace(f"run_action_and_notify: got response from runner {runner.readable_id}, return_code={response.return_code}, result_formats={list(response.result_by_format.keys())}")
+    return response
 
 
 async def get_partial_results(
@@ -191,16 +187,37 @@ async def get_partial_results(
         logger.trace(f"get_partial_results: cancelled for runner {runner.readable_id} token={partial_result_token}")
 
 
+async def get_progress(
+    result_list: AsyncList,
+    progress_token: int | str,
+    runner: runner_client.ExtensionRunnerInfo,
+) -> None:
+    try:
+        logger.trace(f"get_progress: listening on runner {runner.readable_id} for token={progress_token}")
+        with runner.progress_notifications.iterator() as iterator:
+            async for notification in iterator:
+                if notification.token == progress_token:
+                    logger.trace(f"get_progress: matched type={notification.value.get('type')} from {runner.readable_id}")
+                    result_list.append(notification.value)
+    except asyncio.CancelledError:
+        logger.trace(f"get_progress: cancelled for runner {runner.readable_id} token={progress_token}")
+
+
 class RunWithPartialResultsContext:
     """Holds both the partial results async iterable and the final runner responses.
 
     ``partials`` is available immediately for iteration.  ``responses`` is
     populated after the context manager exits (i.e. after all runner tasks
-    complete).
+    complete).  ``progress`` carries progress notifications (begin/report/end).
     """
 
-    def __init__(self, partials: AsyncList[domain.PartialResultRawValue]) -> None:
+    def __init__(
+        self,
+        partials: AsyncList[domain.PartialResultRawValue],
+        progress: AsyncList[domain.ProgressRawValue] | None = None,
+    ) -> None:
         self.partials = partials
+        self.progress = progress
         self.responses: list[runner_client.RunActionResponse] = []
 
     def __aiter__(self):
@@ -218,11 +235,15 @@ async def run_with_partial_results(
     ws_context: context.WorkspaceContext,
     initialize_all_handlers: bool = False,
     result_formats: list[runner_client.RunResultFormat] | None = None,
+    progress_token: int | str | None = None,
 ) -> collections.abc.AsyncIterator[RunWithPartialResultsContext]:
     logger.trace(f"Run {action_name} in project {project_dir_path}")
 
     result: AsyncList[domain.PartialResultRawValue] = AsyncList()
-    ctx = RunWithPartialResultsContext(partials=result)
+    progress_result: AsyncList[domain.ProgressRawValue] | None = None
+    if progress_token is not None:
+        progress_result = AsyncList()
+    ctx = RunWithPartialResultsContext(partials=result, progress=progress_result)
     project = ws_context.ws_projects[project_dir_path]
     try:
         action_tasks: list[asyncio.Task] = []
@@ -254,19 +275,48 @@ async def run_with_partial_results(
                         runner=runner,
                     )
                 )
-                action_tasks.append(tg.create_task(
+
+                runner_progress_task: asyncio.Task | None = None
+                if progress_token is not None and progress_result is not None:
+                    runner_progress_task = tg.create_task(
+                        get_progress(
+                            result_list=progress_result,
+                            progress_token=progress_token,
+                            runner=runner,
+                        )
+                    )
+
+                action_task = tg.create_task(
                     run_action_and_notify(
                         action_name=action_name,
                         params=params,
                         partial_result_token=partial_result_token,
                         runner=runner,
-                        result_list=result,
-                        partial_results_task=runner_partial_results_task,
                         run_trigger=run_trigger,
                         dev_env=dev_env,
                         result_formats=result_formats,
+                        progress_token=progress_token,
                     )
-                ))
+                )
+
+                def _make_cleanup(
+                    partial_task: asyncio.Task,
+                    prog_task: asyncio.Task | None,
+                ) -> typing.Callable[[asyncio.Future], None]:
+                    def _cleanup(_fut: asyncio.Future) -> None:
+                        logger.trace(f"run_action_and_notify: ending result_list, cancelling partial_results_task for token={partial_result_token}")
+                        result.end()
+                        partial_task.cancel("Got final result")
+                        if progress_result is not None:
+                            progress_result.end()
+                        if prog_task is not None:
+                            prog_task.cancel("Got final result")
+                    return _cleanup
+
+                action_task.add_done_callback(
+                    _make_cleanup(runner_partial_results_task, runner_progress_task)
+                )
+                action_tasks.append(action_task)
 
             yield ctx
         # TaskGroup exited — all tasks completed, collect final responses
@@ -473,6 +523,7 @@ async def run_actions_in_running_project(
     result_formats: list[RunResultFormat],
     run_trigger: runner_client.RunActionTrigger,
     dev_env: runner_client.DevEnv,
+    progress_token_by_action: dict[str, str] | None = None,
 ) -> dict[str, RunActionResponse]:
     result_by_action: dict[str, RunActionResponse] = {}
 
@@ -490,6 +541,7 @@ async def run_actions_in_running_project(
                             run_trigger=run_trigger,
                             dev_env=dev_env,
                             result_formats=result_formats,
+                            progress_token=progress_token_by_action.get(action_name) if progress_token_by_action else None,
                         )
                     )
                     run_tasks.append(run_task)
@@ -517,6 +569,7 @@ async def run_actions_in_running_project(
                     run_trigger=run_trigger,
                     dev_env=dev_env,
                     result_formats=result_formats,
+                    progress_token=progress_token_by_action.get(action_name) if progress_token_by_action else None,
                 )
             except ActionRunFailed as exception:
                 raise ActionRunFailed(
@@ -543,6 +596,7 @@ async def run_actions_in_projects(
     run_trigger: runner_client.RunActionTrigger,
     dev_env: runner_client.DevEnv,
     payload_overrides_by_project: dict[str, dict[str, typing.Any]] | None = None,
+    progress_token_by_project: dict[pathlib.Path, dict[str, str]] | None = None,
 ) -> dict[pathlib.Path, dict[str, RunActionResponse]]:
     _payload_overrides_by_project = payload_overrides_by_project or {}
     project_handler_tasks: list[asyncio.Task] = []
@@ -564,6 +618,7 @@ async def run_actions_in_projects(
                         result_formats=result_formats,
                         run_trigger=run_trigger,
                         dev_env=dev_env,
+                        progress_token_by_action=progress_token_by_project.get(project_dir_path) if progress_token_by_project else None,
                     )
                 )
                 project_handler_tasks.append(project_task)
@@ -617,6 +672,7 @@ async def run_action(
     dev_env: runner_client.DevEnv,
     result_formats: list[runner_client.RunResultFormat] | None = None,
     initialize_all_handlers: bool = False,
+    progress_token: int | str | None = None,
 ) -> RunActionResponse:
     formatted_params = str(params)
     if len(formatted_params) > 100:
@@ -663,6 +719,7 @@ async def run_action(
             dev_env=dev_env,
             result_formats=_result_formats,
             initialize_all_handlers=initialize_all_handlers,
+            progress_token=progress_token,
         )
     else:
         # TODO: concurrent vs sequential, this value should be taken from action config
@@ -683,6 +740,7 @@ async def run_action(
                     dev_env=dev_env,
                     result_formats=_result_formats,
                     initialize_all_handlers=initialize_all_handlers,
+                    progress_token=progress_token,
                 )
 
     return response
@@ -698,6 +756,7 @@ async def _run_action_in_env_runner(
     dev_env: runner_client.DevEnv,
     result_formats: list[runner_client.RunResultFormat],
     initialize_all_handlers: bool = False,
+    progress_token: int | str | None = None,
 ):
     try:
         runner = await runner_manager.get_or_start_runner(
@@ -713,14 +772,17 @@ async def _run_action_in_env_runner(
         ) from exception
 
     try:
+        options: dict[str, typing.Any] = {
+            "result_formats": result_formats,
+            "meta": {"trigger": run_trigger.value, "dev_env": dev_env.value},
+        }
+        if progress_token is not None:
+            options["progress_token"] = progress_token
         response = await runner_client.run_action(
             runner=runner,
             action_name=action_name,
             params=payload,
-            options={
-                "result_formats": result_formats,
-                "meta": {"trigger": run_trigger.value, "dev_env": dev_env.value},
-            },
+            options=options,
         )
     except runner_client.BaseRunnerRequestException as error:
         await user_messages.error(

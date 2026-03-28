@@ -247,11 +247,14 @@ class ApiClient:
         params: dict | None = None,
         params_by_project: dict[str, dict] | None = None,
         options: dict | None = None,
+        progress_token: str | None = None,
     ) -> dict:
         """Run multiple actions across multiple (or all) projects.
 
         Results are keyed by project path string, then action name.
         All result keys use camelCase (returnCode, resultByFormat).
+        If ``progress_token`` is provided, progress notifications are delivered
+        as ``actions/progress`` notifications before this coroutine returns.
         """
         body: dict = {"actions": actions}
         if projects is not None:
@@ -262,6 +265,8 @@ class ApiClient:
             body["paramsByProject"] = params_by_project
         if options:
             body["options"] = options
+        if progress_token is not None:
+            body["progressToken"] = progress_token
         return await self.request("actions/runBatch", body)
 
     async def run_action(
@@ -270,8 +275,13 @@ class ApiClient:
         project: str,
         params: dict | None = None,
         options: dict | None = None,
+        progress_token: str | None = None,
     ) -> dict:
-        """Run an action on a project."""
+        """Run an action on a project.
+
+        If ``progress_token`` is provided, progress notifications are delivered
+        as ``actions/progress`` notifications before this coroutine returns.
+        """
         body: dict = {
             "action": action,
             "project": project,
@@ -279,6 +289,8 @@ class ApiClient:
         }
         if params:
             body["params"] = params
+        if progress_token is not None:
+            body["progressToken"] = progress_token
         return await self.request("actions/run", body)
 
     async def run_action_with_partial_results(
