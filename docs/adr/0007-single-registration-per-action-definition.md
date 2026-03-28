@@ -1,6 +1,6 @@
 # ADR-0007: Single registration per action definition
 
-- **Status:** proposed
+- **Status:** accepted
 - **Date:** 2026-03-21
 - **Deciders:** @Aksem
 - **Tags:** actions, architecture, languages
@@ -78,7 +78,6 @@ to be expressed as duplicate registrations instead of as explicit architecture.
 ## Related Decisions
 
 - Refines [ADR-0006](0006-shared-action-types-as-the-action-identity-contract.md)
-- Related implementation mechanism: [ADR-0008](0008-class-metadata-for-language-subaction-discovery.md)
 
 ## Implementation Notes
 
