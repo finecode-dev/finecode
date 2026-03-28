@@ -62,7 +62,7 @@ The generic action can still exist as a base case — useful for ecosystems wher
 
 ### Declaring the relationship
 
-Language-specific subactions declare their target language and parent action via class-level attributes so that dispatch handlers can discover them reliably — without depending on the registered name (see [ADR-0008](../adr/0008-class-metadata-for-language-subaction-discovery.md)):
+Language-specific subactions declare their target language and parent action via class-level attributes so that dispatch handlers can discover them reliably — without depending on the registered name (see [ADR-0008](../adr/0008-explicit-specialization-metadata-for-language-actions.md)):
 
 ```python
 class LintPythonFilesAction(code_action.Action[...]):
@@ -173,6 +173,121 @@ flowchart TD
 ```
 
 Adding support for a new language requires no changes to `LockDependenciesDispatchHandler` — registering a subaction with `PARENT_ACTION = LockDependenciesAction` and `LANGUAGE = "<lang>"` is sufficient. The dispatch handler discovers it automatically via `get_actions_for_parent`.
+
+## Partial results and progress
+
+For long-running actions, the default recommendation is: **use partial results when the caller can consume useful incremental result data, and use progress when the user benefits from seeing execution status. Often you want both.**
+
+They solve different problems:
+
+| Mechanism | What it carries | Typical use |
+|---|---|---|
+| Partial results | Incremental **result data** in the action's result shape | diagnostics per file, discovered tests, per-file formatting results |
+| Progress | Execution **metadata** about the current run | "resolving dependencies", "12/50 files linted", "running tests" |
+
+### When to use which
+
+- Use **partial results** when intermediate data is already meaningful to the caller and can be merged into the final result cleanly.
+- Use **progress** when the action may take noticeable time, even if there is nothing useful to return until the end.
+- Use **both** for workspace-scale or multi-step actions such as linting, formatting, test discovery, or other orchestration-heavy runs.
+- Use **neither** for short, atomic actions where extra streaming would add complexity without improving UX.
+
+Examples:
+
+- `lint` should usually use **both**: diagnostics can stream incrementally, and progress can show overall completion.
+- `install_env` may use **progress only**: the user cares what stage the install is in, but partial result data may not be meaningful until completion.
+- `dump_config` likely needs **neither**: it is short and returns one final value.
+
+### Keep the two contracts separate
+
+Partial results and progress are orthogonal:
+
+- Partial results are part of the action's **result contract**.
+- Progress is **metadata** about execution.
+
+Do not put status messages into partial results just to show activity, and do not use progress updates to smuggle result data. If the client should be able to consume it as structured output, it belongs in the result. If it only helps the user understand what the action is currently doing, it belongs in progress.
+
+### Action boundaries stay explicit
+
+When one action delegates to another, neither partial results nor progress should be treated as something that "just flows through".
+
+- A parent action that wants client-visible **partial results** must consume delegated partial results, map them into the parent's result shape, and re-emit them.
+- A parent action that wants client-visible **progress** owns that narrative at its own boundary. Child handlers report progress for their own action scope; the parent should report parent-level stages itself.
+
+This keeps the parent action in control of its client-facing contract. It also matches FineCode's WM behavior: multi-project requests aggregate progress at the WM level, while handler code remains action-scoped.
+
+### How to implement partial results
+
+If an action is designed to stream result data, use `RunActionWithPartialResultsContext` for its run context.
+
+For **sequential orchestration**, prefer an async-generator handler that consumes delegated partial results with `run_action_iter()` and `yield`s mapped parent results:
+
+```python
+class LintHandler(
+    code_action.ActionHandler[lint_action.LintAction, LintHandlerConfig]
+):
+    async def run(
+        self,
+        payload: lint_action.LintRunPayload,
+        run_context: lint_action.LintRunContext,
+    ):
+        lint_files_action_instance = self.action_runner.get_action_by_source(
+            lint_files_action.LintFilesAction
+        )
+
+        async for partial in self.action_runner.run_action_iter(
+            action=lint_files_action_instance,
+            payload=lint_files_action.LintFilesRunPayload(file_paths=file_uris),
+            meta=run_context.meta,
+        ):
+            yield lint_action.LintRunResult(messages=partial.messages)
+```
+
+This is the preferred pattern because it keeps the orchestration logic the same whether partial results are active or not.
+
+For **concurrent orchestration**, use the explicit sender from the run context when results become available outside a place where `yield` is practical:
+
+```python
+await run_context.partial_result_sender.send(
+    lint_action.LintRunResult(messages=partial.messages)
+)
+```
+
+Whichever pattern you use, each emitted partial result should already match the parent action's result contract and should merge cleanly via `RunActionResult.update()`.
+
+### How to implement progress
+
+Use `run_context.progress()` as an async context manager. It owns the begin/end lifecycle automatically, including error paths.
+
+When you know the number of work items, pass `total=` and call `advance()`:
+
+```python
+async with run_context.progress("Linting files", total=len(file_uris)) as progress:
+    for file_uri in file_uris:
+        await lint_one_file(file_uri)
+        await progress.advance(message=f"Linted {file_uri}")
+```
+
+When progress is **indeterminate** or stage-based, omit `total` and use `report()`:
+
+```python
+async with run_context.progress("Installing dependencies") as progress:
+    await progress.report("Resolving dependency graph")
+    await resolve_dependencies()
+
+    await progress.report("Creating environment")
+    await create_environment()
+
+    await progress.report("Installing packages")
+    await install_packages()
+```
+
+Recommendations:
+
+- Prefer `advance()` for clear "N of M" work.
+- Prefer short, user-facing messages that describe the current stage.
+- Report parent-level milestones in orchestrators; do not rely on delegated child progress to describe the parent run.
+- Avoid fake precision. If you do not have a meaningful total, keep progress indeterminate instead of inventing percentages.
 
 ## Documenting actions and fields
 
