@@ -415,6 +415,17 @@ async def start_runner(
         runner.initialized_event.set()
         raise exception
 
+    try:
+        runner_info = await _internal_client_api.get_runner_info(runner.client)
+        log_file_path_str = runner_info.get("logFilePath")
+        if log_file_path_str is not None:
+            runner.log_file_path = Path(log_file_path_str)
+            logger.debug(f"Runner {runner.readable_id} log file: {runner.log_file_path}")
+        else:
+            logger.debug(f"Runner {runner.readable_id} returned no log file path")
+    except Exception as e:
+        logger.warning(f"Failed to get runner info for {runner.readable_id}: {e}")
+
     if (
         project_def.dir_path not in ws_context.ws_projects_raw_configs
         or not isinstance(project_def, domain.CollectedProject)

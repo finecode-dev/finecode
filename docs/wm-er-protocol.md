@@ -64,6 +64,12 @@ The protocol is LSP-shaped with a small set of custom commands.
       - `handlers_to_initialize`: map of action name → handler names (optional)
     - Result: `{}` (empty object)
 
+  - `finecodeRunner/getInfo`
+    - Arguments: none
+    - Result: `{ "logFilePath": "/abs/path/to/runner.log" | null }`
+    - Returns runtime information about the runner. Currently reports the path
+      to the runner's log file, or `null` if logging to a file is not configured.
+
   - `actions/run`
     - Arguments:
       1. `action_name` (string)

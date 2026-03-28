@@ -41,6 +41,19 @@ async def notify_initialized(client: jsonrpc_client.JsonRpcClient) -> None:
     )
 
 
+async def get_runner_info(client: jsonrpc_client.JsonRpcClient) -> dict:
+    logger.debug(f"Get runner info from {client.readable_id}")
+    response = await client.send_request(
+        method=_internal_client_types.WORKSPACE_EXECUTE_COMMAND,
+        params=_internal_client_types.ExecuteCommandParams(
+            command="finecodeRunner/getInfo",
+            arguments=[],
+        ),
+        timeout=10,
+    )
+    return response.result
+
+
 async def cancel_request(
     client: jsonrpc_client.JsonRpcClient, request_id: int | str
 ) -> None:

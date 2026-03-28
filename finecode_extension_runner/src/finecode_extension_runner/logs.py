@@ -114,7 +114,7 @@ def reset_log_level_for_group(group: str):
         del log_level_by_group[group]
 
 
-def setup_logging(log_level: str, log_file_path: Path) -> None:
+def setup_logging(log_level: str, log_file_path: Path) -> Path:
     logger.remove()
 
     # disable logging raw messages
@@ -124,7 +124,7 @@ def setup_logging(log_level: str, log_file_path: Path) -> None:
 
     # ~~extension runner communicates with workspace manager with tcp, we can print logs
     # to stdout as well~~. See README.md
-    save_logs_to_file(
+    actual_log_file_path = save_logs_to_file(
         file_path=log_file_path,
         log_level=log_level,
         stdout=True,
@@ -161,6 +161,8 @@ def setup_logging(log_level: str, log_file_path: Path) -> None:
     set_log_level_for_group(
         "finecode_extension_runner.impls.inmemory_cache", LogLevel.WARNING
     )
+
+    return actual_log_file_path
 
 
 __all__ = ["save_logs_to_file", "set_log_level_for_group", "reset_log_level_for_group", "setup_logging"]
