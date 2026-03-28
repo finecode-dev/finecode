@@ -60,3 +60,5 @@ keep the same decision, would the ADR still read correctly?
 | 0007 | [Single registration per action definition](0007-single-registration-per-action-definition.md)                                | accepted | 2026-03-21 | actions, architecture          |
 | 0008 | [Explicit specialization metadata for language-specific actions](0008-explicit-specialization-metadata-for-language-actions.md) | accepted | 2026-03-21 | actions, architecture, languages |
 | 0009 | [Explicit handler mediation of partial results across action boundaries](0009-explicit-partial-result-token-propagation.md)    | accepted | 2026-03-24 | actions, partial-results, architecture |
+| 0010 | [Explicit action-scoped progress reporting](0010-progress-reporting-for-actions.md)                                            | accepted | 2026-03-27 | actions, progress, architecture |
+| 0011 | [WM aggregates progress for multi-execution requests](0011-wm-aggregates-progress-across-multi-project-action-runs.md)       | accepted | 2026-03-28 | actions, progress, architecture, wm-server |
