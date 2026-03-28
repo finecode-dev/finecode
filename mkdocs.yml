@@ -27,6 +27,7 @@ theme:
 
 exclude_docs: |
   adr/template.md
+  plans/
 
 plugins:
   - search
@@ -70,12 +71,16 @@ nav:
       - Welcome to FineCode: index.md
       - Setup: getting-started.md
       - IDE and MCP Setup: getting-started-ide-mcp.md
-  - Concepts: concepts.md
+  - Concepts:
+      - Overview: concepts.md
+      - Why FineCode's Action Model Works: theory/why-action-model.md
   - Configuration: configuration.md
   - CLI Reference: cli.md
   - Guides:
       - Creating an Extension: guides/creating-extension.md
       - Creating a Preset: guides/creating-preset.md
+      - Designing Actions: guides/designing-actions.md
+      - Preparing Environments: guides/preparing-environments.md
       - Multi-Project Workspace: guides/workspace.md
   - Reference:
       - Built-in Actions: reference/actions.md
