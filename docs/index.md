@@ -1,12 +1,72 @@
 # FineCode
 
-**FineCode gives you one workflow for code quality and developer tooling across CLI, IDE, CI, and AI assistants.**
+**FineCode gives you one intent-based workflow for developer tooling across CLI, IDE, CI, and AI assistants.**
 
-FineCode organizes your tooling so tasks like linting, formatting, type checking, build, and publish follow one consistent workflow and can be reused across projects.
+Most teams end up wiring the same tooling logic multiple times: shell scripts for local use, YAML for CI, editor integration, and now MCP or AI-specific glue. FineCode gives you one reusable layer instead, so `lint`, `format`, `type-check`, environment preparation, and other workflows follow the same model everywhere. In FineCode, those intents are modeled as reusable actions.
 
-Start in one repository in minutes. Then package the same setup and reuse it across your other projects.
+For example, you can define `lint` once and then reuse that same intent:
 
-## Start in minutes
+- in the terminal: `python -m finecode run lint`
+- in CI: run `lint` as part of your pipeline
+- in the IDE: surface `lint` through the editor integration
+- in AI workflows: expose `lint` through MCP
+
+Start in one repository. Reuse the same standards across many. Keep the setup flexible instead of locking your project to one tool or one interface.
+
+## Why teams use FineCode
+
+### One workflow across local runs, CI, IDE, and AI
+
+FineCode lets you define actions once and run them through the surfaces developers already use:
+
+- Local CLI: `python -m finecode run lint`
+- CI: run the same actions instead of re-creating tool wiring in pipelines
+- IDE: connect through the [VSCode and MCP setup guide](getting-started-ide-mcp.md)
+- AI assistants: expose the same action surface through MCP-compatible clients
+
+That means less duplicated glue code and fewer mismatches between "what works on my machine" and "what CI expects".
+
+### Explicit action model, not ad-hoc scripts
+
+FineCode is built around explicit actions and handlers: define the operation once, then plug in the tooling that implements it.
+
+That makes it easier to:
+
+- swap tools without redesigning the whole workflow
+- keep a stable command surface as your stack evolves
+- support mixed-language workspaces with a clearer abstraction boundary
+- reason about what your tooling setup actually does
+
+If you want the deeper reasoning, the docs now explain it directly:
+
+- [Why FineCode's Action Model Works](theory/why-action-model.md)
+- [Designing Actions](guides/designing-actions.md)
+
+### Reusable standards for teams
+
+FineCode presets let you package your tooling setup once and share it across repositories. Start with a built-in preset, then turn your own conventions into a reusable standard for your team.
+
+- adopt a working baseline quickly
+- refine it in a real project
+- publish it as a shared preset
+- roll out updates through normal dependency updates
+
+See [Creating a Preset](guides/creating-preset.md) for the packaging flow.
+
+### Isolation without fragmentation
+
+FineCode keeps developer tooling isolated from runtime dependencies while still presenting one coherent workflow to the team. You get more predictable execution without forcing every tool into a bespoke setup.
+
+### Built to grow from one repo to a workspace
+
+You can start small, but the model is designed for larger codebases too:
+
+- single-project repositories
+- multi-project workspaces
+- mixed-language setups
+- team-maintained tooling standards
+
+## Try it in minutes
 
 Add FineCode and a preset to your `pyproject.toml`:
 
@@ -18,155 +78,49 @@ dev_workspace = ["finecode==0.3.*", "fine_python_recommended==0.3.*"]
 presets = [{ source = "fine_python_recommended" }]
 ```
 
-Run FineCode:
+Bootstrap the workspace tooling environment:
 
 ```bash
-# initial one-time setup
-python -m venv .venvs/dev_workspace
-source .venvs/dev_workspace/bin/activate   # Windows: .venvs\dev_workspace\Scripts\activate
-python -m pip install --group="dev_workspace"
-python -m finecode prepare-envs
+pipx run finecode bootstrap
+# or
+uvx finecode bootstrap
+```
 
-# now you are ready to use finecode
-# e.g. lint the whole workspace:
+Then activate the bootstrapped environment:
+
+```bash
+source .venvs/dev_workspace/bin/activate
+# Windows: .venvs\dev_workspace\Scripts\activate
+```
+
+Then prepare tool environments and run your first action:
+
+```bash
+python -m finecode prepare-envs
 python -m finecode run lint
 ```
 
-NOTE: `pip install --group` requires pip 25.1+.
+This gives you a ready-to-use baseline for Python quality tooling through one shared entry point.
 
-This gives you a working Python baseline with Ruff, Flake8, and isort through one shared config entry point.
+For the full setup flow, see [Getting Started](getting-started.md).
 
-## From one project to reusable standard
+## Why FineCode feels different
 
-Once this works in one project, turn it into a shared preset and use it across repositories:
+FineCode is not just a wrapper around linters and formatters. It gives those tools a shared execution model, so the workflow stays coherent as your project grows.
 
-```toml
-[dependency-groups]
-dev_workspace = ["finecode==0.3.*", "my_team_standards==0.1.*"]
+- Your team sees the same actions in terminal, CI, IDE, and AI-assisted flows
+- Your configuration has a clearer structure than a pile of unrelated tool configs
+- Your standards can move from "this repo's setup" to "our team's reusable preset"
+- Your docs can explain the model, not just list commands
 
-[tool.finecode]
-presets = [{ source = "my_team_standards" }]
-```
+## Where to go next
 
-```bash
-python -m pip install --group="dev_workspace"
-python -m finecode prepare-envs
-```
-
-Projects can then adopt updates through normal dependency updates.
-See [Creating a Preset](guides/creating-preset.md) for the packaging flow.
-
-You can also combine presets in one project (for example, a language preset and a team preset):
-
-```toml
-[tool.finecode]
-presets = [
-    { source = "fine_python_recommended" },
-    { source = "my_team_standards" },
-]
-```
-
-Typical rollout:
-
-1. Start with a preset in one repository.
-2. Tune handlers and action config to fit your workflow.
-3. Publish that setup as a preset package for your team.
-4. Reuse it across repositories.
-
-## Why developers use FineCode
-
-### Core benefits for every project
-
-- Keep tooling config in one place instead of per-tool config sprawl
-- Use the same actions in terminal, IDE, and AI-assisted workflows
-- Spend less time wiring tools together and more time shipping code
-- Keep local runs and CI behavior aligned around the same actions
-
-#### One command surface for local, CI, IDE, and AI
-
-Use the same actions and config everywhere:
-
-- IDE: [VSCode extension setup](getting-started-ide-mcp.md#vscode-setup)
-- AI assistants: [MCP setup for AI clients](getting-started-ide-mcp.md#mcp-setup-for-ai-clients)
-- Local CLI: `python -m finecode run lint check_formatting`
-- CI: `python -m finecode run lint check_formatting`
-- Git hooks: run FineCode actions before commit without requiring `pre-commit`
-
-#### Isolated environments by purpose
-
-FineCode keeps developer tooling separate from runtime dependencies:
-
-```text
-.venvs/
-  dev_workspace/   <- FineCode and presets
-  dev_no_runtime/  <- lint/format/type-check handlers
-  dev/             <- tooling that imports project code during execution
-  runtime/         <- project runtime dependencies
-```
-
-This reduces dependency cross-talk and makes tool execution more predictable.
-
-These environment roles are examples, not fixed requirements. You can shape the layout to match your workflow.
-
-#### Workspace-aware by design
-
-FineCode understands your workspace as a whole, including how individual subprojects fit together.
-
-Actions can target a single project or the entire workspace, so tasks like linting every subproject run from one command.
-
-#### Polyglot workflow, one action surface
-
-FineCode actions are not tied to a single language. A single action can include handlers for different file types (for example Python code, Markdown docs, and JSON/TOML config) while keeping one shared command surface.
-
-In practice, this means you can keep using the same `lint` and `format` actions across mixed repositories today. Broader first-class preset coverage for combinations such as Python + Rust is on the roadmap.
-
-### Additional benefits for teams
-
-- Keep standards centralized in a shared preset package
-- Roll out toolchain changes through normal dependency updates
-- Keep rollout predictable by updating a shared preset package instead of editing each repository separately
-
-## Flexible, no lock-in
-
-Presets are a starting point, not a ceiling.
-
-Disable or tune individual handlers:
-
-```toml
-[[tool.finecode.action_handler]]
-source = "fine_python_ruff.RuffLintFilesHandler"
-config.line_length = 120
-
-[tool.finecode.action.lint]
-handlers = [
-    { name = "flake8", enabled = false },
-    { name = "my_linter", source = "my_team.MyLinterHandler" },
-]
-```
-
-Replace an action handler set completely:
-
-```toml
-[tool.finecode.action.lint]
-handlers_mode = "replace"
-handlers = [
-    { name = "my_linter", source = "my_team.MyLinterHandler" },
-]
-```
-
-You can also add custom actions and handlers for project-specific workflows.
-
-## Proven in this repository
-
-FineCode is used to run quality actions in the FineCode repository itself.
-
-- TODO: Add repository-scale metrics (actions/day, CI duration impact, setup time before/after)
-
-## Ready to try FineCode?
-
-[Get started in 5 minutes ->](getting-started.md)
-
-See also: [Concepts](concepts.md), [Configuration](configuration.md), [available presets and extensions](reference/extensions.md)
+- [Getting Started](getting-started.md) for the full setup path
+- [IDE and MCP Setup](getting-started-ide-mcp.md) to connect editors and AI clients
+- [Concepts](concepts.md) for the core mental model
+- [Why FineCode's Action Model Works](theory/why-action-model.md) for the design rationale
+- [Designing Actions](guides/designing-actions.md) for action design guidance
+- [Extensions](reference/extensions.md) for available integrations
 
 ## Community
 

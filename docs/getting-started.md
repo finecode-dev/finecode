@@ -39,6 +39,12 @@ uvx finecode bootstrap
 This creates `.venvs/dev_workspace/` with FineCode installed, using the exact
 versions specified in your `pyproject.toml`.
 
+Activate it before running subsequent `python -m finecode` or `python -m pip` commands:
+
+```bash
+source .venvs/dev_workspace/bin/activate   # Windows: .venvs\dev_workspace\Scripts\activate
+```
+
 **Manual alternative** (if you prefer not to use pipx/uvx — requires pip 25.1+):
 
 ```bash
