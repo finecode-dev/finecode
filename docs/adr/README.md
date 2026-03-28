@@ -59,3 +59,4 @@ keep the same decision, would the ADR still read correctly?
 | 0006 | [Shared action types as the action identity contract](0006-shared-action-types-as-the-action-identity-contract.md)            | accepted | 2026-03-21 | actions, api, architecture, environments     |
 | 0007 | [Single registration per action definition](0007-single-registration-per-action-definition.md)                                | accepted | 2026-03-21 | actions, architecture          |
 | 0008 | [Explicit specialization metadata for language-specific actions](0008-explicit-specialization-metadata-for-language-actions.md) | accepted | 2026-03-21 | actions, architecture, languages |
+| 0009 | [Explicit handler mediation of partial results across action boundaries](0009-explicit-partial-result-token-propagation.md)    | accepted | 2026-03-24 | actions, partial-results, architecture |
