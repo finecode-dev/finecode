@@ -1,0 +1,47 @@
+.md-header__topic {
+  display: none;
+}
+
+.md-header__button.md-logo {
+  margin: 0 0 0 0.2rem;
+}
+
+.md-header__button.md-logo img {
+  height: 1.65rem;
+}
+
+/* Mobile: hide left logo button, show logo inside title area */
+@media screen and (max-width: 76.1875em) {
+  .md-header__button.md-logo {
+    display: none;
+  }
+
+  .md-header__ellipsis {
+    display: flex;
+    justify-content: center;
+  }
+
+  .md-header__logo-mobile {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+  }
+
+  .md-header__logo-mobile img {
+    height: 1.5rem;
+  }
+}
+
+/* Tablet (960px / 60em) */
+@media screen and (min-width: 60em) {
+  .md-header__ellipsis {
+    justify-content: flex-start;
+  }
+}
+
+/* Desktop: hide the logo inside title area */
+@media screen and (min-width: 76.25em) {
+  .md-header__logo-mobile {
+    display: none;
+  }
+}
