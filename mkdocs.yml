@@ -6,6 +6,8 @@ repo_name: finecode-dev/finecode
 
 theme:
   name: material
+  logo: finecode_logo_white.png
+  custom_dir: docs/overrides
   palette:
     - scheme: default
       toggle:
@@ -24,6 +26,9 @@ theme:
     - search.highlight
     - content.code.copy
     - content.code.annotate
+
+extra_css:
+  - stylesheets/extra.css
 
 exclude_docs: |
   adr/template.md
