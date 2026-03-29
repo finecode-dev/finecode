@@ -53,6 +53,7 @@ plugins:
             docstring_style: google
 
 markdown_extensions:
+  - attr_list
   - admonition
   - pymdownx.details
   - pymdownx.superfences:
@@ -94,6 +95,7 @@ nav:
       - LSP and MCP Architecture: reference/lsp-mcp-architecture.md
       - LSP Client Protocol: reference/lsp-protocol.md
       - Glossary: glossary.md
+  - About: about.md
   - Development:
       - Overview: development.md
       - WM Protocol: wm-protocol.md
