@@ -66,14 +66,18 @@ class FormatHandler(
         format_files_action_instance = self.action_runner.get_action_by_source(
             format_files_action.FormatFilesAction
         )
-        async for partial in self.action_runner.run_action_iter(
-            action=format_files_action_instance,
-            payload=format_files_action.FormatFilesRunPayload(
-                file_paths=file_uris,
-                save=payload.save,
-            ),
-            meta=run_meta,
-        ):
-            yield format_action.FormatRunResult(
-                result_by_file_path=partial.result_by_file_path
-            )
+        async with run_context.progress("Formatting files", total=len(file_uris)) as progress:
+            async for partial in self.action_runner.run_action_iter(
+                action=format_files_action_instance,
+                payload=format_files_action.FormatFilesRunPayload(
+                    file_paths=file_uris,
+                    save=payload.save,
+                ),
+                meta=run_meta,
+            ):
+                files = list(partial.result_by_file_path.keys())
+                msg = str(files[0]) if files else None
+                await progress.advance(message=msg)
+                yield format_action.FormatRunResult(
+                    result_by_file_path=partial.result_by_file_path
+                )

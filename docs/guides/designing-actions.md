@@ -207,6 +207,23 @@ Partial results and progress are orthogonal:
 
 Do not put status messages into partial results just to show activity, and do not use progress updates to smuggle result data. If the client should be able to consume it as structured output, it belongs in the result. If it only helps the user understand what the action is currently doing, it belongs in progress.
 
+### Progress must reflect the user's unit of work
+
+When a user sees "file X formatted" or "file X linted", they expect **all** handlers to have been applied to that file — not that one particular handler finished its pass. The progress grain must match the user's mental model, not the handler execution model.
+
+This has a direct consequence on how multi-file, multi-handler actions structure their execution:
+
+| Execution model | Handler order | Progress grain | User perception |
+| --- | --- | --- | --- |
+| **Per-item** (iterable payload) | All handlers run on file 1, then all on file 2, … | Per-file, after all handlers | "file X done" ✓ |
+| **Per-handler batch** (flat payload) | Handler A on all files, then handler B on all files, … | Per-handler pass, or only at end | "handler A done" or no useful progress ✗ |
+
+**Rule: when an action processes multiple items through multiple handlers and reports file-level progress, prefer the iterable payload model.** This ensures each partial result — and each progress step — represents a fully processed item.
+
+The per-handler batch model is appropriate when handlers genuinely need the full file list at once (e.g. a whole-program analysis pass), or when there is only a single handler. But if the action chains several independent per-file tools (formatter A → formatter B → save), the iterable model gives correct progress semantics by construction.
+
+**Corollary: single-tool handlers in an iterable-payload action should not report their own progress.** The parent action already advances progress after all handlers complete for each item. A handler reporting "processed file X" independently would be redundant at best — and misleading at worst, since from the user's perspective the file is not done until every handler has run. Handlers should focus on doing their work and returning a result; the orchestrating action owns the progress narrative.
+
 ### Action boundaries stay explicit
 
 When one action delegates to another, neither partial results nor progress should be treated as something that "just flows through".

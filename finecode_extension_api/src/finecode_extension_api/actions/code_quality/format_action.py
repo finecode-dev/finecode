@@ -22,7 +22,7 @@ class FormatRunPayload(code_action.RunActionPayload):
     """Files to format (``file://`` URIs). Only used when target is 'files'."""
 
 
-class FormatRunContext(code_action.RunActionContext[FormatRunPayload]): ...
+class FormatRunContext(code_action.RunActionWithPartialResultsContext[FormatRunPayload]): ...
 
 
 @dataclasses.dataclass

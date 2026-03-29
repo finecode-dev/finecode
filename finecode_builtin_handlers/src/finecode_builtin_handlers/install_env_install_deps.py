@@ -45,42 +45,45 @@ class InstallEnvInstallDepsHandler(
             install_deps_in_env_action.InstallDepsInEnvAction,
         )
 
-        deps_groups = project_def.get("dependency-groups", {})
-        env_raw_deps = deps_groups.get(env.name, [])
-        env_deps_config = (
-            project_def.get("tool", {})
-            .get("finecode", {})
-            .get("env", {})
-            .get(env.name, {})
-            .get("dependencies", {})
-        )
-        project_def_path = resource_uri_to_path(env.project_def_path)
-        dependencies: list[dict] = []
-        process_raw_deps(
-            env_raw_deps,
-            env_deps_config,
-            dependencies,
-            deps_groups,
-            project_def_path=project_def_path,
-        )
+        async with run_context.progress(f"Installing {env.name}") as progress:
+            await progress.report("Reading configuration")
+            deps_groups = project_def.get("dependency-groups", {})
+            env_raw_deps = deps_groups.get(env.name, [])
+            env_deps_config = (
+                project_def.get("tool", {})
+                .get("finecode", {})
+                .get("env", {})
+                .get(env.name, {})
+                .get("dependencies", {})
+            )
+            project_def_path = resource_uri_to_path(env.project_def_path)
+            dependencies: list[dict] = []
+            process_raw_deps(
+                env_raw_deps,
+                env_deps_config,
+                dependencies,
+                deps_groups,
+                project_def_path=project_def_path,
+            )
 
-        install_deps_payload = install_deps_in_env_action.InstallDepsInEnvRunPayload(
-            env_name=env.name,
-            venv_dir_path=env.venv_dir_path,
-            project_dir_path=path_to_resource_uri(project_def_path.parent),
-            dependencies=[
-                install_deps_in_env_action.Dependency(
-                    name=dep["name"],
-                    version_or_source=dep["version_or_source"],
-                    editable=dep["editable"],
-                )
-                for dep in dependencies
-            ],
-        )
+            install_deps_payload = install_deps_in_env_action.InstallDepsInEnvRunPayload(
+                env_name=env.name,
+                venv_dir_path=env.venv_dir_path,
+                project_dir_path=path_to_resource_uri(project_def_path.parent),
+                dependencies=[
+                    install_deps_in_env_action.Dependency(
+                        name=dep["name"],
+                        version_or_source=dep["version_or_source"],
+                        editable=dep["editable"],
+                    )
+                    for dep in dependencies
+                ],
+            )
 
-        result = await self.action_runner.run_action(
-            action=install_deps_in_env_action_instance,
-            payload=install_deps_payload,
-            meta=run_context.meta,
-        )
-        return InstallEnvsRunResult(errors=result.errors)
+            await progress.report("Installing dependencies")
+            result = await self.action_runner.run_action(
+                action=install_deps_in_env_action_instance,
+                payload=install_deps_payload,
+                meta=run_context.meta,
+            )
+            return InstallEnvsRunResult(errors=result.errors)
