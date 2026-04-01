@@ -13,6 +13,9 @@ from flake8.plugins import finder
 
 from finecode_extension_api import code_action
 from finecode_extension_api.actions.code_quality import lint_files_action
+from finecode_extension_api.actions.code_quality.lint_python_files_action import (
+    LintPythonFilesAction,
+)
 from finecode_extension_api.interfaces import (
     icache,
     ifileeditor,
@@ -118,7 +121,7 @@ class Flake8LintFilesHandlerConfig(code_action.ActionHandlerConfig):
 
 
 class Flake8LintFilesHandler(
-    code_action.ActionHandler[lint_files_action.LintFilesAction, Flake8LintFilesHandlerConfig]
+    code_action.ActionHandler[LintPythonFilesAction, Flake8LintFilesHandlerConfig]
 ):
     CACHE_KEY = "flake8"
     FILE_OPERATION_AUTHOR = ifileeditor.FileOperationAuthor(

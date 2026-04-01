@@ -55,7 +55,7 @@ Type checking via [Mypy](https://mypy-lang.org/).
 
 | Handler | Action | Description |
 |---|---|---|
-| `fine_python_mypy.MypyLintHandler` | `lint` / `lint_files` | Type-check Python files |
+| `fine_python_mypy.MypyLintFilesHandler` | `lint_python_files` | Type-check Python files |
 
 ---
 

@@ -9,7 +9,10 @@ from pathlib import Path
 import fine_python_mypy.output_parser as output_parser
 
 from finecode_extension_api import code_action
-from finecode_extension_api.actions.code_quality import lint_action
+from finecode_extension_api.actions.code_quality import lint_files_action
+from finecode_extension_api.actions.code_quality.lint_python_files_action import (
+    LintPythonFilesAction,
+)
 from finecode_extension_api.interfaces import (
     icache,
     icommandrunner,
@@ -18,20 +21,21 @@ from finecode_extension_api.interfaces import (
     iextensionrunnerinfoprovider,
     iprojectinfoprovider,
 )
+from finecode_extension_api.resource_uri import path_to_resource_uri, resource_uri_to_path
 
 
 class DmypyFailedError(Exception): ...
 
 
 @dataclasses.dataclass
-class MypyManyCodeActionConfig(code_action.ActionHandlerConfig): ...
+class MypyLintFilesHandlerConfig(code_action.ActionHandlerConfig): ...
 
 
-class MypyLintHandler(
-    code_action.ActionHandler[lint_action.LintAction, MypyManyCodeActionConfig]
+class MypyLintFilesHandler(
+    code_action.ActionHandler[LintPythonFilesAction, MypyLintFilesHandlerConfig]
 ):
     CACHE_KEY = "mypy"
-    FILE_OPERATION_AUTHOR = ifileeditor.FileOperationAuthor(erovid)
+    FILE_OPERATION_AUTHOR = ifileeditor.FileOperationAuthor('Mypy')
 
     DMYPY_ARGS = [
         "--no-color-output",
@@ -72,22 +76,23 @@ class MypyLintHandler(
 
     async def run_on_single_file(
         self,
+        file_uri: str,
         file_path: Path,
         project_path: Path,
         all_project_files: list[Path],
         action_run_id: int,
-    ) -> lint_action.LintRunResult:
+    ) -> lint_files_action.LintFilesRunResult:
         # if mypy was run on the file, the result will be found in cache. If result
         # is not in cache, we need additionally to check whether mypy is not running
         # on the file right now, because we run mypy on the whole packages.
-        messages: dict[str, list[lint_action.LintMessage]] = {}
+        messages: dict[str, list[lint_files_action.LintMessage]] = {}
         # TODO: right cache with dependencies
         try:
             cached_lint_messages = await self.cache.get_file_cache(
                 file_path, self.CACHE_KEY
             )
-            messages[str(file_path)] = cached_lint_messages
-            return lint_action.LintRunResult(messages=messages)
+            messages[file_uri] = cached_lint_messages
+            return lint_files_action.LintFilesRunResult(messages=messages)
         except icache.CacheMissException:
             pass
 
@@ -105,8 +110,8 @@ class MypyLintHandler(
                 # if checking failed, there are no results in cache
                 cached_lint_messages = []
 
-            messages[str(file_path)] = cached_lint_messages
-            return lint_action.LintRunResult(messages=messages)
+            messages[file_uri] = cached_lint_messages
+            return lint_files_action.LintFilesRunResult(messages=messages)
         else:
             # save file versions at the beginning because file can be changed during
             # checking and we want to cache result for current version, not for changed
@@ -129,7 +134,7 @@ class MypyLintHandler(
                     project_path, all_project_files
                 )
                 messages = {
-                    str(file_path): lint_messages
+                    path_to_resource_uri(file_path): lint_messages
                     for (
                         file_path,
                         lint_messages,
@@ -159,12 +164,12 @@ class MypyLintHandler(
                 project_checked_event.set()
                 del self._projects_being_checked_done_events[project_path]
 
-            return lint_action.LintRunResult(messages=messages)
+            return lint_files_action.LintFilesRunResult(messages=messages)
 
     async def _run_dmypy_on_project(
         self, project_dir_path: Path, all_project_files: list[Path]
-    ) -> dict[Path, list[lint_action.LintMessage]]:
-        new_messages: dict[str, list[lint_action.LintMessage]] = {}
+    ) -> dict[Path, list[lint_files_action.LintMessage]]:
+        new_messages: dict[str, list[lint_files_action.LintMessage]] = {}
         if project_dir_path not in self._process_lock_by_cwd:
             self._process_lock_by_cwd[project_dir_path] = asyncio.Lock()
 
@@ -181,7 +186,9 @@ class MypyLintHandler(
             content=dmypy_run_output, severity={}
         )
         new_messages.update(project_lint_messages)
-        all_processed_files_with_messages: dict[Path, list[lint_action.LintMessage]] = {
+        all_processed_files_with_messages: dict[
+            Path, list[lint_files_action.LintMessage]
+        ] = {
             file_path: [] for file_path in all_project_files
         }
         all_processed_files_with_messages.update(
@@ -194,10 +201,15 @@ class MypyLintHandler(
 
     async def run(
         self,
-        payload: lint_action.LintRunPayload,
-        run_context: lint_action.LintRunContext,
+        payload: lint_files_action.LintFilesRunPayload,
+        run_context: lint_files_action.LintFilesRunContext,
     ) -> None:
-        file_paths = [file_path async for file_path in payload]
+        file_uris = [file_uri async for file_uri in payload]
+        file_paths = [resource_uri_to_path(file_uri) for file_uri in file_uris]
+        file_uri_by_path = {
+            file_path: file_uri
+            for file_path, file_uri in zip(file_paths, file_uris, strict=False)
+        }
 
         files_by_projects: dict[Path, list[Path]] = self.group_files_by_projects(
             file_paths, self.project_info_provider.get_current_project_dir_path()
@@ -205,9 +217,11 @@ class MypyLintHandler(
 
         for project_path, project_files in files_by_projects.items():
             for file_path in project_files:
+                file_uri = file_uri_by_path.get(file_path, path_to_resource_uri(file_path))
                 run_context.partial_result_scheduler.schedule(
-                    file_path,
+                    file_uri,
                     self.run_on_single_file(
+                        file_uri,
                         file_path,
                         project_path,
                         project_files,
