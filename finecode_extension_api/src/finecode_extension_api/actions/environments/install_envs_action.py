@@ -20,10 +20,7 @@ class InstallEnvsRunPayload(code_action.RunActionPayload):
     """Filter: when set, only in environments whose name is in this list dependencies will be installed. Applied during discovery only."""
 
 
-
-class InstallEnvsRunContext(
-    code_action.RunActionContext[InstallEnvsRunPayload]
-):
+class InstallEnvsRunContext(code_action.RunActionContext[InstallEnvsRunPayload]):
     def __init__(
         self,
         run_id: int,
@@ -40,9 +37,7 @@ class InstallEnvsRunContext(
 
         self.envs: list[EnvInfo] | None = None
         self.project_def_path_by_venv_dir_path: dict[ResourceUri, ResourceUri] = {}
-        self.project_def_by_venv_dir_path: dict[
-            ResourceUri, dict[str, typing.Any]
-        ] = {}
+        self.project_def_by_venv_dir_path: dict[ResourceUri, dict[str, typing.Any]] = {}
 
     async def init(self) -> None:
         self.envs = list(self.initial_payload.envs)

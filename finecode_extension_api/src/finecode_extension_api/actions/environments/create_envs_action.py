@@ -69,9 +69,7 @@ class CreateEnvsRunResult(code_action.RunActionResult):
 
 
 class CreateEnvsAction(
-    code_action.Action[
-        CreateEnvsRunPayload, CreateEnvsRunContext, CreateEnvsRunResult
-    ]
+    code_action.Action[CreateEnvsRunPayload, CreateEnvsRunContext, CreateEnvsRunResult]
 ):
     """Create environments for the workspace(without installing dependencies, only environment)."""
 

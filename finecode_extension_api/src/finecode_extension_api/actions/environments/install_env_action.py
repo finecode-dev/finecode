@@ -13,9 +13,7 @@ class InstallEnvRunPayload(code_action.RunActionPayload):
     env: EnvInfo
 
 
-class InstallEnvRunContext(
-    code_action.RunActionContext[InstallEnvRunPayload]
-):
+class InstallEnvRunContext(code_action.RunActionContext[InstallEnvRunPayload]):
     def __init__(
         self,
         run_id: int,
