@@ -33,7 +33,7 @@ You can declare or extend actions directly in your project:
 source = "finecode_extension_api.actions.lint.LintAction"
 handlers = [
     { name = "ruff", source = "fine_python_ruff.RuffLintFilesHandler", env = "dev_no_runtime", dependencies = ["fine_python_ruff~=0.2.0"] },
-    { name = "mypy", source = "fine_python_mypy.MypyLintHandler", env = "dev_no_runtime", dependencies = ["fine_python_mypy~=0.3.0"] },
+    { name = "mypy", source = "fine_python_mypy.MypyLintFilesHandler", env = "dev_no_runtime", dependencies = ["fine_python_mypy~=0.3.0"] },
 ]
 ```
 
@@ -46,7 +46,7 @@ To completely replace the handlers from presets for an action:
 source = "finecode_extension_api.actions.lint.LintAction"
 handlers_mode = "replace"
 handlers = [
-    { name = "mypy", source = "fine_python_mypy.MypyLintHandler", env = "dev_no_runtime", dependencies = ["fine_python_mypy~=0.3.0"] },
+    { name = "mypy", source = "fine_python_mypy.MypyLintFilesHandler", env = "dev_no_runtime", dependencies = ["fine_python_mypy~=0.3.0"] },
 ]
 ```
 

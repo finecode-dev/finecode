@@ -53,7 +53,7 @@ flowchart LR
 
 **Sequential mode** (default): handlers run one after another. Each handler can read the accumulated result so far via `context.current_result`. Useful when handlers depend on each other's output (e.g. formatter → save-to-disk).
 
-**Concurrent mode** (`run_handlers_concurrently: true`): all handlers run in parallel and results are merged afterward. Accessing `context.current_result` in concurrent mode raises `RuntimeError`. Useful for independent linters.
+**Concurrent mode** (`HANDLER_EXECUTION = HandlerExecution.CONCURRENT`): all handlers run in parallel and results are merged afterward. Accessing `context.current_result` in concurrent mode raises `RuntimeError`. Useful for independent linters.
 
 ## Service
 

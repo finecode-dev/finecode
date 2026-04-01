@@ -62,7 +62,7 @@ Format a source artifact or specific files.
 | `file_paths` | `list[Path]` | `[]` | Files to format (required when `target="files"`) |
 
 !!! note
-    The `save` payload field controls whether changes are written to disk. The built-in `SaveFormatFilesHandler` reads this flag. If you omit the save handler from your preset, files won't be written regardless.
+    The `save` payload field controls whether changes are written to disk. The built-in `SaveFormatFileHandler` reads this flag. If you omit the save handler from your preset, files won't be written regardless.
 
 ---
 
@@ -73,20 +73,54 @@ Format a specific set of files. Internal action dispatched by `format`.
 - **Source:** `finecode_extension_api.actions.FormatFilesAction`
 - **Default handler execution:** sequential
 
-The built-in `FormatFilesDispatchHandler` groups the given files by language and dispatches each language's batch to the matching language subaction — any action declaring `PARENT_ACTION = FormatFilesAction` and the corresponding `LANGUAGE`.
+The built-in `FormatFilesIterateHandler` iterates over all files and delegates each to `format_file`. Language routing is handled by `format_file` via its dispatch handler — `format_files` has no language awareness.
 
 ---
 
-## `format_python_files`
+## `format_file`
 
-Format Python source files. Language-specific subaction of `format_files`.
+Format a single file. Item-level action; handlers run sequentially as a pipeline.
 
-- **Source:** `finecode_extension_api.actions.FormatPythonFilesAction`
+- **Source:** `finecode_extension_api.actions.FormatFileAction`
 - **Default handler execution:** sequential
 
-**Payload fields:** same as `format_files`.
+**Payload fields:**
 
-Register Python formatting tools (ruff, black, …) as handlers for this action.
+| Field | Type | Description |
+|---|---|---|
+| `file_path` | `ResourceUri` | The single file to format |
+| `save` | `bool` | Whether to write the result back to disk |
+
+**Run context kwargs** (`FormatFileCallerRunContextKwargs`):
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `file_editor_session` | `IFileEditorSession \| None` | `None` | Shared session from a parent action. If absent, the context opens its own. |
+| `file_info` | `FileInfo \| None` | `None` | Pre-read file content. If absent, the context reads the file itself (with `block=True`). |
+
+When called standalone (e.g. IDE on-save), no kwargs are needed — the context creates its own session and reads the file. When called from `format_files`, the iterate handler passes the parent session. When called from the dispatch handler into a language subaction, both session and file info are passed to avoid redundant reads.
+
+**Result fields:**
+
+| Field | Type | Description |
+|---|---|---|
+| `changed` | `bool` | Whether the file content was modified |
+| `code` | `str` | The formatted content |
+
+Handlers read and update `run_context.file_info` to pass formatted content to the next handler in the pipeline.
+
+---
+
+## `format_python_file`
+
+Format a single Python file. Language-specific item-level subaction of `format_file`.
+
+- **Source:** `finecode_extension_api.actions.FormatPythonFileAction`
+- **Default handler execution:** sequential
+
+**Payload fields:** same as `format_file`.
+
+Register Python formatting tools (ruff, isort, …) as handlers for this action. Handler order matters — they run sequentially as a pipeline.
 
 ---
 

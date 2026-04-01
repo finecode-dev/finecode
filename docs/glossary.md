@@ -8,6 +8,10 @@ A named operation (for example `lint`, `format`, `build_artifact`).
 
 A concrete implementation of an action. Multiple handlers can be registered for a single action, and they run sequentially or concurrently.
 
+## Collection Action
+
+An action whose payload carries multiple items and whose result describes that batch, often with per-item entries. Used when handlers need to iterate over, correlate, or optimize across the full set of items.
+
 ## Execution Environment
 
 A named, isolated context in which handlers and project code execute (e.g. `runtime`, `dev_workspace`, `dev_no_runtime`). Each execution environment has its own dependency set, serving a specific purpose — for example, the project's runtime, dev tooling, or test execution. The concept is inter-language; in Python each execution environment is materialized as a virtual environment. Configuration uses the shorthand `env`.
@@ -15,6 +19,10 @@ A named, isolated context in which handlers and project code execute (e.g. `runt
 ## Extension Runner (ER)
 
 A process that runs inside a specific execution environment and executes action handler code. The Workspace Manager spawns one ER per (project, execution environment) pair, on demand. ERs communicate with the WM over JSON-RPC. The concept is inter-language — `finecode_extension_runner` is the Python implementation.
+
+## Item Action
+
+An action whose payload carries one item and whose result describes that one item. Used when handlers naturally operate on a single unit of work.
 
 ## Preset
 
