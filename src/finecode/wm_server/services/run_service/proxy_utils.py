@@ -779,15 +779,14 @@ async def _run_action_in_env_runner(
     run_trigger: runner_client.RunActionTrigger,
     dev_env: runner_client.DevEnv,
     result_formats: list[runner_client.RunResultFormat],
+    wal_run_id: str,
     initialize_all_handlers: bool = False,
     progress_token: int | str | None = None,
-    wal_run_id: str | None = None,
 ):
-    effective_wal_run_id = wal_run_id or wal.new_wal_run_id()
     wal.emit_run_event(
         ws_context.wal_writer,
         event_type=wal.WalEventType.RUNNER_SELECTED,
-        wal_run_id=effective_wal_run_id,
+        wal_run_id=wal_run_id,
         action_name=action_name,
         project_path=project_def.dir_path,
         run_trigger=run_trigger.value,
@@ -811,6 +810,7 @@ async def _run_action_in_env_runner(
     try:
         options: dict[str, typing.Any] = {
             "result_formats": result_formats,
+            "wal_run_id": wal_run_id,
             "meta": {"trigger": run_trigger.value, "dev_env": dev_env.value},
         }
         if progress_token is not None:
@@ -818,7 +818,7 @@ async def _run_action_in_env_runner(
         wal.emit_run_event(
             ws_context.wal_writer,
             event_type=wal.WalEventType.RUN_DISPATCHED,
-            wal_run_id=effective_wal_run_id,
+            wal_run_id=wal_run_id,
             action_name=action_name,
             project_path=project_def.dir_path,
             run_trigger=run_trigger.value,
@@ -837,7 +837,7 @@ async def _run_action_in_env_runner(
         wal.emit_run_event(
             ws_context.wal_writer,
             event_type=wal.WalEventType.RUN_COMPLETED,
-            wal_run_id=effective_wal_run_id,
+            wal_run_id=wal_run_id,
             action_name=action_name,
             project_path=project_def.dir_path,
             run_trigger=run_trigger.value,
@@ -848,7 +848,7 @@ async def _run_action_in_env_runner(
         wal.emit_run_event(
             ws_context.wal_writer,
             event_type=wal.WalEventType.RUN_FAILED,
-            wal_run_id=effective_wal_run_id,
+            wal_run_id=wal_run_id,
             action_name=action_name,
             project_path=project_def.dir_path,
             run_trigger=run_trigger.value,

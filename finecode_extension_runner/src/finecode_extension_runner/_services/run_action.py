@@ -6,17 +6,21 @@ import time
 import typing
 
 import deepmerge
-from loguru import logger
 import pydantic
+from loguru import logger
 from pydantic.dataclasses import dataclass as pydantic_dataclass
 
 from finecode_extension_api import code_action, textstyler, service
 from finecode_extension_api.interfaces import iactionrunner
-from finecode_extension_runner import context, domain, global_state
 from finecode_extension_runner import (
+    context,
+    domain,
+    er_wal,
+    global_state,
     partial_result_sender as partial_result_sender_module,
+    run_utils,
+    schemas,
 )
-from finecode_extension_runner import run_utils, schemas
 from finecode_extension_runner.di import resolver as di_resolver
 
 last_run_id: int = 0
@@ -146,6 +150,8 @@ async def run_action(
     # - execution of handlers can be concurrent or sequential. But executions of handler
     #   on iterable payloads(single parts) are always concurrent.
 
+    wal_run_id = meta.wal_run_id
+
     if run_id is None:
         global last_run_id
         run_id = last_run_id
@@ -254,6 +260,7 @@ async def run_action(
                 )
                 for handler in action_def.handlers:
                     await execute_action_handler(
+                        action_name=action_def.name,
                         handler=handler,
                         payload=payload,
                         run_context=run_context_instance,
@@ -262,8 +269,20 @@ async def run_action(
                         action_exec_info=action_exec_info,
                         runner_context=runner_context,
                         partial_result_token=partial_result_token,
+                        wal_run_id=wal_run_id,
+                        trigger=meta.trigger,
+                        dev_env=meta.dev_env,
                         tracking_sender=tracking_sender,
                     )
+
+                if not isinstance(
+                    run_context_instance,
+                    code_action.RunActionWithPartialResultsContext,
+                ):
+                    raise ActionFailedException(
+                        f"Action '{action_def.name}' uses iterable payload but run context does not provide partial_result_scheduler"
+                    )
+                scheduler = run_context_instance.partial_result_scheduler
 
                 parts = [part async for part in payload]
                 subresults_tasks: list[asyncio.Task] = []
@@ -281,16 +300,14 @@ async def run_action(
                 try:
                     async with asyncio.TaskGroup() as tg:
                         for part in parts:
-                            if part not in run_context.partial_result_scheduler.coroutines_by_key:
+                            if part not in scheduler.coroutines_by_key:
                                 logger.warning(
                                     f"R{run_id} | No coroutines scheduled for part {part} "
                                     f"of action '{action_def.name}', skipping"
                                 )
                                 continue
-                            part_coros = (
-                                run_context.partial_result_scheduler.coroutines_by_key[part]
-                            )
-                            del run_context.partial_result_scheduler.coroutines_by_key[part]
+                            part_coros = scheduler.coroutines_by_key[part]
+                            del scheduler.coroutines_by_key[part]
                             if execute_handlers_concurrently:
                                 coro = run_subresult_coros_concurrently(
                                     part_coros,
@@ -300,6 +317,10 @@ async def run_action(
                                     action_def.name,
                                     run_id,
                                     partial_result_queue=partial_result_queue,
+                                    tracking_sender=tracking_sender,
+                                    wal_run_id=wal_run_id,
+                                    trigger=meta.trigger,
+                                    dev_env=meta.dev_env,
                                 )
                             else:
                                 coro = run_subresult_coros_sequentially(
@@ -310,6 +331,10 @@ async def run_action(
                                     action_def.name,
                                     run_id,
                                     partial_result_queue=partial_result_queue,
+                                    tracking_sender=tracking_sender,
+                                    wal_run_id=wal_run_id,
+                                    trigger=meta.trigger,
+                                    dev_env=meta.dev_env,
                                 )
                             subresult_task = tg.create_task(coro)
                             subresults_tasks.append(subresult_task)
@@ -347,6 +372,7 @@ async def run_action(
                             for handler in action_def.handlers:
                                 handler_task = tg.create_task(
                                     execute_action_handler(
+                                        action_name=action_def.name,
                                         handler=handler,
                                         payload=payload,
                                         run_context=run_context_instance,
@@ -355,6 +381,9 @@ async def run_action(
                                         action_exec_info=action_exec_info,
                                         runner_context=runner_context,
                                         partial_result_token=partial_result_token,
+                                        wal_run_id=wal_run_id,
+                                        trigger=meta.trigger,
+                                        dev_env=meta.dev_env,
                                         tracking_sender=tracking_sender,
                                     )
                                 )
@@ -379,6 +408,7 @@ async def run_action(
                     for handler in action_def.handlers:
                         try:
                             handler_result = await execute_action_handler(
+                                action_name=action_def.name,
                                 handler=handler,
                                 payload=payload,
                                 run_context=run_context_instance,
@@ -387,6 +417,9 @@ async def run_action(
                                 action_exec_info=action_exec_info,
                                 runner_context=runner_context,
                                 partial_result_token=partial_result_token,
+                                wal_run_id=wal_run_id,
+                                trigger=meta.trigger,
+                                dev_env=meta.dev_env,
                                 tracking_sender=tracking_sender,
                             )
                         except ActionFailedException as exception:
@@ -414,6 +447,18 @@ async def run_action(
     logger.trace(
         f"R{run_id} | Run action end '{action_def.name}', duration: {duration}ms"
     )
+
+    if tracking_sender is not None and tracking_sender.has_sent:
+        er_wal.emit_run_event(
+            global_state.wal_writer,
+            event_type=er_wal.ErWalEventType.PARTIAL_RESULT_FINAL_SENT,
+            wal_run_id=wal_run_id,
+            action_name=action_def.name,
+            project_path=global_state.project_dir_path or "",
+            trigger=meta.trigger,
+            dev_env=meta.dev_env,
+            payload={"run_id": run_id},
+        )
 
     # if partial results were sent, `action_result` may be None
     if action_result is not None and not isinstance(
@@ -453,11 +498,11 @@ async def run_action_raw(
 
     try:
         action = project_def.actions[request.action_name]
-    except KeyError:
+    except KeyError as exception:
         logger.error(f"R{run_id} | Action {request.action_name} not found")
         raise ActionFailedException(
             f"R{run_id} | Action {request.action_name} not found"
-        )
+        ) from exception
 
     action_name = request.action_name
 
@@ -477,12 +522,33 @@ async def run_action_raw(
     payload: code_action.RunActionPayload | None = None
     if action_exec_info.payload_type is not None:
         payload_type_with_validation = pydantic_dataclass(action_exec_info.payload_type)
-        payload = payload_type_with_validation(**request.params)
+        payload = typing.cast(
+            code_action.RunActionPayload,
+            payload_type_with_validation(**request.params),
+        )
+
+    wal_run_id = getattr(options, "wal_run_id", None)
+    if not isinstance(wal_run_id, str) or wal_run_id.strip() == "":
+        raise ActionFailedException("Missing required wal_run_id in run options")
+
+    meta = dataclasses.replace(options.meta, wal_run_id=wal_run_id)
+
+    project_path = global_state.project_dir_path or ""
+    er_wal.emit_run_event(
+        global_state.wal_writer,
+        event_type=er_wal.ErWalEventType.RUN_DISPATCHED,
+        wal_run_id=wal_run_id,
+        action_name=request.action_name,
+        project_path=project_path,
+        trigger=options.meta.trigger,
+        dev_env=options.meta.dev_env,
+        payload={"run_id": run_id},
+    )
 
     action_result = await run_action(
         action_def=action,
         payload=payload,
-        meta=options.meta,
+        meta=meta,
         partial_result_token=options.partial_result_token,
         progress_token=options.progress_token,
         run_id=run_id,
@@ -498,7 +564,7 @@ def action_result_to_run_action_response(
     action_result: code_action.RunActionResult | None,
     asked_result_formats: list[typing.Literal["json"] | typing.Literal["string"]],
 ) -> schemas.RunActionResponse:
-    result_by_format: dict[str, dict[str, typing.Any] | str | None] = {}
+    result_by_format: dict[str, dict[str, typing.Any] | str] = {}
     run_return_code = code_action.RunReturnCode.SUCCESS
     if isinstance(action_result, code_action.RunActionResult):
         run_return_code = action_result.return_code
@@ -533,10 +599,15 @@ def create_action_exec_info(action: domain.ActionDeclaration) -> domain.ActionEx
             "Action class expected to be a subclass of finecode_extension_api.code_action.Action"
         )
 
-    payload_type = action_type_def.PAYLOAD_TYPE
-    run_context_type = action_type_def.RUN_CONTEXT_TYPE
-    result_type = action_type_def.RESULT_TYPE
-    handler_execution = action_type_def.HANDLER_EXECUTION
+    typed_action_type_def = typing.cast(
+        type[code_action.Action[typing.Any, typing.Any, typing.Any]],
+        action_type_def,
+    )
+
+    payload_type = typed_action_type_def.PAYLOAD_TYPE
+    run_context_type = typed_action_type_def.RUN_CONTEXT_TYPE
+    result_type = typed_action_type_def.RESULT_TYPE
+    handler_execution = typed_action_type_def.HANDLER_EXECUTION
 
     # TODO: validate that classes and correct subclasses?
 
@@ -638,7 +709,7 @@ async def ensure_handler_instantiated(
         try:
             config_type = pydantic_dataclass(param_type)
         except pydantic.ValidationError as exception:
-            raise ActionFailedException(exception.errors()) from exception
+            raise ActionFailedException(str(exception.errors())) from exception
         return config_type(**handler_raw_config)
 
     def get_process_executor(param_type):
@@ -709,6 +780,7 @@ async def ensure_handler_instantiated(
 
 
 async def execute_action_handler(
+    action_name: str,
     handler: domain.ActionHandlerDeclaration,
     payload: code_action.RunActionPayload | None,
     run_context: code_action.RunActionContext | AsyncPlaceholderContext,
@@ -717,9 +789,23 @@ async def execute_action_handler(
     action_cache: domain.ActionCache,
     runner_context: context.RunnerContext,
     partial_result_token: int | str | None = None,
+    wal_run_id: str | None = None,
+    trigger: str = "unknown",
+    dev_env: str = "unknown",
     tracking_sender: _TrackingPartialResultSender | None = None,
-) -> code_action.RunActionResult:
+) -> code_action.RunActionResult | None:
     logger.trace(f"R{run_id} | Run {handler.name} on {str(payload)[:100]}...")
+    if wal_run_id is not None:
+        er_wal.emit_run_event(
+            global_state.wal_writer,
+            event_type=er_wal.ErWalEventType.HANDLER_STARTED,
+            wal_run_id=wal_run_id,
+            action_name=action_name,
+            project_path=global_state.project_dir_path or "",
+            trigger=trigger,
+            dev_env=dev_env,
+            payload={"run_id": run_id, "handler": handler.name},
+        )
     if handler.name in action_cache.handler_cache_by_name:
         handler_cache = action_cache.handler_cache_by_name[handler.name]
     else:
@@ -732,7 +818,6 @@ async def execute_action_handler(
     if handler_cache.instance is not None:
         handler_instance = handler_cache.instance
         handler_run_func = handler_instance.run
-        exec_info = handler_cache.exec_info
         # TODO: check status of exec_info?
         logger.trace(
             f"R{run_id} | Instance of action handler {handler.name} found in cache"
@@ -752,7 +837,6 @@ async def execute_action_handler(
                 handler.source
             )
             handler_run_func = action_handler
-        exec_info = handler_cache.exec_info
 
     def get_run_payload(param_type):
         return payload
@@ -774,22 +858,42 @@ async def execute_action_handler(
         # functions which are class methods. Use `isawaitable` on result instead.
         call_result = handler_run_func(**args)
         if inspect.isasyncgen(call_result):
-            execution_result = None
+            stream_result: code_action.RunActionResult | None = None
             async for partial_result in call_result:
+                partial_result = typing.cast(code_action.RunActionResult, partial_result)
                 if partial_result_token is not None:
+                    if (
+                        tracking_sender is not None
+                        and wal_run_id is not None
+                        and not tracking_sender.has_sent
+                    ):
+                        er_wal.emit_run_event(
+                            global_state.wal_writer,
+                            event_type=er_wal.ErWalEventType.PARTIAL_RESULT_FIRST_SENT,
+                            wal_run_id=wal_run_id,
+                            action_name=action_name,
+                            project_path=global_state.project_dir_path or "",
+                            trigger=trigger,
+                            dev_env=dev_env,
+                            payload={"run_id": run_id, "handler": handler.name},
+                        )
+                        tracking_sender.has_sent = True
                     await partial_result_sender.schedule_sending(
                         partial_result_token, partial_result
                     )
-                if execution_result is None:
+                if stream_result is None:
                     result_type_pydantic = pydantic_dataclass(type(partial_result))
-                    execution_result = result_type_pydantic(
-                        **dataclasses.asdict(partial_result)
+                    stream_result = typing.cast(
+                        code_action.RunActionResult,
+                        result_type_pydantic(**dataclasses.asdict(partial_result)),
                     )
                 else:
-                    execution_result.update(partial_result)
+                    stream_result.update(partial_result)
             if partial_result_token is not None:
                 await partial_result_sender.send_all_immediately()
                 execution_result = None  # partials already sent
+            else:
+                execution_result = stream_result
         elif inspect.isawaitable(call_result):
             handler_result = await call_result
             if tracking_sender is not None and tracking_sender.has_sent:
@@ -802,7 +906,7 @@ async def execute_action_handler(
     except Exception as exception:
         if isinstance(exception, code_action.StopActionRunWithResult):
             action_result = exception.result
-            response = action_result_to_run_action_response(action_result, "string")
+            response = action_result_to_run_action_response(action_result, ["string"])
             raise StopWithResponse(response=response) from exception
         elif isinstance(
             exception, iactionrunner.BaseRunActionException
@@ -812,6 +916,17 @@ async def execute_action_handler(
             logger.error("Unhandled exception in action handler:")
             error_str = str(exception)
         logger.exception(exception)
+        if wal_run_id is not None:
+            er_wal.emit_run_event(
+                global_state.wal_writer,
+                event_type=er_wal.ErWalEventType.HANDLER_FAILED,
+                wal_run_id=wal_run_id,
+                action_name=action_name,
+                project_path=global_state.project_dir_path or "",
+                trigger=trigger,
+                dev_env=dev_env,
+                payload={"run_id": run_id, "handler": handler.name, "error": error_str},
+            )
         raise ActionFailedException(
             f"Running action handler '{handler.name}' failed(Run {run_id}): {error_str}"
         ) from exception
@@ -822,17 +937,32 @@ async def execute_action_handler(
         f"R{run_id} | End of execution of action handler {handler.name}"
         f" on {str(payload)[:100]}..., duration: {duration}ms"
     )
+    if wal_run_id is not None:
+        er_wal.emit_run_event(
+            global_state.wal_writer,
+            event_type=er_wal.ErWalEventType.HANDLER_COMPLETED,
+            wal_run_id=wal_run_id,
+            action_name=action_name,
+            project_path=global_state.project_dir_path or "",
+            trigger=trigger,
+            dev_env=dev_env,
+            payload={"run_id": run_id, "handler": handler.name, "duration_ms": duration},
+        )
     return execution_result
 
 
 async def run_subresult_coros_concurrently(
     coros: list[collections.abc.Coroutine],
     send_partial_results: bool,
-    partial_result_token: int | str,
+    partial_result_token: int | str | None,
     partial_result_sender: partial_result_sender_module.PartialResultSender,
     action_name: str,
     run_id: int,
     partial_result_queue: asyncio.Queue | None = None,
+    tracking_sender: _TrackingPartialResultSender | None = None,
+    wal_run_id: str | None = None,
+    trigger: str = "unknown",
+    dev_env: str = "unknown",
 ) -> code_action.RunActionResult | None:
     coros_tasks: list[asyncio.Task] = []
     try:
@@ -868,8 +998,9 @@ async def run_subresult_coros_concurrently(
                     action_subresult_type
                 )
                 action_subresult_dict = dataclasses.asdict(coro_result)
-                action_subresult = action_subresult_type_pydantic(
-                    **action_subresult_dict
+                action_subresult = typing.cast(
+                    code_action.RunActionResult,
+                    action_subresult_type_pydantic(**action_subresult_dict),
                 )
             else:
                 action_subresult.update(coro_result)
@@ -878,6 +1009,21 @@ async def run_subresult_coros_concurrently(
         await partial_result_queue.put(action_subresult)
         return None
     elif send_partial_results:
+        if action_subresult is None:
+            return None
+        if tracking_sender is not None and wal_run_id is not None and not tracking_sender.has_sent:
+            er_wal.emit_run_event(
+                global_state.wal_writer,
+                event_type=er_wal.ErWalEventType.PARTIAL_RESULT_FIRST_SENT,
+                wal_run_id=wal_run_id,
+                action_name=action_name,
+                project_path=global_state.project_dir_path or "",
+                trigger=trigger,
+                dev_env=dev_env,
+                payload={"run_id": run_id},
+            )
+            tracking_sender.has_sent = True
+        assert partial_result_token is not None
         await partial_result_sender.schedule_sending(
             partial_result_token, action_subresult
         )
@@ -889,11 +1035,15 @@ async def run_subresult_coros_concurrently(
 async def run_subresult_coros_sequentially(
     coros: list[collections.abc.Coroutine],
     send_partial_results: bool,
-    partial_result_token: int | str,
+    partial_result_token: int | str | None,
     partial_result_sender: partial_result_sender_module.PartialResultSender,
     action_name: str,
     run_id: int,
     partial_result_queue: asyncio.Queue | None = None,
+    tracking_sender: _TrackingPartialResultSender | None = None,
+    wal_run_id: str | None = None,
+    trigger: str = "unknown",
+    dev_env: str = "unknown",
 ) -> code_action.RunActionResult | None:
     action_subresult: code_action.RunActionResult | None = None
     for coro in coros:
@@ -906,7 +1056,7 @@ async def run_subresult_coros_sequentially(
             logger.exception(e)
             raise ActionFailedException(
                 f"Running action handlers of '{action_name}' failed(Run {run_id}): {e}"
-            )
+            ) from e
 
         if coro_result is not None:
             if action_subresult is None:
@@ -918,6 +1068,21 @@ async def run_subresult_coros_sequentially(
         await partial_result_queue.put(action_subresult)
         return None
     elif send_partial_results:
+        if action_subresult is None:
+            return None
+        if tracking_sender is not None and wal_run_id is not None and not tracking_sender.has_sent:
+            er_wal.emit_run_event(
+                global_state.wal_writer,
+                event_type=er_wal.ErWalEventType.PARTIAL_RESULT_FIRST_SENT,
+                wal_run_id=wal_run_id,
+                action_name=action_name,
+                project_path=global_state.project_dir_path or "",
+                trigger=trigger,
+                dev_env=dev_env,
+                payload={"run_id": run_id},
+            )
+            tracking_sender.has_sent = True
+        assert partial_result_token is not None
         await partial_result_sender.schedule_sending(
             partial_result_token, action_subresult
         )

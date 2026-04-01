@@ -109,6 +109,8 @@ async def _start_extension_runner_process(
         f"--project-path={runner.working_dir_path.as_posix()}",
         f"--env-name={runner.env_name}",
     ]
+    if ws_context.wal_writer is not None:
+        process_args.append("--wal")
     _project = ws_context.ws_projects[runner.working_dir_path]
     _default_env_config = domain.EnvConfig(runner_config=domain.RunnerConfig(debug=False))
     env_config = (

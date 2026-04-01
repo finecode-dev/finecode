@@ -23,7 +23,7 @@ from finecode_extension_api import code_action
 from finecode_extension_api.interfaces import ifileeditor
 from pydantic.dataclasses import dataclass as pydantic_dataclass
 
-from finecode_extension_runner import schemas, services
+from finecode_extension_runner import er_wal, global_state, schemas, services
 from finecode_extension_runner._services import run_action as run_action_service
 from finecode_extension_runner._services import merge_results as merge_results_service
 from finecode_extension_runner.di import resolver
@@ -318,6 +318,8 @@ def create_lsp_server() -> lsp_server.LanguageServer:
 
     def on_process_exit():
         logger.info("Exit extension runner")
+        if global_state.wal_writer is not None:
+            global_state.wal_writer.close()
         services.shutdown_all_action_handlers()
         services.exit_all_action_handlers()
 
@@ -353,6 +355,8 @@ def _on_initialized(ls: CustomLanguageServer, params: types.InitializedParams):
 
 def _on_shutdown(ls: CustomLanguageServer, params):
     logger.info("Shutdown extension runner")
+    if global_state.wal_writer is not None:
+        global_state.wal_writer.close()
     services.shutdown_all_action_handlers()
     
     logger.debug("Stop Finecode async tasks")
@@ -367,6 +371,8 @@ def _on_shutdown(ls: CustomLanguageServer, params):
 
 def _on_exit(ls: lsp_server.LanguageServer, params):
     logger.info("Exit extension runner")
+    if global_state.wal_writer is not None:
+        global_state.wal_writer.close()
 
 
 def uri_to_path(uri: str) -> pathlib.Path:
@@ -537,6 +543,28 @@ async def run_action(
     options: dict[str, typing.Any] | None,
 ):
     logger.trace(f"Run action: {action_name}")
+    wal_run_id = (options or {}).get("wal_run_id")
+    if not isinstance(wal_run_id, str) or wal_run_id.strip() == "":
+        return {"error": "Missing required wal_run_id in run options"}
+
+    meta = (options or {}).get("meta") or {}
+    trigger = meta.get("trigger", "unknown")
+    dev_env = meta.get("dev_env", "unknown")
+    project_path = global_state.project_dir_path or pathlib.Path(".")
+    er_wal.emit_run_event(
+        global_state.wal_writer,
+        event_type=er_wal.ErWalEventType.RUN_ACCEPTED,
+        wal_run_id=wal_run_id,
+        action_name=action_name,
+        project_path=project_path,
+        trigger=trigger,
+        dev_env=dev_env,
+        payload={
+            "partial_result_token": (options or {}).get("partial_result_token"),
+            "progress_token": (options or {}).get("progress_token"),
+        },
+    )
+
     request = schemas.RunActionRequest(action_name=action_name, params=params)
     
     # use pydantic dataclass to convert dict to dataclass instance recursively
@@ -552,6 +580,16 @@ async def run_action(
         if isinstance(exception, services.StopWithResponse):
             status = "stopped"
             response = exception.response
+            er_wal.emit_run_event(
+                global_state.wal_writer,
+                event_type=er_wal.ErWalEventType.RUN_FAILED,
+                wal_run_id=wal_run_id,
+                action_name=action_name,
+                project_path=project_path,
+                trigger=trigger,
+                dev_env=dev_env,
+                payload={"error": "stopped"},
+            )
         else:
             error_msg = ""
             if isinstance(exception, services.ActionFailedException):
@@ -561,6 +599,16 @@ async def run_action(
                 logger.error("Unhandled exception in action run:")
                 logger.exception(exception)
                 error_msg = f"{type(exception)}: {str(exception)}"
+            er_wal.emit_run_event(
+                global_state.wal_writer,
+                event_type=er_wal.ErWalEventType.RUN_FAILED,
+                wal_run_id=wal_run_id,
+                action_name=action_name,
+                project_path=project_path,
+                trigger=trigger,
+                dev_env=dev_env,
+                payload={"error": error_msg},
+            )
             return {"error": error_msg}
 
     # dict key can be path, but pygls fails to handle slashes in dict keys, use strings
@@ -574,6 +622,16 @@ async def run_action(
         for fmt, result in result_by_format.items()
     }
     result_str = json.dumps(converted_result_by_format, cls=CustomJSONEncoder)
+    er_wal.emit_run_event(
+        global_state.wal_writer,
+        event_type=er_wal.ErWalEventType.RUN_COMPLETED,
+        wal_run_id=wal_run_id,
+        action_name=action_name,
+        project_path=project_path,
+        trigger=trigger,
+        dev_env=dev_env,
+        payload={"status": status, "return_code": response.return_code},
+    )
     return {
         "status": status,
         "resultByFormat": result_str,

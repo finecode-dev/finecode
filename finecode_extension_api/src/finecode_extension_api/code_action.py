@@ -55,6 +55,7 @@ class DevEnv(enum.StrEnum):
 class RunActionMeta:
     trigger: RunActionTrigger
     dev_env: DevEnv
+    wal_run_id: str = ""
 
 
 class RunReturnCode(enum.IntEnum):

@@ -1,16 +1,15 @@
 from __future__ import annotations
 
 import dataclasses
-import datetime as dt
 import enum
 import hashlib
 import json
-import os
 import pathlib
 import sys
-import threading
 import typing
 import uuid
+
+from finecode_extension_runner import wal as shared_wal
 
 DEFAULT_MAX_SEGMENT_BYTES = 1_048_576  # 1 MiB
 DEFAULT_MAX_SEGMENTS = 20
@@ -127,10 +126,6 @@ def default_wal_dir_path() -> pathlib.Path:
     return venv_dir_path / "state" / "finecode" / "wal" / "wm"
 
 
-def _utc_now_iso() -> str:
-    return dt.datetime.now(dt.timezone.utc).isoformat()
-
-
 def _serialize_payload(payload: WalPayload | None) -> dict[str, typing.Any]:
     if payload is None:
         return {}
@@ -155,23 +150,21 @@ class WalWriter:
     """
 
     def __init__(self, config: WalConfig) -> None:
-        if config.max_segment_bytes <= 0:
-            raise ValueError("WalConfig.max_segment_bytes must be > 0")
-        if config.max_segments <= 0:
-            raise ValueError("WalConfig.max_segments must be > 0")
-
         self._dir_path = config.dir_path or default_wal_dir_path()
         self.config = dataclasses.replace(config, dir_path=self._dir_path)
-        self._lock = threading.Lock()
-        self._writer_id = f"wm-{os.getpid()}-{int(dt.datetime.now().timestamp())}"
-        self._segment_index = self._discover_last_segment_index()
-        self._sequence = self._discover_last_sequence()
-        self._active_path = self._segment_path(self._segment_index)
-        self._dir_path.mkdir(parents=True, exist_ok=True)
+        self._writer = shared_wal.WalWriter(
+            shared_wal.WalConfig(
+                enabled=self.config.enabled,
+                dir_path=self._dir_path,
+                max_segment_bytes=self.config.max_segment_bytes,
+                max_segments=self.config.max_segments,
+                writer_id_prefix="wm",
+            )
+        )
 
     @property
     def writer_id(self) -> str:
-        return self._writer_id
+        return self._writer.writer_id
 
     def append(
         self,
@@ -184,82 +177,18 @@ class WalWriter:
         dev_env: str,
         payload: WalPayload | None = None,
     ) -> None:
-        with self._lock:
-            self._rotate_if_needed()
-            self._sequence += 1
-            serialized_event_type = (
-                event_type.value if isinstance(event_type, WalEventType) else event_type
-            )
-            event = {
-                "schema_version": 1,
-                "sequence": self._sequence,
-                "ts": _utc_now_iso(),
-                "event_type": serialized_event_type,
-                "wal_run_id": wal_run_id,
-                "action_name": action_name,
-                "project_path": project_path,
-                "trigger": trigger,
-                "dev_env": dev_env,
-                "writer_id": self._writer_id,
-                "payload": _serialize_payload(payload),
-            }
-            with self._active_path.open("a", encoding="utf-8") as handle:
-                handle.write(json.dumps(event, ensure_ascii=True, default=str))
-                handle.write("\n")
+        serialized_event_type = (
+            event_type.value if isinstance(event_type, WalEventType) else event_type
+        )
+        self._writer.append(
+            event_type=serialized_event_type,
+            wal_run_id=wal_run_id,
+            action_name=action_name,
+            project_path=project_path,
+            trigger=trigger,
+            dev_env=dev_env,
+            payload=_serialize_payload(payload),
+        )
 
     def close(self) -> None:
-        return None
-
-    def _rotate_if_needed(self) -> None:
-        self._dir_path.mkdir(parents=True, exist_ok=True)
-        if not self._active_path.exists():
-            return
-        if self._active_path.stat().st_size < self.config.max_segment_bytes:
-            return
-        self._segment_index += 1
-        self._active_path = self._segment_path(self._segment_index)
-        self._cleanup_old_segments()
-
-    def _cleanup_old_segments(self) -> None:
-        segment_paths = self._list_segments()
-        if len(segment_paths) <= self.config.max_segments:
-            return
-        to_remove = segment_paths[: len(segment_paths) - self.config.max_segments]
-        for segment_path in to_remove:
-            segment_path.unlink(missing_ok=True)
-
-    def _list_segments(self) -> list[pathlib.Path]:
-        return sorted(self._dir_path.glob("wal-*.jsonl"))
-
-    def _discover_last_segment_index(self) -> int:
-        paths = self._list_segments()
-        if not paths:
-            return 1
-        latest = paths[-1]
-        stem = latest.stem  # wal-000001
-        try:
-            return int(stem.split("-")[1])
-        except (IndexError, ValueError):
-            return len(paths) + 1
-
-    def _discover_last_sequence(self) -> int:
-        paths = self._list_segments()
-        if not paths:
-            return 0
-        latest = paths[-1]
-        try:
-            lines = latest.read_text(encoding="utf-8").splitlines()
-        except OSError:
-            return 0
-        for line in reversed(lines):
-            try:
-                payload = json.loads(line)
-                sequence = payload.get("sequence")
-                if isinstance(sequence, int):
-                    return sequence
-            except json.JSONDecodeError:
-                continue
-        return 0
-
-    def _segment_path(self, index: int) -> pathlib.Path:
-        return self._dir_path / f"wal-{index:06d}.jsonl"
+        self._writer.close()

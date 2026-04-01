@@ -7,7 +7,7 @@ import click
 from loguru import logger
 
 import finecode_extension_runner.start as runner_start
-from finecode_extension_runner import global_state, logs
+from finecode_extension_runner import er_wal, global_state, logs
 
 
 @click.group()
@@ -19,6 +19,7 @@ def main():
 @main.command()
 @click.option("--trace", "trace", is_flag=True, default=False)
 @click.option("--debug", "debug", is_flag=True, default=False)
+@click.option("--wal", "wal", is_flag=True, default=False)
 @click.option(
     "--project-path",
     "project_path",
@@ -29,6 +30,7 @@ def main():
 def start(
     trace: bool,
     debug: bool,
+    wal: bool,
     project_path: Path,
     env_name: str | None,
 ):
@@ -55,6 +57,8 @@ def start(
     global_state.log_level = "INFO" if trace is False else "TRACE"
     global_state.project_dir_path = project_path
     global_state.env_name = env_name
+    if wal:
+        global_state.wal_writer = er_wal.ErWalWriter()
 
     log_file_path = (project_path
         / ".venvs"
