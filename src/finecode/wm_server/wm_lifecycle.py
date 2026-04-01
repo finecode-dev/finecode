@@ -95,6 +95,7 @@ def start_own_server(
     workdir: pathlib.Path,
     log_level: str = "INFO",
     port_file: pathlib.Path | None = None,
+    wal_enabled: bool = False,
 ) -> pathlib.Path:
     """Start a dedicated WM server subprocess for exclusive use by one client.
 
@@ -118,8 +119,21 @@ def start_own_server(
     port_file.write_text("")
 
     logger.info(f"Starting dedicated FineCode WM server in {workdir}")
+    command = [
+        sys.executable,
+        "-m",
+        "finecode",
+        "start-wm-server",
+        "--port-file",
+        str(port_file),
+        "--log-level",
+        log_level,
+    ]
+    if wal_enabled:
+        command.append("--wal")
+
     subprocess.Popen(
-        [sys.executable, "-m", "finecode", "start-wm-server", "--port-file", str(port_file), "--log-level", log_level],
+        command,
         cwd=str(workdir),
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,

@@ -89,11 +89,16 @@ async def run_actions(
     own_server: bool = False,
     log_level: str = "INFO",
     dev_env: str = "cli",
+    wal_enabled: bool = False,
 ) -> utils.RunActionsResult:
     port_file = None
     try:
         if own_server:
-            port_file = wm_lifecycle.start_own_server(workdir_path, log_level=log_level)
+            port_file = wm_lifecycle.start_own_server(
+                workdir_path,
+                log_level=log_level,
+                wal_enabled=wal_enabled,
+            )
             try:
                 port = await wm_lifecycle.wait_until_ready_from_file(port_file)
             except TimeoutError as exc:

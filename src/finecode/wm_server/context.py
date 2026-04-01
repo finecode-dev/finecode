@@ -9,6 +9,7 @@ from finecode.wm_server.runner.runner_client import ExtensionRunnerInfo
 
 if TYPE_CHECKING:
     from finecode_jsonrpc._io_thread import AsyncIOThread
+    from finecode.wm_server.wal import WalWriter
 
 
 @dataclass
@@ -48,6 +49,7 @@ class WorkspaceContext:
     cached_actions_by_id: dict[str, CachedAction] = field(default_factory=dict)
     # payload schema cache: project_path → {action_name: JSON Schema fragment | None}
     ws_action_schemas: dict[Path, dict[str, dict | None]] = field(default_factory=dict)
+    wal_writer: WalWriter | None = None
 
 
 @dataclass

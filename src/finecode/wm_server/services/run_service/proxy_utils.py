@@ -10,7 +10,7 @@ import ordered_set
 from loguru import logger
 
 from finecode import user_messages
-from finecode.wm_server import find_project, context, domain, domain_helpers
+from finecode.wm_server import find_project, context, domain, domain_helpers, wal
 from finecode.wm_server.runner import runner_manager
 from finecode.wm_server.runner import runner_client
 from finecode.wm_server.runner.runner_manager import RunnerFailedToStart
@@ -674,6 +674,7 @@ async def run_action(
     initialize_all_handlers: bool = False,
     progress_token: int | str | None = None,
 ) -> RunActionResponse:
+    wal_run_id = wal.new_wal_run_id()
     formatted_params = str(params)
     if len(formatted_params) > 100:
         formatted_params = f"{formatted_params[:100]}..."
@@ -685,10 +686,31 @@ async def run_action(
         _result_formats = result_formats
 
     if project_def.status != domain.ProjectStatus.CONFIG_VALID:
+        wal.emit_run_event(
+            ws_context.wal_writer,
+            event_type=wal.WalEventType.RUN_REJECTED,
+            wal_run_id=wal_run_id,
+            action_name=action_name,
+            project_path=project_def.dir_path,
+            run_trigger=run_trigger.value,
+            dev_env=dev_env.value,
+            payload=wal.RunRejectedPayload(reason="invalid_project_config"),
+        )
         raise ActionRunFailed(
             f"Project {project_def.dir_path} has no valid configuration and finecode."
             + " Please check logs."
         )
+
+    wal.emit_run_event(
+        ws_context.wal_writer,
+        event_type=wal.WalEventType.RUN_ACCEPTED,
+        wal_run_id=wal_run_id,
+        action_name=action_name,
+        project_path=project_def.dir_path,
+        run_trigger=run_trigger.value,
+        dev_env=dev_env.value,
+        payload=wal.RunAcceptedPayload(params_hash=wal.params_hash(params)),
+    )
 
     payload = params
 
@@ -720,6 +742,7 @@ async def run_action(
             result_formats=_result_formats,
             initialize_all_handlers=initialize_all_handlers,
             progress_token=progress_token,
+            wal_run_id=wal_run_id,
         )
     else:
         # TODO: concurrent vs sequential, this value should be taken from action config
@@ -741,6 +764,7 @@ async def run_action(
                     result_formats=_result_formats,
                     initialize_all_handlers=initialize_all_handlers,
                     progress_token=progress_token,
+                    wal_run_id=wal_run_id,
                 )
 
     return response
@@ -757,7 +781,20 @@ async def _run_action_in_env_runner(
     result_formats: list[runner_client.RunResultFormat],
     initialize_all_handlers: bool = False,
     progress_token: int | str | None = None,
+    wal_run_id: str | None = None,
 ):
+    effective_wal_run_id = wal_run_id or wal.new_wal_run_id()
+    wal.emit_run_event(
+        ws_context.wal_writer,
+        event_type=wal.WalEventType.RUNNER_SELECTED,
+        wal_run_id=effective_wal_run_id,
+        action_name=action_name,
+        project_path=project_def.dir_path,
+        run_trigger=run_trigger.value,
+        dev_env=dev_env.value,
+        payload=wal.RunnerSelectedPayload(env_name=env_name),
+    )
+
     try:
         runner = await runner_manager.get_or_start_runner(
             project_def=project_def,
@@ -778,13 +815,46 @@ async def _run_action_in_env_runner(
         }
         if progress_token is not None:
             options["progress_token"] = progress_token
+        wal.emit_run_event(
+            ws_context.wal_writer,
+            event_type=wal.WalEventType.RUN_DISPATCHED,
+            wal_run_id=effective_wal_run_id,
+            action_name=action_name,
+            project_path=project_def.dir_path,
+            run_trigger=run_trigger.value,
+            dev_env=dev_env.value,
+            payload=wal.RunDispatchedPayload(
+                runner_id=runner.readable_id,
+                env_name=env_name,
+            ),
+        )
         response = await runner_client.run_action(
             runner=runner,
             action_name=action_name,
             params=payload,
             options=options,
         )
+        wal.emit_run_event(
+            ws_context.wal_writer,
+            event_type=wal.WalEventType.RUN_COMPLETED,
+            wal_run_id=effective_wal_run_id,
+            action_name=action_name,
+            project_path=project_def.dir_path,
+            run_trigger=run_trigger.value,
+            dev_env=dev_env.value,
+            payload=wal.RunCompletedPayload(return_code=response.return_code),
+        )
     except runner_client.BaseRunnerRequestException as error:
+        wal.emit_run_event(
+            ws_context.wal_writer,
+            event_type=wal.WalEventType.RUN_FAILED,
+            wal_run_id=effective_wal_run_id,
+            action_name=action_name,
+            project_path=project_def.dir_path,
+            run_trigger=run_trigger.value,
+            dev_env=dev_env.value,
+            payload=wal.RunFailedPayload(error=error.message, env_name=env_name),
+        )
         await user_messages.error(
             f"Action {action_name} failed in {runner.readable_id}: {error.message} . Log file: {runner.logs_path}"
         )

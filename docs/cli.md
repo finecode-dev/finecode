@@ -55,10 +55,13 @@ python -m finecode run [options] <action> [<action> ...] [payload] [--config.<ke
 | `--project=<name>` | Run only in this project (matched by `[project].name` from `pyproject.toml`). Repeatable for multiple projects. |
 | `--concurrently` | Run actions concurrently within each project |
 | `--shared-server` | Connect to the shared persistent WM Server instead of starting a dedicated one |
+| `--wal` | Enable WM write-ahead log (WAL) for the dedicated WM server started by this run command |
 | `--log-level=<level>` | Set log level: `TRACE`, `DEBUG`, `INFO`, `WARNING`, `ERROR` (default: `INFO`) |
 | `--no-env-config` | Ignore `FINECODE_CONFIG_*` environment variables |
 | `--no-save-results` | Do not write action results to the cache directory |
 | `--dev-env=<env>` | Override the detected dev environment. One of: `ai`, `ci`, `cli`, `ide`, `precommit` (default: auto-detected — see [Dev environment detection](#dev-environment-detection)) |
+
+WAL environment variable and storage settings are shared with `start-wm-server` — see [`start-wm-server`](#start-wm-server) for details.
 
 ### Payload
 
@@ -88,6 +91,7 @@ See [Configuration](configuration.md) for full details on config precedence.
 - With no `--project`: FineCode treats `cwd` (or `--workdir`) as the workspace root, discovers all projects, and runs the action in each project that defines it.
 - With `--project`: the action must exist in every specified project.
 - Action results are saved to `<venv>/cache/finecode/results/<action>.json` (one entry per project path).
+- WAL options on `run` apply only when FineCode starts a dedicated WM server (default mode). In `--shared-server` mode, configure WAL on the shared WM server process.
 
 ### Examples
 
@@ -227,12 +231,23 @@ Typically started automatically by MCP-compatible clients (for example, Claude C
 Start the FineCode Workspace Manager Server standalone (TCP JSON-RPC), listen for client connections. Shuts down after the last client disconnects and the disconnect timeout expires.
 
 ```text
-python -m finecode start-wm-server [--log-level=<level>] [--disconnect-timeout=<seconds>]
+python -m finecode start-wm-server [--log-level=<level>] [--disconnect-timeout=<seconds>] [--wal]
 ```
 
 | Option | Description |
 | --- | --- |
 | `--log-level=<level>` | Set log level: `TRACE`, `DEBUG`, `INFO`, `WARNING`, `ERROR` (default: `INFO`) |
 | `--disconnect-timeout=<seconds>` | Seconds to wait after the last client disconnects before shutting down (default: 30) |
+| `--wal` | Enable WM write-ahead log (WAL) for run lifecycle events. |
+
+Environment variable equivalent:
+
+- `FINECODE_WAL_ENABLED=1` (or `true`/`yes`/`on`)
+
+WAL storage and retention are fixed in this version:
+
+- WAL directory: `<venv>/state/finecode/wal/wm`
+- Max segment size: `1048576` bytes
+- Retention: last `20` segment files
 
 Usually started automatically by `start-lsp` or `start-mcp`. Can also be started manually for debugging.

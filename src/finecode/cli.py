@@ -17,6 +17,13 @@ FINECODE_CONFIG_ENV_PREFIX = "FINECODE_CONFIG_"
 _VALID_DEV_ENVS = {"ide", "cli", "ai", "precommit", "ci"}
 
 
+def _parse_env_bool(name: str, default: bool) -> bool:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
 def detect_dev_env() -> str:
     """Detect dev environment from context. CI env var overrides the default 'cli'."""
     if os.environ.get("CI"):
@@ -273,6 +280,7 @@ def run(ctx) -> None:
     map_payload_fields: set[str] = set()
     shared_server: bool = False
     dev_env: str = detect_dev_env()
+    wal_enabled: bool | None = None
 
     # finecode run parameters
     for arg in args:
@@ -304,6 +312,8 @@ def run(ctx) -> None:
             map_payload_fields = {f.replace("-", "_") for f in fields.split(",")}
         elif arg == "--shared-server":
             shared_server = True
+        elif arg == "--wal":
+            wal_enabled = True
         elif arg.startswith("--dev-env"):
             dev_env = arg.removeprefix("--dev-env=")
             if dev_env not in _VALID_DEV_ENVS:
@@ -317,6 +327,16 @@ def run(ctx) -> None:
         processed_args_count += 1
 
     logger_utils.init_logger(log_name="cli", log_level=log_level, stdout=True)
+
+    if wal_enabled is None:
+        wal_enabled = _parse_env_bool("FINECODE_WAL_ENABLED", False)
+
+    if shared_server and wal_enabled:
+        click.echo(
+            "Warning: --wal is ignored in --shared-server mode. "
+            "Enable WAL on the shared WM server process itself.",
+            err=True,
+        )
 
     # Parse handler config from env vars
     handler_config_overrides: dict[str, dict[str, dict[str, str]]] = {}
@@ -390,6 +410,7 @@ def run(ctx) -> None:
                 own_server=not shared_server,
                 log_level=log_level,
                 dev_env=dev_env,
+                wal_enabled=wal_enabled,
             )
         )
         click.echo(result.output)
@@ -576,14 +597,40 @@ def start_mcp(workdir: str | None, log_level: str, wm_port_file: str | None):
     show_default=True,
     help="Seconds to wait after the last client disconnects before shutting down.",
 )
-def start_wm_server(log_level: str, port_file: str | None, disconnect_timeout: int):
+@click.option(
+    "--wal",
+    "wal_enabled",
+    is_flag=True,
+    default=None,
+    help="Enable WM write-ahead log (WAL). Can also be enabled with FINECODE_WAL_ENABLED=1.",
+)
+def start_wm_server(
+    log_level: str,
+    port_file: str | None,
+    disconnect_timeout: int,
+    wal_enabled: bool | None,
+):
     """Start the FineCode WM Server standalone (TCP JSON-RPC). Auto-stops when all clients disconnect."""
-    from finecode.wm_server import wm_server
+    from finecode.wm_server import wal, wm_server
 
     log_file_path = logger_utils.init_logger(log_name="wm_server", log_level=log_level, stdout=False)
     wm_server._log_file_path = log_file_path
     port_file_path = pathlib.Path(port_file) if port_file else None
-    asyncio.run(wm_server.start_standalone(port_file=port_file_path, disconnect_timeout=disconnect_timeout))
+
+    env_wal_enabled = _parse_env_bool("FINECODE_WAL_ENABLED", False)
+    final_wal_enabled = wal_enabled if wal_enabled is not None else env_wal_enabled
+
+    wal_config = wal.WalConfig(
+        enabled=final_wal_enabled,
+    )
+
+    asyncio.run(
+        wm_server.start_standalone(
+            port_file=port_file_path,
+            disconnect_timeout=disconnect_timeout,
+            wal_config=wal_config,
+        )
+    )
 
 
 if __name__ == "__main__":

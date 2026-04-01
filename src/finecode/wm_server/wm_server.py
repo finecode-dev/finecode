@@ -58,6 +58,7 @@ from finecode.wm_server._jsonrpc import (
     _write_message,
 )
 from finecode.wm_server.wm_lifecycle import discovery_file_path
+from finecode.wm_server import wal
 
 DISCONNECT_TIMEOUT_SECONDS = 30
 NO_CLIENT_TIMEOUT_SECONDS = 30
@@ -403,6 +404,8 @@ async def start(
         # Clean up workspace resources (runners, IO thread).
         from finecode.wm_server.services import shutdown_service
         shutdown_service.on_shutdown(ws_context)
+        if ws_context.wal_writer is not None:
+            ws_context.wal_writer.close()
 
 
 def stop() -> None:
@@ -463,6 +466,7 @@ def _register_callbacks() -> None:
 async def start_standalone(
     port_file: pathlib.Path | None = None,
     disconnect_timeout: int = DISCONNECT_TIMEOUT_SECONDS,
+    wal_config: wal.WalConfig | None = None,
 ) -> None:
     """Start the WM server as a standalone process with its own WorkspaceContext.
 
@@ -474,5 +478,7 @@ async def start_standalone(
             before shutting down.
     """
     ws_context = context.WorkspaceContext([])
+    if wal_config is not None and wal_config.enabled:
+        ws_context.wal_writer = wal.WalWriter(wal_config)
     _register_callbacks()
     await start(ws_context, port_file=port_file, disconnect_timeout=disconnect_timeout)
