@@ -20,6 +20,7 @@ Typical usage in a handler::
     # ResourceUri → Path  (when you need a local filesystem path)
     local_path = resource_uri_to_path(uri)
 """
+
 from __future__ import annotations
 
 import pathlib

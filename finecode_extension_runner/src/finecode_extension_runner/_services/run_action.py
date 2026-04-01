@@ -135,6 +135,7 @@ async def run_action(
     progress_token: int | str | None = None,
     run_id: int | None = None,
     partial_result_queue: asyncio.Queue | None = None,
+    caller_kwargs: code_action.CallerRunContextKwargs | None = None,
 ) -> code_action.RunActionResult | None:
     # design decisions:
     # - keep payload unchanged between all subaction runs.
@@ -175,8 +176,9 @@ async def run_action(
         action_exec_info = create_action_exec_info(action_def)
         action_cache.exec_info = action_exec_info
 
-    # TODO: take value from action config
-    execute_handlers_concurrently = action_def.name.startswith("lint_files_")
+    execute_handlers_concurrently = (
+        action_exec_info.handler_execution == code_action.HandlerExecution.CONCURRENT
+    )
 
     run_context: code_action.RunActionContext | AsyncPlaceholderContext
     run_context_info = code_action.RunContextInfoProvider(is_concurrent_execution=execute_handlers_concurrently)
@@ -197,16 +199,19 @@ async def run_action(
         er_progress_sender = code_action._NOOP_PROGRESS_SENDER
 
     if action_exec_info.run_context_type is not None:
+        known_args: dict[str, typing.Callable[[typing.Any], typing.Any]] = {
+            "run_id": lambda _: run_id,
+            "initial_payload": lambda _: payload,
+            "meta": lambda _: meta,
+            "info_provider": lambda _: run_context_info,
+            "partial_result_sender": lambda _: tracking_sender or code_action._NOOP_SENDER,
+            "progress_sender": lambda _: er_progress_sender,
+        }
+        if caller_kwargs is not None:
+            known_args["caller_kwargs"] = lambda _: caller_kwargs
         constructor_args = await resolve_func_args_with_di(
             action_exec_info.run_context_type.__init__,
-            known_args={
-                "run_id": lambda _: run_id,
-                "initial_payload": lambda _: payload,
-                "meta": lambda _: meta,
-                "info_provider": lambda _: run_context_info,
-                "partial_result_sender": lambda _: tracking_sender or code_action._NOOP_SENDER,
-                "progress_sender": lambda _: er_progress_sender,
-            },
+            known_args=known_args,
             params_to_ignore=["self"],
         )
 
@@ -531,11 +536,15 @@ def create_action_exec_info(action: domain.ActionDeclaration) -> domain.ActionEx
     payload_type = action_type_def.PAYLOAD_TYPE
     run_context_type = action_type_def.RUN_CONTEXT_TYPE
     result_type = action_type_def.RESULT_TYPE
+    handler_execution = action_type_def.HANDLER_EXECUTION
 
     # TODO: validate that classes and correct subclasses?
 
     action_exec_info = domain.ActionExecInfo(
-        payload_type=payload_type, run_context_type=run_context_type, result_type=result_type
+        payload_type=payload_type,
+        run_context_type=run_context_type,
+        result_type=result_type,
+        handler_execution=handler_execution,
     )
     return action_exec_info
 
@@ -555,7 +564,10 @@ async def resolve_func_args_with_di(
         # Ignore them.
         if (
             params_to_ignore is not None and param_name in params_to_ignore
-        ) or param_name in ["args", "kwargs"]:
+        ) or func_parameters[param_name].kind in (
+            inspect.Parameter.VAR_POSITIONAL,
+            inspect.Parameter.VAR_KEYWORD,
+        ):
             continue
         elif known_args is not None and param_name in known_args:
             param_type = func_annotations[param_name]

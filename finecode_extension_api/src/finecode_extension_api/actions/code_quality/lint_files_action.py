@@ -144,3 +144,4 @@ class LintFilesAction(
     PAYLOAD_TYPE = LintFilesRunPayload
     RUN_CONTEXT_TYPE = LintFilesRunContext
     RESULT_TYPE = LintFilesRunResult
+    HANDLER_EXECUTION = code_action.HandlerExecution.CONCURRENT

@@ -21,3 +21,4 @@ class LintPythonFilesAction(
     RESULT_TYPE = LintFilesRunResult
     LANGUAGE = "python"
     PARENT_ACTION = LintFilesAction
+    HANDLER_EXECUTION = code_action.HandlerExecution.CONCURRENT

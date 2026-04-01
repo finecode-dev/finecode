@@ -12,20 +12,22 @@ else:
     from typing import override
 
 from finecode_extension_api import code_action
-from finecode_extension_api.actions.code_quality import format_files_action
+from finecode_extension_api.actions.code_quality import format_file_action
+from finecode_extension_api.actions.code_quality.format_python_file_action import (
+    FormatPythonFileAction,
+)
 from finecode_extension_api.interfaces import (
-    icache,
     icommandrunner,
-    ilogger,
     iextensionrunnerinfoprovider,
+    ilogger,
     iprojectinfoprovider,
 )
-from finecode_extension_api.resource_uri import ResourceUri, resource_uri_to_path
+from finecode_extension_api.resource_uri import resource_uri_to_path
 from fine_python_ruff.ruff_lsp_service import RuffLspService
 
 
 @dataclasses.dataclass
-class RuffFormatFilesHandlerConfig(code_action.ActionHandlerConfig):
+class RuffFormatFileHandlerConfig(code_action.ActionHandlerConfig):
     line_length: int = 88
     indent_width: int = 4
     quote_style: str = "double"  # "double" or "single"
@@ -34,24 +36,20 @@ class RuffFormatFilesHandlerConfig(code_action.ActionHandlerConfig):
     use_cli: bool = False
 
 
-class RuffFormatFilesHandler(
-    code_action.ActionHandler[
-        format_files_action.FormatFilesAction, RuffFormatFilesHandlerConfig
-    ]
+class RuffFormatFileHandler(
+    code_action.ActionHandler[FormatPythonFileAction, RuffFormatFileHandlerConfig]
 ):
     def __init__(
         self,
-        config: RuffFormatFilesHandlerConfig,
+        config: RuffFormatFileHandlerConfig,
         extension_runner_info_provider: iextensionrunnerinfoprovider.IExtensionRunnerInfoProvider,
         logger: ilogger.ILogger,
-        cache: icache.ICache,
         command_runner: icommandrunner.ICommandRunner,
         project_info_provider: iprojectinfoprovider.IProjectInfoProvider,
         lsp_service: RuffLspService,
     ) -> None:
         self.config = config
         self.logger = logger
-        self.cache = cache
         self.command_runner = command_runner
         self.extension_runner_info_provider = extension_runner_info_provider
         self.project_info_provider = project_info_provider
@@ -75,44 +73,36 @@ class RuffFormatFilesHandler(
     @override
     async def run(
         self,
-        payload: format_files_action.FormatFilesRunPayload,
-        run_context: format_files_action.FormatFilesRunContext,
-    ) -> format_files_action.FormatFilesRunResult:
+        payload: format_file_action.FormatFileRunPayload,
+        run_context: format_file_action.FormatFileRunContext,
+    ) -> format_file_action.FormatFileRunResult:
         if not self.config.use_cli:
             root_uri = self.project_info_provider.get_current_project_dir_path().as_uri()
             await self.lsp_service.ensure_started(root_uri)
 
-        result_by_file_path: dict[ResourceUri, format_files_action.FormatRunFileResult] = {}
-        for file_uri in payload.file_paths:
-            file_path = resource_uri_to_path(file_uri)
-            file_content, file_version = run_context.file_info_by_path[file_uri]
+        file_path = resource_uri_to_path(payload.file_path)
+        file_content = run_context.file_info.file_content
+        file_version = run_context.file_info.file_version
 
-            if self.config.use_cli:
-                new_file_content, file_changed = await self.format_one_cli(
-                    file_path, file_content
-                )
-            else:
-                new_file_content = await self.lsp_service.format_file(
-                    file_path, file_content
-                )
-                file_changed = new_file_content != file_content
-
-            # save for next handlers
-            run_context.file_info_by_path[file_uri] = format_files_action.FileInfo(
-                new_file_content, file_version
+        if self.config.use_cli:
+            new_file_content, file_changed = await self.format_one_cli(
+                file_path, file_content
             )
-
-            result_by_file_path[file_uri] = format_files_action.FormatRunFileResult(
-                changed=file_changed, code=new_file_content
+        else:
+            new_file_content = await self.lsp_service.format_file(
+                file_path, file_content
             )
+            file_changed = new_file_content != file_content
 
-        return format_files_action.FormatFilesRunResult(
-            result_by_file_path=result_by_file_path
+        # update for next handlers in the pipeline
+        run_context.file_info = format_file_action.FileInfo(new_file_content, file_version)
+
+        return format_file_action.FormatFileRunResult(
+            changed=file_changed, code=new_file_content
         )
 
     async def format_one_cli(self, file_path: Path, file_content: str) -> tuple[str, bool]:
         """Format a single file using ruff format CLI"""
-        # Build ruff format command
         cmd = [
             str(self.ruff_bin_path),
             "format",

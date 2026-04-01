@@ -6,13 +6,15 @@ from io import StringIO
 import isort.api as isort_api
 import isort.settings as isort_settings
 from finecode_extension_api import code_action
-from finecode_extension_api.actions.code_quality import format_files_action
-from finecode_extension_api.interfaces import icache, ilogger, iprocessexecutor
-from finecode_extension_api.resource_uri import ResourceUri
+from finecode_extension_api.actions.code_quality import format_file_action
+from finecode_extension_api.actions.code_quality.format_python_file_action import (
+    FormatPythonFileAction,
+)
+from finecode_extension_api.interfaces import ilogger, iprocessexecutor
 
 
 @dataclasses.dataclass
-class IsortFormatFilesHandlerConfig(code_action.ActionHandlerConfig):
+class IsortFormatFileHandlerConfig(code_action.ActionHandlerConfig):
     profile: str | None = None
     line_length: int | None = None
     multi_line_output: int | None = None
@@ -23,47 +25,36 @@ class IsortFormatFilesHandlerConfig(code_action.ActionHandlerConfig):
     split_on_trailing_comma: bool | None = None
 
 
-class IsortFormatFilesHandler(
-    code_action.ActionHandler[
-        format_files_action.FormatFilesAction, IsortFormatFilesHandlerConfig
-    ]
+class IsortFormatFileHandler(
+    code_action.ActionHandler[FormatPythonFileAction, IsortFormatFileHandlerConfig]
 ):
     def __init__(
         self,
-        config: IsortFormatFilesHandlerConfig,
+        config: IsortFormatFileHandlerConfig,
         logger: ilogger.ILogger,
-        cache: icache.ICache,
         process_executor: iprocessexecutor.IProcessExecutor,
     ) -> None:
         self.config = config
         self.logger = logger
-        self.cache = cache
         self.process_executor = process_executor
 
     async def run(
         self,
-        payload: format_files_action.FormatFilesRunPayload,
-        run_context: format_files_action.FormatFilesRunContext,
-    ) -> format_files_action.FormatFilesRunResult:
-        result_by_file_path: dict[ResourceUri, format_files_action.FormatRunFileResult] = {}
-        for file_uri in payload.file_paths:
-            file_content, file_version = run_context.file_info_by_path[file_uri]
+        payload: format_file_action.FormatFileRunPayload,
+        run_context: format_file_action.FormatFileRunContext,
+    ) -> format_file_action.FormatFileRunResult:
+        file_content = run_context.file_info.file_content
+        file_version = run_context.file_info.file_version
 
-            new_file_content, file_changed = await self.process_executor.submit(
-                format_one, file_content, dataclasses.asdict(self.config)
-            )
+        new_file_content, file_changed = await self.process_executor.submit(
+            format_one, file_content, dataclasses.asdict(self.config)
+        )
 
-            # save for next handlers
-            run_context.file_info_by_path[file_uri] = format_files_action.FileInfo(
-                new_file_content, file_version
-            )
+        # update for next handlers in the pipeline
+        run_context.file_info = format_file_action.FileInfo(new_file_content, file_version)
 
-            result_by_file_path[file_uri] = format_files_action.FormatRunFileResult(
-                changed=file_changed, code=new_file_content
-            )
-
-        return format_files_action.FormatFilesRunResult(
-            result_by_file_path=result_by_file_path
+        return format_file_action.FormatFileRunResult(
+            changed=file_changed, code=new_file_content
         )
 
 

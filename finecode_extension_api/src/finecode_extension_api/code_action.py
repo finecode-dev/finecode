@@ -19,6 +19,24 @@ class ActionHandlerConfig: ...
 class RunActionPayload: ...
 
 
+@dataclasses.dataclass
+class CallerRunContextKwargs:
+    """Base class for caller-provided run context parameters.
+
+    When a parent action delegates to a child action and needs to pass runtime
+    state (e.g. a shared file editor session), it defines a concrete subclass
+    of ``CallerRunContextKwargs`` with typed fields for those values.  The child
+    action's ``RunActionContext`` declares a constructor parameter
+    ``caller_kwargs: MyCallerRunContextKwargs | None = None`` to receive them.
+
+    This separates **caller-provided** parameters (passed explicitly through
+    ``IActionRunner.run_action(caller_kwargs=...)``) from
+    **DI-resolved** parameters (injected automatically by the framework).
+
+    See :doc:`docs/guides/designing-actions` for the full pattern.
+    """
+
+
 class RunActionTrigger(enum.StrEnum):
     USER = "user"
     SYSTEM = "system"
@@ -192,7 +210,9 @@ class ProgressContext:
             percentage = min(int(self._completed / self._total * 100), 100)
         await self._sender.report(message=message, percentage=percentage)
 
-    async def report(self, message: str | None = None, percentage: int | None = None) -> None:
+    async def report(
+        self, message: str | None = None, percentage: int | None = None
+    ) -> None:
         """Freeform progress. Caller controls the percentage directly."""
         await self._sender.report(message=message, percentage=percentage)
 
@@ -287,9 +307,13 @@ class RunActionWithPartialResultsContext(RunActionContext[RunPayloadType]):
         self.partial_result_scheduler = partialresultscheduler.PartialResultScheduler()
 
 
+class HandlerExecution(enum.Enum):
+    SEQUENTIAL = "sequential"
+    CONCURRENT = "concurrent"
+
+
 @dataclasses.dataclass
-class ActionConfig:
-    run_handlers_concurrently: bool = False
+class ActionConfig: ...
 
 
 class Action(Generic[RunPayloadType, RunContextType, RunResultType]):
@@ -299,6 +323,7 @@ class Action(Generic[RunPayloadType, RunContextType, RunResultType]):
     CONFIG_TYPE: type[ActionConfig] = ActionConfig
     LANGUAGE: ClassVar[str | None] = None
     PARENT_ACTION: ClassVar[type[Action] | None] = None
+    HANDLER_EXECUTION: ClassVar[HandlerExecution] = HandlerExecution.SEQUENTIAL
 
 
 class StopActionRunWithResult(Exception):

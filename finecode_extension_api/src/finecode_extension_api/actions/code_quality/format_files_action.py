@@ -1,10 +1,12 @@
 # docs: docs/reference/actions.md
+import collections.abc
 import dataclasses
 import sys
-from typing import NamedTuple
 
-from finecode_extension_api.interfaces import ifileeditor
-from finecode_extension_api.resource_uri import ResourceUri, resource_uri_to_path
+from finecode_extension_api.interfaces import (
+    ifileeditor,  # used in FormatFilesRunContext
+)
+from finecode_extension_api.resource_uri import ResourceUri
 
 if sys.version_info >= (3, 12):
     from typing import override
@@ -12,23 +14,42 @@ else:
     from typing_extensions import override
 
 from finecode_extension_api import code_action, textstyler
+from finecode_extension_api.actions.code_quality.format_file_action import (
+    FILE_OPERATION_AUTHOR,
+)
 
 
 @dataclasses.dataclass
-class FormatFilesRunPayload(code_action.RunActionPayload):
+class FormatFilesRunPayload(
+    code_action.RunActionPayload, collections.abc.AsyncIterable[ResourceUri]
+):
     file_paths: list[ResourceUri]
     save: bool
 
-
-class FileInfo(NamedTuple):
-    file_content: str
-    file_version: str
+    def __aiter__(self) -> collections.abc.AsyncIterator[ResourceUri]:
+        return FormatFilesRunPayloadIterator(self)
 
 
-FILE_OPERATION_AUTHOR = ifileeditor.FileOperationAuthor(id="FormatFilesAction")
+@dataclasses.dataclass
+class FormatFilesRunPayloadIterator(collections.abc.AsyncIterator[ResourceUri]):
+    def __init__(self, payload: FormatFilesRunPayload) -> None:
+        self._payload = payload
+        self._index = 0
+
+    def __aiter__(self) -> "FormatFilesRunPayloadIterator":
+        return self
+
+    async def __anext__(self) -> ResourceUri:
+        if self._index >= len(self._payload.file_paths):
+            raise StopAsyncIteration()
+        result = self._payload.file_paths[self._index]
+        self._index += 1
+        return result
 
 
-class FormatFilesRunContext(code_action.RunActionContext[FormatFilesRunPayload]):
+class FormatFilesRunContext(
+    code_action.RunActionWithPartialResultsContext[FormatFilesRunPayload]
+):
     def __init__(
         self,
         run_id: int,
@@ -36,16 +57,18 @@ class FormatFilesRunContext(code_action.RunActionContext[FormatFilesRunPayload])
         meta: code_action.RunActionMeta,
         file_editor: ifileeditor.IFileEditor,
         info_provider: code_action.RunContextInfoProvider,
+        partial_result_sender: code_action.PartialResultSender = code_action._NOOP_SENDER,
+        progress_sender: code_action.ProgressSender = code_action._NOOP_PROGRESS_SENDER,
     ) -> None:
         super().__init__(
             run_id=run_id,
             initial_payload=initial_payload,
             meta=meta,
             info_provider=info_provider,
+            partial_result_sender=partial_result_sender,
+            progress_sender=progress_sender,
         )
         self.file_editor = file_editor
-
-        self.file_info_by_path: dict[ResourceUri, FileInfo] = {}
         self.file_editor_session: ifileeditor.IFileEditorSession
 
     @override
@@ -53,17 +76,6 @@ class FormatFilesRunContext(code_action.RunActionContext[FormatFilesRunPayload])
         self.file_editor_session = await self.exit_stack.enter_async_context(
             self.file_editor.session(FILE_OPERATION_AUTHOR)
         )
-        for file_uri in self.initial_payload.file_paths:
-            file_info = await self.exit_stack.enter_async_context(
-                self.file_editor_session.read_file(
-                    resource_uri_to_path(file_uri), block=True
-                )
-            )
-            file_content = file_info.content
-            file_version = file_info.version
-            self.file_info_by_path[file_uri] = FileInfo(
-                file_content=file_content, file_version=file_version
-            )
 
 
 @dataclasses.dataclass

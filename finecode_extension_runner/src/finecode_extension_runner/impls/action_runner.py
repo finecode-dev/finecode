@@ -10,7 +10,7 @@ _SENTINEL = object()
 
 
 class ActionRunner(iactionrunner.IActionRunner):
-    def __init__(self, run_action_func: typing.Callable[[domain.ActionDeclaration, code_action.RunActionPayload, code_action.RunActionMeta], collections.abc.Coroutine[None, None, code_action.RunActionResult]],
+    def __init__(self, run_action_func: typing.Callable[..., collections.abc.Coroutine[None, None, code_action.RunActionResult]],
                  actions_getter: typing.Callable[[], dict[str, domain.ActionDeclaration]]):
         self._run_action_func = run_action_func
         self._actions_getter = actions_getter
@@ -26,10 +26,16 @@ class ActionRunner(iactionrunner.IActionRunner):
 
     @typing.override
     async def run_action(
-        self, action: iactionrunner.ActionDeclaration[iactionrunner.ActionT], payload: code_action.RunActionPayload, meta: code_action.RunActionMeta
+        self,
+        action: iactionrunner.ActionDeclaration[iactionrunner.ActionT],
+        payload: code_action.RunActionPayload,
+        meta: code_action.RunActionMeta,
+        caller_kwargs: code_action.CallerRunContextKwargs | None = None,
     ) -> code_action.RunActionResult:
         try:
-            return await self._run_action_func(action, payload, meta)
+            return await self._run_action_func(
+                action, payload, meta, caller_kwargs=caller_kwargs
+            )
         except Exception as exception:
             raise iactionrunner.ActionRunFailed(str(exception)) from exception
 
@@ -39,12 +45,19 @@ class ActionRunner(iactionrunner.IActionRunner):
         action: iactionrunner.ActionDeclaration[iactionrunner.ActionT],
         payload: code_action.RunActionPayload,
         meta: code_action.RunActionMeta,
+        caller_kwargs: code_action.CallerRunContextKwargs | None = None,
     ) -> collections.abc.AsyncIterator[code_action.RunActionResult]:
         queue: asyncio.Queue = asyncio.Queue()
 
         async def producer():
             try:
-                await self._run_action_func(action, payload, meta, partial_result_queue=queue)
+                await self._run_action_func(
+                    action,
+                    payload,
+                    meta,
+                    caller_kwargs=caller_kwargs,
+                    partial_result_queue=queue,
+                )
             finally:
                 await queue.put(_SENTINEL)
 

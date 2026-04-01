@@ -2,14 +2,7 @@ from __future__ import annotations
 
 import dataclasses
 import sys
-
-# import asyncio
-# import os
-from pathlib import Path
-
-# from concurrent.futures import Executor  # ProcessPoolExecutor,
-# from concurrent.futures import ThreadPoolExecutor
-
+from typing import cast
 
 if sys.version_info < (3, 12):
     from typing_extensions import override
@@ -17,19 +10,31 @@ else:
     from typing import override
 
 import black
-
-# from black import WriteBack
-# from black.concurrency import schedule_formatting
 from black.mode import Mode, TargetVersion
 
 from finecode_extension_api import code_action
-from finecode_extension_api.actions.code_quality import format_action
-from finecode_extension_api.interfaces import icache, ilogger, iprocessexecutor
+from finecode_extension_api.actions.code_quality import format_file_action
+from finecode_extension_api.actions.code_quality.format_python_file_action import (
+    FormatPythonFileAction,
+)
+from finecode_extension_api.interfaces import ilogger, iprocessexecutor
 
 
-def get_black_mode(config: BlackFormatHandlerConfig) -> Mode:
+def _resolve_target_version(version: str) -> TargetVersion | None:
+    normalized = version.upper().replace(".", "").replace("_", "")
+    if not normalized.startswith("PY"):
+        normalized = f"PY{normalized}"
+    return TargetVersion.__members__.get(normalized)
+
+
+def get_black_mode(config: BlackFormatFileHandlerConfig) -> Mode:
+    target_versions = {
+        resolved
+        for version in config.target_versions
+        if (resolved := _resolve_target_version(version)) is not None
+    }
     return Mode(
-        target_versions=set([TargetVersion[ver] for ver in config.target_versions]),
+        target_versions=target_versions,
         line_length=config.line_length,
         is_pyi=False,
         is_ipynb=False,
@@ -37,13 +42,13 @@ def get_black_mode(config: BlackFormatHandlerConfig) -> Mode:
         string_normalization=not config.skip_string_normalization,
         magic_trailing_comma=not config.skip_magic_trailing_comma,
         preview=config.preview,
-        python_cell_magics=set(),  # set(python_cell_magics),
+        python_cell_magics=set(config.python_cell_magics),
         unstable=config.unstable,
     )
 
 
 @dataclasses.dataclass
-class BlackFormatHandlerConfig(code_action.ActionHandlerConfig):
+class BlackFormatFileHandlerConfig(code_action.ActionHandlerConfig):
     # TODO: should be set
     target_versions: list[
         # TODO: investigate why list of literals doesn't work
@@ -59,24 +64,20 @@ class BlackFormatHandlerConfig(code_action.ActionHandlerConfig):
     skip_string_normalization: bool = False
     skip_source_first_line: bool = False
     skip_magic_trailing_comma: bool = False
-    python_cell_magics: bool = False  # it should be a set?
+    python_cell_magics: list[str] = dataclasses.field(default_factory=list)
 
 
-class BlackFormatHandler(
-    code_action.ActionHandler[format_action.FormatAction, BlackFormatHandlerConfig]
+class BlackFormatFileHandler(
+    code_action.ActionHandler[FormatPythonFileAction, BlackFormatFileHandlerConfig]
 ):
-    CACHE_KEY = "BlackFormatter"
-
     def __init__(
         self,
-        config: BlackFormatHandlerConfig,
+        config: BlackFormatFileHandlerConfig,
         logger: ilogger.ILogger,
-        cache: icache.ICache,
         process_executor: iprocessexecutor.IProcessExecutor,
     ) -> None:
         self.config = config
         self.logger = logger
-        self.cache = cache
         self.process_executor = process_executor
 
         self.black_mode = get_black_mode(self.config)
@@ -84,44 +85,33 @@ class BlackFormatHandler(
     @override
     async def run(
         self,
-        payload: format_action.FormatRunPayload,
-        run_context: format_action.FormatRunContext,
-    ) -> format_action.FormatRunResult:
-        result_by_file_path: dict[Path, format_action.FormatRunFileResult] = {}
-        for file_path in payload.file_paths:
-            file_content, file_version = run_context.file_info_by_path[file_path]
-            try:
-                new_file_content = await self.cache.get_file_cache(
-                    file_path, self.CACHE_KEY
-                )
-                result_by_file_path[file_path] = format_action.FormatRunFileResult(
-                    changed=False, code=new_file_content
-                )
-                continue
-            except icache.CacheMissException:
-                pass
+        payload: format_file_action.FormatFileRunPayload,
+        run_context: format_file_action.FormatFileRunContext,
+    ) -> format_file_action.FormatFileRunResult:
+        file_content = run_context.file_info.file_content
+        file_version = run_context.file_info.file_version
 
-            # avoid outputting low-level logs of black, our goal is to trace finecode,
-            # not flake8 itself
-            self.logger.disable("fine_python_black")
-            new_file_content, file_changed = await self.process_executor.submit(
-                format_one, file_content, self.black_mode
-            )
-            self.logger.enable("fine_python_black")
+        # Avoid outputting low-level logs of black. We trace extension flow here.
+        self.logger.disable("fine_python_black")
+        process_result = cast(
+            tuple[str, bool],
+            await self.process_executor.submit(format_one, file_content, self.black_mode),
+        )
+        if process_result is None:
+            raise code_action.ActionFailedException(
+                "black formatter returned no result"
+            ) from None
+        new_file_content = process_result[0]
+        file_changed = process_result[1]
+        self.logger.enable("fine_python_black")
 
-            # save for next handlers
-            run_context.file_info_by_path[file_path] = format_action.FileInfo(
-                new_file_content, file_version
-            )
+        # Update for next handlers in the formatting pipeline.
+        run_context.file_info = format_file_action.FileInfo(new_file_content, file_version)
 
-            await self.cache.save_file_cache(
-                file_path, file_version, self.CACHE_KEY, new_file_content
-            )
-            result_by_file_path[file_path] = format_action.FormatRunFileResult(
-                changed=file_changed, code=new_file_content
-            )
-
-        return format_action.FormatRunResult(result_by_file_path=result_by_file_path)
+        return format_file_action.FormatFileRunResult(
+            changed=file_changed,
+            code=new_file_content,
+        )
 
 
 def format_one(file_content: str, black_mode: Mode) -> tuple[str, bool]:

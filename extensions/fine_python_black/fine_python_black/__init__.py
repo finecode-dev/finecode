@@ -1,6 +1,9 @@
-from .action import BlackFormatHandler, BlackFormatHandlerConfig
+from .format_python_file_handler import (
+    BlackFormatFileHandler,
+    BlackFormatFileHandlerConfig,
+)
 
 __all__ = [
-    "BlackFormatHandler",
-    "BlackFormatHandlerConfig",
+    "BlackFormatFileHandler",
+    "BlackFormatFileHandlerConfig",
 ]

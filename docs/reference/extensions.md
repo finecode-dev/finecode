@@ -15,7 +15,7 @@ Linting and formatting via [Ruff](https://docs.astral.sh/ruff/).
 | Handler | Action | Description |
 |---|---|---|
 | `fine_python_ruff.RuffLintFilesHandler` | `lint_files` | Lint Python files with Ruff |
-| `fine_python_ruff.RuffFormatFilesHandler` | `format_files` | Format Python files with Ruff formatter |
+| `fine_python_ruff.RuffFormatFileHandler` | `format_python_file` | Format a single Python file with Ruff formatter |
 
 **Example config:**
 
@@ -109,13 +109,13 @@ Import sorting via [isort](https://pycqa.github.io/isort/).
 
 | Handler | Action | Description |
 |---|---|---|
-| `fine_python_isort.IsortFormatFilesHandler` | `format_files` | Sort Python imports |
+| `fine_python_isort.IsortFormatFileHandler` | `format_python_file` | Sort Python imports in a single file |
 
 **Example config** (compatible with Ruff formatter / Black):
 
 ```toml
 [[tool.finecode.action_handler]]
-source = "fine_python_isort.IsortFormatFilesHandler"
+source = "fine_python_isort.IsortFormatFileHandler"
 config.multi_line_output = 3
 config.include_trailing_comma = true
 config.line_length = 88

@@ -1,20 +1,28 @@
-[tool.finecode.action.format_python_files]
-source = "finecode_extension_api.actions.FormatPythonFilesAction"
+[tool.finecode.action.format_file]
+source = "finecode_extension_api.actions.FormatFileAction"
 handlers = [
-    { name = "ruff", source = "fine_python_ruff.RuffFormatFilesHandler", env = "dev_no_runtime", dependencies = [
-        "fine_python_ruff~=0.2.0a0",
+    { name = "dispatch", source = "finecode_builtin_handlers.FormatFileDispatchHandler", env = "dev_no_runtime", dependencies = [
+        "finecode_builtin_handlers~=0.2.0a1",
     ] },
-    # ruff formatter doesn't handle imports, run isort to sort them
-    { name = "isort", source = "fine_python_isort.IsortFormatFilesHandler", env = "dev_no_runtime", dependencies = [
-        "fine_python_isort~=0.3.0a0",
-    ] },
-    { name = "save", source = "finecode_builtin_handlers.SaveFormatFilesHandler", env = "dev_no_runtime", dependencies = [
+    { name = "save", source = "finecode_builtin_handlers.SaveFormatFileHandler", env = "dev_no_runtime", dependencies = [
         "finecode_builtin_handlers~=0.2.0a1",
     ] },
 ]
 
+[tool.finecode.action.format_python_file]
+source = "finecode_extension_api.actions.FormatPythonFileAction"
+handlers = [
+    # ruff formatter doesn't handle imports, run isort to sort them first
+    { name = "isort", source = "fine_python_isort.IsortFormatFileHandler", env = "dev_no_runtime", dependencies = [
+        "fine_python_isort~=0.3.0a0",
+    ] },
+    { name = "ruff", source = "fine_python_ruff.RuffFormatFileHandler", env = "dev_no_runtime", dependencies = [
+        "fine_python_ruff~=0.2.0a0",
+    ] },
+]
+
 [[tool.finecode.action_handler]]
-source = "fine_python_isort.IsortFormatFilesHandler"
+source = "fine_python_isort.IsortFormatFileHandler"
 # make isort config compatible with fine_python_lint
 # this config is based on 'black' profile of isort, black is not used in lint preset,
 # but rules configured for ruff formatter are compatible with black formatting

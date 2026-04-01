@@ -120,6 +120,12 @@ source = "finecode_builtin_handlers.LintFilesDispatchHandler"
 env = "dev_no_runtime"
 dependencies = ["finecode_builtin_handlers~=0.2.0a0"]
 
+[tool.finecode.action.format_file]
+source = "finecode_extension_api.actions.FormatFileAction"
+
+[tool.finecode.action.format_python_file]
+source = "finecode_extension_api.actions.FormatPythonFileAction"
+
 [tool.finecode.action.format]
 source = "finecode_extension_api.actions.FormatAction"
 
@@ -133,8 +139,8 @@ dependencies = ["finecode_builtin_handlers~=0.2.0a0"]
 source = "finecode_extension_api.actions.FormatFilesAction"
 
 [[tool.finecode.action.format_files.handlers]]
-name = "format_files_dispatch"
-source = "finecode_builtin_handlers.FormatFilesDispatchHandler"
+name = "format_files_iterate"
+source = "finecode_builtin_handlers.FormatFilesIterateHandler"
 env = "dev_no_runtime"
 dependencies = ["finecode_builtin_handlers~=0.2.0a0"]
 

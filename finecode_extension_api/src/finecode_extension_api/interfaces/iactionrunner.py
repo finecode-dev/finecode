@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import collections.abc
 import typing
 
@@ -35,6 +37,7 @@ class IActionRunner(service.Service, typing.Protocol):
         action: ActionDeclaration[code_action.Action[PayloadT, typing.Any, ResultT]],
         payload: PayloadT,
         meta: code_action.RunActionMeta,
+        caller_kwargs: code_action.CallerRunContextKwargs | None = None,
     ) -> ResultT: ...
 
     def run_action_iter(
@@ -42,6 +45,7 @@ class IActionRunner(service.Service, typing.Protocol):
         action: ActionDeclaration[code_action.Action[PayloadT, typing.Any, ResultT]],
         payload: PayloadT,
         meta: code_action.RunActionMeta,
+        caller_kwargs: code_action.CallerRunContextKwargs | None = None,
     ) -> collections.abc.AsyncIterator[ResultT]: ...
 
     def get_actions_names(self) -> list[str]: ...
