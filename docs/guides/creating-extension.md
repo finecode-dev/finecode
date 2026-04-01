@@ -183,7 +183,7 @@ async def run(self, payload, context):
 ```
 
 !!! warning
-    `context.current_result` raises `RuntimeError` in concurrent handler mode. Only use it when `run_handlers_concurrently` is `false` (the default).
+    `context.current_result` raises `RuntimeError` in concurrent handler mode. Only use it when the action's `HANDLER_EXECUTION` is `HandlerExecution.SEQUENTIAL` (the default).
 
 ## Available actions to handle
 

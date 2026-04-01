@@ -44,18 +44,18 @@ handlers = [
     { name = "ruff", source = "fine_python_ruff.RuffLintFilesHandler", env = "dev_no_runtime", dependencies = [
         "fine_python_ruff~=0.2.0",
     ] },
-    { name = "mypy", source = "fine_python_mypy.MypyLintHandler", env = "dev_no_runtime", dependencies = [
+    { name = "mypy", source = "fine_python_mypy.MypyLintFilesHandler", env = "dev_no_runtime", dependencies = [
         "fine_python_mypy~=0.3.0",
     ] },
 ]
 
-[tool.finecode.action.format]
-source = "finecode_extension_api.actions.format.FormatAction"
+[tool.finecode.action.format_python_file]
+source = "finecode_extension_api.actions.FormatPythonFileAction"
 handlers = [
-    { name = "ruff", source = "fine_python_ruff.RuffFormatFilesHandler", env = "dev_no_runtime", dependencies = [
+    { name = "ruff", source = "fine_python_ruff.RuffFormatFileHandler", env = "dev_no_runtime", dependencies = [
         "fine_python_ruff~=0.2.0",
     ] },
-    { name = "save", source = "finecode_builtin_handlers.SaveFormatFilesHandler", env = "dev_no_runtime", dependencies = [
+    { name = "save", source = "finecode_builtin_handlers.SaveFormatFileHandler", env = "dev_no_runtime", dependencies = [
         "finecode_builtin_handlers~=0.2.0",
     ] },
 ]
