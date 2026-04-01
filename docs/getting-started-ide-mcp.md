@@ -37,6 +37,8 @@ To use the Testing panel, you need handlers registered for both actions. The `fi
 
 FineCode exposes an MCP server so any MCP-compatible client can invoke FineCode actions directly.
 
+If you use VS Code and the FineCode VSCode extension, prefer the extension-based integration for Copilot (recommended below). Manual MCP configuration is a fallback for setups without the extension.
+
 At a minimum, your client should launch:
 
 ```bash
@@ -62,6 +64,32 @@ Create `.mcp.json` in the workspace root:
 ```
 
 Claude Code discovers this file and prompts for approval on first use.
+
+### Example: VS Code Copilot (recommended with FineCode VSCode extension)
+
+When the FineCode VSCode extension is installed, it registers FineCode MCP servers for Copilot automatically.
+
+No manual MCP configuration is required.
+
+### Example: VS Code Copilot fallback (only without FineCode VSCode extension)
+
+Use this only if you are not using the FineCode VSCode extension.
+
+Create `.vscode/mcp.json` in the workspace root:
+
+```json
+{
+  "servers": {
+    "finecode": {
+      "type": "stdio",
+      "command": ".venvs/dev_workspace/bin/python",
+      "args": ["-m", "finecode", "start-mcp", "--workdir=${workspaceFolder}"]
+    }
+  }
+}
+```
+
+Note: VS Code uses the top-level `servers` key in `mcp.json`.
 
 Manual server startup is mainly for debugging and custom integration development.
 See [LSP and MCP Architecture](reference/lsp-mcp-architecture.md#manual-server-startup-for-debugging).

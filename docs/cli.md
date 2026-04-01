@@ -222,7 +222,9 @@ Start the FineCode MCP server on stdio. Connects to a running FineCode WM Server
 | `--workdir=<path>` | Workspace root directory (default: current directory). |
 | `--log-level=<level>` | Set log level: `TRACE`, `DEBUG`, `INFO`, `WARNING`, `ERROR` (default: `INFO`) |
 
-Typically started automatically by MCP-compatible clients (for example, Claude Code) — see [IDE and MCP Setup](getting-started-ide-mcp.md#mcp-setup-for-ai-clients).
+Typically started automatically by MCP-compatible clients (for example, Claude Code) or by VS Code Copilot when the FineCode VSCode extension registers the MCP provider.
+
+For setup details, see [IDE and MCP Setup](getting-started-ide-mcp.md#mcp-setup-for-ai-clients). If you use VS Code without the FineCode extension, use the fallback `.vscode/mcp.json` configuration from that page.
 
 ---
 
