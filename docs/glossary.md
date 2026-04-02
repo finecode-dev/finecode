@@ -12,6 +12,10 @@ A concrete implementation of an action. Multiple handlers can be registered for 
 
 An action whose payload carries multiple items and whose result describes that batch, often with per-item entries. Used when handlers need to iterate over, correlate, or optimize across the full set of items.
 
+## Main Handler Action
+
+When both an item action and a collection action exist for the same operation, the main handler action is the one where the main handler logic naturally lives. The other action mainly adapts to it. This term is for action design, not for telling callers which action they should prefer in every situation.
+
 ## Execution Environment
 
 A named, isolated context in which handlers and project code execute (e.g. `runtime`, `dev_workspace`, `dev_no_runtime`). Each execution environment has its own dependency set, serving a specific purpose — for example, the project's runtime, dev tooling, or test execution. The concept is inter-language; in Python each execution environment is materialized as a virtual environment. Configuration uses the shorthand `env`.

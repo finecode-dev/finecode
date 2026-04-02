@@ -62,3 +62,7 @@ keep the same decision, would the ADR still read correctly?
 | 0009 | [Explicit handler mediation of partial results across action boundaries](0009-explicit-partial-result-token-propagation.md)    | accepted | 2026-03-24 | actions, partial-results, architecture |
 | 0010 | [Explicit action-scoped progress reporting](0010-progress-reporting-for-actions.md)                                            | accepted | 2026-03-27 | actions, progress, architecture |
 | 0011 | [WM aggregates progress for multi-execution requests](0011-wm-aggregates-progress-across-multi-project-action-runs.md)       | accepted | 2026-03-28 | actions, progress, architecture, wm-server |
+| 0012 | [Actions that process multiple items distinguish item and collection granularity](0012-item-level-and-collection-level-action-granularity.md) | accepted | 2026-03-29 | actions, architecture                   |
+| 0013 | [Action declares handler execution strategy](0013-action-declares-handler-execution-strategy.md)                              | accepted | 2026-03-29 | actions, architecture                      |
+| 0014 | [CLI streams partial results in completion order](0014-cli-streams-partial-results-in-completion-order.md)                    | accepted | 2026-03-31 | cli, partial-results, ux                  |
+| 0015 | [Dedicated per-process WAL streams for durable execution lifecycle events](0015-dedicated-per-process-wal-streams-for-durable-lifecycle-events.md) | accepted | 2026-04-01 | architecture, reliability, recovery, logging, wal |
