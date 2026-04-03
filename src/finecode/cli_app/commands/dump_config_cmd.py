@@ -2,6 +2,7 @@
 import pathlib
 
 from finecode.wm_client import ApiClient, ApiError
+from finecode_extension_api.resource_uri import path_to_resource_uri
 from finecode.wm_server import wm_lifecycle
 
 
@@ -50,9 +51,13 @@ async def dump_config(
                     action="dump_config",
                     project=project_path,
                     params={
-                        "source_file_path": str(source_file_path),
+                        "source_file_path": str(
+                            path_to_resource_uri(source_file_path)
+                        ),
                         "project_raw_config": project_raw_config,
-                        "target_file_path": str(target_file_path),
+                        "target_file_path": str(
+                            path_to_resource_uri(target_file_path)
+                        ),
                     },
                     options={
                         "resultFormats": ["string"],

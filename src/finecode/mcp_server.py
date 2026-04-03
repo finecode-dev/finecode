@@ -15,6 +15,7 @@ import uuid
 
 from finecode.wm_client import ApiClient
 from finecode.wm_server import wm_lifecycle
+from finecode_extension_api.resource_uri import path_to_resource_uri
 from loguru import logger
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
@@ -268,10 +269,14 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             "dump_config",
             project,
             params={
-                "source_file_path": str(project_path / "pyproject.toml"),
+                "source_file_path": str(
+                    path_to_resource_uri(project_path / "pyproject.toml")
+                ),
                 "project_raw_config": raw_config,
                 "target_file_path": str(
-                    project_path / "finecode_config_dump" / "pyproject.toml"
+                    path_to_resource_uri(
+                        project_path / "finecode_config_dump" / "pyproject.toml"
+                    )
                 ),
             },
             options={"resultFormats": ["json"], "trigger": "user", "devEnv": "ai"},

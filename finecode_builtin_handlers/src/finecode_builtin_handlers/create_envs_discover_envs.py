@@ -21,7 +21,7 @@ class CreateEnvsDiscoverEnvsHandler(
 ):
     """Discover and populate run_context.envs from the current project's config.
 
-    If payload.envs is already non-empty (explicit caller), those envs are
+    If payload.envs is provided (explicit caller), those envs are
     used as-is — the caller is responsible for any filtering.
     Otherwise all envs defined in ``dependency-groups`` are discovered.
     """
@@ -41,7 +41,7 @@ class CreateEnvsDiscoverEnvsHandler(
         payload: create_envs_action.CreateEnvsRunPayload,
         run_context: create_envs_action.CreateEnvsRunContext,
     ) -> create_envs_action.CreateEnvsRunResult:
-        if payload.envs:
+        if payload.envs is not None:
             envs = list(payload.envs)
         else:
             project_def_path = self.project_info_provider.get_current_project_def_path()

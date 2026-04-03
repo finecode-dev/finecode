@@ -14,8 +14,8 @@ from finecode_extension_api.resource_uri import ResourceUri
 
 @dataclasses.dataclass
 class InstallEnvsRunPayload(code_action.RunActionPayload):
-    envs: list[EnvInfo] = dataclasses.field(default_factory=list)
-    """Explicit list of environments to install dependencies in. Empty means handlers discover envs at run time."""
+    envs: list[EnvInfo] | None = None
+    """Explicit list of environments to install dependencies in. ``None`` means handlers discover envs, empty list means explicit no-op."""
     env_names: list[str] | None = None
     """Filter: when set, only in environments whose name is in this list dependencies will be installed. Applied during discovery only."""
 
@@ -40,6 +40,9 @@ class InstallEnvsRunContext(code_action.RunActionContext[InstallEnvsRunPayload])
         self.project_def_by_venv_dir_path: dict[ResourceUri, dict[str, typing.Any]] = {}
 
     async def init(self) -> None:
+        if self.initial_payload.envs is None:
+            return
+
         self.envs = list(self.initial_payload.envs)
         for env_info in self.initial_payload.envs:
             self.project_def_path_by_venv_dir_path[env_info.venv_dir_path] = (

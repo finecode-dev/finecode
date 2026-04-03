@@ -6,6 +6,7 @@ import tomlkit
 from finecode_extension_api import code_action
 from finecode_extension_api.actions.system import dump_config_action
 from finecode_extension_api.interfaces import ifilemanager, ifileeditor
+from finecode_extension_api.resource_uri import resource_uri_to_path
 
 
 @dataclasses.dataclass
@@ -35,14 +36,15 @@ class DumpConfigSaveHandler(
         run_context: dump_config_action.DumpConfigRunContext,
     ) -> dump_config_action.DumpConfigRunResult:
         raw_config_str = tomlkit.dumps(run_context.raw_config_dump)
-        target_file_dir_path = payload.target_file_path.parent
+        target_file_path = resource_uri_to_path(payload.target_file_path)
+        target_file_dir_path = target_file_path.parent
 
         await self.file_manager.create_dir(dir_path=target_file_dir_path)
         async with self.file_editor.session(
             author=self.FILE_OPERATION_AUTHOR
         ) as session:
             await session.save_file(
-                file_path=payload.target_file_path, file_content=raw_config_str
+                file_path=target_file_path, file_content=raw_config_str
             )
 
         return dump_config_action.DumpConfigRunResult(

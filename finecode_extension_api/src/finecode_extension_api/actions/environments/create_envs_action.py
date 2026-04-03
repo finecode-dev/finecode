@@ -19,8 +19,8 @@ class EnvInfo:
 
 @dataclasses.dataclass
 class CreateEnvsRunPayload(code_action.RunActionPayload):
-    envs: list[EnvInfo] = dataclasses.field(default_factory=list)
-    """Explicit list of environments to create. Empty means handlers discover envs."""
+    envs: list[EnvInfo] | None = None
+    """Explicit list of environments to create. ``None`` means handlers discover envs, empty list means explicit no-op."""
     recreate: bool = False
     """Remove and recreate existing environments from scratch even if they are already valid."""
 
@@ -43,7 +43,7 @@ class CreateEnvsRunContext(code_action.RunActionContext[CreateEnvsRunPayload]):
         self.envs: list[EnvInfo] | None = None
 
     async def init(self) -> None:
-        if self.initial_payload.envs:
+        if self.initial_payload.envs is not None:
             self.envs = list(self.initial_payload.envs)
 
 

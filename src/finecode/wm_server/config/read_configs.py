@@ -170,10 +170,11 @@ async def read_project_config(
         # add runtime dependency group if it's not explicitly declared
         add_runtime_dependency_group_if_new(project_config)
 
-        add_extension_runner_to_dependencies(project_config)
-
         merge_handlers_dependencies_into_groups(project_config)
         merge_services_dependencies_into_groups(project_config)
+        # add extension runner after mergin handlers dependencies into groups
+        # because env may be missing in dependency-groups and be used in handlers
+        add_extension_runner_to_dependencies(project_config)
 
         ws_context.ws_projects_raw_configs[project.dir_path] = project_config
     else:

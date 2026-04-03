@@ -170,15 +170,18 @@ async def _run(
 
     # Steps 3a + 3b — create virtualenvs and install deps via shared helper.
     # ('recreate' for dev_workspace envs is handled above via remove_env, no need to pass here)
-    try:
-        await create_and_install_envs(
-            client=client,
-            project_path=current_project["path"],
-            envs=dw_envs,
-            dev_env=dev_env,
-        )
-    except EnvSetupFailed as exc:
-        raise PrepareEnvsFailed(f"dev_workspace setup failed: {exc.message}") from exc
+    if dw_envs:
+        try:
+            await create_and_install_envs(
+                client=client,
+                project_path=current_project["path"],
+                envs=dw_envs,
+                dev_env=dev_env,
+            )
+        except EnvSetupFailed as exc:
+            raise PrepareEnvsFailed(f"dev_workspace setup failed: {exc.message}") from exc
+    else:
+        logger.info("No dev_workspace environments selected for bootstrap, skipping")
 
     # Step 4 — start dev_workspace runners (resolves preset-defined actions).
     logger.info("Starting dev_workspace runners...")

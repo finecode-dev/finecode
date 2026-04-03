@@ -23,7 +23,7 @@ class InstallEnvsDiscoverEnvsHandler(
 ):
     """Discover and populate run_context.envs from the current project's config.
 
-    If payload.envs is already non-empty (explicit caller), those envs are
+    If payload.envs is provided (explicit caller), those envs are
     used as-is — the caller is responsible for any filtering.
     Otherwise envs are discovered from dependency-groups: every dependency group
     defined in the project definition is included as an env.
@@ -44,7 +44,7 @@ class InstallEnvsDiscoverEnvsHandler(
         payload: install_envs_action.InstallEnvsRunPayload,
         run_context: install_envs_action.InstallEnvsRunContext,
     ) -> install_envs_action.InstallEnvsRunResult:
-        if payload.envs:
+        if payload.envs is not None:
             envs = list(payload.envs)
         else:
             project_def_path = self.project_info_provider.get_current_project_def_path()
