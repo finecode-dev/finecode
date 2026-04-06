@@ -40,6 +40,7 @@ async def update_config(
     project_raw_config_getter: typing.Callable[
         [str], collections.abc.Awaitable[dict[str, typing.Any]]
     ],
+    send_request_to_wm: typing.Callable[[str, dict], collections.abc.Awaitable[typing.Any]] | None = None,
 ) -> schemas.UpdateConfigResponse:
     project_dir_path = Path(request.working_dir)
 
@@ -128,6 +129,7 @@ async def update_config(
         current_env_name_getter=current_env_name_getter,
         handler_packages=handler_packages,
         service_declarations=request.services,
+        send_request_to_wm=send_request_to_wm,
     )
 
     if request.handlers_to_initialize is not None:

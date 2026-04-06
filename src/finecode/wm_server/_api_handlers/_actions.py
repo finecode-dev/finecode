@@ -27,11 +27,12 @@ async def _handle_run_action(
     parsed = _parse_and_validate_run_action_params(params or {}, ws_context)
 
     try:
-        result = await run_service.run_action(
-            action_name=parsed.action_name,
+        executor = run_service.ProjectExecutor(ws_context)
+        action = next(a for a in parsed.project.actions if a.name == parsed.action_name)
+        result = await executor.run_action(
+            action_source=action.source,
             params=parsed.action_params,
-            project_def=parsed.project,
-            ws_context=ws_context,
+            project_path=parsed.project.dir_path,
             run_trigger=parsed.trigger,
             dev_env=parsed.dev_env,
             result_formats=parsed.result_formats,
@@ -105,14 +106,14 @@ async def _handle_run_batch(
         actions_by_project, ws_context, update_config_in_running_runners=True
     )
 
-    result_by_project = await run_service.run_actions_in_projects(
+    workspace_executor = run_service.WorkspaceExecutor(ws_context)
+    result_by_project = await workspace_executor.run_actions_in_projects(
         actions_by_project=actions_by_project,
-        action_payload=parsed.action_params,
-        ws_context=ws_context,
-        concurrently=parsed.concurrently,
-        result_formats=parsed.result_formats,
+        params=parsed.action_params,
         run_trigger=parsed.trigger,
         dev_env=parsed.dev_env,
+        concurrently=parsed.concurrently,
+        result_formats=parsed.result_formats,
         payload_overrides_by_project=parsed.params_by_project,
     )
 

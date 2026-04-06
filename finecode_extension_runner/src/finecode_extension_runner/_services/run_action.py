@@ -273,6 +273,7 @@ async def run_action(
                         trigger=meta.trigger,
                         dev_env=meta.dev_env,
                         tracking_sender=tracking_sender,
+                        partial_result_queue=partial_result_queue,
                     )
 
                 if not isinstance(
@@ -385,6 +386,7 @@ async def run_action(
                                         trigger=meta.trigger,
                                         dev_env=meta.dev_env,
                                         tracking_sender=tracking_sender,
+                                        partial_result_queue=partial_result_queue,
                                     )
                                 )
                                 handlers_tasks.append(handler_task)
@@ -421,6 +423,7 @@ async def run_action(
                                 trigger=meta.trigger,
                                 dev_env=meta.dev_env,
                                 tracking_sender=tracking_sender,
+                                partial_result_queue=partial_result_queue,
                             )
                         except ActionFailedException as exception:
                             raise exception
@@ -793,6 +796,7 @@ async def execute_action_handler(
     trigger: str = "unknown",
     dev_env: str = "unknown",
     tracking_sender: _TrackingPartialResultSender | None = None,
+    partial_result_queue: asyncio.Queue | None = None,
 ) -> code_action.RunActionResult | None:
     logger.trace(f"R{run_id} | Run {handler.name} on {str(payload)[:100]}...")
     if wal_run_id is not None:
@@ -861,6 +865,11 @@ async def execute_action_handler(
             stream_result: code_action.RunActionResult | None = None
             async for partial_result in call_result:
                 partial_result = typing.cast(code_action.RunActionResult, partial_result)
+                # Both paths below forward the partial to a caller — they differ only
+                # in transport.  partial_result_token sends to an LSP/MCP client via
+                # the WM notification channel; partial_result_queue delivers to a parent
+                # action handler that called run_action_iter().  These could be unified
+                # into a single PartialResultForwarder abstraction in the future.
                 if partial_result_token is not None:
                     if (
                         tracking_sender is not None
@@ -881,6 +890,8 @@ async def execute_action_handler(
                     await partial_result_sender.schedule_sending(
                         partial_result_token, partial_result
                     )
+                if partial_result_queue is not None:
+                    await partial_result_queue.put(partial_result)
                 if stream_result is None:
                     result_type_pydantic = pydantic_dataclass(type(partial_result))
                     stream_result = typing.cast(
@@ -892,6 +903,8 @@ async def execute_action_handler(
             if partial_result_token is not None:
                 await partial_result_sender.send_all_immediately()
                 execution_result = None  # partials already sent
+            elif partial_result_queue is not None:
+                execution_result = None  # each partial already forwarded to queue
             else:
                 execution_result = stream_result
         elif inspect.isawaitable(call_result):

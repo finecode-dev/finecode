@@ -18,7 +18,9 @@ from finecode_extension_api.interfaces import (  # idevenvinfoprovider,
     ifilemanager,
     ilogger,
     iprojectinfoprovider,
+    iprojectactionrunner,
     irepositorycredentialsprovider,
+    iworkspaceactionrunner,
 )
 
 from finecode_extension_runner import domain
@@ -33,9 +35,11 @@ from finecode_extension_runner.impls import (  # dev_env_info_provider,
     file_manager,
     inmemory_cache,
     loguru_logger,
+    project_action_runner,
     project_info_provider,
     repository_credentials_provider,
     service_registry,
+    workspace_action_runner,
 )
 
 def bootstrap(
@@ -49,6 +53,7 @@ def bootstrap(
     current_env_name_getter: Callable[[], str],
     handler_packages: set[str],
     service_declarations: list,
+    send_request_to_wm: Callable[[str, dict], collections.abc.Awaitable[Any]] | None = None,
 ):
     # logger_instance = loguru_logger.LoguruLogger()
     logger_instance = loguru_logger.get_logger()
@@ -74,6 +79,14 @@ def bootstrap(
     _state.container[ifileeditor.IFileEditor] = file_editor_instance
     _state.container[icache.ICache] = cache_instance
     _state.container[iactionrunner.IActionRunner] = action_runner_instance
+
+    if send_request_to_wm is not None:
+        _state.container[iprojectactionrunner.IProjectActionRunner] = (
+            project_action_runner.ProjectActionRunnerImpl(send_request_to_wm)
+        )
+        _state.container[iworkspaceactionrunner.IWorkspaceActionRunner] = (
+            workspace_action_runner.WorkspaceActionRunnerImpl(send_request_to_wm)
+        )
 
     _state.container[irepositorycredentialsprovider.IRepositoryCredentialsProvider] = (
         repository_credentials_provider.ConfigRepositoryCredentialsProvider()

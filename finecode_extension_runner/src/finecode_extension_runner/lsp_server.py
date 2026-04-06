@@ -479,9 +479,13 @@ async def update_config(
             ],
             handlers_to_initialize=config.get("handlers_to_initialize"),
         )
+        async def _send_request_to_wm(method: str, params: dict):
+            return await ls.protocol.send_request_async(method, params)
+
         response = await services.update_config(
             request=request,
             project_raw_config_getter=functools.partial(get_project_raw_config, ls),
+            send_request_to_wm=_send_request_to_wm,
         )
         # update_config calls DI bootstrap, we can instantiate file_editor_session first
         # here

@@ -66,3 +66,4 @@ keep the same decision, would the ADR still read correctly?
 | 0013 | [Action declares handler execution strategy](0013-action-declares-handler-execution-strategy.md)                              | accepted | 2026-03-29 | actions, architecture                      |
 | 0014 | [CLI streams partial results in completion order](0014-cli-streams-partial-results-in-completion-order.md)                    | accepted | 2026-03-31 | cli, partial-results, ux                  |
 | 0015 | [Dedicated per-process WAL streams for durable execution lifecycle events](0015-dedicated-per-process-wal-streams-for-durable-lifecycle-events.md) | accepted | 2026-04-01 | architecture, reliability, recovery, logging, wal |
+| 0016 | [Layered execution scopes for action invocation](0016-layered-execution-scopes-for-action-invocation.md)                     | accepted | 2026-04-05 | actions, architecture, orchestration, extension-runner, wm-server |

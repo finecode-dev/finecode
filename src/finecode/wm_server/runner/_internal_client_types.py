@@ -25,6 +25,8 @@ WORKSPACE_EXECUTE_COMMAND = "workspace/executeCommand"
 WORKSPACE_APPLY_EDIT = "workspace/applyEdit"
 
 PROJECT_RAW_CONFIG_GET = "projects/getRawConfig"
+RUN_ACTION_IN_PROJECT = "finecode/runActionInProject"
+RUN_ACTION_IN_WORKSPACE = "finecode/runActionInWorkspace"
 
 
 @dataclasses.dataclass
@@ -1388,6 +1390,28 @@ class GetProjectRawConfigResult(BaseResult):
 @dataclasses.dataclass
 class GetProjectRawConfigResponse(BaseResponse):
     result: GetProjectRawConfigResult
+
+
+@dataclasses.dataclass
+class RunActionInProjectMeta:
+    trigger: str
+    dev_env: str
+    orchestration_depth: int = 0
+
+
+@dataclasses.dataclass
+class RunActionInProjectParams:
+    action_source: str
+    payload: dict
+    meta: RunActionInProjectMeta
+
+
+@dataclasses.dataclass
+class RunActionInWorkspaceParams:
+    action_source: str
+    payload: dict
+    meta: RunActionInProjectMeta
+    project_paths: list[str] | None = None
 
 
 @dataclasses.dataclass

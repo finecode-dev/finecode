@@ -56,6 +56,7 @@ class RunActionMeta:
     trigger: RunActionTrigger
     dev_env: DevEnv
     wal_run_id: str = ""
+    orchestration_depth: int = 0  # incremented at each cross-boundary hop
 
 
 class RunReturnCode(enum.IntEnum):

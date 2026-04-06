@@ -13,8 +13,16 @@ from .proxy_utils import (
     run_actions_in_projects,
     RunResultFormat,
     RunActionTrigger,
-    DevEnv
+    DevEnv,
 )
+from .execution_scopes import (
+    OrchestrationPolicy,
+    DEFAULT_ORCHESTRATION_POLICY,
+    IProjectExecutionScope,
+    IWorkspaceExecutionScope,
+)
+from .project_executor import ProjectExecutor
+from .workspace_executor import WorkspaceExecutor
 
 
 __all__ = [
@@ -31,4 +39,10 @@ __all__ = [
     "RunResultFormat",
     "RunActionTrigger",
     "DevEnv",
+    "OrchestrationPolicy",
+    "DEFAULT_ORCHESTRATION_POLICY",
+    "IProjectExecutionScope",
+    "IWorkspaceExecutionScope",
+    "ProjectExecutor",
+    "WorkspaceExecutor",
 ]

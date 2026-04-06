@@ -200,11 +200,11 @@ async def _handle_run_action_with_progress(
     forward_task = asyncio.create_task(_forward_progress())
 
     try:
-        result = await run_service.run_action(
-            action_name=parsed.action_name,
+        executor = run_service.ProjectExecutor(ws_context)
+        result = await executor.run_action(
+            action_source=action.source,
             params=parsed.action_params,
-            project_def=parsed.project,
-            ws_context=ws_context,
+            project_path=parsed.project.dir_path,
             run_trigger=parsed.trigger,
             dev_env=parsed.dev_env,
             result_formats=parsed.result_formats,
@@ -348,14 +348,14 @@ async def _handle_run_batch_with_progress(
     client_forward_task = asyncio.create_task(_forward_to_client())
 
     try:
-        result_by_project = await run_service.run_actions_in_projects(
+        workspace_executor = run_service.WorkspaceExecutor(ws_context)
+        result_by_project = await workspace_executor.run_actions_in_projects(
             actions_by_project=actions_by_project,
-            action_payload=parsed.action_params,
-            ws_context=ws_context,
-            concurrently=parsed.concurrently,
-            result_formats=parsed.result_formats,
+            params=parsed.action_params,
             run_trigger=parsed.trigger,
             dev_env=parsed.dev_env,
+            concurrently=parsed.concurrently,
+            result_formats=parsed.result_formats,
             payload_overrides_by_project=parsed.params_by_project or None,
             progress_token_by_project=progress_token_by_project,
         )

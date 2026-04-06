@@ -673,6 +673,7 @@ async def run_action(
     result_formats: list[runner_client.RunResultFormat] | None = None,
     initialize_all_handlers: bool = False,
     progress_token: int | str | None = None,
+    orchestration_depth: int = 0,
 ) -> RunActionResponse:
     wal_run_id = wal.new_wal_run_id()
     formatted_params = str(params)
@@ -743,6 +744,7 @@ async def run_action(
             initialize_all_handlers=initialize_all_handlers,
             progress_token=progress_token,
             wal_run_id=wal_run_id,
+            orchestration_depth=orchestration_depth,
         )
     else:
         # TODO: concurrent vs sequential, this value should be taken from action config
@@ -765,6 +767,7 @@ async def run_action(
                     initialize_all_handlers=initialize_all_handlers,
                     progress_token=progress_token,
                     wal_run_id=wal_run_id,
+                    orchestration_depth=orchestration_depth,
                 )
 
     return response
@@ -782,6 +785,7 @@ async def _run_action_in_env_runner(
     wal_run_id: str,
     initialize_all_handlers: bool = False,
     progress_token: int | str | None = None,
+    orchestration_depth: int = 0,
 ):
     wal.emit_run_event(
         ws_context.wal_writer,
@@ -811,7 +815,7 @@ async def _run_action_in_env_runner(
         options: dict[str, typing.Any] = {
             "result_formats": result_formats,
             "wal_run_id": wal_run_id,
-            "meta": {"trigger": run_trigger.value, "dev_env": dev_env.value},
+            "meta": {"trigger": run_trigger.value, "dev_env": dev_env.value, "orchestration_depth": orchestration_depth},
         }
         if progress_token is not None:
             options["progress_token"] = progress_token
@@ -872,5 +876,4 @@ __all__ = [
     "find_all_projects_with_action",
     "run_with_partial_results",
     "start_required_environments",
-    "run_actions_in_projects",
 ]
