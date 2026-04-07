@@ -119,7 +119,7 @@ python -m finecode run lint --config.ruff.line_length=120
 Create and populate virtual environments for all handler dependencies.
 
 ```
-python -m finecode prepare-envs [--recreate] [--env-names=<name>]...
+python -m finecode prepare-envs [--recreate] [--env=<name>]...
                                  [--project=<name>]... [--log-level=<level>] [--debug]
 ```
 
@@ -130,14 +130,14 @@ See [Preparing Environments](guides/preparing-environments.md) for a full explan
 | Option | Description |
 |---|---|
 | `--recreate` | Delete and recreate all venvs from scratch |
-| `--env-names=<name>` | Restrict handler dependency installation to the named env(s). Repeatable. See note below. |
+| `--env=<name>` | Restrict handler dependency installation to the named env(s). Repeatable. See note below. |
 | `--project=<name>` | Restrict preparation to the named project(s) (matched by `[project].name` from `pyproject.toml`). Repeatable. |
 | `--log-level=<level>` | Set log level: `TRACE`, `DEBUG`, `INFO`, `WARNING`, `ERROR` (default: `INFO`) |
 | `--debug` | Wait for a debugpy client on port 5680 before starting |
 | `--dev-env=<env>` | Override the detected dev environment. One of: `ai`, `ci`, `cli`, `ide`, `precommit` (default: auto-detected) |
 
 
-!!! note `--env-names` restricts only the `install_envs` step. The `create_envs` step still runs for **all** envs regardless of this flag — virtualenvs must exist for every env even when you only need to update dependencies in one of them.
+!!! note `--env` restricts only the `install_envs` step. The `create_envs` step still runs for **all** envs regardless of this flag — virtualenvs must exist for every env even when you only need to update dependencies in one of them.
 
 ---
 

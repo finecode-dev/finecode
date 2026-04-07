@@ -119,10 +119,10 @@ Only prepares environments for the listed projects. Useful in a large workspaces
 ### Filtering by environment name
 
 ```bash
-python -m finecode prepare-envs --env-names=dev_no_runtime
+python -m finecode prepare-envs --env=dev_no_runtime
 ```
 
-Restricts the `install_envs` step (step 2) to the named environments. The `create_envs` step still runs for **all** envs regardless of this flag.
+Restricts the `install_envs` step (step 5) to the named environments. The `create_envs` step still runs for **all** envs regardless of this flag.
 
 **Why?** Virtualenvs must exist for every env — they are cheap to create and skip if already valid. Filtering at that step would leave envs in a broken state if they don't exist yet.
 
