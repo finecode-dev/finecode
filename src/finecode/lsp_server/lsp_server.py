@@ -245,10 +245,9 @@ async def _on_initialized(ls: LanguageServer, params: types.InitializedParams):
 
     # Register notification handlers for server→client push messages.
     async def on_tree_changed(params: dict) -> None:
-        # TODO
-        ...
-        # node = schemas.ActionTreeNode(**params["node"])
-        # await action_tree_endpoints.notify_changed_action_node(ls, node)
+        node = params.get("node")
+        if isinstance(node, dict):
+            await action_tree_endpoints.notify_changed_action_node(ls, node)
 
     async def on_user_message(params: dict) -> None:
         await send_user_message_notification(ls, params["message"], params["type"])

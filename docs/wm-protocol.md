@@ -358,15 +358,15 @@ Get the hierarchical action tree for IDE sidebar display.
 {
   "nodes": [
     {
-      "node_id": "ws_dir_0",
+      "nodeId": "ws_dir_0",
       "name": "/path/to/workspace",
-      "node_type": 0,
+      "nodeType": 0,
       "status": "ok",
       "subnodes": [
         {
-          "node_id": "project_0",
+          "nodeId": "project_0",
           "name": "finecode",
-          "node_type": 1,
+          "nodeType": 1,
           "status": "ok",
           "subnodes": []
         }
@@ -376,7 +376,7 @@ Get the hierarchical action tree for IDE sidebar display.
 }
 ```
 
-`node_type` values: 0=DIRECTORY, 1=PROJECT, 2=ACTION, 3=ACTION_GROUP, 4=PRESET,
+`nodeType` values: 0=DIRECTORY, 1=PROJECT, 2=ACTION, 3=ACTION_GROUP, 4=PRESET,
 5=ENV_GROUP, 6=ENV
 
 ---
@@ -782,9 +782,9 @@ runner start/stop).
 ```json
 {
   "node": {
-    "node_id": "project_0",
+    "nodeId": "project_0",
     "name": "finecode",
-    "node_type": 1,
+    "nodeType": 1,
     "status": "ok",
     "subnodes": []
   }

@@ -36,18 +36,18 @@ def _project_action_tree(project: domain.Project | None, ws_context: context.Wor
                 handler_node_id = f"{project.dir_path.as_posix()}::{action.name}::{handler.name}"
                 handlers_nodes.append(
                     {
-                        "node_id": handler_node_id,
+                        "nodeId": handler_node_id,
                         "name": handler.name,
-                        "node_type": 2,  # ACTION
+                        "nodeType": 2,  # ACTION
                         "subnodes": [],
                         "status": "",
                     }
                 )
             action_nodes.append(
                 {
-                    "node_id": node_id,
+                    "nodeId": node_id,
                     "name": action.name,
-                    "node_type": 2,  # ACTION
+                    "nodeType": 2,  # ACTION
                     "subnodes": handlers_nodes,
                     "status": "",
                 }
@@ -61,9 +61,9 @@ def _project_action_tree(project: domain.Project | None, ws_context: context.Wor
         node_id = f"{project.dir_path.as_posix()}::actions"
         actions_nodes.append(
             {
-                "node_id": node_id,
+                "nodeId": node_id,
                 "name": "Actions",
-                "node_type": 3,  # ACTION_GROUP
+                "nodeType": 3,  # ACTION_GROUP
                 "subnodes": action_nodes,
                 "status": "",
             }
@@ -74,9 +74,9 @@ def _project_action_tree(project: domain.Project | None, ws_context: context.Wor
             env_node_id = f"{project.dir_path.as_posix()}::envs::{env}"
             envs_nodes.append(
                 {
-                    "node_id": env_node_id,
+                    "nodeId": env_node_id,
                     "name": env,
-                    "node_type": 6,  # ENV
+                    "nodeType": 6,  # ENV
                     "subnodes": [],
                     "status": "",
                 }
@@ -84,9 +84,9 @@ def _project_action_tree(project: domain.Project | None, ws_context: context.Wor
         node_id = f"{project.dir_path.as_posix()}::envs"
         actions_nodes.append(
             {
-                "node_id": node_id,
+                "nodeId": node_id,
                 "name": "Environments",
-                "node_type": 5,  # ENV_GROUP
+                "nodeType": 5,  # ENV_GROUP
                 "subnodes": envs_nodes,
                 "status": "",
             }
@@ -135,10 +135,10 @@ def _build_tree(ws_context: context.WorkspaceContext) -> list[dict]:
 
         actions_nodes = _project_action_tree(ws_context.ws_projects.get(ws_dir), ws_context)
         node = {
-            "node_id": ws_dir.as_posix(),
+            "nodeId": ws_dir.as_posix(),
             "name": ws_dir.name,
             "subnodes": actions_nodes,
-            "node_type": dir_node_type,
+            "nodeType": dir_node_type,
             "status": status,
         }
         nodes.append(node)
@@ -149,10 +149,10 @@ def _build_tree(ws_context: context.WorkspaceContext) -> list[dict]:
             status = project.status.name if project is not None else ""
             actions_nodes = _project_action_tree(project, ws_context)
             node = {
-                "node_id": project_path.as_posix(),
+                "nodeId": project_path.as_posix(),
                 "name": project_path.name,
                 "subnodes": actions_nodes,
-                "node_type": 1,  # PROJECT
+                "nodeType": 1,  # PROJECT
                 "status": status,
             }
 

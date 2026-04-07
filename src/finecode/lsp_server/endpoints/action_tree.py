@@ -5,13 +5,38 @@ from loguru import logger
 from pygls.lsp.server import LanguageServer
 
 
+def _parse_parent_node_id(params) -> str | None:
+    """Parse getActions executeCommand params (camelCase protocol)."""
+    if params is None:
+        return None
+
+    if isinstance(params, str):
+        return params
+
+    if isinstance(params, dict):
+        return params.get("parentNodeId")
+
+    if isinstance(params, list):
+        if len(params) == 0:
+            return None
+        first = params[0]
+        if isinstance(first, str):
+            return first
+        if isinstance(first, dict):
+            return first.get("parentNodeId")
+
+    return None
+
+
+async def notify_changed_action_node(ls: LanguageServer, action_node: dict) -> None:
+    ls.protocol.notify(method="actionsNodes/changed", params=action_node)
+
+
 async def list_actions(ls: LanguageServer, params):
     logger.info(f"list_actions {params}")
     await global_state.server_initialized.wait()
 
-    # params is expected to be a list, but pygls seems to pass the first element of list
-    # if the list contains only one element. Test after migration from pygls
-    parent_node_id = params  # params[0]
+    parent_node_id = _parse_parent_node_id(params)
 
     if global_state.wm_client is None:
         raise Exception()

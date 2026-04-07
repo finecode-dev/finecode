@@ -445,9 +445,9 @@ def _register_callbacks() -> None:
     async def on_project_changed(project: domain.Project) -> None:
         _notify_all_clients("actions/treeChanged", {
             "node": {
-                "node_id": str(project.dir_path),
+                "nodeId": str(project.dir_path),
                 "name": project.name,
-                "node_type": 1,
+                "nodeType": 1,
                 "status": project.status.name,
                 "subnodes": [],
             },

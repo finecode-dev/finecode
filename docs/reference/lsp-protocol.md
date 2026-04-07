@@ -51,8 +51,11 @@ Server APIs. Params are passed as the `params` array of `executeCommand`.
 ### Action Tree and Projects
 
 - `finecode.getActions`
-  - Params: `parent_node_id` (string or `null`)
+  - Params: `parentNodeId` (string or `null`), or positional string argument
   - Returns: action tree under the given node
+
+Action tree node payloads use camelCase fields in the LSP protocol:
+`nodeId`, `nodeType`, `subnodes`, `status`, `name`.
 
 - `finecode.getActionsForPosition`
   - Params: position object (currently ignored)
