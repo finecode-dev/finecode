@@ -1412,6 +1412,29 @@ class RunActionInWorkspaceParams:
     payload: dict
     meta: RunActionInProjectMeta
     project_paths: list[str] | None = None
+    concurrently: bool = True
+
+
+@dataclasses.dataclass
+class RunActionInWorkspaceResult(BaseResult):
+    # Stringified JSON, not a dict — same pattern as GetProjectRawConfigResult.
+    # Reason: pygls deserializes JSON-RPC responses into attribute-style Object
+    # instances. Dict keys that are POSIX paths (containing "/") are not valid
+    # Python identifiers, so pygls mangles them to "_0", "_1", etc., losing the
+    # original paths. Returning the payload as a JSON string bypasses pygls
+    # deserialization; the ER side does json.loads() to recover the real dict.
+    results_by_project: str
+
+
+@dataclasses.dataclass
+class RunActionInWorkspaceRequest(BaseRequest):
+    params: RunActionInWorkspaceParams
+    method = RUN_ACTION_IN_WORKSPACE
+
+
+@dataclasses.dataclass
+class RunActionInWorkspaceResponse(BaseResponse):
+    result: RunActionInWorkspaceResult
 
 
 @dataclasses.dataclass
@@ -1612,5 +1635,11 @@ METHOD_TO_TYPES: dict[
         DidChangeTextDocumentParams,
         None,
         None,
+    ),
+    RUN_ACTION_IN_WORKSPACE: (
+        RunActionInWorkspaceRequest,
+        RunActionInWorkspaceParams,
+        RunActionInWorkspaceResponse,
+        RunActionInWorkspaceResult,
     ),
 }

@@ -306,18 +306,19 @@ async def _start_extension_runner_process(
                 run_trigger=run_trigger,
                 dev_env=dev_env,
                 orchestration_depth=params.meta.orchestration_depth,
+                concurrently=params.concurrently,
             )
         except ActionRunFailed as exc:
             raise ValueError(exc.message) from exc
-        return {
-            "resultsByProject": {
+        return _internal_client_types.RunActionInWorkspaceResult(
+            results_by_project=json.dumps({
                 k.as_posix(): {
                     action: resp.result_by_format.get("json", {})
                     for action, resp in v.items()
                 }
                 for k, v in results.items()
-            }
-        }
+            })
+        )
 
     runner.client.feature(
         _internal_client_types.RUN_ACTION_IN_WORKSPACE,

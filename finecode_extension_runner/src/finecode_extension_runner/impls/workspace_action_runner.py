@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import dataclasses
+import json
 import pathlib
 import typing
 from typing import Any, Awaitable, Callable
 
+import apischema
 from finecode_extension_api import code_action
 from finecode_extension_api.interfaces import iactionrunner, iworkspaceactionrunner
 from finecode_extension_runner import run_utils
@@ -25,6 +27,7 @@ class WorkspaceActionRunnerImpl(iworkspaceactionrunner.IWorkspaceActionRunner):
         payload: PayloadT,
         meta: code_action.RunActionMeta,
         project_paths: list[pathlib.Path] | None = None,
+        concurrently: bool = True,
     ) -> dict[pathlib.Path, ResultT]:
         action_source: str = action.source
         action_cls = run_utils.import_module_member_by_source_str(action_source)
@@ -41,9 +44,17 @@ class WorkspaceActionRunnerImpl(iworkspaceactionrunner.IWorkspaceActionRunner):
                 "projectPaths": [p.as_posix() for p in project_paths]
                 if project_paths is not None
                 else None,
+                "concurrently": concurrently,
             },
         )
+        # raw.resultsByProject is a stringified JSON string — pygls converts
+        # JSON-RPC responses to Object and mangles path-keyed dicts (slashes
+        # are invalid Python identifiers), so we stringify on the WM side and
+        # parse back here, following the same pattern as projects/getRawConfig.
+        results_by_project: dict = json.loads(raw.resultsByProject)
         return {
-            pathlib.Path(k): action_cls.RESULT_TYPE(**v)
-            for k, v in raw.get("resultsByProject", {}).items()
+            pathlib.Path(k): apischema.deserialize(
+                action_cls.RESULT_TYPE, next(iter(v.values()), {})
+            )
+            for k, v in results_by_project.items()
         }

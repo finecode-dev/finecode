@@ -28,4 +28,5 @@ class IWorkspaceActionRunner(service.Service, typing.Protocol):
         payload: PayloadT,
         meta: code_action.RunActionMeta,
         project_paths: list[pathlib.Path] | None = None,
+        concurrently: bool = True,
     ) -> dict[pathlib.Path, ResultT]: ...

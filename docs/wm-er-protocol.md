@@ -76,7 +76,8 @@ The protocol is LSP-shaped with a small set of custom commands.
       2. `params` (object)
       3. `options` (object, optional)
     - Options (snake_case keys are expected):
-      - `meta`: `{ "trigger": "user|system|unknown", "dev_env": "ide|cli|ai|precommit|ci" }`
+      - `meta`: `{ "trigger": "user|system|unknown", "dev_env": "ide|cli|ai|precommit|ci", "orchestration_depth": int }`
+        - `orchestration_depth`: cross-boundary hop counter, defaults to `0`. The ER propagates it unchanged via `RunActionMeta.orchestration_depth`.
       - `partial_result_token`: `int | string` (used to correlate `$/progress`)
       - `result_formats`: `["json", "string"]` (defaults to `["json"]`)
     - Result (success):
@@ -143,6 +144,24 @@ The protocol is LSP-shaped with a small set of custom commands.
   - Params: `{ "projectDefPath": "/abs/path/to/project/finecode.toml" }`
   - Result: `{ "config": "<stringified JSON config>" }`
   - Used by ER during `finecodeRunner/updateConfig` to resolve project config.
+
+- `finecode/runActionInProject`
+  - Params:
+    - `actionSource` (string): import path of the action class (e.g. `"myext.actions.lint.LintAction"`)
+    - `payload` (object): serialized action payload (`dataclasses.asdict`)
+    - `meta` (object): `{ "trigger": string, "devEnv": string, "orchestrationDepth": int }`
+  - Result: `{ "result": <json result object>, "returnCode": 0|1 }`
+  - Runs the action at project scope (all env-runners of the ER's own project). WM enforces `OrchestrationPolicy.max_recursion_depth` before dispatching.
+
+- `finecode/runActionInWorkspace`
+  - Params:
+    - `actionSource` (string): import path of the action class
+    - `payload` (object): serialized action payload
+    - `meta` (object): `{ "trigger": string, "devEnv": string, "orchestrationDepth": int }`
+    - `projectPaths` (list[string] | null): explicit POSIX project paths, or `null` for all projects that declare the action
+    - `concurrently` (boolean, default `true`): run projects concurrently.
+  - Result: `{ "resultsByProject": { "<posix path>": <json result>, ... } }`
+  - Fans out the action across the specified projects (or all projects that declare it). WM enforces `OrchestrationPolicy.max_project_fanout` before dispatching.
 
 **Notifications**
 
