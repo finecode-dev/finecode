@@ -427,10 +427,6 @@ class ServeWalExplorerFromStoreHandler(
         if since_ts_iso is not None and not isinstance(since_ts_iso, str):
             raise _BadRequestError("since_ts_iso must be a string or null")
 
-        project_scope = request_payload.get("project_scope")
-        if project_scope is not None and not isinstance(project_scope, str):
-            raise _BadRequestError("project_scope must be a string or null")
-
         self.logger.info("WAL ingest requested from HTTP endpoint")
 
         ingest_action = self.action_runner.get_action_by_source(IngestWalToStoreAction)
@@ -445,7 +441,6 @@ class ServeWalExplorerFromStoreHandler(
             ingest_payload = IngestWalToStoreRunPayload(
                 since_ts_iso=since_ts_iso,
                 store_uri=path_to_resource_uri(store_path),
-                project_scope=cast(ResourceUri | None, project_scope),
             )
 
             try:
