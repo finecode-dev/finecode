@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -50,6 +51,17 @@ class WorkspaceContext:
     # payload schema cache: project_path → {action_name: JSON Schema fragment | None}
     ws_action_schemas: dict[Path, dict[str, dict | None]] = field(default_factory=dict)
     wal_writer: WalWriter | None = None
+
+    # Serializes the fast discovery phase of workspace mutations (addDir, removeDir,
+    # startRunners): dir-list updates, filesystem scan, and projects_to_init
+    # computation.  Released before the slow runner-startup phase begins.
+    workspace_state_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+
+    # Per-project initialization locks.  Guard the slow per-project work: config
+    # reading, preset resolution, and runner startup.  Created once per project path
+    # inside workspace_state_lock so they are always present before being awaited.
+    # A locked entry means initialization is in progress for that project.
+    project_init_locks: dict[Path, asyncio.Lock] = field(default_factory=dict)
 
 
 @dataclass
