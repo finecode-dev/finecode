@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>WAL Explorer — Runs</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<nav>
+  <span class="brand">WAL Explorer</span>
+  <a href="/">Dashboard</a>
+  <a href="/runs.html" class="active">Runs</a>
+  <a href="/events.html">Events</a>
+  <a href="/health.html">Health</a>
+</nav>
+<div class="page">
+  <h1>Runs</h1>
+  <div class="filter-form">
+    <form method="get" class="form-row" id="filterForm">
+      <label>Source ID
+        <input type="text" name="source_id" id="f_source_id" placeholder="any">
+      </label>
+      <label>From (ISO)
+        <input type="text" name="from_ts" id="f_from_ts" placeholder="2026-01-01T00:00:00">
+      </label>
+      <label>To (ISO)
+        <input type="text" name="to_ts" id="f_to_ts" placeholder="2026-12-31T23:59:59">
+      </label>
+      <label>Limit
+        <input type="number" name="limit" id="f_limit" value="200" min="1" max="5000" style="min-width:80px">
+      </label>
+      <button type="submit">Filter</button>
+    </form>
+  </div>
+  <div id="content"><p class="msg">Loading…</p></div>
+</div>
+<script>
+function badge(status) {
+  const cls = status === 'success' ? 'success' : status === 'failed' ? 'failed' : 'incomplete';
+  return `<span class="badge badge-${cls}">${status ?? '—'}</span>`;
+}
+
+function fmtMs(ms) {
+  if (ms == null) return '—';
+  return ms < 1000 ? ms + ' ms' : (ms / 1000).toFixed(2) + ' s';
+}
+
+function fmtTs(ts) {
+  if (!ts) return '—';
+  try {
+    const d = new Date(ts);
+    const p = (n, z = 2) => String(n).padStart(z, '0');
+    return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())} ` +
+           `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}.${p(d.getMilliseconds(), 3)}`;
+  } catch { return ts; }
+}
+
+// Pre-fill form from URL params
+const params = new URLSearchParams(location.search);
+['source_id','from_ts','to_ts','limit'].forEach(k => {
+  const el = document.getElementById('f_' + k);
+  if (el && params.has(k)) el.value = params.get(k);
+});
+
+async function load() {
+  const qs = location.search ? location.search.slice(1) : '';
+  const res = await fetch('/runs' + (qs ? '?' + qs : ''));
+  if (!res.ok) throw new Error('HTTP ' + res.status);
+  const { runs } = await res.json();
+
+  if (runs.length === 0) {
+    document.getElementById('content').innerHTML = '<p class="msg">No runs found.</p>';
+    return;
+  }
+
+  const rows = runs.map(r => `
+    <tr>
+      <td><a href="/run.html?run_id=${encodeURIComponent(r.run_id)}">${r.run_id}</a></td>
+      <td>${r.source_id ?? '—'}</td>
+      <td>${r.action_name ?? '—'}</td>
+      <td>${badge(r.status)}</td>
+      <td style="text-align:right">${fmtMs(r.duration_ms)}</td>
+      <td style="text-align:right">${r.event_count ?? '—'}</td>
+      <td>${fmtTs(r.first_ts)}</td>
+      <td>${fmtTs(r.last_ts)}</td>
+    </tr>`).join('');
+
+  document.getElementById('content').innerHTML = `
+    <p class="msg">${runs.length} run(s)</p>
+    <div class="table-wrap"><table>
+      <thead><tr>
+        <th>Run ID</th><th>Source</th><th>Action</th>
+        <th>Status</th><th>Duration</th><th>Events</th>
+        <th>Started</th><th>Ended</th>
+      </tr></thead>
+      <tbody>${rows}</tbody>
+    </table></div>`;
+}
+
+load().catch(err => {
+  document.getElementById('content').innerHTML =
+    `<p class="msg msg-error">Error: ${err.message}</p>`;
+});
+</script>
+</body>
+</html>

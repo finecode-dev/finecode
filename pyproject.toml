@@ -75,6 +75,8 @@ finecode_extension_api = { path = "./finecode_extension_api", editable = true }
 finecode_jsonrpc = { path = "./finecode_jsonrpc", editable = true }
 finecode_builtin_handlers = { path = "./finecode_builtin_handlers", editable = true }
 
+[tool.finecode.env.dev_no_runtime.dependencies]
+fine_python_setuptools_scm = { path = "./extensions/fine_python_setuptools_scm", editable = true }
 
 [tool.importlinter]
 root_package = "finecode"
@@ -120,5 +122,37 @@ handlers_mode = "replace"
 handlers = [
     { name = 'get_src_artifact_version_setuptools_scm', source = 'fine_python_setuptools_scm.GetSrcArtifactVersionSetuptoolsScmHandler', env = "dev_no_runtime", dependencies = [
         "fine_python_setuptools_scm~=0.1.0a1",
+    ] },
+]
+
+[tool.finecode.action.summarize_wal_logs]
+source = "finecode_extension_api.actions.SummarizeWalLogsAction"
+handlers = [
+    { name = "summarize_wal_logs", source = "fine_wal_explorer.SummarizeWalLogsHandler", env = "wal_explorer", dependencies = [
+        "fine_wal_explorer~=0.1.0a0",
+    ] },
+]
+
+[tool.finecode.action.export_wal_timeline_from_logs]
+source = "finecode_extension_api.actions.ExportWalTimelineFromLogsAction"
+handlers = [
+    { name = "export_wal_timeline_from_logs", source = "fine_wal_explorer.ExportWalTimelineFromLogsHandler", env = "wal_explorer", dependencies = [
+        "fine_wal_explorer~=0.1.0a0",
+    ] },
+]
+
+[tool.finecode.action.serve_wal_explorer_from_store]
+source = "finecode_extension_api.actions.ServeWalExplorerFromStoreAction"
+handlers = [
+    { name = "serve_wal_explorer_from_store", source = "fine_wal_explorer.ServeWalExplorerFromStoreHandler", env = "wal_explorer", dependencies = [
+        "fine_wal_explorer~=0.1.0a0",
+    ] },
+]
+
+[tool.finecode.action.ingest_and_serve_wal_explorer]
+source = "finecode_extension_api.actions.IngestAndServeWalExplorerAction"
+handlers = [
+    { name = "ingest_and_serve_wal_explorer", source = "fine_wal_explorer.IngestAndServeWalExplorerHandler", env = "wal_explorer", dependencies = [
+        "fine_wal_explorer~=0.1.0a0",
     ] },
 ]

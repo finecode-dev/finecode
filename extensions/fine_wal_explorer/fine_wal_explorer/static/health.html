@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>WAL Explorer — Health</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<nav>
+  <span class="brand">WAL Explorer</span>
+  <a href="/">Dashboard</a>
+  <a href="/runs.html">Runs</a>
+  <a href="/events.html">Events</a>
+  <a href="/health.html" class="active">Health</a>
+</nav>
+<div class="page">
+  <h1>Health</h1>
+  <div id="content"><p class="msg">Loading…</p></div>
+</div>
+<script>
+fetch('/health')
+  .then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+  .then(data => {
+    const statusCls = data.status === 'ok' ? 'ok' : 'error';
+    const fields = [
+      ['Status',         `<span class="badge badge-${statusCls}">${data.status ?? '—'}</span>`],
+      ['Schema Version', data.schema_version ?? '—'],
+      ['Total Events',   data.total_events   ?? '—'],
+      ['Total Runs',     data.total_runs      ?? '—'],
+      ['Server URL',     `<a href="${window.location.origin}">${window.location.origin}</a>`],
+    ];
+    document.getElementById('content').innerHTML = `
+      <div class="cards">
+        ${fields.map(([label, value]) => `
+          <div class="card">
+            <div class="label">${label}</div>
+            <div class="value" style="font-size:1.25rem">${value}</div>
+          </div>`).join('')}
+      </div>`;
+  })
+  .catch(err => {
+    document.getElementById('content').innerHTML =
+      `<p class="msg msg-error">Error: ${err.message}</p>`;
+  });
+</script>
+</body>
+</html>

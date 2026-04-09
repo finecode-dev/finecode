@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>WAL Explorer — Events</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<nav>
+  <span class="brand">WAL Explorer</span>
+  <a href="/">Dashboard</a>
+  <a href="/runs.html">Runs</a>
+  <a href="/events.html" class="active">Events</a>
+  <a href="/health.html">Health</a>
+</nav>
+<div class="page">
+  <h1>Events</h1>
+  <div class="filter-form">
+    <form method="get" class="form-row">
+      <label>Run ID
+        <input type="text" name="run_id" id="f_run_id" placeholder="any">
+      </label>
+      <label>Source ID
+        <input type="text" name="source_id" id="f_source_id" placeholder="any">
+      </label>
+      <label>From (ISO)
+        <input type="text" name="from_ts" id="f_from_ts" placeholder="2026-01-01T00:00:00">
+      </label>
+      <label>To (ISO)
+        <input type="text" name="to_ts" id="f_to_ts" placeholder="2026-12-31T23:59:59">
+      </label>
+      <label>Limit
+        <input type="number" name="limit" id="f_limit" value="200" min="1" max="5000" style="min-width:80px">
+      </label>
+      <button type="submit">Filter</button>
+    </form>
+  </div>
+  <div id="content"><p class="msg">Loading…</p></div>
+</div>
+<script>
+function fmtTs(ts) {
+  if (!ts) return '—';
+  try {
+    const d = new Date(ts);
+    const p = (n, z = 2) => String(n).padStart(z, '0');
+    return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())} ` +
+           `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}.${p(d.getMilliseconds(), 3)}`;
+  } catch { return ts; }
+}
+
+function togglePayload(el) {
+  const pre = el.nextElementSibling;
+  pre.style.display = pre.style.display === 'block' ? 'none' : 'block';
+  el.textContent = pre.style.display === 'block' ? '[collapse]' : '[json]';
+}
+
+function escHtml(s) {
+  return String(s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+// Pre-fill form from URL params
+const params = new URLSearchParams(location.search);
+['run_id','source_id','from_ts','to_ts','limit'].forEach(k => {
+  const el = document.getElementById('f_' + k);
+  if (el && params.has(k)) el.value = params.get(k);
+});
+
+async function load() {
+  const qs = location.search ? location.search.slice(1) : '';
+  const res = await fetch('/events' + (qs ? '?' + qs : ''));
+  if (!res.ok) throw new Error('HTTP ' + res.status);
+  const { events } = await res.json();
+
+  if (events.length === 0) {
+    document.getElementById('content').innerHTML = '<p class="msg">No events found.</p>';
+    return;
+  }
+
+  const rows = events.map(e => {
+    const hasPayload = e.payload_json && e.payload_json !== 'null';
+    const payloadCell = hasPayload
+      ? `<span class="payload-toggle" onclick="togglePayload(this)">[json]</span>
+         <pre class="payload-full">${escHtml(
+           typeof e.payload_json === 'string'
+             ? e.payload_json
+             : JSON.stringify(e.payload_json, null, 2)
+         )}</pre>`
+      : '—';
+    const origin = e.origin_file_path
+      ? `${e.origin_file_path}:${e.origin_line_no ?? ''}`
+      : '—';
+    return `<tr>
+      <td style="white-space:nowrap">${fmtTs(e.ts)}</td>
+      <td>${e.event_type ?? '—'}</td>
+      <td><a href="/run.html?run_id=${encodeURIComponent(e.run_id ?? '')}">${e.run_id ?? '—'}</a></td>
+      <td>${e.action_name ?? '—'}</td>
+      <td>${e.source_id ?? '—'}</td>
+      <td>${e.trigger ?? '—'}</td>
+      <td class="payload-cell">${payloadCell}</td>
+      <td style="font-size:0.75rem;color:#6b7280">${origin}</td>
+    </tr>`;
+  }).join('');
+
+  document.getElementById('content').innerHTML = `
+    <p class="msg">${events.length} event(s)</p>
+    <div class="table-wrap"><table>
+      <thead><tr>
+        <th>Timestamp</th><th>Event Type</th><th>Run ID</th>
+        <th>Action</th><th>Source</th><th>Trigger</th>
+        <th>Payload</th><th>Origin</th>
+      </tr></thead>
+      <tbody>${rows}</tbody>
+    </table></div>`;
+}
+
+load().catch(err => {
+  document.getElementById('content').innerHTML =
+    `<p class="msg msg-error">Error: ${err.message}</p>`;
+});
+</script>
+</body>
+</html>

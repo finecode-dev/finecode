@@ -124,6 +124,24 @@ handlers = [
     ] },
 ]
 
+[tool.finecode.env.wal_explorer.dependencies]
+fine_wal_explorer = { path = "../../../extensions/fine_wal_explorer", editable = true }
+finecode_extension_runner = { path = "../../../finecode_extension_runner", editable = true }
+finecode_extension_api = { path = "../../../finecode_extension_api", editable = true }
+
+[tool.finecode.action.ingest_wal_to_store]
+source = "finecode_extension_api.actions.IngestWalToStoreAction"
+handlers = [
+    { name = "discover_sources", source = "fine_wal_explorer.IngestWalSourceDiscoveryHandler", env = "wal_explorer" },
+    { name = "ingest_wal_to_store", source = "fine_wal_explorer.IngestWalToStoreHandler", env = "wal_explorer" },
+]
+
+[tool.finecode.action.discover_wal_sources]
+source = "finecode_extension_api.actions.DiscoverWalSourcesAction"
+handlers = [
+    { name = "discover_wal_sources", source = "fine_wal_explorer.DiscoverWalSourcesActionHandler", env = "wal_explorer" },
+]
+
 [tool.finecode.action.verify_artifact_published_to_registry]
 source = "finecode_extension_api.actions.VerifyArtifactPublishedToRegistryAction"
 # TODO: install, try to import etc
