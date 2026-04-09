@@ -63,6 +63,7 @@ type RunActionRawResult = dict[str, Any] | str
 class RunActionResponse:
     result_by_format: dict[str, RunActionRawResult]
     return_code: int
+    status: str = "success"
 
     def json(self) -> dict[str, Any]:
         result = self.result_by_format.get("json")
@@ -142,10 +143,12 @@ async def run_action(
     except json.JSONDecodeError as exception:
         raise ActionRunFailed(f"Failed to decode result json: {exception}") from exception
 
-    if command_result["status"] == "stopped":
+    status = command_result["status"]
+
+    if status == "stopped":
         raise ActionRunStopped(message=result_by_format)
 
-    return RunActionResponse(result_by_format=result_by_format, return_code=return_code)
+    return RunActionResponse(result_by_format=result_by_format, return_code=return_code, status=status)
 
 
 async def merge_results(

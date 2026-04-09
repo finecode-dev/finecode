@@ -191,7 +191,12 @@ class ProgressContext:
         self._completed = 0
 
     async def __aenter__(self) -> ProgressContext:
-        percentage = 0 if self._total is not None else None
+        if self._total is None:
+            percentage = None
+        elif self._total <= 0:
+            percentage = 100
+        else:
+            percentage = 0
         await self._sender.begin(
             self._title,
             percentage=percentage,
@@ -209,7 +214,10 @@ class ProgressContext:
         self._completed += steps
         percentage = None
         if self._total is not None:
-            percentage = min(int(self._completed / self._total * 100), 100)
+            if self._total <= 0:
+                percentage = 100
+            else:
+                percentage = min(int(self._completed / self._total * 100), 100)
         await self._sender.report(message=message, percentage=percentage)
 
     async def report(

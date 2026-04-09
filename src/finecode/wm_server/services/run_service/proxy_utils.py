@@ -174,11 +174,13 @@ async def run_action_and_notify(
     runner: runner_client.ExtensionRunnerInfo,
     run_trigger: runner_client.RunActionTrigger,
     dev_env: runner_client.DevEnv,
+    wal_run_id: str,
     result_formats: list[runner_client.RunResultFormat] | None = None,
     progress_token: int | str | None = None,
 ) -> runner_client.RunActionResponse:
     options: dict[str, typing.Any] = {
         "partial_result_token": partial_result_token,
+        "wal_run_id": wal_run_id,
         "meta": {"trigger": run_trigger.value, "dev_env": dev_env.value},
     }
     if progress_token is not None:
@@ -265,6 +267,7 @@ async def run_with_partial_results(
     progress_token: int | str | None = None,
 ) -> collections.abc.AsyncIterator[RunWithPartialResultsContext]:
     logger.trace(f"Run {action_name} in project {project_dir_path}")
+    wal_run_id = wal.new_wal_run_id()
 
     result: AsyncList[domain.PartialResultRawValue] = AsyncList()
     progress_result: AsyncList[domain.ProgressRawValue] | None = None
@@ -321,6 +324,7 @@ async def run_with_partial_results(
                         runner=runner,
                         run_trigger=run_trigger,
                         dev_env=dev_env,
+                        wal_run_id=wal_run_id,
                         result_formats=result_formats,
                         progress_token=progress_token,
                     )

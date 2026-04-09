@@ -13,10 +13,15 @@ import socket
 import subprocess
 import sys
 import tempfile
+import time
 
+from filelock import FileLock
 from loguru import logger
 
 NO_CLIENT_TIMEOUT_SECONDS = 30
+STARTUP_LOCK_FILENAME = "wm_start.lock"
+STARTUP_READY_TIMEOUT_SECONDS = 10.0
+STARTUP_READY_POLL_INTERVAL_SECONDS = 0.1
 
 
 def _cache_dir() -> pathlib.Path:
@@ -62,19 +67,35 @@ def is_running() -> bool:
     return running_port() is not None
 
 
+def _startup_lock() -> FileLock:
+    """Serialize shared WM startup across processes."""
+    lock_path = _cache_dir() / STARTUP_LOCK_FILENAME
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    return FileLock(str(lock_path))
+
+
 def ensure_running(workdir: pathlib.Path, log_level: str = "INFO") -> None:
     """Start the WM server as a subprocess if not already running."""
-    if is_running():
-        return
+    with _startup_lock():
+        if is_running():
+            return
 
-    python_cmd = sys.executable
-    logger.info(f"Starting FineCode WM server subprocess in {workdir}")
-    subprocess.Popen(
-        [python_cmd, "-m", "finecode", "start-wm-server", f"--log-level={log_level}"],
-        cwd=str(workdir),
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
+        python_cmd = sys.executable
+        logger.info(f"Starting FineCode WM server subprocess in {workdir}")
+        subprocess.Popen(
+            [python_cmd, "-m", "finecode", "start-wm-server", f"--log-level={log_level}"],
+            cwd=str(workdir),
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+
+        # Keep the lock until the spawned server is observable via discovery and
+        # TCP probe so competing callers do not start a duplicate process.
+        deadline = time.monotonic() + STARTUP_READY_TIMEOUT_SECONDS
+        while time.monotonic() < deadline:
+            if is_running():
+                return
+            time.sleep(STARTUP_READY_POLL_INTERVAL_SECONDS)
 
 
 async def wait_until_ready(timeout: float = 30) -> int:

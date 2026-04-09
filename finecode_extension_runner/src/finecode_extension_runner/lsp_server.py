@@ -621,6 +621,8 @@ async def run_action(
     # custom json encoder converts dict values and `convert_path_keys` is used to
     # convert dict keys
     result_by_format = response.to_dict()["result_by_format"]
+    if not result_by_format and options_schema.partial_result_token is not None:
+        status = "streamed"
     converted_result_by_format = {
         fmt: convert_path_keys(result) if isinstance(result, dict) else result
         for fmt, result in result_by_format.items()

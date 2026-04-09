@@ -252,6 +252,15 @@ async def run_action_with_partial_results(
 
         # Responses collected by the context manager from runner tasks
         for resp in ctx.responses:
+            if resp.status == "streamed":
+                return_codes.append(resp.return_code)
+                continue
+            if not resp.result_by_format:
+                raise runner_client.ActionRunFailed(
+                    f"ER returned empty result with status '{resp.status}' for project={project.name}; "
+                    "expected 'streamed' status when result_by_format is empty"
+                )
+
             json_result = resp.json()
             logger.trace(f"partial_results: final result for project={project.name}: return_code={resp.return_code}, keys={list(json_result.keys()) if isinstance(json_result, dict) else type(json_result)}")
             final_results.append(json_result)

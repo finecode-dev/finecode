@@ -88,6 +88,18 @@ The protocol is LSP-shaped with a small set of custom commands.
         "return_code": 0
       }
       ```
+    - Result (streamed): used when `partial_result_token` was provided and all
+      results were delivered via `$/progress` notifications. Following LSP convention,
+      the final response is an explicit completion signal — `result_by_format` is
+      intentionally empty. The WM treats this as a valid completion; an empty
+      `result_by_format` with any other status is a protocol error.
+      ```json
+      {
+        "status": "streamed",
+        "result_by_format": "{}",
+        "return_code": 0
+      }
+      ```
     - Result (stopped):
       ```json
       {
@@ -169,6 +181,9 @@ The protocol is LSP-shaped with a small set of custom commands.
   - Params: `{ "token": <token>, "value": "<stringified JSON partial result>" }`
   - The `token` must match `partial_result_token` from `actions/run`.
   - `value` is a JSON string produced by the ER from a partial run result.
+  - When `$/progress` is used to deliver results, the final `actions/run` response
+    must have `status: "streamed"` and empty `result_by_format`. See `actions/run`
+    result (streamed) above.
 
 ## Error Handling and Cancellation
 
