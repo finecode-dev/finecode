@@ -748,11 +748,20 @@ class JsonRpcClient:
                 f"Error occured on running handler of message {message_id} | {self.readable_id}"
             )
             logger.exception(exception)
+            message = getattr(exception, "message", None) or str(exception)
+            if not message:
+                message = type(exception).__name__
+
+            data = getattr(exception, "data", None)
+            if data is None:
+                data = {
+                    "exceptionType": type(exception).__name__,
+                }
             self._send_error_response(
                 request_id=message_id,
                 code=JsonRpcErrorCode.INTERNAL_ERROR,
-                message="Internal error",
-                data="",
+                message=message,
+                data=data,
             )
         finally:
             current_task = asyncio.current_task()

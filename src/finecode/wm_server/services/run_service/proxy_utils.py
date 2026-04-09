@@ -19,6 +19,27 @@ from finecode.wm_server.runner.runner_client import RunResultFormat  # reexport
 from .exceptions import ActionRunFailed, StartingEnvironmentsFailed
 
 
+def _format_runner_failure_message(
+    action_name: str,
+    runner: runner_client.ExtensionRunnerInfo,
+    base_error_message: str,
+) -> str:
+    """Build a stable WM error message for runner failures.
+
+    The WM owns runner log paths, so this is the single place where we append
+    a "Log file:" hint. The helper is idempotent to avoid duplicated suffixes
+    when nested orchestration re-wraps propagated error messages.
+    """
+    error_message = base_error_message
+    if "Log file:" not in error_message:
+        error_message = f"{error_message} . Log file: {runner.logs_path}"
+
+    action_prefix = f"Action {action_name} failed in {runner.readable_id}:"
+    if error_message.startswith(action_prefix):
+        return error_message
+    return f"{action_prefix} {error_message}"
+
+
 async def find_action_project(
     file_path: pathlib.Path, action_name: str, ws_context: context.WorkspaceContext
 ) -> pathlib.Path:
@@ -92,7 +113,13 @@ async def run_action_in_runner(
         )
     except runner_client.BaseRunnerRequestException as exception:
         logger.error(f"Error on running action {action_name}: {exception.message}")
-        raise ActionRunFailed(exception.message) from exception
+        raise ActionRunFailed(
+            _format_runner_failure_message(
+                action_name=action_name,
+                runner=runner,
+                base_error_message=exception.message,
+            )
+        ) from exception
 
     return response
 
@@ -572,9 +599,8 @@ async def run_actions_in_running_project(
                     progress_token=progress_token_by_action.get(action_name) if progress_token_by_action else None,
                 )
             except ActionRunFailed as exception:
-                raise ActionRunFailed(
-                    f"Running of action {action_name} failed: {exception.message}"
-                ) from exception
+                # Keep original context to avoid repetitive nested wrappers.
+                raise exception
             except Exception as error:
                 logger.error("Unexpected exception")
                 logger.exception(error)
@@ -849,6 +875,11 @@ async def _run_action_in_env_runner(
             payload=wal.RunCompletedPayload(return_code=response.return_code),
         )
     except runner_client.BaseRunnerRequestException as error:
+        error_message = _format_runner_failure_message(
+            action_name=action_name,
+            runner=runner,
+            base_error_message=error.message,
+        )
         wal.emit_run_event(
             ws_context.wal_writer,
             event_type=wal.WalEventType.RUN_FAILED,
@@ -857,14 +888,10 @@ async def _run_action_in_env_runner(
             project_path=project_def.dir_path,
             run_trigger=run_trigger.value,
             dev_env=dev_env.value,
-            payload=wal.RunFailedPayload(error=error.message, env_name=env_name),
+            payload=wal.RunFailedPayload(error=error_message, env_name=env_name),
         )
-        await user_messages.error(
-            f"Action {action_name} failed in {runner.readable_id}: {error.message} . Log file: {runner.logs_path}"
-        )
-        raise ActionRunFailed(
-            f"Action {action_name} failed in {runner.readable_id}: {error.message} . Log file: {runner.logs_path}"
-        ) from error
+        await user_messages.error(error_message)
+        raise ActionRunFailed(error_message) from error
 
     return response
 

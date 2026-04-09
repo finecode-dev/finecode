@@ -17,6 +17,8 @@ class ErWalEventType(enum.StrEnum):
     HANDLER_STARTED = "handler.started"
     HANDLER_COMPLETED = "handler.completed"
     HANDLER_FAILED = "handler.failed"
+    HANDLER_PARTS_STARTED = "handler.parts_started"
+    HANDLER_PARTS_COMPLETED = "handler.parts_completed"
     PARTIAL_RESULT_FIRST_SENT = "partial_result.first_sent"
     PARTIAL_RESULT_FINAL_SENT = "partial_result.final_sent"
 

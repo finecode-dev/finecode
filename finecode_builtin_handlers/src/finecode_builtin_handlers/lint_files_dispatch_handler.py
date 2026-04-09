@@ -1,3 +1,4 @@
+import asyncio
 import dataclasses
 
 from finecode_extension_api import code_action
@@ -17,11 +18,14 @@ class LintFilesDispatchHandler(
         LintFilesDispatchHandlerConfig,
     ]
 ):
-    """Group files by language once and dispatch to lint_{lang}_files subactions.
+    """Dispatch ``lint_files`` to language-specific lint subactions.
 
-    Subaction names follow the convention: language "python" maps to "lint_python_files",
-    "javascript" maps to "lint_javascript_files", etc. Each subaction must be registered
-    in the project config.
+    The handler groups input files by language once via
+    ``GroupSrcArtifactFilesByLangAction`` and then invokes the registered
+    language subaction for each non-empty language bucket.
+
+    Language subactions run concurrently, and partial lint results are forwarded
+    to the caller as they are produced.
     """
 
     def __init__(
@@ -32,17 +36,19 @@ class LintFilesDispatchHandler(
         self.action_runner = action_runner
         self.logger = logger
 
-    async def _lint_file(
+    async def _lint_lang(
         self,
         subaction: iactionrunner.ActionDeclaration[lint_files_action.LintFilesAction],
-        file_uri: ResourceUri,
+        file_uris: list[ResourceUri],
         meta: code_action.RunActionMeta,
-    ) -> lint_files_action.LintFilesRunResult:
-        return await self.action_runner.run_action(
+        partial_result_sender: code_action.PartialResultSender,
+    ) -> None:
+        async for partial in self.action_runner.run_action_iter(
             action=subaction,
-            payload=lint_files_action.LintFilesRunPayload(file_paths=[file_uri]),
+            payload=lint_files_action.LintFilesRunPayload(file_paths=file_uris),
             meta=meta,
-        )
+        ):
+            await partial_result_sender.send(partial)
 
     async def run(
         self,
@@ -71,17 +77,17 @@ class LintFilesDispatchHandler(
         )
         files_by_lang = files_by_lang_result.files_by_lang
 
-        # Build reverse mapping: file → language subaction.
-        file_to_subaction: dict[ResourceUri, iactionrunner.ActionDeclaration[lint_files_action.LintFilesAction]] = {}
-        for lang, files in files_by_lang.items():
-            for file_uri in files:
-                file_to_subaction[file_uri] = subactions_by_lang[lang]
-
-        # Schedule per-file coroutines via partial_result_scheduler so that
-        # run_action can execute them concurrently and send partial results.
-        for file_uri in payload.file_paths:
-            if file_uri in file_to_subaction:
-                run_context.partial_result_scheduler.schedule(
-                    file_uri,
-                    self._lint_file(file_to_subaction[file_uri], file_uri, run_context.meta),
+        # Run all language subactions concurrently. Each streams per-file partial
+        # results directly to the caller as they arrive.
+        async with asyncio.TaskGroup() as tg:
+            for lang, file_uris in files_by_lang.items():
+                if not file_uris or lang not in subactions_by_lang:
+                    continue
+                tg.create_task(
+                    self._lint_lang(
+                        subactions_by_lang[lang],
+                        file_uris,
+                        run_context.meta,
+                        run_context.partial_result_sender,
+                    )
                 )

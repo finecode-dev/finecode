@@ -63,6 +63,28 @@ class _TrackingPartialResultSender:
         await self._send_func(self._token, result)
 
 
+class _AccumulatingPartialResultSender:
+    """Collects every sent result so non-streaming callers get a final accumulated result.
+
+    Used in place of ``_NOOP_SENDER`` when there is no ``partial_result_token``.
+    Handlers that call ``partial_result_sender.send()`` directly (instead of using
+    ``partial_result_scheduler``) produce a correct final result for non-streaming callers.
+    """
+
+    def __init__(self) -> None:
+        self.accumulated: code_action.RunActionResult | None = None
+
+    async def send(self, result: code_action.RunActionResult) -> None:
+        if self.accumulated is None:
+            self.accumulated = result
+        else:
+            self.accumulated.update(result)
+
+    @property
+    def has_sent(self) -> bool:
+        return self.accumulated is not None
+
+
 def set_partial_result_sender(send_func: typing.Callable) -> None:
     global partial_result_sender
     partial_result_sender = partial_result_sender_module.PartialResultSender(
@@ -188,13 +210,18 @@ async def run_action(
 
     run_context: code_action.RunActionContext | AsyncPlaceholderContext
     run_context_info = code_action.RunContextInfoProvider(is_concurrent_execution=execute_handlers_concurrently)
+    accumulating_sender: _AccumulatingPartialResultSender | None
     if partial_result_token is not None:
         tracking_sender = _TrackingPartialResultSender(
             token=partial_result_token,
             send_func=partial_result_sender.schedule_sending,
         )
+        context_sender: code_action.PartialResultSender = tracking_sender
+        accumulating_sender = None
     else:
         tracking_sender = None
+        accumulating_sender = _AccumulatingPartialResultSender()
+        context_sender = accumulating_sender
 
     if progress_token is not None and progress_sender_func is not None:
         er_progress_sender: code_action.ProgressSender = _ERProgressSender(
@@ -210,7 +237,7 @@ async def run_action(
             "initial_payload": lambda _: payload,
             "meta": lambda _: meta,
             "info_provider": lambda _: run_context_info,
-            "partial_result_sender": lambda _: tracking_sender or code_action._NOOP_SENDER,
+            "partial_result_sender": lambda _: context_sender,
             "progress_sender": lambda _: er_progress_sender,
         }
         if caller_kwargs is not None:
@@ -252,14 +279,18 @@ async def run_action(
         with action_exec_info.process_executor.activate():
             # action payload can be iterable or not
             if isinstance(payload, collections.abc.AsyncIterable):
-                # iterable: `run` method should not calculate results itself, but call
-                #           `partial_result_scheduler.schedule`. Then we execute provided
-                #           coroutines either concurrently or sequentially.
+                # Iterable payload: handlers may either
+                #   (a) call partial_result_scheduler.schedule() — classic path, or
+                #   (b) call partial_result_sender.send() directly — dispatch-style path,
+                #   (c) return a final result explicitly from run().
+                # After all handlers run we check which path was taken and handle accordingly.
+                # Priority for final result: explicit return > accumulated sends > scheduler.
                 logger.trace(
                     f"R{run_id} | Iterable payload, execute all handlers to schedule coros"
                 )
+                handler_results: list[code_action.RunActionResult | None] = []
                 for handler in action_def.handlers:
-                    await execute_action_handler(
+                    handler_result = await execute_action_handler(
                         action_name=action_def.name,
                         handler=handler,
                         payload=payload,
@@ -275,95 +306,148 @@ async def run_action(
                         tracking_sender=tracking_sender,
                         partial_result_queue=partial_result_queue,
                     )
+                    handler_results.append(handler_result)
 
-                if not isinstance(
-                    run_context_instance,
-                    code_action.RunActionWithPartialResultsContext,
-                ):
-                    raise ActionFailedException(
-                        f"Action '{action_def.name}' uses iterable payload but run context does not provide partial_result_scheduler"
-                    )
-                scheduler = run_context_instance.partial_result_scheduler
-
-                parts = [part async for part in payload]
-                subresults_tasks: list[asyncio.Task] = []
-                logger.trace(
-                    "R{run_id} | Run subresult coros {exec_type} {partials} partial results".format(
-                        run_id=run_id,
-                        exec_type=(
-                            "concurrently"
-                            if execute_handlers_concurrently
-                            else "sequentially"
-                        ),
-                        partials="with" if send_partial_results else "without",
-                    )
+                explicit_results = [r for r in handler_results if r is not None]
+                handler_used_direct_sends = (
+                    (tracking_sender is not None and tracking_sender.has_sent) or
+                    (accumulating_sender is not None and accumulating_sender.has_sent)
                 )
-                try:
-                    async with asyncio.TaskGroup() as tg:
-                        for part in parts:
-                            if part not in scheduler.coroutines_by_key:
-                                logger.warning(
-                                    f"R{run_id} | No coroutines scheduled for part {part} "
-                                    f"of action '{action_def.name}', skipping"
-                                )
-                                continue
-                            part_coros = scheduler.coroutines_by_key[part]
-                            del scheduler.coroutines_by_key[part]
-                            if execute_handlers_concurrently:
-                                coro = run_subresult_coros_concurrently(
-                                    part_coros,
-                                    send_partial_results,
-                                    partial_result_token,
-                                    partial_result_sender,
-                                    action_def.name,
-                                    run_id,
-                                    partial_result_queue=partial_result_queue,
-                                    tracking_sender=tracking_sender,
-                                    wal_run_id=wal_run_id,
-                                    trigger=meta.trigger,
-                                    dev_env=meta.dev_env,
-                                )
-                            else:
-                                coro = run_subresult_coros_sequentially(
-                                    part_coros,
-                                    send_partial_results,
-                                    partial_result_token,
-                                    partial_result_sender,
-                                    action_def.name,
-                                    run_id,
-                                    partial_result_queue=partial_result_queue,
-                                    tracking_sender=tracking_sender,
-                                    wal_run_id=wal_run_id,
-                                    trigger=meta.trigger,
-                                    dev_env=meta.dev_env,
-                                )
-                            subresult_task = tg.create_task(coro)
-                            subresults_tasks.append(subresult_task)
-                except ExceptionGroup as eg:
-                    errors: list[str] = []
-                    for exc in eg.exceptions:
-                        if not isinstance(exc, ActionFailedException):
-                            logger.error("Unexpected exception:")
-                            logger.exception(exc)
-                        else:
-                            errors.append(exc.message)
-                    raise ActionFailedException(
-                        f"Running action handlers of '{action_def.name}' failed(Run {run_id}): {errors}."
-                        " See ER logs for more details"
-                    ) from eg
 
-                if send_partial_results:
-                    # all subresults are ready
-                    logger.trace(f"R{run_id} | all subresults are ready, send them")
-                    await partial_result_sender.send_all_immediately()
+                if explicit_results:
+                    # Handler returned a final result — use it directly.
+                    for result in explicit_results:
+                        if action_result is None:
+                            action_result = result
+                        else:
+                            action_result.update(result)
+                    if send_partial_results:
+                        await partial_result_sender.send_all_immediately()
+                elif handler_used_direct_sends:
+                    # Handler sent results directly via partial_result_sender.send().
+                    # Flush any buffered streaming sends; for non-streaming, surface
+                    # the accumulated result.
+                    logger.trace(f"R{run_id} | Handler used direct sends, skipping scheduler")
+                    if send_partial_results:
+                        logger.trace(f"R{run_id} | all subresults are ready, send them")
+                        await partial_result_sender.send_all_immediately()
+                    elif accumulating_sender is not None:
+                        action_result = accumulating_sender.accumulated
                 else:
-                    for subresult_task in subresults_tasks:
-                        result = subresult_task.result()
-                        if result is not None:
-                            if action_result is None:
-                                action_result = result
+                    # Classic scheduler path.
+                    if not isinstance(
+                        run_context_instance,
+                        code_action.RunActionWithPartialResultsContext,
+                    ):
+                        raise ActionFailedException(
+                            f"Action '{action_def.name}' uses iterable payload but run context does not provide partial_result_scheduler"
+                        )
+                    scheduler = run_context_instance.partial_result_scheduler
+
+                    parts = [part async for part in payload]
+                    subresults_tasks: list[asyncio.Task] = []
+                    logger.trace(
+                        "R{run_id} | Run subresult coros {exec_type} {partials} partial results".format(
+                            run_id=run_id,
+                            exec_type=(
+                                "concurrently"
+                                if execute_handlers_concurrently
+                                else "sequentially"
+                            ),
+                            partials="with" if send_partial_results else "without",
+                        )
+                    )
+                    er_wal.emit_run_event(
+                        global_state.wal_writer,
+                        event_type=er_wal.ErWalEventType.HANDLER_PARTS_STARTED,
+                        wal_run_id=wal_run_id or "",
+                        action_name=action_def.name,
+                        project_path=global_state.project_dir_path or "",
+                        trigger=meta.trigger,
+                        dev_env=meta.dev_env,
+                        payload={"run_id": run_id, "part_count": len(parts)},
+                    )
+                    parts_start_time = time.time_ns()
+                    try:
+                        async with asyncio.TaskGroup() as tg:
+                            for part in parts:
+                                if part not in scheduler.coroutines_by_key:
+                                    logger.warning(
+                                        f"R{run_id} | No coroutines scheduled for part {part} "
+                                        f"of action '{action_def.name}', skipping"
+                                    )
+                                    continue
+                                part_coros = scheduler.coroutines_by_key[part]
+                                del scheduler.coroutines_by_key[part]
+                                if execute_handlers_concurrently:
+                                    coro = run_subresult_coros_concurrently(
+                                        part_coros,
+                                        send_partial_results,
+                                        partial_result_token,
+                                        partial_result_sender,
+                                        action_def.name,
+                                        run_id,
+                                        partial_result_queue=partial_result_queue,
+                                        tracking_sender=tracking_sender,
+                                        wal_run_id=wal_run_id,
+                                        trigger=meta.trigger,
+                                        dev_env=meta.dev_env,
+                                    )
+                                else:
+                                    coro = run_subresult_coros_sequentially(
+                                        part_coros,
+                                        send_partial_results,
+                                        partial_result_token,
+                                        partial_result_sender,
+                                        action_def.name,
+                                        run_id,
+                                        partial_result_queue=partial_result_queue,
+                                        tracking_sender=tracking_sender,
+                                        wal_run_id=wal_run_id,
+                                        trigger=meta.trigger,
+                                        dev_env=meta.dev_env,
+                                    )
+                                subresult_task = tg.create_task(coro)
+                                subresults_tasks.append(subresult_task)
+                    except ExceptionGroup as eg:
+                        errors: list[str] = []
+                        for exc in eg.exceptions:
+                            if not isinstance(exc, ActionFailedException):
+                                logger.error("Unexpected exception:")
+                                logger.exception(exc)
                             else:
-                                action_result.update(result)
+                                errors.append(exc.message)
+                        raise ActionFailedException(
+                            f"Running action handlers of '{action_def.name}' failed(Run {run_id}): {errors}."
+                            " See ER logs for more details"
+                        ) from eg
+                    er_wal.emit_run_event(
+                        global_state.wal_writer,
+                        event_type=er_wal.ErWalEventType.HANDLER_PARTS_COMPLETED,
+                        wal_run_id=wal_run_id or "",
+                        action_name=action_def.name,
+                        project_path=global_state.project_dir_path or "",
+                        trigger=meta.trigger,
+                        dev_env=meta.dev_env,
+                        payload={
+                            "run_id": run_id,
+                            "part_count": len(parts),
+                            "duration_ms": (time.time_ns() - parts_start_time) / 1_000_000,
+                        },
+                    )
+
+                    if send_partial_results:
+                        # all subresults are ready
+                        logger.trace(f"R{run_id} | all subresults are ready, send them")
+                        await partial_result_sender.send_all_immediately()
+                    else:
+                        for subresult_task in subresults_tasks:
+                            result = subresult_task.result()
+                            if result is not None:
+                                if action_result is None:
+                                    action_result = result
+                                else:
+                                    action_result.update(result)
             else:
                 # action payload not iterable, just execute handlers on the whole payload
                 if execute_handlers_concurrently:

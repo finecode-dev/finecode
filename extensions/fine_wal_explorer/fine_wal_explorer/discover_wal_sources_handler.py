@@ -23,13 +23,13 @@ _WAL_WRITER_DIRS: tuple[tuple[str, str], ...] = (
 
 
 @dataclasses.dataclass
-class DiscoverWalSourcesActionHandlerConfig(code_action.ActionHandlerConfig): ...
+class DiscoverWalSourcesHandlerConfig(code_action.ActionHandlerConfig): ...
 
 
-class DiscoverWalSourcesActionHandler(
+class DiscoverWalSourcesHandler(
     code_action.ActionHandler[
         DiscoverWalSourcesAction,
-        DiscoverWalSourcesActionHandlerConfig,
+        DiscoverWalSourcesHandlerConfig,
     ]
 ):
     """Discover WAL sources as a standalone action result."""

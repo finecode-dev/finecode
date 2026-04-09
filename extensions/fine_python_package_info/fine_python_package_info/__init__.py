@@ -4,11 +4,11 @@ from .get_dist_artifact_version_py_handler import \
 from .get_src_artifact_registries_py_handler import \
     GetSrcArtifactRegistriesPyHandler
 from .get_src_artifact_version_py_handler import GetSrcArtifactVersionPyHandler
-from .group_src_artifact_files_by_lang_python import \
+from .group_src_artifact_files_by_lang_python_handler import \
     GroupSrcArtifactFilesByLangPythonHandler
 from .is_artifact_published_to_registry_py_handler import \
     IsArtifactPublishedToRegistryPyHandler
-from .list_src_artifact_files_by_lang_python import \
+from .list_src_artifact_files_by_lang_python_handler import \
     ListSrcArtifactFilesByLangPythonHandler
 from .publish_artifact_to_registry_py_handler import \
     PublishArtifactToRegistryPyHandler
