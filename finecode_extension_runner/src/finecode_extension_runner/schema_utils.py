@@ -13,6 +13,8 @@ import pathlib
 import textwrap
 import typing
 
+from finecode_extension_api.resource_uri import ResourceUri
+
 
 def extract_payload_schema(payload_cls: type) -> dict:
     """Return a JSON Schema fragment describing the fields of a RunActionPayload subclass.
@@ -33,6 +35,7 @@ def extract_payload_schema(payload_cls: type) -> dict:
     ``int``                   ``{"type": "integer"}``
     ``float``                 ``{"type": "number"}``
     ``pathlib.Path``          ``{"type": "string"}``
+    ``ResourceUri``           ``{"type": "string", "format": "uri"}``
     ``enum.Enum`` subclass    ``{"type": "string", "enum": [<member values>]}``
     ``list[T]``               ``{"type": "array", "items": <schema for T>}``
     ``T | None``              same schema as ``T`` (optionality via ``required``)
@@ -150,5 +153,7 @@ def _type_to_schema(t: type) -> dict:
         return {"type": "string"}
     if t is pathlib.Path:
         return {"type": "string"}
+    if t is ResourceUri:
+        return {"type": "string", "format": "uri", "description": "A URI identifying a resource. For local files, use a file:// URI, e.g. file:///home/user/foo.py"}
 
     return {}

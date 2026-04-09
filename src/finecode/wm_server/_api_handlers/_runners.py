@@ -64,16 +64,36 @@ async def _handle_start_runners(
     Params: ``{"projects": ["project_name", ...]}`` (optional, default: all projects)
     Result: ``{}``
     """
+    import asyncio
+
     from finecode.wm_server.runner import runner_manager
 
     params = params or {}
     project_names: list[str] | None = params.get("projects")
     python_overrides: dict[str, str] | None = params.get("pythonOverrides")
 
-    projects = list(ws_context.ws_projects.values())
-    if project_names is not None:
-        projects = [p for p in projects if str(p.dir_path) in project_names]
+    # Phase 1: under global lock — decide which projects to start, claim their locks.
+    async with ws_context.workspace_state_lock:
+        projects = list(ws_context.ws_projects.values())
+        if project_names is not None:
+            projects = [p for p in projects if str(p.dir_path) in project_names]
 
+        claimed: list = []
+        for p in projects:
+            init_lock = ws_context.project_init_locks.get(p.dir_path)
+            if init_lock is None:
+                init_lock = asyncio.Lock()
+                ws_context.project_init_locks[p.dir_path] = init_lock
+            if not init_lock.locked():
+                await init_lock.acquire()  # uncontested → no yield
+                claimed.append(p)
+            # else: addDir (or another startRunners) already handles this project.
+        projects = claimed
+
+    if not projects:
+        return {}
+
+    # Phase 2: slow — runner startup outside the global lock.
     try:
         await runner_manager.start_runners_with_presets(
             projects=projects,
@@ -82,6 +102,11 @@ async def _handle_start_runners(
         )
     except runner_manager.RunnerFailedToStart as exc:
         raise ValueError(f"Starting runners failed: {exc.message}") from exc
+    finally:
+        for p in projects:
+            lock = ws_context.project_init_locks.get(p.dir_path)
+            if lock is not None and lock.locked():
+                lock.release()
 
     return {}
 

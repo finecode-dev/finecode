@@ -240,8 +240,7 @@ async def run_action(
             "partial_result_sender": lambda _: context_sender,
             "progress_sender": lambda _: er_progress_sender,
         }
-        if caller_kwargs is not None:
-            known_args["caller_kwargs"] = lambda _: caller_kwargs
+        known_args["caller_kwargs"] = lambda _: caller_kwargs
         constructor_args = await resolve_func_args_with_di(
             action_exec_info.run_context_type.__init__,
             known_args=known_args,

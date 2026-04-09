@@ -27,6 +27,32 @@ server = Server("FineCode")
 _partial_result_queues: dict[str, asyncio.Queue] = {}
 _progress_queues: dict[str, asyncio.Queue] = {}
 
+_wm_port: int | None = None
+_workdir: pathlib.Path | None = None
+_wm_connected: bool = False
+
+
+async def _ensure_wm_connected(session) -> None:
+    global _wm_connected
+    if _wm_connected:
+        return
+
+    client_id = "mcp"
+    if session is not None and session.client_params is not None:
+        info = session.client_params.clientInfo
+        if info is not None and info.name:
+            client_id = f"mcp-{info.name}"
+
+    logger.info(f"MCP: Connecting to WM server on 127.0.0.1:{_wm_port} as {client_id!r}")
+    await _wm_client.connect("127.0.0.1", _wm_port, client_id=client_id)
+    logger.info("MCP: Connected to WM server")
+    _setup_partial_result_forwarding()
+    _setup_progress_forwarding()
+    logger.debug(f"MCP: Add dir to API Client: {_workdir}")
+    await _wm_client.add_dir(_workdir)
+    logger.info(f"MCP: Added workspace dir {_workdir}")
+    _wm_connected = True
+
 
 def _setup_partial_result_forwarding() -> None:
     """Register the WM partial-result notification handler.
@@ -137,6 +163,10 @@ async def list_tools() -> list[Tool]:
     constructs one ``Tool`` per action with the real input schema.
     A static ``list_projects`` tool is always included.
     """
+    logger.info("MCP list_tools() called")
+    from mcp.server.lowlevel.server import request_ctx
+    session = request_ctx.get().session
+    await _ensure_wm_connected(session)
     tools: list[Tool] = [
         Tool(
             name="list_projects",
@@ -191,7 +221,12 @@ async def list_tools() -> list[Tool]:
         ),
     ]
 
-    actions = await _wm_client.list_actions()
+    try:
+        actions = await _wm_client.list_actions()
+        logger.info(f"MCP: Fetched {len(actions)} actions from WM")
+    except Exception as exc:
+        logger.error(f"MCP: Failed to fetch actions from WM: {exc}", exc_info=True)
+        actions = []
 
     # Deduplicate: first project that exposes an action owns its schema.
     seen: dict[str, dict] = {}
@@ -199,17 +234,23 @@ async def list_tools() -> list[Tool]:
         if action["name"] not in seen:
             seen[action["name"]] = action
 
+    logger.info(f"MCP: After deduplication, {len(seen)} unique actions")
+
     # Group by project to keep schema requests batched.
     unique_by_project: dict[str, list[dict]] = {}
     for action in seen.values():
         unique_by_project.setdefault(action["project"], []).append(action)
 
+    logger.info(f"MCP: Actions grouped by {len(unique_by_project)} projects")
+
     for project_path, project_actions in unique_by_project.items():
         action_names = [a["name"] for a in project_actions]
+        logger.debug(f"MCP: Fetching schemas for {len(action_names)} actions in {project_path}")
         try:
             schemas = await _wm_client.get_payload_schemas(project_path, action_names)
+            logger.debug(f"MCP: Got {len(schemas)} schemas for {project_path}")
         except Exception as exc:
-            logger.debug(f"Could not fetch payload schemas for {project_path}: {exc}")
+            logger.error(f"MCP: Could not fetch payload schemas for {project_path}: {exc}", exc_info=True)
             schemas = {}
 
         for action in project_actions:
@@ -237,12 +278,17 @@ async def list_tools() -> list[Tool]:
                 )
             )
 
+    logger.info(f"MCP list_tools() returning {len(tools)} tools total")
     return tools
 
 
 @server.call_tool()
 async def call_tool(name: str, arguments: dict) -> list[TextContent]:
     """Dispatch an MCP tool call to the WM server."""
+    from mcp.server.lowlevel.server import request_ctx
+    session = request_ctx.get().session
+    await _ensure_wm_connected(session)
+
     if name == "list_projects":
         result = await _wm_client.list_projects()
         return [TextContent(type="text", text=json.dumps({"projects": result}))]
@@ -299,43 +345,41 @@ def start(workdir: pathlib.Path, port_file: pathlib.Path | None = None) -> None:
 
     If *port_file* is given, a dedicated WM server is started that writes its
     port to that file instead of the shared discovery file.
+
+    The WM connection is established lazily on the first ``list_tools`` call so
+    that the MCP client name (from the ``initialize`` handshake) can be included
+    in the ``client_id`` sent to the WM server.
     """
+    global _wm_port, _workdir
     if port_file is not None:
         wm_lifecycle.start_own_server(workdir, port_file=port_file)
         try:
-            port = asyncio.run(wm_lifecycle.wait_until_ready_from_file(port_file))
+            _wm_port = asyncio.run(wm_lifecycle.wait_until_ready_from_file(port_file))
         except TimeoutError as exc:
             logger.error(str(exc))
             sys.exit(1)
     else:
         wm_lifecycle.ensure_running(workdir)
         try:
-            port = asyncio.run(wm_lifecycle.wait_until_ready())
+            _wm_port = asyncio.run(wm_lifecycle.wait_until_ready())
         except TimeoutError as exc:
             logger.error(str(exc))
             sys.exit(1)
+    _workdir = workdir
 
     async def _run() -> None:
         try:
-            await _wm_client.connect("127.0.0.1", port, client_id="mcp")
-        except (ConnectionRefusedError, OSError) as exc:
-            logger.error(
-                f"Could not connect to FineCode WM server on port {port}: {exc}"
-            )
-            sys.exit(1)
-        _setup_partial_result_forwarding()
-        _setup_progress_forwarding()
-        logger.debug(f"Add dir to API Client: {workdir}")
-        await _wm_client.add_dir(workdir)
-        logger.debug("Added dir")
-        try:
+            logger.info("MCP: Starting stdio server")
             async with stdio_server() as (read_stream, write_stream):
+                logger.info("MCP: Stdio server ready, running MCP server")
                 await server.run(
                     read_stream,
                     write_stream,
                     server.create_initialization_options(),
                 )
         finally:
-            await _wm_client.close()
+            if _wm_connected:
+                logger.info("MCP: Closing WM client")
+                await _wm_client.close()
 
     asyncio.run(_run())
