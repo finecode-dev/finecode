@@ -8,7 +8,7 @@ else:
 
 from finecode_extension_api import code_action
 from finecode_extension_api.actions.code_quality import format_action, precommit_action
-from finecode_extension_api.interfaces import iactionrunner, ilogger
+from finecode_extension_api.interfaces import iprojectactionrunner, ilogger
 from finecode_extension_api.resource_uri import ResourceUri, path_to_resource_uri
 
 
@@ -37,10 +37,10 @@ class FormatPrecommitBridgeHandler(
 
     def __init__(
         self,
-        action_runner: iactionrunner.IActionRunner,
+        project_action_runner: iprojectactionrunner.IProjectActionRunner,
         logger: ilogger.ILogger,
     ) -> None:
-        self.action_runner = action_runner
+        self.project_action_runner = project_action_runner
         self.logger = logger
 
     async def run(
@@ -57,11 +57,8 @@ class FormatPrecommitBridgeHandler(
             return precommit_action.PrecommitRunResult()
 
         file_uris = [path_to_resource_uri(p) for p in run_context.staged_files]
-        format_action_instance = self.action_runner.get_action_by_source(
-            format_action.FormatAction
-        )
-        result = await self.action_runner.run_action(
-            action=format_action_instance,
+        result = await self.project_action_runner.run_action(
+            action_type=format_action.FormatAction,
             payload=format_action.FormatRunPayload(
                 target=format_action.FormatTarget.FILES,
                 file_paths=file_uris,

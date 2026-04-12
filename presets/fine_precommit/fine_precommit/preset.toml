@@ -14,3 +14,9 @@ name = "lint_precommit_bridge"
 source = "finecode_builtin_handlers.LintPrecommitBridgeHandler"
 env = "dev_workspace"
 dependencies = ["finecode_builtin_handlers~=0.2.0a0"]
+
+[[tool.finecode.action.precommit.handlers]]
+name = "format_precommit_bridge"
+source = "finecode_builtin_handlers.FormatPrecommitBridgeHandler"
+env = "dev_workspace"
+dependencies = ["finecode_builtin_handlers~=0.2.0a0"]

@@ -2,7 +2,7 @@ import dataclasses
 
 from finecode_extension_api import code_action
 from finecode_extension_api.actions.code_quality import lint_action, precommit_action
-from finecode_extension_api.interfaces import iactionrunner, ilogger
+from finecode_extension_api.interfaces import iprojectactionrunner, ilogger
 from finecode_extension_api.resource_uri import path_to_resource_uri
 
 
@@ -19,10 +19,10 @@ class LintPrecommitBridgeHandler(
 
     def __init__(
         self,
-        action_runner: iactionrunner.IActionRunner,
+        project_action_runner: iprojectactionrunner.IProjectActionRunner,
         logger: ilogger.ILogger,
     ) -> None:
-        self.action_runner = action_runner
+        self.project_action_runner = project_action_runner
         self.logger = logger
 
     async def run(
@@ -39,11 +39,8 @@ class LintPrecommitBridgeHandler(
             return precommit_action.PrecommitRunResult()
 
         file_uris = [path_to_resource_uri(p) for p in run_context.staged_files]
-        lint_action_instance = self.action_runner.get_action_by_source(
-            lint_action.LintAction
-        )
-        result = await self.action_runner.run_action(
-            action=lint_action_instance,
+        result = await self.project_action_runner.run_action(
+            action_type=lint_action.LintAction,
             payload=lint_action.LintRunPayload(
                 target=lint_action.LintTarget.FILES,
                 file_paths=file_uris,
