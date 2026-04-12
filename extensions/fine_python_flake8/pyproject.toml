@@ -11,3 +11,6 @@ dependencies = [
     "types-flake8 (>=7.1.0.20241020,<8.0.0.0)",
     "flake8 (>=7.1.2,<8.0.0)",
 ]
+
+[tool.setuptools]
+packages = ["fine_python_flake8"]
