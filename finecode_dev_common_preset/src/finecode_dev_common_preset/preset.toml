@@ -1,6 +1,7 @@
 [tool.finecode]
 presets = [
     { source = "fine_python_recommended" },
+    { source = "fine_precommit" },
     { source = "fine_python_aksem" },
 ]
 
@@ -20,6 +21,7 @@ finecode_builtin_handlers = { path = "../../../finecode_builtin_handlers", edita
 finecode_jsonrpc = { path = "../../../finecode_jsonrpc", editable = true }
 fine_python_pip = { path = "../../../extensions/fine_python_pip", editable = true }
 fine_python_virtualenv = { path = "../../../extensions/fine_python_virtualenv", editable = true }
+fine_python_uv = { path = "../../../extensions/fine_python_uv", editable = true }
 
 [tool.finecode.env.dev_no_runtime.dependencies]
 finecode_extension_api = { path = "../../../finecode_extension_api", editable = true }
@@ -38,6 +40,7 @@ fine_python_package_info = { path = "../../../extensions/fine_python_package_inf
 fine_python_setuptools_scm = { path = "../../../extensions/fine_python_setuptools_scm", editable = true }
 fine_python_pip = { path = "../../../extensions/fine_python_pip", editable = true }
 fine_python_virtualenv = { path = "../../../extensions/fine_python_virtualenv", editable = true }
+fine_python_uv = { path = "../../../extensions/fine_python_uv", editable = true }
 
 # currently, all packages in finecode repository are pure python packages, reuse
 # setuptools build in all of them

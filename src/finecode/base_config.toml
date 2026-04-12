@@ -2,10 +2,10 @@
 source = "finecode_extension_api.actions.CreateEnvAction"
 
 [[tool.finecode.action.create_env.handlers]]
-name = "create_env_create_venv"
-source = "fine_python_virtualenv.VirtualenvCreateEnvHandler"
+name = "create_env_with_uv"
+source = "fine_python_uv.UvCreateEnvHandler"
 env = "dev_workspace"
-dependencies = ["fine_python_virtualenv~=0.2.0a0"]
+dependencies = ["fine_python_uv~=0.1.0a0"]
 
 
 [tool.finecode.action.create_envs]
@@ -22,7 +22,6 @@ name = "create_envs_dispatch"
 source = "finecode_builtin_handlers.CreateEnvsDispatchHandler"
 env = "dev_workspace"
 dependencies = ["finecode_builtin_handlers~=0.2.0a0"]
-
 
 [tool.finecode.action.install_env]
 source = "finecode_extension_api.actions.InstallEnvAction"
@@ -77,10 +76,10 @@ dependencies = ["finecode_builtin_handlers~=0.2.0a0"]
 source = "finecode_extension_api.actions.InstallDepsInEnvAction"
 
 [[tool.finecode.action.install_deps_in_env.handlers]]
-name = "install_deps_with_pip"
-source = "fine_python_pip.PipInstallDepsInEnvHandler"
+name = "install_deps_with_uv"
+source = "fine_python_uv.UvInstallDepsInEnvHandler"
 env = "dev_workspace"
-dependencies = ["fine_python_pip~=0.2.0a0"]
+dependencies = ["fine_python_uv~=0.1.0a0"]
 
 
 [tool.finecode.action.list_src_artifact_files_by_lang]

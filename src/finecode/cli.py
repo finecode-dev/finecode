@@ -14,7 +14,7 @@ from finecode.wm_server.config.config_models import ConfigurationError
 
 
 FINECODE_CONFIG_ENV_PREFIX = "FINECODE_CONFIG_"
-_VALID_DEV_ENVS = {"ide", "cli", "ai", "precommit", "ci"}
+_VALID_DEV_ENVS = {"ide", "cli", "ai", "ci", "git_hook"}
 
 
 def _parse_env_bool(name: str, default: bool) -> bool:

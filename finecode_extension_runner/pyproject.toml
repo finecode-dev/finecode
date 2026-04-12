@@ -25,7 +25,11 @@ dev_workspace = [
     "finecode~=0.4.0a0",
     "finecode_dev_common_preset~=0.3.0a0",
 ]
-dev = [{ include-group = "runtime" }, "pytest==7.4.*", "debugpy==1.8.*"]
+dev = ["finecode_extension_runner", "pytest==7.4.*", "debugpy==1.8.*"]
+
+[tool.finecode.env.dev.dependencies]
+finecode_extension_runner = { path = "../finecode_extension_runner", editable = true }
+finecode_extension_api = { path = "../finecode_extension_api", editable = true }
 
 [tool.finecode.env.dev_workspace.dependencies]
 finecode_dev_common_preset = { path = "../finecode_dev_common_preset", editable = true }
@@ -38,8 +42,10 @@ fine_python_recommended = { path = "../presets/fine_python_recommended", editabl
 fine_python_lint = { path = "../presets/fine_python_lint", editable = true }
 fine_python_format = { path = "../presets/fine_python_format", editable = true }
 fine_python_test = { path = "../presets/fine_python_test", editable = true }
+fine_precommit = { path = "../presets/fine_precommit", editable = true }
 fine_python_pip = { path = "../extensions/fine_python_pip", editable = true }
 fine_python_virtualenv = { path = "../extensions/fine_python_virtualenv", editable = true }
+fine_python_uv = { path = "../extensions/fine_python_uv", editable = true }
 
 [build-system]
 requires = ["setuptools>=64", "setuptools-scm>=8"]
@@ -65,6 +71,12 @@ layers = [
 [tool.setuptools_scm]
 version_file = "src/finecode_extension_runner/_version.py"
 root = ".."
+
+[tool.setuptools.package-dir]
+"" = "src"
+
+[tool.setuptools.packages.find]
+where = ["src"]
 
 [tool.finecode.action.get_src_artifact_version]
 source = "finecode_extension_api.actions.GetSrcArtifactVersionAction"
