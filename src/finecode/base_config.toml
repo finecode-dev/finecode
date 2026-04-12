@@ -144,6 +144,26 @@ source = "finecode_builtin_handlers.FormatFilesIterateHandler"
 env = "dev_no_runtime"
 dependencies = ["finecode_builtin_handlers~=0.2.0a0"]
 
+[tool.finecode.action.install_git_hooks]
+source = "finecode_extension_api.actions.InstallGitHooksAction"
+
+[[tool.finecode.action.install_git_hooks.handlers]]
+name = "install_git_hooks"
+source = "finecode_builtin_handlers.InstallGitHooksHandler"
+env = "dev_workspace"
+dependencies = ["finecode_builtin_handlers~=0.2.0a0"]
+
+
+[tool.finecode.action.uninstall_git_hooks]
+source = "finecode_extension_api.actions.UninstallGitHooksAction"
+
+[[tool.finecode.action.uninstall_git_hooks.handlers]]
+name = "uninstall_git_hooks"
+source = "finecode_builtin_handlers.UninstallGitHooksHandler"
+env = "dev_workspace"
+dependencies = ["finecode_builtin_handlers~=0.2.0a0"]
+
+
 [tool.finecode.action.clean_finecode_logs]
 source = "finecode_extension_api.actions.CleanFinecodeLogsAction"
 

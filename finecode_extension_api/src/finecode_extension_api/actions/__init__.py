@@ -12,6 +12,7 @@ __all__ = [
     "LintAction",
     "LintFilesAction",
     "LintPythonFilesAction",
+    "PrecommitAction",
     # testing
     "ListTestsAction",
     "RunTestsAction",
@@ -40,6 +41,8 @@ __all__ = [
     # system
     "CleanFinecodeLogsAction",
     "DumpConfigAction",
+    "InstallGitHooksAction",
+    "UninstallGitHooksAction",
     # observability
     "DiscoverWalSourcesAction",
     "IngestWalToStoreAction",
@@ -65,6 +68,7 @@ from finecode_extension_api.actions.artifact.list_src_artifact_files_by_lang_act
     ListSrcArtifactFilesByLangAction,
 )
 from finecode_extension_api.actions.code_quality.format_action import FormatAction
+from finecode_extension_api.actions.code_quality.precommit_action import PrecommitAction
 from finecode_extension_api.actions.code_quality.format_file_action import (
     FormatFileAction,
 )
@@ -133,5 +137,11 @@ from finecode_extension_api.actions.system.clean_finecode_logs_action import (
     CleanFinecodeLogsAction,
 )
 from finecode_extension_api.actions.system.dump_config_action import DumpConfigAction
+from finecode_extension_api.actions.system.install_git_hooks_action import (
+    InstallGitHooksAction,
+)
+from finecode_extension_api.actions.system.uninstall_git_hooks_action import (
+    UninstallGitHooksAction,
+)
 from finecode_extension_api.actions.testing.list_tests_action import ListTestsAction
 from finecode_extension_api.actions.testing.run_tests_action import RunTestsAction

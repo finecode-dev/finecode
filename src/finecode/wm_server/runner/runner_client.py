@@ -93,7 +93,7 @@ class DevEnv(enum.StrEnum):
     IDE = 'ide'
     CLI = 'cli'
     AI = 'ai'
-    PRECOMMIT = 'precommit'
+    GIT_HOOK = 'git_hook'
     CI = 'ci'
 
 
