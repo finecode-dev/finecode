@@ -6,8 +6,8 @@ import typing
 from typing import Any, Awaitable, Callable
 
 from finecode_extension_api import code_action
-from finecode_extension_api.interfaces import iactionrunner, iprojectactionrunner
-from finecode_extension_runner import run_utils
+from finecode_extension_api.interfaces import iprojectactionrunner
+
 
 PayloadT = typing.TypeVar("PayloadT", bound=code_action.RunActionPayload)
 ResultT = typing.TypeVar("ResultT", bound=code_action.RunActionResult)
@@ -21,12 +21,11 @@ class ProjectActionRunnerImpl(iprojectactionrunner.IProjectActionRunner):
 
     async def run_action(
         self,
-        action: iactionrunner.ActionDeclaration[code_action.Action[PayloadT, typing.Any, ResultT]],
+        action_type: type[code_action.Action[PayloadT, typing.Any, ResultT]],
         payload: PayloadT,
         meta: code_action.RunActionMeta,
     ) -> ResultT:
-        action_source: str = action.source  # type: ignore[attr-defined]
-        action_cls = run_utils.import_module_member_by_source_str(action_source)
+        action_source = f"{action_type.__module__}.{action_type.__qualname__}"
         raw_result = await self._send(
             "finecode/runActionInProject",
             {
@@ -39,12 +38,11 @@ class ProjectActionRunnerImpl(iprojectactionrunner.IProjectActionRunner):
                 },
             },
         )
-        result_dict = raw_result.get("result", {}) or {}
-        return action_cls.RESULT_TYPE(**result_dict)
+        return action_type.RESULT_TYPE(**raw_result["result"])  # type: ignore[attr-defined]
 
     def run_action_iter(
         self,
-        action: iactionrunner.ActionDeclaration[code_action.Action[PayloadT, typing.Any, ResultT]],
+        action_type: type[code_action.Action[PayloadT, typing.Any, ResultT]],
         payload: PayloadT,
         meta: code_action.RunActionMeta,
     ) -> collections.abc.AsyncIterator[ResultT]:

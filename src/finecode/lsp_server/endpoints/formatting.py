@@ -9,10 +9,10 @@ from lsprotocol import types
 from pydantic.dataclasses import dataclass as pydantic_dataclass
 
 if TYPE_CHECKING:
-    from pygls.lsp.server import LanguageServer
+    from finecode.lsp_server.lsp_server import LspServer
 
 
-async def format_document(ls: LanguageServer, params: types.DocumentFormattingParams):
+async def format_document(_ls: LspServer, params: types.DocumentFormattingParams):
     logger.info(f"format document {params}")
     await global_state.server_initialized.wait()
 
@@ -55,12 +55,11 @@ async def format_document(ls: LanguageServer, params: types.DocumentFormattingPa
         return []
 
     if response_for_file.changed is True:
-        doc = ls.workspace.get_text_document(params.text_document.uri)
         return [
             types.TextEdit(
                 range=types.Range(
                     start=types.Position(0, 0),
-                    end=types.Position(len(doc.lines), len(doc.lines[-1])),
+                    end=types.Position(999999, 0),
                 ),
                 new_text=response_for_file.code,
             )
@@ -69,7 +68,7 @@ async def format_document(ls: LanguageServer, params: types.DocumentFormattingPa
     return []
 
 
-async def format_range(ls: LanguageServer, params: types.DocumentRangeFormattingParams):
+async def format_range(_ls: LspServer, params: types.DocumentRangeFormattingParams):
     logger.info(f"format range {params}")
     await global_state.server_initialized.wait()
     # TODO
@@ -77,7 +76,7 @@ async def format_range(ls: LanguageServer, params: types.DocumentRangeFormatting
 
 
 async def format_ranges(
-    ls: LanguageServer, params: types.DocumentRangesFormattingParams
+    _ls: LspServer, params: types.DocumentRangesFormattingParams
 ):
     logger.info(f"format ranges {params}")
     await global_state.server_initialized.wait()

@@ -8,7 +8,7 @@ from lsprotocol import types
 from finecode.lsp_server import global_state, pygls_types_utils
 
 if TYPE_CHECKING:
-    from pygls.lsp.server import LanguageServer
+    from finecode.lsp_server.lsp_server import LspServer
 
 
 def inlay_hint_params_to_dict(params: types.InlayHintParams) -> dict[str, Any]:
@@ -42,7 +42,7 @@ def dict_to_inlay_hint(raw: dict[str, Any]) -> types.InlayHint:
 
 
 async def document_inlay_hint(
-    ls: LanguageServer, params: types.InlayHintParams
+    _ls: LspServer, params: types.InlayHintParams
 ) -> types.InlayHintResult:
     logger.trace(f"Document inlay hints requested: {params}")
     await global_state.server_initialized.wait()
@@ -55,7 +55,6 @@ async def document_inlay_hint(
 
     project_dir = await global_state.wm_client.find_project_for_file(str(file_path))
     if project_dir is None:
-        # Not all files belong to a project with this action — not an error.
         return []
 
     try:
@@ -81,7 +80,7 @@ async def document_inlay_hint(
 
 
 async def inlay_hint_resolve(
-    ls: LanguageServer, params: types.InlayHint
+    _ls: LspServer, params: types.InlayHint
 ) -> types.InlayHint | None:
     # TODO
     ...

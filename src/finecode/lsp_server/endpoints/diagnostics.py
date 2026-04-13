@@ -11,6 +11,9 @@ from pydantic.dataclasses import dataclass as pydantic_dataclass
 from finecode.lsp_server import global_state, pygls_types_utils
 from finecode_extension_api.actions.code_quality import lint_action
 
+if TYPE_CHECKING:
+    from finecode.lsp_server.lsp_server import LspServer
+
 
 async def _find_project_dir_for_file(file_path: Path) -> str | None:
     """Return the absolute directory path of the project containing *file_path*.
@@ -24,10 +27,6 @@ async def _find_project_dir_for_file(file_path: Path) -> str | None:
     assert global_state.wm_client is not None, "WM client required for project lookup"
     project = await global_state.wm_client.find_project_for_file(str(file_path))
     return project
-
-
-if TYPE_CHECKING:
-    from pygls.lsp.server import LanguageServer
 
 
 def map_lint_message_to_diagnostic(
@@ -87,7 +86,8 @@ async def document_diagnostic_with_full_result(
             },
             options={"trigger": "system", "devEnv": "ide"},
         )
-    except Exception as error:  # catching any runtime error from client
+    except Exception as error:
+        # catching any runtime error from client
         # don't throw error because vscode after a few sequential errors will stop
         # requesting diagnostics until restart. Show user message instead
         logger.error(f"Diagnostics API request failed: {error}")
@@ -96,12 +96,12 @@ async def document_diagnostic_with_full_result(
     if response is None:
         return None
 
-    # use pydantic dataclass to convert dict to dataclass instance recursively
-    # (default dataclass constructor doesn't handle nested items, it stores them just
-    # as dict)
     json_result = (response.get("resultByFormat") or {}).get("json")
     if json_result is None:
         return None
+    # use pydantic dataclass to convert dict to dataclass instance recursively
+    # (default dataclass constructor doesn't handle nested items, it stores them just
+    # as dict)
     result_type = pydantic_dataclass(lint_action.LintRunResult)
     lint_result: lint_action.LintRunResult = result_type(**json_result)
 
@@ -167,7 +167,7 @@ async def document_diagnostic_with_partial_results(
 
 
 async def document_diagnostic(
-    ls: LanguageServer, params: types.DocumentDiagnosticParams
+    _ls: LspServer, params: types.DocumentDiagnosticParams
 ) -> types.DocumentDiagnosticReport | None:
     """
     LSP defines support of partial results in this endpoint, but testing of
@@ -182,7 +182,6 @@ async def document_diagnostic(
     try:
         if run_with_partial_results:
             assert params.partial_result_token is not None
-
             await document_diagnostic_with_partial_results(
                 file_path=file_path, partial_result_token=params.partial_result_token
             )
@@ -247,7 +246,7 @@ async def workspace_diagnostic_with_partial_results(
 async def workspace_diagnostic_with_full_result() -> types.WorkspaceDiagnosticReport:
     """Run lint action on all projects via API and aggregate results.
 
-    The WM server automatically runs in all relevant projects when 'project'
+    The WM server automatically selects relevant projects when the 'project'
     field is empty.
     """
     assert global_state.wm_client is not None, "WM client must be connected"
@@ -313,7 +312,7 @@ async def _workspace_diagnostic(
 
 
 async def workspace_diagnostic(
-    ls: LanguageServer, params: types.WorkspaceDiagnosticParams
+    _ls: LspServer, params: types.WorkspaceDiagnosticParams
 ) -> types.WorkspaceDiagnosticReport | None:
     logger.trace(f"Workspace diagnostic requested: {params}")
     await global_state.server_initialized.wait()

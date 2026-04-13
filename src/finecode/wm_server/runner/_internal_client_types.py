@@ -21,7 +21,14 @@ PROGRESS = "$/progress"
 TEXT_DOCUMENT_DID_CLOSE = "textDocument/didClose"
 TEXT_DOCUMENT_DID_CHANGE = "textDocument/didChange"
 TEXT_DOCUMENT_DID_OPEN = "textDocument/didOpen"
-WORKSPACE_EXECUTE_COMMAND = "workspace/executeCommand"
+ER_RUN_ACTION = "actions/run"
+ER_RELOAD_ACTION = "actions/reload"
+ER_MERGE_RESULTS = "actions/mergeResults"
+ER_GET_PAYLOAD_SCHEMAS = "actions/getPayloadSchemas"
+ER_RESOLVE_PACKAGE_PATH = "packages/resolvePath"
+ER_UPDATE_CONFIG = "finecodeRunner/updateConfig"
+ER_RESOLVE_ACTION_SOURCES = "finecodeRunner/resolveActionSources"
+ER_GET_INFO = "finecodeRunner/getInfo"
 WORKSPACE_APPLY_EDIT = "workspace/applyEdit"
 
 PROJECT_RAW_CONFIG_GET = "projects/getRawConfig"
@@ -1383,8 +1390,7 @@ class GetProjectRawConfigRequest(BaseRequest):
 
 @dataclasses.dataclass
 class GetProjectRawConfigResult(BaseResult):
-    # stringified json
-    config: str
+    config: dict
 
 
 @dataclasses.dataclass
@@ -1407,6 +1413,23 @@ class RunActionInProjectParams:
 
 
 @dataclasses.dataclass
+class RunActionInProjectResult(BaseResult):
+    result: dict
+    return_code: int
+
+
+@dataclasses.dataclass
+class RunActionInProjectRequest(BaseRequest):
+    params: RunActionInProjectParams
+    method = RUN_ACTION_IN_PROJECT
+
+
+@dataclasses.dataclass
+class RunActionInProjectResponse(BaseResponse):
+    result: RunActionInProjectResult
+
+
+@dataclasses.dataclass
 class RunActionInWorkspaceParams:
     action_source: str
     payload: dict
@@ -1417,13 +1440,7 @@ class RunActionInWorkspaceParams:
 
 @dataclasses.dataclass
 class RunActionInWorkspaceResult(BaseResult):
-    # Stringified JSON, not a dict — same pattern as GetProjectRawConfigResult.
-    # Reason: pygls deserializes JSON-RPC responses into attribute-style Object
-    # instances. Dict keys that are POSIX paths (containing "/") are not valid
-    # Python identifiers, so pygls mangles them to "_0", "_1", etc., losing the
-    # original paths. Returning the payload as a JSON string bypasses pygls
-    # deserialization; the ER side does json.loads() to recover the real dict.
-    results_by_project: str
+    results_by_project: dict
 
 
 @dataclasses.dataclass
@@ -1435,6 +1452,11 @@ class RunActionInWorkspaceRequest(BaseRequest):
 @dataclasses.dataclass
 class RunActionInWorkspaceResponse(BaseResponse):
     result: RunActionInWorkspaceResult
+
+
+@dataclasses.dataclass
+class ErResolveActionSourcesResponse(BaseResponse):
+    result: dict[str, str] = dataclasses.field(default_factory=dict)
 
 
 @dataclasses.dataclass
@@ -1568,6 +1590,129 @@ class CancelNotification(BaseNotification):
 
 
 @dataclasses.dataclass
+class ErRunActionParams:
+    action_name: str
+    params: dict
+    options: dict | None = None
+
+
+@dataclasses.dataclass
+class ErRunActionRequest(BaseRequest):
+    params: ErRunActionParams
+
+
+@dataclasses.dataclass
+class ErRunActionResult(BaseResult):
+    error: str | None = None
+    return_code: int | None = None
+    result_by_format: dict | None = None
+    status: str | None = None
+
+
+@dataclasses.dataclass
+class ErRunActionResponse(BaseResponse):
+    result: ErRunActionResult
+
+
+@dataclasses.dataclass
+class ErReloadActionParams:
+    action_name: str
+
+
+@dataclasses.dataclass
+class ErReloadActionRequest(BaseRequest):
+    params: ErReloadActionParams
+
+
+@dataclasses.dataclass
+class ErReloadActionResult(BaseResult): ...
+
+
+@dataclasses.dataclass
+class ErReloadActionResponse(BaseResponse):
+    result: ErReloadActionResult
+
+
+@dataclasses.dataclass
+class ErMergeResultsParams:
+    action_name: str
+    results: list
+
+
+@dataclasses.dataclass
+class ErMergeResultsRequest(BaseRequest):
+    params: ErMergeResultsParams
+
+
+@dataclasses.dataclass
+class ErMergeResultsResult(BaseResult):
+    merged: typing.Any = None
+    error: str | None = None
+
+
+@dataclasses.dataclass
+class ErMergeResultsResponse(BaseResponse):
+    result: ErMergeResultsResult
+
+
+@dataclasses.dataclass
+class ErGetPayloadSchemasResponse(BaseResponse):
+    result: dict[str, dict | None] = dataclasses.field(default_factory=dict)
+
+
+@dataclasses.dataclass
+class ErResolvePackagePathParams:
+    package_name: str
+
+
+@dataclasses.dataclass
+class ErResolvePackagePathRequest(BaseRequest):
+    params: ErResolvePackagePathParams
+
+
+@dataclasses.dataclass
+class ErResolvePackagePathResult(BaseResult):
+    package_path: str = ""
+
+
+@dataclasses.dataclass
+class ErResolvePackagePathResponse(BaseResponse):
+    result: ErResolvePackagePathResult
+
+
+@dataclasses.dataclass
+class ErUpdateConfigParams:
+    working_dir: str
+    project_name: str
+    project_def_path: str
+    config: dict
+
+
+@dataclasses.dataclass
+class ErUpdateConfigRequest(BaseRequest):
+    params: ErUpdateConfigParams
+
+
+@dataclasses.dataclass
+class ErUpdateConfigResult(BaseResult): ...
+
+
+@dataclasses.dataclass
+class ErUpdateConfigResponse(BaseResponse):
+    result: ErUpdateConfigResult
+
+
+@dataclasses.dataclass
+class ErGetInfoResult(BaseResult):
+    log_file_path: str | None = None
+
+
+@dataclasses.dataclass
+class ErGetInfoResponse(BaseResponse):
+    result: ErGetInfoResult
+
+
+@dataclasses.dataclass
 class ShutdownRequest(BaseRequest):
     params: None = None
 
@@ -1600,12 +1745,13 @@ METHOD_TO_TYPES: dict[
     SHUTDOWN: (ShutdownRequest, None, ShutdownResponse, None),
     PROGRESS: (ProgressNotification, ProgressParams, None, None),
     EXIT: (ExitNotification, None, None, None),
-    WORKSPACE_EXECUTE_COMMAND: (
-        ExecuteCommandRequest,
-        ExecuteCommandParams,
-        ExecuteCommandResponse,
-        None,
-    ),
+    ER_RUN_ACTION: (ErRunActionRequest, ErRunActionParams, ErRunActionResponse, None),
+    ER_RELOAD_ACTION: (ErReloadActionRequest, ErReloadActionParams, ErReloadActionResponse, None),
+    ER_MERGE_RESULTS: (ErMergeResultsRequest, ErMergeResultsParams, ErMergeResultsResponse, None),
+    ER_GET_PAYLOAD_SCHEMAS: (None, None, ErGetPayloadSchemasResponse, None),
+    ER_RESOLVE_PACKAGE_PATH: (ErResolvePackagePathRequest, ErResolvePackagePathParams, ErResolvePackagePathResponse, None),
+    ER_UPDATE_CONFIG: (ErUpdateConfigRequest, ErUpdateConfigParams, ErUpdateConfigResponse, None),
+    ER_GET_INFO: (None, None, ErGetInfoResponse, None),
     WORKSPACE_APPLY_EDIT: (
         ApplyWorkspaceEditRequest,
         ApplyWorkspaceEditParams,
@@ -1636,10 +1782,17 @@ METHOD_TO_TYPES: dict[
         None,
         None,
     ),
+    RUN_ACTION_IN_PROJECT: (
+        RunActionInProjectRequest,
+        RunActionInProjectParams,
+        RunActionInProjectResponse,
+        RunActionInProjectResult,
+    ),
     RUN_ACTION_IN_WORKSPACE: (
         RunActionInWorkspaceRequest,
         RunActionInWorkspaceParams,
         RunActionInWorkspaceResponse,
         RunActionInWorkspaceResult,
     ),
+    ER_RESOLVE_ACTION_SOURCES: (None, None, ErResolveActionSourcesResponse, None),
 }

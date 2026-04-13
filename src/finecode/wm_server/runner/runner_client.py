@@ -7,7 +7,6 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import enum
-import json
 import typing
 import pathlib
 from typing import Any
@@ -113,10 +112,9 @@ async def run_action(
 
     try:
         response = await runner.client.send_request(
-            method=_internal_client_types.WORKSPACE_EXECUTE_COMMAND,
-            params=_internal_client_types.ExecuteCommandParams(
-                command="actions/run",
-                arguments=[action_name, params, options],
+            method=_internal_client_types.ER_RUN_ACTION,
+            params=_internal_client_types.ErRunActionParams(
+                action_name=action_name, params=params, options=options
             ),
             timeout=None,
         )
@@ -129,21 +127,15 @@ async def run_action(
         )
         raise error
 
-    command_result = response.result
+    run_result = response.result
 
-    if "error" in command_result:
-        raise ActionRunFailed(command_result["error"])
+    if run_result.error is not None:
+        raise ActionRunFailed(run_result.error)
 
-    return_code = command_result["returnCode"]
-    stringified_result = command_result["resultByFormat"]
-    # currently result is always dumped to json even if response format is expected to
-    # be a string. See docs of ER lsp server for more details.
-    try:
-        result_by_format = json.loads(stringified_result)
-    except json.JSONDecodeError as exception:
-        raise ActionRunFailed(f"Failed to decode result json: {exception}") from exception
+    return_code = run_result.return_code
+    result_by_format = run_result.result_by_format
 
-    status = command_result["status"]
+    status = run_result.status
 
     if status == "stopped":
         raise ActionRunStopped(message=result_by_format)
@@ -165,17 +157,16 @@ async def merge_results(
         )
 
     response = await runner.client.send_request(
-        method=_internal_client_types.WORKSPACE_EXECUTE_COMMAND,
-        params=_internal_client_types.ExecuteCommandParams(
-            command="actions/mergeResults",
-            arguments=[action_name, results],
+        method=_internal_client_types.ER_MERGE_RESULTS,
+        params=_internal_client_types.ErMergeResultsParams(
+            action_name=action_name, results=results
         ),
         timeout=None,
     )
-    command_result = response.result
-    if "error" in command_result:
-        raise ActionRunFailed(command_result["error"])
-    return command_result["merged"]
+    merge_result = response.result
+    if merge_result.error is not None:
+        raise ActionRunFailed(merge_result.error)
+    return merge_result.merged
 
 
 async def reload_action(runner: ExtensionRunnerInfo, action_name: str) -> None:
@@ -183,14 +174,18 @@ async def reload_action(runner: ExtensionRunnerInfo, action_name: str) -> None:
         await runner.initialized_event.wait()
 
     await runner.client.send_request(
-        method=_internal_client_types.WORKSPACE_EXECUTE_COMMAND,
-        params=_internal_client_types.ExecuteCommandParams(
-            command="actions/reload",
-            arguments=[
-                action_name,
-            ],
-        ),
+        method=_internal_client_types.ER_RELOAD_ACTION,
+        params=_internal_client_types.ErReloadActionParams(action_name=action_name),
     )
+
+
+async def resolve_action_sources(runner: ExtensionRunnerInfo) -> dict[str, str]:
+    """Ask the ER to resolve canonical (fully-qualified) action source paths."""
+    response = await runner.client.send_request(
+        method=_internal_client_types.ER_RESOLVE_ACTION_SOURCES,
+        timeout=None,
+    )
+    return response.result
 
 
 async def get_payload_schemas(runner: ExtensionRunnerInfo) -> dict[str, dict | None]:
@@ -204,11 +199,7 @@ async def get_payload_schemas(runner: ExtensionRunnerInfo) -> dict[str, dict | N
         )
 
     response = await runner.client.send_request(
-        method=_internal_client_types.WORKSPACE_EXECUTE_COMMAND,
-        params=_internal_client_types.ExecuteCommandParams(
-            command="actions/getPayloadSchemas",
-            arguments=[],
-        ),
+        method=_internal_client_types.ER_GET_PAYLOAD_SCHEMAS,
         timeout=None,
     )
     return response.result
@@ -222,15 +213,10 @@ async def resolve_package_path(
     # for any other actions, so `runner.started_event` stays not set and should not be
     # checked here.
     response = await runner.client.send_request(
-        method=_internal_client_types.WORKSPACE_EXECUTE_COMMAND,
-        params=_internal_client_types.ExecuteCommandParams(
-            command="packages/resolvePath",
-            arguments=[
-                package_name,
-            ],
-        ),
+        method=_internal_client_types.ER_RESOLVE_PACKAGE_PATH,
+        params=_internal_client_types.ErResolvePackagePathParams(package_name=package_name),
     )
-    return {"packagePath": response.result["packagePath"]}
+    return {"packagePath": response.result.package_path}
 
 
 @dataclasses.dataclass
@@ -258,15 +244,12 @@ async def update_config(
     runner: ExtensionRunnerInfo, project_def_path: pathlib.Path, config: RunnerConfig
 ) -> None:
     await runner.client.send_request(
-        method=_internal_client_types.WORKSPACE_EXECUTE_COMMAND,
-        params=_internal_client_types.ExecuteCommandParams(
-            command="finecodeRunner/updateConfig",
-            arguments=[
-                runner.working_dir_path.as_posix(),
-                runner.working_dir_path.stem,
-                project_def_path.as_posix(),
-                config.to_dict(),
-            ],
+        method=_internal_client_types.ER_UPDATE_CONFIG,
+        params=_internal_client_types.ErUpdateConfigParams(
+            working_dir=runner.working_dir_path.as_posix(),
+            project_name=runner.working_dir_path.stem,
+            project_def_path=project_def_path.as_posix(),
+            config=config.to_dict(),
         ),
     )
 
@@ -315,6 +298,7 @@ __all__ = [
     "run_action",
     "merge_results",
     "reload_action",
+    "resolve_action_sources",
     "get_payload_schemas",
     "resolve_package_path",
     "RunnerConfig",

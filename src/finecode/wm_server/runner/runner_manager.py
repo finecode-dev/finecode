@@ -227,7 +227,7 @@ async def _start_extension_runner_process(
         except KeyError as exception:
             raise ValueError(f"Config of project '{project_def_path_str}' not found") from exception
         return _internal_client_types.GetProjectRawConfigResult(
-            config=json.dumps(project_raw_config)
+            config=project_raw_config
         )
 
     runner.client.feature(
@@ -237,7 +237,7 @@ async def _start_extension_runner_process(
 
     async def handle_run_action_in_project(
         params: _internal_client_types.RunActionInProjectParams,
-    ) -> dict:
+    ) -> _internal_client_types.RunActionInProjectResult:
         from finecode.wm_server.services.run_service import ProjectExecutor
         from finecode.wm_server.services.run_service.exceptions import ActionRunFailed
         from finecode.wm_server.runner.runner_client import RunActionTrigger, DevEnv
@@ -254,10 +254,10 @@ async def _start_extension_runner_process(
             )
         except ActionRunFailed as exc:
             raise ValueError(exc.message) from exc
-        return {
-            "result": result.result_by_format.get("json", {}),
-            "returnCode": result.return_code,
-        }
+        return _internal_client_types.RunActionInProjectResult(
+            result=result.result_by_format.get("json", {}),
+            return_code=result.return_code,
+        )
 
     runner.client.feature(
         _internal_client_types.RUN_ACTION_IN_PROJECT,
@@ -275,13 +275,15 @@ async def _start_extension_runner_process(
         run_trigger = RunActionTrigger(params.meta.trigger)
         dev_env = DevEnv(params.meta.dev_env)
 
-        # Resolve action name from source via the runner's own project actions
+        # Resolve action name from source via the runner's own project actions.
+        # Use canonical_source (resolved by ER)
         project = ws_context.ws_projects.get(runner.working_dir_path)
         if not isinstance(project, domain.CollectedProject):
             raise ValueError(f"Project {runner.working_dir_path} has no valid config")
         try:
             action_name = next(
-                a.name for a in project.actions if a.source == params.action_source
+                a.name for a in project.actions
+                if a.canonical_source == params.action_source
             )
         except StopIteration:
             raise ValueError(
@@ -311,13 +313,13 @@ async def _start_extension_runner_process(
         except ActionRunFailed as exc:
             raise ValueError(exc.message) from exc
         return _internal_client_types.RunActionInWorkspaceResult(
-            results_by_project=json.dumps({
+            results_by_project={
                 k.as_posix(): {
                     action: resp.result_by_format.get("json", {})
                     for action, resp in v.items()
                 }
                 for k, v in results.items()
-            })
+            }
         )
 
     runner.client.feature(
@@ -509,9 +511,8 @@ async def start_runner(
 
     try:
         runner_info = await _internal_client_api.get_runner_info(runner.client)
-        log_file_path_str = runner_info.get("logFilePath")
-        if log_file_path_str is not None:
-            runner.log_file_path = Path(log_file_path_str)
+        if runner_info.log_file_path is not None:
+            runner.log_file_path = Path(runner_info.log_file_path)
             logger.debug(f"Runner {runner.readable_id} log file: {runner.log_file_path}")
         else:
             logger.debug(f"Runner {runner.readable_id} returned no log file path")
@@ -656,6 +657,15 @@ async def update_runner_config(
         raise jsonrpc_client.RunnerFailedToStart(
             f"Runner failed to update config: {exception.message}"
         ) from exception
+
+    try:
+        canonical_sources = await runner_client.resolve_action_sources(runner)
+        for action in project.actions:
+            canonical = canonical_sources.get(action.source)
+            if canonical is not None:
+                action.canonical_source = canonical
+    except Exception as exc:
+        logger.debug(f"Failed to resolve canonical action sources: {exc}")
 
     ws_context.ws_action_schemas.pop(project.dir_path, None)
     logger.debug(f"Updated config of runner {runner.readable_id}")

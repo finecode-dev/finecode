@@ -138,6 +138,32 @@ async def update_config(
     return schemas.UpdateConfigResponse()
 
 
+async def resolve_action_sources() -> dict[str, str]:
+    """Resolve canonical (fully qualified) sources for all known actions.
+
+    The config source may be a re-exported import path (e.g.
+    ``finecode_extension_api.LintAction``) while callers that hold a class object
+    always derive the source from ``__module__.__qualname__``, producing the
+    canonical path (e.g. ``finecode_extension_api.actions.lint.LintAction``).
+    Returns a mapping of config source → canonical source for entries that differ.
+    """
+    if global_state.runner_context is None:
+        return {}
+    actions = global_state.runner_context.project.actions
+    resolved: dict[str, str] = {}
+    for action in actions.values():
+        if action.source is None:
+            continue
+        try:
+            cls = run_utils.import_module_member_by_source_str(action.source)
+            canonical = f"{cls.__module__}.{cls.__qualname__}"
+            if canonical != action.source:
+                resolved[action.source] = canonical
+        except Exception as exception:
+            logger.trace(f'Failed to import action {action.source}: {exception}')
+    return resolved
+
+
 async def initialize_handlers(
     handlers_by_action: dict[str, list[str]],
 ) -> None:

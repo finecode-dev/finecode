@@ -190,7 +190,6 @@ def cli(): ...
 @click.option(
     "--socket", "tcp", default=None, type=int, help="start a TCP server"
 )  # is_flag=True,
-@click.option("--ws", "ws", is_flag=True, default=False, help="start a WS server")
 @click.option(
     "--stdio", "stdio", is_flag=True, default=False, help="Use stdio communication"
 )
@@ -206,14 +205,12 @@ def start_lsp(
     log_level: str,
     debug: bool,
     tcp: int | None,
-    ws: bool,
     stdio: bool,
     tcp_auto: bool,
     host: str | None,
     port: int | None,
 ):
     import finecode.lsp_server.main as wm_lsp_server
-    from finecode.lsp_server import communication_utils
 
     if debug is True:
         import debugpy
@@ -225,19 +222,17 @@ def start_lsp(
             logger.info(e)
 
     if tcp_auto:
-        comm_type = communication_utils.CommunicationType.TCP
+        comm_type = "tcp"
         host = "127.0.0.1"
         port = None  # main.start() will pick a free port and print it
     elif tcp is not None:
-        comm_type = communication_utils.CommunicationType.TCP
+        comm_type = "tcp"
         port = tcp
         host = "127.0.0.1"
-    elif ws is True:
-        comm_type = communication_utils.CommunicationType.WS
     elif stdio is True:
-        comm_type = communication_utils.CommunicationType.STDIO
+        comm_type = "stdio"
     else:
-        raise ValueError("Specify either --tcp, --socket, --ws or --stdio")
+        raise ValueError("Specify either --tcp, --tcp-auto or --stdio")
 
     asyncio.run(
         wm_lsp_server.start(comm_type=comm_type, host=host, port=port, log_level=log_level)

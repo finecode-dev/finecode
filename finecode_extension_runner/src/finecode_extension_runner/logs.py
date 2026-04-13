@@ -117,11 +117,6 @@ def reset_log_level_for_group(group: str):
 def setup_logging(log_level: str, log_file_path: Path) -> Path:
     logger.remove()
 
-    # disable logging raw messages
-    # TODO: make configurable
-    # disable logging all raw sent messages
-    logger.configure(activation=[("pygls.protocol.json_rpc", False)])
-
     # ~~extension runner communicates with workspace manager with tcp, we can print logs
     # to stdout as well~~. See README.md
     actual_log_file_path = save_logs_to_file(
@@ -130,7 +125,6 @@ def setup_logging(log_level: str, log_file_path: Path) -> Path:
         stdout=True,
     )
 
-    # pygls uses standard python logger, intercept it and pass logs to loguru
     class InterceptHandler(logging.Handler):
         def emit(self, record: logging.LogRecord) -> None:
             # Get corresponding Loguru level if it exists.

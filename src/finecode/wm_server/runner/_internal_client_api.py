@@ -41,14 +41,12 @@ async def notify_initialized(client: jsonrpc_client.JsonRpcClient) -> None:
     )
 
 
-async def get_runner_info(client: jsonrpc_client.JsonRpcClient) -> dict:
+async def get_runner_info(
+    client: jsonrpc_client.JsonRpcClient,
+) -> _internal_client_types.ErGetInfoResult:
     logger.debug(f"Get runner info from {client.readable_id}")
     response = await client.send_request(
-        method=_internal_client_types.WORKSPACE_EXECUTE_COMMAND,
-        params=_internal_client_types.ExecuteCommandParams(
-            command="finecodeRunner/getInfo",
-            arguments=[],
-        ),
+        method=_internal_client_types.ER_GET_INFO,
         timeout=10,
     )
     return response.result

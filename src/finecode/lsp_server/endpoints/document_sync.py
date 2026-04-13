@@ -1,12 +1,18 @@
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
 from loguru import logger
 from lsprotocol import types
-from pygls.lsp.server import LanguageServer
 
 from finecode.lsp_server import global_state
 
+if TYPE_CHECKING:
+    from finecode.lsp_server.lsp_server import LspServer
+
 
 async def document_did_open(
-    ls: LanguageServer, params: types.DidOpenTextDocumentParams
+    _ls: LspServer, params: types.DidOpenTextDocumentParams
 ):
     logger.trace(f"Document did open: {params.text_document.uri}")
     await global_state.server_initialized.wait()
@@ -22,7 +28,7 @@ async def document_did_open(
 
 
 async def document_did_close(
-    ls: LanguageServer, params: types.DidCloseTextDocumentParams
+    _ls: LspServer, params: types.DidCloseTextDocumentParams
 ):
     logger.trace(f"Document did close: {params.text_document.uri}")
     await global_state.server_initialized.wait()
@@ -36,14 +42,14 @@ async def document_did_close(
 
 
 async def document_did_save(
-    ls: LanguageServer, params: types.DidSaveTextDocumentParams
+    _ls: LspServer, params: types.DidSaveTextDocumentParams
 ):
     logger.trace(f"Document did save: {params}")
     await global_state.server_initialized.wait()
 
 
 async def document_did_change(
-    ls: LanguageServer, params: types.DidChangeTextDocumentParams
+    _ls: LspServer, params: types.DidChangeTextDocumentParams
 ):
     logger.trace(f"Document did change: {params.text_document.uri}")
     await global_state.server_initialized.wait()

@@ -9,7 +9,6 @@ dependencies = [
     "loguru==0.7.*",
     "click==8.1.*",
     "pydantic==2.12.*",
-    "pygls==2.0.0",
     "finecode_extension_api~=0.4.0a0",
     "deepmerge==2.0.*",
     "debugpy==1.8.*",
@@ -63,7 +62,7 @@ id = "er-layered"
 name = "ER layered architecture"
 type = "layers"
 layers = [
-    "finecode_extension_runner.lsp_server",
+    "finecode_extension_runner.er_server",
     "finecode_extension_runner.services",
     "finecode_extension_runner.domain",
 ]

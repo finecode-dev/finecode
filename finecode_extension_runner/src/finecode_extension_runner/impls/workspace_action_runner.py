@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import dataclasses
-import json
 import pathlib
 import typing
 from typing import Any, Awaitable, Callable
@@ -47,11 +46,7 @@ class WorkspaceActionRunnerImpl(iworkspaceactionrunner.IWorkspaceActionRunner):
                 "concurrently": concurrently,
             },
         )
-        # raw.resultsByProject is a stringified JSON string — pygls converts
-        # JSON-RPC responses to Object and mangles path-keyed dicts (slashes
-        # are invalid Python identifiers), so we stringify on the WM side and
-        # parse back here, following the same pattern as projects/getRawConfig.
-        results_by_project: dict = json.loads(raw.resultsByProject)
+        results_by_project: dict = raw["resultsByProject"]
         return {
             pathlib.Path(k): apischema.deserialize(
                 action_cls.RESULT_TYPE, next(iter(v.values()), {})

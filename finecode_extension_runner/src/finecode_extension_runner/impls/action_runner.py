@@ -33,9 +33,14 @@ class ActionRunner(iactionrunner.IActionRunner):
         caller_kwargs: code_action.CallerRunContextKwargs | None = None,
     ) -> code_action.RunActionResult:
         try:
-            return await self._run_action_func(
+            result = await self._run_action_func(
                 action, payload, meta, caller_kwargs=caller_kwargs
             )
+            if result is None:
+                raise iactionrunner.ActionRunFailed(
+                    f"Action '{action.name}' returned no result"
+                )
+            return result
         except Exception as exception:
             raise iactionrunner.ActionRunFailed(str(exception)) from exception
 
@@ -68,6 +73,8 @@ class ActionRunner(iactionrunner.IActionRunner):
                 if item is _SENTINEL:
                     break
                 yield item
+            # Propagate producer-side exceptions (if any) to the caller.
+            await task
         finally:
             if not task.done():
                 task.cancel()

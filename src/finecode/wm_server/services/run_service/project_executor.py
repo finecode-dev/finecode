@@ -34,8 +34,12 @@ class ProjectExecutor:
     def _resolve_action_name(
         self, action_source: str, project: domain.CollectedProject
     ) -> str:
+        # Use canonical_source (resolved by ER)
         try:
-            return next(a.name for a in project.actions if a.source == action_source)
+            return next(
+                a.name for a in project.actions
+                if a.canonical_source == action_source
+            )
         except StopIteration:
             raise ActionRunFailed(
                 f"No action with source '{action_source}' found in project {project.dir_path}"

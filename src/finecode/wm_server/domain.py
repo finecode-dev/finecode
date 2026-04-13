@@ -88,6 +88,9 @@ class Action:
     ):
         self.name: str = name
         self.source: str = source
+        # Canonical (fully qualified) import path resolved by the Extension Runner
+        # at startup. May differ from source when source is a re-exported path.
+        self.canonical_source: str | None = None
         self.handlers: list[ActionHandler] = handlers
         self.config = config
 
