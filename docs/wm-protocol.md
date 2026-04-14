@@ -471,8 +471,16 @@ Any valid import path resolving to the same registered action class is accepted
 
 `devEnv` values: `"ide"`, `"cli"`, `"ai"`, `"precommit"`, `"ci"` (default: `"cli"`)
 
-If `progressToken` is provided, the server sends `actions/progress` notifications
-before returning the final result.
+**Streaming options (both optional):**
+
+- `partialResultToken` — when present, the server streams `actions/partialResult`
+  notifications during execution before returning the final result.  May be
+  combined with `progressToken`.
+- `progressToken` — when present (and `partialResultToken` is absent), the server
+  sends `actions/progress` notifications during execution.
+
+Pass `project=""` to run across all projects that expose the action (same
+semantics as `actions/runBatch` with no `projects` filter).
 
 **Result:**
 
@@ -518,8 +526,14 @@ Execute multiple actions across multiple projects. Used for batch operations.
 Required: `actionSources`. If `projects` is omitted, runs on all projects that have the
 requested actions.
 
-If `progressToken` is provided, the server sends aggregated `actions/progress`
-notifications across all (project × action) slots before returning the final result.
+**Streaming options (both optional):**
+
+- `partialResultToken` — when present, the server emits one `actions/partialResult`
+  notification per completed project in completion order.  Each notification carries
+  the full result block for that project (see `actions/partialResult` below).  The
+  final response still contains the aggregated `results` and `returnCode`.
+- `progressToken` — when present (and `partialResultToken` is absent), the server
+  sends aggregated `actions/progress` notifications across all (project × action) slots.
 
 **Result:**
 
@@ -539,49 +553,6 @@ Result is keyed by project path, then by action source. `returnCode` at the top 
 is the bitwise OR of all individual return codes.
 
 ---
-
-#### `actions/runWithPartialResults`
-
-Execute an action with streaming partial results. The server sends
-`actions/partialResult` notifications during execution.
-
-- **Type:** request
-- **Clients:** LSP
-- **Status:** implemented
-
-**Params:**
-
-```json
-{
-  "actionSource": "finecode_extension_api.actions.LintAction",
-  "project": "/abs/path/to/project",
-  "params": {"file_paths": ["/path/to/file.py"]},
-  "partialResultToken": "diag_1",
-  "options": {
-    "resultFormats": ["json", "string"],
-    "trigger": "system",
-    "devEnv": "ide"
-  }
-}
-```
-
-Required: `actionSource`, `project`, `partialResultToken`.
-
-Supported `resultFormats`: `"json"`, `"string"` (same as `actions/run`).
-
-If `progressToken` is provided, the server also sends `actions/progress` notifications.
-
-**Result:** Same as `actions/run` (the final aggregated result).
-
-During execution, the server sends `actions/partialResult` notifications (see below).
-
-> **Guarantee:** The WM Server always delivers results via `actions/partialResult`
-> notifications, even when an extension runner does not stream incrementally (i.e.
-> it collects all results internally and returns them as a single final response).
-> In that case the server emits the final result as a partial result notification
-> before returning the aggregated response.  Clients can therefore rely solely on
-> `actions/partialResult` notifications to receive results and safely ignore the
-> response body of this request.
 
 ---
 
@@ -812,13 +783,20 @@ a background reader to receive them.
 
 #### `actions/partialResult`
 
-Sent during `actions/runWithPartialResults` execution as results stream in.
+Sent when an `actions/run` or `actions/runBatch` request includes a
+`partialResultToken`.
 
 - **Type:** notification (server -> client)
-- **Clients:** LSP
+- **Clients:** LSP, MCP, CLI
 - **Status:** implemented
 
-**Params:**
+`token` matches the `partialResultToken` from the originating request.
+
+> **Note:** Notifications are delivered only to the client connection that
+> initiated the request.  The WM Server does **not** broadcast these messages to
+> every connected client.
+
+**Params for `actions/run` + `partialResultToken`:**
 
 ```json
 {
@@ -832,22 +810,45 @@ Sent during `actions/runWithPartialResults` execution as results stream in.
 }
 ```
 
-`token` matches the `partialResultToken` from the originating request.
+`value` mirrors the `actions/run` result shape (without `returnCode`).
 
-`resultByFormat` contains results in all formats requested in the originating
-`actions/runWithPartialResults` params (same structure as `actions/run` response,
-but without `returnCode`).
+> **Guarantee:** The WM Server always delivers results via `actions/partialResult`
+> notifications, even when an extension runner does not stream incrementally (i.e.
+> it collects all results internally and returns them as a single final response).
+> In that case the server emits the final result as a partial result notification
+> before returning the aggregated response.  Clients can therefore rely solely on
+> `actions/partialResult` notifications to receive results and safely ignore the
+> response body of this request.
 
-> **Note:** Notifications are delivered only to the client connection that
-> initiated the corresponding `actions/runWithPartialResults` request.  The
-> WM Server does **not** broadcast these messages to every connected client.
+**Params for `actions/runBatch` + `partialResultToken`:**
+
+```json
+{
+  "token": "batch_1",
+  "value": {
+    "project": "/abs/path/to/project_a",
+    "results": {
+      "finecode_extension_api.actions.LintAction": {
+        "resultByFormat": {"json": {}, "string": "..."},
+        "returnCode": 0
+      }
+    },
+    "returnCode": 0
+  }
+}
+```
+
+One notification is emitted per project, in completion order (the fastest project
+finishes first).  `value.returnCode` is the bitwise OR of all action return codes
+for that project.  `value.results` is keyed by action source, matching the shape of
+a single entry in the final `actions/runBatch` response.
 
 ---
 
 #### `actions/progress`
 
-Sent during `actions/run`, `actions/runBatch`, or `actions/runWithPartialResults`
-when the request includes a `progressToken`.
+Sent during `actions/run` or `actions/runBatch` when the request includes a
+`progressToken` (and no `partialResultToken`).
 
 - **Type:** notification (server -> client)
 - **Clients:** LSP, MCP, CLI

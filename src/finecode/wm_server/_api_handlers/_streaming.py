@@ -24,17 +24,18 @@ from finecode.wm_server._jsonrpc import (
 )
 
 
-async def _handle_run_with_partial_results(
+async def _handle_run_action_with_partial_results(
     params: dict | None,
     ws_context: context.WorkspaceContext,
     writer: asyncio.StreamWriter,
 ) -> dict:
-    """Handle the ``actions/runWithPartialResults`` request.
+    """Handle ``actions/run`` when a ``partialResultToken`` is present.
 
     The handler uses :mod:`partial_results_service` to obtain an async iterator
     of partial values and forwards them to the requesting client only.  When the
     iterator completes an aggregated result dict is returned exactly as the
-    ``actions/run`` method would produce.
+    ``actions/run`` method would produce.  An optional ``progressToken`` is also
+    supported: progress notifications are forwarded concurrently with partials.
     """
     if params is None:
         raise ValueError("params required")
@@ -51,7 +52,7 @@ async def _handle_run_with_partial_results(
     dev_env = run_service.DevEnv(options.get("devEnv", "ide"))
     result_formats = options.get("resultFormats", ["json"])
 
-    logger.trace(f"runWithPartialResults: actionSource={action_source} project={project_path!r} token={token} formats={result_formats}")
+    logger.trace(f"run+partialResults: actionSource={action_source} project={project_path!r} token={token} formats={result_formats}")
 
     # Resolve the action source to an action name for the internal pipeline.
     action_name = await _resolve_source_to_name(action_source, project_path, ws_context)
@@ -74,7 +75,7 @@ async def _handle_run_with_partial_results(
         count = 0
         async for value in stream:
             count += 1
-            logger.trace(f"runWithPartialResults: sending partial #{count} for token={token}, keys={list(value.keys()) if isinstance(value, dict) else type(value)}")
+            logger.trace(f"run+partialResults: sending partial #{count} for token={token}, keys={list(value.keys()) if isinstance(value, dict) else type(value)}")
             _notify_client(
                 writer,
                 "actions/partialResult",
@@ -87,7 +88,7 @@ async def _handle_run_with_partial_results(
         if stream.progress_stream is None or progress_token is None:
             return
         async for value in stream.progress_stream:
-            logger.trace(f"runWithPartialResults: sending progress type={value.get('type')} for token={progress_token}")
+            logger.trace(f"run+partialResults: sending progress type={value.get('type')} for token={progress_token}")
             _notify_client(
                 writer,
                 "actions/progress",
@@ -102,23 +103,23 @@ async def _handle_run_with_partial_results(
     partial_count = partials_task.result()
 
     final = await stream.final_result()
-    logger.trace(f"runWithPartialResults: done, sent {partial_count} partials, final keys={list(final.keys()) if isinstance(final, dict) else type(final)}")
+    logger.trace(f"run+partialResults: done, sent {partial_count} partials, final keys={list(final.keys()) if isinstance(final, dict) else type(final)}")
     return final
 
 
-async def _handle_run_with_partial_results_task(
+async def _handle_run_action_with_partial_results_task(
     params: dict | None,
     ws_context: context.WorkspaceContext,
     writer: asyncio.StreamWriter,
     req_id: int | str,
 ) -> None:
-    """Task to handle the ``actions/runWithPartialResults`` request asynchronously.
+    """Task wrapper for ``actions/run`` with ``partialResultToken``.
 
-    This runs in a separate task to avoid blocking the client handler loop
-    during long-running actions.
+    Runs in a separate task to avoid blocking the client handler loop during
+    long-running actions.
     """
     try:
-        result = await _handle_run_with_partial_results(
+        result = await _handle_run_action_with_partial_results(
             params, ws_context, writer
         )
         _write_message(writer, _jsonrpc_response(req_id, result))
@@ -131,11 +132,152 @@ async def _handle_run_with_partial_results_task(
         await writer.drain()
     except Exception as exc:
         logger.exception(
-            "FineCode API: error handling actions/runWithPartialResults"
+            "FineCode API: error handling actions/run with partialResultToken"
         )
         _write_message(
             writer, _jsonrpc_error(req_id, -32603, str(exc))
         )
+        await writer.drain()
+
+
+async def _handle_run_batch_with_partial_results(
+    params: dict | None,
+    ws_context: context.WorkspaceContext,
+    writer: asyncio.StreamWriter,
+) -> dict:
+    """Handle ``actions/runBatch`` when a ``partialResultToken`` is present.
+
+    Emits one ``actions/partialResult`` notification per completed project in
+    completion order.  Each notification value mirrors a single entry in the
+    final ``results`` dict::
+
+        {
+            "project": "/abs/path",
+            "results": {action_source: {"resultByFormat": ..., "returnCode": int}},
+            "returnCode": int   # bitwise OR across this project's actions
+        }
+
+    The final response still contains the full ``results`` and overall
+    ``returnCode`` once every project has completed.
+    """
+    from finecode.wm_server.services import run_service
+    from finecode.wm_server.services.run_service import proxy_utils
+    from finecode.wm_server.services.run_service.exceptions import ActionRunFailed
+    from finecode.wm_server.services.run_service.execution_scopes import DEFAULT_ORCHESTRATION_POLICY
+
+    params = params or {}
+    parsed = _parse_run_batch_params(params)
+    token = params["partialResultToken"]
+
+    if not parsed.action_sources:
+        raise ValueError("actionSources list is required and must be non-empty")
+
+    logger.debug(f"runBatch+partialResults: actionSources={parsed.action_sources} projects={parsed.project_names}")
+
+    actions_by_project, name_to_source = await _resolve_actions_by_project(
+        parsed.project_names, parsed.action_sources, ws_context
+    )
+
+    if len(actions_by_project) > DEFAULT_ORCHESTRATION_POLICY.max_project_fanout:
+        raise ActionRunFailed(
+            f"Workspace fan-out {len(actions_by_project)} exceeds limit "
+            f"{DEFAULT_ORCHESTRATION_POLICY.max_project_fanout}"
+        )
+
+    await run_service.start_required_environments(
+        actions_by_project, ws_context, update_config_in_running_runners=True
+    )
+
+    payload_overrides = parsed.params_by_project or {}
+
+    # Launch one task per project so we can emit notifications in completion order.
+    project_tasks: dict[pathlib.Path, asyncio.Task] = {}
+    for project_path, actions_to_run in actions_by_project.items():
+        project = ws_context.ws_projects[project_path]
+        project_payload = {
+            **parsed.action_params,
+            **payload_overrides.get(str(project_path), {}),
+        }
+        task = asyncio.create_task(
+            proxy_utils.run_actions_in_running_project(
+                actions=actions_to_run,
+                action_payload=project_payload,
+                project=project,
+                ws_context=ws_context,
+                concurrently=parsed.concurrently,
+                result_formats=parsed.result_formats,
+                run_trigger=parsed.trigger,
+                dev_env=parsed.dev_env,
+            )
+        )
+        project_tasks[project_path] = task
+
+    result_by_project: dict[pathlib.Path, dict] = {}
+    task_to_project: dict[asyncio.Task, pathlib.Path] = {t: p for p, t in project_tasks.items()}
+    pending: set[asyncio.Task] = set(project_tasks.values())
+
+    while pending:
+        done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
+        for task in done:
+            exc = task.exception()
+            if exc is not None:
+                for t in pending:
+                    t.cancel()
+                await asyncio.gather(*pending, return_exceptions=True)
+                raise exc
+
+            project_path = task_to_project[task]
+            project_result = task.result()
+            result_by_project[project_path] = project_result
+
+            # Build the per-project partial notification payload.
+            project_results_dict: dict[str, dict] = {}
+            project_return_code = 0
+            for action_name, response in project_result.items():
+                project_return_code |= response.return_code
+                key = name_to_source.get(action_name, action_name)
+                project_results_dict[key] = {
+                    "resultByFormat": response.result_by_format,
+                    "returnCode": response.return_code,
+                }
+
+            logger.trace(f"runBatch+partialResults: emitting partial for project={project_path} token={token}")
+            _notify_client(
+                writer,
+                "actions/partialResult",
+                {
+                    "token": token,
+                    "value": {
+                        "project": str(project_path),
+                        "results": project_results_dict,
+                        "returnCode": project_return_code,
+                    },
+                },
+            )
+            await writer.drain()
+
+    results, overall_return_code = _build_batch_result(result_by_project, name_to_source)
+    logger.debug(f"runBatch+partialResults: done, projects_count={len(results)} returnCode={overall_return_code}")
+    return {"results": results, "returnCode": overall_return_code}
+
+
+async def _handle_run_batch_with_partial_results_task(
+    params: dict | None,
+    ws_context: context.WorkspaceContext,
+    writer: asyncio.StreamWriter,
+    req_id: int | str,
+) -> None:
+    """Task wrapper for ``actions/runBatch`` with ``partialResultToken``."""
+    try:
+        result = await _handle_run_batch_with_partial_results(params, ws_context, writer)
+        _write_message(writer, _jsonrpc_response(req_id, result))
+        await writer.drain()
+    except _NotImplementedError as exc:
+        _write_message(writer, _jsonrpc_error(req_id, NOT_IMPLEMENTED_CODE, str(exc)))
+        await writer.drain()
+    except Exception as exc:
+        logger.exception("FineCode API: error handling actions/runBatch with partialResultToken")
+        _write_message(writer, _jsonrpc_error(req_id, -32603, str(exc)))
         await writer.drain()
 
 

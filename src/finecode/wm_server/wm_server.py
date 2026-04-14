@@ -32,10 +32,11 @@ from finecode.wm_server._api_handlers import (
     _handle_get_project_raw_config,
     _handle_remove_dir,
     _handle_run_action,
+    _handle_run_action_with_partial_results_task,
     _handle_run_action_with_progress_task,
     _handle_run_batch,
+    _handle_run_batch_with_partial_results_task,
     _handle_run_batch_with_progress_task,
-    _handle_run_with_partial_results_task,
     _handle_runners_check_env,
     _handle_runners_list,
     _handle_runners_remove_env,
@@ -135,7 +136,6 @@ _METHODS: dict[str, MethodHandler] = {
     "actions/getPayloadSchemas": _handle_get_payload_schemas,
     "actions/run": _handle_run_action,
     "actions/runBatch": _handle_run_batch,
-    # (runWithPartialResults is handled specially in _handle_client)
     "actions/reload": _handle_actions_reload,
     # runners/
     "runners/list": _handle_runners_list,
@@ -246,8 +246,9 @@ async def _handle_client(
                 continue
 
             # Requests (has id) — dispatch and respond.
-            # ``client/initialize`` and ``actions/runWithPartialResults`` are
-            # handled specially because they need access to the writer.
+            # ``client/initialize`` and streaming action requests are handled
+            # specially because they need access to the writer to send
+            # notifications mid-request.
             if method == "client/initialize":
                 new_label = (params or {}).get("clientId")
                 if new_label:
@@ -260,16 +261,14 @@ async def _handle_client(
                 await writer.drain()
                 continue
 
-            if method == "actions/runWithPartialResults":
-                # Spawn a task to handle this long-running request without blocking
-                # the client handler loop. This allows the client to send other
-                # requests while this action is running.
+            if method == "actions/run" and (params or {}).get("partialResultToken") is not None:
+                # partialResultToken takes priority: the handler also forwards
+                # progressToken notifications if present.
                 task = asyncio.create_task(
-                    _handle_run_with_partial_results_task(
+                    _handle_run_action_with_partial_results_task(
                         params, ws_context, writer, req_id
                     )
                 )
-                # Track the task associated with this client
                 if writer not in _running_partial_result_tasks:
                     _running_partial_result_tasks[writer] = set()
                 _running_partial_result_tasks[writer].add(task)
@@ -277,10 +276,22 @@ async def _handle_client(
                 continue
 
             if method == "actions/run" and (params or {}).get("progressToken") is not None:
-                # actions/run with a progressToken needs writer access to
-                # forward progress notifications, so handle like runWithPartialResults.
+                # actions/run with only a progressToken needs writer access to
+                # forward progress notifications.
                 task = asyncio.create_task(
                     _handle_run_action_with_progress_task(
+                        params, ws_context, writer, req_id
+                    )
+                )
+                if writer not in _running_partial_result_tasks:
+                    _running_partial_result_tasks[writer] = set()
+                _running_partial_result_tasks[writer].add(task)
+                task.add_done_callback(lambda t: _running_partial_result_tasks[writer].discard(t) if writer in _running_partial_result_tasks else None)
+                continue
+
+            if method == "actions/runBatch" and (params or {}).get("partialResultToken") is not None:
+                task = asyncio.create_task(
+                    _handle_run_batch_with_partial_results_task(
                         params, ws_context, writer, req_id
                     )
                 )

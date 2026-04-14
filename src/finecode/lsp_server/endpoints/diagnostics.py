@@ -151,15 +151,12 @@ async def document_diagnostic_with_partial_results(
     global_state.partial_result_tokens[partial_result_token] = ("finecode_extension_api.actions.LintAction", "document_diagnostic")
 
     try:
-        await global_state.wm_client.request(
-            "actions/runWithPartialResults",
-            {
-                "actionSource": "finecode_extension_api.actions.LintAction",
-                "project": project_dir,
-                "params": {"file_paths": [file_path.as_uri()]},
-                "partialResultToken": partial_result_token,
-                "options": {"resultFormats": ["json"], "trigger": "system", "devEnv": "ide"},
-            },
+        await global_state.wm_client.run_action(
+            action_source="finecode_extension_api.actions.LintAction",
+            project=project_dir,
+            params={"file_paths": [file_path.as_uri()]},
+            options={"resultFormats": ["json"], "trigger": "system", "devEnv": "ide"},
+            partial_result_token=partial_result_token,
         )
     except Exception as error:
         logger.error(f"Diagnostics API request failed: {error}")
@@ -214,15 +211,12 @@ async def run_workspace_diagnostic_with_partial_results(
 
     try:
         # send request to WM server; notifications will trigger progress reporter
-        await global_state.wm_client.request(
-            "actions/runWithPartialResults",
-            {
-                "actionSource": "finecode_extension_api.actions.LintAction",
-                "project": "",  # empty project = all relevant projects
-                "params": {"target": "project"},
-                "partialResultToken": partial_result_token,
-                "options": {"resultFormats": ["json"], "trigger": "system", "devEnv": "ide"},
-            },
+        await global_state.wm_client.run_action(
+            action_source="finecode_extension_api.actions.LintAction",
+            project="",  # empty project = all relevant projects
+            params={"target": "project"},
+            options={"resultFormats": ["json"], "trigger": "system", "devEnv": "ide"},
+            partial_result_token=partial_result_token,
         )
     except Exception as error:
         logger.error(f"Workspace diagnostics API request failed: {error}")

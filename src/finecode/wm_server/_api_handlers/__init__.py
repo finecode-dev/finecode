@@ -20,8 +20,9 @@ from finecode.wm_server._api_handlers._actions import (
     _handle_get_payload_schemas,
 )
 from finecode.wm_server._api_handlers._streaming import (
-    _handle_run_with_partial_results_task,
+    _handle_run_action_with_partial_results_task,
     _handle_run_action_with_progress_task,
+    _handle_run_batch_with_partial_results_task,
     _handle_run_batch_with_progress_task,
 )
 from finecode.wm_server._api_handlers._runners import (
@@ -48,8 +49,9 @@ __all__ = [
     "_handle_run_action",
     "_handle_actions_reload",
     "_handle_run_batch",
-    "_handle_run_with_partial_results_task",
+    "_handle_run_action_with_partial_results_task",
     "_handle_run_action_with_progress_task",
+    "_handle_run_batch_with_partial_results_task",
     "_handle_run_batch_with_progress_task",
     "_handle_runners_list",
     "_handle_runners_restart",

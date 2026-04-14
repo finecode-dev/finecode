@@ -141,9 +141,10 @@ async def _run_with_progress(
             pass
 
     result_task = asyncio.create_task(
-        _wm_client.run_action_with_partial_results(
-            action_source, project, token, params, options,
+        _wm_client.run_action(
+            action_source, project, params, options,
             progress_token=progress_token,
+            partial_result_token=token,
         )
     )
     forward_task = asyncio.create_task(_forward_partials())

@@ -163,30 +163,67 @@ async def run_actions(
 
             result_formats = ["string", "json"] if save_results else ["string"]
 
-            progress_token = str(uuid.uuid4())
-            client.on_notification(
-                "actions/progress",
-                _make_progress_handler(sys.stderr.isatty()),
-            )
+            # Multi-project runs stream partial results so each project's output
+            # is printed as soon as that project finishes (completion order).
+            # Single-project runs use progress notifications instead (no streaming).
+            use_streaming = project_paths is None or len(project_paths) > 1
 
-            try:
-                batch_result = await client.run_batch(
-                    action_sources=action_sources,
-                    projects=project_paths,
-                    params=action_payload,
-                    params_by_project=params_by_project or None,
-                    options={
-                        "concurrently": concurrently,
-                        "resultFormats": result_formats,
-                        "trigger": "user",
-                        "devEnv": dev_env,
-                    },
-                    progress_token=progress_token,
+            batch_options = {
+                "concurrently": concurrently,
+                "resultFormats": result_formats,
+                "trigger": "user",
+                "devEnv": dev_env,
+            }
+
+            if use_streaming:
+                partial_result_token = str(uuid.uuid4())
+                streaming_results: dict[str, dict] = {}
+
+                async def _on_partial_result(params: dict) -> None:
+                    value = params.get("value", {}) if params else {}
+                    project_str = value.get("project", "")
+                    results = value.get("results", {})
+                    streaming_results[project_str] = results
+                    block = _format_project_block(project_str, results, source_to_name)
+                    click.echo(block, nl=False)
+
+                client.on_notification("actions/partialResult", _on_partial_result)
+
+                try:
+                    batch_result = await client.run_batch(
+                        action_sources=action_sources,
+                        projects=project_paths,
+                        params=action_payload,
+                        params_by_project=params_by_project or None,
+                        options=batch_options,
+                        partial_result_token=partial_result_token,
+                    )
+                except ApiError as exc:
+                    raise RunFailed(str(exc)) from exc
+
+                return _build_streaming_result(
+                    streaming_results, batch_result.get("returnCode", 0)
                 )
-            except ApiError as exc:
-                raise RunFailed(str(exc)) from exc
+            else:
+                progress_token = str(uuid.uuid4())
+                client.on_notification(
+                    "actions/progress",
+                    _make_progress_handler(sys.stderr.isatty()),
+                )
 
-            return _build_run_result(batch_result, source_to_name)
+                try:
+                    batch_result = await client.run_batch(
+                        action_sources=action_sources,
+                        projects=project_paths,
+                        params=action_payload,
+                        params_by_project=params_by_project or None,
+                        options=batch_options,
+                        progress_token=progress_token,
+                    )
+                except ApiError as exc:
+                    raise RunFailed(str(exc)) from exc
+
+                return _build_run_result(batch_result, source_to_name)
         finally:
             await client.close()
     finally:
@@ -242,6 +279,66 @@ def _build_run_result(
 
     return utils.RunActionsResult(
         output="\n".join(output_parts),
+        return_code=overall_return_code,
+        result_by_project=result_by_project,
+    )
+
+
+def _format_project_block(
+    project_path_str: str,
+    actions_results: dict,
+    source_to_name: dict[str, str] | None = None,
+) -> str:
+    """Format one project's action results as a printable block.
+
+    Always includes the project path header (streaming callers are multi-project
+    by definition).
+    """
+    run_many_actions = len(actions_results) > 1
+    project_output_parts: list[str] = []
+
+    for action_source, action_data in actions_results.items():
+        result_by_format = action_data.get("resultByFormat", {})
+        return_code = action_data.get("returnCode", 0)
+        response = runner_client.RunActionResponse(
+            result_by_format=result_by_format,
+            return_code=return_code,
+        )
+        display_name = (source_to_name or {}).get(action_source, action_source)
+        action_output = ""
+        if run_many_actions:
+            action_output += f"{click.style(display_name, bold=True)}:"
+        action_output += utils.run_result_to_str(response.text(), display_name)
+        project_output_parts.append(action_output)
+
+    block = "".join(project_output_parts)
+    block = f"{click.style(project_path_str, bold=True, underline=True)}\n" + block
+    return block
+
+
+def _build_streaming_result(
+    streaming_results: dict[str, dict],
+    overall_return_code: int,
+) -> utils.RunActionsResult:
+    """Build a RunActionsResult from collected partial-result notifications.
+
+    Output is empty because each project block was already printed to stdout as
+    the notification arrived.  ``result_by_project`` is populated for callers
+    that need the structured data (e.g. ``--save-results``).
+    """
+    result_by_project: dict[pathlib.Path, dict[str, runner_client.RunActionResponse]] = {}
+    for project_path_str, actions_results in streaming_results.items():
+        project_path = pathlib.Path(project_path_str)
+        project_responses: dict[str, runner_client.RunActionResponse] = {}
+        for action_source, action_data in actions_results.items():
+            project_responses[action_source] = runner_client.RunActionResponse(
+                result_by_format=action_data.get("resultByFormat", {}),
+                return_code=action_data.get("returnCode", 0),
+            )
+        result_by_project[project_path] = project_responses
+
+    return utils.RunActionsResult(
+        output="",
         return_code=overall_return_code,
         result_by_project=result_by_project,
     )

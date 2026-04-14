@@ -248,6 +248,7 @@ class ApiClient:
         params_by_project: dict[str, dict] | None = None,
         options: dict | None = None,
         progress_token: str | None = None,
+        partial_result_token: str | None = None,
     ) -> dict:
         """Run multiple actions across multiple (or all) projects.
 
@@ -255,6 +256,8 @@ class ApiClient:
         All result keys use camelCase (returnCode, resultByFormat).
         If ``progress_token`` is provided, progress notifications are delivered
         as ``actions/progress`` notifications before this coroutine returns.
+        If ``partial_result_token`` is provided, one ``actions/partialResult``
+        notification is emitted per completed project in completion order.
         """
         body: dict = {"actionSources": action_sources}
         if projects is not None:
@@ -267,6 +270,8 @@ class ApiClient:
             body["options"] = options
         if progress_token is not None:
             body["progressToken"] = progress_token
+        if partial_result_token is not None:
+            body["partialResultToken"] = partial_result_token
         return await self.request("actions/runBatch", body)
 
     async def run_action(
@@ -276,12 +281,17 @@ class ApiClient:
         params: dict | None = None,
         options: dict | None = None,
         progress_token: str | None = None,
+        partial_result_token: str | None = None,
     ) -> dict:
         """Run an action on a project.
 
         ``action_source`` is an import-path alias identifying the action (ADR-0019).
         If ``progress_token`` is provided, progress notifications are delivered
         as ``actions/progress`` notifications before this coroutine returns.
+        If ``partial_result_token`` is provided, partial results are streamed as
+        ``actions/partialResult`` notifications (``progress_token`` may also be
+        set simultaneously).
+        Pass ``project=""`` to run across all projects that expose the action.
         """
         body: dict = {
             "actionSource": action_source,
@@ -292,37 +302,9 @@ class ApiClient:
             body["params"] = params
         if progress_token is not None:
             body["progressToken"] = progress_token
+        if partial_result_token is not None:
+            body["partialResultToken"] = partial_result_token
         return await self.request("actions/run", body)
-
-    async def run_action_with_partial_results(
-        self,
-        action_source: str,
-        project: str,
-        partial_result_token: str,
-        params: dict | None = None,
-        options: dict | None = None,
-        progress_token: str | None = None,
-    ) -> dict:
-        """Run an action with streaming partial results via notifications.
-
-        ``action_source`` is an import-path alias identifying the action (ADR-0019).
-        Pass ``project=""`` to run across all projects that expose the action.
-        Partial results are delivered as ``actions/partialResult`` notifications
-        before this coroutine returns the aggregated final result.
-        Progress is delivered as ``actions/progress`` notifications if
-        ``progress_token`` is provided.
-        """
-        body: dict = {
-            "actionSource": action_source,
-            "project": project,
-            "partialResultToken": partial_result_token,
-            "options": options or {},
-        }
-        if params:
-            body["params"] = params
-        if progress_token is not None:
-            body["progressToken"] = progress_token
-        return await self.request("actions/runWithPartialResults", body)
 
     async def add_dir(
         self,
