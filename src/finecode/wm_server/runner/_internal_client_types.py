@@ -22,13 +22,14 @@ TEXT_DOCUMENT_DID_CLOSE = "textDocument/didClose"
 TEXT_DOCUMENT_DID_CHANGE = "textDocument/didChange"
 TEXT_DOCUMENT_DID_OPEN = "textDocument/didOpen"
 ER_RUN_ACTION = "actions/run"
+ER_RUN_HANDLERS = "actions/runHandlers"
 ER_RELOAD_ACTION = "actions/reload"
 ER_MERGE_RESULTS = "actions/mergeResults"
 ER_GET_PAYLOAD_SCHEMAS = "actions/getPayloadSchemas"
 ER_RESOLVE_SOURCE = "actions/resolveSource"
 ER_RESOLVE_PACKAGE_PATH = "packages/resolvePath"
 ER_UPDATE_CONFIG = "finecodeRunner/updateConfig"
-ER_RESOLVE_ACTION_SOURCES = "finecodeRunner/resolveActionSources"
+ER_RESOLVE_ACTION_META = "finecodeRunner/resolveActionMeta"
 ER_GET_INFO = "finecodeRunner/getInfo"
 WORKSPACE_APPLY_EDIT = "workspace/applyEdit"
 
@@ -1456,8 +1457,8 @@ class RunActionInWorkspaceResponse(BaseResponse):
 
 
 @dataclasses.dataclass
-class ErResolveActionSourcesResponse(BaseResponse):
-    result: dict[str, str] = dataclasses.field(default_factory=dict)
+class ErResolveActionMetaResponse(BaseResponse):
+    result: dict[str, dict] = dataclasses.field(default_factory=dict)
 
 
 @dataclasses.dataclass
@@ -1616,6 +1617,34 @@ class ErRunActionResponse(BaseResponse):
 
 
 @dataclasses.dataclass
+class ErRunHandlersParams:
+    action_name: str
+    handler_names: list[str]
+    params: dict = dataclasses.field(default_factory=dict)
+    previous_result: dict | None = None
+    options: dict | None = None
+
+
+@dataclasses.dataclass
+class ErRunHandlersRequest(BaseRequest):
+    params: ErRunHandlersParams
+
+
+@dataclasses.dataclass
+class ErRunHandlersResult(BaseResult):
+    error: str | None = None
+    status: str | None = None
+    result: dict | None = None
+    result_by_format: dict | None = None
+    return_code: int | None = None
+
+
+@dataclasses.dataclass
+class ErRunHandlersResponse(BaseResponse):
+    result: ErRunHandlersResult
+
+
+@dataclasses.dataclass
 class ErReloadActionParams:
     action_name: str
 
@@ -1767,6 +1796,7 @@ METHOD_TO_TYPES: dict[
     PROGRESS: (ProgressNotification, ProgressParams, None, None),
     EXIT: (ExitNotification, None, None, None),
     ER_RUN_ACTION: (ErRunActionRequest, ErRunActionParams, ErRunActionResponse, None),
+    ER_RUN_HANDLERS: (ErRunHandlersRequest, ErRunHandlersParams, ErRunHandlersResponse, None),
     ER_RELOAD_ACTION: (ErReloadActionRequest, ErReloadActionParams, ErReloadActionResponse, None),
     ER_MERGE_RESULTS: (ErMergeResultsRequest, ErMergeResultsParams, ErMergeResultsResponse, None),
     ER_GET_PAYLOAD_SCHEMAS: (None, None, ErGetPayloadSchemasResponse, None),
@@ -1816,5 +1846,5 @@ METHOD_TO_TYPES: dict[
         RunActionInWorkspaceResponse,
         RunActionInWorkspaceResult,
     ),
-    ER_RESOLVE_ACTION_SOURCES: (None, None, ErResolveActionSourcesResponse, None),
+    ER_RESOLVE_ACTION_META: (None, None, ErResolveActionMetaResponse, None),
 }

@@ -25,11 +25,16 @@ method names.
 3. WM sends `initialized`.
 4. WM sends `finecodeRunner/updateConfig` to bootstrap handlers and services.
    - ER processes it and returns `{}`.
-5. WM sends `finecodeRunner/resolveActionSources` to get canonical action source paths.
-   - ER returns a sparse map of `configSource → canonicalSource` for actions whose
-     declared config path differs from the fully qualified runtime path.
+5. WM sends `finecodeRunner/resolveActionMeta` to get action meta info.
+   - ER returns a complete map of `configSource → { canonical_source, runs_concurrently }` for every action
+     whose class can be imported in this env.  Actions that fail to import are omitted.
    - WM stores these on its `Action` domain objects before the runner is considered ready.
 6. On shutdown: WM sends `shutdown` then `exit`.
+
+> **Multi-env runs:** when an action's handlers span more than one env, the WM
+> orchestrates execution segment-by-segment using `actions/runHandlers` so that
+> the serialized run context (`previousResult`) crosses the wire only at actual
+> env boundaries. See [Multi-Env Action Orchestration](#multi-env-action-orchestration).
 
 ## Message Catalog
 
@@ -110,6 +115,58 @@ method names.
   - Note: `result_by_format` is a JSON-encoded string (not a nested object) —
     the WM decodes it with `json.loads` after receiving the response.
 
+- `actions/runHandlers`
+  - Runs a named subset of an action's handlers sequentially within this ER,
+    seeding `context.current_result` from a prior segment's serialized result.
+    Used by the WM to orchestrate multi-env action runs; not used for single-env
+    actions (those still use `actions/run`).
+  - Params:
+    - `actionName` (string): action name as registered via `finecodeRunner/updateConfig`
+    - `handlerNames` (list of string): ordered list of handler names to execute;
+      all must belong to this ER's env
+    - `previousResult` (object | null): serialized `RunActionResult`
+      (`dataclasses.asdict`) from the last handler of the preceding segment, or
+      `null` for the first segment. Reconstructed as `context.current_result`
+      before the first handler in `handlerNames` is invoked.
+    - `options` (object | null): same keys as `actions/run`. `resultFormats`
+      should be omitted (or `[]`) for intermediate segments and non-empty only
+      for the final segment of a run.
+  - Result (success):
+    ```json
+    {
+      "status": "success",
+      "result": {"<resultField>": "..."},
+      "resultByFormat": {"json": {"...": "..."}, "string": "..."},
+      "returnCode": 0
+    }
+    ```
+    - `result`: serialized `RunActionResult` after all specified handlers ran
+      (`dataclasses.asdict`). Pass as `previousResult` to the next segment's
+      `actions/runHandlers` call.
+    - `resultByFormat`: formatted results in the requested formats; `{}` when
+      `resultFormats` was empty in options.
+  - Result (streamed): used when `partialResultToken` was provided and all
+    results were delivered via `$/progress`. `result` is still populated for
+    context chaining.
+    ```json
+    {
+      "status": "streamed",
+      "result": {"<resultField>": "..."},
+      "resultByFormat": {},
+      "returnCode": 0
+    }
+    ```
+  - Result (stopped):
+    ```json
+    {
+      "status": "stopped",
+      "result": {"<resultField>": "..."},
+      "resultByFormat": {"json": {"...": "..."}},
+      "returnCode": 1
+    }
+    ```
+  - Result (error): `{"error": "message"}`
+
 - `actions/getPayloadSchemas`
   - Params: `{}`
   - Result: `{ action_name: JSON Schema fragment | null }`
@@ -120,25 +177,26 @@ method names.
 
 - `actions/mergeResults`
   - Params: `{ "actionName": string, "results": list }`
-  - Result: `{ "merged": ... }` or `{ "error": "..." }`
+  - `results`: list of serialized `RunActionResult` objects (`dataclasses.asdict`),
+    one per concurrent segment or handler. Used by the WM after a concurrent
+    multi-env run to merge the per-env results into a single final result.
+  - Result: `{ "merged": <serialized RunActionResult> }` or `{ "error": "..." }`
 
 - `actions/reload`
   - Params: `{ "actionName": string }`
   - Result: `{}`
 
-- `finecodeRunner/resolveActionSources`
+- `finecodeRunner/resolveActionMeta`
   - Params: `{}` (no params)
-  - Result: sparse map of `{ "<configSource>": "<canonicalSource>", ... }` for actions
-    whose declared config path differs from the fully qualified runtime path.
-    Only entries where the two differ are included.
-    Example: `{ "myext.LintAction": "myext.actions.lint.LintAction" }`
+  - Result: complete map of `{ "<configSource>": { "canonical_source": string, "runs_concurrently": bool }, ... }` for every
+    action whose class can be imported in this env.  Actions that fail to import are
+    omitted entirely.
+    Example: `{ "myext.LintAction": { "canonical_source": "myext.actions.lint.LintAction", "runs_concurrently": true } }`
   - Called by the WM after `finecodeRunner/updateConfig` completes to store canonical
-    sources on its `Action` domain objects before the runner is considered ready.
-    The WM uses `canonical_source` as the primary identifier in all subsequent action
-    lookups; `source` (from config) is the fallback for actions whose class could not
-    be imported in this env.
-  - Actions where `cls.__module__ + "." + cls.__qualname__ == config source` are
-    omitted (no mapping needed — the config source is already canonical).
+    sources and execution modes on its `Action` domain objects before the runner is
+    considered ready.  The WM uses `canonical_source` as the primary identifier in all
+    subsequent action lookups.  Actions absent from the response (import failure) keep
+    `canonical_source = None` until another runner for the same project resolves them.
 
 - `actions/resolveSource`
   - Params: `{ "source": string }` — an arbitrary import-path alias to resolve.
@@ -146,7 +204,7 @@ method names.
     (`cls.__module__ + "." + cls.__qualname__`).
   - Raises a JSON-RPC error if the alias cannot be imported or resolved.
   - Used during action lookup when a caller provides an alias not already known
-    from `finecodeRunner/resolveActionSources` (full ADR-0019 support).
+    from `finecodeRunner/resolveActionMeta` (full ADR-0019 support).
 
 - `packages/resolvePath`
   - Params: `{ "packageName": string }`
@@ -180,7 +238,7 @@ method names.
       `f"{cls.__module__}.{cls.__qualname__}"` (e.g. `"myext.actions.lint.LintAction"`).
       Must not be a re-exported alias such as `"myext.LintAction"`. The WM resolves
       the action name by matching against the canonical source reported by
-      `finecodeRunner/resolveActionSources`; a re-exported path will not match and the
+      `finecodeRunner/resolveActionMeta`; a re-exported path will not match and the
       request will fail.
     - `payload` (object): serialized action payload (`dataclasses.asdict`)
     - `meta` (object): `{ "trigger": string, "devEnv": string, "orchestrationDepth": int }`
@@ -202,11 +260,76 @@ method names.
 
 - `$/progress`
   - Params: `{ "token": <token>, "value": "<stringified JSON partial result>" }`
-  - The `token` must match `partial_result_token` from `actions/run`.
+  - The `token` must match `partialResultToken` from `actions/run` or
+    `actions/runHandlers`.
   - `value` is a JSON string produced by the ER from a partial run result.
-  - When `$/progress` is used to deliver results, the final `actions/run` response
-    must have `status: "streamed"` and empty `result_by_format`. See `actions/run`
-    result (streamed) above.
+  - When `$/progress` is used to deliver results, the final `actions/run` or
+    `actions/runHandlers` response must have `status: "streamed"` and empty
+    `result_by_format`. See result (streamed) entries above.
+
+## Multi-Env Action Orchestration
+
+When an action's handlers span more than one env, the WM cannot delegate the
+whole run to a single ER via `actions/run`. Instead the WM becomes the
+orchestrator and drives execution using `actions/runHandlers`.
+
+### Sequential mode (default)
+
+The WM groups the action's handlers into **consecutive same-env segments**:
+
+```text
+handlers:  [h1/env1, h2/env1, h3/env1, h4/env2]
+segments:  [(env1, [h1, h2, h3]), (env2, [h4])]
+
+handlers:  [h1/env1, h2/env2, h3/env1]
+segments:  [(env1, [h1]), (env2, [h2]), (env1, [h3])]
+```
+
+Execution:
+
+1. WM calls `actions/runHandlers` for segment 1 with `previousResult: null`.
+2. For each subsequent segment, WM calls `actions/runHandlers` on that segment's
+   ER with `previousResult` set to the `result` returned by the previous call.
+   The ER reconstructs this as `context.current_result` before the first handler
+   in the segment runs.
+3. If any call returns `status: "stopped"`, WM stops the chain and returns that
+   result to the caller.
+4. `resultFormats` is passed only in the final segment's options — earlier
+   segments return `resultByFormat: {}` to avoid unnecessary serialization.
+5. WM assembles the final response from the last segment's `result` and
+   `resultByFormat`.
+
+### Concurrent mode
+
+The WM groups handlers by env (order within an env does not matter for
+concurrent execution):
+
+```text
+handlers:  [h1/env1, h2/env2, h3/env1]
+groups:    [(env1, [h1, h3]), (env2, [h2])]
+```
+
+Execution:
+
+1. WM dispatches `actions/runHandlers` to all env groups in parallel, all with
+   `previousResult: null`.
+2. WM collects all `result` objects from the parallel calls.
+3. WM calls `actions/mergeResults` on any available ER for the action, passing
+   the collected `result` objects.
+4. The merged result and its formatted representation form the final response.
+
+### Single-env actions
+
+When all handlers are in the same env, the WM uses `actions/run` — a single
+delegated call where the ER manages handler sequencing internally.
+`actions/runHandlers` is only used when handlers span multiple envs.
+
+### `walRunId` continuity
+
+The WM generates a single `walRunId` for the whole logical action run and
+passes it in every `actions/runHandlers` call's options. Each ER emits WAL
+events tagged with that ID for the handler(s) it executes, so traces can be
+correlated across envs for the same logical run.
 
 ## Error Handling and Cancellation
 

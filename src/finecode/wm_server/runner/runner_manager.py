@@ -659,19 +659,21 @@ async def update_runner_config(
         ) from exception
 
     try:
-        canonical_sources = await runner_client.resolve_action_sources(runner)
+        action_meta = await runner_client.resolve_action_meta(runner)
     except Exception as exc:
-        logger.warning(f"Failed to resolve canonical action sources for runner {runner.readable_id}: {exc}")
-        canonical_sources = {}
+        logger.warning(f"Failed to resolve action meta for runner {runner.readable_id}: {exc}")
+        action_meta = {}
 
     for action in project.actions:
+        meta = action_meta.get(action.source)
+        if meta is None:
+            continue
         # Use the first runner that can successfully import an action to set its
         # canonical_source.  Multiple runners for the same project should agree on
         # canonical paths, so "first wins" is safe.
         if action.canonical_source is None:
-            canonical = canonical_sources.get(action.source)
-            if canonical is not None:
-                action.canonical_source = canonical
+            action.canonical_source = meta["canonical_source"]
+        action.runs_concurrently = meta["runs_concurrently"]
 
     ws_context.ws_action_schemas.pop(project.dir_path, None)
     logger.debug(f"Updated config of runner {runner.readable_id}")

@@ -15,6 +15,7 @@ from finecode_extension_runner._services.run_action import (
     ActionFailedException,
     StopWithResponse,
     run_action_raw,
+    run_handlers_raw,
     create_action_exec_info,
     ensure_handler_instantiated,
 )
@@ -138,27 +139,35 @@ async def update_config(
     return schemas.UpdateConfigResponse()
 
 
-async def resolve_action_sources() -> dict[str, str]:
-    """Resolve canonical (fully qualified) sources for all known actions.
+async def resolve_action_meta() -> dict[str, dict]:
+    """Resolve meta info for all known actions.
 
-    The config source may be a re-exported import path (e.g.
-    ``finecode_extension_api.LintAction``) while callers that hold a class object
-    always derive the source from ``__module__.__qualname__``, producing the
-    canonical path (e.g. ``finecode_extension_api.actions.lint.LintAction``).
-    Returns a mapping of config source → canonical source for entries that differ.
+    Returns a mapping of config source → action meta dict containing:
+    - ``canonical_source``: fully-qualified import path (may differ from the
+      config source when the source is a re-exported alias).
+    - ``runs_concurrently``: True when the action declares CONCURRENT handler
+      execution (``HANDLER_EXECUTION = HandlerExecution.CONCURRENT``).
+
+    Actions that fail to import are omitted.
     """
+    from finecode_extension_api.code_action import HandlerExecution
+
     if global_state.runner_context is None:
         return {}
     actions = global_state.runner_context.project.actions
-    resolved: dict[str, str] = {}
+    resolved: dict[str, dict] = {}
     for action in actions.values():
         if action.source is None:
             continue
         try:
             cls = run_utils.import_module_member_by_source_str(action.source)
-            canonical = f"{cls.__module__}.{cls.__qualname__}"
-            if canonical != action.source:
-                resolved[action.source] = canonical
+            resolved[action.source] = {
+                "canonical_source": f"{cls.__module__}.{cls.__qualname__}",
+                "runs_concurrently": (
+                    getattr(cls, "HANDLER_EXECUTION", HandlerExecution.SEQUENTIAL)
+                    == HandlerExecution.CONCURRENT
+                ),
+            }
         except Exception as exception:
             logger.trace(f'Failed to import action {action.source}: {exception}')
     return resolved

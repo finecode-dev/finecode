@@ -777,28 +777,38 @@ async def run_action(
             orchestration_depth=orchestration_depth,
         )
     else:
-        # TODO: concurrent vs sequential, this value should be taken from action config
-        run_concurrently = False  # action_name == 'lint'
+        run_concurrently = action.runs_concurrently
+
         if run_concurrently:
-            ...
-            raise NotImplementedError()
+            response = await _run_multi_env_concurrent(
+                action_name=action_name,
+                action=action,
+                payload=payload,
+                project_def=project_def,
+                ws_context=ws_context,
+                run_trigger=run_trigger,
+                dev_env=dev_env,
+                result_formats=_result_formats,
+                initialize_all_handlers=initialize_all_handlers,
+                progress_token=progress_token,
+                wal_run_id=wal_run_id,
+                orchestration_depth=orchestration_depth,
+            )
         else:
-            for handler in action.handlers:
-                # TODO: manage run context
-                response = await _run_action_in_env_runner(
-                    action_name=action_name,
-                    payload=payload,
-                    env_name=handler.env,
-                    project_def=project_def,
-                    ws_context=ws_context,
-                    run_trigger=run_trigger,
-                    dev_env=dev_env,
-                    result_formats=_result_formats,
-                    initialize_all_handlers=initialize_all_handlers,
-                    progress_token=progress_token,
-                    wal_run_id=wal_run_id,
-                    orchestration_depth=orchestration_depth,
-                )
+            response = await _run_multi_env_sequential(
+                action_name=action_name,
+                action=action,
+                payload=payload,
+                project_def=project_def,
+                ws_context=ws_context,
+                run_trigger=run_trigger,
+                dev_env=dev_env,
+                result_formats=_result_formats,
+                initialize_all_handlers=initialize_all_handlers,
+                progress_token=progress_token,
+                wal_run_id=wal_run_id,
+                orchestration_depth=orchestration_depth,
+            )
 
     return response
 
@@ -898,6 +908,310 @@ async def _run_action_in_env_runner(
         raise ActionRunFailed(error_message) from error
 
     return response
+
+
+
+def _build_sequential_segments(
+    handlers: list[domain.ActionHandler],
+) -> list[tuple[str, list[str]]]:
+    """Group consecutive same-env handlers into ordered segments.
+
+    Example::
+        [h1/env1, h2/env1, h3/env2, h4/env1]
+        → [(env1, [h1, h2]), (env2, [h3]), (env1, [h4])]
+    """
+    segments: list[tuple[str, list[str]]] = []
+    for handler in handlers:
+        if segments and segments[-1][0] == handler.env:
+            segments[-1][1].append(handler.name)
+        else:
+            segments.append((handler.env, [handler.name]))
+    return segments
+
+
+def _build_concurrent_groups(
+    handlers: list[domain.ActionHandler],
+) -> dict[str, list[str]]:
+    """Group handlers by env for concurrent dispatch (order within env preserved).
+
+    Example::
+        [h1/env1, h2/env2, h3/env1]
+        → {env1: [h1, h3], env2: [h2]}
+    """
+    groups: dict[str, list[str]] = {}
+    for handler in handlers:
+        groups.setdefault(handler.env, []).append(handler.name)
+    return groups
+
+
+async def _run_handlers_in_env_runner(
+    action_name: str,
+    handler_names: list[str],
+    payload: dict[str, typing.Any],
+    previous_result: dict | None,
+    env_name: str,
+    project_def: domain.Project,
+    ws_context: context.WorkspaceContext,
+    run_trigger: runner_client.RunActionTrigger,
+    dev_env: runner_client.DevEnv,
+    result_formats: list[runner_client.RunResultFormat],
+    wal_run_id: str,
+    initialize_all_handlers: bool = False,
+    progress_token: int | str | None = None,
+    orchestration_depth: int = 0,
+) -> runner_client.RunHandlersResponse:
+    """Call actions/runHandlers on the ER for one segment of a multi-env run."""
+    wal.emit_run_event(
+        ws_context.wal_writer,
+        event_type=wal.WalEventType.RUNNER_SELECTED,
+        wal_run_id=wal_run_id,
+        action_name=action_name,
+        project_path=project_def.dir_path,
+        run_trigger=run_trigger.value,
+        dev_env=dev_env.value,
+        payload=wal.RunnerSelectedPayload(env_name=env_name),
+    )
+
+    try:
+        runner = await runner_manager.get_or_start_runner(
+            project_def=project_def,
+            env_name=env_name,
+            ws_context=ws_context,
+            initialize_all_handlers=initialize_all_handlers,
+            action_names_to_initialize=[action_name],
+        )
+    except runner_manager.RunnerFailedToStart as exception:
+        raise ActionRunFailed(
+            f"Runner {env_name} in project {project_def.dir_path} failed: {exception.message}"
+        ) from exception
+
+    options: dict[str, typing.Any] = {
+        "result_formats": result_formats,
+        "wal_run_id": wal_run_id,
+        "meta": {
+            "trigger": run_trigger.value,
+            "dev_env": dev_env.value,
+            "orchestration_depth": orchestration_depth,
+        },
+    }
+    if progress_token is not None:
+        options["progress_token"] = progress_token
+
+    wal.emit_run_event(
+        ws_context.wal_writer,
+        event_type=wal.WalEventType.RUN_DISPATCHED,
+        wal_run_id=wal_run_id,
+        action_name=action_name,
+        project_path=project_def.dir_path,
+        run_trigger=run_trigger.value,
+        dev_env=dev_env.value,
+        payload=wal.RunDispatchedPayload(
+            runner_id=runner.readable_id,
+            env_name=env_name,
+        ),
+    )
+
+    try:
+        response = await runner_client.run_handlers(
+            runner=runner,
+            action_name=action_name,
+            handler_names=handler_names,
+            params=payload,
+            previous_result=previous_result,
+            options=options,
+        )
+    except runner_client.BaseRunnerRequestException as error:
+        error_message = _format_runner_failure_message(
+            action_name=action_name,
+            runner=runner,
+            base_error_message=error.message,
+        )
+        wal.emit_run_event(
+            ws_context.wal_writer,
+            event_type=wal.WalEventType.RUN_FAILED,
+            wal_run_id=wal_run_id,
+            action_name=action_name,
+            project_path=project_def.dir_path,
+            run_trigger=run_trigger.value,
+            dev_env=dev_env.value,
+            payload=wal.RunFailedPayload(error=error_message, env_name=env_name),
+        )
+        await user_messages.error(error_message)
+        raise ActionRunFailed(error_message) from error
+
+    wal.emit_run_event(
+        ws_context.wal_writer,
+        event_type=wal.WalEventType.RUN_COMPLETED,
+        wal_run_id=wal_run_id,
+        action_name=action_name,
+        project_path=project_def.dir_path,
+        run_trigger=run_trigger.value,
+        dev_env=dev_env.value,
+        payload=wal.RunCompletedPayload(return_code=response.return_code),
+    )
+    return response
+
+
+async def _run_multi_env_sequential(
+    action_name: str,
+    action: domain.Action,
+    payload: dict[str, typing.Any],
+    project_def: domain.CollectedProject,
+    ws_context: context.WorkspaceContext,
+    run_trigger: runner_client.RunActionTrigger,
+    dev_env: runner_client.DevEnv,
+    result_formats: list[runner_client.RunResultFormat],
+    wal_run_id: str,
+    initialize_all_handlers: bool = False,
+    progress_token: int | str | None = None,
+    orchestration_depth: int = 0,
+) -> runner_client.RunActionResponse:
+    """Drive multi-env sequential execution segment-by-segment."""
+    segments = _build_sequential_segments(action.handlers)
+    previous_result: dict | None = None
+    final_response: runner_client.RunHandlersResponse | None = None
+
+    for idx, (env_name, handler_names) in enumerate(segments):
+        is_last = idx == len(segments) - 1
+        segment_formats = result_formats if is_last else []
+
+        seg_response = await _run_handlers_in_env_runner(
+            action_name=action_name,
+            handler_names=handler_names,
+            payload=payload,
+            previous_result=previous_result,
+            env_name=env_name,
+            project_def=project_def,
+            ws_context=ws_context,
+            run_trigger=run_trigger,
+            dev_env=dev_env,
+            result_formats=segment_formats,
+            wal_run_id=wal_run_id,
+            initialize_all_handlers=initialize_all_handlers,
+            progress_token=progress_token if is_last else None,
+            orchestration_depth=orchestration_depth,
+        )
+
+        if seg_response.status == "stopped":
+            return runner_client.RunActionResponse(
+                result_by_format=seg_response.result_by_format,
+                return_code=seg_response.return_code,
+                status="stopped",
+            )
+
+        previous_result = seg_response.raw_result
+        final_response = seg_response
+
+    assert final_response is not None
+    return runner_client.RunActionResponse(
+        result_by_format=final_response.result_by_format,
+        return_code=final_response.return_code,
+        status=final_response.status,
+    )
+
+
+async def _run_multi_env_concurrent(
+    action_name: str,
+    action: domain.Action,
+    payload: dict[str, typing.Any],
+    project_def: domain.CollectedProject,
+    ws_context: context.WorkspaceContext,
+    run_trigger: runner_client.RunActionTrigger,
+    dev_env: runner_client.DevEnv,
+    result_formats: list[runner_client.RunResultFormat],
+    wal_run_id: str,
+    initialize_all_handlers: bool = False,
+    progress_token: int | str | None = None,
+    orchestration_depth: int = 0,
+) -> runner_client.RunActionResponse:
+    """Drive multi-env concurrent execution: dispatch all env groups in parallel."""
+    groups = _build_concurrent_groups(action.handlers)
+    group_tasks: list[asyncio.Task] = []
+
+    try:
+        async with asyncio.TaskGroup() as tg:
+            for env_name, handler_names in groups.items():
+                task = tg.create_task(
+                    _run_handlers_in_env_runner(
+                        action_name=action_name,
+                        handler_names=handler_names,
+                        payload=payload,
+                        previous_result=None,
+                        env_name=env_name,
+                        project_def=project_def,
+                        ws_context=ws_context,
+                        run_trigger=run_trigger,
+                        dev_env=dev_env,
+                        result_formats=[],
+                        wal_run_id=wal_run_id,
+                        initialize_all_handlers=initialize_all_handlers,
+                        progress_token=None,
+                        orchestration_depth=orchestration_depth,
+                    )
+                )
+                group_tasks.append(task)
+    except ExceptionGroup as eg:
+        errors = [
+            exc.message if isinstance(exc, ActionRunFailed) else str(exc)
+            for exc in eg.exceptions
+        ]
+        raise ActionRunFailed(
+            f"Concurrent multi-env run of {action_name} failed: {', '.join(errors)}"
+        ) from eg
+
+    raw_results = [task.result().raw_result for task in group_tasks]
+
+    # Pick any running runner to call merge_results
+    runners_by_env = ws_context.ws_projects_extension_runners.get(project_def.dir_path, {})
+    merge_runner: runner_client.ExtensionRunnerInfo | None = None
+    for env_name in groups:
+        candidate = runners_by_env.get(env_name)
+        if candidate is not None and candidate.status == runner_client.RunnerStatus.RUNNING:
+            merge_runner = candidate
+            break
+
+    if merge_runner is None:
+        raise ActionRunFailed(
+            f"No running runner available to merge results for {action_name}"
+        )
+
+    try:
+        merged_raw = await runner_client.merge_results(
+            runner=merge_runner,
+            action_name=action_name,
+            results=raw_results,
+        )
+    except runner_client.BaseRunnerRequestException as error:
+        raise ActionRunFailed(
+            f"merge_results failed for {action_name}: {error.message}"
+        ) from error
+
+    # Now format the merged result via a final run_handlers call on any env
+    # with an empty handler list but the merged previousResult, requesting the
+    # desired formats.  Use the last env in the group as a convenient runner.
+    last_env = next(reversed(groups))
+    format_response = await _run_handlers_in_env_runner(
+        action_name=action_name,
+        handler_names=[],
+        payload=payload,
+        previous_result=merged_raw,
+        env_name=last_env,
+        project_def=project_def,
+        ws_context=ws_context,
+        run_trigger=run_trigger,
+        dev_env=dev_env,
+        result_formats=result_formats,
+        wal_run_id=wal_run_id,
+        initialize_all_handlers=initialize_all_handlers,
+        progress_token=progress_token,
+        orchestration_depth=orchestration_depth,
+    )
+
+    return runner_client.RunActionResponse(
+        result_by_format=format_response.result_by_format,
+        return_code=format_response.return_code,
+        status=format_response.status,
+    )
 
 
 __all__ = [

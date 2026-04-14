@@ -162,6 +162,7 @@ async def run_action(
     run_id: int | None = None,
     partial_result_queue: asyncio.Queue | None = None,
     caller_kwargs: code_action.CallerRunContextKwargs | None = None,
+    initial_result: code_action.RunActionResult | None = None,
 ) -> code_action.RunActionResult | None:
     # design decisions:
     # - keep payload unchanged between all subaction runs.
@@ -259,7 +260,9 @@ async def run_action(
         # TODO: check run_context below, whether AsyncPlaceholder can really be used
         run_context = AsyncPlaceholderContext()
 
-    action_result: code_action.RunActionResult | None = None
+    action_result: code_action.RunActionResult | None = initial_result
+    if initial_result is not None:
+        run_context_info.update(initial_result)
     runner_context = global_state.runner_context
 
     # to be able to catch source of exceptions in user-accessible code more precisely,
@@ -518,6 +521,15 @@ async def run_action(
                                 action_result.update(handler_result)
 
                             run_context_info.update(action_result)
+
+                # Surface results sent via run_context.partial_result_sender.send()
+                # (accumulated in accumulating_sender) — these are not captured by
+                # handler return values but must contribute to the final result.
+                if accumulating_sender is not None and accumulating_sender.has_sent:
+                    if action_result is None:
+                        action_result = accumulating_sender.accumulated
+                    elif accumulating_sender.accumulated is not None:
+                        action_result.update(accumulating_sender.accumulated)
     finally:
         # exit run context
         try:
@@ -670,6 +682,111 @@ def action_result_to_run_action_response(
     return schemas.RunActionResponse(
         result_by_format=result_by_format,
         return_code=run_return_code.value,
+    )
+
+
+async def run_handlers_raw(
+    request: schemas.RunHandlersRequest, options: schemas.RunActionOptions
+) -> schemas.RunHandlersResponse:
+    """Execute a named subset of an action's handlers for multi-env orchestration.
+
+    Seeds context.current_result from request.previous_result before the first
+    handler runs, so sequential handlers across env boundaries see a continuous
+    result chain.  Returns both the raw serialized result (for chaining) and
+    formatted output (populated only when options.result_formats is non-empty).
+    """
+    global last_run_id
+    run_id = last_run_id
+    last_run_id += 1
+
+    if global_state.runner_context is None:
+        raise ActionFailedException(
+            "run_handlers called before extension runner is initialized"
+        )
+
+    project_def = global_state.runner_context.project
+
+    try:
+        action = project_def.actions[request.action_name]
+    except KeyError as exc:
+        raise ActionFailedException(
+            f"R{run_id} | Action {request.action_name} not found"
+        ) from exc
+
+    try:
+        action_cache = global_state.runner_context.action_cache_by_name[request.action_name]
+    except KeyError:
+        action_cache = domain.ActionCache()
+        global_state.runner_context.action_cache_by_name[request.action_name] = action_cache
+
+    if action_cache.exec_info is None:
+        action_cache.exec_info = create_action_exec_info(action)
+    action_exec_info = action_cache.exec_info
+
+    # Build a filtered ActionDeclaration containing only the requested handlers,
+    # in the order specified by handler_names (preserves WM segment ordering).
+    handler_names_ordered = request.handler_names
+    handlers_by_name = {h.name: h for h in action.handlers}
+    filtered_handlers = [
+        handlers_by_name[name]
+        for name in handler_names_ordered
+        if name in handlers_by_name
+    ]
+    filtered_action = domain.ActionDeclaration(
+        name=action.name,
+        config=action.config,
+        handlers=filtered_handlers,
+        source=action.source,
+    )
+
+    # Reconstruct the previous segment's result so handlers see a continuous
+    # context.current_result across the env boundary.
+    initial_result: code_action.RunActionResult | None = None
+    if request.previous_result is not None and action_exec_info.result_type is not None:
+        try:
+            initial_result = action_exec_info.result_type(**request.previous_result)
+        except Exception as exc:
+            logger.warning(
+                f"R{run_id} | Could not reconstruct previous_result for "
+                f"{request.action_name}: {exc}. Handlers will see no prior context."
+            )
+
+    # Build payload from params.
+    payload: code_action.RunActionPayload | None = None
+    if action_exec_info.payload_type is not None and request.params:
+        payload_type_with_validation = pydantic_dataclass(action_exec_info.payload_type)
+        payload = typing.cast(
+            code_action.RunActionPayload,
+            payload_type_with_validation(**request.params),
+        )
+
+    wal_run_id = getattr(options, "wal_run_id", None)
+    if not isinstance(wal_run_id, str) or wal_run_id.strip() == "":
+        raise ActionFailedException("Missing required wal_run_id in run options")
+
+    meta = dataclasses.replace(options.meta, wal_run_id=wal_run_id)
+
+    action_result = await run_action(
+        action_def=filtered_action,
+        payload=payload,
+        meta=meta,
+        partial_result_token=options.partial_result_token,
+        progress_token=options.progress_token,
+        run_id=run_id,
+        initial_result=initial_result,
+    )
+
+    # Raw serialized result for chaining to the next segment.
+    raw_result: dict = dataclasses.asdict(action_result) if action_result is not None else {}
+
+    # Formatted result — only populated when the caller requests formats.
+    formatted = action_result_to_run_action_response(action_result, options.result_formats)
+    result_by_format: dict = formatted.result_by_format or {}
+
+    return schemas.RunHandlersResponse(
+        return_code=formatted.return_code,
+        result=raw_result,
+        result_by_format=result_by_format,
     )
 
 

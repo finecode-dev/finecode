@@ -70,3 +70,20 @@ class RunActionResponse(BaseSchema):
     return_code: int
     # result can be empty(=None) e.g. if it was sent as a list of partial results
     result_by_format: dict[str, dict[str, Any] | str] | None
+
+
+@dataclass
+class RunHandlersRequest(BaseSchema):
+    action_name: str
+    handler_names: list[str]
+    params: dict[str, Any] = field(default_factory=dict)
+    previous_result: dict[str, Any] | None = None
+
+
+@dataclass
+class RunHandlersResponse(BaseSchema):
+    return_code: int
+    # serialized RunActionResult for context chaining to the next segment
+    result: dict[str, Any]
+    # formatted output; empty for intermediate segments
+    result_by_format: dict[str, dict[str, Any] | str]

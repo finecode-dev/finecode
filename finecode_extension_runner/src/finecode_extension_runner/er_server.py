@@ -511,6 +511,96 @@ async def run_action(server: ErServer, params: dict | None) -> dict:
     }
 
 
+async def run_handlers(server: ErServer, params: dict | None) -> dict:
+    """Handler for ``actions/runHandlers``."""
+    assert params is not None
+    action_name: str = params["actionName"]
+    handler_names: list[str] = params.get("handlerNames", [])
+    action_params: dict = params.get("params") or {}
+    previous_result: dict | None = params.get("previousResult")
+    options: dict | None = params.get("options")
+
+    logger.trace(
+        f"Run handlers: action={action_name}, handlers={handler_names}, "
+        f"has_previous_result={previous_result is not None}"
+    )
+
+    wal_run_id = (options or {}).get("wal_run_id")
+    if not isinstance(wal_run_id, str) or wal_run_id.strip() == "":
+        return {"error": "Missing required wal_run_id in run options"}
+
+    meta = (options or {}).get("meta") or {}
+    trigger = meta.get("trigger", "unknown")
+    dev_env = meta.get("dev_env", "unknown")
+    project_path = global_state.project_dir_path or pathlib.Path(".")
+    er_wal.emit_run_event(
+        global_state.wal_writer,
+        event_type=er_wal.ErWalEventType.RUN_ACCEPTED,
+        wal_run_id=wal_run_id,
+        action_name=action_name,
+        project_path=project_path,
+        trigger=trigger,
+        dev_env=dev_env,
+        payload={"handler_names": handler_names},
+    )
+
+    request = schemas.RunHandlersRequest(
+        action_name=action_name,
+        handler_names=handler_names,
+        params=action_params,
+        previous_result=previous_result,
+    )
+    options_type = pydantic_dataclass(schemas.RunActionOptions)
+    options_schema = options_type(**options if options is not None else {})
+    status: str = "success"
+
+    try:
+        response = await services.run_handlers_raw(request=request, options=options_schema)
+    except Exception as exception:
+        if isinstance(exception, services.ActionFailedException):
+            logger.error(f"Run handlers failed: {exception.message}")
+            error_msg = exception.message
+        else:
+            logger.error("Unhandled exception in run_handlers:")
+            logger.exception(exception)
+            error_msg = f"{type(exception)}: {str(exception)}"
+        er_wal.emit_run_event(
+            global_state.wal_writer,
+            event_type=er_wal.ErWalEventType.RUN_FAILED,
+            wal_run_id=wal_run_id,
+            action_name=action_name,
+            project_path=project_path,
+            trigger=trigger,
+            dev_env=dev_env,
+            payload={"error": error_msg},
+        )
+        return {"error": error_msg}
+
+    result_by_format = response.result_by_format
+    if not result_by_format and options_schema.partial_result_token is not None:
+        status = "streamed"
+    converted_result_by_format = {
+        fmt: convert_path_keys(result) if isinstance(result, dict) else result
+        for fmt, result in result_by_format.items()
+    }
+    er_wal.emit_run_event(
+        global_state.wal_writer,
+        event_type=er_wal.ErWalEventType.RUN_COMPLETED,
+        wal_run_id=wal_run_id,
+        action_name=action_name,
+        project_path=project_path,
+        trigger=trigger,
+        dev_env=dev_env,
+        payload={"status": status, "return_code": response.return_code},
+    )
+    return {
+        "status": status,
+        "result": convert_path_keys(response.result) if response.result else {},
+        "resultByFormat": converted_result_by_format,
+        "returnCode": response.return_code,
+    }
+
+
 async def reload_action(_server: ErServer, params: dict | None) -> dict:
     assert params is not None
     action_name: str = params["actionName"]
@@ -575,9 +665,9 @@ async def resolve_source(_server: ErServer, params: dict | None) -> dict:
     return {"canonicalSource": canonical}
 
 
-async def resolve_action_sources(_server: ErServer, _params: dict | None) -> dict:
-    """Handler for ``finecodeRunner/resolveActionSources``."""
-    return await services.resolve_action_sources()
+async def resolve_action_meta(_server: ErServer, _params: dict | None) -> dict:
+    """Handler for ``finecodeRunner/resolveActionMeta``."""
+    return await services.resolve_action_meta()
 
 
 async def get_runner_info(_server: ErServer, _params: dict | None) -> dict:
@@ -616,8 +706,9 @@ def create_er_server() -> ErServer:
 
     # ER-specific commands (direct JSON-RPC methods, previously workspace/executeCommand)
     session.on_request("finecodeRunner/updateConfig", _wrap(update_config))
-    session.on_request("finecodeRunner/resolveActionSources", _wrap(resolve_action_sources))
+    session.on_request("finecodeRunner/resolveActionMeta", _wrap(resolve_action_meta))
     session.on_request("actions/run", _wrap(run_action))
+    session.on_request("actions/runHandlers", _wrap(run_handlers))
     session.on_request("actions/resolveSource", _wrap(resolve_source))
     session.on_request("actions/reload", _wrap(reload_action))
     session.on_request("packages/resolvePath", _wrap(resolve_package_path))

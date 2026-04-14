@@ -91,6 +91,8 @@ class Action:
         # Canonical (fully qualified) import path resolved by the Extension Runner
         # at startup. May differ from source when source is a re-exported path.
         self.canonical_source: str | None = None
+        # True when the action declares CONCURRENT handler execution.
+        self.runs_concurrently: bool = False
         self.handlers: list[ActionHandler] = handlers
         self.config = config
 

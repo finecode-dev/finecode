@@ -67,7 +67,7 @@ async def find_action_by_source(
 
     1. Direct match against the action's config ``source`` field and its
        ``canonical_source`` (set by the WM after ``finecodeRunner/updateConfig``
-       via ``finecodeRunner/resolveActionSources``).  This covers the vast majority of
+       via ``finecodeRunner/resolveActionMeta``).  This covers the vast majority of
        calls where callers use the same alias written in project configuration or
        the canonical path returned by ``actions/list``.
 
@@ -79,13 +79,15 @@ async def find_action_by_source(
        guaranteed to have the relevant extension packages installed);
        ``dev_workspace`` and any other running runner are tried as a fallback.
     """
-    # Step 1: direct match.
+    # Step 1: direct match — covers the alias written in project config (source)
+    # and callers that already hold the canonical path (canonical_source).
+    # canonical_source is set by update_runner_config for every action whose class
+    # can be imported; None comparisons are safe (None != any string).
     action = next(
         (
             a
             for a in actions
-            if a.source == source
-            or (a.canonical_source is not None and a.canonical_source == source)
+            if a.source == source or a.canonical_source == source
         ),
         None,
     )
