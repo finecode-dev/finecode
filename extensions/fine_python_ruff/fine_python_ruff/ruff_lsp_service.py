@@ -43,6 +43,15 @@ class RuffLspService(service.DisposableService):
     async def ensure_started(self, root_uri: str) -> None:
         await self._lsp_service.ensure_started(root_uri)
 
+    async def request(
+        self,
+        method: str,
+        params: dict,
+        timeout: float = 30.0,
+    ):
+        """Forward an arbitrary LSP request to the running ruff server."""
+        return await self._lsp_service.request(method, params, timeout=timeout)
+
     async def check_file(
         self,
         file_path: Path,

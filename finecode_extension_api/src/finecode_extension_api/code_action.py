@@ -67,6 +67,14 @@ class RunReturnCode(enum.IntEnum):
 @dataclasses.dataclass
 class RunActionResult:
     def update(self, other: RunActionResult) -> None:
+        """Merge ``other`` into ``self``.
+
+        Merge scope is always a single project: partial-result streaming
+        inside one action call, or delegated sub-action results consumed
+        by a parent handler within the same project. Cross-project
+        aggregation is handled at the WM API boundary, not here — see
+        ADR-0017.
+        """
         raise NotImplementedError()
 
     def to_text(self) -> str | textstyler.StyledText:

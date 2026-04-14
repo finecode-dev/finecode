@@ -12,6 +12,14 @@ handlers = [
     ] },
 ]
 
+[tool.finecode.action.get_lint_fixes_python_files]
+source = "finecode_extension_api.actions.GetLintFixesPythonFilesAction"
+handlers = [
+    { name = "ruff", source = "fine_python_ruff.RuffGetLintFixesHandler", env = "dev_no_runtime", dependencies = [
+        "fine_python_ruff[jsonrpc]~=0.2.0a0",
+    ] },
+]
+
 [[tool.finecode.action_handler]]
 source = "fine_python_ruff.RuffLintFilesHandler"
 config.extend_select = ["B", "I"]
