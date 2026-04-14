@@ -134,34 +134,10 @@ handlers = [
     ] },
 ]
 
-[tool.finecode.action.summarize_wal_logs]
-source = "finecode_extension_api.actions.SummarizeWalLogsAction"
-handlers = [
-    { name = "summarize_wal_logs", source = "fine_wal_explorer.SummarizeWalLogsHandler", env = "wal_explorer", dependencies = [
-        "fine_wal_explorer~=0.1.0a0",
-    ] },
-]
-
-[tool.finecode.action.export_wal_timeline_from_logs]
-source = "finecode_extension_api.actions.ExportWalTimelineFromLogsAction"
-handlers = [
-    { name = "export_wal_timeline_from_logs", source = "fine_wal_explorer.ExportWalTimelineFromLogsHandler", env = "wal_explorer", dependencies = [
-        "fine_wal_explorer~=0.1.0a0",
-    ] },
-]
-
 [tool.finecode.action.serve_wal_explorer_from_store]
 source = "finecode_extension_api.actions.ServeWalExplorerFromStoreAction"
 handlers = [
     { name = "serve_wal_explorer_from_store", source = "fine_wal_explorer.ServeWalExplorerFromStoreHandler", env = "wal_explorer", dependencies = [
-        "fine_wal_explorer~=0.1.0a0",
-    ] },
-]
-
-[tool.finecode.action.ingest_and_serve_wal_explorer]
-source = "finecode_extension_api.actions.IngestAndServeWalExplorerAction"
-handlers = [
-    { name = "ingest_and_serve_wal_explorer", source = "fine_wal_explorer.IngestAndServeWalExplorerHandler", env = "wal_explorer", dependencies = [
         "fine_wal_explorer~=0.1.0a0",
     ] },
 ]
