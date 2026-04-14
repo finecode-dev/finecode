@@ -350,7 +350,7 @@ async def _on_initialized(server: LspServer, _params: dict | None) -> None:
             logger.error(f"No mapping found for partial result token {token}")
             return
 
-        if action == "lint":
+        if action == "finecode_extension_api.actions.LintAction":
             result_by_format = value.get("resultByFormat") or {}
             json_result = result_by_format.get("json")
             if json_result is None:

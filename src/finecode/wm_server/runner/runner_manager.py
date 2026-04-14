@@ -660,12 +660,18 @@ async def update_runner_config(
 
     try:
         canonical_sources = await runner_client.resolve_action_sources(runner)
-        for action in project.actions:
+    except Exception as exc:
+        logger.warning(f"Failed to resolve canonical action sources for runner {runner.readable_id}: {exc}")
+        canonical_sources = {}
+
+    for action in project.actions:
+        # Use the first runner that can successfully import an action to set its
+        # canonical_source.  Multiple runners for the same project should agree on
+        # canonical paths, so "first wins" is safe.
+        if action.canonical_source is None:
             canonical = canonical_sources.get(action.source)
             if canonical is not None:
                 action.canonical_source = canonical
-    except Exception as exc:
-        logger.debug(f"Failed to resolve canonical action sources: {exc}")
 
     ws_context.ws_action_schemas.pop(project.dir_path, None)
     logger.debug(f"Updated config of runner {runner.readable_id}")

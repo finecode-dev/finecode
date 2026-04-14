@@ -179,6 +179,31 @@ async def reload_action(runner: ExtensionRunnerInfo, action_name: str) -> None:
     )
 
 
+async def resolve_source(runner: ExtensionRunnerInfo, source: str) -> str | None:
+    """Ask the ER to resolve an import-path alias to its canonical source.
+
+    Returns the canonical source string
+    on success, or ``None`` when the alias cannot be imported in the runner's
+    environment.
+    """
+    if not runner.initialized_event.is_set():
+        await runner.initialized_event.wait()
+
+    if runner.status != RunnerStatus.RUNNING:
+        return None
+
+    try:
+        response = await runner.client.send_request(
+            method=_internal_client_types.ER_RESOLVE_SOURCE,
+            params=_internal_client_types.ErResolveSourceParams(source=source),
+            timeout=10,
+        )
+    except jsonrpc_client.BaseRunnerRequestException as exc:
+        logger.debug(f"ER could not resolve source '{source}': {exc}")
+        return None
+    return response.result.canonical_source
+
+
 async def resolve_action_sources(runner: ExtensionRunnerInfo) -> dict[str, str]:
     """Ask the ER to resolve canonical (fully-qualified) action source paths."""
     response = await runner.client.send_request(

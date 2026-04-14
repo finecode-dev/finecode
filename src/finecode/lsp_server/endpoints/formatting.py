@@ -31,7 +31,7 @@ async def format_document(_ls: LspServer, params: types.DocumentFormattingParams
 
     try:
         response = await global_state.wm_client.run_action(
-            action="format",
+            action_source="finecode_extension_api.actions.FormatAction",
             project=project_dir,
             params={"file_paths": [file_uri], "save": False, "target": "files"},
             options={"trigger": "user", "devEnv": "ide"},

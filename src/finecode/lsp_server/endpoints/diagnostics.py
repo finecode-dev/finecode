@@ -78,7 +78,7 @@ async def document_diagnostic_with_full_result(
 
     try:
         response = await global_state.wm_client.run_action(
-            action="lint",
+            action_source="finecode_extension_api.actions.LintAction",
             project=project_dir,
             params={
                 "target": "files",
@@ -148,13 +148,13 @@ async def document_diagnostic_with_partial_results(
         return None
 
     # Store the expected response type for this token
-    global_state.partial_result_tokens[partial_result_token] = ("lint", "document_diagnostic")
+    global_state.partial_result_tokens[partial_result_token] = ("finecode_extension_api.actions.LintAction", "document_diagnostic")
 
     try:
         await global_state.wm_client.request(
             "actions/runWithPartialResults",
             {
-                "action": "lint",
+                "actionSource": "finecode_extension_api.actions.LintAction",
                 "project": project_dir,
                 "params": {"file_paths": [file_path.as_uri()]},
                 "partialResultToken": partial_result_token,
@@ -210,14 +210,14 @@ async def run_workspace_diagnostic_with_partial_results(
     assert global_state.wm_client is not None, "WM client must be connected"
 
     # Store the expected response type for this token
-    global_state.partial_result_tokens[partial_result_token] = ("lint", "workspace_diagnostic")
+    global_state.partial_result_tokens[partial_result_token] = ("finecode_extension_api.actions.LintAction", "workspace_diagnostic")
 
     try:
         # send request to WM server; notifications will trigger progress reporter
         await global_state.wm_client.request(
             "actions/runWithPartialResults",
             {
-                "action": "lint",
+                "actionSource": "finecode_extension_api.actions.LintAction",
                 "project": "",  # empty project = all relevant projects
                 "params": {"target": "project"},
                 "partialResultToken": partial_result_token,
@@ -253,7 +253,7 @@ async def workspace_diagnostic_with_full_result() -> types.WorkspaceDiagnosticRe
 
     try:
         response = await global_state.wm_client.run_action(
-            action="lint",
+            action_source="finecode_extension_api.actions.LintAction",
             project="",  # empty project = all relevant projects
             params={"target": "project"},
             options={"trigger": "system", "devEnv": "ide"},

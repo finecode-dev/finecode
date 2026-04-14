@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import pathlib
 import uuid
 
 from loguru import logger
@@ -37,11 +38,11 @@ async def _handle_run_with_partial_results(
     """
     if params is None:
         raise ValueError("params required")
-    action_name = params.get("action")
+    action_source = params.get("actionSource")
     token = params.get("partialResultToken")
-    if not action_name or token is None:
-        raise ValueError("action and partial_result_token are required")
-    project_path = params.get("project", "")
+    project_path = params.get("project")
+    if not action_source or token is None or project_path is None:
+        raise ValueError("actionSource, partialResultToken and project are required")
     options = params.get("options", {})
 
     from finecode.wm_server.services import partial_results_service, run_service
@@ -50,7 +51,10 @@ async def _handle_run_with_partial_results(
     dev_env = run_service.DevEnv(options.get("devEnv", "ide"))
     result_formats = options.get("resultFormats", ["json"])
 
-    logger.trace(f"runWithPartialResults: action={action_name} project={project_path!r} token={token} formats={result_formats}")
+    logger.trace(f"runWithPartialResults: actionSource={action_source} project={project_path!r} token={token} formats={result_formats}")
+
+    # Resolve the action source to an action name for the internal pipeline.
+    action_name = await _resolve_source_to_name(action_source, project_path, ws_context)
 
     progress_token = params.get("progressToken")
 
@@ -151,19 +155,13 @@ async def _handle_run_action_with_progress(
     from finecode.wm_server.services import run_service
     from finecode.wm_server.services.run_service import proxy_utils
 
-    parsed = _parse_and_validate_run_action_params(params, ws_context)
+    parsed = await _parse_and_validate_run_action_params(params, ws_context)
     progress_token = params["progressToken"]
-
-    action = next(
-        (a for a in parsed.project.actions if a.name == parsed.action_name), None
-    )
-    if action is None:
-        raise ValueError(f"Action '{parsed.action_name}' not found in project '{params.get('project')}'")
 
     # Ensure runners are started before subscribing to progress notifications
     # so the runner objects exist in ws_projects_extension_runners.
     await run_service.start_required_environments(
-        {parsed.project.dir_path: [parsed.action_name]},
+        {parsed.project.dir_path: [parsed.action.name]},
         ws_context,
         initialize_all_handlers=True,
     )
@@ -172,7 +170,7 @@ async def _handle_run_action_with_progress(
     progress_list: proxy_utils.AsyncList[domain.ProgressRawValue] = proxy_utils.AsyncList()
     progress_tasks: list[asyncio.Task] = []
     runners_by_env = ws_context.ws_projects_extension_runners.get(parsed.project.dir_path, {})
-    for handler in action.handlers:
+    for handler in parsed.action.handlers:
         runner = runners_by_env.get(handler.env)
         if runner is not None:
             task = asyncio.create_task(
@@ -202,7 +200,7 @@ async def _handle_run_action_with_progress(
     try:
         executor = run_service.ProjectExecutor(ws_context)
         result = await executor.run_action(
-            action_source=action.source,
+            action_source=parsed.action.canonical_source,
             params=parsed.action_params,
             project_path=parsed.project.dir_path,
             run_trigger=parsed.trigger,
@@ -273,12 +271,14 @@ async def _handle_run_batch_with_progress(
     parsed = _parse_run_batch_params(params)
     progress_token: str = params["progressToken"]
 
-    if not parsed.actions:
-        raise ValueError("actions list is required and must be non-empty")
+    if not parsed.action_sources:
+        raise ValueError("actionSources list is required and must be non-empty")
 
-    logger.debug(f"runBatch+progress: actions={parsed.actions} projects={parsed.project_names}")
+    logger.debug(f"runBatch+progress: actionSources={parsed.action_sources} projects={parsed.project_names}")
 
-    actions_by_project = _resolve_actions_by_project(parsed.project_names, parsed.actions, ws_context)
+    actions_by_project, name_to_source = await _resolve_actions_by_project(
+        parsed.project_names, parsed.action_sources, ws_context
+    )
 
     await run_service.start_required_environments(
         actions_by_project, ws_context, update_config_in_running_runners=True
@@ -296,7 +296,6 @@ async def _handle_run_batch_with_progress(
     slot_lists: dict[str, proxy_utils.AsyncList[domain.ProgressRawValue]] = {}
     get_progress_tasks: list[asyncio.Task] = []
 
-    import pathlib as pathlib_mod
     for project_path, actions_to_run in actions_by_project.items():
         project_def = ws_context.ws_projects[project_path]
         if not isinstance(project_def, domain.CollectedProject):
@@ -371,7 +370,7 @@ async def _handle_run_batch_with_progress(
         combined_stream.set_done()
         await asyncio.gather(client_forward_task, return_exceptions=True)
 
-    results, overall_return_code = _build_batch_result(result_by_project)
+    results, overall_return_code = _build_batch_result(result_by_project, name_to_source)
     logger.debug(f"runBatch+progress: done, projects_count={len(results)} returnCode={overall_return_code}")
     return {"results": results, "returnCode": overall_return_code}
 
@@ -394,3 +393,46 @@ async def _handle_run_batch_with_progress_task(
         logger.exception("FineCode API: error handling actions/runBatch with progress")
         _write_message(writer, _jsonrpc_error(req_id, -32603, str(exc)))
         await writer.drain()
+
+
+async def _resolve_source_to_name(
+    action_source: str,
+    project_path_str: str,
+    ws_context: context.WorkspaceContext,
+) -> str:
+    """Resolve an action source to its internal name for the partial-results pipeline.
+
+    When *project_path_str* is the empty string the action is resolved against
+    the first available :class:`~domain.CollectedProject` that declares it.
+    This mirrors the "all projects" semantic supported by
+    :func:`~partial_results_service.run_action_with_partial_results`.
+
+    Raises ``ValueError`` if the project or action cannot be found.
+    """
+    from finecode.wm_server import domain as _domain
+    from finecode.wm_server._api_handlers._helpers import find_action_by_source
+
+    if project_path_str:
+        project = ws_context.ws_projects.get(pathlib.Path(project_path_str))
+        if project is None or not isinstance(project, _domain.CollectedProject):
+            raise ValueError(f"Project '{project_path_str}' not found or not initialized")
+        action = await find_action_by_source(project.actions, action_source, project, ws_context)
+        if action is None:
+            raise ValueError(
+                f"Action with source '{action_source}' not found in project '{project_path_str}'"
+            )
+        return action.name
+    else:
+        # project="" means "all projects" — resolve against the first project that
+        # declares the action so we can obtain the canonical action name.
+        for project in ws_context.ws_projects.values():
+            if not isinstance(project, _domain.CollectedProject):
+                continue
+            action = await find_action_by_source(
+                project.actions, action_source, project, ws_context
+            )
+            if action is not None:
+                return action.name
+        raise ValueError(
+            f"Action with source '{action_source}' not found in any project"
+        )

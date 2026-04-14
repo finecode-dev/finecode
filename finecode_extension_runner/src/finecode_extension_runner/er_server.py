@@ -548,6 +548,33 @@ async def merge_results_cmd(_server: ErServer, params: dict | None) -> dict:
         return {"error": str(exception)}
 
 
+async def resolve_source(_server: ErServer, params: dict | None) -> dict:
+    """Handler for ``actions/resolveSource``.
+
+    Resolves an arbitrary import-path alias to the canonical class path.
+    The canonical path is ``cls.__module__ + "." + cls.__qualname__`` and is
+    globally unique regardless of how many re-export aliases point to the class.
+
+    Raises ``ValueError`` when the alias cannot be imported or resolved.
+    """
+    assert params is not None
+    source: str = params["source"]
+    logger.trace(f"Resolve source: {source}")
+    last_dot = source.rfind(".")
+    if last_dot == -1:
+        raise ValueError(f"Invalid source path (no module separator): {source!r}")
+    import importlib
+    module_path = source[:last_dot]
+    attr_name = source[last_dot + 1:]
+    try:
+        mod = importlib.import_module(module_path)
+        cls = getattr(mod, attr_name)
+    except (ImportError, AttributeError) as exc:
+        raise ValueError(f"Cannot resolve source '{source}': {exc}") from exc
+    canonical = f"{cls.__module__}.{cls.__qualname__}"
+    return {"canonicalSource": canonical}
+
+
 async def resolve_action_sources(_server: ErServer, _params: dict | None) -> dict:
     """Handler for ``finecodeRunner/resolveActionSources``."""
     return await services.resolve_action_sources()
@@ -591,6 +618,7 @@ def create_er_server() -> ErServer:
     session.on_request("finecodeRunner/updateConfig", _wrap(update_config))
     session.on_request("finecodeRunner/resolveActionSources", _wrap(resolve_action_sources))
     session.on_request("actions/run", _wrap(run_action))
+    session.on_request("actions/resolveSource", _wrap(resolve_source))
     session.on_request("actions/reload", _wrap(reload_action))
     session.on_request("packages/resolvePath", _wrap(resolve_package_path))
     session.on_request("actions/mergeResults", _wrap(merge_results_cmd))

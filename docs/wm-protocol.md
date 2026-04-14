@@ -40,6 +40,8 @@ connect to it.
 Method names use LSP-style domain prefixes: `workspace/`, `actions/`, `documents/`,
 `runners/`, `server/`.
 
+All field names in params and results use **camelCase**.
+
 ---
 
 ## Methods
@@ -79,18 +81,16 @@ list all projects and perform path comparisons itself.
 **Params:**
 
 ```json
-{"file_path": "/abs/path/to/some/file.py"}
+{"filePath": "/abs/path/to/some/file.py"}
 ```
 
 **Result:**
 
 ```json
-{"project": "project_name"}   # or {"project": null} if not found
+{"project": "/abs/path/to/project"}
 ```
 
-The server internally calls
-:func:`finecode.wm_server.services.run_service.find_action_project` with
-``action_name="lint"`` and returns the corresponding project name.
+Returns `{"project": null}` if the file does not belong to any known project.
 
 ---
 
@@ -114,10 +114,10 @@ and optionally starts extension runners.
 **Params:**
 
 ```json
-{"dir_path": "/path/to/workspace", "start_runners": true, "projects": ["my_project"]}
+{"dirPath": "/path/to/workspace", "startRunners": true, "projects": ["my_project"]}
 ```
 
-`start_runners` is optional (default: `true`). When `false`, the server reads
+`startRunners` is optional (default: `true`). When `false`, the server reads
 configs and collects actions without starting any extension runners. Use this
 when runner environments may not exist yet (e.g. before running `prepare-envs`).
 Actions are still available in the result so clients can validate the workspace.
@@ -128,7 +128,7 @@ directory are still discovered (added to workspace state) but skipped for
 initialization. This avoids the cost of reading configs and spawning runner
 processes for projects that are not needed.
 
-Calling `workspace/addDir` again for the same `dir_path` with a different
+Calling `workspace/addDir` again for the same `dirPath` with a different
 `projects` filter (or with `projects` omitted) will initialize the previously
 skipped projects — the call is **incremental**, not idempotent. Only projects
 that have not yet been config-initialized are processed on each call. This makes
@@ -178,7 +178,7 @@ find them.
 
 Set persistent handler config overrides on the server. Overrides are stored for
 the lifetime of the server and applied to all subsequent action runs — unlike the
-`config_overrides` field that was previously accepted by `actions/runBatch`, which
+`configOverrides` field that was previously accepted by `actions/runBatch`, which
 required runners to be stopped first.
 
 - **Type:** request
@@ -231,7 +231,7 @@ from context.
 **Params:**
 
 ```json
-{"dir_path": "/path/to/workspace"}
+{"dirPath": "/path/to/workspace"}
 ```
 
 **Result:** `{}`
@@ -250,16 +250,15 @@ workspace context after config reading and preset resolution.
 **Params:**
 
 ```json
-{"project": "my_project"}
+{"project": "/abs/path/to/project"}
 ```
 
 **Result:**
 
 ```json
 {
-  "raw_config": {
-    "tool": { "finecode": { ... } },
-    ...
+  "rawConfig": {
+    "tool": { "finecode": { "..." : "..." } }
   }
 }
 ```
@@ -267,7 +266,7 @@ workspace context after config reading and preset resolution.
 **Errors:**
 
 - `project` is required — returns a JSON-RPC error if omitted.
-- Project not found — returns a JSON-RPC error if no project with the given name
+- Project not found — returns a JSON-RPC error if no project with the given path
   exists in the workspace context.
 
 ---
@@ -281,12 +280,12 @@ programmatic use by MCP agents and CLI.
 
 - **Type:** request
 - **Clients:** MCP, CLI
-- **Status:** stub
+- **Status:** implemented
 
 **Params:**
 
 ```json
-{"project": "finecode"}
+{"project": "/abs/path/to/project"}
 ```
 
 All fields optional. If `project` is omitted, returns actions from all projects.
@@ -298,8 +297,8 @@ All fields optional. If `project` is omitted, returns actions from all projects.
   "actions": [
     {
       "name": "lint",
-      "source": "finecode_extension_api.actions.lint.LintAction",
-      "project": "finecode",
+      "source": "finecode_extension_api.actions.LintAction",
+      "project": "/abs/path/to/project",
       "handlers": [
         {"name": "ruff", "source": "fine_python_ruff.RuffLintFilesHandler", "env": "runtime"}
       ]
@@ -307,6 +306,9 @@ All fields optional. If `project` is omitted, returns actions from all projects.
   ]
 }
 ```
+
+`source` is the import-path alias that uniquely identifies the action class (ADR-0019).
+It is the value to pass as `actionSource` in `actions/run`, `actions/runBatch`, etc.
 
 ---
 
@@ -322,7 +324,7 @@ server to build accurate `inputSchema` entries for each tool.
 **Params:**
 
 ```json
-{ "project": "/abs/path/to/project", "action_names": ["lint", "format"] }
+{"project": "/abs/path/to/project", "actionSources": ["finecode_extension_api.actions.LintAction", "finecode_extension_api.actions.FormatAction"]}
 ```
 
 **Result:**
@@ -330,15 +332,28 @@ server to build accurate `inputSchema` entries for each tool.
 ```json
 {
   "schemas": {
-    "lint":   { "properties": { "file_paths": {"type": "array", "items": {"type": "string"}}, "target": {"type": "string", "enum": ["project", "files"]} }, "required": [] },
-    "format": { "properties": { "save": {"type": "boolean"}, "target": {"type": "string"}, "file_paths": {"type": "array", "items": {"type": "string"}} }, "required": [] }
+    "finecode_extension_api.actions.LintAction": {
+      "properties": {
+        "file_paths": {"type": "array", "items": {"type": "string"}},
+        "target": {"type": "string", "enum": ["project", "files"]}
+      },
+      "required": []
+    },
+    "finecode_extension_api.actions.FormatAction": {
+      "properties": {
+        "save": {"type": "boolean"},
+        "target": {"type": "string"},
+        "file_paths": {"type": "array", "items": {"type": "string"}}
+      },
+      "required": []
+    }
   }
 }
 ```
 
-Each schema value is `null` for actions whose class cannot be imported in any
-Extension Runner. Schemas are cached per project in the WM and invalidated
-whenever runner config is updated.
+Result is keyed by action source. Each value is `null` for actions whose class
+cannot be imported in any Extension Runner. Schemas are cached per project in the
+WM and invalidated whenever runner config is updated.
 
 ---
 
@@ -348,7 +363,7 @@ Get the hierarchical action tree for IDE sidebar display.
 
 - **Type:** request
 - **Clients:** LSP
-- **Status:** stub
+- **Status:** implemented
 
 **Params:** `{}`
 
@@ -358,17 +373,49 @@ Get the hierarchical action tree for IDE sidebar display.
 {
   "nodes": [
     {
-      "nodeId": "ws_dir_0",
-      "name": "/path/to/workspace",
+      "nodeId": "/path/to/workspace",
+      "name": "workspace",
       "nodeType": 0,
-      "status": "ok",
+      "status": "",
       "subnodes": [
         {
-          "nodeId": "project_0",
-          "name": "finecode",
+          "nodeId": "/path/to/workspace/my_project",
+          "name": "my_project",
           "nodeType": 1,
-          "status": "ok",
-          "subnodes": []
+          "status": "CONFIG_VALID",
+          "subnodes": [
+            {
+              "nodeId": "/path/to/my_project::actions",
+              "name": "Actions",
+              "nodeType": 3,
+              "status": "",
+              "subnodes": [
+                {
+                  "nodeId": "/path/to/my_project::finecode_extension_api.actions.LintAction",
+                  "name": "lint",
+                  "source": "finecode_extension_api.actions.LintAction",
+                  "nodeType": 2,
+                  "status": "",
+                  "subnodes": []
+                }
+              ]
+            },
+            {
+              "nodeId": "/path/to/my_project::envs",
+              "name": "Environments",
+              "nodeType": 5,
+              "status": "",
+              "subnodes": [
+                {
+                  "nodeId": "/path/to/my_project::envs::runtime",
+                  "name": "runtime",
+                  "nodeType": 6,
+                  "status": "",
+                  "subnodes": []
+                }
+              ]
+            }
+          ]
         }
       ]
     }
@@ -376,8 +423,17 @@ Get the hierarchical action tree for IDE sidebar display.
 }
 ```
 
-`nodeType` values: 0=DIRECTORY, 1=PROJECT, 2=ACTION, 3=ACTION_GROUP, 4=PRESET,
-5=ENV_GROUP, 6=ENV
+`nodeType` values: `0`=DIRECTORY, `1`=PROJECT, `2`=ACTION, `3`=ACTION_GROUP, `4`=PRESET,
+`5`=ENV_GROUP, `6`=ENV
+
+Node ID format:
+
+- Directory/project: absolute path string (e.g. `"/path/to/project"`)
+- Action group: `"<project_path>::actions"`
+- Action: `"<project_path>::<actionSource>"` (e.g. `"/path/to/project::finecode_extension_api.actions.LintAction"`)
+- Handler: `"<project_path>::<actionSource>::<handlerName>"`
+- Env group: `"<project_path>::envs"`
+- Env: `"<project_path>::envs::<envName>"`
 
 ---
 
@@ -387,38 +443,46 @@ Execute a single action on a project.
 
 - **Type:** request
 - **Clients:** LSP, MCP, CLI
-- **Status:** stub
+- **Status:** implemented
 
 **Params:**
 
 ```json
 {
-  "action": "lint",
-  "project": "finecode",
+  "actionSource": "finecode_extension_api.actions.LintAction",
+  "project": "/abs/path/to/project",
   "params": {"file_paths": ["/path/to/file.py"]},
   "options": {
-    "result_formats": ["json", "string"],
+    "resultFormats": ["json", "string"],
     "trigger": "user",
-    "dev_env": "ide"
+    "devEnv": "ide"
   }
 }
 ```
 
-Required: `action`, `project`. All other fields optional.
+Required: `actionSource`, `project`. All other fields optional.
+
+`actionSource` is an import-path alias identifying the action class (ADR-0019).
+Any valid import path resolving to the same registered action class is accepted
+(e.g. the short alias `"finecode_extension_api.actions.LintAction"` or the canonical
+`"finecode_extension_api.actions.code_quality.lint_action.LintAction"` both work).
 
 `trigger` values: `"user"`, `"system"`, `"unknown"` (default: `"unknown"`)
 
-`dev_env` values: `"ide"`, `"cli"`, `"ai"`, `"precommit"`, `"ci"` (default: `"cli"`)
+`devEnv` values: `"ide"`, `"cli"`, `"ai"`, `"precommit"`, `"ci"` (default: `"cli"`)
+
+If `progressToken` is provided, the server sends `actions/progress` notifications
+before returning the final result.
 
 **Result:**
 
 ```json
 {
-  "result_by_format": {
+  "resultByFormat": {
     "json": {"messages": {"file.py": []}},
     "string": "All checks passed."
   },
-  "return_code": 0
+  "returnCode": 0
 }
 ```
 
@@ -430,42 +494,49 @@ Execute multiple actions across multiple projects. Used for batch operations.
 
 - **Type:** request
 - **Clients:** CLI, MCP
-- **Status:** stub
+- **Status:** implemented
 
 **Params:**
 
 ```json
 {
-  "actions": ["lint", "check_formatting"],
-  "projects": ["finecode", "finecode_extension_api"],
+  "actionSources": [
+    "finecode_extension_api.actions.LintAction",
+    "finecode_extension_api.actions.FormatAction"
+  ],
+  "projects": ["/abs/path/to/project_a", "/abs/path/to/project_b"],
   "params": {},
   "options": {
-    "concurrent": false,
-    "result_formats": ["json", "string"],
+    "concurrently": false,
+    "resultFormats": ["json", "string"],
     "trigger": "user",
-    "dev_env": "cli"
+    "devEnv": "cli"
   }
 }
 ```
 
-Required: `actions`. If `projects` is omitted, runs on all projects that have the
+Required: `actionSources`. If `projects` is omitted, runs on all projects that have the
 requested actions.
+
+If `progressToken` is provided, the server sends aggregated `actions/progress`
+notifications across all (project × action) slots before returning the final result.
 
 **Result:**
 
 ```json
 {
   "results": {
-    "/path/to/finecode": {
-      "lint": {"result_by_format": {...}, "return_code": 0},
-      "check_formatting": {"result_by_format": {...}, "return_code": 0}
+    "/abs/path/to/project_a": {
+      "finecode_extension_api.actions.LintAction": {"resultByFormat": {"...": "..."}, "returnCode": 0},
+      "finecode_extension_api.actions.FormatAction": {"resultByFormat": {"...": "..."}, "returnCode": 0}
     }
   },
-  "return_code": 0
+  "returnCode": 0
 }
 ```
 
-`return_code` at the top level is the bitwise OR of all individual return codes.
+Result is keyed by project path, then by action source. `returnCode` at the top level
+is the bitwise OR of all individual return codes.
 
 ---
 
@@ -476,27 +547,29 @@ Execute an action with streaming partial results. The server sends
 
 - **Type:** request
 - **Clients:** LSP
-- **Status:** stub
+- **Status:** implemented
 
 **Params:**
 
 ```json
 {
-  "action": "lint",
-  "project": "finecode",
+  "actionSource": "finecode_extension_api.actions.LintAction",
+  "project": "/abs/path/to/project",
   "params": {"file_paths": ["/path/to/file.py"]},
-  "partial_result_token": "diag_1",
+  "partialResultToken": "diag_1",
   "options": {
-    "result_formats": ["json", "string"],
+    "resultFormats": ["json", "string"],
     "trigger": "system",
-    "dev_env": "ide"
+    "devEnv": "ide"
   }
 }
 ```
 
-Required: `action`, `project`, `partial_result_token`.
+Required: `actionSource`, `project`, `partialResultToken`.
 
-Supported `result_formats`: `"json"`, `"string"`, etc. (same as `actions/run`).
+Supported `resultFormats`: `"json"`, `"string"` (same as `actions/run`).
+
+If `progressToken` is provided, the server also sends `actions/progress` notifications.
 
 **Result:** Same as `actions/run` (the final aggregated result).
 
@@ -518,13 +591,16 @@ Hot-reload handler code for an action without restarting runners.
 
 - **Type:** request
 - **Clients:** LSP
-- **Status:** stub
+- **Status:** implemented
 
 **Params:**
 
 ```json
-{"project": "finecode", "action": "lint"}
+{"actionNodeId": "/abs/path/to/project::finecode_extension_api.actions.LintAction"}
 ```
+
+`actionNodeId` uses the same `<project_path>::<actionSource>` format as the node IDs
+in the `actions/getTree` response.
 
 **Result:** `{}`
 
@@ -539,7 +615,7 @@ informed about open documents. These are fire-and-forget (no response).
 
 - **Type:** notification (client -> server)
 - **Clients:** LSP
-- **Status:** stub
+- **Status:** implemented
 
 **Params:**
 
@@ -553,7 +629,7 @@ informed about open documents. These are fire-and-forget (no response).
 
 - **Type:** notification (client -> server)
 - **Clients:** LSP
-- **Status:** stub
+- **Status:** implemented
 
 **Params:**
 
@@ -567,7 +643,7 @@ informed about open documents. These are fire-and-forget (no response).
 
 - **Type:** notification (client -> server)
 - **Clients:** LSP
-- **Status:** stub
+- **Status:** implemented
 
 **Params:**
 
@@ -575,7 +651,7 @@ informed about open documents. These are fire-and-forget (no response).
 {
   "uri": "file:///path/to/file.py",
   "version": 2,
-  "content_changes": [
+  "contentChanges": [
     {
       "range": {
         "start": {"line": 5, "character": 0},
@@ -597,12 +673,12 @@ List extension runners and their statuses.
 
 - **Type:** request
 - **Clients:** LSP, MCP
-- **Status:** stub
+- **Status:** implemented
 
 **Params:**
 
 ```json
-{"project": "finecode"}
+{"project": "/abs/path/to/project"}
 ```
 
 `project` is optional. If omitted, returns runners for all projects.
@@ -613,10 +689,10 @@ List extension runners and their statuses.
 {
   "runners": [
     {
-      "project": "finecode",
+      "project": "/abs/path/to/project",
       "env": "runtime",
       "status": "RUNNING",
-      "readable_id": "finecode::runtime"
+      "readable_id": "my_project::runtime"
     }
   ]
 }
@@ -632,12 +708,12 @@ Restart an extension runner. Optionally start in debug mode.
 
 - **Type:** request
 - **Clients:** LSP
-- **Status:** stub
+- **Status:** implemented
 
 **Params:**
 
 ```json
-{"project": "finecode", "env": "runtime", "debug": false}
+{"project": "/abs/path/to/project", "env": "runtime", "debug": false}
 ```
 
 `debug` is optional, defaults to `false`.
@@ -658,7 +734,7 @@ exists and its dependencies are correctly installed).
 **Params:**
 
 ```json
-{"project": "my_project", "env_name": "dev_workspace"}
+{"project": "/abs/path/to/project", "envName": "dev_workspace"}
 ```
 
 **Result:**
@@ -681,7 +757,7 @@ environment, it is stopped first.
 **Params:**
 
 ```json
-{"project": "my_project", "env_name": "dev_workspace"}
+{"project": "/abs/path/to/project", "envName": "dev_workspace"}
 ```
 
 **Result:** `{}`
@@ -704,11 +780,11 @@ Return static information about the running WM Server instance.
 
 ```json
 {
-  "log_file_path": "/abs/path/to/.venvs/dev_workspace/logs/wm_server/wm_server.log"
+  "logFilePath": "/abs/path/to/.venvs/dev_workspace/logs/wm_server/wm_server.log"
 }
 ```
 
-`log_file_path` is the absolute path to the WM Server's log file for the current process.
+`logFilePath` is the absolute path to the WM Server's log file for the current process.
 Clients can log or display this path so the user can open the file directly when troubleshooting.
 
 ---
@@ -740,7 +816,7 @@ Sent during `actions/runWithPartialResults` execution as results stream in.
 
 - **Type:** notification (server -> client)
 - **Clients:** LSP
-- **Status:** stub
+- **Status:** implemented
 
 **Params:**
 
@@ -748,7 +824,7 @@ Sent during `actions/runWithPartialResults` execution as results stream in.
 {
   "token": "diag_1",
   "value": {
-    "result_by_format": {
+    "resultByFormat": {
       "json": {"messages": {"file.py": [...]}},
       "string": "3 issues found in file.py"
     }
@@ -756,15 +832,43 @@ Sent during `actions/runWithPartialResults` execution as results stream in.
 }
 ```
 
-`token` matches the `partial_result_token` from the originating request.
+`token` matches the `partialResultToken` from the originating request.
 
-`result_by_format` contains results in all formats requested in the originating
+`resultByFormat` contains results in all formats requested in the originating
 `actions/runWithPartialResults` params (same structure as `actions/run` response,
-but without `return_code`).
+but without `returnCode`).
 
 > **Note:** Notifications are delivered only to the client connection that
 > initiated the corresponding `actions/runWithPartialResults` request.  The
 > WM Server does **not** broadcast these messages to every connected client.
+
+---
+
+#### `actions/progress`
+
+Sent during `actions/run`, `actions/runBatch`, or `actions/runWithPartialResults`
+when the request includes a `progressToken`.
+
+- **Type:** notification (server -> client)
+- **Clients:** LSP, MCP, CLI
+- **Status:** implemented
+
+**Params:**
+
+```json
+{
+  "token": "progress_1",
+  "value": {
+    "type": "report",
+    "message": "Checked 12/42 files",
+    "percentage": 28
+  }
+}
+```
+
+`token` matches the `progressToken` from the originating request.
+
+`value.type` values: `"begin"`, `"report"`, `"end"`
 
 ---
 
@@ -782,10 +886,10 @@ runner start/stop).
 ```json
 {
   "node": {
-    "nodeId": "project_0",
-    "name": "finecode",
+    "nodeId": "/path/to/project",
+    "name": "my_project",
     "nodeType": 1,
-    "status": "ok",
+    "status": "CONFIG_VALID",
     "subnodes": []
   }
 }

@@ -31,6 +31,9 @@ _wm_port: int | None = None
 _workdir: pathlib.Path | None = None
 _wm_connected: bool = False
 
+# Populated by list_tools(); maps MCP tool name (action name) → action source.
+_tool_name_to_source: dict[str, str] = {}
+
 
 async def _ensure_wm_connected(session) -> None:
     global _wm_connected
@@ -91,7 +94,7 @@ def _setup_progress_forwarding() -> None:
 
 
 async def _run_with_progress(
-    action: str,
+    action_source: str,
     project: str,
     params: dict,
     options: dict,
@@ -139,7 +142,7 @@ async def _run_with_progress(
 
     result_task = asyncio.create_task(
         _wm_client.run_action_with_partial_results(
-            action, project, token, params, options,
+            action_source, project, token, params, options,
             progress_token=progress_token,
         )
     )
@@ -228,11 +231,11 @@ async def list_tools() -> list[Tool]:
         logger.error(f"MCP: Failed to fetch actions from WM: {exc}", exc_info=True)
         actions = []
 
-    # Deduplicate: first project that exposes an action owns its schema.
+    # Deduplicate by source: first project that exposes an action owns its schema.
     seen: dict[str, dict] = {}
     for action in actions:
-        if action["name"] not in seen:
-            seen[action["name"]] = action
+        if action["source"] not in seen:
+            seen[action["source"]] = action
 
     logger.info(f"MCP: After deduplication, {len(seen)} unique actions")
 
@@ -243,11 +246,12 @@ async def list_tools() -> list[Tool]:
 
     logger.info(f"MCP: Actions grouped by {len(unique_by_project)} projects")
 
+    _tool_name_to_source.clear()
     for project_path, project_actions in unique_by_project.items():
-        action_names = [a["name"] for a in project_actions]
-        logger.debug(f"MCP: Fetching schemas for {len(action_names)} actions in {project_path}")
+        action_sources = [a["source"] for a in project_actions]
+        logger.debug(f"MCP: Fetching schemas for {len(action_sources)} actions in {project_path}")
         try:
-            schemas = await _wm_client.get_payload_schemas(project_path, action_names)
+            schemas = await _wm_client.get_payload_schemas(project_path, action_sources)
             logger.debug(f"MCP: Got {len(schemas)} schemas for {project_path}")
         except Exception as exc:
             logger.error(f"MCP: Could not fetch payload schemas for {project_path}: {exc}", exc_info=True)
@@ -255,7 +259,9 @@ async def list_tools() -> list[Tool]:
 
         for action in project_actions:
             name = action["name"]
-            schema: dict | None = schemas.get(name)
+            source = action["source"]
+            _tool_name_to_source[name] = source
+            schema: dict | None = schemas.get(source)
             description = (
                 schema.get("description") if schema else None
             ) or f"Run {name} on a project or the whole workspace"
@@ -312,8 +318,8 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         project_path = pathlib.Path(project)
         raw_config = await _wm_client.get_project_raw_config(project)
         result = await _wm_client.run_action(
-            "dump_config",
-            project,
+            action_source="finecode_extension_api.actions.DumpConfigAction",
+            project=project,
             params={
                 "source_file_path": str(
                     path_to_resource_uri(project_path / "pyproject.toml")
@@ -333,9 +339,10 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
 
     session = request_ctx.get().session
     project = arguments.pop("project", None)
+    action_source = _tool_name_to_source.get(name, name)
     options = {"resultFormats": ["json"], "trigger": "user", "devEnv": "ai"}
     result = await _run_with_progress(
-        name, project or "", arguments or {}, options, session
+        action_source, project or "", arguments or {}, options, session
     )
     return [TextContent(type="text", text=json.dumps(result))]
 

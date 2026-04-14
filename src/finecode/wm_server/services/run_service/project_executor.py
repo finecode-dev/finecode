@@ -34,7 +34,10 @@ class ProjectExecutor:
     def _resolve_action_name(
         self, action_source: str, project: domain.CollectedProject
     ) -> str:
-        # Use canonical_source (resolved by ER)
+        # action_source is always canonical here: ER-initiated calls pass
+        # canonical_source directly (derived from cls.__module__.__qualname__),
+        # and canonical_source is always populated by update_runner_config before
+        # any action can be executed.
         try:
             return next(
                 a.name for a in project.actions
@@ -42,7 +45,7 @@ class ProjectExecutor:
             )
         except StopIteration:
             raise ActionRunFailed(
-                f"No action with source '{action_source}' found in project {project.dir_path}"
+                f"No action with canonical source '{action_source}' found in project {project.dir_path}"
             )
 
     async def run_action(

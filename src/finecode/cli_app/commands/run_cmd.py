@@ -145,6 +145,15 @@ async def run_actions(
                     p["path"] for p in all_projects if p["name"] in projects_names
                 ]
 
+            # Resolve action names to sources (ADR-0019).
+            all_actions = await client.list_actions()
+            name_to_source: dict[str, str] = {a["name"]: a["source"] for a in all_actions}
+            source_to_name: dict[str, str] = {a["source"]: a["name"] for a in all_actions}
+            unknown_actions = [a for a in actions if a not in name_to_source]
+            if unknown_actions:
+                raise RunFailed(f"Unknown action(s): {unknown_actions}")
+            action_sources = [name_to_source[a] for a in actions]
+
             params_by_project: dict[str, dict[str, typing.Any]] = {}
             if map_payload_fields:
                 params_by_project = _resolve_mapped_payload_fields(
@@ -162,7 +171,7 @@ async def run_actions(
 
             try:
                 batch_result = await client.run_batch(
-                    actions=actions,
+                    action_sources=action_sources,
                     projects=project_paths,
                     params=action_payload,
                     params_by_project=params_by_project or None,
@@ -177,7 +186,7 @@ async def run_actions(
             except ApiError as exc:
                 raise RunFailed(str(exc)) from exc
 
-            return _build_run_result(batch_result)
+            return _build_run_result(batch_result, source_to_name)
         finally:
             await client.close()
     finally:
@@ -185,7 +194,9 @@ async def run_actions(
             port_file.unlink(missing_ok=True)
 
 
-def _build_run_result(batch_result: dict) -> utils.RunActionsResult:
+def _build_run_result(
+    batch_result: dict, source_to_name: dict[str, str] | None = None
+) -> utils.RunActionsResult:
     """Convert the actions/runBatch API response to RunActionsResult."""
     raw_results: dict[str, dict] = batch_result.get("results", {})
     overall_return_code: int = batch_result.get("returnCode", 0)
@@ -202,7 +213,7 @@ def _build_run_result(batch_result: dict) -> utils.RunActionsResult:
         project_output_parts: list[str] = []
         run_many_actions = len(actions_results) > 1
 
-        for action_name, action_data in actions_results.items():
+        for action_source, action_data in actions_results.items():
             result_by_format = action_data.get("resultByFormat", {})
             return_code = action_data.get("returnCode", 0)
 
@@ -210,12 +221,13 @@ def _build_run_result(batch_result: dict) -> utils.RunActionsResult:
                 result_by_format=result_by_format,
                 return_code=return_code,
             )
-            project_responses[action_name] = response
+            project_responses[action_source] = response
 
+            display_name = (source_to_name or {}).get(action_source, action_source)
             action_output = ""
             if run_many_actions:
-                action_output += f"{click.style(action_name, bold=True)}:"
-            action_output += utils.run_result_to_str(response.text(), action_name)
+                action_output += f"{click.style(display_name, bold=True)}:"
+            action_output += utils.run_result_to_str(response.text(), display_name)
             project_output_parts.append(action_output)
 
         result_by_project[project_path] = project_responses

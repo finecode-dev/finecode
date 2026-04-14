@@ -47,6 +47,7 @@ class WorkspaceContext:
     project_path_by_dir_and_action: dict[str, dict[str, Path]] = field(
         default_factory=dict
     )
+    # Maps action node ID (project_path::action_source) → CachedAction
     cached_actions_by_id: dict[str, CachedAction] = field(default_factory=dict)
     # payload schema cache: project_path → {action_name: JSON Schema fragment | None}
     ws_action_schemas: dict[Path, dict[str, dict | None]] = field(default_factory=dict)
@@ -68,4 +69,4 @@ class WorkspaceContext:
 class CachedAction:
     action_id: str
     project_path: Path
-    action_name: str
+    action_source: str

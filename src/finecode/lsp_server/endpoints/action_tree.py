@@ -32,6 +32,18 @@ def _parse_parent_node_id(params) -> str | None:
     return None
 
 
+def _parse_node_id(node_id: str) -> tuple[str, str]:
+    """Split a node ID of the form ``project_path::action_source`` into its parts.
+
+    Returns ``(project_path_str, action_source)``.
+    Raises ``ValueError`` if the format is invalid.
+    """
+    parts = node_id.split("::", 1)
+    if len(parts) < 2:
+        raise ValueError(f"Invalid action node ID: {node_id!r}")
+    return parts[0], parts[1]
+
+
 async def notify_changed_action_node(ls: LspServer, action_node: dict) -> None:
     ls.notify_client("actionsNodes/changed", action_node)
 
@@ -69,9 +81,7 @@ async def run_action_on_file(ls: LspServer, params=None):
 
     params_dict = params[0]
     action_node_id = params_dict["projectPath"]
-    action_node_id_parts = action_node_id.split("::")
-    project_path_str = action_node_id_parts[0]
-    action_name = action_node_id_parts[1]
+    project_path_str, action_source = _parse_node_id(action_node_id)
 
     document_meta = await ls.send_request_to_client(
         "editor/documentMeta", {}
@@ -80,11 +90,12 @@ async def run_action_on_file(ls: LspServer, params=None):
         return None
 
     run_params: dict = {"file_paths": [document_meta["uri"]], "target": "files"}
-    if action_name == "format":
+    # Format actions should not auto-save when triggered from the file context menu.
+    if "format" in action_source.lower():
         run_params["save"] = False
 
     response = await global_state.wm_client.run_action(
-        action=action_name,
+        action_source=action_source,
         project=project_path_str,
         params=run_params,
         options={"trigger": "user", "devEnv": "ide"},
@@ -101,12 +112,10 @@ async def run_action_on_project(_ls: LspServer, params=None):
 
     params_dict = params[0]
     action_node_id = params_dict["projectPath"]
-    action_node_id_parts = action_node_id.split("::")
-    project_path_str = action_node_id_parts[0]
-    action_name = action_node_id_parts[1]
+    project_path_str, action_source = _parse_node_id(action_node_id)
 
     response = await global_state.wm_client.run_action(
-        action=action_name,
+        action_source=action_source,
         project=project_path_str,
         params={"target": "project"},
         options={"trigger": "user", "devEnv": "ide"},
@@ -136,7 +145,7 @@ async def run_batch(_ls: LspServer, params=None):
 
     try:
         result = await global_state.wm_client.run_batch(
-            actions=params["actions"],
+            action_sources=params["actions"],
             projects=params.get("projects"),
             params=params.get("params"),
             params_by_project=params.get("paramsByProject"),
@@ -159,7 +168,7 @@ async def run_action(_ls: LspServer, params=None):
         raise Exception()
 
     return await global_state.wm_client.run_action(
-        action=params["action"],
+        action_source=params["action"],
         project=params["project"],
         params=params.get("params"),
         options=params.get("options", {"trigger": "user", "devEnv": "ide"}),

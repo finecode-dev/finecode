@@ -14,6 +14,7 @@ from finecode.wm_server._api_handlers._helpers import (
     _parse_and_validate_run_action_params,
     _parse_run_batch_params,
     _resolve_actions_by_project,
+    find_action_by_source,
 )
 from finecode.wm_server.services.action_tree import _handle_get_tree  # noqa: F401 (re-export)
 
@@ -24,13 +25,21 @@ async def _handle_run_action(
     """Run an action on a project."""
     from finecode.wm_server.services import run_service
 
-    parsed = _parse_and_validate_run_action_params(params or {}, ws_context)
+    parsed = await _parse_and_validate_run_action_params(params or {}, ws_context)
 
     try:
+        # Start required environments so that canonical_source is populated for all
+        # importable action classes (ADR-0021: canonical_source is the WM's internal
+        # identifier after runner initialization; only find_action_by_source at the
+        # external API boundary may match by config source alias).
+        await run_service.start_required_environments(
+            {parsed.project.dir_path: [parsed.action.name]},
+            ws_context,
+            initialize_all_handlers=True,
+        )
         executor = run_service.ProjectExecutor(ws_context)
-        action = next(a for a in parsed.project.actions if a.name == parsed.action_name)
         result = await executor.run_action(
-            action_source=action.source,
+            action_source=parsed.action.canonical_source,
             params=parsed.action_params,
             project_path=parsed.project.dir_path,
             run_trigger=parsed.trigger,
@@ -51,7 +60,7 @@ async def _handle_actions_reload(
 ) -> dict:
     """Reload an action's handlers in all relevant extension runners.
 
-    Params: ``{"actionNodeId": "project_path::action_name"}``
+    Params: ``{"actionNodeId": "project_path::action_source"}``
     Result: ``{}``
     """
     from finecode.wm_server.runner import runner_client
@@ -63,11 +72,19 @@ async def _handle_actions_reload(
         raise ValueError(f"Invalid action_node_id: {action_node_id!r}")
 
     project_path = pathlib.Path(parts[0])
-    action_name = parts[1]
+    action_source = parts[1]
+
+    project = ws_context.ws_projects.get(project_path)
+    if not isinstance(project, domain.CollectedProject):
+        raise ValueError(f"Project '{project_path}' not found or not initialized")
+
+    action = await find_action_by_source(project.actions, action_source, project, ws_context)
+    if action is None:
+        raise ValueError(f"Action with source '{action_source}' not found in project '{project_path}'")
 
     runners_by_env = ws_context.ws_projects_extension_runners.get(project_path, {})
     for runner in runners_by_env.values():
-        await runner_client.reload_action(runner, action_name)
+        await runner_client.reload_action(runner, action.name)
 
     return {}
 
@@ -78,29 +95,31 @@ async def _handle_run_batch(
     """Run multiple actions across multiple (or all) projects.
 
     Params:
-      actions: list[str] - action names to run
+      actionSources: list[str] - action import-path aliases to run
       projects: list[str] | None - project paths (absolute) to filter; absent/null means all projects
       params: dict - action payload shared across all projects
-      params_by_project: dict[str, dict] - per-project payload overrides keyed by project path string
+      paramsByProject: dict[str, dict] - per-project payload overrides keyed by project path string
       options:
         concurrently: bool - run actions concurrently within each project (default false)
-        result_formats: list[str] - "string" and/or "json" (default ["string"])
+        resultFormats: list[str] - "string" and/or "json" (default ["string"])
         trigger: str - run trigger (default "user")
-        dev_env: str - dev environment (default "cli")
+        devEnv: str - dev environment (default "cli")
 
-    Result: {"results": {project_path_str: {action_name: {"resultByFormat": ..., "returnCode": int}}},
+    Result: {"results": {project_path_str: {action_source: {"resultByFormat": ..., "returnCode": int}}},
        "returnCode": int}
     """
     from finecode.wm_server.services import run_service
 
     parsed = _parse_run_batch_params(params or {})
 
-    if not parsed.actions:
-        raise ValueError("actions list is required and must be non-empty")
+    if not parsed.action_sources:
+        raise ValueError("actionSources list is required and must be non-empty")
 
-    logger.debug(f"runBatch: actions={parsed.actions} projects={parsed.project_names} formats={parsed.result_format_strs}")
+    logger.debug(f"runBatch: actionSources={parsed.action_sources} projects={parsed.project_names} formats={parsed.result_format_strs}")
 
-    actions_by_project = _resolve_actions_by_project(parsed.project_names, parsed.actions, ws_context)
+    actions_by_project, name_to_source = await _resolve_actions_by_project(
+        parsed.project_names, parsed.action_sources, ws_context
+    )
 
     await run_service.start_required_environments(
         actions_by_project, ws_context, update_config_in_running_runners=True
@@ -117,13 +136,13 @@ async def _handle_run_batch(
         payload_overrides_by_project=parsed.params_by_project,
     )
 
-    results, overall_return_code = _build_batch_result(result_by_project)
+    results, overall_return_code = _build_batch_result(result_by_project, name_to_source)
     logger.debug(f"runBatch: done, projects_count={len(results)} returnCode={overall_return_code}")
     return {"results": results, "returnCode": overall_return_code}
 
 
 async def _handle_server_reset(
-    params: dict | None, ws_context: context.WorkspaceContext
+    _params: dict | None, _ws_context: context.WorkspaceContext
 ) -> dict:
     """Reset the server state.
 
@@ -191,20 +210,17 @@ async def _handle_get_payload_schemas(
 ) -> dict:
     """Return payload schemas for the given actions in a project.
 
-    Params: ``{"project": "/abs/path/to/project", "action_names": ["lint", "format"]}``
-    Result: ``{"schemas": {"lint": {...} | null, "format": {...} | null}}``
+    Params: ``{"project": "/abs/path/to/project", "actionSources": ["finecode_extension_api.actions.LintAction"]}``
+    Result: ``{"schemas": {"finecode_extension_api.actions.LintAction": {...} | null}}``
 
-    Schemas are fetched on-demand from Extension Runners. The ``dev_workspace``
-    runner is tried first (fast path). For actions whose class is not importable
-    there, the runner for each handler env is tried as a fallback.
-
-    Results are cached in ``ws_context.ws_action_schemas``.
+    Schemas are fetched on-demand from Extension Runners keyed by the canonical
+    action name internally, then re-keyed by the requested source for the response.
     """
     from finecode.wm_server.runner import runner_client
 
     params = params or {}
     project_path = params.get("project")
-    action_names: list[str] = params.get("action_names", [])
+    action_sources: list[str] = params.get("actionSources", [])
 
     if not project_path:
         raise ValueError("project parameter is required")
@@ -217,6 +233,16 @@ async def _handle_get_payload_schemas(
             f"Project '{project_path}' actions are not collected yet. "
             "Ensure the project is initialized before requesting schemas."
         )
+
+    # Resolve each requested source to an action and its name (for schema cache lookup).
+    source_to_name: dict[str, str] = {}
+    action_names: list[str] = []
+    for source in action_sources:
+        action = await find_action_by_source(project.actions, source, project, ws_context)
+        if action is not None:
+            source_to_name[source] = action.name
+            if action.name not in action_names:
+                action_names.append(action.name)
 
     cache = ws_context.ws_action_schemas.setdefault(project.dir_path, {})
     missing = [name for name in action_names if name not in cache]
@@ -254,4 +280,10 @@ async def _handle_get_payload_schemas(
                         f"Failed to get payload schemas from runner '{env_name}': {exc}"
                     )
 
-    return {"schemas": {name: cache.get(name) for name in action_names}}
+    # Re-key schemas by the requested source rather than internal action name.
+    result_schemas: dict[str, dict | None] = {}
+    for source in action_sources:
+        name = source_to_name.get(source)
+        result_schemas[source] = cache.get(name) if name is not None else None
+
+    return {"schemas": result_schemas}

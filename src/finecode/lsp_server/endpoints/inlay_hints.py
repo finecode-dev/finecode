@@ -59,7 +59,7 @@ async def document_inlay_hint(
 
     try:
         response = await global_state.wm_client.run_action(
-            action="text_document_inlay_hint",
+            action_source="finecode_extension_api.actions.TextDocumentInlayHintAction",
             project=project_dir,
             params=inlay_hint_params_to_dict(params),
             options={"trigger": "system", "devEnv": "ide"},

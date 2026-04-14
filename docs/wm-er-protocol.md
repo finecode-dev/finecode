@@ -2,8 +2,12 @@
 
 This document describes the communication protocol between the FineCode Workspace
 Manager (WM) and Extension Runners (ER). WM is the JSON-RPC client; each ER is a
-JSON-RPC server implemented via the LSP stack (`finecode_extension_runner/lsp_server.py`).
-The protocol is LSP-shaped with a small set of custom commands.
+JSON-RPC server.
+
+The WM-ER protocol uses JSON-RPC 2.0 with LSP-style wire framing. Lifecycle method
+names (`initialize`, `initialized`, `shutdown`, `exit`) and text-document notification
+names follow LSP conventions; all FineCode-specific commands use direct JSON-RPC
+method names.
 
 ## Transport
 
@@ -12,8 +16,7 @@ The protocol is LSP-shaped with a small set of custom commands.
 - WM spawns ER processes with:
   - `python -m finecode_extension_runner.cli start --project-path=... --env-name=...`
   - `--debug` enables a debugpy attach flow before WM connects
-- Field names are camelCase for standard LSP params, but command arguments are
-  passed verbatim (snake_case is common in FineCode payloads).
+- All parameter object keys use camelCase.
 
 ## Lifecycle
 
@@ -21,7 +24,12 @@ The protocol is LSP-shaped with a small set of custom commands.
 2. WM sends `initialize` and waits for the ER response.
 3. WM sends `initialized`.
 4. WM sends `finecodeRunner/updateConfig` to bootstrap handlers and services.
-5. On shutdown: WM sends `shutdown` then `exit`.
+   - ER processes it and returns `{}`.
+5. WM sends `finecodeRunner/resolveActionSources` to get canonical action source paths.
+   - ER returns a sparse map of `configSource → canonicalSource` for actions whose
+     declared config path differs from the fully qualified runtime path.
+   - WM stores these on its `Action` domain objects before the runner is considered ready.
+6. On shutdown: WM sends `shutdown` then `exit`.
 
 ## Message Catalog
 
@@ -45,95 +53,104 @@ The protocol is LSP-shaped with a small set of custom commands.
 - `shutdown`
   - Standard LSP shutdown request.
 
-- `workspace/executeCommand`
-  - Used for all FineCode WM → ER commands. The `arguments` array is passed to
-    the handler verbatim.
+- `finecodeRunner/updateConfig`
+  - Params: `{ "workingDir": string, "projectName": string, "projectDefPath": string, "config": object }`
+  - Config shape (top-level):
+    - `actions`: list of action objects (`name`, `handlers`, `source`, `config`)
+    - `action_handler_configs`: map of handler source → config
+    - `services`: list of service declarations (optional)
+    - `handlers_to_initialize`: map of action name → handler names (optional)
+  - Result: `{}` (empty object)
 
-  **Commands**
+- `finecodeRunner/getInfo`
+  - Params: `{}`
+  - Result: `{ "logFilePath": "/abs/path/to/runner.log" | null }`
+  - Returns runtime information about the runner. Currently reports the path
+    to the runner's log file, or `null` if logging to a file is not configured.
 
-  - `finecodeRunner/updateConfig`
-    - Arguments:
-      1. `working_dir` (string path)
-      2. `project_name` (string)
-      3. `project_def_path` (string path)
-      4. `config` (object)
-    - Config shape (top-level):
-      - `actions`: list of action objects (`name`, `handlers`, `source`, `config`)
-      - `action_handler_configs`: map of handler source → config
-      - `services`: list of service declarations (optional)
-      - `handlers_to_initialize`: map of action name → handler names (optional)
-    - Result: `{}` (empty object)
+- `actions/run`
+  - Params: `{ "actionName": string, "params": object, "options": object | null }`
+  - Options keys (camelCase):
+    - `meta`: `{ "trigger": "user|system|unknown", "devEnv": "ide|cli|ai|git_hook|ci", "orchestrationDepth": int }`
+      - `orchestrationDepth`: cross-boundary hop counter, defaults to `0`. The ER propagates it unchanged via `RunActionMeta.orchestration_depth`.
+    - `partialResultToken`: `int | string` (used to correlate `$/progress`)
+    - `resultFormats`: `["json", "string"]` (defaults to `["json"]`)
+  - Result (success):
+    ```json
+    {
+      "status": "success",
+      "result_by_format": "{\"json\": {\"...\": \"...\"}}",
+      "return_code": 0
+    }
+    ```
+  - Result (streamed): used when `partialResultToken` was provided and all
+    results were delivered via `$/progress` notifications. The final response
+    is an explicit completion signal — `result_by_format` is intentionally empty.
+    The WM treats this as a valid completion; an empty `result_by_format` with
+    any other status is a protocol error.
+    ```json
+    {
+      "status": "streamed",
+      "result_by_format": "{}",
+      "return_code": 0
+    }
+    ```
+  - Result (stopped):
+    ```json
+    {
+      "status": "stopped",
+      "result_by_format": "{\"json\": {\"...\": \"...\"}}",
+      "return_code": 1
+    }
+    ```
+  - Result (error):
+    ```json
+    {"error": "message"}
+    ```
+  - Note: `result_by_format` is a JSON-encoded string (not a nested object) —
+    the WM decodes it with `json.loads` after receiving the response.
 
-  - `finecodeRunner/getInfo`
-    - Arguments: none
-    - Result: `{ "logFilePath": "/abs/path/to/runner.log" | null }`
-    - Returns runtime information about the runner. Currently reports the path
-      to the runner's log file, or `null` if logging to a file is not configured.
+- `actions/getPayloadSchemas`
+  - Params: `{}`
+  - Result: `{ action_name: JSON Schema fragment | null }`
+  - Returns a payload schema for every action currently known to the runner.
+    Each schema has `properties` (field name → JSON Schema type object) and
+    `required` (list of field names without defaults).
+    `null` means the action class could not be imported.
 
-  - `actions/run`
-    - Arguments:
-      1. `action_name` (string)
-      2. `params` (object)
-      3. `options` (object, optional)
-    - Options (snake_case keys are expected):
-      - `meta`: `{ "trigger": "user|system|unknown", "dev_env": "ide|cli|ai|precommit|ci", "orchestration_depth": int }`
-        - `orchestration_depth`: cross-boundary hop counter, defaults to `0`. The ER propagates it unchanged via `RunActionMeta.orchestration_depth`.
-      - `partial_result_token`: `int | string` (used to correlate `$/progress`)
-      - `result_formats`: `["json", "string"]` (defaults to `["json"]`)
-    - Result (success):
-      ```json
-      {
-        "status": "success",
-        "result_by_format": "{\"json\": {\"...\": \"...\"}}",
-        "return_code": 0
-      }
-      ```
-    - Result (streamed): used when `partial_result_token` was provided and all
-      results were delivered via `$/progress` notifications. Following LSP convention,
-      the final response is an explicit completion signal — `result_by_format` is
-      intentionally empty. The WM treats this as a valid completion; an empty
-      `result_by_format` with any other status is a protocol error.
-      ```json
-      {
-        "status": "streamed",
-        "result_by_format": "{}",
-        "return_code": 0
-      }
-      ```
-    - Result (stopped):
-      ```json
-      {
-        "status": "stopped",
-        "result_by_format": "{\"json\": {\"...\": \"...\"}}",
-        "return_code": 1
-      }
-      ```
-    - Result (error):
-      ```json
-      {"error": "message"}
-      ```
-    - Note: `result_by_format` is a JSON string (not a JSON object) due to
-      LSP serialization constraints in the runner.
+- `actions/mergeResults`
+  - Params: `{ "actionName": string, "results": list }`
+  - Result: `{ "merged": ... }` or `{ "error": "..." }`
 
-  - `actions/getPayloadSchemas`
-    - Arguments: none
-    - Result: `{ action_name: JSON Schema fragment | null }`
-    - Returns a payload schema for every action currently known to the runner.
-      Each schema has `properties` (field name → JSON Schema type object) and
-      `required` (list of field names without defaults).
-      `null` means the action class could not be imported.
+- `actions/reload`
+  - Params: `{ "actionName": string }`
+  - Result: `{}`
 
-  - `actions/mergeResults`
-    - Arguments: `[action_name, results]`
-    - Result: `{ "merged": ... }` or `{ "error": "..." }`
+- `finecodeRunner/resolveActionSources`
+  - Params: `{}` (no params)
+  - Result: sparse map of `{ "<configSource>": "<canonicalSource>", ... }` for actions
+    whose declared config path differs from the fully qualified runtime path.
+    Only entries where the two differ are included.
+    Example: `{ "myext.LintAction": "myext.actions.lint.LintAction" }`
+  - Called by the WM after `finecodeRunner/updateConfig` completes to store canonical
+    sources on its `Action` domain objects before the runner is considered ready.
+    The WM uses `canonical_source` as the primary identifier in all subsequent action
+    lookups; `source` (from config) is the fallback for actions whose class could not
+    be imported in this env.
+  - Actions where `cls.__module__ + "." + cls.__qualname__ == config source` are
+    omitted (no mapping needed — the config source is already canonical).
 
-  - `actions/reload`
-    - Arguments: `[action_name]`
-    - Result: `{}`
+- `actions/resolveSource`
+  - Params: `{ "source": string }` — an arbitrary import-path alias to resolve.
+  - Result: `{ "canonicalSource": string }` — the fully qualified class path
+    (`cls.__module__ + "." + cls.__qualname__`).
+  - Raises a JSON-RPC error if the alias cannot be imported or resolved.
+  - Used during action lookup when a caller provides an alias not already known
+    from `finecodeRunner/resolveActionSources` (full ADR-0019 support).
 
-  - `packages/resolvePath`
-    - Arguments: `[package_name]`
-    - Result: `{ "packagePath": "/abs/path/to/package" }`
+- `packages/resolvePath`
+  - Params: `{ "packageName": string }`
+  - Result: `{ "packagePath": "/abs/path/to/package" }`
 
 **Notifications**
 
@@ -159,7 +176,12 @@ The protocol is LSP-shaped with a small set of custom commands.
 
 - `finecode/runActionInProject`
   - Params:
-    - `actionSource` (string): import path of the action class (e.g. `"myext.actions.lint.LintAction"`)
+    - `actionSource` (string): **fully qualified** import path of the action class —
+      `f"{cls.__module__}.{cls.__qualname__}"` (e.g. `"myext.actions.lint.LintAction"`).
+      Must not be a re-exported alias such as `"myext.LintAction"`. The WM resolves
+      the action name by matching against the canonical source reported by
+      `finecodeRunner/resolveActionSources`; a re-exported path will not match and the
+      request will fail.
     - `payload` (object): serialized action payload (`dataclasses.asdict`)
     - `meta` (object): `{ "trigger": string, "devEnv": string, "orchestrationDepth": int }`
   - Result: `{ "result": <json result object>, "returnCode": 0|1 }`
@@ -167,7 +189,8 @@ The protocol is LSP-shaped with a small set of custom commands.
 
 - `finecode/runActionInWorkspace`
   - Params:
-    - `actionSource` (string): import path of the action class
+    - `actionSource` (string): **fully qualified** import path of the action class —
+      same constraint as `finecode/runActionInProject` above.
     - `payload` (object): serialized action payload
     - `meta` (object): `{ "trigger": string, "devEnv": string, "orchestrationDepth": int }`
     - `projectPaths` (list[string] | null): explicit POSIX project paths, or `null` for all projects that declare the action

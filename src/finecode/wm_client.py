@@ -185,7 +185,7 @@ class ApiClient:
         return result["actions"]
 
     async def get_payload_schemas(
-        self, project: str, action_names: list[str]
+        self, project: str, action_sources: list[str]
     ) -> dict[str, dict | None]:
         """Return payload schemas for the given actions in a project.
 
@@ -193,15 +193,15 @@ class ApiClient:
 
         Args:
             project: Absolute path to the project directory.
-            action_names: List of action names to fetch schemas for.
+            action_sources: List of action import-path aliases (ADR-0019).
 
         Returns:
-            Mapping of action name → JSON Schema fragment, or ``None``
+            Mapping of action source → JSON Schema fragment, or ``None``
             for actions whose class could not be imported by the ER.
         """
         result = await self.request(
             "actions/getPayloadSchemas",
-            {"project": project, "action_names": action_names},
+            {"project": project, "actionSources": action_sources},
         )
         if not isinstance(result, dict) or "schemas" not in result:
             raise ApiResponseError(
@@ -242,7 +242,7 @@ class ApiClient:
 
     async def run_batch(
         self,
-        actions: list[str],
+        action_sources: list[str],
         projects: list[str] | None = None,
         params: dict | None = None,
         params_by_project: dict[str, dict] | None = None,
@@ -251,12 +251,12 @@ class ApiClient:
     ) -> dict:
         """Run multiple actions across multiple (or all) projects.
 
-        Results are keyed by project path string, then action name.
+        Results are keyed by project path string, then action source.
         All result keys use camelCase (returnCode, resultByFormat).
         If ``progress_token`` is provided, progress notifications are delivered
         as ``actions/progress`` notifications before this coroutine returns.
         """
-        body: dict = {"actions": actions}
+        body: dict = {"actionSources": action_sources}
         if projects is not None:
             body["projects"] = projects
         if params:
@@ -271,7 +271,7 @@ class ApiClient:
 
     async def run_action(
         self,
-        action: str,
+        action_source: str,
         project: str,
         params: dict | None = None,
         options: dict | None = None,
@@ -279,11 +279,12 @@ class ApiClient:
     ) -> dict:
         """Run an action on a project.
 
+        ``action_source`` is an import-path alias identifying the action (ADR-0019).
         If ``progress_token`` is provided, progress notifications are delivered
         as ``actions/progress`` notifications before this coroutine returns.
         """
         body: dict = {
-            "action": action,
+            "actionSource": action_source,
             "project": project,
             "options": options,
         }
@@ -295,7 +296,7 @@ class ApiClient:
 
     async def run_action_with_partial_results(
         self,
-        action: str,
+        action_source: str,
         project: str,
         partial_result_token: str,
         params: dict | None = None,
@@ -304,6 +305,7 @@ class ApiClient:
     ) -> dict:
         """Run an action with streaming partial results via notifications.
 
+        ``action_source`` is an import-path alias identifying the action (ADR-0019).
         Pass ``project=""`` to run across all projects that expose the action.
         Partial results are delivered as ``actions/partialResult`` notifications
         before this coroutine returns the aggregated final result.
@@ -311,7 +313,7 @@ class ApiClient:
         ``progress_token`` is provided.
         """
         body: dict = {
-            "action": action,
+            "actionSource": action_source,
             "project": project,
             "partialResultToken": partial_result_token,
             "options": options or {},

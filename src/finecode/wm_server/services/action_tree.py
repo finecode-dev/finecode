@@ -30,10 +30,10 @@ def _project_action_tree(project: domain.Project | None, ws_context: context.Wor
     if isinstance(project, domain.CollectedProject):
         action_nodes: list[dict] = []
         for action in project.actions:
-            node_id = f"{project.dir_path.as_posix()}::{action.name}"
+            node_id = f"{project.dir_path.as_posix()}::{action.source}"
             handlers_nodes: list[dict] = []
             for handler in action.handlers:
-                handler_node_id = f"{project.dir_path.as_posix()}::{action.name}::{handler.name}"
+                handler_node_id = f"{project.dir_path.as_posix()}::{action.source}::{handler.name}"
                 handlers_nodes.append(
                     {
                         "nodeId": handler_node_id,
@@ -47,6 +47,7 @@ def _project_action_tree(project: domain.Project | None, ws_context: context.Wor
                 {
                     "nodeId": node_id,
                     "name": action.name,
+                    "source": action.source,
                     "nodeType": 2,  # ACTION
                     "subnodes": handlers_nodes,
                     "status": "",
@@ -55,7 +56,7 @@ def _project_action_tree(project: domain.Project | None, ws_context: context.Wor
             ws_context.cached_actions_by_id[node_id] = context.CachedAction(
                 action_id=node_id,
                 project_path=project.dir_path,
-                action_name=action.name,
+                action_source=action.source,
             )
 
         node_id = f"{project.dir_path.as_posix()}::actions"
@@ -167,7 +168,7 @@ def _build_tree(ws_context: context.WorkspaceContext) -> list[dict]:
 
 
 async def _handle_get_tree(
-    params: dict | None, ws_context: context.WorkspaceContext
+    _params: dict | None, ws_context: context.WorkspaceContext
 ) -> dict:
     """Request handler that returns the action tree for the workspace."""
 

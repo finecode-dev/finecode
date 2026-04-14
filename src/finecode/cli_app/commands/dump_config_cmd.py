@@ -48,7 +48,7 @@ async def dump_config(
             try:
                 project_raw_config = await client.get_project_raw_config(project_path)
                 await client.run_action(
-                    action="dump_config",
+                    action_source="finecode_extension_api.actions.DumpConfigAction",
                     project=project_path,
                     params={
                         "source_file_path": str(

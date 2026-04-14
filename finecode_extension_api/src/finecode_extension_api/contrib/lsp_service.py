@@ -165,6 +165,16 @@ class LspService(service.DisposableService):
             {"settings": self._settings},
         )
 
+    async def request(
+        self,
+        method: str,
+        params: dict[str, Any],
+        timeout: float = 30.0,
+    ) -> Any:
+        """Send an arbitrary LSP request to the running server and return the result."""
+        assert self._session is not None, "LspService not started"
+        return await self._session.send_request(method, params, timeout=timeout)
+
     async def check_file(
         self,
         file_path: Path,

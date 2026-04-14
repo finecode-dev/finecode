@@ -25,6 +25,7 @@ ER_RUN_ACTION = "actions/run"
 ER_RELOAD_ACTION = "actions/reload"
 ER_MERGE_RESULTS = "actions/mergeResults"
 ER_GET_PAYLOAD_SCHEMAS = "actions/getPayloadSchemas"
+ER_RESOLVE_SOURCE = "actions/resolveSource"
 ER_RESOLVE_PACKAGE_PATH = "packages/resolvePath"
 ER_UPDATE_CONFIG = "finecodeRunner/updateConfig"
 ER_RESOLVE_ACTION_SOURCES = "finecodeRunner/resolveActionSources"
@@ -1661,6 +1662,26 @@ class ErGetPayloadSchemasResponse(BaseResponse):
 
 
 @dataclasses.dataclass
+class ErResolveSourceParams:
+    source: str
+
+
+@dataclasses.dataclass
+class ErResolveSourceRequest(BaseRequest):
+    params: ErResolveSourceParams
+
+
+@dataclasses.dataclass
+class ErResolveSourceResult(BaseResult):
+    canonical_source: str | None = None
+
+
+@dataclasses.dataclass
+class ErResolveSourceResponse(BaseResponse):
+    result: ErResolveSourceResult
+
+
+@dataclasses.dataclass
 class ErResolvePackagePathParams:
     package_name: str
 
@@ -1749,6 +1770,7 @@ METHOD_TO_TYPES: dict[
     ER_RELOAD_ACTION: (ErReloadActionRequest, ErReloadActionParams, ErReloadActionResponse, None),
     ER_MERGE_RESULTS: (ErMergeResultsRequest, ErMergeResultsParams, ErMergeResultsResponse, None),
     ER_GET_PAYLOAD_SCHEMAS: (None, None, ErGetPayloadSchemasResponse, None),
+    ER_RESOLVE_SOURCE: (ErResolveSourceRequest, ErResolveSourceParams, ErResolveSourceResponse, None),
     ER_RESOLVE_PACKAGE_PATH: (ErResolvePackagePathRequest, ErResolvePackagePathParams, ErResolvePackagePathResponse, None),
     ER_UPDATE_CONFIG: (ErUpdateConfigRequest, ErUpdateConfigParams, ErUpdateConfigResponse, None),
     ER_GET_INFO: (None, None, ErGetInfoResponse, None),
