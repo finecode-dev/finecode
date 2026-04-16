@@ -3,13 +3,12 @@ from importlib import metadata
 from pathlib import Path
 from typing import Any, NamedTuple
 
-from loguru import logger
-from tomlkit import loads as toml_loads
-
 from finecode import user_messages
 from finecode.wm_server import context, domain
 from finecode.wm_server.config import config_models
 from finecode.wm_server.runner import runner_client
+from loguru import logger
+from tomlkit import loads as toml_loads
 
 
 async def read_projects_in_dir(
@@ -190,7 +189,7 @@ class PresetToProcess(NamedTuple):
 
 async def get_preset_project_path(
     preset: PresetToProcess, def_path: Path, runner: runner_client.ExtensionRunnerInfo
-) -> Path | None:
+) -> Path:
     logger.trace(f"Get preset project path: {preset.source}")
 
     try:
@@ -198,12 +197,29 @@ async def get_preset_project_path(
             runner, preset.source
         )
     except runner_client.BaseRunnerRequestException as error:
-        await user_messages.error(f"Failed to get preset project path: {error.message}")
-        return None
+        error_message = error.message
+        lower_message = error_message.lower()
+        if "cannot find package" in lower_message or "no module named" in lower_message:
+            raise config_models.ConfigurationError(
+                "Preset "
+                f"{preset.source} is referenced in project {def_path.parent}, "
+                "but this preset package is not installed in the dev_workspace "
+                "environment. Add it to [tool.finecode.env.dev_workspace.dependencies] "
+                "or install it manually, then run prepare-envs again. "
+                f"Runner error: {error_message}"
+            )
+
+        await user_messages.error(f"Failed to get preset project path: {error_message}")
+        raise config_models.ConfigurationError(
+            "Failed to resolve preset package path "
+            f"for {preset.source} in project {def_path.parent}: {error_message}"
+        )
     try:
         preset_project_path = Path(resolve_path_result["packagePath"])
     except KeyError as exception:
-        raise ValueError(f"Preset source cannot be resolved: {preset.source}") from exception
+        raise ValueError(
+            f"Preset source cannot be resolved: {preset.source}"
+        ) from exception
 
     logger.trace(f"Got: {preset.source} -> {preset_project_path}")
     return preset_project_path
@@ -265,11 +281,6 @@ async def collect_config_from_py_presets(
         preset_project_path = await get_preset_project_path(
             preset=preset, def_path=def_path, runner=runner
         )
-        if preset_project_path is None:
-            logger.trace(f"Path of preset {preset.source} not found")
-            raise config_models.ConfigurationError(
-                f"Path of preset {preset.source} in project {def_path.parent} not found"
-            )
 
         preset_toml_path = preset_project_path / "preset.toml"
         preset_toml, preset_config = read_preset_config(preset_toml_path, preset.source)
@@ -387,9 +398,14 @@ def _merge_projects_configs(
                     if "handlers" in action_info:
                         handlers_mode = action_info.get("handlers_mode", "merge")
                         if handlers_mode == "replace":
-                            tool_finecode_config1[key][action_name]["handlers"] = action_info["handlers"]
+                            tool_finecode_config1[key][action_name]["handlers"] = (
+                                action_info["handlers"]
+                            )
                         else:
-                            if "handlers" not in tool_finecode_config1[key][action_name]:
+                            if (
+                                "handlers"
+                                not in tool_finecode_config1[key][action_name]
+                            ):
                                 tool_finecode_config1[key][action_name]["handlers"] = []
 
                             existing_handlers = tool_finecode_config1[key][action_name][
@@ -626,7 +642,9 @@ def merge_handlers_dependencies_into_groups(project_config: dict[str, Any]) -> N
 
 def merge_services_dependencies_into_groups(project_config: dict[str, Any]) -> None:
     # tool.finecode.service[x].dependencies
-    services_list = project_config.get("tool", {}).get("finecode", {}).get("service", [])
+    services_list = (
+        project_config.get("tool", {}).get("finecode", {}).get("service", [])
+    )
     if "dependency-groups" not in project_config:
         project_config["dependency-groups"] = {}
     deps_groups = project_config["dependency-groups"]

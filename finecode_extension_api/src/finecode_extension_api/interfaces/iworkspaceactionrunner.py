@@ -4,7 +4,6 @@ import pathlib
 import typing
 
 from finecode_extension_api import code_action, service
-from finecode_extension_api.interfaces.iactionrunner import ActionDeclaration
 
 PayloadT = typing.TypeVar("PayloadT", bound=code_action.RunActionPayload)
 ResultT = typing.TypeVar("ResultT", bound=code_action.RunActionResult)
@@ -24,7 +23,7 @@ class IWorkspaceActionRunner(service.Service, typing.Protocol):
 
     async def run_action_in_projects(
         self,
-        action: ActionDeclaration[code_action.Action[PayloadT, typing.Any, ResultT]],
+        action_type: type[code_action.Action[PayloadT, typing.Any, ResultT]],
         payload: PayloadT,
         meta: code_action.RunActionMeta,
         project_paths: list[pathlib.Path] | None = None,

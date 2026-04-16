@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-import enum
 import dataclasses
+import enum
 import typing
 from pathlib import Path
 
@@ -24,10 +24,11 @@ class ActionDeclaration:
 
 
 class ActionHandlerDeclaration:
-    def __init__(self, name: str, source: str, config: dict[str, typing.Any]) -> None:
+    def __init__(self, name: str, source: str, config: dict[str, typing.Any], env: str | None = None) -> None:
         self.name = name
         self.source = source
         self.config = config
+        self.env = env
 
 
 class Project:

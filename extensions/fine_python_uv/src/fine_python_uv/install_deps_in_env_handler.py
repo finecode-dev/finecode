@@ -2,7 +2,7 @@ import dataclasses
 
 from finecode_extension_api import code_action
 from finecode_extension_api.actions.environments import install_deps_in_env_action
-from finecode_extension_api.interfaces import iactionrunner, icommandrunner, ilogger, iprojectinfoprovider
+from finecode_extension_api.interfaces import icommandrunner, ilogger, iprojectactionrunner, iprojectinfoprovider
 from finecode_extension_api.resource_uri import resource_uri_to_path
 
 from ._uv_common import dump_project_config, get_uv_executable
@@ -24,7 +24,7 @@ class UvInstallDepsInEnvHandler(
         config: UvInstallDepsInEnvHandlerConfig,
         command_runner: icommandrunner.ICommandRunner,
         logger: ilogger.ILogger,
-        action_runner: iactionrunner.IActionRunner,
+        action_runner: iprojectactionrunner.IProjectActionRunner,
         project_info_provider: iprojectinfoprovider.IProjectInfoProvider,
     ) -> None:
         self.config = config

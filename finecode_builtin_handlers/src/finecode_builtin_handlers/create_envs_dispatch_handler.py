@@ -6,7 +6,7 @@ from finecode_extension_api.actions.environments import (
     create_env_action,
     create_envs_action,
 )
-from finecode_extension_api.interfaces import iactionrunner, ilogger
+from finecode_extension_api.interfaces import ilogger, iprojectactionrunner
 
 
 @dataclasses.dataclass
@@ -21,7 +21,7 @@ class CreateEnvsDispatchHandler(
     """Dispatch a create_env call per environment concurrently."""
 
     def __init__(
-        self, action_runner: iactionrunner.IActionRunner, logger: ilogger.ILogger
+        self, action_runner: iprojectactionrunner.IProjectActionRunner, logger: ilogger.ILogger
     ) -> None:
         self.action_runner = action_runner
         self.logger = logger
@@ -36,15 +36,11 @@ class CreateEnvsDispatchHandler(
                 "envs must be either provided in payload or be discovered by previous `create_envs` handlers"
             )
 
-        create_env_action_instance = self.action_runner.get_action_by_source(
-            create_env_action.CreateEnvAction,
-        )
-
         tasks: list[asyncio.Task[create_envs_action.CreateEnvsRunResult]] = []
         async with run_context.progress("Creating environments", total=len(run_context.envs)) as progress:
             async def _create_and_advance(env):
                 result = await self.action_runner.run_action(
-                    action=create_env_action_instance,
+                    action_type=create_env_action.CreateEnvAction,
                     payload=create_env_action.CreateEnvRunPayload(
                         env=env,
                         recreate=payload.recreate,

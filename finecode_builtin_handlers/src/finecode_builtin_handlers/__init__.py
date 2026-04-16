@@ -19,7 +19,9 @@ from .install_env_read_config_handler import InstallEnvReadConfigHandler
 from .install_envs_discover_envs_handler import InstallEnvsDiscoverEnvsHandler
 from .install_envs_dispatch_handler import InstallEnvsDispatchHandler
 from .install_git_hooks import InstallGitHooksHandler
+from .get_lint_fixes_files_dispatch_handler import GetLintFixesFilesDispatchHandler
 from .lint_files_dispatch_handler import LintFilesDispatchHandler
+from .lint_fixes_code_actions_bridge_handler import LintFixesCodeActionsBridgeHandler
 from .lint_handler import LintHandler
 from .lint_precommit_bridge_handler import LintPrecommitBridgeHandler
 from .publish_artifact_handler import PublishArtifactHandler
@@ -46,7 +48,9 @@ __all__ = [
     "InstallEnvReadConfigHandler",
     "InstallEnvsDiscoverEnvsHandler",
     "InstallEnvsDispatchHandler",
+    "GetLintFixesFilesDispatchHandler",
     "LintFilesDispatchHandler",
+    "LintFixesCodeActionsBridgeHandler",
     "LintHandler",
     "PublishArtifactHandler",
     "SaveFormatFileHandler",

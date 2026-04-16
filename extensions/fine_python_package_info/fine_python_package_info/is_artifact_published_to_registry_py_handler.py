@@ -5,9 +5,9 @@ from finecode_extension_api.actions.artifact import get_src_artifact_registries_
 from finecode_extension_api.actions.publishing import is_artifact_published_to_registry_action
 from finecode_extension_api.resource_uri import resource_uri_to_path
 from finecode_extension_api.interfaces import (
-    iactionrunner,
     ihttpclient,
     ilogger,
+    iprojectactionrunner,
     iprojectinfoprovider,
 )
 
@@ -25,7 +25,7 @@ class IsArtifactPublishedToRegistryPyHandler(
     def __init__(
         self,
         config: IsArtifactPublishedToRegistryPyHandlerConfig,
-        action_runner: iactionrunner.IActionRunner,
+        action_runner: iprojectactionrunner.IProjectActionRunner,
         project_info_provider: iprojectinfoprovider.IProjectInfoProvider,
         logger: ilogger.ILogger,
         http_client: ihttpclient.IHttpClient,
@@ -58,21 +58,17 @@ class IsArtifactPublishedToRegistryPyHandler(
             raise code_action.ActionFailedException(
                 f"project.name in {payload.src_artifact_def_path} expected to be a string, but is {type(package_name)}"
             )
-        
+
         # normalize package name
         package_name = package_name.replace('_', '-')
 
         # Get registries using the action
-        get_registries_action = self.action_runner.get_action_by_source(
-            get_src_artifact_registries_action.GetSrcArtifactRegistriesAction
-        )
-        registries_payload = (
-            get_src_artifact_registries_action.GetSrcArtifactRegistriesRunPayload(
-                src_artifact_def_path=payload.src_artifact_def_path
-            )
-        )
         registries_result = await self.action_runner.run_action(
-            action=get_registries_action, payload=registries_payload, meta=run_meta
+            action_type=get_src_artifact_registries_action.GetSrcArtifactRegistriesAction,
+            payload=get_src_artifact_registries_action.GetSrcArtifactRegistriesRunPayload(
+                src_artifact_def_path=payload.src_artifact_def_path
+            ),
+            meta=run_meta,
         )
 
         # Find the registry by name
@@ -113,10 +109,10 @@ class IsArtifactPublishedToRegistryPyHandler(
         version_list = response_json.get('versions', None)
         if version_list is None:
             raise code_action.ActionFailedException("No 'versions' key in response from registry")
-        
+
         if not isinstance(version_list, list):
             raise code_action.ActionFailedException("'versions' key in response from registry expected to be a list")
-        
+
         version_is_published = payload.version in version_list
         dist_artifact_paths = payload.dist_artifact_paths
         if version_is_published:

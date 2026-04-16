@@ -4,7 +4,7 @@ import dataclasses
 from finecode_extension_api import code_action
 from finecode_extension_api.actions.artifact import list_src_artifact_files_by_lang_action
 from finecode_extension_api.actions.code_quality import lint_action, lint_files_action
-from finecode_extension_api.interfaces import iactionrunner, ifileeditor, ilogger
+from finecode_extension_api.interfaces import ifileeditor, ilogger, iprojectactionrunner
 from finecode_extension_api.resource_uri import ResourceUri, path_to_resource_uri
 
 
@@ -23,7 +23,7 @@ class LintHandler(
     def __init__(
         self,
         config: LintHandlerConfig,
-        action_runner: iactionrunner.IActionRunner,
+        action_runner: iprojectactionrunner.IProjectActionRunner,
         logger: ilogger.ILogger,
         file_editor: ifileeditor.IFileEditor,
     ) -> None:
@@ -53,11 +53,8 @@ class LintHandler(
                     for p in self.file_editor.get_opened_files()
                 ]
             else:
-                list_action = self.action_runner.get_action_by_source(
-                    list_src_artifact_files_by_lang_action.ListSrcArtifactFilesByLangAction,
-                )
                 files_by_lang_result = await self.action_runner.run_action(
-                    action=list_action,
+                    action_type=list_src_artifact_files_by_lang_action.ListSrcArtifactFilesByLangAction,
                     payload=list_src_artifact_files_by_lang_action.ListSrcArtifactFilesByLangRunPayload(
                         langs=None
                     ),
@@ -71,12 +68,9 @@ class LintHandler(
         else:
             file_uris = payload.file_paths
 
-        lint_files_action_instance = self.action_runner.get_action_by_source(
-            lint_files_action.LintFilesAction
-        )
         async with run_context.progress("Linting files", total=len(file_uris)) as progress:
             async for partial in self.action_runner.run_action_iter(
-                action=lint_files_action_instance,
+                action_type=lint_files_action.LintFilesAction,
                 payload=lint_files_action.LintFilesRunPayload(file_paths=file_uris),
                 meta=run_meta,
             ):

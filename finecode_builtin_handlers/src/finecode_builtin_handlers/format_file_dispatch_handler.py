@@ -3,7 +3,7 @@ import dataclasses
 from finecode_extension_api import code_action
 from finecode_extension_api.actions.artifact import group_src_artifact_files_by_lang_action
 from finecode_extension_api.actions.code_quality import format_file_action
-from finecode_extension_api.interfaces import iactionrunner, ilogger
+from finecode_extension_api.interfaces import ilogger, iprojectactionrunner
 
 
 @dataclasses.dataclass
@@ -24,7 +24,7 @@ class FormatFileDispatchHandler(
 
     def __init__(
         self,
-        action_runner: iactionrunner.IActionRunner,
+        action_runner: iprojectactionrunner.IProjectActionRunner,
         logger: ilogger.ILogger,
     ) -> None:
         self.action_runner = action_runner
@@ -45,11 +45,8 @@ class FormatFileDispatchHandler(
                 changed=False, code=run_context.file_info.file_content
             )
 
-        group_action = self.action_runner.get_action_by_source(
-            group_src_artifact_files_by_lang_action.GroupSrcArtifactFilesByLangAction,
-        )
         files_by_lang_result = await self.action_runner.run_action(
-            action=group_action,
+            action_type=group_src_artifact_files_by_lang_action.GroupSrcArtifactFilesByLangAction,
             payload=group_src_artifact_files_by_lang_action.GroupSrcArtifactFilesByLangRunPayload(
                 file_paths=[payload.file_path],
                 langs=list(subactions_by_lang.keys()),
@@ -72,7 +69,7 @@ class FormatFileDispatchHandler(
             )
 
         result: format_file_action.FormatFileRunResult = await self.action_runner.run_action(
-            action=lang_subaction,
+            action_type=lang_subaction,
             payload=format_file_action.FormatFileRunPayload(
                 file_path=payload.file_path,
                 save=payload.save,

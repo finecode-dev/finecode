@@ -2,7 +2,7 @@ import dataclasses
 
 from finecode_extension_api import code_action
 from finecode_extension_api.actions.publishing import init_repository_provider_action
-from finecode_extension_api.interfaces import iactionrunner
+from finecode_extension_api.interfaces import iprojectactionrunner
 from finecode_extension_api.interfaces.irepositorycredentialsprovider import (
     Repository,
     RepositoryCredentials,
@@ -35,7 +35,7 @@ class PublishAndVerifyArtifactInitRepositoryProviderHandler(
     def __init__(
         self,
         config: PublishAndVerifyArtifactInitRepositoryProviderHandlerConfig,
-        action_runner: iactionrunner.IActionRunner,
+        action_runner: iprojectactionrunner.IProjectActionRunner,
     ) -> None:
         self.config = config
         self.action_runner = action_runner
@@ -47,15 +47,13 @@ class PublishAndVerifyArtifactInitRepositoryProviderHandler(
     ) -> PublishAndVerifyArtifactRunResult:
         run_meta = run_context.meta
 
-        init_action = self.action_runner.get_action_by_source(
-            init_repository_provider_action.InitRepositoryProviderAction,
-        )
-        init_payload = init_repository_provider_action.InitRepositoryProviderRunPayload(
-            repositories=self.config.repositories,
-            credentials_by_repository=self.config.credentials_by_repository,
-        )
         await self.action_runner.run_action(
-            action=init_action, payload=init_payload, meta=run_meta
+            action_type=init_repository_provider_action.InitRepositoryProviderAction,
+            payload=init_repository_provider_action.InitRepositoryProviderRunPayload(
+                repositories=self.config.repositories,
+                credentials_by_repository=self.config.credentials_by_repository,
+            ),
+            meta=run_meta,
         )
 
         return PublishAndVerifyArtifactRunResult(

@@ -16,6 +16,7 @@ class ActionHandler(BaseSchema):
     name: str
     source: str | None = None
     config: dict[str, Any] | None = None
+    env: str | None = None
 
 
 @dataclass

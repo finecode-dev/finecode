@@ -11,7 +11,7 @@ from loguru import logger
 from pydantic.dataclasses import dataclass as pydantic_dataclass
 
 from finecode_extension_api import code_action, textstyler, service
-from finecode_extension_api.interfaces import iactionrunner
+from finecode_extension_api.interfaces import iprojectactionrunner
 from finecode_extension_runner import (
     context,
     domain,
@@ -1122,7 +1122,7 @@ async def execute_action_handler(
             response = action_result_to_run_action_response(action_result, ["string"])
             raise StopWithResponse(response=response) from exception
         elif isinstance(
-            exception, iactionrunner.BaseRunActionException
+            exception, iprojectactionrunner.BaseRunActionException
         ) or isinstance(exception, code_action.ActionFailedException):
             error_str = exception.message
         else:

@@ -119,6 +119,27 @@ source = "finecode_builtin_handlers.LintFilesDispatchHandler"
 env = "dev_no_runtime"
 dependencies = ["finecode_builtin_handlers~=0.2.0a0"]
 
+[tool.finecode.action.get_lint_fixes]
+source = "finecode_extension_api.actions.GetLintFixesAction"
+
+[[tool.finecode.action.get_lint_fixes.handlers]]
+name = "get_lint_fixes_dispatch"
+source = "finecode_builtin_handlers.GetLintFixesFilesDispatchHandler"
+env = "dev_no_runtime"
+dependencies = ["finecode_builtin_handlers~=0.2.0a0"]
+
+[tool.finecode.action.get_lint_fixes_python_files]
+source = "finecode_extension_api.actions.GetLintFixesPythonFilesAction"
+
+[tool.finecode.action.get_code_actions]
+source = "finecode_extension_api.actions.GetCodeActionsAction"
+
+[[tool.finecode.action.get_code_actions.handlers]]
+name = "lint_fixes_code_actions_bridge"
+source = "finecode_builtin_handlers.LintFixesCodeActionsBridgeHandler"
+env = "dev_no_runtime"
+dependencies = ["finecode_builtin_handlers~=0.2.0a0"]
+
 [tool.finecode.action.format_file]
 source = "finecode_extension_api.actions.FormatFileAction"
 

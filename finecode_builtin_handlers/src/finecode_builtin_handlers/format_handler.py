@@ -4,7 +4,7 @@ import dataclasses
 from finecode_extension_api import code_action
 from finecode_extension_api.actions.artifact import list_src_artifact_files_by_lang_action
 from finecode_extension_api.actions.code_quality import format_action, format_files_action
-from finecode_extension_api.interfaces import iactionrunner, ifileeditor, ilogger
+from finecode_extension_api.interfaces import ifileeditor, ilogger, iprojectactionrunner
 from finecode_extension_api.resource_uri import ResourceUri, path_to_resource_uri
 
 
@@ -17,7 +17,7 @@ class FormatHandler(
 ):
     def __init__(
         self,
-        action_runner: iactionrunner.IActionRunner,
+        action_runner: iprojectactionrunner.IProjectActionRunner,
         logger: ilogger.ILogger,
         file_editor: ifileeditor.IFileEditor,
     ) -> None:
@@ -45,11 +45,8 @@ class FormatHandler(
                     for p in self.file_editor.get_opened_files()
                 ]
             else:
-                list_action = self.action_runner.get_action_by_source(
-                    list_src_artifact_files_by_lang_action.ListSrcArtifactFilesByLangAction,
-                )
                 files_by_lang_result = await self.action_runner.run_action(
-                    action=list_action,
+                    action_type=list_src_artifact_files_by_lang_action.ListSrcArtifactFilesByLangAction,
                     payload=list_src_artifact_files_by_lang_action.ListSrcArtifactFilesByLangRunPayload(
                         langs=None
                     ),
@@ -63,12 +60,9 @@ class FormatHandler(
         else:
             file_uris = payload.file_paths
 
-        format_files_action_instance = self.action_runner.get_action_by_source(
-            format_files_action.FormatFilesAction
-        )
         async with run_context.progress("Formatting files", total=len(file_uris)) as progress:
             async for partial in self.action_runner.run_action_iter(
-                action=format_files_action_instance,
+                action_type=format_files_action.FormatFilesAction,
                 payload=format_files_action.FormatFilesRunPayload(
                     file_paths=file_uris,
                     save=payload.save,

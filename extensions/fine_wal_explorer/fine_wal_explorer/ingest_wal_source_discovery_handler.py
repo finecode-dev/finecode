@@ -11,7 +11,7 @@ from finecode_extension_api.actions.observability.ingest_wal_to_store_action imp
     IngestWalToStoreRunPayload,
     IngestWalToStoreRunResult,
 )
-from finecode_extension_api.interfaces import iactionrunner
+from finecode_extension_api.interfaces import iprojectactionrunner
 
 
 @dataclasses.dataclass
@@ -28,7 +28,7 @@ class IngestWalSourceDiscoveryHandler(
 
     def __init__(
         self,
-        action_runner: iactionrunner.IActionRunner,
+        action_runner: iprojectactionrunner.IProjectActionRunner,
     ) -> None:
         self.action_runner = action_runner
 
@@ -45,9 +45,8 @@ class IngestWalSourceDiscoveryHandler(
         if run_context.source_specs is not None:
             return IngestWalToStoreRunResult()
 
-        discover_action = self.action_runner.get_action_by_source(DiscoverWalSourcesAction)
         discover_result = await self.action_runner.run_action(
-            action=discover_action,
+            action_type=DiscoverWalSourcesAction,
             payload=DiscoverWalSourcesRunPayload(),
             meta=run_context.meta,
         )

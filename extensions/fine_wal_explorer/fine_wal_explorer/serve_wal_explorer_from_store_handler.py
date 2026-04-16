@@ -27,8 +27,8 @@ from finecode_extension_api.actions.observability.serve_wal_explorer_from_store_
     ServeWalExplorerFromStoreRunResult,
 )
 from finecode_extension_api.interfaces import (
-    iactionrunner,
     ilogger,
+    iprojectactionrunner,
     iworkspaceactionrunner,
 )
 from finecode_extension_api.resource_uri import (
@@ -313,7 +313,7 @@ class ServeWalExplorerFromStoreHandler(
     def __init__(
         self,
         config: ServeWalExplorerFromStoreHandlerConfig,
-        action_runner: iactionrunner.IActionRunner,
+        action_runner: iprojectactionrunner.IProjectActionRunner,
         workspace_runner: iworkspaceactionrunner.IWorkspaceActionRunner,
         logger: ilogger.ILogger,
     ) -> None:
@@ -429,7 +429,6 @@ class ServeWalExplorerFromStoreHandler(
 
         self.logger.info("WAL ingest requested from HTTP endpoint")
 
-        ingest_action = self.action_runner.get_action_by_source(IngestWalToStoreAction)
         warnings: list[str] = []
         with state_lock:
             state.refreshing = True
@@ -445,7 +444,7 @@ class ServeWalExplorerFromStoreHandler(
 
             try:
                 results_by_project = await self.workspace_runner.run_action_in_projects(
-                    action=ingest_action,
+                    action_type=IngestWalToStoreAction,
                     payload=ingest_payload,
                     meta=meta,
                     concurrently=False,
@@ -474,7 +473,7 @@ class ServeWalExplorerFromStoreHandler(
                 for attempt in range(1, local_fallback_attempts + 1):
                     try:
                         ingest_result = await self.action_runner.run_action(
-                            action=ingest_action,
+                            action_type=IngestWalToStoreAction,
                             payload=ingest_payload,
                             meta=meta,
                         )

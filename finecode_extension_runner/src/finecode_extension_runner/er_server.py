@@ -37,6 +37,7 @@ from finecode_extension_runner import er_wal, global_state, schemas, services
 from finecode_extension_runner._services import merge_results as merge_results_service
 from finecode_extension_runner._services import run_action as run_action_service
 from finecode_extension_runner.di import resolver
+from finecode_extension_runner.impls import project_action_runner as project_action_runner_module
 
 _lsp_converter = lsp_converters.get_converter()
 
@@ -703,6 +704,25 @@ def create_er_server() -> ErServer:
     session.on_notification("textDocument/didOpen", _wrap(_document_did_open))
     session.on_notification("textDocument/didClose", _wrap(_document_did_close))
     session.on_notification("textDocument/didChange", _wrap(_document_did_change))
+
+    # Partial results forwarded from WM to ER (for run_action_iter cross-env path)
+    async def _on_progress_from_wm(params: dict | None) -> None:
+        if params is None:
+            return
+        token = params.get("token")
+        value = params.get("value")
+        if token is None or value is None:
+            logger.debug(f"$/progress from WM: missing token or value")
+            return
+        try:
+            value_dict = json.loads(value)
+        except (json.JSONDecodeError, TypeError) as exc:
+            logger.warning(f"$/progress from WM: failed to decode value: {exc}")
+            return
+        logger.trace(f"$/progress from WM: token={token}, preview={str(value_dict)[:200]}")
+        project_action_runner_module.dispatch_partial_result_from_wm(token, value_dict)
+
+    session.on_notification("$/progress", _on_progress_from_wm)
 
     # ER-specific commands (direct JSON-RPC methods, previously workspace/executeCommand)
     session.on_request("finecodeRunner/updateConfig", _wrap(update_config))

@@ -243,6 +243,37 @@ async def _start_extension_runner_process(
         from finecode.wm_server.runner.runner_client import RunActionTrigger, DevEnv
 
         executor = ProjectExecutor(ws_context)
+
+        if params.partial_result_token is not None:
+            try:
+                async with executor.run_action_with_partial_results(
+                    action_source=params.action_source,
+                    params=params.payload,
+                    project_path=runner.working_dir_path,
+                    partial_result_token=params.partial_result_token,
+                    run_trigger=RunActionTrigger(params.meta.trigger),
+                    dev_env=DevEnv(params.meta.dev_env),
+                    orchestration_depth=params.meta.orchestration_depth,
+                ) as ctx:
+                    async for partial_raw in ctx:
+                        runner.client.notify(
+                            _internal_client_types.PROGRESS,
+                            _internal_client_types.ProgressParams(
+                                token=params.partial_result_token,
+                                value=json.dumps(partial_raw),
+                            ),
+                        )
+            except ActionRunFailed as exc:
+                raise ValueError(exc.message) from exc
+
+            if ctx.responses:
+                final = ctx.responses[0]
+                return _internal_client_types.RunActionInProjectResult(
+                    result=final.result_by_format.get("json", {}),
+                    return_code=final.return_code,
+                )
+            return _internal_client_types.RunActionInProjectResult(result={}, return_code=0)
+
         try:
             result = await executor.run_action(
                 action_source=params.action_source,

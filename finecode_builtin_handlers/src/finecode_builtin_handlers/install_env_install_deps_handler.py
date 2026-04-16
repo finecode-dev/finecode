@@ -8,7 +8,7 @@ from finecode_extension_api.actions.environments import (
 from finecode_extension_api.actions.environments.install_envs_action import (
     InstallEnvsRunResult,
 )
-from finecode_extension_api.interfaces import iactionrunner, ilogger
+from finecode_extension_api.interfaces import ilogger, iprojectactionrunner
 from finecode_extension_api.resource_uri import path_to_resource_uri, resource_uri_to_path
 from finecode_builtin_handlers.dependency_config_utils import process_raw_deps
 
@@ -24,7 +24,7 @@ class InstallEnvInstallDepsHandler(
     ]
 ):
     def __init__(
-        self, action_runner: iactionrunner.IActionRunner, logger: ilogger.ILogger
+        self, action_runner: iprojectactionrunner.IProjectActionRunner, logger: ilogger.ILogger
     ) -> None:
         self.action_runner = action_runner
         self.logger = logger
@@ -40,10 +40,6 @@ class InstallEnvInstallDepsHandler(
             raise code_action.ActionFailedException(
                 "project_def must be set by InstallEnvReadConfigHandler"
             )
-
-        install_deps_in_env_action_instance = self.action_runner.get_action_by_source(
-            install_deps_in_env_action.InstallDepsInEnvAction,
-        )
 
         async with run_context.progress(f"Installing {env.name}") as progress:
             await progress.report("Reading configuration")
@@ -82,7 +78,7 @@ class InstallEnvInstallDepsHandler(
 
             await progress.report("Installing dependencies")
             result = await self.action_runner.run_action(
-                action=install_deps_in_env_action_instance,
+                action_type=install_deps_in_env_action.InstallDepsInEnvAction,
                 payload=install_deps_payload,
                 meta=run_context.meta,
             )

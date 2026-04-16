@@ -7,8 +7,7 @@ from typing import Any, Awaitable, Callable
 
 import apischema
 from finecode_extension_api import code_action
-from finecode_extension_api.interfaces import iactionrunner, iworkspaceactionrunner
-from finecode_extension_runner import run_utils
+from finecode_extension_api.interfaces import iworkspaceactionrunner
 
 PayloadT = typing.TypeVar("PayloadT", bound=code_action.RunActionPayload)
 ResultT = typing.TypeVar("ResultT", bound=code_action.RunActionResult)
@@ -22,14 +21,13 @@ class WorkspaceActionRunnerImpl(iworkspaceactionrunner.IWorkspaceActionRunner):
 
     async def run_action_in_projects(
         self,
-        action: iactionrunner.ActionDeclaration[code_action.Action[PayloadT, typing.Any, ResultT]],
+        action_type: type[code_action.Action[PayloadT, typing.Any, ResultT]],
         payload: PayloadT,
         meta: code_action.RunActionMeta,
         project_paths: list[pathlib.Path] | None = None,
         concurrently: bool = True,
     ) -> dict[pathlib.Path, ResultT]:
-        action_source: str = action.source
-        action_cls = run_utils.import_module_member_by_source_str(action_source)
+        action_source = f"{action_type.__module__}.{action_type.__qualname__}"
         raw = await self._send(
             "finecode/runActionInWorkspace",
             {
@@ -49,7 +47,7 @@ class WorkspaceActionRunnerImpl(iworkspaceactionrunner.IWorkspaceActionRunner):
         results_by_project: dict = raw["resultsByProject"]
         return {
             pathlib.Path(k): apischema.deserialize(
-                action_cls.RESULT_TYPE, next(iter(v.values()), {})
+                action_type.RESULT_TYPE, next(iter(v.values()), {})  # type: ignore[attr-defined]
             )
             for k, v in results_by_project.items()
         }

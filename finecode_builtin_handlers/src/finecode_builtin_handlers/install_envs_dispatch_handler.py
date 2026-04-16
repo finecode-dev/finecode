@@ -6,7 +6,7 @@ from finecode_extension_api.actions.environments import (
     install_env_action,
     install_envs_action,
 )
-from finecode_extension_api.interfaces import iactionrunner, ilogger
+from finecode_extension_api.interfaces import ilogger, iprojectactionrunner
 
 
 @dataclasses.dataclass
@@ -22,7 +22,7 @@ class InstallEnvsDispatchHandler(
     """Dispatch an install_env call per environment concurrently."""
 
     def __init__(
-        self, action_runner: iactionrunner.IActionRunner, logger: ilogger.ILogger
+        self, action_runner: iprojectactionrunner.IProjectActionRunner, logger: ilogger.ILogger
     ) -> None:
         self.action_runner = action_runner
         self.logger = logger
@@ -32,10 +32,6 @@ class InstallEnvsDispatchHandler(
         payload: install_envs_action.InstallEnvsRunPayload,
         run_context: install_envs_action.InstallEnvsRunContext,
     ) -> install_envs_action.InstallEnvsRunResult:
-        install_env_action_instance = self.action_runner.get_action_by_source(
-            install_env_action.InstallEnvAction,
-        )
-
         if run_context.envs is None:
             raise code_action.ActionFailedException(
                 "envs must be populated must be provided in payload or populated by previous handlers"
@@ -46,7 +42,7 @@ class InstallEnvsDispatchHandler(
         async with run_context.progress("Installing environments", total=len(run_context.envs)) as progress:
             async def _install_and_advance(env):
                 result = await self.action_runner.run_action(
-                    action=install_env_action_instance,
+                    action_type=install_env_action.InstallEnvAction,
                     payload=install_env_action.InstallEnvRunPayload(env=env),
                     meta=run_context.meta,
                 )

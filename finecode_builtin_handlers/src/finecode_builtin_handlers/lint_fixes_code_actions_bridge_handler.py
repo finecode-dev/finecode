@@ -16,7 +16,7 @@ from finecode_extension_api.actions.code_quality.get_lint_fixes_action import (
     GetLintFixesRunPayload,
 )
 from finecode_extension_api.actions.code_quality.lint_fix import LintFix
-from finecode_extension_api.interfaces import iactionrunner
+from finecode_extension_api.interfaces import iprojectactionrunner
 
 # LSP code-action kind prefixes that this bridge can satisfy.
 _LINT_FIX_KINDS = {"quickfix", "source.fixAll", "source.organizeImports"}
@@ -65,7 +65,7 @@ class LintFixesCodeActionsBridgeHandler(
     when the caller's ``only`` filter cannot be satisfied by lint fixes.
     """
 
-    def __init__(self, action_runner: iactionrunner.IActionRunner) -> None:
+    def __init__(self, action_runner: iprojectactionrunner.IProjectActionRunner) -> None:
         self.action_runner = action_runner
 
     async def run(
@@ -81,10 +81,8 @@ class LintFixesCodeActionsBridgeHandler(
                 actions=[],
             )
 
-        lint_fixes_action = self.action_runner.get_action_by_source(GetLintFixesAction)
-
         lint_fix_result = await self.action_runner.run_action(
-            action=lint_fixes_action,
+            action_type=GetLintFixesAction,
             payload=GetLintFixesRunPayload(
                 file_path=payload.file_path,
                 range=payload.range,

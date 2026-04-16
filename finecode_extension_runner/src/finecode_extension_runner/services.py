@@ -54,6 +54,7 @@ async def update_config(
                     name=handler_obj.name,
                     source=handler_obj.source,
                     config=handler_obj.config,
+                    env=handler_obj.env,
                 )
             )
         action = domain.ActionDeclaration(

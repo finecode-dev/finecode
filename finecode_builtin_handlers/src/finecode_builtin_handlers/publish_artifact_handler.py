@@ -14,8 +14,8 @@ from finecode_extension_api.actions.publishing import (
     publish_artifact_to_registry_action,
 )
 from finecode_extension_api.interfaces import (
-    iactionrunner,
     ilogger,
+    iprojectactionrunner,
     iprojectinfoprovider,
 )
 
@@ -30,13 +30,13 @@ class PublishArtifactHandler(
         PublishArtifactHandlerConfig,
     ]
 ):
-    action_runner: iactionrunner.IActionRunner
+    action_runner: iprojectactionrunner.IProjectActionRunner
     logger: ilogger.ILogger
     project_info_provider: iprojectinfoprovider.IProjectInfoProvider
 
     def __init__(
         self,
-        action_runner: iactionrunner.IActionRunner,
+        action_runner: iprojectactionrunner.IProjectActionRunner,
         logger: ilogger.ILogger,
         project_info_provider: iprojectinfoprovider.IProjectInfoProvider,
     ) -> None:
@@ -56,29 +56,21 @@ class PublishArtifactHandler(
 
         async with run_context.progress("Publishing artifact") as progress:
             await progress.report("Getting artifact version")
-            get_version_action = self.action_runner.get_action_by_source(
-                get_src_artifact_version_action.GetSrcArtifactVersionAction
-            )
-            version_payload = (
-                get_src_artifact_version_action.GetSrcArtifactVersionRunPayload(
-                    src_artifact_def_path=src_artifact_def_path
-                )
-            )
             version_result = await self.action_runner.run_action(
-                action=get_version_action, payload=version_payload, meta=run_meta
+                action_type=get_src_artifact_version_action.GetSrcArtifactVersionAction,
+                payload=get_src_artifact_version_action.GetSrcArtifactVersionRunPayload(
+                    src_artifact_def_path=src_artifact_def_path
+                ),
+                meta=run_meta,
             )
             version = version_result.version
 
-            get_registries_action = self.action_runner.get_action_by_source(
-                get_src_artifact_registries_action.GetSrcArtifactRegistriesAction
-            )
-            registries_payload = (
-                get_src_artifact_registries_action.GetSrcArtifactRegistriesRunPayload(
-                    src_artifact_def_path=src_artifact_def_path
-                )
-            )
             registries_result = await self.action_runner.run_action(
-                action=get_registries_action, payload=registries_payload, meta=run_meta
+                action_type=get_src_artifact_registries_action.GetSrcArtifactRegistriesAction,
+                payload=get_src_artifact_registries_action.GetSrcArtifactRegistriesRunPayload(
+                    src_artifact_def_path=src_artifact_def_path
+                ),
+                meta=run_meta,
             )
 
             # Filter registries based on publication status if not forced
@@ -95,10 +87,6 @@ class PublishArtifactHandler(
                 }
             else:
                 await progress.report("Checking publication status")
-                is_published_action = self.action_runner.get_action_by_source(
-                    is_artifact_published_to_registry_action.IsArtifactPublishedToRegistryAction
-                )
-
                 check_tasks: list[tuple[asyncio.Task[is_artifact_published_to_registry_action.IsArtifactPublishedToRegistryRunResult], get_src_artifact_registries_action.Registry]] = []
                 try:
                     async with asyncio.TaskGroup() as tg:
@@ -111,7 +99,7 @@ class PublishArtifactHandler(
                             )
                             task = tg.create_task(
                                 self.action_runner.run_action(
-                                    action=is_published_action,
+                                    action_type=is_artifact_published_to_registry_action.IsArtifactPublishedToRegistryAction,
                                     payload=check_payload,
                                     meta=run_meta,
                                 )
@@ -135,10 +123,6 @@ class PublishArtifactHandler(
 
             # Publish to registries with unpublished artifacts
             await progress.report("Publishing to registries")
-            publish_to_registry_action = self.action_runner.get_action_by_source(
-                publish_artifact_to_registry_action.PublishArtifactToRegistryAction
-            )
-
             publish_tasks: list[asyncio.Task[publish_artifact_to_registry_action.PublishArtifactToRegistryRunResult]] = []
             try:
                 async with asyncio.TaskGroup() as tg:
@@ -151,7 +135,7 @@ class PublishArtifactHandler(
                         )
                         task = tg.create_task(
                             self.action_runner.run_action(
-                                action=publish_to_registry_action,
+                                action_type=publish_artifact_to_registry_action.PublishArtifactToRegistryAction,
                                 payload=publish_payload,
                                 meta=run_meta,
                             )

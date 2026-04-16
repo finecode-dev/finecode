@@ -8,7 +8,7 @@ from finecode_extension_api.actions.code_quality.format_file_action import (
     FormatFileRunPayload,
     FormatFileRunResult,
 )
-from finecode_extension_api.interfaces import iactionrunner, ilogger
+from finecode_extension_api.interfaces import ilogger, iprojectactionrunner
 from finecode_extension_api.resource_uri import ResourceUri
 
 
@@ -36,7 +36,7 @@ class FormatFilesIterateHandler(
 
     def __init__(
         self,
-        action_runner: iactionrunner.IActionRunner,
+        action_runner: iprojectactionrunner.IProjectActionRunner,
         logger: ilogger.ILogger,
     ) -> None:
         self.action_runner = action_runner
@@ -49,9 +49,8 @@ class FormatFilesIterateHandler(
         meta: code_action.RunActionMeta,
         run_context: format_files_action.FormatFilesRunContext,
     ) -> format_files_action.FormatFilesRunResult:
-        item_action = self.action_runner.get_action_by_source(FormatFileAction)
         item_result: FormatFileRunResult = await self.action_runner.run_action(
-            action=item_action,
+            action_type=FormatFileAction,
             payload=FormatFileRunPayload(
                 file_path=file_uri,
                 save=save,

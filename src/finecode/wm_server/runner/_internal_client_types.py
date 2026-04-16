@@ -1412,6 +1412,7 @@ class RunActionInProjectParams:
     action_source: str
     payload: dict
     meta: RunActionInProjectMeta
+    partial_result_token: int | str | None = None
 
 
 @dataclasses.dataclass

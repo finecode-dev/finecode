@@ -3,7 +3,7 @@ import dataclasses
 from finecode_extension_api import code_action
 from finecode_extension_api.actions.artifact import group_src_artifact_files_by_lang_action
 from finecode_extension_api.actions.code_quality import get_lint_fixes_action
-from finecode_extension_api.interfaces import iactionrunner, ilogger
+from finecode_extension_api.interfaces import ilogger, iprojectactionrunner
 
 
 @dataclasses.dataclass
@@ -25,7 +25,7 @@ class GetLintFixesFilesDispatchHandler(
 
     def __init__(
         self,
-        action_runner: iactionrunner.IActionRunner,
+        action_runner: iprojectactionrunner.IProjectActionRunner,
         logger: ilogger.ILogger,
     ) -> None:
         self.action_runner = action_runner
@@ -47,11 +47,8 @@ class GetLintFixesFilesDispatchHandler(
             return
 
         # Group the single file by language to find the correct language subaction.
-        group_action = self.action_runner.get_action_by_source(
-            group_src_artifact_files_by_lang_action.GroupSrcArtifactFilesByLangAction,
-        )
         files_by_lang_result = await self.action_runner.run_action(
-            action=group_action,
+            action_type=group_src_artifact_files_by_lang_action.GroupSrcArtifactFilesByLangAction,
             payload=group_src_artifact_files_by_lang_action.GroupSrcArtifactFilesByLangRunPayload(
                 file_paths=[payload.file_path],
                 langs=list(subactions_by_lang.keys()),
@@ -76,7 +73,7 @@ class GetLintFixesFilesDispatchHandler(
 
         subaction = subactions_by_lang[file_lang]
         async for partial in self.action_runner.run_action_iter(
-            action=subaction,
+            action_type=subaction,
             payload=payload,
             meta=run_context.meta,
         ):

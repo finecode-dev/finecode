@@ -10,25 +10,23 @@ import ordered_set
 from loguru import logger
 
 from finecode_extension_api.interfaces import (  # idevenvinfoprovider,
-    iactionrunner,
     icache,
     icommandrunner,
     iextensionrunnerinfoprovider,
     ifileeditor,
     ifilemanager,
     ilogger,
-    iprojectinfoprovider,
     iprojectactionrunner,
+    iprojectinfoprovider,
     irepositorycredentialsprovider,
     iworkspaceactionrunner,
 )
 
 from finecode_extension_runner import domain
-from finecode_extension_runner._services import run_action
+from finecode_extension_runner._services import run_action as run_action_service
 from finecode_extension_runner.di import _state, resolver
 from finecode_extension_runner.run_utils import import_module_member_by_source_str
 from finecode_extension_runner.impls import (  # dev_env_info_provider,
-    action_runner,
     command_runner,
     extension_runner_info_provider,
     file_editor,
@@ -69,24 +67,22 @@ def bootstrap(
     cache_instance = inmemory_cache.InMemoryCache(
         file_editor=file_editor_instance, logger=logger_instance
     )
-    action_runner_instance = action_runner.ActionRunner(
-        run_action_func=run_action.run_action,
-        actions_getter=actions_getter,
-    )
     _state.container[ilogger.ILogger] = logger_instance
     _state.container[icommandrunner.ICommandRunner] = command_runner_instance
     _state.container[ifilemanager.IFileManager] = file_manager_instance
     _state.container[ifileeditor.IFileEditor] = file_editor_instance
     _state.container[icache.ICache] = cache_instance
-    _state.container[iactionrunner.IActionRunner] = action_runner_instance
-
-    if send_request_to_wm is not None:
-        _state.container[iprojectactionrunner.IProjectActionRunner] = (
-            project_action_runner.ProjectActionRunnerImpl(send_request_to_wm)
+    _state.container[iprojectactionrunner.IProjectActionRunner] = (
+        project_action_runner.ProjectActionRunnerImpl(
+            send_request_to_wm,
+            run_action_func=run_action_service.run_action,
+            actions_getter=actions_getter,
+            current_env_name_getter=current_env_name_getter,
         )
-        _state.container[iworkspaceactionrunner.IWorkspaceActionRunner] = (
-            workspace_action_runner.WorkspaceActionRunnerImpl(send_request_to_wm)
-        )
+    )
+    _state.container[iworkspaceactionrunner.IWorkspaceActionRunner] = (
+        workspace_action_runner.WorkspaceActionRunnerImpl(send_request_to_wm)
+    )
 
     _state.container[irepositorycredentialsprovider.IRepositoryCredentialsProvider] = (
         repository_credentials_provider.ConfigRepositoryCredentialsProvider()
