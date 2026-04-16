@@ -7,6 +7,7 @@ repo_name: finecode-dev/finecode
 theme:
   name: material
   logo: finecode_logo_white.png
+  favicon: favicon.ico
   custom_dir: docs/overrides
   palette:
     - scheme: default
@@ -87,6 +88,7 @@ nav:
       - Creating a Preset: guides/creating-preset.md
       - Designing Actions: guides/designing-actions.md
       - Preparing Environments: guides/preparing-environments.md
+      - Using Git Hooks: guides/using-git-hooks.md
       - Multi-Project Workspace: guides/workspace.md
   - Reference:
       - Built-in Actions: reference/actions.md
