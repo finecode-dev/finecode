@@ -473,16 +473,17 @@ Any valid import path resolving to the same registered action class is accepted
 
 **Streaming options (both optional):**
 
-- `partialResultToken` — when present, the server streams `actions/partialResult`
-  notifications during execution before returning the final result.  May be
-  combined with `progressToken`.
+- `partialResultToken` — when present, all result data is delivered via
+  `actions/partialResult` notifications during execution; the final JSON-RPC
+  response contains only `returnCode` as a completion signal.  May be combined
+  with `progressToken`.
 - `progressToken` — when present (and `partialResultToken` is absent), the server
   sends `actions/progress` notifications during execution.
 
 Pass `project=""` to run across all projects that expose the action (same
 semantics as `actions/runBatch` with no `projects` filter).
 
-**Result:**
+**Result (without `partialResultToken`):**
 
 ```json
 {
@@ -493,6 +494,14 @@ semantics as `actions/runBatch` with no `projects` filter).
   "returnCode": 0
 }
 ```
+
+**Result (with `partialResultToken`):**
+
+```json
+{"returnCode": 0}
+```
+
+All result data is carried by `actions/partialResult` notifications.
 
 ---
 
@@ -531,11 +540,11 @@ requested actions.
 - `partialResultToken` — when present, the server emits one `actions/partialResult`
   notification per completed project in completion order.  Each notification carries
   the full result block for that project (see `actions/partialResult` below).  The
-  final response still contains the aggregated `results` and `returnCode`.
+  final response contains only `returnCode` as a completion signal.
 - `progressToken` — when present (and `partialResultToken` is absent), the server
   sends aggregated `actions/progress` notifications across all (project × action) slots.
 
-**Result:**
+**Result (without `partialResultToken`):**
 
 ```json
 {
@@ -551,6 +560,14 @@ requested actions.
 
 Result is keyed by project path, then by action source. `returnCode` at the top level
 is the bitwise OR of all individual return codes.
+
+**Result (with `partialResultToken`):**
+
+```json
+{"returnCode": 0}
+```
+
+All per-project result data is carried by `actions/partialResult` notifications.
 
 ---
 
@@ -816,9 +833,8 @@ Sent when an `actions/run` or `actions/runBatch` request includes a
 > notifications, even when an extension runner does not stream incrementally (i.e.
 > it collects all results internally and returns them as a single final response).
 > In that case the server emits the final result as a partial result notification
-> before returning the aggregated response.  Clients can therefore rely solely on
-> `actions/partialResult` notifications to receive results and safely ignore the
-> response body of this request.
+> before sending the final response.  Clients must not rely on the final response
+> body for result data — it contains only `returnCode`.
 
 **Params for `actions/runBatch` + `partialResultToken`:**
 

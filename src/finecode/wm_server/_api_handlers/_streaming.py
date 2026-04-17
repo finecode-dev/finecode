@@ -33,9 +33,9 @@ async def _handle_run_action_with_partial_results(
 
     The handler uses :mod:`partial_results_service` to obtain an async iterator
     of partial values and forwards them to the requesting client only.  When the
-    iterator completes an aggregated result dict is returned exactly as the
-    ``actions/run`` method would produce.  An optional ``progressToken`` is also
-    supported: progress notifications are forwarded concurrently with partials.
+    iterator completes the final response contains only ``returnCode``.
+    An optional ``progressToken`` is also supported: progress notifications are
+    forwarded concurrently with partials.
     """
     if params is None:
         raise ValueError("params required")
@@ -157,8 +157,8 @@ async def _handle_run_batch_with_partial_results(
             "returnCode": int   # bitwise OR across this project's actions
         }
 
-    The final response still contains the full ``results`` and overall
-    ``returnCode`` once every project has completed.
+    The final response contains only overall ``returnCode`` once every project
+    has completed.
     """
     from finecode.wm_server.services import run_service
     from finecode.wm_server.services.run_service import proxy_utils
@@ -213,6 +213,7 @@ async def _handle_run_batch_with_partial_results(
         project_tasks[project_path] = task
 
     result_by_project: dict[pathlib.Path, dict] = {}
+    overall_return_code = 0
     task_to_project: dict[asyncio.Task, pathlib.Path] = {t: p for p, t in project_tasks.items()}
     pending: set[asyncio.Task] = set(project_tasks.values())
 
@@ -240,6 +241,7 @@ async def _handle_run_batch_with_partial_results(
                     "resultByFormat": response.result_by_format,
                     "returnCode": response.return_code,
                 }
+            overall_return_code |= project_return_code
 
             logger.trace(f"runBatch+partialResults: emitting partial for project={project_path} token={token}")
             _notify_client(
@@ -256,9 +258,8 @@ async def _handle_run_batch_with_partial_results(
             )
             await writer.drain()
 
-    results, overall_return_code = _build_batch_result(result_by_project, name_to_source)
-    logger.debug(f"runBatch+partialResults: done, projects_count={len(results)} returnCode={overall_return_code}")
-    return {"results": results, "returnCode": overall_return_code}
+    logger.debug(f"runBatch+partialResults: done, projects_count={len(result_by_project)} returnCode={overall_return_code}")
+    return {"returnCode": overall_return_code}
 
 
 async def _handle_run_batch_with_partial_results_task(

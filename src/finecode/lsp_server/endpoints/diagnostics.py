@@ -2,14 +2,15 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
+import apischema
 from loguru import logger
 from lsprotocol import types
-from pydantic.dataclasses import dataclass as pydantic_dataclass
 
 from finecode.lsp_server import global_state, pygls_types_utils
 from finecode_extension_api.actions.code_quality import lint_action
+from finecode_extension_api.resource_uri import ResourceUri
 
 if TYPE_CHECKING:
     from finecode.lsp_server.lsp_server import LspServer
@@ -99,14 +100,12 @@ async def document_diagnostic_with_full_result(
     json_result = (response.get("resultByFormat") or {}).get("json")
     if json_result is None:
         return None
-    # use pydantic dataclass to convert dict to dataclass instance recursively
-    # (default dataclass constructor doesn't handle nested items, it stores them just
-    # as dict)
-    result_type = pydantic_dataclass(lint_action.LintRunResult)
-    lint_result: lint_action.LintRunResult = result_type(**json_result)
+    lint_result = apischema.deserialize(lint_action.LintRunResult, json_result)
 
     try:
-        requested_file_messages = lint_result.messages.pop(file_uri)
+        requested_file_messages = lint_result.messages.pop(
+            cast(ResourceUri, file_uri)
+        )
     except KeyError:
         requested_file_messages = []
     requested_files_diagnostic_items = [
@@ -156,7 +155,7 @@ async def document_diagnostic_with_partial_results(
             project=project_dir,
             params={"file_paths": [file_path.as_uri()]},
             options={"resultFormats": ["json"], "trigger": "system", "devEnv": "ide"},
-            partial_result_token=partial_result_token,
+            partial_result_token=str(partial_result_token),
         )
     except Exception as error:
         logger.error(f"Diagnostics API request failed: {error}")
@@ -216,7 +215,7 @@ async def run_workspace_diagnostic_with_partial_results(
             project="",  # empty project = all relevant projects
             params={"target": "project"},
             options={"resultFormats": ["json"], "trigger": "system", "devEnv": "ide"},
-            partial_result_token=partial_result_token,
+            partial_result_token=str(partial_result_token),
         )
     except Exception as error:
         logger.error(f"Workspace diagnostics API request failed: {error}")
@@ -259,14 +258,10 @@ async def workspace_diagnostic_with_full_result() -> types.WorkspaceDiagnosticRe
     if not response:
         return types.WorkspaceDiagnosticReport(items=[])
 
-    # use pydantic dataclass to convert dict to dataclass instance recursively
-    # (default dataclass constructor doesn't handle nested items, it stores them just
-    # as dict)
     json_result = (response.get("resultByFormat") or {}).get("json")
     if not json_result:
         return types.WorkspaceDiagnosticReport(items=[])
-    result_type = pydantic_dataclass(lint_action.LintRunResult)
-    lint_result: lint_action.LintRunResult = result_type(**json_result)
+    lint_result = apischema.deserialize(lint_action.LintRunResult, json_result)
 
     items: list[types.WorkspaceDocumentDiagnosticReport] = []
     for file_uri, lint_messages in lint_result.messages.items():

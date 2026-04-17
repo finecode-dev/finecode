@@ -160,7 +160,7 @@ async def run_action_with_partial_results(
     The returned :class:`PartialResultsStream` can be iterated to receive
     ``domain.PartialResultRawValue`` objects.  Once execution completes the
     caller should call :meth:`PartialResultsStream.final_result` to obtain the
-    aggregated result equivalent to what ``actions/run`` would return.
+    final completion payload (currently ``{"returnCode": int}``).
     """
 
     # determine target project(s) — only CollectedProject instances have actions
@@ -188,9 +188,7 @@ async def run_action_with_partial_results(
     runner_formats = [RunResultFormat(fmt) for fmt in requested_formats if fmt in ("json", "string")]
 
     stream = PartialResultsStream()
-    final_results: list[dict] = []
     return_codes: list[int] = []
-    runners_used: list[runner_client.ExtensionRunnerInfo] = []
 
     # Set up progress forwarding if a progress token was provided.
     # Each project gets its own internal token; an aggregator combines them.
@@ -263,7 +261,6 @@ async def run_action_with_partial_results(
 
             json_result = resp.json()
             logger.trace(f"partial_results: final result for project={project.name}: return_code={resp.return_code}, keys={list(json_result.keys()) if isinstance(json_result, dict) else type(json_result)}")
-            final_results.append(json_result)
             return_codes.append(resp.return_code)
 
             # If the runner sent no partial results (collected everything internally
@@ -276,27 +273,11 @@ async def run_action_with_partial_results(
                 logger.trace(f"partial_results: no partials received for project={project.name}, emitting final result as partial")
                 stream.put({"resultByFormat": result_by_format})
 
-        # Collect a runner from this project to use for cross-project result merging.
-        action = next((a for a in project.actions if a.name == action_name), None)
-        if action and action.handlers:
-            env_name = action.handlers[0].env
-            runner = ws_context.ws_projects_extension_runners.get(project.dir_path, {}).get(env_name)
-            if runner is not None:
-                runners_used.append(runner)
-
     async with asyncio.TaskGroup() as tg:
         for proj in projects:
             tg.create_task(run_one(proj))
 
-    if final_results and runners_used:
-        aggregated = await runner_client.merge_results(runners_used[0], action_name, final_results)
-    else:
-        aggregated = {}
-    logger.trace(f"partial_results: aggregated result keys={list(aggregated.keys()) if isinstance(aggregated, dict) else type(aggregated)}")
-    final_result_by_format: dict[str, dict] = {}
-    if "json" in requested_formats:
-        final_result_by_format["json"] = aggregated
     if progress_stream is not None:
         progress_stream.set_done()
-    stream.set_final({"resultByFormat": final_result_by_format, "returnCode": max(return_codes) if return_codes else 0})
+    stream.set_final({"returnCode": max(return_codes) if return_codes else 0})
     return stream

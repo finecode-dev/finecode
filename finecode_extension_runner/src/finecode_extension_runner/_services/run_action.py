@@ -5,10 +5,9 @@ import inspect
 import time
 import typing
 
+import apischema
 import deepmerge
-import pydantic
 from loguru import logger
-from pydantic.dataclasses import dataclass as pydantic_dataclass
 
 from finecode_extension_api import code_action, textstyler, service
 from finecode_extension_api.interfaces import iprojectactionrunner
@@ -619,10 +618,9 @@ async def run_action_raw(
     # TODO: catch validation errors
     payload: code_action.RunActionPayload | None = None
     if action_exec_info.payload_type is not None:
-        payload_type_with_validation = pydantic_dataclass(action_exec_info.payload_type)
         payload = typing.cast(
             code_action.RunActionPayload,
-            payload_type_with_validation(**request.params),
+            apischema.deserialize(action_exec_info.payload_type, request.params),
         )
 
     wal_run_id = getattr(options, "wal_run_id", None)
@@ -754,10 +752,9 @@ async def run_handlers_raw(
     # Build payload from params.
     payload: code_action.RunActionPayload | None = None
     if action_exec_info.payload_type is not None and request.params:
-        payload_type_with_validation = pydantic_dataclass(action_exec_info.payload_type)
         payload = typing.cast(
             code_action.RunActionPayload,
-            payload_type_with_validation(**request.params),
+            apischema.deserialize(action_exec_info.payload_type, request.params),
         )
 
     wal_run_id = getattr(options, "wal_run_id", None)
@@ -908,12 +905,10 @@ async def ensure_handler_instantiated(
         ) from error
 
     def get_handler_config(param_type):
-        # validate config using pydantic
         try:
-            config_type = pydantic_dataclass(param_type)
-        except pydantic.ValidationError as exception:
-            raise ActionFailedException(str(exception.errors())) from exception
-        return config_type(**handler_raw_config)
+            return apischema.deserialize(param_type, handler_raw_config)
+        except apischema.ValidationError as exception:
+            raise ActionFailedException(str(exception)) from exception
 
     def get_process_executor(param_type):
         return action_exec_info.process_executor
@@ -1093,10 +1088,12 @@ async def execute_action_handler(
                 if partial_result_queue is not None:
                     await partial_result_queue.put(partial_result)
                 if stream_result is None:
-                    result_type_pydantic = pydantic_dataclass(type(partial_result))
                     stream_result = typing.cast(
                         code_action.RunActionResult,
-                        result_type_pydantic(**dataclasses.asdict(partial_result)),
+                        apischema.deserialize(
+                            type(partial_result),
+                            dataclasses.asdict(partial_result),
+                        ),
                     )
                 else:
                     stream_result.update(partial_result)
@@ -1205,15 +1202,13 @@ async def run_subresult_coros_concurrently(
                 # in it and result from action handler must stay immutable (e.g. it can
                 # reference to cache)
                 action_subresult_type = type(coro_result)
-                # use pydantic dataclass as constructor because it instantiates classes
-                # recursively, normal dataclass only on the first level
-                action_subresult_type_pydantic = pydantic_dataclass(
-                    action_subresult_type
-                )
                 action_subresult_dict = dataclasses.asdict(coro_result)
                 action_subresult = typing.cast(
                     code_action.RunActionResult,
-                    action_subresult_type_pydantic(**action_subresult_dict),
+                    apischema.deserialize(
+                        action_subresult_type,
+                        action_subresult_dict,
+                    ),
                 )
             else:
                 action_subresult.update(coro_result)

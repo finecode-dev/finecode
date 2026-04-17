@@ -1417,8 +1417,8 @@ class RunActionInProjectParams:
 
 @dataclasses.dataclass
 class RunActionInProjectResult(BaseResult):
-    result: dict
     return_code: int
+    result: dict | None = None
 
 
 @dataclasses.dataclass

@@ -6,6 +6,7 @@ import asyncio
 import typing
 from pathlib import Path
 
+import apischema
 from loguru import logger
 from lsprotocol import converters as lsp_converters
 from lsprotocol import types
@@ -304,8 +305,6 @@ async def _on_initialized(server: LspServer, _params: dict | None) -> None:
 
     # Forward progress notifications to the IDE progress reporter.
     from finecode_extension_api.actions.code_quality import lint_action
-    from pydantic.dataclasses import dataclass as pydantic_dataclass
-    from finecode.lsp_server import pygls_types_utils
     from finecode.lsp_server.endpoints.diagnostics import map_lint_message_to_diagnostic
 
     def _map_lint_to_document_diagnostic_partial(
@@ -316,8 +315,8 @@ async def _on_initialized(server: LspServer, _params: dict | None) -> None:
             file_report = types.FullDocumentDiagnosticReport(
                 items=[map_lint_message_to_diagnostic(m) for m in lint_messages]
             )
-            uri = pygls_types_utils.path_to_uri_str(Path(file_path_str))
-            related_documents[uri] = file_report
+            # file_path_str is a ResourceUri (already a file:// URI) — use directly
+            related_documents[file_path_str] = file_report
         partial = types.DocumentDiagnosticReportPartialResult(
             related_documents=related_documents
         )
@@ -328,7 +327,8 @@ async def _on_initialized(server: LspServer, _params: dict | None) -> None:
     ) -> dict:
         items = [
             types.WorkspaceFullDocumentDiagnosticReport(
-                uri=pygls_types_utils.path_to_uri_str(Path(file_path_str)),
+                # file_path_str is a ResourceUri (already a file:// URI) — use directly
+                uri=file_path_str,
                 items=[map_lint_message_to_diagnostic(m) for m in lint_messages],
             )
             for file_path_str, lint_messages in lint_result.messages.items()
@@ -356,8 +356,7 @@ async def _on_initialized(server: LspServer, _params: dict | None) -> None:
             if json_result is None:
                 logger.error(f"No json result in partial result for token {token}")
                 return
-            result_type = pydantic_dataclass(lint_action.LintRunResult)
-            lint_result: lint_action.LintRunResult = result_type(**json_result)
+            lint_result = apischema.deserialize(lint_action.LintRunResult, json_result)
 
             if endpoint_type == "document_diagnostic":
                 partial_dict = _map_lint_to_document_diagnostic_partial(lint_result)

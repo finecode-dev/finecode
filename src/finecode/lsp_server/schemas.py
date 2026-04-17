@@ -1,24 +1,28 @@
 from __future__ import annotations
 
+import dataclasses
 from enum import IntEnum
 from typing import Any
 
-import pydantic
-from pydantic.alias_generators import to_camel
+import apischema
 
 
-class BaseModel(pydantic.BaseModel):
-    model_config = pydantic.ConfigDict(
-        alias_generator=pydantic.AliasGenerator(
-            serialization_alias=to_camel,
+@dataclasses.dataclass
+class BaseModel:
+    def to_dict(self) -> dict[str, Any]:
+        return apischema.serialize(
+            type(self),
+            self,
+            aliaser=apischema.utils.to_camel_case,
         )
-    )
 
 
+@dataclasses.dataclass
 class ListActionsRequest(BaseModel):
     parent_node_id: str = ""
 
 
+@dataclasses.dataclass
 class ActionTreeNode(BaseModel):
     node_id: str
     name: str
@@ -36,14 +40,17 @@ class ActionTreeNode(BaseModel):
         ENV = 6
 
 
+@dataclasses.dataclass
 class ListActionsResponse(BaseModel):
     nodes: list[ActionTreeNode]
 
 
+@dataclasses.dataclass
 class RunActionRequest(BaseModel):
     action_node_id: str
     params: dict[str, Any]
 
 
+@dataclasses.dataclass
 class RunActionResponse(BaseModel):
     result: dict[str, Any]

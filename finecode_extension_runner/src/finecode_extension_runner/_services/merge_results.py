@@ -1,7 +1,7 @@
 import dataclasses
 
+import apischema
 from loguru import logger
-from pydantic.dataclasses import dataclass as pydantic_dataclass
 
 from finecode_extension_api import code_action
 from finecode_extension_runner import global_state, run_utils
@@ -35,11 +35,9 @@ async def merge_results(action_name: str, results: list[dict]) -> dict:
     if result_type is None or not non_empty:
         return {}
 
-    result_type_pydantic = pydantic_dataclass(result_type)
-
     merged: code_action.RunActionResult | None = None
     for result_dict in non_empty:
-        typed = result_type_pydantic(**result_dict)
+        typed = apischema.deserialize(result_type, result_dict)
         if merged is None:
             merged = typed
         else:

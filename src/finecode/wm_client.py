@@ -248,7 +248,7 @@ class ApiClient:
         params_by_project: dict[str, dict] | None = None,
         options: dict | None = None,
         progress_token: str | None = None,
-        partial_result_token: str | None = None,
+        partial_result_token: str | int | None = None,
     ) -> dict:
         """Run multiple actions across multiple (or all) projects.
 
@@ -281,7 +281,7 @@ class ApiClient:
         params: dict | None = None,
         options: dict | None = None,
         progress_token: str | None = None,
-        partial_result_token: str | None = None,
+        partial_result_token: str | int | None = None,
     ) -> dict:
         """Run an action on a project.
 

@@ -245,6 +245,7 @@ async def _start_extension_runner_process(
         executor = ProjectExecutor(ws_context)
 
         if params.partial_result_token is not None:
+            partial_count = 0
             try:
                 async with executor.run_action_with_partial_results(
                     action_source=params.action_source,
@@ -256,6 +257,7 @@ async def _start_extension_runner_process(
                     orchestration_depth=params.meta.orchestration_depth,
                 ) as ctx:
                     async for partial_raw in ctx:
+                        partial_count += 1
                         runner.client.notify(
                             _internal_client_types.PROGRESS,
                             _internal_client_types.ProgressParams(
@@ -268,11 +270,22 @@ async def _start_extension_runner_process(
 
             if ctx.responses:
                 final = ctx.responses[0]
+                if final.status != "streamed":
+                    final_json = final.result_by_format.get("json", {})
+                    if partial_count == 0 and final_json:
+                        runner.client.notify(
+                            _internal_client_types.PROGRESS,
+                            _internal_client_types.ProgressParams(
+                                token=params.partial_result_token,
+                                value=json.dumps(final_json),
+                            ),
+                        )
                 return _internal_client_types.RunActionInProjectResult(
-                    result=final.result_by_format.get("json", {}),
                     return_code=final.return_code,
                 )
-            return _internal_client_types.RunActionInProjectResult(result={}, return_code=0)
+            return _internal_client_types.RunActionInProjectResult(
+                return_code=0,
+            )
 
         try:
             result = await executor.run_action(

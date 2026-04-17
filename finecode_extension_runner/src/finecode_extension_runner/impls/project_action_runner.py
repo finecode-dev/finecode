@@ -6,6 +6,7 @@ import dataclasses
 import typing
 from typing import Any, Awaitable, Callable
 
+import apischema
 from loguru import logger
 
 from finecode_extension_api import code_action
@@ -16,9 +17,23 @@ from finecode_extension_runner import domain, run_utils
 PayloadT = typing.TypeVar("PayloadT", bound=code_action.RunActionPayload)
 ResultT = typing.TypeVar("ResultT", bound=code_action.RunActionResult)
 
+# WM streaming queue protocol for run_action_iter (WM path):
+# - dict[str, Any]: partial payload forwarded from $/progress.
+# - ("final", raw_result): terminal item from finecode/runActionInProject response.
+#   In streaming mode the final response is completion metadata only
+#   (currently just returnCode); partial result payloads are sent exclusively
+#   through $/progress notifications.
+# - ("error", exc): terminal item when WM request itself fails.
+WmRawResult = dict[str, Any]
+WmQueueItem = (
+    dict[str, Any]
+    | tuple[typing.Literal["final"], WmRawResult]
+    | tuple[typing.Literal["error"], Exception]
+)
+
 _SENTINEL = object()
 _last_wm_token: int = 0
-_wm_partial_result_queues: dict[int, asyncio.Queue[dict[str, Any] | object]] = {}
+_wm_partial_result_queues: dict[int, asyncio.Queue[WmQueueItem]] = {}
 
 
 def dispatch_partial_result_from_wm(token: int | str, value: dict[str, Any]) -> None:
@@ -27,6 +42,9 @@ def dispatch_partial_result_from_wm(token: int | str, value: dict[str, Any]) -> 
     Routes the partial result dict to the asyncio.Queue registered for *token*
     by an in-flight run_action_iter WM-path call.  Silently ignored when no
     matching queue exists (e.g. stale notifications).
+
+    The queued value is always a *partial* payload dict. Terminal queue items
+    are injected only by _call_wm inside run_action_iter as tuples.
     """
     queue = _wm_partial_result_queues.get(token)  # type: ignore[arg-type]
     if queue is not None:
@@ -92,6 +110,16 @@ class ProjectActionRunnerImpl(iprojectactionrunner.IProjectActionRunner):
                     result[lang] = cls
         return result
 
+    def _build_result(
+        self,
+        action_type: type[code_action.Action[PayloadT, typing.Any, ResultT]],
+        raw_result: dict[str, Any],
+    ) -> ResultT:
+        return typing.cast(
+            ResultT,
+            apischema.deserialize(action_type.RESULT_TYPE, raw_result),
+        )
+
     async def run_action(
         self,
         action_type: type[code_action.Action[PayloadT, typing.Any, ResultT]],
@@ -132,7 +160,12 @@ class ProjectActionRunnerImpl(iprojectactionrunner.IProjectActionRunner):
                 },
             },
         )
-        return action_type.RESULT_TYPE(**raw_result["result"])  # type: ignore[attr-defined]
+        raw_final_result = raw_result.get("result")
+        if raw_final_result is None:
+            raise iprojectactionrunner.ActionRunFailed(
+                f"Action '{action_type.__qualname__}' returned no final result payload"
+            )
+        return self._build_result(action_type, raw_final_result)
 
     async def run_action_iter(  # type: ignore[override]
         self,
@@ -174,7 +207,7 @@ class ProjectActionRunnerImpl(iprojectactionrunner.IProjectActionRunner):
         # WM path — streaming via $/progress notifications
         _last_wm_token += 1
         token = _last_wm_token
-        wm_queue: asyncio.Queue[dict[str, Any] | object] = asyncio.Queue()
+        wm_queue: asyncio.Queue[WmQueueItem] = asyncio.Queue()
         _wm_partial_result_queues[token] = wm_queue
 
         action_source = f"{action_type.__module__}.{action_type.__qualname__}"
@@ -194,28 +227,32 @@ class ProjectActionRunnerImpl(iprojectactionrunner.IProjectActionRunner):
                         "partialResultToken": token,
                     },
                 )
+                # Terminal success item. Shape: ("final", {"result": {...}, "returnCode": ...}).
                 wm_queue.put_nowait(("final", raw_result))
             except Exception as exc:
+                # Terminal error item. Shape: ("error", Exception(...)).
                 wm_queue.put_nowait(("error", exc))
 
         wm_task = asyncio.ensure_future(_call_wm())
 
         try:
-            got_partial = False
             while True:
                 item = await wm_queue.get()
                 if isinstance(item, tuple):
+                    # Tuple items are terminal markers from _call_wm:
+                    # - ("error", Exception)
+                    # - ("final", raw_result_dict)
                     kind, value = item
                     if kind == "error":
                         raise value  # type: ignore[misc]
-                    # kind == "final"
-                    if not got_partial:
-                        # Non-generator handler: yield the final result as the single item
-                        yield action_type.RESULT_TYPE(**value["result"])  # type: ignore[attr-defined,misc]
+                    # kind == "final": WM streaming mode guarantees that result data
+                    # was already delivered via partial-result notifications. The final
+                    # tuple is only an end-of-stream marker plus completion metadata.
+                    _ = typing.cast(WmRawResult, value)
                     break
                 else:
-                    got_partial = True
-                    yield action_type.RESULT_TYPE(**item)  # type: ignore[attr-defined,misc]
+                    # Non-tuple item: partial payload from dispatch_partial_result_from_wm.
+                    yield self._build_result(action_type, item)
         finally:
             _wm_partial_result_queues.pop(token, None)
             if not wm_task.done():

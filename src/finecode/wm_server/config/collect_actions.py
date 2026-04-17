@@ -2,6 +2,8 @@
 from pathlib import Path
 from typing import Any
 
+import apischema
+
 import finecode.wm_server.config.config_models as config_models
 from finecode.wm_server import context, domain
 from finecode.wm_server.config.read_configs import read_env_configs
@@ -57,7 +59,10 @@ def _collect_services_in_config(
     services: list[domain.ServiceDeclaration] = []
     for service_def_raw in config["tool"]["finecode"].get("service", []):
         try:
-            service_def = config_models.ServiceDefinition(**service_def_raw)
+            service_def = apischema.deserialize(
+                config_models.ServiceDefinition,
+                service_def_raw,
+            )
         except config_models.ValidationError as exception:
             raise config_models.ConfigurationError(str(exception)) from exception
 
@@ -98,7 +103,10 @@ def _collect_actions_in_config(
         config["tool"]["finecode"].get("action", {}).items()
     ):
         try:
-            action_def = config_models.ActionDefinition(**action_def_raw)
+            action_def = apischema.deserialize(
+                config_models.ActionDefinition,
+                action_def_raw,
+            )
         except config_models.ValidationError as exception:
             raise config_models.ConfigurationError(str(exception)) from exception
 

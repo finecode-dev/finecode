@@ -1,51 +1,60 @@
 # docs: docs/concepts.md, docs/configuration.md
+from dataclasses import dataclass, field
 from typing import Any
 
-from pydantic import BaseModel, ValidationError
+from apischema import ValidationError
 
 
-class FinecodePresetDefinition(BaseModel):
+@dataclass
+class FinecodePresetDefinition:
     source: str
 
 
-class FinecodeActionDefinition(BaseModel):
+@dataclass
+class FinecodeActionDefinition:
     name: str
     source: str | None = None
 
 
-class FinecodeViewDefinition(BaseModel):
+@dataclass
+class FinecodeViewDefinition:
     name: str
     source: str
 
 
-class PresetDefinition(BaseModel):
-    extends: list[FinecodePresetDefinition] = []
+@dataclass
+class PresetDefinition:
+    extends: list[FinecodePresetDefinition] = field(default_factory=list)
 
 
-class ActionHandlerDefinition(BaseModel):
+@dataclass
+class ActionHandlerDefinition:
     name: str
     source: str = ""
     env: str = ""
-    dependencies: list[str] = []
+    dependencies: list[str] = field(default_factory=list)
     config: dict[str, Any] | None = None
     enabled: bool = True
 
 
-class ServiceDefinition(BaseModel):
+@dataclass
+class ServiceDefinition:
     interface: str
     source: str
     env: str
-    dependencies: list[str] = []
+    dependencies: list[str] = field(default_factory=list)
 
 
-class ActionDefinition(BaseModel):
+@dataclass
+class ActionDefinition:
     source: str
-    handlers: list[ActionHandlerDefinition] = []
+    handlers: list[ActionHandlerDefinition] = field(default_factory=list)
     handlers_mode: str = "merge"  # "merge" or "replace"
     config: dict[str, Any] | None = None
 
 
-class ViewDefinition(BaseModel):
+@dataclass
+class ViewDefinition:
     name: str
     source: str
 

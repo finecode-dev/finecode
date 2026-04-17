@@ -1,12 +1,14 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
+
+import apischema
+from loguru import logger
+from lsprotocol import types
 
 from finecode.lsp_server import global_state, pygls_types_utils
 from finecode_extension_api.actions.code_quality import format_files_action
-from loguru import logger
-from lsprotocol import types
-from pydantic.dataclasses import dataclass as pydantic_dataclass
+from finecode_extension_api.resource_uri import ResourceUri
 
 if TYPE_CHECKING:
     from finecode.lsp_server.lsp_server import LspServer
@@ -47,10 +49,13 @@ async def format_document(_ls: LspServer, params: types.DocumentFormattingParams
     if json_result is None:
         return []
 
-    result_type = pydantic_dataclass(format_files_action.FormatFilesRunResult)
-    format_result: format_files_action.FormatFilesRunResult = result_type(**json_result)
+    format_result = apischema.deserialize(
+        format_files_action.FormatFilesRunResult, json_result
+    )
 
-    response_for_file = format_result.result_by_file_path.get(file_uri)
+    response_for_file = format_result.result_by_file_path.get(
+        cast(ResourceUri, file_uri)
+    )
     if response_for_file is None:
         return []
 

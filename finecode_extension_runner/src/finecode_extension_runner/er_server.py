@@ -25,10 +25,10 @@ import sys
 import threading
 import typing
 
+import apischema
 from loguru import logger
 from lsprotocol import converters as lsp_converters
 from lsprotocol import types
-from pydantic.dataclasses import dataclass as pydantic_dataclass
 
 import finecode_jsonrpc as finecode_jsonrpc_module
 from finecode_extension_api import code_action
@@ -446,8 +446,10 @@ async def run_action(server: ErServer, params: dict | None) -> dict:
     )
 
     request = schemas.RunActionRequest(action_name=action_name, params=action_params)
-    options_type = pydantic_dataclass(schemas.RunActionOptions)
-    options_schema = options_type(**options if options is not None else {})
+    options_schema = apischema.deserialize(
+        schemas.RunActionOptions,
+        options if options is not None else {},
+    )
     status: str = "success"
 
     try:
@@ -551,8 +553,10 @@ async def run_handlers(server: ErServer, params: dict | None) -> dict:
         params=action_params,
         previous_result=previous_result,
     )
-    options_type = pydantic_dataclass(schemas.RunActionOptions)
-    options_schema = options_type(**options if options is not None else {})
+    options_schema = apischema.deserialize(
+        schemas.RunActionOptions,
+        options if options is not None else {},
+    )
     status: str = "success"
 
     try:

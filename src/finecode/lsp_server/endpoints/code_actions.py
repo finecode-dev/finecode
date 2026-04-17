@@ -3,9 +3,9 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+import apischema
 from loguru import logger
 from lsprotocol import types
-from pydantic.dataclasses import dataclass as pydantic_dataclass
 
 from finecode.lsp_server import global_state, pygls_types_utils
 from finecode_extension_api.actions.code_quality.code_action_types import (
@@ -168,8 +168,7 @@ async def document_code_action(
     if json_result is None:
         return []
 
-    result_type = pydantic_dataclass(GetCodeActionsRunResult)
-    result: GetCodeActionsRunResult = result_type(**json_result)
+    result = apischema.deserialize(GetCodeActionsRunResult, json_result)
 
     return [_code_action_to_lsp(action) for action in result.actions]
 
