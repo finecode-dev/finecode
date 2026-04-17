@@ -73,6 +73,12 @@ class RunnerFailedToStart(Exception):
         self.message: typing.Final = message
 
 
+class RunnerExitedBeforePort(Exception):
+    def __init__(self, return_code: int | None) -> None:
+        super().__init__()
+        self.return_code: typing.Final = return_code
+
+
 class BaseRunnerRequestException(Exception):
     def __init__(self, message: str) -> None:
         super().__init__()
@@ -791,16 +797,20 @@ class JsonRpcClient:
 
             try:
                 await asyncio.wait_for(self._tcp_port_future, timeout)
+            except RunnerExitedBeforePort as exception:
+                for task in self._async_tasks_in_io_thread:
+                    task.cancel()
+
+                raise RunnerFailedToStart(
+                    f"Runner exited before publishing TCP port (exit code: {exception.return_code})"
+                    f"{self._stderr_tail()}"
+                ) from exception
             except TimeoutError as exception:
                 for task in self._async_tasks_in_io_thread:
                     task.cancel()
 
-                stderr_hint = ""
-                if self._stderr_buffer:
-                    recent = "\n".join(self._stderr_buffer[-30:])
-                    stderr_hint = f"\nRunner stderr output:\n{recent}"
                 raise RunnerFailedToStart(
-                    f"Didn't get port in 30 seconds{stderr_hint}"
+                    f"Didn't get port in {timeout} seconds{self._stderr_tail()}"
                 ) from exception
 
             port = self._tcp_port_future.result()
@@ -852,6 +862,13 @@ class JsonRpcClient:
             )
         )
         self._async_tasks_in_io_thread.append(task)
+
+    def _stderr_tail(self, max_lines: int = 30) -> str:
+        if not self._stderr_buffer:
+            return ""
+
+        recent = "\n".join(self._stderr_buffer[-max_lines:])
+        return f"\nRunner stderr output:\n{recent}"
 
 
 async def start_server(
@@ -950,6 +967,7 @@ async def start_server(
             async_tasks,
             server_stopped_event,
             out_message_queue.async_q,
+            port_future=tcp_port_future,
         )
     )
     task.add_done_callback(
@@ -971,16 +989,21 @@ async def wait_for_stop_event_and_clean(
     tasks: list[asyncio.Task[typing.Any]],
     server_stopped_event: threading.Event,
     out_message_queue: culsans.AsyncQueue[bytes],
+    port_future: asyncio.Future[int] | None,
 ) -> None:
     # wait either on stop event (=user asks to stop the client) or end of the server
     # process
     logger.debug("Wait on one of tasks")
-    tasks_to_wait = [
-        asyncio.create_task(asyncio.to_thread(stop_event.wait)),
-        asyncio.create_task(server_process.wait()),
-    ]
-    _, _ = await asyncio.wait(tasks_to_wait, return_when=asyncio.FIRST_COMPLETED)
+    wait_stop_task = asyncio.create_task(asyncio.to_thread(stop_event.wait))
+    wait_process_task = asyncio.create_task(server_process.wait())
+    done, _ = await asyncio.wait(
+        [wait_stop_task, wait_process_task], return_when=asyncio.FIRST_COMPLETED
+    )
     logger.debug("One of tasks to wait is done")
+
+    process_finished_first = wait_process_task in done
+    if process_finished_first and port_future is not None and not port_future.done():
+        port_future.set_exception(RunnerExitedBeforePort(server_process.returncode))
 
     if not stop_event.is_set():
         stop_event.set()
