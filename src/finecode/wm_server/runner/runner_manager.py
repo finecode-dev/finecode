@@ -408,6 +408,7 @@ async def start_runners_with_presets(
     ws_context: context.WorkspaceContext,
     initialize_all_handlers: bool = False,
     python_overrides: dict[str, str] | None = None,
+    resolve_presets: bool = True,
 ) -> None:
     # start runners with presets in projects, resolve presets and read project actions
     new_runners_tasks: list[asyncio.Task] = []
@@ -475,7 +476,7 @@ async def start_runners_with_presets(
 
         try:
             await read_configs.read_project_config(
-                project=project, ws_context=ws_context
+                project=project, ws_context=ws_context, resolve_presets=resolve_presets
             )
             collected = collect_actions.collect_project(
                 project_path=project.dir_path, ws_context=ws_context

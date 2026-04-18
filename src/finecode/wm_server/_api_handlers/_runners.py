@@ -71,6 +71,7 @@ async def _handle_start_runners(
     params = params or {}
     project_names: list[str] | None = params.get("projects")
     python_overrides: dict[str, str] | None = params.get("pythonOverrides")
+    resolve_presets: bool = params.get("resolvePresets", True)
 
     # Phase 1: under global lock — decide which projects to start, claim their locks.
     async with ws_context.workspace_state_lock:
@@ -99,6 +100,7 @@ async def _handle_start_runners(
             projects=projects,
             ws_context=ws_context,
             python_overrides=python_overrides,
+            resolve_presets=resolve_presets,
         )
     except runner_manager.RunnerFailedToStart as exc:
         raise ValueError(f"Starting runners failed: {exc.message}") from exc

@@ -9,6 +9,7 @@ dependencies = [
     "fine_python_aksem~=0.3.0a3",
     "fine_python_recommended~=0.5.0a0",
     "fine_precommit~=0.1.0a0",
+    "fine_logs~=0.1.0a0",
 ]
 
 [tool.setuptools.package-data]
@@ -19,3 +20,8 @@ finecode_dev_common_preset = ["preset.toml"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.finecode.deps]
+fine_python_recommended = { path = "../presets/fine_python_recommended", editable = true }
+fine_precommit = { path = "../presets/fine_precommit", editable = true }
+fine_logs = { path = "../presets/fine_logs", editable = true }

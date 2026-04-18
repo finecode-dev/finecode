@@ -1,5 +1,64 @@
 import pathlib
+import tomllib
 import typing
+
+
+def collect_transitive_deps(dependencies: list[dict]) -> list[dict]:
+    """For each editable dep with a local file:// source, read its pyproject.toml and
+    collect [tool.finecode.deps] entries recursively. Returns additional deps to install."""
+    seen: set[str] = {dep["name"] for dep in dependencies}
+    result: list[dict] = []
+    queue = [
+        dep for dep in dependencies
+        if dep.get("editable") and " @ file://" in dep.get("version_or_source", "")
+    ]
+
+    while queue:
+        dep = queue.pop()
+        _, _, path_str = dep["version_or_source"].partition("file://")
+        package_dir = pathlib.Path(path_str)
+
+        if not package_dir.exists():
+            continue
+
+        pyproject_path = package_dir / "pyproject.toml"
+        if not pyproject_path.exists():
+            continue
+
+        with open(pyproject_path, "rb") as f:
+            config = tomllib.load(f)
+
+        finecode_deps = config.get("tool", {}).get("finecode", {}).get("deps", {})
+
+        for pkg_name, pkg_params in finecode_deps.items():
+            if pkg_name in seen:
+                continue
+            if not pkg_params.get("editable"):
+                continue
+            raw_path = pkg_params.get("path")
+            if raw_path is None:
+                continue
+            resolved = pathlib.Path(raw_path)
+            if not resolved.is_absolute():
+                resolved = (package_dir / resolved).resolve()
+            if not resolved.exists():
+                continue
+            dep_pyproject = resolved / "pyproject.toml"
+            if not dep_pyproject.exists():
+                raise ValueError(
+                    f"Editable dep '{pkg_name}' declared in '{pyproject_path}'"
+                    f" points to '{resolved}' which has no pyproject.toml"
+                )
+            new_dep: dict = {
+                "name": pkg_name,
+                "version_or_source": f" @ file://{resolved.as_posix()}",
+                "editable": True,
+            }
+            seen.add(pkg_name)
+            result.append(new_dep)
+            queue.append(new_dep)
+
+    return result
 
 
 def make_project_config_pip_compatible(
@@ -137,6 +196,7 @@ def process_raw_deps(
 
 
 __all__ = [
+    "collect_transitive_deps",
     "make_project_config_pip_compatible",
     "get_dependency_name",
     "process_raw_deps",

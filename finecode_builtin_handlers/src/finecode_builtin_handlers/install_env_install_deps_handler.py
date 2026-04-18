@@ -10,7 +10,10 @@ from finecode_extension_api.actions.environments.install_envs_action import (
 )
 from finecode_extension_api.interfaces import ilogger, iprojectactionrunner
 from finecode_extension_api.resource_uri import path_to_resource_uri, resource_uri_to_path
-from finecode_builtin_handlers.dependency_config_utils import process_raw_deps
+from finecode_builtin_handlers.dependency_config_utils import (
+    collect_transitive_deps,
+    process_raw_deps,
+)
 
 
 @dataclasses.dataclass
@@ -61,6 +64,7 @@ class InstallEnvInstallDepsHandler(
                 deps_groups,
                 project_def_path=project_def_path,
             )
+            dependencies.extend(collect_transitive_deps(dependencies))
 
             install_deps_payload = install_deps_in_env_action.InstallDepsInEnvRunPayload(
                 env_name=env.name,

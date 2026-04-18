@@ -91,6 +91,7 @@ async def _run(
         await client.start_runners(
             projects=[workdir_str],
             python_overrides={"dev_workspace": sys.executable},
+            resolve_presets=False,
         )
     except ApiError as exc:
         raise BootstrapFailed(f"Failed to start runner: {exc}") from exc

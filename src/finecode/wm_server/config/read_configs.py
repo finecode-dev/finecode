@@ -304,9 +304,9 @@ async def collect_config_from_py_presets(
             # use merge instead of just assigning config, because merge not only merges
             # configs, but also adapts relative pathes etc.
             config = {}
-            _merge_projects_configs(config, def_path, preset_toml, preset_toml_path)
+            _merge_projects_configs(config, def_path, preset_toml, preset_toml_path, is_from_preset=True)
         else:
-            _merge_projects_configs(config, def_path, preset_toml, preset_toml_path)
+            _merge_projects_configs(config, def_path, preset_toml, preset_toml_path, is_from_preset=True)
         new_presets_sources = (
             set([extend.source for extend in preset_config.extends]) - processed_presets
         )
@@ -379,6 +379,7 @@ def _merge_projects_configs(
     config1_filepath: Path,
     config2: dict[str, Any],
     config2_filepath: Path,
+    is_from_preset: bool = False,
 ) -> None:
     # merge config2 in config1 without overwriting
     if "tool" not in config1:
@@ -509,6 +510,12 @@ def _merge_projects_configs(
                         new_path = updated_dep_config["path"]
                         if new_path.startswith("."):
                             abs_path = (config2_filepath.parent / new_path).resolve()
+                            if is_from_preset and not abs_path.exists():
+                                logger.debug(
+                                    f"Skipping preset-contributed dep '{updated_dep_name}': "
+                                    f"path '{abs_path}' does not exist"
+                                )
+                                continue
                             new_rel_path = abs_path.relative_to(
                                 config1_filepath.parent, walk_up=True
                             )
