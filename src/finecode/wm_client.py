@@ -332,6 +332,7 @@ class ApiClient:
         self,
         projects: list[str] | None = None,
         python_overrides: dict[str, str] | None = None,
+        resolve_presets: bool = True,
     ) -> None:
         """Start extension runners for all (or specified) projects.
 
@@ -348,6 +349,8 @@ class ApiClient:
             params["projects"] = projects
         if python_overrides is not None:
             params["pythonOverrides"] = python_overrides
+        if not resolve_presets:
+            params["resolvePresets"] = False
         await self.request("workspace/startRunners", params)
 
     async def list_runners(self) -> list[dict]:

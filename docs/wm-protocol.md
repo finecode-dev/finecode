@@ -165,10 +165,14 @@ find them.
 **Params:**
 
 ```json
-{"projects": ["my_project"]}
+{"projects": ["my_project"], "resolvePresets": true}
 ```
 
 `projects` is optional. If omitted, starts runners for all projects.
+
+`resolvePresets` is optional (default: `true`). When `false`, the server starts
+missing runners without resolving presets, so project action lists are not
+refreshed by this call.
 
 **Result:** `{}`
 
