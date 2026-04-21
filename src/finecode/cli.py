@@ -247,12 +247,10 @@ async def show_user_message(message: str, message_type: str) -> None:
 def deserialize_action_payload(raw_payload: dict[str, str]) -> dict[str, typing.Any]:
     deserialized_payload = {}
     for key, value in raw_payload.items():
-        if (value.startswith("{") and value.endswith("}")) or (value.startswith('[') and value.endswith(']')):
-            try:
-                deserialized_value = json.loads(value)
-            except json.JSONDecodeError:
-                deserialized_value = value
-        else:
+        try:
+            # use json deserialize for objects, arrays, numbers, booleans
+            deserialized_value = json.loads(value)
+        except json.JSONDecodeError:
             deserialized_value = value
         deserialized_payload[key] = deserialized_value
     return deserialized_payload
@@ -408,7 +406,11 @@ def run(ctx) -> None:
                 wal_enabled=wal_enabled,
             )
         )
-        click.echo(result.output)
+
+        # if partial results were printed, final result is empty
+        if result.output != "":
+            click.echo(result.output)
+        
         if save_results:
             results_dir = pathlib.Path(sys.executable).parent.parent / "cache" / "finecode" / "results"
             results_dir.mkdir(parents=True, exist_ok=True)

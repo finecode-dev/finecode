@@ -185,6 +185,10 @@ async def run_actions(
                     results = value.get("results", {})
                     streaming_results[project_str] = results
                     block = _format_project_block(project_str, results, source_to_name)
+
+                    # split blocks with newline
+                    block = "\n" + block
+
                     click.echo(block, nl=False)
 
                 client.on_notification("actions/partialResult", _on_partial_result)
@@ -313,6 +317,10 @@ def _format_project_block(
 
     block = "".join(project_output_parts)
     block = f"{click.style(project_path_str, bold=True, underline=True)}\n" + block
+
+    if not block.endswith("\n"):
+        block += "\n"
+
     return block
 
 

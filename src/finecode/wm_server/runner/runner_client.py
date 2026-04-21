@@ -64,6 +64,18 @@ class RunActionResponse:
     return_code: int
     status: str = "success"
 
+    def json(self) -> dict[str, Any]:
+        result = self.result_by_format.get("json")
+        if result is None:
+            raise ActionRunFailed("Expected json result format but it was not returned")
+        return result
+
+    def text(self) -> str:
+        result = self.result_by_format.get("styled_text_json") or self.result_by_format.get("string")
+        if result is None:
+            raise ActionRunFailed("Expected text result format but it was not returned")
+        return result
+
 
 @dataclasses.dataclass
 class RunHandlersResponse:
