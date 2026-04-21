@@ -1,0 +1,42 @@
+[tool.finecode.action.list_observability_services]
+source = "finecode_extension_api.actions.ListObservabilityServicesAction"
+
+[[tool.finecode.action.list_observability_services.handlers]]
+name = "builtin"
+source = "finecode_builtin_handlers.ListObservabilityServicesHandler"
+env = "dev_workspace"
+dependencies = ["finecode_builtin_handlers~=0.2.0a0"]
+
+[tool.finecode.action.get_service_logs]
+source = "finecode_extension_api.actions.GetServiceLogsAction"
+
+[[tool.finecode.action.get_service_logs.handlers]]
+name = "builtin"
+source = "finecode_builtin_handlers.GetServiceLogsHandler"
+env = "dev_workspace"
+dependencies = ["finecode_builtin_handlers~=0.2.0a0"]
+
+[tool.finecode.action.clean_service_logs]
+source = "finecode_extension_api.actions.CleanServiceLogsAction"
+
+[[tool.finecode.action.clean_service_logs.handlers]]
+name = "builtin"
+source = "finecode_builtin_handlers.CleanServiceLogsHandler"
+env = "dev_workspace"
+dependencies = ["finecode_builtin_handlers~=0.2.0a0"]
+
+[tool.finecode.action.clean_services_logs]
+source = "finecode_extension_api.actions.CleanServicesLogsAction"
+
+# Discovery must be first — populates run_context.service_ids for the iterate handler
+[[tool.finecode.action.clean_services_logs.handlers]]
+name = "discovery"
+source = "finecode_builtin_handlers.CleanServicesLogsDiscoveryHandler"
+env = "dev_workspace"
+dependencies = ["finecode_builtin_handlers~=0.2.0a0"]
+
+[[tool.finecode.action.clean_services_logs.handlers]]
+name = "iterate"
+source = "finecode_builtin_handlers.CleanServicesLogsIterateHandler"
+env = "dev_workspace"
+dependencies = ["finecode_builtin_handlers~=0.2.0a0"]

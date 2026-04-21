@@ -182,32 +182,3 @@ name = "uninstall_git_hooks"
 source = "finecode_builtin_handlers.UninstallGitHooksHandler"
 env = "dev_workspace"
 dependencies = ["finecode_builtin_handlers~=0.2.0a0"]
-
-
-[tool.finecode.action.clean_finecode_logs]
-source = "finecode_extension_api.actions.CleanFinecodeLogsAction"
-
-[[tool.finecode.action.clean_finecode_logs.handlers]]
-name = "clean_finecode_logs_dev_workspace"
-source = "finecode_builtin_handlers.CleanFinecodeLogsHandler"
-env = "dev_workspace"
-dependencies = ["finecode_builtin_handlers~=0.2.0a0"]
-
-[[tool.finecode.action.clean_finecode_logs.handlers]]
-name = "clean_finecode_logs_dev_no_runtime"
-source = "finecode_builtin_handlers.CleanFinecodeLogsHandler"
-env = "dev_no_runtime"
-dependencies = ["finecode_builtin_handlers~=0.2.0a0"]
-
-# TODO: finish
-# [[tool.finecode.action.clean_finecode_logs.handlers]]
-# name = "clean_finecode_logs_dev"
-# source = "finecode_builtin_handlers.CleanFinecodeLogsHandler"
-# env = "dev"
-# dependencies = ["finecode_builtin_handlers~=0.1.0a0"]
-
-# [[tool.finecode.action.clean_finecode_logs.handlers]]
-# name = "clean_finecode_logs_runtime"
-# source = "finecode_builtin_handlers.CleanFinecodeLogsHandler"
-# env = "runtime"
-# dependencies = ["finecode_builtin_handlers~=0.1.0a0"]

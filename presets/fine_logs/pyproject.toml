@@ -1,0 +1,15 @@
+[project]
+name = "fine_logs"
+version = "0.1.0a0"
+description = "FineCode preset for listing, reading, and cleaning service logs"
+authors = [{ name = "Vladyslav Hnatiuk", email = "aders1234@gmail.com" }]
+readme = "README.md"
+requires-python = ">=3.11, <= 3.14"
+dependencies = []
+
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.package-data]
+fine_logs = ["preset.toml"]

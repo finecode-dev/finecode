@@ -1,6 +1,10 @@
 """FineCode Built-in handlers."""
 
-from .clean_finecode_logs_handler import CleanFinecodeLogsHandler
+from .clean_service_logs_handler import CleanServiceLogsHandler
+from .clean_services_logs_discovery_handler import CleanServicesLogsDiscoveryHandler
+from .clean_services_logs_iterate_handler import CleanServicesLogsIterateHandler
+from .get_service_logs_handler import GetServiceLogsHandler
+from .list_observability_services_handler import ListObservabilityServicesHandler
 from .create_envs_discover_envs_handler import CreateEnvsDiscoverEnvsHandler
 from .create_envs_dispatch_handler import CreateEnvsDispatchHandler
 from .dump_config_handler import DumpConfigHandler
@@ -29,7 +33,11 @@ from .staged_files_discovery_handler import StagedFilesDiscoveryHandler
 from .uninstall_git_hooks import UninstallGitHooksHandler
 
 __all__ = [
-    "CleanFinecodeLogsHandler",
+    "CleanServiceLogsHandler",
+    "CleanServicesLogsDiscoveryHandler",
+    "CleanServicesLogsIterateHandler",
+    "GetServiceLogsHandler",
+    "ListObservabilityServicesHandler",
     "InstallGitHooksHandler",
     "LintPrecommitBridgeHandler",
     "StagedFilesDiscoveryHandler",

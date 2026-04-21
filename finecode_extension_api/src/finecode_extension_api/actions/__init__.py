@@ -9,6 +9,9 @@ __all__ = [
     "FormatFileAction",
     "FormatFilesAction",
     "FormatPythonFileAction",
+    "GetCodeActionsAction",
+    "GetLintFixesAction",
+    "GetLintFixesPythonFilesAction",
     "LintAction",
     "LintFilesAction",
     "LintPythonFilesAction",
@@ -39,7 +42,6 @@ __all__ = [
     "LockDependenciesAction",
     "LockPythonDependenciesAction",
     # system
-    "CleanFinecodeLogsAction",
     "DumpConfigAction",
     "InstallGitHooksAction",
     "UninstallGitHooksAction",
@@ -47,6 +49,12 @@ __all__ = [
     "DiscoverWalSourcesAction",
     "IngestWalToStoreAction",
     "ServeWalExplorerFromStoreAction",
+    "ListObservabilityServicesAction",
+    "GetServiceLogsAction",
+    "CleanServiceLogsAction",
+    "CleanServicesLogsAction",
+    # ide
+    "TextDocumentInlayHintAction",
 ]
 
 from finecode_extension_api.actions.artifact.build_artifact_action import (
@@ -77,6 +85,15 @@ from finecode_extension_api.actions.code_quality.format_files_action import (
 )
 from finecode_extension_api.actions.code_quality.format_python_file_action import (
     FormatPythonFileAction,
+)
+from finecode_extension_api.actions.code_quality.get_code_actions_action import (
+    GetCodeActionsAction,
+)
+from finecode_extension_api.actions.code_quality.get_lint_fixes_action import (
+    GetLintFixesAction,
+)
+from finecode_extension_api.actions.code_quality.get_lint_fixes_python_files_action import (
+    GetLintFixesPythonFilesAction,
 )
 from finecode_extension_api.actions.code_quality.lint_action import LintAction
 from finecode_extension_api.actions.code_quality.lint_files_action import (
@@ -115,6 +132,18 @@ from finecode_extension_api.actions.observability.ingest_wal_to_store_action imp
 from finecode_extension_api.actions.observability.serve_wal_explorer_from_store_action import (
     ServeWalExplorerFromStoreAction,
 )
+from finecode_extension_api.actions.observability.list_observability_services_action import (
+    ListObservabilityServicesAction,
+)
+from finecode_extension_api.actions.observability.get_service_logs_action import (
+    GetServiceLogsAction,
+)
+from finecode_extension_api.actions.observability.clean_service_logs_action import (
+    CleanServiceLogsAction,
+)
+from finecode_extension_api.actions.observability.clean_services_logs_action import (
+    CleanServicesLogsAction,
+)
 from finecode_extension_api.actions.publishing.get_dist_artifact_version_action import (
     GetDistArtifactVersionAction,
 )
@@ -133,15 +162,15 @@ from finecode_extension_api.actions.publishing.publish_artifact_to_registry_acti
 from finecode_extension_api.actions.publishing.verify_artifact_published_to_registry_action import (
     VerifyArtifactPublishedToRegistryAction,
 )
-from finecode_extension_api.actions.system.clean_finecode_logs_action import (
-    CleanFinecodeLogsAction,
-)
 from finecode_extension_api.actions.system.dump_config_action import DumpConfigAction
 from finecode_extension_api.actions.system.install_git_hooks_action import (
     InstallGitHooksAction,
 )
 from finecode_extension_api.actions.system.uninstall_git_hooks_action import (
     UninstallGitHooksAction,
+)
+from finecode_extension_api.actions.ide.text_document_inlay_hint import (
+    TextDocumentInlayHintAction,
 )
 from finecode_extension_api.actions.testing.list_tests_action import ListTestsAction
 from finecode_extension_api.actions.testing.run_tests_action import RunTestsAction
