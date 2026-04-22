@@ -437,6 +437,10 @@ class TcpServerTransport:
 
         logger.debug(f"End reading messages | {self._readable_id}")
 
+        # Signal that the connection has ended (client disconnect, EOF, or error)
+        # so that any caller polling _stop_event can unblock.
+        self._stop_event.set()
+
         if self._on_exit is not None:
             try:
                 await self._on_exit()
