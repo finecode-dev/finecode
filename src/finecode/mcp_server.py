@@ -13,16 +13,13 @@ import pathlib
 import sys
 import uuid
 
+import finecode_jsonrpc
 from finecode.wm_client import ApiClient
 from finecode.wm_server import wm_lifecycle
 from finecode_extension_api.resource_uri import path_to_resource_uri
 from loguru import logger
-from mcp.server import Server
-from mcp.server.stdio import stdio_server
-from mcp.types import TextContent, Tool
 
 _wm_client = ApiClient()
-server = Server("FineCode")
 
 _partial_result_queues: dict[str, asyncio.Queue] = {}
 _progress_queues: dict[str, asyncio.Queue] = {}
@@ -31,21 +28,19 @@ _wm_port: int | None = None
 _workdir: pathlib.Path | None = None
 _wm_connected: bool = False
 
-# Populated by list_tools(); maps MCP tool name (action name) → action source.
+# Populated by _handle_list_tools(); maps MCP tool name (action name) → action source.
 _tool_name_to_source: dict[str, str] = {}
 
+_client_name: str | None = None
+_session: finecode_jsonrpc.JsonRpcServerSession | None = None
 
-async def _ensure_wm_connected(session) -> None:
+
+async def _ensure_wm_connected() -> None:
     global _wm_connected
     if _wm_connected:
         return
 
-    client_id = "mcp"
-    if session is not None and session.client_params is not None:
-        info = session.client_params.clientInfo
-        if info is not None and info.name:
-            client_id = f"mcp-{info.name}"
-
+    client_id = f"mcp-{_client_name}" if _client_name else "mcp"
     logger.info(f"MCP: Connecting to WM server on 127.0.0.1:{_wm_port} as {client_id!r}")
     await _wm_client.connect("127.0.0.1", _wm_port, client_id=client_id)
     logger.info("MCP: Connected to WM server")
@@ -58,11 +53,7 @@ async def _ensure_wm_connected(session) -> None:
 
 
 def _setup_partial_result_forwarding() -> None:
-    """Register the WM partial-result notification handler.
-
-    Must be called once after ``_wm_client.connect()``.  Each ``actions/partialResult``
-    notification is routed by token to the matching per-call asyncio.Queue.
-    """
+    """Register the WM partial-result notification handler."""
 
     async def _on_partial_result(params: dict) -> None:
         token = params.get("token")
@@ -76,11 +67,7 @@ def _setup_partial_result_forwarding() -> None:
 
 
 def _setup_progress_forwarding() -> None:
-    """Register the WM progress notification handler.
-
-    Must be called once after ``_wm_client.connect()``.  Each ``actions/progress``
-    notification is routed by token to the matching per-call asyncio.Queue.
-    """
+    """Register the WM progress notification handler."""
 
     async def _on_progress(params: dict) -> None:
         token = params.get("token")
@@ -93,22 +80,22 @@ def _setup_progress_forwarding() -> None:
     _wm_client.on_notification("actions/progress", _on_progress)
 
 
+async def _send_log_message(level: str, data: object, logger_name: str = "finecode") -> None:
+    if _session is None:
+        return
+    await _session.send_notification(
+        "notifications/message",
+        {"level": level, "data": data, "logger": logger_name},
+    )
+
+
 async def _run_with_progress(
     action_source: str,
     project: str,
     params: dict,
     options: dict,
-    session,
 ) -> dict:
-    """Run a WM action with streaming partial results and progress forwarded as MCP messages.
-
-    ``project`` may be ``""`` to run across all projects that expose the action.
-    Each ``actions/partialResult`` notification is forwarded to the MCP client as a
-    ``notifications/message`` log message while the call blocks waiting for the final result.
-    Partial results are also collected and returned in ``resultsByProject`` keyed by project
-    path, so callers receive the actual action output rather than just ``returnCode``.
-    Progress notifications are forwarded as log messages with the progress metadata.
-    """
+    """Run a WM action with streaming partial results and progress forwarded as MCP messages."""
     token = str(uuid.uuid4())
     progress_token = str(uuid.uuid4())
     queue: asyncio.Queue = asyncio.Queue()
@@ -126,9 +113,7 @@ async def _run_with_progress(
                 result_by_format = value.get("resultByFormat", {})
                 if result_by_format:
                     results_by_project[project_key] = result_by_format
-                await session.send_log_message(
-                    level="info", data=value, logger="finecode"
-                )
+                await _send_log_message("info", value)
         except asyncio.CancelledError:
             pass
 
@@ -142,9 +127,7 @@ async def _run_with_progress(
                 log_data = {"progress_type": progress_type, "message": message}
                 if percentage is not None:
                     log_data["percentage"] = percentage
-                await session.send_log_message(
-                    level="info", data=log_data, logger="finecode.progress"
-                )
+                await _send_log_message("info", log_data, "finecode.progress")
         except asyncio.CancelledError:
             pass
 
@@ -181,33 +164,47 @@ async def _run_with_progress(
     return result
 
 
-@server.list_tools()
-async def list_tools() -> list[Tool]:
-    """Build the MCP tool list from live WM data.
+# ---------------------------------------------------------------------------
+# MCP protocol handlers
+# ---------------------------------------------------------------------------
 
-    Fetches all actions and their payload schemas from the WM, then
-    constructs one ``Tool`` per action with the real input schema.
-    A static ``list_projects`` tool is always included.
-    """
-    logger.info("MCP list_tools() called")
-    from mcp.server.lowlevel.server import request_ctx
-    session = request_ctx.get().session
-    await _ensure_wm_connected(session)
-    tools: list[Tool] = [
-        Tool(
-            name="list_projects",
-            description="List all projects in the FineCode workspace with their names, paths, and statuses",
-            inputSchema={"type": "object", "properties": {}},
-        ),
-        Tool(
-            name="list_runners",
-            description="List all extension runners and their status (running, stopped, error). Use this to diagnose failures when actions do not respond.",
-            inputSchema={"type": "object", "properties": {}},
-        ),
-        Tool(
-            name="list_actions",
-            description="List actions available in the workspace, optionally filtered to a single project. Returns action names and which projects expose them.",
-            inputSchema={
+
+async def _handle_initialize(params: dict | None) -> dict:
+    global _client_name
+    if params:
+        client_info = params.get("clientInfo") or {}
+        _client_name = client_info.get("name")
+    return {
+        "protocolVersion": "2024-11-05",
+        "capabilities": {"tools": {}},
+        "serverInfo": {"name": "FineCode", "version": "1.0.0"},
+    }
+
+
+async def _handle_ping(_params: dict | None) -> dict:
+    return {}
+
+
+async def _handle_list_tools(_params: dict | None) -> dict:
+    """Build the MCP tool list from live WM data."""
+    logger.info("MCP tools/list called")
+    await _ensure_wm_connected()
+
+    tools: list[dict] = [
+        {
+            "name": "list_projects",
+            "description": "List all projects in the FineCode workspace with their names, paths, and statuses",
+            "inputSchema": {"type": "object", "properties": {}},
+        },
+        {
+            "name": "list_runners",
+            "description": "List all extension runners and their status (running, stopped, error). Use this to diagnose failures when actions do not respond.",
+            "inputSchema": {"type": "object", "properties": {}},
+        },
+        {
+            "name": "list_actions",
+            "description": "List actions available in the workspace, optionally filtered to a single project. Returns action names and which projects expose them.",
+            "inputSchema": {
                 "type": "object",
                 "properties": {
                     "project": {
@@ -216,11 +213,11 @@ async def list_tools() -> list[Tool]:
                     }
                 },
             },
-        ),
-        Tool(
-            name="get_project_raw_config",
-            description="Return the resolved (post-preset-merge) configuration for a project. Use this to understand what actions and handlers are configured.",
-            inputSchema={
+        },
+        {
+            "name": "get_project_raw_config",
+            "description": "Return the resolved (post-preset-merge) configuration for a project. Use this to understand what actions and handlers are configured.",
+            "inputSchema": {
                 "type": "object",
                 "properties": {
                     "project": {
@@ -230,11 +227,11 @@ async def list_tools() -> list[Tool]:
                 },
                 "required": ["project"],
             },
-        ),
-        Tool(
-            name="dump_config",
-            description="Return the fully resolved project configuration with all presets applied and the presets key removed. Use this to understand the complete effective configuration a project runs with.",
-            inputSchema={
+        },
+        {
+            "name": "dump_config",
+            "description": "Return the fully resolved project configuration with all presets applied and the presets key removed. Use this to understand the complete effective configuration a project runs with.",
+            "inputSchema": {
                 "type": "object",
                 "properties": {
                     "project": {
@@ -244,7 +241,7 @@ async def list_tools() -> list[Tool]:
                 },
                 "required": ["project"],
             },
-        ),
+        },
     ]
 
     try:
@@ -300,41 +297,44 @@ async def list_tools() -> list[Tool]:
                 "required": schema.get("required", []) if schema else [],
             }
             tools.append(
-                Tool(
-                    name=name,
-                    description=description,
-                    inputSchema=input_schema,
-                )
+                {
+                    "name": name,
+                    "description": description,
+                    "inputSchema": input_schema,
+                }
             )
 
-    logger.info(f"MCP list_tools() returning {len(tools)} tools total")
-    return tools
+    logger.info(f"MCP tools/list returning {len(tools)} tools total")
+    return {"tools": tools}
 
 
-@server.call_tool()
-async def call_tool(name: str, arguments: dict) -> list[TextContent]:
+async def _handle_call_tool(params: dict | None) -> dict:
     """Dispatch an MCP tool call to the WM server."""
-    from mcp.server.lowlevel.server import request_ctx
-    session = request_ctx.get().session
-    await _ensure_wm_connected(session)
+    if not params:
+        return {"content": [{"type": "text", "text": "Missing params"}], "isError": True}
+
+    name = params.get("name", "")
+    arguments: dict = dict(params.get("arguments") or {})
+
+    await _ensure_wm_connected()
 
     if name == "list_projects":
         result = await _wm_client.list_projects()
-        return [TextContent(type="text", text=json.dumps({"projects": result}))]
+        return {"content": [{"type": "text", "text": json.dumps({"projects": result})}]}
 
     if name == "list_runners":
         result = await _wm_client.list_runners()
-        return [TextContent(type="text", text=json.dumps({"runners": result}))]
+        return {"content": [{"type": "text", "text": json.dumps({"runners": result})}]}
 
     if name == "list_actions":
         project = arguments.get("project")
         result = await _wm_client.list_actions(project=project)
-        return [TextContent(type="text", text=json.dumps({"actions": result}))]
+        return {"content": [{"type": "text", "text": json.dumps({"actions": result})}]}
 
     if name == "get_project_raw_config":
         project = arguments["project"]
         result = await _wm_client.get_project_raw_config(project)
-        return [TextContent(type="text", text=json.dumps({"rawConfig": result}))]
+        return {"content": [{"type": "text", "text": json.dumps({"rawConfig": result})}]}
 
     if name == "dump_config":
         project = arguments["project"]
@@ -356,18 +356,19 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             },
             options={"resultFormats": ["json"], "trigger": "user", "devEnv": "ai"},
         )
-        return [TextContent(type="text", text=json.dumps(result))]
+        return {"content": [{"type": "text", "text": json.dumps(result)}]}
 
-    from mcp.server.lowlevel.server import request_ctx
-
-    session = request_ctx.get().session
     project = arguments.pop("project", None)
     action_source = _tool_name_to_source.get(name, name)
     options = {"resultFormats": ["json"], "trigger": "user", "devEnv": "ai"}
     result = await _run_with_progress(
-        action_source, project or "", arguments or {}, options, session
+        action_source, project or "", arguments or {}, options
     )
-    return [TextContent(type="text", text=json.dumps(result))]
+    return {"content": [{"type": "text", "text": json.dumps(result)}]}
+
+
+async def _noop(_params: dict | None) -> None:
+    pass
 
 
 def start(workdir: pathlib.Path, port_file: pathlib.Path | None = None) -> None:
@@ -376,7 +377,7 @@ def start(workdir: pathlib.Path, port_file: pathlib.Path | None = None) -> None:
     If *port_file* is given, a dedicated WM server is started that writes its
     port to that file instead of the shared discovery file.
 
-    The WM connection is established lazily on the first ``list_tools`` call so
+    The WM connection is established lazily on the first ``tools/list`` call so
     that the MCP client name (from the ``initialize`` handshake) can be included
     in the ``client_id`` sent to the WM server.
     """
@@ -398,21 +399,24 @@ def start(workdir: pathlib.Path, port_file: pathlib.Path | None = None) -> None:
     _workdir = workdir
 
     async def _run() -> None:
-        try:
-            logger.info("MCP: Starting stdio server")
-            async with stdio_server() as (read_stream, write_stream):
-                logger.info("MCP: Stdio server ready, running MCP server")
-                await server.run(
-                    read_stream,
-                    write_stream,
-                    server.create_initialization_options(),
-                )
-        finally:
-            if _wm_connected:
-                logger.info("MCP: Closing WM client")
-                await _wm_client.close()
+        global _session
+        transport = finecode_jsonrpc.ServerStdioTransport(readable_id="mcp_server")
+        _session = finecode_jsonrpc.JsonRpcServerSession()
+        _session.attach(transport)
+        _session.on_request("initialize", _handle_initialize)
+        _session.on_request("ping", _handle_ping)
+        _session.on_request("tools/list", _handle_list_tools)
+        _session.on_request("tools/call", _handle_call_tool)
+        _session.on_notification("notifications/initialized", _noop)
 
-    try:
-        asyncio.run(_run())
-    except KeyboardInterrupt:
-        pass
+        await transport.start()
+        logger.info("MCP: stdio server ready")
+        while not transport._stop_event.is_set():
+            await asyncio.sleep(0.05)
+
+        logger.info("MCP: stdio transport stopped")
+        if _wm_connected:
+            logger.info("MCP: Closing WM client")
+            await _wm_client.close()
+
+    asyncio.run(_run())
