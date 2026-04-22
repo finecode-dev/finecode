@@ -29,10 +29,17 @@ class ServerStdioTransport:
 
     Reading uses short timeouts so that :meth:`stop` can interrupt the loop
     gracefully without waiting for the next byte from stdin.
+
+    *framing* controls the wire format:
+
+    - ``"content-length"`` (default): LSP-style ``Content-Length`` header framing.
+    - ``"newline"``: newline-delimited JSON — one JSON object per line, no headers.
+      Required by the MCP stdio transport spec.
     """
 
-    def __init__(self, readable_id: str = "") -> None:
+    def __init__(self, readable_id: str = "", framing: str = "content-length") -> None:
         self._readable_id = readable_id
+        self._framing = framing
         self._stop_event = asyncio.Event()
         self._out_queue: asyncio.Queue[bytes | None] = asyncio.Queue()
         self._on_message: (
@@ -130,13 +137,16 @@ class ServerStdioTransport:
     # ------------------------------------------------------------------
 
     def send(self, message: dict[str, typing.Any]) -> None:
-        """Serialize *message* to JSON with Content-Length header and enqueue."""
-        body = json.dumps(message)
-        header = (
-            f"Content-Length: {len(body)}\r\n"
-            f"Content-Type: {CONTENT_TYPE}; charset={CHARSET}\r\n\r\n"
-        )
-        data = (header + body).encode(CHARSET)
+        """Serialize *message* and enqueue for writing."""
+        if self._framing == "newline":
+            data = (json.dumps(message) + "\n").encode(CHARSET)
+        else:
+            body = json.dumps(message)
+            header = (
+                f"Content-Length: {len(body)}\r\n"
+                f"Content-Type: {CONTENT_TYPE}; charset={CHARSET}\r\n\r\n"
+            )
+            data = (header + body).encode(CHARSET)
 
         if self._loop is not None and self._loop.is_running():
             self._loop.call_soon_threadsafe(self._out_queue.put_nowait, data)
@@ -164,6 +174,66 @@ class ServerStdioTransport:
     async def _read_messages(self, reader: asyncio.StreamReader) -> None:
         """Read messages from stdin with short timeouts to allow graceful stop."""
         logger.debug(f"Start reading messages | {self._readable_id}")
+
+        if self._framing == "newline":
+            await self._read_messages_newline(reader)
+        else:
+            await self._read_messages_content_length(reader)
+
+        logger.debug(f"End reading messages | {self._readable_id}")
+
+        if self._on_exit is not None:
+            try:
+                await self._on_exit()
+            except Exception as exc:
+                logger.exception(
+                    f"Error in exit handler | {self._readable_id}: {exc}"
+                )
+
+    async def _read_messages_newline(self, reader: asyncio.StreamReader) -> None:
+        """Read newline-delimited JSON messages (MCP stdio transport)."""
+        try:
+            while not self._stop_event.is_set():
+                try:
+                    line = await asyncio.wait_for(reader.readline(), timeout=0.1)
+                except asyncio.TimeoutError:
+                    continue
+                except (ValueError, ConnectionResetError) as exc:
+                    logger.warning(f"Read error | {self._readable_id}: {exc}")
+                    break
+
+                if not line:
+                    if reader.at_eof():
+                        logger.debug(f"Reader reached EOF | {self._readable_id}")
+                        break
+                    continue
+
+                line = line.strip()
+                if not line:
+                    continue
+
+                try:
+                    message = json.loads(line)
+                except json.JSONDecodeError as exc:
+                    logger.error(f"JSON parse error | {self._readable_id}: {exc}")
+                    continue
+
+                if not isinstance(message, dict):
+                    logger.error(f"Expected dict message | {self._readable_id}")
+                    continue
+
+                if self._on_message is not None:
+                    try:
+                        await self._on_message(message)
+                    except Exception as exc:
+                        logger.exception(
+                            f"Error in message handler | {self._readable_id}: {exc}"
+                        )
+        except asyncio.CancelledError:
+            pass
+
+    async def _read_messages_content_length(self, reader: asyncio.StreamReader) -> None:
+        """Read Content-Length-framed JSON messages (LSP-style)."""
         content_length = 0
 
         try:
@@ -225,16 +295,6 @@ class ServerStdioTransport:
                             )
         except asyncio.CancelledError:
             pass
-
-        logger.debug(f"End reading messages | {self._readable_id}")
-
-        if self._on_exit is not None:
-            try:
-                await self._on_exit()
-            except Exception as exc:
-                logger.exception(
-                    f"Error in exit handler | {self._readable_id}: {exc}"
-                )
 
 
 class TcpServerTransport:

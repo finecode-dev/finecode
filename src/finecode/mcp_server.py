@@ -400,7 +400,7 @@ def start(workdir: pathlib.Path, port_file: pathlib.Path | None = None) -> None:
 
     async def _run() -> None:
         global _session
-        transport = finecode_jsonrpc.ServerStdioTransport(readable_id="mcp_server")
+        transport = finecode_jsonrpc.ServerStdioTransport(readable_id="mcp_server", framing="newline")
         _session = finecode_jsonrpc.JsonRpcServerSession()
         _session.attach(transport)
         _session.on_request("initialize", _handle_initialize)
