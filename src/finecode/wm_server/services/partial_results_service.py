@@ -234,7 +234,7 @@ async def run_action_with_partial_results(
                     result_by_format: dict[str, domain.PartialResultRawValue] = {}
                     if "json" in requested_formats:
                         result_by_format["json"] = value
-                    stream.put({"resultByFormat": result_by_format})
+                    stream.put({"project": str(project.dir_path), "resultByFormat": result_by_format})
                 logger.trace(f"partial_results: partial iteration done for project={project.name}, got {partial_count} partials")
 
             async def _forward_progress() -> None:
@@ -271,7 +271,7 @@ async def run_action_with_partial_results(
                 if "json" in requested_formats:
                     result_by_format["json"] = json_result
                 logger.trace(f"partial_results: no partials received for project={project.name}, emitting final result as partial")
-                stream.put({"resultByFormat": result_by_format})
+                stream.put({"project": str(project.dir_path), "resultByFormat": result_by_format})
 
     async with asyncio.TaskGroup() as tg:
         for proj in projects:

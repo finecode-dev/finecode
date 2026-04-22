@@ -105,6 +105,8 @@ async def _run_with_progress(
     ``project`` may be ``""`` to run across all projects that expose the action.
     Each ``actions/partialResult`` notification is forwarded to the MCP client as a
     ``notifications/message`` log message while the call blocks waiting for the final result.
+    Partial results are also collected and returned in ``resultsByProject`` keyed by project
+    path, so callers receive the actual action output rather than just ``returnCode``.
     Progress notifications are forwarded as log messages with the progress metadata.
     """
     token = str(uuid.uuid4())
@@ -114,10 +116,16 @@ async def _run_with_progress(
     _partial_result_queues[token] = queue
     _progress_queues[progress_token] = progress_queue
 
+    results_by_project: dict[str, dict] = {}
+
     async def _forward_partials() -> None:
         try:
             while True:
                 value = await queue.get()
+                project_key = value.get("project", "")
+                result_by_format = value.get("resultByFormat", {})
+                if result_by_format:
+                    results_by_project[project_key] = result_by_format
                 await session.send_log_message(
                     level="info", data=value, logger="finecode"
                 )
@@ -150,13 +158,27 @@ async def _run_with_progress(
     forward_task = asyncio.create_task(_forward_partials())
     progress_forward_task = asyncio.create_task(_forward_progress())
     try:
-        return await result_task
+        result = await result_task
     finally:
+        # Yield to let any notification handler tasks that were scheduled
+        # concurrently with result_task completion finish enqueuing their values.
+        await asyncio.sleep(0)
         forward_task.cancel()
         progress_forward_task.cancel()
         await asyncio.gather(forward_task, progress_forward_task, return_exceptions=True)
+        # Drain items that arrived after forward_task was cancelled.
+        while not queue.empty():
+            value = queue.get_nowait()
+            project_key = value.get("project", "")
+            result_by_format = value.get("resultByFormat", {})
+            if result_by_format:
+                results_by_project[project_key] = result_by_format
         _partial_result_queues.pop(token, None)
         _progress_queues.pop(progress_token, None)
+
+    if results_by_project:
+        result = {**result, "resultsByProject": results_by_project}
+    return result
 
 
 @server.list_tools()
@@ -390,4 +412,7 @@ def start(workdir: pathlib.Path, port_file: pathlib.Path | None = None) -> None:
                 logger.info("MCP: Closing WM client")
                 await _wm_client.close()
 
-    asyncio.run(_run())
+    try:
+        asyncio.run(_run())
+    except KeyboardInterrupt:
+        pass

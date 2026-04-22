@@ -823,6 +823,7 @@ Sent when an `actions/run` or `actions/runBatch` request includes a
 {
   "token": "diag_1",
   "value": {
+    "project": "/abs/path/to/project",
     "resultByFormat": {
       "json": {"messages": {"file.py": [...]}},
       "string": "3 issues found in file.py"
@@ -831,7 +832,12 @@ Sent when an `actions/run` or `actions/runBatch` request includes a
 }
 ```
 
-`value` mirrors the `actions/run` result shape (without `returnCode`).
+`value.project` is the absolute path of the project that produced this partial result.
+When `project=""` is passed to `actions/run` (run across all projects), multiple
+notifications are emitted — one per project — and `value.project` identifies which
+project each belongs to, allowing clients to group results by project.
+
+`value.resultByFormat` mirrors the `actions/run` result shape (without `returnCode`).
 
 > **Guarantee:** The WM Server always delivers results via `actions/partialResult`
 > notifications, even when an extension runner does not stream incrementally (i.e.
