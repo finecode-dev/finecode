@@ -11,8 +11,7 @@ FineCode gives you one workflow for code quality and developer tooling across CL
 
 ## Prerequisites
 
-- Python 3.11-3.14
-- pip 25.1+ (for `--group` support)
+- Python 3.11-3.14 or [uv](https://docs.astral.sh/uv/)
 
 ## Quick Start (5 minutes)
 
@@ -26,10 +25,14 @@ dev_workspace = ["finecode==0.3.*", "fine_python_recommended==0.3.*"]
 presets = [{ source = "fine_python_recommended" }]
 ```
 
-2. Create and activate environment:
+2. Bootstrap and activate the `dev_workspace` environment:
 
 ```bash
-python -m venv .venvs/dev_workspace
+# Recommended: bootstrap the environment
+pipx run finecode bootstrap
+# or
+uvx finecode bootstrap
+
 # macOS/Linux
 source .venvs/dev_workspace/bin/activate
 # Windows (PowerShell)
@@ -38,11 +41,9 @@ source .venvs/dev_workspace/bin/activate
 .venvs\dev_workspace\Scripts\activate.bat
 ```
 
-3. Install dependencies and run FineCode:
+3. Prepare environments and run FineCode:
 
 ```bash
-python -m pip install --upgrade pip
-python -m pip install --group="dev_workspace"
 python -m finecode prepare-envs
 python -m finecode run lint
 ```
