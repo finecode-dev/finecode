@@ -42,7 +42,7 @@ async def update_config(
         [str], collections.abc.Awaitable[dict[str, typing.Any]]
     ],
     send_request_to_wm: typing.Callable[[str, dict], collections.abc.Awaitable[typing.Any]] | None = None,
-) -> schemas.UpdateConfigResponse:
+) -> tuple[schemas.UpdateConfigResponse, context.RunnerContext]:
     project_dir_path = Path(request.working_dir)
 
     actions: dict[str, domain.ActionDeclaration] = {}
@@ -76,7 +76,7 @@ async def update_config(
                 )
         actions[action_name] = action
 
-    global_state.runner_context = context.RunnerContext(
+    runner_context = context.RunnerContext(
         project=domain.Project(
             name=request.project_name,
             dir_path=project_dir_path,
@@ -85,31 +85,26 @@ async def update_config(
             action_handler_configs=request.action_handler_configs,
         ),
     )
-    global_state.runner_context.project_config_version = _compute_request_hash(request)
+    runner_context.project_config_version = _compute_request_hash(request)
 
     # currently update_config is called only once directly after runner start. So we can
     # bootstrap here. Should be changed after adding updating configuration on the fly.
     def project_def_path_getter() -> Path:
-        assert global_state.runner_context is not None
-        return global_state.runner_context.project.def_path
+        return runner_context.project.def_path
 
     def cache_dir_path_getter() -> Path:
-        assert global_state.runner_context is not None
-        project_dir_path = global_state.runner_context.project.dir_path
         project_cache_dir = (
-            project_dir_path / ".venvs" / global_state.env_name / "cache"
+            runner_context.project.dir_path / ".venvs" / global_state.env_name / "cache"
         )
         if not project_cache_dir.exists():
             project_cache_dir.mkdir()
-
         return project_cache_dir
 
     def current_project_raw_config_version_getter() -> int:
-        return global_state.runner_context.project_config_version
+        return runner_context.project_config_version
 
     def actions_getter() -> dict[str, domain.ActionDeclaration]:
-        assert global_state.runner_context is not None
-        return global_state.runner_context.project.actions
+        return runner_context.project.actions
 
     def current_env_name_getter() -> str:
         return global_state.env_name
@@ -123,6 +118,8 @@ async def update_config(
     }
 
     di_bootstrap.bootstrap(
+        registry=runner_context.di_registry,
+        runner_context=runner_context,
         project_def_path_getter=project_def_path_getter,
         project_raw_config_getter=project_raw_config_getter,
         cache_dir_path_getter=cache_dir_path_getter,
@@ -135,12 +132,12 @@ async def update_config(
     )
 
     if request.handlers_to_initialize is not None:
-        await initialize_handlers(request.handlers_to_initialize)
+        await initialize_handlers(request.handlers_to_initialize, runner_context)
 
-    return schemas.UpdateConfigResponse()
+    return schemas.UpdateConfigResponse(), runner_context
 
 
-async def resolve_action_meta() -> dict[str, dict]:
+async def resolve_action_meta(runner_context: context.RunnerContext) -> dict[str, dict]:
     """Resolve meta info for all known actions.
 
     Returns a mapping of config source → action meta dict containing:
@@ -153,9 +150,7 @@ async def resolve_action_meta() -> dict[str, dict]:
     """
     from finecode_extension_api.code_action import HandlerExecution
 
-    if global_state.runner_context is None:
-        return {}
-    actions = global_state.runner_context.project.actions
+    actions = runner_context.project.actions
     resolved: dict[str, dict] = {}
     for action in actions.values():
         if action.source is None:
@@ -176,6 +171,7 @@ async def resolve_action_meta() -> dict[str, dict]:
 
 async def initialize_handlers(
     handlers_by_action: dict[str, list[str]],
+    runner_context: context.RunnerContext,
 ) -> None:
     """Eagerly instantiate and initialize handlers.
 
@@ -185,12 +181,8 @@ async def initialize_handlers(
     Args:
         handlers_by_action: mapping of action name → list of handler names
             to eagerly initialize.
+        runner_context: the active runner context.
     """
-    if global_state.runner_context is None:
-        logger.warning("Cannot initialize handlers: runner context is not set")
-        return
-
-    runner_context = global_state.runner_context
     project = runner_context.project
 
     for action_name, handler_names in handlers_by_action.items():
@@ -240,12 +232,8 @@ async def initialize_handlers(
                 )
 
 
-def reload_action(action_name: str) -> None:
-    if global_state.runner_context is None:
-        # TODO: raise error
-        return
-
-    project_def = global_state.runner_context.project
+def reload_action(action_name: str, runner_context: context.RunnerContext) -> None:
+    project_def = runner_context.project
 
     try:
         action_obj = project_def.actions[action_name]
@@ -260,8 +248,8 @@ def reload_action(action_name: str) -> None:
         # TODO: raise error
         return
 
-    if action_name in global_state.runner_context.action_cache_by_name:
-        action_cache = global_state.runner_context.action_cache_by_name[action_name]
+    if action_name in runner_context.action_cache_by_name:
+        action_cache = runner_context.action_cache_by_name[action_name]
 
         for handler_name, handler_cache in action_cache.handler_cache_by_name.items():
             if handler_cache.exec_info is not None:
@@ -270,10 +258,10 @@ def reload_action(action_name: str) -> None:
                     handler_instance=handler_cache.instance,
                     exec_info=handler_cache.exec_info,
                     used_services=handler_cache.used_services,
-                    runner_context=global_state.runner_context,
+                    runner_context=runner_context,
                 )
 
-        del global_state.runner_context.action_cache_by_name[action_name]
+        del runner_context.action_cache_by_name[action_name]
         logger.trace(f"Removed '{action_name}' instance from cache")
 
     try:
@@ -352,10 +340,10 @@ def shutdown_action_handler(
                         logger.exception(exception)
 
 
-def shutdown_all_action_handlers() -> None:
-    if global_state.runner_context is not None:
+def shutdown_all_action_handlers(runner_context: context.RunnerContext | None) -> None:
+    if runner_context is not None:
         logger.trace("Shutdown all action handlers")
-        for action_cache in global_state.runner_context.action_cache_by_name.values():
+        for action_cache in runner_context.action_cache_by_name.values():
             for (
                 handler_name,
                 handler_cache,
@@ -366,7 +354,7 @@ def shutdown_all_action_handlers() -> None:
                         handler_instance=handler_cache.instance,
                         exec_info=handler_cache.exec_info,
                         used_services=handler_cache.used_services,
-                        runner_context=global_state.runner_context,
+                        runner_context=runner_context,
                     )
 
 
@@ -384,10 +372,10 @@ def exit_action_handler(
             logger.error(f"Failed to exit action {action_handler_name}: {e}")
 
 
-def exit_all_action_handlers() -> None:
-    if global_state.runner_context is not None:
+def exit_all_action_handlers(runner_context: context.RunnerContext | None) -> None:
+    if runner_context is not None:
         logger.trace("Exit all action handlers")
-        for action_cache in global_state.runner_context.action_cache_by_name.values():
+        for action_cache in runner_context.action_cache_by_name.values():
             for (
                 handler_name,
                 handler_cache,
@@ -400,7 +388,7 @@ def exit_all_action_handlers() -> None:
             action_cache.handler_cache_by_name = {}
 
 
-def get_payload_schemas() -> dict[str, dict | None]:
+def get_payload_schemas(runner_context: context.RunnerContext) -> dict[str, dict | None]:
     """Return a payload schema for every action currently known to the runner.
 
     Called by the WM via the ``actions/getPayloadSchemas`` command to populate
@@ -409,11 +397,8 @@ def get_payload_schemas() -> dict[str, dict | None]:
     Returns a mapping of action name → JSON Schema fragment (or ``None`` if the
     action class could not be imported or has no ``PAYLOAD_TYPE``).
     """
-    if global_state.runner_context is None:
-        return {}
-
     result: dict[str, dict | None] = {}
-    for action_name, action in global_state.runner_context.project.actions.items():
+    for action_name, action in runner_context.project.actions.items():
         try:
             action_cls = run_utils.import_module_member_by_source_str(action.source)
             payload_cls = getattr(action_cls, "PAYLOAD_TYPE", None)

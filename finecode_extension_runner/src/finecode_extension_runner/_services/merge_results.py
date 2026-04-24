@@ -3,11 +3,15 @@ import dataclasses
 from loguru import logger
 
 from finecode_extension_api import code_action
-from finecode_extension_runner import global_state, run_utils
+from finecode_extension_runner import context, run_utils
 from finecode_extension_runner._converter import converter as _converter
 
 
-async def merge_results(action_name: str, results: list[dict]) -> dict:
+async def merge_results(
+    action_name: str,
+    results: list[dict],
+    runner_context: context.RunnerContext,
+) -> dict:
     """Merge multiple serialized action results into one using the action's result type.
 
     Each entry in ``results`` must be a dict produced by ``dataclasses.asdict()``
@@ -15,17 +19,14 @@ async def merge_results(action_name: str, results: list[dict]) -> dict:
     ``RunActionResult.update()``, the same mechanism the runner uses when
     combining results from multiple handlers within a single run.
     """
-    if global_state.runner_context is None:
-        raise ValueError("Extension runner is not initialized yet")
-
     # Prefer cached result_type to avoid re-importing the action module.
-    action_cache = global_state.runner_context.action_cache_by_name.get(action_name)
+    action_cache = runner_context.action_cache_by_name.get(action_name)
     if action_cache is not None and action_cache.exec_info is not None:
         result_type = action_cache.exec_info.result_type
     else:
         # Cold cache: action hasn't been run yet in this runner; import the type.
         try:
-            action = global_state.runner_context.project.actions[action_name]
+            action = runner_context.project.actions[action_name]
         except KeyError:
             raise ValueError(f"Action '{action_name}' not found")
         action_type = run_utils.import_module_member_by_source_str(action.source)

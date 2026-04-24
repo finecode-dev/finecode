@@ -32,11 +32,10 @@ from loguru import logger
 import finecode_jsonrpc as finecode_jsonrpc_module
 from finecode_extension_api import code_action
 from finecode_extension_api.interfaces import ifileeditor
-from finecode_extension_runner import er_wal, global_state, schemas, services
+from finecode_extension_runner import context, er_wal, global_state, schemas, services
 from finecode_extension_runner._converter import converter as _converter
 from finecode_extension_runner._services import merge_results as merge_results_service
 from finecode_extension_runner._services import run_action as run_action_service
-from finecode_extension_runner.di import resolver
 from finecode_extension_runner.impls import project_action_runner as project_action_runner_module
 
 # ---------------------------------------------------------------------------
@@ -178,6 +177,7 @@ class ErServer:
         )
         self._stop_event = threading.Event()
         self._tcp_server: asyncio.Server | None = None
+        self._runner_context: context.RunnerContext | None = None
 
     # ------------------------------------------------------------------
     # Server → client helpers
@@ -348,7 +348,7 @@ async def _on_shutdown(server: ErServer, _params: dict | None) -> None:
     logger.info("Shutdown extension runner")
     if global_state.wal_writer is not None:
         global_state.wal_writer.close()
-    services.shutdown_all_action_handlers()
+    services.shutdown_all_action_handlers(server._runner_context)
 
     logger.debug("Stop Finecode async tasks")
     for task in server._finecode_async_tasks:
@@ -474,13 +474,14 @@ async def update_config(server: ErServer, params: dict | None) -> dict:
         async def _send_request_to_wm(method: str, req_params: dict):
             return await server.send_request_to_wm(method, req_params)
 
-        response = await services.update_config(
+        response, runner_context = await services.update_config(
             request=request,
             project_raw_config_getter=functools.partial(get_project_raw_config, server),
             send_request_to_wm=_send_request_to_wm,
         )
+        server._runner_context = runner_context
 
-        file_editor = await resolver.get_service_instance(ifileeditor.IFileEditor)
+        file_editor = await runner_context.di_registry.get_instance(ifileeditor.IFileEditor)
         server._finecode_file_editor_session = (
             await server._finecode_exit_stack.enter_async_context(
                 file_editor.session(author=server._finecode_file_operation_author)
@@ -536,7 +537,9 @@ async def run_action(server: ErServer, params: dict | None) -> dict:
     meta = (options or {}).get("meta") or {}
     trigger = meta.get("trigger", "unknown")
     dev_env = meta.get("dev_env", "unknown")
-    project_path = global_state.project_dir_path or pathlib.Path(".")
+    if server._runner_context is None:
+        return {"error": "Extension runner not initialized"}
+    project_path = server._runner_context.project.dir_path
     er_wal.emit_run_event(
         global_state.wal_writer,
         event_type=er_wal.ErWalEventType.RUN_ACCEPTED,
@@ -559,7 +562,7 @@ async def run_action(server: ErServer, params: dict | None) -> dict:
 
     try:
         response = await services.run_action_raw(
-            request=request, options=options_schema
+            request=request, options=options_schema, runner_context=server._runner_context
         )
     except Exception as exception:
         if isinstance(exception, services.StopWithResponse):
@@ -640,7 +643,9 @@ async def run_handlers(server: ErServer, params: dict | None) -> dict:
     meta = (options or {}).get("meta") or {}
     trigger = meta.get("trigger", "unknown")
     dev_env = meta.get("dev_env", "unknown")
-    project_path = global_state.project_dir_path or pathlib.Path(".")
+    if server._runner_context is None:
+        return {"error": "Extension runner not initialized"}
+    project_path = server._runner_context.project.dir_path
     er_wal.emit_run_event(
         global_state.wal_writer,
         event_type=er_wal.ErWalEventType.RUN_ACCEPTED,
@@ -664,7 +669,9 @@ async def run_handlers(server: ErServer, params: dict | None) -> dict:
     status: str = "success"
 
     try:
-        response = await services.run_handlers_raw(request=request, options=options_schema)
+        response = await services.run_handlers_raw(
+            request=request, options=options_schema, runner_context=server._runner_context
+        )
     except Exception as exception:
         if isinstance(exception, services.ActionFailedException):
             logger.error(f"Run handlers failed: {exception.message}")
@@ -710,11 +717,13 @@ async def run_handlers(server: ErServer, params: dict | None) -> dict:
     }
 
 
-async def reload_action(_server: ErServer, params: dict | None) -> dict:
+async def reload_action(server: ErServer, params: dict | None) -> dict:
     assert params is not None
     action_name: str = params["actionName"]
     logger.trace(f"Reload action: {action_name}")
-    services.reload_action(action_name)
+    if server._runner_context is None:
+        return {}
+    services.reload_action(action_name, server._runner_context)
     return {}
 
 
@@ -727,19 +736,23 @@ async def resolve_package_path(_server: ErServer, params: dict | None) -> dict:
     return {"packagePath": result}
 
 
-async def get_payload_schemas_cmd(_server: ErServer, _params: dict | None) -> dict:
+async def get_payload_schemas_cmd(server: ErServer, _params: dict | None) -> dict:
     logger.trace("Get payload schemas")
-    return services.get_payload_schemas()
+    if server._runner_context is None:
+        return {}
+    return services.get_payload_schemas(server._runner_context)
 
 
-async def merge_results_cmd(_server: ErServer, params: dict | None) -> dict:
+async def merge_results_cmd(server: ErServer, params: dict | None) -> dict:
     assert params is not None
     action_name: str = params["actionName"]
     results: list = params["results"]
     logger.trace(f"Merge results: action={action_name}, count={len(results)}")
+    if server._runner_context is None:
+        return {"error": "Extension runner not initialized"}
     try:
         merged = await merge_results_service.merge_results(
-            action_name=action_name, results=results
+            action_name=action_name, results=results, runner_context=server._runner_context
         )
         return {"merged": merged}
     except Exception as exception:
@@ -774,9 +787,11 @@ async def resolve_source(_server: ErServer, params: dict | None) -> dict:
     return {"canonicalSource": canonical}
 
 
-async def resolve_action_meta(_server: ErServer, _params: dict | None) -> dict:
+async def resolve_action_meta(server: ErServer, _params: dict | None) -> dict:
     """Handler for ``finecodeRunner/resolveActionMeta``."""
-    return await services.resolve_action_meta()
+    if server._runner_context is None:
+        return {}
+    return await services.resolve_action_meta(server._runner_context)
 
 
 async def get_runner_info(_server: ErServer, _params: dict | None) -> dict:
@@ -848,8 +863,8 @@ def create_er_server() -> ErServer:
         logger.info("Exit extension runner (atexit)")
         if global_state.wal_writer is not None:
             global_state.wal_writer.close()
-        services.shutdown_all_action_handlers()
-        services.exit_all_action_handlers()
+        services.shutdown_all_action_handlers(server._runner_context)
+        services.exit_all_action_handlers(server._runner_context)
 
     atexit.register(on_process_exit)
 

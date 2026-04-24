@@ -23,6 +23,7 @@ from finecode_extension_runner import (
     schemas,
 )
 from finecode_extension_runner.di import resolver as di_resolver
+from finecode_extension_runner.di.registry import Registry
 
 last_run_id: int = 0
 partial_result_sender: partial_result_sender_module.PartialResultSender
@@ -158,6 +159,7 @@ async def run_action(
     action_def: domain.ActionDeclaration,
     payload: code_action.RunActionPayload | None,
     meta: code_action.RunActionMeta,
+    runner_context: context.RunnerContext,
     partial_result_token: int | str | None = None,
     progress_token: int | str | None = None,
     run_id: int | None = None,
@@ -185,20 +187,13 @@ async def run_action(
         f"run_action: action='{action_def.name}', run_id={run_id}, partial_result_token={partial_result_token}"
     )
 
-    # TODO: check whether config is set: this will be solved by passing initial
-    # configuration as payload of initialize
-    if global_state.runner_context is None:
-        raise ActionFailedException(
-            "Run of action failed because extension runner is not initialized yet"
-        )
-
     start_time = time.time_ns()
 
     try:
-        action_cache = global_state.runner_context.action_cache_by_name[action_def.name]
+        action_cache = runner_context.action_cache_by_name[action_def.name]
     except KeyError:
         action_cache = domain.ActionCache()
-        global_state.runner_context.action_cache_by_name[action_def.name] = action_cache
+        runner_context.action_cache_by_name[action_def.name] = action_cache
 
     if action_cache.exec_info is not None:
         action_exec_info = action_cache.exec_info
@@ -247,6 +242,7 @@ async def run_action(
             action_exec_info.run_context_type.__init__,
             known_args=known_args,
             params_to_ignore=["self"],
+            registry=runner_context.di_registry,
         )
 
         # developers can change run context constructor, handle all exceptions
@@ -264,7 +260,6 @@ async def run_action(
     action_result: code_action.RunActionResult | None = initial_result
     if initial_result is not None:
         run_context_info.update(initial_result)
-    runner_context = global_state.runner_context
 
     # to be able to catch source of exceptions in user-accessible code more precisely,
     # manually enter and exit run context
@@ -365,7 +360,7 @@ async def run_action(
                         event_type=er_wal.ErWalEventType.HANDLER_PARTS_STARTED,
                         wal_run_id=wal_run_id or "",
                         action_name=action_def.name,
-                        project_path=global_state.project_dir_path or "",
+                        project_path=runner_context.project.dir_path,
                         trigger=meta.trigger,
                         dev_env=meta.dev_env,
                         payload={"run_id": run_id, "part_count": len(parts)},
@@ -390,6 +385,7 @@ async def run_action(
                                         partial_result_sender,
                                         action_def.name,
                                         run_id,
+                                        runner_context=runner_context,
                                         partial_result_queue=partial_result_queue,
                                         tracking_sender=tracking_sender,
                                         wal_run_id=wal_run_id,
@@ -404,6 +400,7 @@ async def run_action(
                                         partial_result_sender,
                                         action_def.name,
                                         run_id,
+                                        runner_context=runner_context,
                                         partial_result_queue=partial_result_queue,
                                         tracking_sender=tracking_sender,
                                         wal_run_id=wal_run_id,
@@ -429,7 +426,7 @@ async def run_action(
                         event_type=er_wal.ErWalEventType.HANDLER_PARTS_COMPLETED,
                         wal_run_id=wal_run_id or "",
                         action_name=action_def.name,
-                        project_path=global_state.project_dir_path or "",
+                        project_path=runner_context.project.dir_path,
                         trigger=meta.trigger,
                         dev_env=meta.dev_env,
                         payload={
@@ -553,7 +550,7 @@ async def run_action(
             event_type=er_wal.ErWalEventType.PARTIAL_RESULT_FINAL_SENT,
             wal_run_id=wal_run_id,
             action_name=action_def.name,
-            project_path=global_state.project_dir_path or "",
+            project_path=runner_context.project.dir_path,
             trigger=meta.trigger,
             dev_env=meta.dev_env,
             payload={"run_id": run_id},
@@ -578,7 +575,9 @@ async def run_action(
 
 
 async def run_action_raw(
-    request: schemas.RunActionRequest, options: schemas.RunActionOptions
+    request: schemas.RunActionRequest,
+    options: schemas.RunActionOptions,
+    runner_context: context.RunnerContext,
 ) -> schemas.RunActionResponse:
     global last_run_id
     run_id = last_run_id
@@ -586,14 +585,8 @@ async def run_action_raw(
     logger.trace(
         f"Run action '{request.action_name}', run id: {run_id}, partial result token: {options.partial_result_token}"
     )
-    # # TODO: check whether config is set: this will be solved by passing initial
-    # # configuration as payload of initialize
-    if global_state.runner_context is None:
-        raise ActionFailedException(
-            "Run of action failed because extension runner is not initialized yet"
-        )
 
-    project_def = global_state.runner_context.project
+    project_def = runner_context.project
 
     try:
         action = project_def.actions[request.action_name]
@@ -606,10 +599,10 @@ async def run_action_raw(
     action_name = request.action_name
 
     try:
-        action_cache = global_state.runner_context.action_cache_by_name[action_name]
+        action_cache = runner_context.action_cache_by_name[action_name]
     except KeyError:
         action_cache = domain.ActionCache()
-        global_state.runner_context.action_cache_by_name[action_name] = action_cache
+        runner_context.action_cache_by_name[action_name] = action_cache
 
     if action_cache.exec_info is not None:
         action_exec_info = action_cache.exec_info
@@ -631,13 +624,12 @@ async def run_action_raw(
 
     meta = dataclasses.replace(options.meta, wal_run_id=wal_run_id)
 
-    project_path = global_state.project_dir_path or ""
     er_wal.emit_run_event(
         global_state.wal_writer,
         event_type=er_wal.ErWalEventType.RUN_DISPATCHED,
         wal_run_id=wal_run_id,
         action_name=request.action_name,
-        project_path=project_path,
+        project_path=runner_context.project.dir_path,
         trigger=options.meta.trigger,
         dev_env=options.meta.dev_env,
         payload={"run_id": run_id},
@@ -647,6 +639,7 @@ async def run_action_raw(
         action_def=action,
         payload=payload,
         meta=meta,
+        runner_context=runner_context,
         partial_result_token=options.partial_result_token,
         progress_token=options.progress_token,
         run_id=run_id,
@@ -686,7 +679,9 @@ def action_result_to_run_action_response(
 
 
 async def run_handlers_raw(
-    request: schemas.RunHandlersRequest, options: schemas.RunActionOptions
+    request: schemas.RunHandlersRequest,
+    options: schemas.RunActionOptions,
+    runner_context: context.RunnerContext,
 ) -> schemas.RunHandlersResponse:
     """Execute a named subset of an action's handlers for multi-env orchestration.
 
@@ -699,12 +694,7 @@ async def run_handlers_raw(
     run_id = last_run_id
     last_run_id += 1
 
-    if global_state.runner_context is None:
-        raise ActionFailedException(
-            "run_handlers called before extension runner is initialized"
-        )
-
-    project_def = global_state.runner_context.project
+    project_def = runner_context.project
 
     try:
         action = project_def.actions[request.action_name]
@@ -714,10 +704,10 @@ async def run_handlers_raw(
         ) from exc
 
     try:
-        action_cache = global_state.runner_context.action_cache_by_name[request.action_name]
+        action_cache = runner_context.action_cache_by_name[request.action_name]
     except KeyError:
         action_cache = domain.ActionCache()
-        global_state.runner_context.action_cache_by_name[request.action_name] = action_cache
+        runner_context.action_cache_by_name[request.action_name] = action_cache
 
     if action_cache.exec_info is None:
         action_cache.exec_info = create_action_exec_info(action)
@@ -769,6 +759,7 @@ async def run_handlers_raw(
         action_def=filtered_action,
         payload=payload,
         meta=meta,
+        runner_context=runner_context,
         partial_result_token=options.partial_result_token,
         progress_token=options.progress_token,
         run_id=run_id,
@@ -824,6 +815,7 @@ def create_action_exec_info(action: domain.ActionDeclaration) -> domain.ActionEx
 
 async def resolve_func_args_with_di(
     func: typing.Callable,
+    registry: Registry,
     known_args: dict[str, typing.Callable[[typing.Any], typing.Any]] | None = None,
     params_to_ignore: list[str] | None = None,
 ) -> dict[str, typing.Any]:
@@ -849,7 +841,7 @@ async def resolve_func_args_with_di(
         else:
             # TODO: handle errors
             param_type = func_annotations[param_name]
-            param_value = await di_resolver.get_service_instance(param_type)
+            param_value = await di_resolver.get_service_instance(param_type, registry)
             args[param_name] = param_value
 
     return args
@@ -927,6 +919,7 @@ async def ensure_handler_instantiated(
                 "process_executor": get_process_executor,
             },
             params_to_ignore=["self"],
+            registry=runner_context.di_registry,
         )
 
         if "lifecycle" in args:
@@ -1002,7 +995,7 @@ async def execute_action_handler(
             event_type=er_wal.ErWalEventType.HANDLER_STARTED,
             wal_run_id=wal_run_id,
             action_name=action_name,
-            project_path=global_state.project_dir_path or "",
+            project_path=runner_context.project.dir_path,
             trigger=trigger,
             dev_env=dev_env,
             payload={"run_id": run_id, "handler": handler.name},
@@ -1051,6 +1044,7 @@ async def execute_action_handler(
     args = await resolve_func_args_with_di(
         func=handler_run_func,
         known_args={"payload": get_run_payload, "run_context": get_run_context},
+        registry=runner_context.di_registry,
     )
     # TODO: cache parameters
     try:
@@ -1078,7 +1072,7 @@ async def execute_action_handler(
                             event_type=er_wal.ErWalEventType.PARTIAL_RESULT_FIRST_SENT,
                             wal_run_id=wal_run_id,
                             action_name=action_name,
-                            project_path=global_state.project_dir_path or "",
+                            project_path=runner_context.project.dir_path,
                             trigger=trigger,
                             dev_env=dev_env,
                             payload={"run_id": run_id, "handler": handler.name},
@@ -1134,7 +1128,7 @@ async def execute_action_handler(
                 event_type=er_wal.ErWalEventType.HANDLER_FAILED,
                 wal_run_id=wal_run_id,
                 action_name=action_name,
-                project_path=global_state.project_dir_path or "",
+                project_path=runner_context.project.dir_path,
                 trigger=trigger,
                 dev_env=dev_env,
                 payload={"run_id": run_id, "handler": handler.name, "error": error_str},
@@ -1155,7 +1149,7 @@ async def execute_action_handler(
             event_type=er_wal.ErWalEventType.HANDLER_COMPLETED,
             wal_run_id=wal_run_id,
             action_name=action_name,
-            project_path=global_state.project_dir_path or "",
+            project_path=runner_context.project.dir_path,
             trigger=trigger,
             dev_env=dev_env,
             payload={"run_id": run_id, "handler": handler.name, "duration_ms": duration},
@@ -1170,6 +1164,7 @@ async def run_subresult_coros_concurrently(
     partial_result_sender: partial_result_sender_module.PartialResultSender,
     action_name: str,
     run_id: int,
+    runner_context: context.RunnerContext,
     partial_result_queue: asyncio.Queue | None = None,
     tracking_sender: _TrackingPartialResultSender | None = None,
     wal_run_id: str | None = None,
@@ -1224,7 +1219,7 @@ async def run_subresult_coros_concurrently(
                 event_type=er_wal.ErWalEventType.PARTIAL_RESULT_FIRST_SENT,
                 wal_run_id=wal_run_id,
                 action_name=action_name,
-                project_path=global_state.project_dir_path or "",
+                project_path=runner_context.project.dir_path,
                 trigger=trigger,
                 dev_env=dev_env,
                 payload={"run_id": run_id},
@@ -1246,6 +1241,7 @@ async def run_subresult_coros_sequentially(
     partial_result_sender: partial_result_sender_module.PartialResultSender,
     action_name: str,
     run_id: int,
+    runner_context: context.RunnerContext,
     partial_result_queue: asyncio.Queue | None = None,
     tracking_sender: _TrackingPartialResultSender | None = None,
     wal_run_id: str | None = None,
@@ -1283,7 +1279,7 @@ async def run_subresult_coros_sequentially(
                 event_type=er_wal.ErWalEventType.PARTIAL_RESULT_FIRST_SENT,
                 wal_run_id=wal_run_id,
                 action_name=action_name,
-                project_path=global_state.project_dir_path or "",
+                project_path=runner_context.project.dir_path,
                 trigger=trigger,
                 dev_env=dev_env,
                 payload={"run_id": run_id},

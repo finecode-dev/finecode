@@ -22,9 +22,9 @@ from finecode_extension_api.interfaces import (  # idevenvinfoprovider,
     iworkspaceactionrunner,
 )
 
-from finecode_extension_runner import domain
+from finecode_extension_runner import context, domain
 from finecode_extension_runner._services import run_action as run_action_service
-from finecode_extension_runner.di import _state, resolver
+from finecode_extension_runner.di.registry import Registry
 from finecode_extension_runner.run_utils import import_module_member_by_source_str
 from finecode_extension_runner.impls import (  # dev_env_info_provider,
     command_runner,
@@ -41,6 +41,8 @@ from finecode_extension_runner.impls import (  # dev_env_info_provider,
 )
 
 def bootstrap(
+    registry: Registry,
+    runner_context: context.RunnerContext,
     project_def_path_getter: Callable[[], pathlib.Path],
     project_raw_config_getter: Callable[
         [str], collections.abc.Awaitable[dict[str, Any]]
@@ -67,49 +69,60 @@ def bootstrap(
     cache_instance = inmemory_cache.InMemoryCache(
         file_editor=file_editor_instance, logger=logger_instance
     )
-    _state.container[ilogger.ILogger] = logger_instance
-    _state.container[icommandrunner.ICommandRunner] = command_runner_instance
-    _state.container[ifilemanager.IFileManager] = file_manager_instance
-    _state.container[ifileeditor.IFileEditor] = file_editor_instance
-    _state.container[icache.ICache] = cache_instance
-    _state.container[iprojectactionrunner.IProjectActionRunner] = (
+    registry.register_instance(ilogger.ILogger, logger_instance)
+    registry.register_instance(icommandrunner.ICommandRunner, command_runner_instance)
+    registry.register_instance(ifilemanager.IFileManager, file_manager_instance)
+    registry.register_instance(ifileeditor.IFileEditor, file_editor_instance)
+    registry.register_instance(icache.ICache, cache_instance)
+    registry.register_instance(
+        iprojectactionrunner.IProjectActionRunner,
         project_action_runner.ProjectActionRunnerImpl(
             send_request_to_wm,
-            run_action_func=run_action_service.run_action,
+            run_action_func=functools.partial(
+                run_action_service.run_action, runner_context=runner_context
+            ),
             actions_getter=actions_getter,
             current_env_name_getter=current_env_name_getter,
-        )
+        ),
     )
-    _state.container[iworkspaceactionrunner.IWorkspaceActionRunner] = (
-        workspace_action_runner.WorkspaceActionRunnerImpl(send_request_to_wm)
+    registry.register_instance(
+        iworkspaceactionrunner.IWorkspaceActionRunner,
+        workspace_action_runner.WorkspaceActionRunnerImpl(send_request_to_wm),
+    )
+    registry.register_instance(
+        irepositorycredentialsprovider.IRepositoryCredentialsProvider,
+        repository_credentials_provider.ConfigRepositoryCredentialsProvider(),
     )
 
-    _state.container[irepositorycredentialsprovider.IRepositoryCredentialsProvider] = (
-        repository_credentials_provider.ConfigRepositoryCredentialsProvider()
-    )
+    # registry.register_instance(idevenvinfoprovider.IDevEnvInfoProvider, dev_env_info_provider_instance)
 
-    # _state.container[idevenvinfoprovider.IDevEnvInfoProvider] = dev_env_info_provider_instance
-
-    _state.factories[iprojectinfoprovider.IProjectInfoProvider] = functools.partial(
-        project_info_provider_factory,
-        project_def_path_getter=project_def_path_getter,
-        project_raw_config_getter=project_raw_config_getter,
-        current_project_raw_config_version_getter=current_project_raw_config_version_getter,
+    registry.register_factory(
+        iprojectinfoprovider.IProjectInfoProvider,
+        functools.partial(
+            project_info_provider_factory,
+            project_def_path_getter=project_def_path_getter,
+            project_raw_config_getter=project_raw_config_getter,
+            current_project_raw_config_version_getter=current_project_raw_config_version_getter,
+        ),
     )
-    _state.factories[iextensionrunnerinfoprovider.IExtensionRunnerInfoProvider] = (
+    registry.register_factory(
+        iextensionrunnerinfoprovider.IExtensionRunnerInfoProvider,
         functools.partial(
             extension_runner_info_provider_factory,
             cache_dir_path_getter=cache_dir_path_getter,
             current_env_name_getter=current_env_name_getter,
-        )
+        ),
     )
 
-    _activate_extensions(handler_packages)
-    _apply_user_service_config(service_declarations)
+    svc_registry = service_registry.ServiceRegistry(di_registry=registry)
+    _activate_extensions(handler_packages, svc_registry)
+    _apply_user_service_config(service_declarations, svc_registry)
 
 
-def _activate_extensions(handler_packages: set[str]) -> None:
-    registry = service_registry.ServiceRegistry()
+def _activate_extensions(
+    handler_packages: set[str],
+    svc_registry: service_registry.ServiceRegistry,
+) -> None:
     all_eps = {
         ep.name: ep
         for ep in importlib.metadata.entry_points(group="finecode.activator")
@@ -119,19 +132,21 @@ def _activate_extensions(handler_packages: set[str]) -> None:
     for pkg_name in packages_to_activate:
         try:
             activator_cls = all_eps[pkg_name].load()
-            activator_cls(registry=registry).activate()
+            activator_cls(registry=svc_registry).activate()
             logger.trace(f"Activated extension '{pkg_name}'")
         except Exception as e:
             logger.error(f"Failed to activate extension '{pkg_name}': {e}")
 
 
-def _apply_user_service_config(service_declarations: list[object]) -> None:
-    registry = service_registry.ServiceRegistry()
+def _apply_user_service_config(
+    service_declarations: list[object],
+    svc_registry: service_registry.ServiceRegistry,
+) -> None:
     for svc in service_declarations:
         try:
             interface = import_module_member_by_source_str(svc.interface)
             impl_cls = import_module_member_by_source_str(svc.source)
-            registry.register_impl(interface, impl_cls)
+            svc_registry.register_impl(interface, impl_cls)
             logger.trace(f"Configured service '{svc.source}' for '{svc.interface}'")
         except Exception as e:
             logger.error(f"Failed to configure service '{svc.source}': {e}")
@@ -180,7 +195,7 @@ def _parse_dep_name(req_str: str) -> str:
 
 
 def project_info_provider_factory(
-    container,
+    _,
     project_def_path_getter: Callable[[], pathlib.Path],
     project_raw_config_getter: Callable[
         [str], collections.abc.Awaitable[dict[str, Any]]
@@ -195,11 +210,11 @@ def project_info_provider_factory(
 
 
 async def extension_runner_info_provider_factory(
-    container,
+    registry,
     cache_dir_path_getter: Callable[[], pathlib.Path],
     current_env_name_getter: Callable[[], str],
 ):
-    logger = await resolver.get_service_instance(ilogger.ILogger)
+    logger = await registry.get_instance(ilogger.ILogger)
     return extension_runner_info_provider.ExtensionRunnerInfoProvider(
         cache_dir_path_getter=cache_dir_path_getter,
         logger=logger,
