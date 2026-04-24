@@ -17,8 +17,9 @@ import typing
 import uuid
 from pathlib import Path
 
-import apischema
+import cattrs
 import culsans
+from finecode_jsonrpc._converter import converter as _converter
 from finecode_jsonrpc import _io_thread
 from loguru import logger
 
@@ -370,9 +371,7 @@ class JsonRpcClient:
             raise ValueError(f"Type of notification params for {method} not found")
 
         if notification_params_type is not None:
-            notification_params_dict = apischema.serialize(
-                notification_params_type, params, aliaser=apischema.utils.to_camel_case
-            )
+            notification_params_dict = _converter.unstructure(params)
         else:
             notification_params_dict = None
 
@@ -408,9 +407,7 @@ class JsonRpcClient:
         )
 
         if request_params_type is not None:
-            request_params_dict = apischema.serialize(
-                request_params_type, params, aliaser=apischema.utils.to_camel_case
-            )
+            request_params_dict = _converter.unstructure(params)
         else:
             request_params_dict = None
 
@@ -469,9 +466,7 @@ class JsonRpcClient:
         )
 
         if request_params_type is not None:
-            request_params_dict = apischema.serialize(
-                request_params_type, params, aliaser=apischema.utils.to_camel_case
-            )
+            request_params_dict = _converter.unstructure(params)
         else:
             request_params_dict = None
 
@@ -567,13 +562,9 @@ class JsonRpcClient:
                     return
 
                 try:
-                    response_error = apischema.deserialize(
-                        ResponseError,
-                        data=message["error"],
-                        aliaser=apischema.utils.to_camel_case,
-                    )
-                except apischema.ValidationError as error:
-                    exception = InvalidResponse(". ".join(error.messages))
+                    response_error = _converter.structure(message["error"], ResponseError)
+                except cattrs.ClassValidationError as error:
+                    exception = InvalidResponse(str(error))
 
                     # avoid race condition: request is sent, then cancelled and the server
                     # sends the response before processing the cancel notification
@@ -609,10 +600,8 @@ class JsonRpcClient:
                     return
 
                 try:
-                    request = apischema.deserialize(
-                        request_type, message, aliaser=apischema.utils.to_camel_case
-                    )
-                except apischema.ValidationError as error:
+                    request = _converter.structure(message, request_type)
+                except cattrs.ClassValidationError as error:
                     # Invalid request parameters - send 'Invalid params' error
                     logger.warning(
                         f"Invalid params for method {message.get('method')}: {error.messages} | {self.readable_id}"
@@ -666,10 +655,8 @@ class JsonRpcClient:
 
                 result_type = self._expected_result_type_by_msg_id[message_id]
                 try:
-                    response = apischema.deserialize(
-                        result_type, message, aliaser=apischema.utils.to_camel_case
-                    )
-                except apischema.ValidationError as error:
+                    response = _converter.structure(message, result_type)
+                except cattrs.ClassValidationError as error:
                     logger.error("errro")
                     logger.exception(error)
                     exception = InvalidResponse(". ".join(error.messages))
@@ -714,10 +701,8 @@ class JsonRpcClient:
 
             try:
                 notification_type = self.message_types[method][0]
-                notification = apischema.deserialize(
-                    notification_type, message, aliaser=apischema.utils.to_camel_case
-                )
-            except (KeyError, apischema.ValidationError) as error:
+                notification = _converter.structure(message, notification_type)
+            except (KeyError, cattrs.ClassValidationError) as error:
                 logger.warning(
                     f"Failed to deserialize notification {method}: {error} | {self.readable_id}"
                 )
@@ -741,9 +726,7 @@ class JsonRpcClient:
             response_dict = {
                 "jsonrpc": self.VERSION,
                 "id": message_id,
-                "result": apischema.serialize(
-                    result_type, result, aliaser=apischema.utils.to_camel_case
-                ),
+                "result": _converter.unstructure(result),
             }
 
             response_str = json.dumps(response_dict)
@@ -1223,13 +1206,9 @@ async def read_messages_from_reader(
                                 continue
 
                             try:
-                                result = apischema.deserialize(
-                                    result_type,
-                                    raw_result,
-                                    aliaser=apischema.utils.to_camel_case,
-                                )
-                            except apischema.ValidationError as error:
-                                exception = InvalidResponse(". ".join(error.messages))
+                                result = _converter.structure(raw_result, result_type)
+                            except cattrs.ClassValidationError as error:
+                                exception = InvalidResponse(str(error))
                                 if not future.cancelled():
                                     future.set_exception(exception)
                                 continue

@@ -3,8 +3,9 @@ from importlib import metadata
 from pathlib import Path
 from typing import Any, NamedTuple
 
-import apischema
+import cattrs
 from finecode import user_messages
+from finecode._converter import converter as _converter
 from finecode.wm_server import context, domain
 from finecode.wm_server.config import config_models
 from finecode.wm_server.runner import runner_client
@@ -130,13 +131,10 @@ async def read_project_config(
         if finecode_raw_config and resolve_presets:
             try:
                 presets = [
-                    apischema.deserialize(
-                        config_models.FinecodePresetDefinition,
-                        raw_preset,
-                    )
+                    _converter.structure(raw_preset, config_models.FinecodePresetDefinition)
                     for raw_preset in finecode_raw_config.get("presets", [])
                 ]
-            except config_models.ValidationError as exception:
+            except cattrs.ClassValidationError as exception:
                 raise config_models.ConfigurationError(str(exception))
 
             # all presets expected to be in `dev_workspace` environment
@@ -261,14 +259,11 @@ def read_preset_config(
     try:
         preset_config = config_models.PresetDefinition(
             extends=[
-                apischema.deserialize(
-                    config_models.FinecodePresetDefinition,
-                    raw_preset,
-                )
+                _converter.structure(raw_preset, config_models.FinecodePresetDefinition)
                 for raw_preset in presets
             ]
         )
-    except config_models.ValidationError as exception:
+    except cattrs.ClassValidationError as exception:
         raise config_models.ConfigurationError(
             f"Invalid preset extension in {preset_id}: {exception}"
         )

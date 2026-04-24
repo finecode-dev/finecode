@@ -6,12 +6,12 @@ import dataclasses
 import typing
 from typing import Any, Awaitable, Callable
 
-import apischema
 from loguru import logger
 
 from finecode_extension_api import code_action
 from finecode_extension_api.interfaces import iprojectactionrunner
 from finecode_extension_runner import domain, run_utils
+from finecode_extension_runner._converter import converter as _converter
 
 
 PayloadT = typing.TypeVar("PayloadT", bound=code_action.RunActionPayload)
@@ -117,7 +117,7 @@ class ProjectActionRunnerImpl(iprojectactionrunner.IProjectActionRunner):
     ) -> ResultT:
         return typing.cast(
             ResultT,
-            apischema.deserialize(action_type.RESULT_TYPE, raw_result),
+            _converter.structure(raw_result, action_type.RESULT_TYPE),
         )
 
     async def run_action(

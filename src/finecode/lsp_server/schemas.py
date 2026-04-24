@@ -1,20 +1,30 @@
 from __future__ import annotations
 
 import dataclasses
+import enum
 from enum import IntEnum
 from typing import Any
 
-import apischema
+
+def _to_camel(name: str) -> str:
+    parts = name.split("_")
+    return parts[0] + "".join(p.title() for p in parts[1:])
+
+
+def _to_camel_dict(obj: Any) -> Any:
+    if dataclasses.is_dataclass(obj) and not isinstance(obj, type):
+        return {_to_camel(f.name): _to_camel_dict(getattr(obj, f.name)) for f in dataclasses.fields(obj)}
+    elif isinstance(obj, list):
+        return [_to_camel_dict(item) for item in obj]
+    elif isinstance(obj, enum.Enum):
+        return obj.value
+    return obj
 
 
 @dataclasses.dataclass
 class BaseModel:
     def to_dict(self) -> dict[str, Any]:
-        return apischema.serialize(
-            type(self),
-            self,
-            aliaser=apischema.utils.to_camel_case,
-        )
+        return _to_camel_dict(self)
 
 
 @dataclasses.dataclass

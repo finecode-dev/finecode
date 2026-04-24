@@ -2,9 +2,10 @@
 from pathlib import Path
 from typing import Any
 
-import apischema
+import cattrs
 
 import finecode.wm_server.config.config_models as config_models
+from finecode._converter import converter as _converter
 from finecode.wm_server import context, domain
 from finecode.wm_server.config.read_configs import read_env_configs
 
@@ -59,11 +60,8 @@ def _collect_services_in_config(
     services: list[domain.ServiceDeclaration] = []
     for service_def_raw in config["tool"]["finecode"].get("service", []):
         try:
-            service_def = apischema.deserialize(
-                config_models.ServiceDefinition,
-                service_def_raw,
-            )
-        except config_models.ValidationError as exception:
+            service_def = _converter.structure(service_def_raw, config_models.ServiceDefinition)
+        except cattrs.ClassValidationError as exception:
             raise config_models.ConfigurationError(str(exception)) from exception
 
         services.append(
@@ -103,11 +101,8 @@ def _collect_actions_in_config(
         config["tool"]["finecode"].get("action", {}).items()
     ):
         try:
-            action_def = apischema.deserialize(
-                config_models.ActionDefinition,
-                action_def_raw,
-            )
-        except config_models.ValidationError as exception:
+            action_def = _converter.structure(action_def_raw, config_models.ActionDefinition)
+        except cattrs.ClassValidationError as exception:
             raise config_models.ConfigurationError(str(exception)) from exception
 
         new_action = domain.Action(

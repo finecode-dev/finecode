@@ -1,10 +1,10 @@
 import dataclasses
 
-import apischema
 from loguru import logger
 
 from finecode_extension_api import code_action
 from finecode_extension_runner import global_state, run_utils
+from finecode_extension_runner._converter import converter as _converter
 
 
 async def merge_results(action_name: str, results: list[dict]) -> dict:
@@ -37,7 +37,7 @@ async def merge_results(action_name: str, results: list[dict]) -> dict:
 
     merged: code_action.RunActionResult | None = None
     for result_dict in non_empty:
-        typed = apischema.deserialize(result_type, result_dict)
+        typed = _converter.structure(result_dict, result_type)
         if merged is None:
             merged = typed
         else:

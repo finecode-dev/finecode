@@ -5,9 +5,11 @@ import inspect
 import time
 import typing
 
-import apischema
+import cattrs
 import deepmerge
 from loguru import logger
+
+from finecode_extension_runner._converter import converter as _converter
 
 from finecode_extension_api import code_action, textstyler, service
 from finecode_extension_api.interfaces import iprojectactionrunner
@@ -620,7 +622,7 @@ async def run_action_raw(
     if action_exec_info.payload_type is not None:
         payload = typing.cast(
             code_action.RunActionPayload,
-            apischema.deserialize(action_exec_info.payload_type, request.params),
+            _converter.structure(request.params, action_exec_info.payload_type),
         )
 
     wal_run_id = getattr(options, "wal_run_id", None)
@@ -754,7 +756,7 @@ async def run_handlers_raw(
     if action_exec_info.payload_type is not None and request.params:
         payload = typing.cast(
             code_action.RunActionPayload,
-            apischema.deserialize(action_exec_info.payload_type, request.params),
+            _converter.structure(request.params, action_exec_info.payload_type),
         )
 
     wal_run_id = getattr(options, "wal_run_id", None)
@@ -906,8 +908,8 @@ async def ensure_handler_instantiated(
 
     def get_handler_config(param_type):
         try:
-            return apischema.deserialize(param_type, handler_raw_config)
-        except apischema.ValidationError as exception:
+            return _converter.structure(handler_raw_config, param_type)
+        except cattrs.ClassValidationError as exception:
             raise ActionFailedException(str(exception)) from exception
 
     def get_process_executor(param_type):
@@ -1090,9 +1092,9 @@ async def execute_action_handler(
                 if stream_result is None:
                     stream_result = typing.cast(
                         code_action.RunActionResult,
-                        apischema.deserialize(
+                        _converter.structure(
+                            _converter.unstructure(partial_result),
                             type(partial_result),
-                            dataclasses.asdict(partial_result),
                         ),
                     )
                 else:
@@ -1205,10 +1207,7 @@ async def run_subresult_coros_concurrently(
                 action_subresult_dict = dataclasses.asdict(coro_result)
                 action_subresult = typing.cast(
                     code_action.RunActionResult,
-                    apischema.deserialize(
-                        action_subresult_type,
-                        action_subresult_dict,
-                    ),
+                    _converter.structure(action_subresult_dict, action_subresult_type),
                 )
             else:
                 action_subresult.update(coro_result)

@@ -5,9 +5,9 @@ import pathlib
 import typing
 from typing import Any, Awaitable, Callable
 
-import apischema
 from finecode_extension_api import code_action
 from finecode_extension_api.interfaces import iworkspaceactionrunner
+from finecode_extension_runner._converter import converter as _converter
 
 PayloadT = typing.TypeVar("PayloadT", bound=code_action.RunActionPayload)
 ResultT = typing.TypeVar("ResultT", bound=code_action.RunActionResult)
@@ -46,8 +46,8 @@ class WorkspaceActionRunnerImpl(iworkspaceactionrunner.IWorkspaceActionRunner):
         )
         results_by_project: dict = raw["resultsByProject"]
         return {
-            pathlib.Path(k): apischema.deserialize(
-                action_type.RESULT_TYPE, next(iter(v.values()), {})  # type: ignore[attr-defined]
+            pathlib.Path(k): _converter.structure(
+                next(iter(v.values()), {}), action_type.RESULT_TYPE
             )
             for k, v in results_by_project.items()
         }

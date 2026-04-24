@@ -2,7 +2,7 @@
 from dataclasses import dataclass, field
 from typing import Any
 
-from apischema import ValidationError
+from cattrs import ClassValidationError as ValidationError
 
 
 @dataclass

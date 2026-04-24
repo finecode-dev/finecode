@@ -25,7 +25,6 @@ import sys
 import threading
 import typing
 
-import apischema
 from loguru import logger
 from lsprotocol import converters as lsp_converters
 from lsprotocol import types
@@ -34,6 +33,7 @@ import finecode_jsonrpc as finecode_jsonrpc_module
 from finecode_extension_api import code_action
 from finecode_extension_api.interfaces import ifileeditor
 from finecode_extension_runner import er_wal, global_state, schemas, services
+from finecode_extension_runner._converter import converter as _converter
 from finecode_extension_runner._services import merge_results as merge_results_service
 from finecode_extension_runner._services import run_action as run_action_service
 from finecode_extension_runner.di import resolver
@@ -446,9 +446,8 @@ async def run_action(server: ErServer, params: dict | None) -> dict:
     )
 
     request = schemas.RunActionRequest(action_name=action_name, params=action_params)
-    options_schema = apischema.deserialize(
-        schemas.RunActionOptions,
-        options if options is not None else {},
+    options_schema = _converter.structure(
+        options if options is not None else {}, schemas.RunActionOptions
     )
     status: str = "success"
 
@@ -553,9 +552,8 @@ async def run_handlers(server: ErServer, params: dict | None) -> dict:
         params=action_params,
         previous_result=previous_result,
     )
-    options_schema = apischema.deserialize(
-        schemas.RunActionOptions,
-        options if options is not None else {},
+    options_schema = _converter.structure(
+        options if options is not None else {}, schemas.RunActionOptions
     )
     status: str = "success"
 
