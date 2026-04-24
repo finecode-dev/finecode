@@ -4,7 +4,7 @@ dynamic = ["version"]
 description = ""
 authors = [{ name = "Vladyslav Hnatiuk", email = "aders1234@gmail.com" }]
 readme = "README.md"
-requires-python = ">=3.11, <= 3.14"
+requires-python = ">=3.11, < 3.15"
 dependencies = [
     "loguru==0.7.*",
     "filelock==3.18.*",
@@ -18,7 +18,7 @@ dependencies = [
     "ordered-set==4.1.*",
     "fine_python_uv~=0.1.0a0",
     "culsans==0.11.*",
-    "apischema==0.19.*",
+    "cattrs==26.1.*",
 ]
 
 [project.scripts]
@@ -26,7 +26,6 @@ finecode = "finecode.cli:cli"
 
 [dependency-groups]
 dev_workspace = [
-    "build==1.2.2.post1",
     "finecode~=0.3.0a0",
     "finecode_dev_common_preset~=0.3.0a0",
     "debugpy==1.8.*",
@@ -42,8 +41,6 @@ docs = [
 requires = ["setuptools>=64", "setuptools-scm>=8"]
 build-backend = "setuptools.build_meta"
 
-# TODO: add import linter handler to lint action
-
 [tool.finecode]
 presets = [{ source = "finecode_dev_common_preset" }]
 
@@ -51,6 +48,16 @@ presets = [{ source = "finecode_dev_common_preset" }]
 finecode = { path = "./", editable = true }
 finecode_dev_common_preset = { path = "./finecode_dev_common_preset", editable = true }
 finecode_extension_runner = { path = "./finecode_extension_runner", editable = true }
+finecode_extension_api = { path = "./finecode_extension_api", editable = true }
+finecode_builtin_handlers = { path = "./finecode_builtin_handlers", editable = true }
+fine_python_uv = { path = "./extensions/fine_python_uv", editable = true }
+
+[tool.finecode.env.runtime.dependencies]
+finecode = { path = "./", editable = true }
+finecode_extension_runner = { path = "./finecode_extension_runner", editable = true }
+finecode_extension_api = { path = "./finecode_extension_api", editable = true }
+finecode_jsonrpc = { path = "./finecode_jsonrpc", editable = true }
+fine_python_uv = { path = "./extensions/fine_python_uv", editable = true }
 
 [tool.finecode.env.dev.dependencies]
 finecode = { path = "./", editable = true }
@@ -66,6 +73,14 @@ finecode_builtin_handlers = { path = "./finecode_builtin_handlers", editable = t
 
 [tool.finecode.env.dev_no_runtime.dependencies]
 fine_python_setuptools_scm = { path = "./extensions/fine_python_setuptools_scm", editable = true }
+# fine_python_import_linter = { path = "./extensions/fine_python_import_linter", editable = true }
+
+# [tool.finecode.action.lint]
+# handlers = [
+#     { name = "import_linter", source = "fine_python_import_linter.ImportLinterHandler", env = "dev_no_runtime", dependencies = [
+#         "fine_python_import_linter~=0.1.0",
+#     ] },
+# ]
 
 [tool.importlinter]
 root_package = "finecode"

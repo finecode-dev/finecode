@@ -25,9 +25,9 @@ import sys
 import threading
 import typing
 
+from cattrs import Converter
+from cattrs.gen import make_dict_structure_fn, make_dict_unstructure_fn, override
 from loguru import logger
-from lsprotocol import converters as lsp_converters
-from lsprotocol import types
 
 import finecode_jsonrpc as finecode_jsonrpc_module
 from finecode_extension_api import code_action
@@ -39,7 +39,121 @@ from finecode_extension_runner._services import run_action as run_action_service
 from finecode_extension_runner.di import resolver
 from finecode_extension_runner.impls import project_action_runner as project_action_runner_module
 
-_lsp_converter = lsp_converters.get_converter()
+# ---------------------------------------------------------------------------
+# Protocol types
+# ---------------------------------------------------------------------------
+
+
+@dataclasses.dataclass
+class Position:
+    line: int
+    character: int
+
+
+@dataclasses.dataclass
+class Range:
+    start: Position
+    end: Position
+
+
+@dataclasses.dataclass
+class TextEdit:
+    range: Range
+    new_text: str
+
+
+@dataclasses.dataclass
+class TextDocumentContentChangePartial:
+    range: Range
+    text: str
+
+
+@dataclasses.dataclass
+class TextDocumentContentChangeWhole:
+    text: str
+
+
+@dataclasses.dataclass
+class TextDocumentId:
+    uri: str
+    version: int | None = None
+
+
+@dataclasses.dataclass
+class TextDocumentEdit:
+    text_document: TextDocumentId
+    edits: list[TextEdit]
+
+
+@dataclasses.dataclass
+class WorkspaceEdit:
+    document_changes: list[TextDocumentEdit]
+
+
+@dataclasses.dataclass
+class ApplyWorkspaceEditParams:
+    edit: WorkspaceEdit
+
+
+@dataclasses.dataclass
+class DidOpenTextDocumentParams:
+    text_document: TextDocumentId
+
+
+@dataclasses.dataclass
+class DidCloseTextDocumentParams:
+    text_document: TextDocumentId
+
+
+@dataclasses.dataclass
+class DidChangeTextDocumentParams:
+    text_document: TextDocumentId
+    content_changes: list[TextDocumentContentChangePartial | TextDocumentContentChangeWhole]
+
+
+# Converter for the protocol types — handles camelCase ↔ snake_case.
+_protocol_converter = Converter()
+
+_protocol_converter.register_structure_hook(
+    TextDocumentContentChangePartial | TextDocumentContentChangeWhole,
+    lambda d, _: (
+        _protocol_converter.structure(d, TextDocumentContentChangePartial)
+        if "range" in d
+        else _protocol_converter.structure(d, TextDocumentContentChangeWhole)
+    ),
+)
+
+for _cls, _renames in [
+    (DidOpenTextDocumentParams, {"text_document": override(rename="textDocument")}),
+    (DidCloseTextDocumentParams, {"text_document": override(rename="textDocument")}),
+    (
+        DidChangeTextDocumentParams,
+        {
+            "text_document": override(rename="textDocument"),
+            "content_changes": override(rename="contentChanges"),
+        },
+    ),
+]:
+    _protocol_converter.register_structure_hook(
+        _cls, make_dict_structure_fn(_cls, _protocol_converter, **_renames)
+    )
+
+_protocol_converter.register_unstructure_hook(
+    TextEdit,
+    make_dict_unstructure_fn(TextEdit, _protocol_converter, new_text=override(rename="newText")),
+)
+_protocol_converter.register_unstructure_hook(
+    TextDocumentEdit,
+    make_dict_unstructure_fn(
+        TextDocumentEdit, _protocol_converter, text_document=override(rename="textDocument")
+    ),
+)
+_protocol_converter.register_unstructure_hook(
+    WorkspaceEdit,
+    make_dict_unstructure_fn(
+        WorkspaceEdit, _protocol_converter, document_changes=override(rename="documentChanges")
+    ),
+)
 
 
 # ---------------------------------------------------------------------------
@@ -79,12 +193,11 @@ class ErServer:
             }
         )
 
-    async def workspace_apply_edit_async(
-        self, params: types.ApplyWorkspaceEditParams
-    ) -> dict:
+    async def workspace_apply_edit_async(self, params: ApplyWorkspaceEditParams) -> dict:
         """Send ``workspace/applyEdit`` request to the WM and return result."""
-        params_dict = _lsp_converter.unstructure(params)
-        return await self._session.send_request("workspace/applyEdit", params_dict)
+        return await self._session.send_request(
+            "workspace/applyEdit", _protocol_converter.unstructure(params)
+        )
 
     async def send_request_to_wm(self, method: str, params: dict) -> typing.Any:
         """Send an arbitrary request to the WM (e.g. ``projects/getRawConfig``)."""
@@ -170,9 +283,9 @@ class ErServer:
 # ---------------------------------------------------------------------------
 
 
-def file_editor_file_change_to_lsp_text_edit(
+def file_editor_file_change_to_text_edit(
     file_change: ifileeditor.FileChange,
-) -> types.TextEdit:
+) -> TextEdit:
     if isinstance(file_change, ifileeditor.FileChangeFull):
         # Temporary workaround: replace the whole document via a huge range
         range_start_line = 0
@@ -185,12 +298,10 @@ def file_editor_file_change_to_lsp_text_edit(
         range_end_line = file_change.range.end.line
         range_end_char = file_change.range.end.character
 
-    return types.TextEdit(
-        range=types.Range(
-            start=types.Position(
-                line=range_start_line, character=range_start_char
-            ),
-            end=types.Position(line=range_end_line, character=range_end_char),
+    return TextEdit(
+        range=Range(
+            start=Position(line=range_start_line, character=range_start_char),
+            end=Position(line=range_end_line, character=range_end_char),
         ),
         new_text=file_change.text,
     )
@@ -256,54 +367,49 @@ async def _on_exit(_server: ErServer, _params: dict | None) -> None:
 
 
 async def _document_did_open(server: ErServer, params: dict | None) -> None:
-    typed = _lsp_converter.structure(params, types.DidOpenTextDocumentParams)
+    typed = _protocol_converter.structure(params, DidOpenTextDocumentParams)
     logger.info(f"document did open: {typed.text_document.uri}")
     file_path = uri_to_path(uri=typed.text_document.uri)
     await server._finecode_file_editor_session.open_file(file_path=file_path)
 
 
 async def _document_did_close(server: ErServer, params: dict | None) -> None:
-    typed = _lsp_converter.structure(params, types.DidCloseTextDocumentParams)
+    typed = _protocol_converter.structure(params, DidCloseTextDocumentParams)
     logger.info(f"document did close: {typed.text_document.uri}")
     file_path = uri_to_path(uri=typed.text_document.uri)
     await server._finecode_file_editor_session.close_file(file_path=file_path)
 
 
-def _lsp_change_to_file_editor_change(
-    lsp_change: types.TextDocumentContentChangeEvent,
+def _change_to_file_editor_change(
+    change: TextDocumentContentChangePartial | TextDocumentContentChangeWhole,
 ) -> ifileeditor.FileChange:
-    if isinstance(lsp_change, types.TextDocumentContentChangePartial):
+    if isinstance(change, TextDocumentContentChangePartial):
         return ifileeditor.FileChangePartial(
             range=ifileeditor.Range(
                 start=ifileeditor.Position(
-                    line=lsp_change.range.start.line,
-                    character=lsp_change.range.start.character,
+                    line=change.range.start.line,
+                    character=change.range.start.character,
                 ),
                 end=ifileeditor.Position(
-                    line=lsp_change.range.end.line,
-                    character=lsp_change.range.end.character,
+                    line=change.range.end.line,
+                    character=change.range.end.character,
                 ),
             ),
-            text=lsp_change.text,
+            text=change.text,
         )
-    elif isinstance(lsp_change, types.TextDocumentContentChangeWholeDocument):
-        return ifileeditor.FileChangeFull(text=lsp_change.text)
     else:
-        logger.error(
-            f"Unexpected type of document change from LSP client: {type(lsp_change)}"
-        )
-        raise ValueError(f"Unknown change type: {type(lsp_change)}")
+        return ifileeditor.FileChangeFull(text=change.text)
 
 
 async def _document_did_change(server: ErServer, params: dict | None) -> None:
-    typed = _lsp_converter.structure(params, types.DidChangeTextDocumentParams)
+    typed = _protocol_converter.structure(params, DidChangeTextDocumentParams)
     logger.info(
         f"document did change: {typed.text_document.uri} {typed.text_document.version}"
     )
     file_path = uri_to_path(uri=typed.text_document.uri)
     for change in typed.content_changes:
         logger.trace(str(change))
-        file_editor_change = _lsp_change_to_file_editor_change(lsp_change=change)
+        file_editor_change = _change_to_file_editor_change(change)
         await server._finecode_file_editor_session.change_file(
             file_path=file_path, change=file_editor_change
         )
@@ -388,15 +494,15 @@ async def update_config(server: ErServer, params: dict | None) -> dict:
                         file_change_event.author
                         != server._finecode_file_operation_author
                     ):
-                        edit_params = types.ApplyWorkspaceEditParams(
-                            edit=types.WorkspaceEdit(
+                        edit_params = ApplyWorkspaceEditParams(
+                            edit=WorkspaceEdit(
                                 document_changes=[
-                                    types.TextDocumentEdit(
-                                        text_document=types.OptionalVersionedTextDocumentIdentifier(
+                                    TextDocumentEdit(
+                                        text_document=TextDocumentId(
                                             uri=f"file://{file_change_event.file_path.as_posix()}"
                                         ),
                                         edits=[
-                                            file_editor_file_change_to_lsp_text_edit(
+                                            file_editor_file_change_to_text_edit(
                                                 file_change=file_change_event.change
                                             )
                                         ],

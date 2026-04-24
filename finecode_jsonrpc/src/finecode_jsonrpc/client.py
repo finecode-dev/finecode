@@ -70,7 +70,7 @@ class WriterFromQueue:
 
 class RunnerFailedToStart(Exception):
     def __init__(self, message: str) -> None:
-        super().__init__()
+        super().__init__(message)
         self.message: typing.Final = message
 
 

@@ -4,7 +4,7 @@ version = "0.1.0a0"
 description = "FineCode preset for listing, reading, and cleaning service logs"
 authors = [{ name = "Vladyslav Hnatiuk", email = "aders1234@gmail.com" }]
 readme = "README.md"
-requires-python = ">=3.11, <= 3.14"
+requires-python = ">=3.11, < 3.15"
 dependencies = []
 
 [build-system]
