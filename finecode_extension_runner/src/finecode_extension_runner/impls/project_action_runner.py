@@ -107,6 +107,17 @@ class ProjectActionRunnerImpl(iprojectactionrunner.IProjectActionRunner):
             if getattr(cls, "PARENT_ACTION", None) is parent_action_type:
                 lang = getattr(cls, "LANGUAGE", None)
                 if lang is not None:
+                    if lang in result:
+                        logger.error(
+                            "Multiple subactions registered for language {!r} under parent"
+                            " {!r}: {!r} and {!r}. Only one subaction per language is"
+                            " allowed; {!r} will be ignored.",
+                            lang,
+                            parent_action_type,
+                            result[lang],
+                            cls,
+                            result[lang],
+                        )
                     result[lang] = cls
         return result
 
