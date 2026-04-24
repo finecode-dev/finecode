@@ -219,6 +219,7 @@ async def _handle_add_dir(
                            f"Did you run `finecode prepare-envs`?",
                 "type": "ERROR",
             })
+            raise
 
         # If config overrides were set before this addDir call (e.g. standalone CLI mode),
         # apply them to the newly discovered projects and push to their running runners.

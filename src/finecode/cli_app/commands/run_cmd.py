@@ -129,7 +129,15 @@ async def run_actions(
 
             client.on_notification("actions/treeChanged", _ignore_tree_changed)
 
-            await client.add_dir(workdir_path)
+            # When a project filter is given and we own the server, discover
+            # projects first (no runners), resolve names to paths, then start
+            # runners only for the requested projects.  In shared-server mode
+            # runners are already running, so always use the normal path.
+            deferred_runner_start = own_server and projects_names is not None
+            try:
+                await client.add_dir(workdir_path, start_runners=not deferred_runner_start)
+            except ApiError as exc:
+                raise RunFailed(str(exc)) from exc
 
             # Resolve project names (CLI option) to paths (canonical API identifier).
             project_paths: list[str] | None = None
@@ -144,6 +152,12 @@ async def run_actions(
                 project_paths = [
                     p["path"] for p in all_projects if p["name"] in projects_names
                 ]
+
+            if deferred_runner_start:
+                try:
+                    await client.start_runners(projects=project_paths)
+                except ApiError as exc:
+                    raise RunFailed(str(exc)) from exc
 
             # Resolve action names to sources (ADR-0019).
             all_actions = await client.list_actions()

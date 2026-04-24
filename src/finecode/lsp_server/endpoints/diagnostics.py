@@ -4,10 +4,10 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
-import apischema
 from loguru import logger
 from lsprotocol import types
 
+from finecode._converter import converter as _converter
 from finecode.lsp_server import global_state, pygls_types_utils
 from finecode_extension_api.actions.code_quality import lint_action
 from finecode_extension_api.resource_uri import ResourceUri
@@ -100,7 +100,7 @@ async def document_diagnostic_with_full_result(
     json_result = (response.get("resultByFormat") or {}).get("json")
     if json_result is None:
         return None
-    lint_result = apischema.deserialize(lint_action.LintRunResult, json_result)
+    lint_result = _converter.structure(json_result, lint_action.LintRunResult)
 
     try:
         requested_file_messages = lint_result.messages.pop(
@@ -261,7 +261,7 @@ async def workspace_diagnostic_with_full_result() -> types.WorkspaceDiagnosticRe
     json_result = (response.get("resultByFormat") or {}).get("json")
     if not json_result:
         return types.WorkspaceDiagnosticReport(items=[])
-    lint_result = apischema.deserialize(lint_action.LintRunResult, json_result)
+    lint_result = _converter.structure(json_result, lint_action.LintRunResult)
 
     items: list[types.WorkspaceDocumentDiagnosticReport] = []
     for file_uri, lint_messages in lint_result.messages.items():
