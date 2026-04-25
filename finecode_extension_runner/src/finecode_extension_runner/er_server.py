@@ -178,6 +178,7 @@ class ErServer:
         self._stop_event = threading.Event()
         self._tcp_server: asyncio.Server | None = None
         self._runner_context: context.RunnerContext | None = None
+        self._wal_writer: er_wal.ErWalWriter | None = None
 
     # ------------------------------------------------------------------
     # Server → client helpers
@@ -346,8 +347,8 @@ async def _on_initialized(_server: ErServer, params: dict | None) -> None:
 
 async def _on_shutdown(server: ErServer, _params: dict | None) -> None:
     logger.info("Shutdown extension runner")
-    if global_state.wal_writer is not None:
-        global_state.wal_writer.close()
+    if server._wal_writer is not None:
+        server._wal_writer.close()
     services.shutdown_all_action_handlers(server._runner_context)
 
     logger.debug("Stop Finecode async tasks")
@@ -362,8 +363,8 @@ async def _on_shutdown(server: ErServer, _params: dict | None) -> None:
 
 async def _on_exit(_server: ErServer, _params: dict | None) -> None:
     logger.info("Exit extension runner")
-    if global_state.wal_writer is not None:
-        global_state.wal_writer.close()
+    if _server._wal_writer is not None:
+        _server._wal_writer.close()
 
 
 async def _document_did_open(server: ErServer, params: dict | None) -> None:
@@ -479,6 +480,7 @@ async def update_config(server: ErServer, params: dict | None) -> dict:
             project_raw_config_getter=functools.partial(get_project_raw_config, server),
             send_request_to_wm=_send_request_to_wm,
         )
+        runner_context.wal_writer = server._wal_writer
         server._runner_context = runner_context
 
         file_editor = await runner_context.di_registry.get_instance(ifileeditor.IFileEditor)
@@ -541,7 +543,7 @@ async def run_action(server: ErServer, params: dict | None) -> dict:
         return {"error": "Extension runner not initialized"}
     project_path = server._runner_context.project.dir_path
     er_wal.emit_run_event(
-        global_state.wal_writer,
+        server._wal_writer,
         event_type=er_wal.ErWalEventType.RUN_ACCEPTED,
         wal_run_id=wal_run_id,
         action_name=action_name,
@@ -569,7 +571,7 @@ async def run_action(server: ErServer, params: dict | None) -> dict:
             status = "stopped"
             response = exception.response
             er_wal.emit_run_event(
-                global_state.wal_writer,
+                server._wal_writer,
                 event_type=er_wal.ErWalEventType.RUN_FAILED,
                 wal_run_id=wal_run_id,
                 action_name=action_name,
@@ -587,7 +589,7 @@ async def run_action(server: ErServer, params: dict | None) -> dict:
                 logger.exception(exception)
                 error_msg = f"{type(exception)}: {str(exception)}"
             er_wal.emit_run_event(
-                global_state.wal_writer,
+                server._wal_writer,
                 event_type=er_wal.ErWalEventType.RUN_FAILED,
                 wal_run_id=wal_run_id,
                 action_name=action_name,
@@ -606,7 +608,7 @@ async def run_action(server: ErServer, params: dict | None) -> dict:
         for fmt, result in result_by_format.items()
     }
     er_wal.emit_run_event(
-        global_state.wal_writer,
+        server._wal_writer,
         event_type=er_wal.ErWalEventType.RUN_COMPLETED,
         wal_run_id=wal_run_id,
         action_name=action_name,
@@ -647,7 +649,7 @@ async def run_handlers(server: ErServer, params: dict | None) -> dict:
         return {"error": "Extension runner not initialized"}
     project_path = server._runner_context.project.dir_path
     er_wal.emit_run_event(
-        global_state.wal_writer,
+        server._wal_writer,
         event_type=er_wal.ErWalEventType.RUN_ACCEPTED,
         wal_run_id=wal_run_id,
         action_name=action_name,
@@ -681,7 +683,7 @@ async def run_handlers(server: ErServer, params: dict | None) -> dict:
             logger.exception(exception)
             error_msg = f"{type(exception)}: {str(exception)}"
         er_wal.emit_run_event(
-            global_state.wal_writer,
+            server._wal_writer,
             event_type=er_wal.ErWalEventType.RUN_FAILED,
             wal_run_id=wal_run_id,
             action_name=action_name,
@@ -700,7 +702,7 @@ async def run_handlers(server: ErServer, params: dict | None) -> dict:
         for fmt, result in result_by_format.items()
     }
     er_wal.emit_run_event(
-        global_state.wal_writer,
+        server._wal_writer,
         event_type=er_wal.ErWalEventType.RUN_COMPLETED,
         wal_run_id=wal_run_id,
         action_name=action_name,
@@ -804,9 +806,10 @@ async def get_runner_info(_server: ErServer, _params: dict | None) -> dict:
 # ---------------------------------------------------------------------------
 
 
-def create_er_server() -> ErServer:
+def create_er_server(wal_writer: er_wal.ErWalWriter | None = None) -> ErServer:
     """Create and wire the ER server with all handlers registered."""
     server = ErServer()
+    server._wal_writer = wal_writer
     session = server._session
 
     def _wrap(handler):
@@ -861,8 +864,8 @@ def create_er_server() -> ErServer:
 
     def on_process_exit() -> None:
         logger.info("Exit extension runner (atexit)")
-        if global_state.wal_writer is not None:
-            global_state.wal_writer.close()
+        if server._wal_writer is not None:
+            server._wal_writer.close()
         services.shutdown_all_action_handlers(server._runner_context)
         services.exit_all_action_handlers(server._runner_context)
 

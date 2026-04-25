@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from finecode_extension_runner import domain
+from finecode_extension_runner import domain, er_wal
 from finecode_extension_runner.di.registry import Registry
 from finecode_extension_api import service
 
@@ -15,3 +15,4 @@ class RunnerContext:
     running_services: dict[service.Service, domain.RunningServiceInfo] = field(
         default_factory=dict
     )
+    wal_writer: er_wal.ErWalWriter | None = None

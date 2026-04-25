@@ -17,7 +17,6 @@ from finecode_extension_runner import (
     context,
     domain,
     er_wal,
-    global_state,
     partial_result_sender as partial_result_sender_module,
     run_utils,
     schemas,
@@ -356,7 +355,7 @@ async def run_action(
                         )
                     )
                     er_wal.emit_run_event(
-                        global_state.wal_writer,
+                        runner_context.wal_writer,
                         event_type=er_wal.ErWalEventType.HANDLER_PARTS_STARTED,
                         wal_run_id=wal_run_id or "",
                         action_name=action_def.name,
@@ -422,7 +421,7 @@ async def run_action(
                             " See ER logs for more details"
                         ) from eg
                     er_wal.emit_run_event(
-                        global_state.wal_writer,
+                        runner_context.wal_writer,
                         event_type=er_wal.ErWalEventType.HANDLER_PARTS_COMPLETED,
                         wal_run_id=wal_run_id or "",
                         action_name=action_def.name,
@@ -546,7 +545,7 @@ async def run_action(
 
     if tracking_sender is not None and tracking_sender.has_sent:
         er_wal.emit_run_event(
-            global_state.wal_writer,
+            runner_context.wal_writer,
             event_type=er_wal.ErWalEventType.PARTIAL_RESULT_FINAL_SENT,
             wal_run_id=wal_run_id,
             action_name=action_def.name,
@@ -625,7 +624,7 @@ async def run_action_raw(
     meta = dataclasses.replace(options.meta, wal_run_id=wal_run_id)
 
     er_wal.emit_run_event(
-        global_state.wal_writer,
+        runner_context.wal_writer,
         event_type=er_wal.ErWalEventType.RUN_DISPATCHED,
         wal_run_id=wal_run_id,
         action_name=request.action_name,
@@ -991,7 +990,7 @@ async def execute_action_handler(
     logger.trace(f"R{run_id} | Run {handler.name} on {str(payload)[:100]}...")
     if wal_run_id is not None:
         er_wal.emit_run_event(
-            global_state.wal_writer,
+            runner_context.wal_writer,
             event_type=er_wal.ErWalEventType.HANDLER_STARTED,
             wal_run_id=wal_run_id,
             action_name=action_name,
@@ -1068,7 +1067,7 @@ async def execute_action_handler(
                         and not tracking_sender.has_sent
                     ):
                         er_wal.emit_run_event(
-                            global_state.wal_writer,
+                            runner_context.wal_writer,
                             event_type=er_wal.ErWalEventType.PARTIAL_RESULT_FIRST_SENT,
                             wal_run_id=wal_run_id,
                             action_name=action_name,
@@ -1124,7 +1123,7 @@ async def execute_action_handler(
         logger.exception(exception)
         if wal_run_id is not None:
             er_wal.emit_run_event(
-                global_state.wal_writer,
+                runner_context.wal_writer,
                 event_type=er_wal.ErWalEventType.HANDLER_FAILED,
                 wal_run_id=wal_run_id,
                 action_name=action_name,
@@ -1145,7 +1144,7 @@ async def execute_action_handler(
     )
     if wal_run_id is not None:
         er_wal.emit_run_event(
-            global_state.wal_writer,
+            runner_context.wal_writer,
             event_type=er_wal.ErWalEventType.HANDLER_COMPLETED,
             wal_run_id=wal_run_id,
             action_name=action_name,
@@ -1215,7 +1214,7 @@ async def run_subresult_coros_concurrently(
             return None
         if tracking_sender is not None and wal_run_id is not None and not tracking_sender.has_sent:
             er_wal.emit_run_event(
-                global_state.wal_writer,
+                runner_context.wal_writer,
                 event_type=er_wal.ErWalEventType.PARTIAL_RESULT_FIRST_SENT,
                 wal_run_id=wal_run_id,
                 action_name=action_name,
@@ -1275,7 +1274,7 @@ async def run_subresult_coros_sequentially(
             return None
         if tracking_sender is not None and wal_run_id is not None and not tracking_sender.has_sent:
             er_wal.emit_run_event(
-                global_state.wal_writer,
+                runner_context.wal_writer,
                 event_type=er_wal.ErWalEventType.PARTIAL_RESULT_FIRST_SENT,
                 wal_run_id=wal_run_id,
                 action_name=action_name,

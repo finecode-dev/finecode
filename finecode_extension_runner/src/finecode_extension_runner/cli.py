@@ -57,8 +57,7 @@ def start(
     global_state.log_level = "INFO" if trace is False else "TRACE"
     global_state.project_dir_path = project_path
     global_state.env_name = env_name
-    if wal:
-        global_state.wal_writer = er_wal.ErWalWriter()
+    wal_writer = er_wal.ErWalWriter() if wal else None
 
     log_file_path = (project_path
         / ".venvs"
@@ -66,13 +65,13 @@ def start(
         / "logs"
         / "runner"
         / "runner.log")
-    
+
     global_state.log_file_path = logs.setup_logging(log_level="INFO" if trace is False else "TRACE", log_file_path=log_file_path)
 
     if debug is True:
         logger.info(f"Started debugger on 127.0.0.1:{debug_port}")
 
-    runner_start.start_runner_sync()
+    runner_start.start_runner_sync(wal_writer=wal_writer)
 
 
 @main.command()
