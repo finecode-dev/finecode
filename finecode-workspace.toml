@@ -1,0 +1,2 @@
+[workspace]
+all_workspace_packages_editable = true

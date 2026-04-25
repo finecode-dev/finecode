@@ -30,6 +30,7 @@ from finecode.wm_server._api_handlers import (
     _handle_list_actions,
     _handle_list_projects,
     _handle_get_project_raw_config,
+    _handle_get_workspace_editable_packages,
     _handle_remove_dir,
     _handle_run_action,
     _handle_run_action_with_partial_results_task,
@@ -129,6 +130,7 @@ _METHODS: dict[str, MethodHandler] = {
     "workspace/removeDir": _handle_remove_dir,
     "workspace/setConfigOverrides": _handle_set_config_overrides,
     "workspace/getProjectRawConfig": _handle_get_project_raw_config,
+    "workspace/getWorkspaceEditablePackages": _handle_get_workspace_editable_packages,
     "workspace/startRunners": _handle_start_runners,
     # actions/
     "actions/list": _handle_list_actions,

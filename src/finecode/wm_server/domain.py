@@ -125,7 +125,7 @@ class Project:
 
     def __init__(
         self,
-        name: str,
+        name: str | None,
         dir_path: Path,
         def_path: Path,
         status: ProjectStatus,
@@ -160,7 +160,7 @@ class CollectedProject(Project):
 
     def __init__(
         self,
-        name: str,
+        name: str | None,
         dir_path: Path,
         def_path: Path,
         status: ProjectStatus,

@@ -22,6 +22,21 @@ async def _handle_list_projects(
     return [_project_to_dict(p) for p in ws_context.ws_projects.values()]
 
 
+async def _handle_get_workspace_editable_packages(
+    params: dict | None, ws_context: context.WorkspaceContext
+) -> dict:
+    """Return workspace editable packages as name → absolute posix path.
+
+    Result: ``{"packages": {"pkg_name": "/abs/path", ...}}``
+    """
+    return {
+        "packages": {
+            name: path.as_posix()
+            for name, path in ws_context.ws_editable_packages.items()
+        }
+    }
+
+
 async def _handle_get_project_raw_config(
     params: dict | None, ws_context: context.WorkspaceContext
 ) -> dict:
@@ -119,6 +134,7 @@ async def _handle_add_dir(
         if is_new_dir:
             ws_context.ws_dirs_paths.append(dir_path)
             await read_configs.read_projects_in_dir(dir_path, ws_context)
+            ws_context.ws_editable_packages = read_configs.resolve_workspace_editable_packages(ws_context)
 
         # Projects in this dir that haven't been config-initialized yet, covering
         # both newly discovered projects and ones filtered out by a previous call.

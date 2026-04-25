@@ -3,6 +3,7 @@ from importlib import metadata
 from pathlib import Path
 from typing import Any, NamedTuple
 
+
 import cattrs
 from finecode import user_messages
 from finecode._converter import converter as _converter
@@ -55,7 +56,7 @@ async def read_projects_in_dir(
         is_new_project = def_file.parent not in ws_context.ws_projects
         if is_new_project:
             new_project = domain.Project(
-                name=project_def.get("project", {}).get("name", def_file.parent.name),
+                name=project_def.get("project", {}).get("name"),
                 dir_path=def_file.parent,
                 def_path=def_file,
                 status=status,
@@ -687,6 +688,72 @@ def merge_services_dependencies_into_groups(project_config: dict[str, Any]) -> N
             if dep not in unique_deps:
                 unique_deps.append(dep)
         deps_groups[group_name] = unique_deps
+
+
+def resolve_workspace_editable_packages(
+    ws_context: context.WorkspaceContext,
+) -> dict[str, Path]:
+    """Resolve workspace editable packages from finecode-workspace.toml.
+
+    Returns the union of:
+      - Every discovered project's [project].name → project directory,
+        when [workspace].all_workspace_packages_editable is True.
+      - Each [workspace].editable_packages entry, validated.
+    """
+    if not ws_context.ws_dirs_paths:
+        return {}
+
+    ws_root = ws_context.ws_dirs_paths[0]
+    ws_config_path = ws_root / "finecode-workspace.toml"
+    if not ws_config_path.exists():
+        return {}
+
+    with open(ws_config_path, "rb") as f:
+        ws_config = toml_loads(f.read()).unwrap()
+
+    workspace_table = ws_config.get("workspace", {})
+    all_editable: bool = workspace_table.get("all_workspace_packages_editable", False)
+    explicit_paths: list[str] = workspace_table.get("editable_packages", [])
+
+    result: dict[str, Path] = {}
+
+    if all_editable:
+        for project in ws_context.ws_projects.values():
+            if project.name is None:
+                continue
+            result[project.name] = project.dir_path
+
+    for raw_entry in explicit_paths:
+        entry_path = Path(raw_entry)
+        if not entry_path.is_absolute():
+            entry_path = (ws_root / entry_path).resolve()
+        if not entry_path.exists():
+            raise config_models.ConfigurationError(
+                f"[workspace].editable_packages entry '{raw_entry}' does not exist: {entry_path}"
+            )
+        pyproject_path = entry_path / "pyproject.toml"
+        if not pyproject_path.exists():
+            raise config_models.ConfigurationError(
+                f"[workspace].editable_packages entry '{raw_entry}' has no pyproject.toml: {entry_path}"
+            )
+        with open(pyproject_path, "rb") as f:
+            entry_toml = toml_loads(f.read()).unwrap()
+        pkg_name = entry_toml.get("project", {}).get("name")
+        if pkg_name is None:
+            raise config_models.ConfigurationError(
+                f"[workspace].editable_packages entry '{raw_entry}' has no [project].name: {entry_path}"
+            )
+        if pkg_name in result:
+            if result[pkg_name] != entry_path:
+                raise config_models.ConfigurationError(
+                    f"[workspace].editable_packages: package '{pkg_name}' resolves to two different paths: "
+                    f"'{result[pkg_name]}' and '{entry_path}'"
+                )
+            # same name + same path → silent de-dup
+        else:
+            result[pkg_name] = entry_path
+
+    return result
 
 
 def add_extension_runner_to_dependencies(project_config: dict[str, Any]) -> None:

@@ -160,6 +160,16 @@ class ApiClient:
             )
         return result.get("project")
 
+    async def get_workspace_editable_packages(self) -> dict[str, str]:
+        """Return workspace editable packages as name → absolute posix path."""
+        result = await self.request("workspace/getWorkspaceEditablePackages")
+        if not isinstance(result, dict) or "packages" not in result:
+            raise ApiResponseError(
+                "workspace/getWorkspaceEditablePackages",
+                f"missing 'packages' field, got {result!r}",
+            )
+        return result["packages"]
+
     async def get_project_raw_config(self, project: str) -> dict:
         """Return the resolved raw config for a project by name."""
         result = await self.request(

@@ -97,14 +97,29 @@ env = "dev_no_runtime"
 dependencies = ["my_company_http~=1.2.0"]
 ```
 
-### Environment-specific dependencies
+## finecode-workspace.toml
 
-You can pin or override dependencies installed into each env:
+Workspace-level configuration lives in `finecode-workspace.toml` at the workspace root, under the `[workspace]` table.
+
+### Workspace editable packages
+
+In a monorepo, local packages should be installed as editable installs. Declare them once in `finecode-workspace.toml`:
 
 ```toml
-[tool.finecode.env.dev_no_runtime.dependencies]
-fine_python_ruff = { path = "./my_local_ruff_fork", editable = true }
+[workspace]
+# When true, every project discovered in this workspace is automatically
+# installed as an editable install when it appears as a dependency.
+all_workspace_packages_editable = true
+
+# Optional: explicit paths to treat as editable installs — useful for
+# vendored forks outside normal project discovery. Paths are relative to
+# the workspace root.
+editable_packages = [
+    "./vendored_forks/some_lib",
+]
 ```
+
+Any dependency whose package name matches a workspace editable package is automatically rewritten to an editable install from its declared path, across every env in every project. The resolved set is the union of every discovered project (when `all_workspace_packages_editable` is `true`) and every explicit `editable_packages` entry.
 
 ## Environment variables
 

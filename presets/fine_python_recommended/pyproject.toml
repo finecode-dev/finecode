@@ -19,8 +19,3 @@ build-backend = "setuptools.build_meta"
 [tool.setuptools.package-data]
 fine_python_recommended = ["preset.toml"]
 
-[tool.finecode.deps]
-fine_python_format = { path = "../fine_python_format", editable = true }
-fine_python_lint = { path = "../fine_python_lint", editable = true }
-fine_python_test = { path = "../fine_python_test", editable = true }
-fine_toml_recommended = { path = "../fine_toml_recommended", editable = true }

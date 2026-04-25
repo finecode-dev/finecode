@@ -53,6 +53,9 @@ def bootstrap(
     current_env_name_getter: Callable[[], str],
     handler_packages: set[str],
     service_declarations: list,
+    workspace_editable_packages_getter: Callable[
+        [], collections.abc.Awaitable[dict[str, pathlib.Path]]
+    ] | None = None,
     send_request_to_wm: Callable[[str, dict], collections.abc.Awaitable[Any]] | None = None,
 ):
     # logger_instance = loguru_logger.LoguruLogger()
@@ -102,6 +105,7 @@ def bootstrap(
             project_info_provider_factory,
             project_def_path_getter=project_def_path_getter,
             project_raw_config_getter=project_raw_config_getter,
+            workspace_editable_packages_getter=workspace_editable_packages_getter,
             current_project_raw_config_version_getter=current_project_raw_config_version_getter,
         ),
     )
@@ -201,10 +205,14 @@ def project_info_provider_factory(
         [str], collections.abc.Awaitable[dict[str, Any]]
     ],
     current_project_raw_config_version_getter: Callable[[], int],
+    workspace_editable_packages_getter: Callable[
+        [], collections.abc.Awaitable[dict[str, pathlib.Path]]
+    ] | None = None,
 ):
     return project_info_provider.ProjectInfoProvider(
         project_def_path_getter=project_def_path_getter,
         project_raw_config_getter=project_raw_config_getter,
+        workspace_editable_packages_getter=workspace_editable_packages_getter,
         current_project_raw_config_version_getter=current_project_raw_config_version_getter,
     )
 

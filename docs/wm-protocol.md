@@ -149,6 +149,14 @@ not all projects in the workspace.
 
 `status` values: `"CONFIG_VALID"`, `"CONFIG_INVALID"`
 
+**Errors:**
+
+If any extension runner fails to start (e.g. the virtual environment is missing
+or a dependency is not installed), the server returns a JSON-RPC error response.
+The error message describes why the runner could not start. The server also sends
+a `server/userMessage` notification with type `"ERROR"` before returning the
+error, so IDE clients that listen to that channel still display the message.
+
 ---
 
 #### `workspace/startRunners`
@@ -239,6 +247,35 @@ from context.
 ```
 
 **Result:** `{}`
+
+---
+
+#### `workspace/getWorkspaceEditablePackages`
+
+Return the resolved workspace editable-package map from `finecode-workspace.toml`.
+
+- **Type:** request
+- **Clients:** CLI
+- **Status:** implemented
+
+**Params:** `{}`
+
+**Result:**
+
+```json
+{
+  "packages": {
+    "finecode": "/abs/path/to/finecode",
+    "fine_python_ruff": "/abs/path/to/extensions/fine_python_ruff"
+  }
+}
+```
+
+Each entry maps a package name (from `[project].name` in the target's `pyproject.toml`)
+to its absolute POSIX path. The map is the union of every discovered project when
+`all_workspace_packages_editable = true` in `finecode-workspace.toml` and any explicit
+`editable_packages` entries. Returns `{"packages": {}}` when no workspace config is found
+or the `[workspace]` table is absent.
 
 ---
 

@@ -34,6 +34,7 @@ ER_GET_INFO = "finecodeRunner/getInfo"
 WORKSPACE_APPLY_EDIT = "workspace/applyEdit"
 
 PROJECT_RAW_CONFIG_GET = "projects/getRawConfig"
+WORKSPACE_EDITABLE_PACKAGES_GET = "workspace/getWorkspaceEditablePackages"
 RUN_ACTION_IN_PROJECT = "finecode/runActionInProject"
 RUN_ACTION_IN_WORKSPACE = "finecode/runActionInWorkspace"
 
@@ -1401,6 +1402,22 @@ class GetProjectRawConfigResponse(BaseResponse):
 
 
 @dataclasses.dataclass
+class GetWorkspaceEditablePackagesRequest(BaseRequest):
+    params: dict | None = None
+    method = WORKSPACE_EDITABLE_PACKAGES_GET
+
+
+@dataclasses.dataclass
+class GetWorkspaceEditablePackagesResult(BaseResult):
+    packages: dict[str, str]
+
+
+@dataclasses.dataclass
+class GetWorkspaceEditablePackagesResponse(BaseResponse):
+    result: GetWorkspaceEditablePackagesResult
+
+
+@dataclasses.dataclass
 class RunActionInProjectMeta:
     trigger: str
     dev_env: str
@@ -1848,4 +1865,10 @@ METHOD_TO_TYPES: dict[
         RunActionInWorkspaceResult,
     ),
     ER_RESOLVE_ACTION_META: (None, None, ErResolveActionMetaResponse, None),
+    WORKSPACE_EDITABLE_PACKAGES_GET: (
+        GetWorkspaceEditablePackagesRequest,
+        None,
+        GetWorkspaceEditablePackagesResponse,
+        GetWorkspaceEditablePackagesResult,
+    ),
 }

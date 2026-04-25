@@ -10,11 +10,15 @@ class ProjectInfoProvider(iprojectinfoprovider.IProjectInfoProvider):
         self,
         project_def_path_getter: Callable[[], pathlib.Path],
         project_raw_config_getter: Callable[[str], collections.abc.Awaitable[dict[str, Any]]],
-        current_project_raw_config_version_getter: Callable[[], int]
+        current_project_raw_config_version_getter: Callable[[], int],
+        workspace_editable_packages_getter: Callable[
+            [], collections.abc.Awaitable[dict[str, pathlib.Path]]
+        ] | None = None,
     ) -> None:
         self.project_def_path_getter = project_def_path_getter
         self.project_raw_config_getter = project_raw_config_getter
         self.current_project_raw_config_version_getter = current_project_raw_config_version_getter
+        self.workspace_editable_packages_getter = workspace_editable_packages_getter
 
     def get_current_project_dir_path(self) -> pathlib.Path:
         project_def_path = self.project_def_path_getter()
@@ -44,3 +48,8 @@ class ProjectInfoProvider(iprojectinfoprovider.IProjectInfoProvider):
 
     def get_current_project_raw_config_version(self) -> int:
         return self.current_project_raw_config_version_getter()
+
+    async def get_workspace_editable_packages(self) -> dict[str, pathlib.Path]:
+        if self.workspace_editable_packages_getter is None:
+            return {}
+        return await self.workspace_editable_packages_getter()

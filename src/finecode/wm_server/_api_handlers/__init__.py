@@ -5,6 +5,7 @@
 from finecode.wm_server._api_handlers._workspace import (
     _handle_list_projects,
     _handle_get_project_raw_config,
+    _handle_get_workspace_editable_packages,
     _handle_find_project_for_file,
     _handle_add_dir,
     _handle_remove_dir,
@@ -42,6 +43,7 @@ __all__ = [
     "_handle_get_tree",
     "_handle_list_projects",
     "_handle_get_project_raw_config",
+    "_handle_get_workspace_editable_packages",
     "_handle_find_project_for_file",
     "_handle_add_dir",
     "_handle_remove_dir",

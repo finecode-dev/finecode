@@ -428,6 +428,16 @@ async def get_project_raw_config(
     return raw_config["config"]
 
 
+async def get_workspace_editable_packages(
+    server: ErServer,
+) -> dict[str, pathlib.Path]:
+    result = await asyncio.wait_for(
+        server.send_request_to_wm("workspace/getWorkspaceEditablePackages", params={}),
+        10,
+    )
+    return {name: pathlib.Path(posix) for name, posix in result.get("packages", {}).items()}
+
+
 async def update_config(server: ErServer, params: dict | None) -> dict:
     """Handler for ``finecodeRunner/updateConfig``."""
     assert params is not None
@@ -478,6 +488,7 @@ async def update_config(server: ErServer, params: dict | None) -> dict:
         response, runner_context = await services.update_config(
             request=request,
             project_raw_config_getter=functools.partial(get_project_raw_config, server),
+            workspace_editable_packages_getter=functools.partial(get_workspace_editable_packages, server),
             send_request_to_wm=_send_request_to_wm,
         )
         runner_context.wal_writer = server._wal_writer

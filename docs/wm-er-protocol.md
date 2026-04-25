@@ -232,6 +232,14 @@ method names.
   - Result: `{ "config": "<stringified JSON config>" }`
   - Used by ER during `finecodeRunner/updateConfig` to resolve project config.
 
+- `workspace/getWorkspaceEditablePackages`
+  - Params: `{}`
+  - Result: `{ "packages": { "<pkg_name>": "/abs/posix/path", ... } }`
+  - Returns the workspace-level editable-package map resolved from
+    `finecode-workspace.toml` (see ADR-0029). The WM resolves this map once during
+    `workspace/addDir` and caches it for the lifetime of the workspace
+    context.
+
 - `finecode/runActionInProject`
   - Params:
     - `actionSource` (string): **fully qualified** import path of the action class —

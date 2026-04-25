@@ -235,6 +235,19 @@ async def _start_extension_runner_process(
         get_project_raw_config,
     )
 
+    async def get_workspace_editable_packages(_params):
+        return {
+            "packages": {
+                name: path.as_posix()
+                for name, path in ws_context.ws_editable_packages.items()
+            }
+        }
+
+    runner.client.feature(
+        _internal_client_types.WORKSPACE_EDITABLE_PACKAGES_GET,
+        get_workspace_editable_packages,
+    )
+
     async def handle_run_action_in_project(
         params: _internal_client_types.RunActionInProjectParams,
     ) -> _internal_client_types.RunActionInProjectResult:

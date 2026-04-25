@@ -20,6 +20,8 @@ class WorkspaceContext:
     ws_dirs_paths: list[Path]
     # all projects in the workspace
     ws_projects: dict[Path, domain.Project] = field(default_factory=dict)
+    # name → absolute path of workspace-resident editable packages
+    ws_editable_packages: dict[str, Path] = field(default_factory=dict)
     # <project_path:config>
     ws_projects_raw_configs: dict[Path, dict[str, Any]] = field(default_factory=dict)
     # <project_path:<env_name:runner_info>>
