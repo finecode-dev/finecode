@@ -3,14 +3,24 @@
 FineCode merges configuration from multiple sources in order of increasing priority:
 
 ```
-preset.toml  →  pyproject.toml  →  environment variables  →  CLI flags
+preset.toml  →  pyproject.toml / finecode.toml  →  environment variables  →  CLI flags
 ```
 
 Higher-priority sources override lower-priority ones.
 
+## Where configuration lives
+
+| Scope | File | Notes |
+| --- | --- | --- |
+| Workspace | `finecode-workspace.toml` at the workspace root | Only valid location for workspace-scoped settings |
+| Project | `[tool.finecode.*]` in `pyproject.toml` | Default; recommended |
+| Project | `finecode.toml` at the project root | Alternative to `pyproject.toml`; cannot be combined with it |
+
+`finecode.toml` and `[tool.finecode.*]` in `pyproject.toml` are **mutually exclusive** within a project — pick one. `finecode.toml` uses a `[finecode]` top-level table; the structure is otherwise identical. A lone `finecode.toml` without an adjacent `pyproject.toml` is ignored.
+
 ## pyproject.toml
 
-All FineCode configuration lives under `[tool.finecode]`.
+All FineCode project configuration lives under `[tool.finecode]`.
 
 ### Enabling presets
 
@@ -96,6 +106,33 @@ source = "my_company_http.MyHttpClient"
 env = "dev_no_runtime"
 dependencies = ["my_company_http~=1.2.0"]
 ```
+
+## finecode.toml
+
+`finecode.toml` is an alternative location for project-scoped configuration. It uses a `[finecode]` top-level table instead of `[tool.finecode]`; every sub-table and field name is identical otherwise. The two files are mutually exclusive — if both exist for the same project, FineCode raises an error at startup.
+
+```toml
+[finecode]
+presets = [{ source = "fine_python_recommended" }]
+
+[finecode.action.lint]
+source = "finecode_extension_api.actions.lint.LintAction"
+handlers = [
+    { name = "ruff", source = "fine_python_ruff.RuffLintFilesHandler", env = "dev_no_runtime", dependencies = ["fine_python_ruff~=0.2.0"] },
+]
+
+[[finecode.action_handler]]
+source = "fine_python_ruff.RuffLintFilesHandler"
+config.line_length = 100
+
+[[finecode.service]]
+interface = "finecode_extension_api.interfaces.ihttpclient.IHttpClient"
+source = "finecode_httpclient.HttpClient"
+env = "dev_no_runtime"
+dependencies = ["finecode_httpclient~=0.1.0a1"]
+```
+
+The `[workspace]` table is not allowed in `finecode.toml`; workspace-scoped settings always go in `finecode-workspace.toml`.
 
 ## finecode-workspace.toml
 

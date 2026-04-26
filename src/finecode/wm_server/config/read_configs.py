@@ -14,6 +14,24 @@ from loguru import logger
 from tomlkit import loads as toml_loads
 
 
+def read_project_finecode_config(project_dir: Path) -> dict | None:
+    """Read finecode.toml at the project root.
+
+    Returns the parsed mapping, or None if the file does not exist.
+    Raises ConfigurationError if the file is malformed.
+    """
+    finecode_toml_path = project_dir / "finecode.toml"
+    if not finecode_toml_path.exists():
+        return None
+    try:
+        with open(finecode_toml_path, "rb") as f:
+            return toml_loads(f.read()).unwrap()
+    except Exception as e:
+        raise config_models.ConfigurationError(
+            f"Failed to parse {finecode_toml_path}: {e}"
+        )
+
+
 async def read_projects_in_dir(
     dir_path: Path, ws_context: context.WorkspaceContext
 ) -> list[domain.Project]:
@@ -44,6 +62,18 @@ async def read_projects_in_dir(
 
         with open(def_file, "rb") as pyproject_file:
             project_def = toml_loads(pyproject_file.read()).unwrap()
+
+        finecode_toml_exists = (def_file.parent / "finecode.toml").exists()
+        has_pyproject_finecode = project_def.get("tool", {}).get("finecode") is not None
+        if finecode_toml_exists and has_pyproject_finecode:
+            raise config_models.ConfigurationError(
+                f"Project FineCode configuration is defined in two places for project\n"
+                f"{def_file.parent}:\n"
+                f"  - {def_file.parent / 'finecode.toml'}\n"
+                f"  - {def_file} ([tool.finecode.*])\n"
+                f"Pick one location and remove the other. The two files cannot be\n"
+                f"combined — one wins entirely."
+            )
 
         dependency_groups = project_def.get("dependency-groups", {})
         dev_workspace_group = dependency_groups.get("dev_workspace", [])
@@ -118,6 +148,19 @@ async def read_project_config(
             # TODO: handle error if toml is invalid
             project_def = toml_loads(pyproject_file.read()).unwrap()
         # TODO: validate that finecode is installed?
+
+        finecode_toml_raw = read_project_finecode_config(project.def_path.parent)
+        if finecode_toml_raw is not None:
+            finecode_section = dict(finecode_toml_raw.get("finecode", {}))
+            if "workspace" in finecode_section or "workspace" in finecode_toml_raw:
+                raise config_models.ConfigurationError(
+                    f"The [workspace] table is not allowed in "
+                    f"{project.def_path.parent / 'finecode.toml'}. "
+                    f"Workspace configuration must live in finecode-workspace.toml."
+                )
+            if "tool" not in project_def:
+                project_def["tool"] = {}
+            project_def["tool"]["finecode"] = finecode_section
 
         base_config_path = Path(__file__).parent.parent.parent / "base_config.toml"
         # TODO: cache instead of reading each time

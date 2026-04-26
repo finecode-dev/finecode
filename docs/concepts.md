@@ -103,7 +103,7 @@ When configuring an action in `pyproject.toml`, you can control how your configu
 
 A **Source Artifact** is a unit of source code that build/publish-style actions operate on. It is identified by a **source artifact definition file** (for example `pyproject.toml` or `package.json`). This is what many tools call a “project”, but FineCode uses **source artifact** to be more concrete.
 
-When a source artifact includes FineCode configuration — a `pyproject.toml` with a `[tool.finecode]` section — the Workspace Manager discovers it automatically under the workspace roots provided by the client. Some CLI flags and protocol fields still use the word “project” for compatibility.
+When a source artifact includes FineCode configuration — a `pyproject.toml` with a `[tool.finecode]` section, or a `finecode.toml` alongside it — the Workspace Manager discovers it automatically under the workspace roots provided by the client. Some CLI flags and protocol fields still use the word “project” for compatibility.
 
 ### Source Artifact identification
 
@@ -111,7 +111,7 @@ The canonical external identifier for a source artifact is its **absolute direct
 
 The human-readable **project name** is taken from the `[project].name` field in `pyproject.toml`. Names are unique within a workspace in practice (two packages with the same name would break dependency resolution), but paths are used in the API to eliminate any ambiguity. The CLI is the only interface that accepts names — it resolves them to paths before making API calls.
 
-A source artifact may belong to a **workspace** — a set of related source artifacts, often a single directory root but sometimes multiple directories. FineCode handles multi-artifact workspaces transparently: running `python -m finecode run lint` from the workspace root runs lint in all source artifacts that define it.
+A source artifact may belong to a **workspace** — a set of related source artifacts, often a single directory root but sometimes multiple directories. FineCode handles multi-artifact workspaces transparently: running `python -m finecode run lint` from the workspace root runs lint in all source artifacts that define it. A `finecode-workspace.toml` file at the workspace root marks it as the workspace root and holds workspace-scoped configuration (such as editable package paths in a monorepo).
 
 ## Workspace Manager and Extension Runner
 
