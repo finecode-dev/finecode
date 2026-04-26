@@ -14,7 +14,8 @@ method names.
 - JSON-RPC 2.0
 - LSP-style framing over stdio: `Content-Length: N\r\nContent-Type: application/vscode-jsonrpc; charset=utf-8\r\n\r\n{json}`
 - WM spawns ER processes with:
-  - `python -m finecode_extension_runner.cli start --project-path=... --env-name=...`
+  - `python -m finecode_extension_runner.cli start --project-path=... --env-name=... --log-level=INFO`
+  - `--log-level` sets the global default log level for the ER process (default: `INFO`); fine-grained per-group overrides are delivered later via `finecodeRunner/updateConfig`
   - `--debug` enables a debugpy attach flow before WM connects
 - All parameter object keys use camelCase.
 
@@ -65,6 +66,9 @@ method names.
     - `action_handler_configs`: map of handler source → config
     - `services`: list of service declarations (optional)
     - `handlers_to_initialize`: map of action name → handler names (optional)
+    - `logging`: logging configuration for this ER instance (optional)
+      - `defaultLevel` (string): global log level, e.g. `"INFO"`, `"DEBUG"`, `"TRACE"`. Overrides the `--log-level` startup value when present.
+      - `logGroups` (object): map of logger-name prefix → level string. Prefix matching applies — a key of `"fine_python_ruff"` covers `fine_python_ruff`, `fine_python_ruff.linter`, etc. The longest matching prefix wins. Example: `{ "fine_python_ruff": "TRACE", "finecode_extension_runner": "WARNING" }`
   - Result: `{}` (empty object)
 
 - `finecodeRunner/getInfo`
@@ -239,6 +243,14 @@ method names.
     `finecode-workspace.toml` (see ADR-0029). The WM resolves this map once during
     `workspace/addDir` and caches it for the lifetime of the workspace
     context.
+
+- `workspace/getProjectPaths`
+  - Params: `{}`
+  - Result: `{ "projectPaths": ["/abs/path/to/project", ...] }`
+  - Returns the directory paths of all projects currently known to the WM.
+    Used by handlers that need to group files by owning project (e.g. bridge
+    handlers that fan out an action across only the projects that own the
+    relevant files).
 
 - `finecode/runActionInProject`
   - Params:

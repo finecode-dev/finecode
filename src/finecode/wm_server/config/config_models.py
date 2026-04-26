@@ -59,6 +59,18 @@ class ViewDefinition:
     source: str
 
 
+@dataclass
+class ErLoggingConfig:
+    default_level: str = "INFO"
+    log_groups: dict[str, str] = field(default_factory=dict)
+
+
+@dataclass
+class ErEnvConfig:
+    debug: bool = False
+    logging: ErLoggingConfig = field(default_factory=ErLoggingConfig)
+
+
 class ConfigurationError(Exception):
     def __init__(self, message: str) -> None:
         self.message = message

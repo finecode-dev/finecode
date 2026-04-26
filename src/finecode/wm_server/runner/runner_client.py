@@ -14,6 +14,7 @@ from typing import Any
 from loguru import logger
 
 import finecode.wm_server.domain as domain
+from finecode.wm_server.config.config_models import ErLoggingConfig
 from finecode.wm_server.runner import _internal_client_types, _internal_client_api
 from finecode.wm_server.utils.iterable_subscribe import IterableSubscribe
 import finecode_jsonrpc as jsonrpc_client
@@ -338,12 +339,17 @@ class RunnerConfig:
     # If provided, eagerly instantiate these handlers after config update.
     # Keys are action names, values are lists of handler names within that action.
     handlers_to_initialize: dict[str, list[str]] | None = None
+    logging: ErLoggingConfig = dataclasses.field(default_factory=ErLoggingConfig)
 
     def to_dict(self) -> dict[str, typing.Any]:
         result: dict[str, typing.Any] = {
             "actions": [action.to_dict() for action in self.actions],
             "action_handler_configs": self.action_handler_configs,
             "services": [svc.to_dict() for svc in self.services],
+            "logging": {
+                "defaultLevel": self.logging.default_level,
+                "logGroups": self.logging.log_groups,
+            },
         }
         if self.handlers_to_initialize is not None:
             result["handlers_to_initialize"] = self.handlers_to_initialize

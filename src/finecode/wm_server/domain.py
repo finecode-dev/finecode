@@ -7,6 +7,8 @@ from pathlib import Path
 
 import ordered_set
 
+from finecode.wm_server.config.config_models import ErLoggingConfig
+
 
 class Preset:
     def __init__(self, source: str) -> None:
@@ -224,8 +226,9 @@ class ProjectStatus(Enum):
 
 
 class RunnerConfig:
-    def __init__(self, debug: bool) -> None:
+    def __init__(self, debug: bool, logging: ErLoggingConfig | None = None) -> None:
         self.debug = debug
+        self.logging: ErLoggingConfig = logging if logging is not None else ErLoggingConfig()
 
     def __str__(self) -> str:
         return f"RunnerConfig(debug={self.debug})"

@@ -17,7 +17,7 @@ def main():
 
 
 @main.command()
-@click.option("--trace", "trace", is_flag=True, default=False)
+@click.option("--log-level", "log_level", type=str, default="INFO")
 @click.option("--debug", "debug", is_flag=True, default=False)
 @click.option("--wal", "wal", is_flag=True, default=False)
 @click.option(
@@ -28,7 +28,7 @@ def main():
 )
 @click.option("--env-name", "env_name", type=str)
 def start(
-    trace: bool,
+    log_level: str,
     debug: bool,
     wal: bool,
     project_path: Path,
@@ -54,7 +54,7 @@ def start(
         click.echo("Environment name(--env-name) is required", err=True)
         sys.exit(1)
 
-    global_state.log_level = "INFO" if trace is False else "TRACE"
+    global_state.log_level = log_level
     global_state.project_dir_path = project_path
     global_state.env_name = env_name
     wal_writer = er_wal.ErWalWriter() if wal else None
@@ -66,7 +66,7 @@ def start(
         / "runner"
         / "runner.log")
 
-    global_state.log_file_path = logs.setup_logging(log_level="INFO" if trace is False else "TRACE", log_file_path=log_file_path)
+    global_state.log_file_path = logs.setup_logging(log_level=log_level, log_file_path=log_file_path)
 
     if debug is True:
         logger.info(f"Started debugger on 127.0.0.1:{debug_port}")

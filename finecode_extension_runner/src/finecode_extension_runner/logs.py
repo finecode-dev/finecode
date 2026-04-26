@@ -23,18 +23,18 @@ log_level_by_group: dict[str, LogLevel | None] = {}
 
 def filter_logs(record):
     module_name = record["name"]
-    if module_name in log_level_by_group:
-        module_log_level = log_level_by_group[module_name]
-        if module_log_level is not None:
-            log_level_number = record["level"].no
-            if log_level_number >= module_log_level.value:
-                return True
-            else:
-                return False
-        else:
-            return False
-    else:
+    # Find the longest matching prefix among configured groups
+    matched_level: LogLevel | None = None
+    matched_len = -1
+    for group, level in log_level_by_group.items():
+        if (module_name == group or module_name.startswith(group + ".")) and len(group) > matched_len:
+            matched_level = level
+            matched_len = len(group)
+    if matched_len == -1:
         return True
+    if matched_level is None:
+        return False
+    return record["level"].no >= matched_level.value
 
 
 def save_logs_to_file(
@@ -114,6 +114,16 @@ def reset_log_level_for_group(group: str):
         del log_level_by_group[group]
 
 
+def apply_logging_config(config: dict) -> None:
+    """Apply log-group overrides delivered via the WM→ER update_config protocol."""
+    for group, level_str in config.get("logGroups", {}).items():
+        try:
+            level = LogLevel[level_str.upper()]
+            set_log_level_for_group(group, level)
+        except KeyError:
+            logger.warning(f"Unknown log level '{level_str}' for group '{group}', ignoring")
+
+
 def setup_logging(log_level: str, log_file_path: Path) -> Path:
     logger.remove()
 
@@ -148,15 +158,7 @@ def setup_logging(log_level: str, log_file_path: Path) -> Path:
 
     logging.basicConfig(handlers=[InterceptHandler()], level=0, force=True)
 
-    # TODO: make configurable
-    set_log_level_for_group(
-        "finecode_extension_runner.impls.file_manager", LogLevel.WARNING
-    )
-    set_log_level_for_group(
-        "finecode_extension_runner.impls.inmemory_cache", LogLevel.WARNING
-    )
-
     return actual_log_file_path
 
 
-__all__ = ["save_logs_to_file", "set_log_level_for_group", "reset_log_level_for_group", "setup_logging"]
+__all__ = ["save_logs_to_file", "set_log_level_for_group", "reset_log_level_for_group", "apply_logging_config", "setup_logging"]

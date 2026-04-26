@@ -35,6 +35,7 @@ WORKSPACE_APPLY_EDIT = "workspace/applyEdit"
 
 PROJECT_RAW_CONFIG_GET = "projects/getRawConfig"
 WORKSPACE_EDITABLE_PACKAGES_GET = "workspace/getWorkspaceEditablePackages"
+WORKSPACE_PROJECT_PATHS_GET = "workspace/getProjectPaths"
 RUN_ACTION_IN_PROJECT = "finecode/runActionInProject"
 RUN_ACTION_IN_WORKSPACE = "finecode/runActionInWorkspace"
 
@@ -1418,6 +1419,22 @@ class GetWorkspaceEditablePackagesResponse(BaseResponse):
 
 
 @dataclasses.dataclass
+class GetWorkspaceProjectPathsRequest(BaseRequest):
+    params: dict | None = None
+    method = WORKSPACE_PROJECT_PATHS_GET
+
+
+@dataclasses.dataclass
+class GetWorkspaceProjectPathsResult(BaseResult):
+    project_paths: list[str]
+
+
+@dataclasses.dataclass
+class GetWorkspaceProjectPathsResponse(BaseResponse):
+    result: GetWorkspaceProjectPathsResult
+
+
+@dataclasses.dataclass
 class RunActionInProjectMeta:
     trigger: str
     dev_env: str
@@ -1870,5 +1887,11 @@ METHOD_TO_TYPES: dict[
         None,
         GetWorkspaceEditablePackagesResponse,
         GetWorkspaceEditablePackagesResult,
+    ),
+    WORKSPACE_PROJECT_PATHS_GET: (
+        GetWorkspaceProjectPathsRequest,
+        None,
+        GetWorkspaceProjectPathsResponse,
+        GetWorkspaceProjectPathsResult,
     ),
 }

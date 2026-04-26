@@ -111,27 +111,85 @@ def get_dependency_name(dependency_str: str) -> str:
     return dependency_str
 
 
-def read_env_configs(project_config: dict[str, Any]) -> dict[str, domain.EnvConfig]:
-    env_configs = {}
-    env_config_section = (
-        project_config.get("tool", {}).get("finecode", {}).get("env", {})
-    )
-    for env_name, env_raw_config in env_config_section.items():
-        if "runner" in env_raw_config:
-            runner_raw_config = env_raw_config["runner"]
-            if "debug" in runner_raw_config:
-                debug = runner_raw_config["debug"]
-                runner_config = domain.RunnerConfig(debug=debug)
-                env_config = domain.EnvConfig(runner_config=runner_config)
-                env_configs[env_name] = env_config
+def _read_er_logging_config(raw: dict[str, Any]) -> config_models.ErLoggingConfig:
+    logging_raw = raw.get("logging", {})
+    default_level = logging_raw.get("default_level", "INFO")
+    log_groups = dict(logging_raw.get("log_groups", {}))
+    return config_models.ErLoggingConfig(default_level=default_level, log_groups=log_groups)
 
-    # add default configs
+
+def _resolve_er_logging_config(
+    project_config: dict[str, Any], env_name: str
+) -> config_models.ErLoggingConfig:
+    """Merge project-level fallback with per-env override from [tool.finecode.er]."""
+    er_section = project_config.get("tool", {}).get("finecode", {}).get("er", {})
+
+    fallback = _read_er_logging_config(er_section)
+
+    env_raw = er_section.get(env_name, {})
+    if not env_raw:
+        return _apply_er_env_var_overrides(fallback, env_name)
+
+    env_logging_raw = env_raw.get("logging", {})
+    merged_level = env_logging_raw.get("default_level", fallback.default_level)
+    merged_groups = {**fallback.log_groups, **dict(env_logging_raw.get("log_groups", {}))}
+    merged = config_models.ErLoggingConfig(default_level=merged_level, log_groups=merged_groups)
+    return _apply_er_env_var_overrides(merged, env_name)
+
+
+def _apply_er_env_var_overrides(
+    config: config_models.ErLoggingConfig, env_name: str
+) -> config_models.ErLoggingConfig:
+    import os
+
+    def _env_key(name: str) -> str:
+        return name.upper().replace("-", "_").replace(".", "_")
+
+    env_key = _env_key(env_name)
+
+    level = (
+        os.environ.get(f"FINECODE_ER_ENV_{env_key}_LOG_LEVEL")
+        or os.environ.get("FINECODE_ER_LOG_LEVEL")
+        or config.default_level
+    )
+
+    groups = dict(config.log_groups)
+    for var, value in os.environ.items():
+        prefix = f"FINECODE_ER_ENV_{env_key}_LOG_GROUP_"
+        if var.startswith(prefix):
+            group_key = var[len(prefix):].lower().replace("_", ".")
+            groups[group_key] = value
+    for var, value in os.environ.items():
+        prefix = "FINECODE_ER_LOG_GROUP_"
+        if var.startswith(prefix) and not var.startswith(f"FINECODE_ER_ENV_"):
+            group_key = var[len(prefix):].lower().replace("_", ".")
+            groups.setdefault(group_key, value)
+
+    return config_models.ErLoggingConfig(default_level=level, log_groups=groups)
+
+
+def read_env_configs(project_config: dict[str, Any]) -> dict[str, domain.EnvConfig]:
+    env_configs: dict[str, domain.EnvConfig] = {}
+
+    er_section = project_config.get("tool", {}).get("finecode", {}).get("er", {})
+    for env_name, env_raw in er_section.items():
+        if env_name == "logging":
+            # reserved key — project-level fallback, not an env name
+            continue
+        if not isinstance(env_raw, dict):
+            continue
+        debug = env_raw.get("debug", False)
+        logging_config = _resolve_er_logging_config(project_config, env_name)
+        runner_config = domain.RunnerConfig(debug=debug, logging=logging_config)
+        env_configs[env_name] = domain.EnvConfig(runner_config=runner_config)
+
+    # add default configs for dependency-group envs not explicitly listed under er
     deps_groups = project_config.get("dependency-groups", {})
     for group_name in deps_groups.keys():
         if group_name not in env_configs:
-            runner_config = domain.RunnerConfig(debug=False)
-            env_config = domain.EnvConfig(runner_config=runner_config)
-            env_configs[group_name] = env_config
+            logging_config = _resolve_er_logging_config(project_config, group_name)
+            runner_config = domain.RunnerConfig(debug=False, logging=logging_config)
+            env_configs[group_name] = domain.EnvConfig(runner_config=runner_config)
 
     return env_configs
 

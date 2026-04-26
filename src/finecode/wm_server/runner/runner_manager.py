@@ -104,13 +104,6 @@ async def _start_extension_runner_process(
         ws_context.runner_io_thread = _io_thread.AsyncIOThread()
         ws_context.runner_io_thread.start()
 
-    process_args: list[str] = [
-        "--trace",
-        f"--project-path={runner.working_dir_path.as_posix()}",
-        f"--env-name={runner.env_name}",
-    ]
-    if ws_context.wal_writer is not None:
-        process_args.append("--wal")
     _project = ws_context.ws_projects[runner.working_dir_path]
     _default_env_config = domain.EnvConfig(runner_config=domain.RunnerConfig(debug=False))
     env_config = (
@@ -119,6 +112,15 @@ async def _start_extension_runner_process(
         else _default_env_config
     )
     runner_config = env_config.runner_config
+
+    log_level = runner_config.logging.default_level
+    process_args: list[str] = [
+        f"--log-level={log_level}",
+        f"--project-path={runner.working_dir_path.as_posix()}",
+        f"--env-name={runner.env_name}",
+    ]
+    if ws_context.wal_writer is not None:
+        process_args.append("--wal")
 
     start_with_debug = debug or runner_config.debug
     if start_with_debug:
@@ -246,6 +248,18 @@ async def _start_extension_runner_process(
     runner.client.feature(
         _internal_client_types.WORKSPACE_EDITABLE_PACKAGES_GET,
         get_workspace_editable_packages,
+    )
+
+    async def get_workspace_project_paths(_params):
+        return {
+            "projectPaths": [
+                str(p.dir_path) for p in ws_context.ws_projects.values()
+            ]
+        }
+
+    runner.client.feature(
+        _internal_client_types.WORKSPACE_PROJECT_PATHS_GET,
+        get_workspace_project_paths,
     )
 
     async def handle_run_action_in_project(
@@ -700,11 +714,14 @@ async def update_runner_config(
     handlers_to_initialize: dict[str, list[str]] | None,
     ws_context: context.WorkspaceContext,
 ) -> None:
+    _default_env_config = domain.EnvConfig(runner_config=domain.RunnerConfig(debug=False))
+    env_config = project.env_configs.get(runner.env_name, _default_env_config)
     config = runner_client.RunnerConfig(
         actions=project.actions,
         action_handler_configs=project.action_handler_configs,
         services=project.services,
         handlers_to_initialize=handlers_to_initialize,
+        logging=env_config.runner_config.logging,
     )
     try:
         await runner_client.update_config(runner, project.def_path, config)
