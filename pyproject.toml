@@ -19,6 +19,7 @@ dependencies = [
     "fine_python_uv~=0.1.0a0",
     "culsans==0.11.*",
     "cattrs==26.1.*",
+    "lsprotocol==2025.0.0"
 ]
 
 [project.scripts]
