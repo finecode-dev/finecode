@@ -19,6 +19,7 @@ class LogLevel(enum.IntEnum):
 
 
 log_level_by_group: dict[str, LogLevel | None] = {}
+_default_log_level: LogLevel = LogLevel.INFO
 
 
 def filter_logs(record):
@@ -31,7 +32,7 @@ def filter_logs(record):
             matched_level = level
             matched_len = len(group)
     if matched_len == -1:
-        return True
+        return record["level"].no >= _default_log_level.value
     if matched_level is None:
         return False
     return record["level"].no >= matched_level.value
@@ -44,12 +45,18 @@ def save_logs_to_file(
     retention: int = 3,
     stdout: bool = True,
 ) -> Path:
+    global _default_log_level
+    try:
+        _default_log_level = LogLevel[log_level.upper()]
+    except KeyError:
+        pass
+
     if stdout is True:
         if isinstance(sys.stdout, io.TextIOWrapper):
             # reconfigure to be able to handle special symbols
             sys.stdout.reconfigure(encoding="utf-8", errors="backslashreplace")
 
-        logger.add(sys.stdout, level=log_level)
+        logger.add(sys.stdout, level="TRACE", filter=filter_logs)
 
     # Find the file with the largest ID in the log directory
     log_dir_path = file_path.parent
@@ -96,13 +103,18 @@ def save_logs_to_file(
         str(file_path_with_id),
         rotation=rotation,
         retention=retention,
-        level=log_level,
+        level="TRACE",
         # set encoding explicitly to be able to handle special symbols
         encoding="utf8",
         filter=filter_logs,
     )
     logger.trace(f"Log file: {file_path_with_id}")
     return file_path_with_id
+
+
+def set_default_log_level(level: LogLevel) -> None:
+    global _default_log_level
+    _default_log_level = level
 
 
 def set_log_level_for_group(group: str, level: LogLevel | None):
@@ -115,7 +127,13 @@ def reset_log_level_for_group(group: str):
 
 
 def apply_logging_config(config: dict) -> None:
-    """Apply log-group overrides delivered via the WM→ER update_config protocol."""
+    """Apply logging config delivered via the WM→ER update_config protocol."""
+    if default_level_str := config.get("defaultLevel"):
+        try:
+            set_default_log_level(LogLevel[default_level_str.upper()])
+        except KeyError:
+            logger.warning(f"Unknown log level '{default_level_str}' for defaultLevel, ignoring")
+
     for group, level_str in config.get("logGroups", {}).items():
         try:
             level = LogLevel[level_str.upper()]
@@ -161,4 +179,4 @@ def setup_logging(log_level: str, log_file_path: Path) -> Path:
     return actual_log_file_path
 
 
-__all__ = ["save_logs_to_file", "set_log_level_for_group", "reset_log_level_for_group", "apply_logging_config", "setup_logging"]
+__all__ = ["save_logs_to_file", "set_default_log_level", "set_log_level_for_group", "reset_log_level_for_group", "apply_logging_config", "setup_logging"]

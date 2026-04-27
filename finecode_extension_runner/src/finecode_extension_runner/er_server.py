@@ -176,6 +176,7 @@ class ErServer:
             id="FineCode_Extension_Runner_Server"
         )
         self._stop_event = threading.Event()
+        self._async_exit_event = asyncio.Event()
         self._tcp_server: asyncio.Server | None = None
         self._runner_context: context.RunnerContext | None = None
         self._wal_writer: er_wal.ErWalWriter | None = None
@@ -245,7 +246,7 @@ class ErServer:
         await self._run_tcp(host, port)
 
     async def _run_tcp(self, host: str, port: int) -> None:
-        logger.info("Starting ER server on TCP %s:%s", host, port)
+        logger.info(f"Starting ER server on TCP {host}:{port}")
 
         async def _handle_connection(
             reader: asyncio.StreamReader, writer: asyncio.StreamWriter
@@ -256,8 +257,8 @@ class ErServer:
             )
             self._session.attach(transport)
             await transport.start()
-            # Wait until transport is done
-            while not transport._stop_event.is_set():
+            # Wait until transport is done or exit was requested
+            while not transport._stop_event.is_set() and not self._async_exit_event.is_set():
                 await asyncio.sleep(0.05)
             self.shutdown()
             writer.close()
@@ -276,7 +277,9 @@ class ErServer:
         except asyncio.CancelledError:
             logger.debug("TCP server closed")
         finally:
+            logger.debug("Close exit stack")
             await self._finecode_exit_stack.aclose()
+            logger.debug("ER TCP server stopped")
 
 
 # ---------------------------------------------------------------------------
@@ -365,6 +368,7 @@ async def _on_exit(_server: ErServer, _params: dict | None) -> None:
     logger.info("Exit extension runner")
     if _server._wal_writer is not None:
         _server._wal_writer.close()
+    _server._async_exit_event.set()
 
 
 async def _document_did_open(server: ErServer, params: dict | None) -> None:
@@ -463,6 +467,7 @@ async def update_config(server: ErServer, params: dict | None) -> dict:
                             name=handler["name"],
                             source=handler["source"],
                             config=handler["config"],
+                            env=handler["env"]
                         )
                         for handler in action["handlers"]
                     ],

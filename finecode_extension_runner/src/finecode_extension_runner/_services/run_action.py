@@ -987,7 +987,12 @@ async def execute_action_handler(
     tracking_sender: _TrackingPartialResultSender | None = None,
     partial_result_queue: asyncio.Queue | None = None,
 ) -> code_action.RunActionResult | None:
-    logger.trace(f"R{run_id} | Run {handler.name} on {str(payload)[:100]}...")
+    logger.opt(lazy=True).trace(
+        "R{run_id} | Run {name} payload={payload}",
+        run_id=lambda: run_id,
+        name=lambda: handler.name,
+        payload=lambda: repr(payload),
+    )
     if wal_run_id is not None:
         er_wal.emit_run_event(
             runner_context.wal_writer,
