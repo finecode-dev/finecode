@@ -242,6 +242,8 @@ class RunActionContext(typing.Generic[RunPayloadType]):
     # to avoid handling in action cases when run context is not initialized and is
     # initialized already.
 
+    STATE_TYPE: ClassVar[type | None] = None
+
     def __init__(
         self,
         run_id: int,
@@ -258,6 +260,8 @@ class RunActionContext(typing.Generic[RunPayloadType]):
         self._info_provider = info_provider
         self.partial_result_sender = partial_result_sender
         self._progress_sender = progress_sender
+        if self.STATE_TYPE is not None:
+            self.state = self.STATE_TYPE()
 
     def progress(
         self,
@@ -285,6 +289,22 @@ class RunActionContext(typing.Generic[RunPayloadType]):
                 "Results from other handlers are not reliably available in concurrent mode."
             )
         return self._info_provider.current_result
+
+    def serialize_context(self) -> dict | None:
+        """Override to customize context state serialization.
+
+        By default the ER uses cattrs to unstructure the STATE_TYPE dataclass.
+        Override this method when the default unstructuring is not sufficient
+        (e.g. the state contains custom classes).
+        """
+        return None
+
+    def restore_context(self, data: dict) -> None:
+        """Override to customize context state deserialization.
+
+        By default the ER uses cattrs to structure *data* into STATE_TYPE.
+        Override this method when the default structuring is not sufficient.
+        """
 
     async def init(self) -> None: ...
 

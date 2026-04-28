@@ -132,6 +132,11 @@ method names.
       (`dataclasses.asdict`) from the last handler of the preceding segment, or
       `null` for the first segment. Reconstructed as `context.current_result`
       before the first handler in `handlerNames` is invoked.
+    - `previousContext` (object | null): serialized `STATE_TYPE` dataclass from
+      the preceding segment's response, or `null` for the first segment or when
+      the context has no `STATE_TYPE`. Restored into `context.state` before
+      `context.init()` is called, so restored state is visible during
+      initialization.
     - `options` (object | null): same keys as `actions/run`. `resultFormats`
       should be omitted (or `[]`) for intermediate segments and non-empty only
       for the final segment of a run.
@@ -141,7 +146,8 @@ method names.
       "status": "success",
       "result": {"<resultField>": "..."},
       "resultByFormat": {"json": {"...": "..."}, "string": "..."},
-      "returnCode": 0
+      "returnCode": 0,
+      "context": {"<stateField>": "..."}
     }
     ```
     - `result`: serialized `RunActionResult` after all specified handlers ran
@@ -149,15 +155,20 @@ method names.
       `actions/runHandlers` call.
     - `resultByFormat`: formatted results in the requested formats; `{}` when
       `resultFormats` was empty in options.
+    - `context` (object | null): serialized `STATE_TYPE` after handlers ran;
+      `null` when the context has no `STATE_TYPE` or `serialize_context()`
+      returns `null`. Pass as `previousContext` to the next segment's
+      `actions/runHandlers` call.
   - Result (streamed): used when `partialResultToken` was provided and all
-    results were delivered via `$/progress`. `result` is still populated for
-    context chaining.
+    results were delivered via `$/progress`. `result` and `context` are still
+    populated for chaining.
     ```json
     {
       "status": "streamed",
       "result": {"<resultField>": "..."},
       "resultByFormat": {},
-      "returnCode": 0
+      "returnCode": 0,
+      "context": {"<stateField>": "..."}
     }
     ```
   - Result (stopped):
@@ -166,7 +177,8 @@ method names.
       "status": "stopped",
       "result": {"<resultField>": "..."},
       "resultByFormat": {"json": {"...": "..."}},
-      "returnCode": 1
+      "returnCode": 1,
+      "context": {"<stateField>": "..."}
     }
     ```
   - Result (error): `{"error": "message"}`
@@ -307,11 +319,13 @@ segments:  [(env1, [h1]), (env2, [h2]), (env1, [h3])]
 
 Execution:
 
-1. WM calls `actions/runHandlers` for segment 1 with `previousResult: null`.
+1. WM calls `actions/runHandlers` for segment 1 with `previousResult: null` and
+   `previousContext: null`.
 2. For each subsequent segment, WM calls `actions/runHandlers` on that segment's
-   ER with `previousResult` set to the `result` returned by the previous call.
-   The ER reconstructs this as `context.current_result` before the first handler
-   in the segment runs.
+   ER with `previousResult` set to the `result` returned by the previous call,
+   and `previousContext` set to the `context` returned by the previous call.
+   The ER reconstructs `previousResult` as `context.current_result` and
+   `previousContext` as `context.state` before `context.init()` is called.
 3. If any call returns `status: "stopped"`, WM stops the chain and returns that
    result to the caller.
 4. `resultFormats` is passed only in the final segment's options — earlier
@@ -332,7 +346,8 @@ groups:    [(env1, [h1, h3]), (env2, [h2])]
 Execution:
 
 1. WM dispatches `actions/runHandlers` to all env groups in parallel, all with
-   `previousResult: null`.
+   `previousResult: null` and `previousContext: null` — parallel groups have no
+   linear context chain to thread.
 2. WM collects all `result` objects from the parallel calls.
 3. WM calls `actions/mergeResults` on any available ER for the action, passing
    the collected `result` objects.

@@ -79,6 +79,7 @@ class RunHandlersRequest(BaseSchema):
     handler_names: list[str]
     params: dict[str, Any] = field(default_factory=dict)
     previous_result: dict[str, Any] | None = None
+    previous_context: dict[str, Any] | None = None
 
 
 @dataclass
@@ -88,3 +89,5 @@ class RunHandlersResponse(BaseSchema):
     result: dict[str, Any]
     # formatted output; empty for intermediate segments
     result_by_format: dict[str, dict[str, Any] | str]
+    # serialized STATE_TYPE for context chaining to the next segment
+    context: dict[str, Any] | None = None

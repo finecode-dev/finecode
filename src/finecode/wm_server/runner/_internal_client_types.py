@@ -1657,6 +1657,7 @@ class ErRunHandlersParams:
     handler_names: list[str]
     params: dict = dataclasses.field(default_factory=dict)
     previous_result: dict | None = None
+    previous_context: dict | None = None
     options: dict | None = None
 
 
@@ -1672,6 +1673,7 @@ class ErRunHandlersResult(BaseResult):
     result: dict | None = None
     result_by_format: dict | None = None
     return_code: int | None = None
+    context: dict | None = None
 
 
 @dataclasses.dataclass

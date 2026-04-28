@@ -86,6 +86,32 @@ class _AccumulatingPartialResultSender:
         return self.accumulated is not None
 
 
+class _ContextOut:
+    """Mutable out-parameter for capturing the serialized context from run_action."""
+
+    def __init__(self) -> None:
+        self.context: dict | None = None
+
+
+def _serialize_context(run_context: code_action.RunActionContext) -> dict | None:
+    """Serialize run context state using cattrs, or the custom override if provided."""
+    if run_context.STATE_TYPE is None:
+        return None
+    if type(run_context).serialize_context is not code_action.RunActionContext.serialize_context:
+        return run_context.serialize_context()
+    return _converter.unstructure(run_context.state)
+
+
+def _restore_context(run_context: code_action.RunActionContext, data: dict) -> None:
+    """Restore run context state using cattrs, or the custom override if provided."""
+    if run_context.STATE_TYPE is None:
+        return
+    if type(run_context).restore_context is not code_action.RunActionContext.restore_context:
+        run_context.restore_context(data)
+    else:
+        run_context.state = _converter.structure(data, run_context.STATE_TYPE)
+
+
 def set_partial_result_sender(send_func: typing.Callable) -> None:
     global partial_result_sender
     partial_result_sender = partial_result_sender_module.PartialResultSender(
@@ -165,6 +191,8 @@ async def run_action(
     partial_result_queue: asyncio.Queue | None = None,
     caller_kwargs: code_action.CallerRunContextKwargs | None = None,
     initial_result: code_action.RunActionResult | None = None,
+    previous_context: dict | None = None,
+    context_out: _ContextOut | None = None,
 ) -> code_action.RunActionResult | None:
     # design decisions:
     # - keep payload unchanged between all subaction runs.
@@ -259,6 +287,10 @@ async def run_action(
     action_result: code_action.RunActionResult | None = initial_result
     if initial_result is not None:
         run_context_info.update(initial_result)
+
+    # Restore context state from a prior ER segment (multi-env sequential runs).
+    if previous_context is not None and isinstance(run_context, code_action.RunActionContext):
+        _restore_context(run_context, previous_context)
 
     # to be able to catch source of exceptions in user-accessible code more precisely,
     # manually enter and exit run context
@@ -528,6 +560,8 @@ async def run_action(
                     elif accumulating_sender.accumulated is not None:
                         action_result.update(accumulating_sender.accumulated)
     finally:
+        if context_out is not None and isinstance(run_context_instance, code_action.RunActionContext):
+            context_out.context = _serialize_context(run_context_instance)
         # exit run context
         try:
             await run_context_instance.__aexit__(None, None, None)
@@ -754,6 +788,7 @@ async def run_handlers_raw(
 
     meta = dataclasses.replace(options.meta, wal_run_id=wal_run_id)
 
+    ctx_out = _ContextOut()
     action_result = await run_action(
         action_def=filtered_action,
         payload=payload,
@@ -763,6 +798,8 @@ async def run_handlers_raw(
         progress_token=options.progress_token,
         run_id=run_id,
         initial_result=initial_result,
+        previous_context=request.previous_context,
+        context_out=ctx_out,
     )
 
     # Raw serialized result for chaining to the next segment.
@@ -776,6 +813,7 @@ async def run_handlers_raw(
         return_code=formatted.return_code,
         result=raw_result,
         result_by_format=result_by_format,
+        context=ctx_out.context,
     )
 
 
@@ -1125,7 +1163,7 @@ async def execute_action_handler(
         else:
             logger.error("Unhandled exception in action handler:")
             error_str = str(exception)
-        logger.exception(exception)
+            logger.exception(exception)
         if wal_run_id is not None:
             er_wal.emit_run_event(
                 runner_context.wal_writer,

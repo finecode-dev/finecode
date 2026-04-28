@@ -85,11 +85,14 @@ class RunHandlersResponse:
     ``raw_result`` is the serialized RunActionResult dict for context chaining
     (pass as ``previous_result`` to the next segment's run_handlers call).
     ``result_by_format`` is populated only for the final segment of a run.
+    ``context`` is the serialized STATE_TYPE dict for context chaining
+    (pass as ``previous_context`` to the next segment's run_handlers call).
     """
     raw_result: dict
     result_by_format: dict[str, RunActionRawResult]
     return_code: int
     status: str = "success"
+    context: dict | None = None
 
     def json(self) -> dict[str, Any]:
         result = self.result_by_format.get("json")
@@ -176,6 +179,7 @@ async def run_handlers(
     handler_names: list[str],
     params: dict[str, typing.Any] | None = None,
     previous_result: dict | None = None,
+    previous_context: dict | None = None,
     options: dict[str, typing.Any] | None = None,
 ) -> RunHandlersResponse:
     """Call actions/runHandlers on the ER for multi-env segment orchestration.
@@ -183,6 +187,8 @@ async def run_handlers(
     ``handler_names`` is the ordered list of handler names belonging to this ER's env.
     ``previous_result`` is the serialized RunActionResult from the preceding segment
     (or None for the first segment). The ER seeds context.current_result from it.
+    ``previous_context`` is the serialized STATE_TYPE from the preceding segment
+    (or None for the first segment or when the context has no STATE_TYPE).
     """
     if not runner.initialized_event.is_set():
         await runner.initialized_event.wait()
@@ -200,6 +206,7 @@ async def run_handlers(
                 handler_names=handler_names,
                 params=params or {},
                 previous_result=previous_result,
+                previous_context=previous_context,
                 options=options,
             ),
             timeout=None,
@@ -226,6 +233,7 @@ async def run_handlers(
         result_by_format=run_result.result_by_format or {},
         return_code=run_result.return_code or 0,
         status=run_result.status or "success",
+        context=run_result.context,
     )
 
 

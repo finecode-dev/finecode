@@ -650,6 +650,7 @@ async def run_handlers(server: ErServer, params: dict | None) -> dict:
     handler_names: list[str] = params.get("handlerNames", [])
     action_params: dict = params.get("params") or {}
     previous_result: dict | None = params.get("previousResult")
+    previous_context: dict | None = params.get("previousContext")
     options: dict | None = params.get("options")
 
     logger.trace(
@@ -683,6 +684,7 @@ async def run_handlers(server: ErServer, params: dict | None) -> dict:
         handler_names=handler_names,
         params=action_params,
         previous_result=previous_result,
+        previous_context=previous_context,
     )
     options_schema = _converter.structure(
         options if options is not None else {}, schemas.RunActionOptions
@@ -735,6 +737,7 @@ async def run_handlers(server: ErServer, params: dict | None) -> dict:
         "result": convert_path_keys(response.result) if response.result else {},
         "resultByFormat": converted_result_by_format,
         "returnCode": response.return_code,
+        "context": response.context,
     }
 
 

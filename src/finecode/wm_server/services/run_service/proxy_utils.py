@@ -959,6 +959,7 @@ async def _run_handlers_in_env_runner(
     initialize_all_handlers: bool = False,
     progress_token: int | str | None = None,
     orchestration_depth: int = 0,
+    previous_context: dict | None = None,
 ) -> runner_client.RunHandlersResponse:
     """Call actions/runHandlers on the ER for one segment of a multi-env run."""
     wal.emit_run_event(
@@ -1018,6 +1019,7 @@ async def _run_handlers_in_env_runner(
             handler_names=handler_names,
             params=payload,
             previous_result=previous_result,
+            previous_context=previous_context,
             options=options,
         )
     except runner_client.BaseRunnerRequestException as error:
@@ -1069,6 +1071,7 @@ async def _run_multi_env_sequential(
     """Drive multi-env sequential execution segment-by-segment."""
     segments = _build_sequential_segments(action.handlers)
     previous_result: dict | None = None
+    previous_context: dict | None = None
     final_response: runner_client.RunHandlersResponse | None = None
 
     for idx, (env_name, handler_names) in enumerate(segments):
@@ -1080,6 +1083,7 @@ async def _run_multi_env_sequential(
             handler_names=handler_names,
             payload=payload,
             previous_result=previous_result,
+            previous_context=previous_context,
             env_name=env_name,
             project_def=project_def,
             ws_context=ws_context,
@@ -1100,6 +1104,7 @@ async def _run_multi_env_sequential(
             )
 
         previous_result = seg_response.raw_result
+        previous_context = seg_response.context
         final_response = seg_response
 
     assert final_response is not None
