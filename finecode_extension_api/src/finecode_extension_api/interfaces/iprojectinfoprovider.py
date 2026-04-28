@@ -17,6 +17,8 @@ class IProjectInfoProvider(Protocol):
 
     def get_current_project_raw_config_version(self) -> int: ...
 
+    async def get_workspace_editable_packages(self) -> dict[str, pathlib.Path]: ...
+
 
 class InvalidProjectConfig(Exception):
     def __init__(self, message: str) -> None:

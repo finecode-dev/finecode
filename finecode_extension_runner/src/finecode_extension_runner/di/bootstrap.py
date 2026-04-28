@@ -20,6 +20,7 @@ from finecode_extension_api.interfaces import (  # idevenvinfoprovider,
     iprojectinfoprovider,
     irepositorycredentialsprovider,
     iworkspaceactionrunner,
+    iworkspaceinfoprovider,
 )
 
 from finecode_extension_runner import context, domain
@@ -38,6 +39,7 @@ from finecode_extension_runner.impls import (  # dev_env_info_provider,
     repository_credentials_provider,
     service_registry,
     workspace_action_runner,
+    workspace_info_provider,
 )
 
 def bootstrap(
@@ -91,6 +93,10 @@ def bootstrap(
     registry.register_instance(
         iworkspaceactionrunner.IWorkspaceActionRunner,
         workspace_action_runner.WorkspaceActionRunnerImpl(send_request_to_wm),
+    )
+    registry.register_instance(
+        iworkspaceinfoprovider.IWorkspaceInfoProvider,
+        workspace_info_provider.WorkspaceInfoProviderImpl(send_request_to_wm),
     )
     registry.register_instance(
         irepositorycredentialsprovider.IRepositoryCredentialsProvider,

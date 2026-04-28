@@ -75,9 +75,12 @@ class ProjectActionRunnerImpl(iprojectactionrunner.IProjectActionRunner):
     def _find_local_action(
         self, action_type: type
     ) -> domain.ActionDeclaration | None:
-        action_source = f"{action_type.__module__}.{action_type.__qualname__}"
         return next(
-            (a for a in self._actions_getter().values() if a.source == action_source),
+            (
+                a
+                for a in self._actions_getter().values()
+                if self._resolve_type(a.source) is action_type
+            ),
             None,
         )
 
@@ -93,7 +96,8 @@ class ProjectActionRunnerImpl(iprojectactionrunner.IProjectActionRunner):
         if cls is None:
             try:
                 cls = run_utils.import_module_member_by_source_str(source)
-            except Exception:
+            except Exception as exception:
+                logger.debug(f"Failed to import type {source}: {exception}")
                 return None
             self._source_cls_cache[source] = cls
         return cls
@@ -139,6 +143,13 @@ class ProjectActionRunnerImpl(iprojectactionrunner.IProjectActionRunner):
         caller_kwargs: code_action.CallerRunContextKwargs | None = None,
     ) -> ResultT:
         action_def = self._find_local_action(action_type)
+        if action_def is None:
+            # Two valid reasons to reach here:
+            # 1. Action belongs to a different project — WM dispatch below will route it correctly.
+            # 2. Bug: action should have been found locally but wasn't — WM dispatch may still
+            #    succeed, masking the problem.
+            logger.debug(f"Action not found locally: {action_type}")
+
         if action_def is not None and self._all_handlers_in_current_env(action_def):
             result = await self._run_action_func(
                 action_def, payload, meta, caller_kwargs=caller_kwargs
@@ -148,6 +159,16 @@ class ProjectActionRunnerImpl(iprojectactionrunner.IProjectActionRunner):
                     f"Action '{action_def.name}' returned no result"
                 )
             return result  # type: ignore[return-value]
+
+        if action_def is not None:
+            env = self._current_env_name_getter()
+            outside = [(h.name, h.env) for h in action_def.handlers if h.env != env]
+            logger.debug(
+                "Dispatching '{}' via WM: handlers not in current env '{}': {}",
+                action_type.__qualname__,
+                env,
+                outside,
+            )
 
         if caller_kwargs is not None:
             logger.warning(
@@ -178,7 +199,7 @@ class ProjectActionRunnerImpl(iprojectactionrunner.IProjectActionRunner):
             )
         return self._build_result(action_type, raw_final_result)
 
-    async def run_action_iter(  # type: ignore[override]
+    async def run_action_iter(
         self,
         action_type: type[code_action.Action[PayloadT, typing.Any, ResultT]],
         payload: PayloadT,
@@ -188,6 +209,13 @@ class ProjectActionRunnerImpl(iprojectactionrunner.IProjectActionRunner):
         global _last_wm_token
 
         action_def = self._find_local_action(action_type)
+        if action_def is None:
+            # Two valid reasons to reach here:
+            # 1. Action belongs to a different project — WM dispatch below will route it correctly.
+            # 2. Bug: action should have been found locally but wasn't — WM dispatch may still
+            #    succeed, masking the problem.
+            logger.debug(f"Action not found locally: {action_type}")
+
         if action_def is not None and self._all_handlers_in_current_env(action_def):
             queue: asyncio.Queue[dict[str, Any] | object] = asyncio.Queue()
             task = asyncio.ensure_future(
@@ -205,6 +233,16 @@ class ProjectActionRunnerImpl(iprojectactionrunner.IProjectActionRunner):
                 yield item  # type: ignore[misc]
             await task
             return
+
+        if action_def is not None:
+            env = self._current_env_name_getter()
+            outside = [(h.name, h.env) for h in action_def.handlers if h.env != env]
+            logger.debug(
+                "Dispatching '{}' via WM: handlers not in current env '{}': {}",
+                action_type.__qualname__,
+                env,
+                outside,
+            )
 
         if caller_kwargs is not None:
             logger.warning(

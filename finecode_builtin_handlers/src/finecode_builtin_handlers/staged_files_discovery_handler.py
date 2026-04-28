@@ -3,7 +3,7 @@ from pathlib import Path
 
 from finecode_extension_api import code_action
 from finecode_extension_api.actions.code_quality import precommit_action
-from finecode_extension_api.interfaces import icommandrunner, ilogger
+from finecode_extension_api.interfaces import icommandrunner, ilogger, iprojectinfoprovider
 
 
 @dataclasses.dataclass
@@ -18,15 +18,22 @@ class StagedFilesDiscoveryHandler(
     """Detect staged files and write them to run_context.staged_files.
 
     Uses payload.file_paths when provided; otherwise calls git diff --cached.
+
+    If the current project is not the root of the git repository, staged_files
+    is set to [] and the handler returns immediately — downstream bridge handlers
+    already skip on empty staged_files. This prevents subprojects in the same
+    repository from running duplicate checks (ADR-0031).
     """
 
     def __init__(
         self,
         logger: ilogger.ILogger,
         command_runner: icommandrunner.ICommandRunner,
+        project_info_provider: iprojectinfoprovider.IProjectInfoProvider,
     ) -> None:
         self.logger = logger
         self.command_runner = command_runner
+        self.project_info_provider = project_info_provider
 
     async def run(
         self,
@@ -41,20 +48,31 @@ class StagedFilesDiscoveryHandler(
             raise code_action.ActionFailedException(
                 "Expected PrecommitRunContext in StagedFilesDiscoveryHandler"
             )
+
+        repo_root = await self._get_repo_root()
+        project_dir = self.project_info_provider.get_current_project_dir_path().resolve()
+        if project_dir != repo_root.resolve():
+            run_context.staged_files = []
+            self.logger.info(
+                "Project is not at the git repository root; "
+                "precommit is orchestrated by the root project."
+            )
+            return precommit_action.PrecommitRunResult()
+
         if payload.file_paths is not None:
             run_context.staged_files = payload.file_paths
             self.logger.info(
                 f"Using {len(run_context.staged_files)} explicitly provided file(s)."
             )
         else:
-            run_context.staged_files = await self._get_staged_files()
+            run_context.staged_files = await self._get_staged_files(repo_root)
             self.logger.info(
                 f"Detected {len(run_context.staged_files)} staged file(s)."
             )
 
         return precommit_action.PrecommitRunResult()
 
-    async def _get_staged_files(self) -> list[Path]:
+    async def _get_staged_files(self, repo_root: Path) -> list[Path]:
         """Run git diff --cached --name-only --diff-filter=ACMR and return absolute paths."""
         proc = await self.command_runner.run(
             "git diff --cached --name-only --diff-filter=ACMR"
@@ -66,8 +84,6 @@ class StagedFilesDiscoveryHandler(
                 f"git diff --cached failed (exit {exit_code}): {proc.get_error_output().strip()}"
             )
 
-        # git outputs paths relative to the repo root; resolve them to absolute paths
-        repo_root = await self._get_repo_root()
         paths: list[Path] = []
         for line in proc.get_output().splitlines():
             line = line.strip()

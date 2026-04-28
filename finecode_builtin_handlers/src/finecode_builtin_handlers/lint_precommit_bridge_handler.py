@@ -1,9 +1,11 @@
+import asyncio
 import dataclasses
 
 from finecode_extension_api import code_action
 from finecode_extension_api.actions.code_quality import lint_action, precommit_action
-from finecode_extension_api.interfaces import iprojectactionrunner, ilogger
+from finecode_extension_api.interfaces import iworkspaceactionrunner, iworkspaceinfoprovider, ilogger
 from finecode_extension_api.resource_uri import path_to_resource_uri
+from finecode_extension_api.workspace_utils import group_files_by_project
 
 
 @dataclasses.dataclass
@@ -19,10 +21,12 @@ class LintPrecommitBridgeHandler(
 
     def __init__(
         self,
-        project_action_runner: iprojectactionrunner.IProjectActionRunner,
+        workspace_action_runner: iworkspaceactionrunner.IWorkspaceActionRunner,
+        workspace_info_provider: iworkspaceinfoprovider.IWorkspaceInfoProvider,
         logger: ilogger.ILogger,
     ) -> None:
-        self.project_action_runner = project_action_runner
+        self.workspace_action_runner = workspace_action_runner
+        self.workspace_info_provider = workspace_info_provider
         self.logger = logger
 
     async def run(
@@ -38,13 +42,34 @@ class LintPrecommitBridgeHandler(
             self.logger.info("No staged files - skipping lint.")
             return precommit_action.PrecommitRunResult()
 
-        file_uris = [path_to_resource_uri(p) for p in run_context.staged_files]
-        result = await self.project_action_runner.run_action(
-            action_type=lint_action.LintAction,
-            payload=lint_action.LintRunPayload(
-                target=lint_action.LintTarget.FILES,
-                file_paths=file_uris,
-            ),
-            meta=run_context.meta,
-        )
-        return precommit_action.PrecommitRunResult(action_results={"lint": result})
+        project_paths = await self.workspace_info_provider.get_workspace_project_paths()
+        files_by_project = group_files_by_project(run_context.staged_files, project_paths)
+
+        if not files_by_project:
+            self.logger.warning(
+                "Staged files do not belong to any workspace project - skipping lint."
+            )
+            return precommit_action.PrecommitRunResult()
+
+        async with asyncio.TaskGroup() as tg:
+            tasks = [
+                tg.create_task(
+                    self.workspace_action_runner.run_action_in_projects(
+                        action_type=lint_action.LintAction,
+                        payload=lint_action.LintRunPayload(
+                            target=lint_action.LintTarget.FILES,
+                            file_paths=[path_to_resource_uri(p) for p in project_files],
+                        ),
+                        meta=run_context.meta,
+                        project_paths=[project_path],
+                    )
+                )
+                for project_path, project_files in files_by_project.items()
+            ]
+
+        merged_lint_result = lint_action.LintRunResult(messages={})
+        for task in tasks:
+            for project_result in task.result().values():
+                merged_lint_result.update(project_result)
+
+        return precommit_action.PrecommitRunResult(action_results={"lint": merged_lint_result})

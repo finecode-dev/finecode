@@ -8,7 +8,7 @@ if sys.version_info >= (3, 12):
 else:
     from typing_extensions import override
 
-from finecode_extension_api import code_action
+from finecode_extension_api import code_action, textstyler
 
 
 @dataclasses.dataclass
@@ -21,6 +21,14 @@ class PrecommitRunPayload(code_action.RunActionPayload):
 
 @dataclasses.dataclass
 class PrecommitRunResult(code_action.RunActionResult):
+    """Aggregated result of all precommit bridge handlers.
+
+    ``action_results`` maps a short action name (e.g. ``"format"``, ``"lint"``)
+    to the result returned by its bridge handler.  Each value is expected to have
+    ``to_text()`` — ``PrecommitRunResult.to_text()`` calls it per entry and
+    combines the outputs under a bold section header.
+    """
+
     action_results: dict[str, code_action.RunActionResult] = dataclasses.field(
         default_factory=dict
     )
@@ -30,6 +38,19 @@ class PrecommitRunResult(code_action.RunActionResult):
         if not isinstance(other, PrecommitRunResult):
             return
         self.action_results.update(other.action_results)
+
+    @override
+    def to_text(self) -> str | textstyler.StyledText:
+        text = textstyler.StyledText()
+        for name, result in self.action_results.items():
+            text.append_styled(f"[{name}]\n", bold=True)
+            sub_text = result.to_text()
+            if isinstance(sub_text, textstyler.StyledText):
+                text.text_parts.extend(sub_text.text_parts)
+            else:
+                text.append(sub_text)
+            text.append("\n")
+        return text
 
     @property
     def return_code(self) -> code_action.RunReturnCode:
