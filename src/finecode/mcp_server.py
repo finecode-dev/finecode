@@ -419,4 +419,7 @@ def start(workdir: pathlib.Path, port_file: pathlib.Path | None = None) -> None:
             logger.info("MCP: Closing WM client")
             await _wm_client.close()
 
-    asyncio.run(_run())
+    try:
+        asyncio.run(_run())
+    except KeyboardInterrupt:
+        pass

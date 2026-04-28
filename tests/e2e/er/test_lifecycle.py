@@ -5,9 +5,7 @@ from __future__ import annotations
 import json
 import socket
 import subprocess
-import sys
 import time
-from pathlib import Path
 
 import pytest
 
@@ -19,6 +17,7 @@ from tests.e2e.conftest import kill_group, sigint_group, start_server, wait_for_
 # ---------------------------------------------------------------------------
 # Minimal WM JSON-RPC client helpers
 # ---------------------------------------------------------------------------
+
 
 
 def _send_request(sock: socket.socket, method: str, params: dict, req_id: int) -> None:
@@ -51,38 +50,6 @@ def _read_response(sock: socket.socket, timeout: float = 30.0) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Fixtures
-# ---------------------------------------------------------------------------
-
-
-@pytest.fixture
-def workspace_dir_with_er(tmp_path: Path) -> Path:
-    """Workspace with a dev_workspace env symlinked to the current Python venv.
-
-    Symlinking the active venv avoids creating a separate virtual environment:
-    ``finecode_extension_runner`` is already installed here (it is a dev
-    dependency of finecode itself), so the WM can start a real ER immediately.
-
-    The workspace declares one action backed by a built-in handler so that WM
-    can validate the config and start the dev_workspace ER on ``workspace/addDir``.
-    """
-    (tmp_path / "pyproject.toml").write_text(
-        "[tool.finecode]\n\n"
-        "[[tool.finecode.actions]]\n"
-        'name = "test_action"\n\n'
-        "[[tool.finecode.actions.handlers]]\n"
-        'handler = "finecode_builtin_handlers.DumpConfigHandler"\n'
-        'env = "dev_workspace"\n'
-    )
-    # Symlink current venv as the dev_workspace env.
-    venvs_dir = tmp_path / ".venvs"
-    venvs_dir.mkdir()
-    current_venv = Path(sys.executable).parent.parent
-    (venvs_dir / "dev_workspace").symlink_to(current_venv)
-    return tmp_path
-
-
-# ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
 
@@ -90,18 +57,9 @@ def workspace_dir_with_er(tmp_path: Path) -> Path:
 def test_extension_runners_cleaned_up_on_wm_shutdown(workspace_dir_with_er, tmp_path):
     """Extension Runner subprocesses are terminated when the WM shuts down cleanly.
 
-    The WM's ``on_shutdown()`` hook sends ``shutdown`` + ``exit`` JSON-RPC
-    messages to every running ER so they stop gracefully.  Without this, ERs
-    would be orphaned (re-parented to PID 1) when the WM exits — a ghost-process
-    scenario that silently consumes resources.
-
-    Sequence:
-      1. Start WM in a workspace that has a dev_workspace ER configured.
-      2. Connect to WM and call ``workspace/addDir``, which discovers the project
-         and starts the dev_workspace Extension Runner subprocess.
-      3. Poll via psutil until the ER child process appears.
-      4. Close the client connection, then send SIGINT to the WM process group.
-      5. Assert every ER PID recorded in step 3 is no longer alive.
+    When a WM exits, every ER it spawned must be stopped. Orphaned ERs are
+    re-parented to PID 1 and silently consume resources — the user cannot
+    easily discover or stop them without inspecting the full process tree.
     """
     port_file = tmp_path / "wm_port"
 

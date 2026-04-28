@@ -31,7 +31,7 @@ dev_workspace = [
     "finecode_dev_common_preset~=0.3.0a0",
     "debugpy==1.8.*",
 ]
-dev = ["finecode", "pytest==7.4.*", "debugpy==1.8.*"]
+dev = ["finecode", "psutil==7.2.*", "debugpy==1.8.*"]
 docs = [
     "mkdocs==1.6.*",
     "mkdocs-material==9.7.*",

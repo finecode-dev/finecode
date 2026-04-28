@@ -1,7 +1,5 @@
 """E2E tests for the MCP server lifecycle."""
 
-import os
-import signal
 import socket
 import subprocess
 import time
@@ -18,28 +16,13 @@ from tests.e2e.conftest import (
 
 
 def test_starts_and_exits_on_sigint(workspace_dir, tmp_path):
-    """MCP server starts a dedicated WM server and exits cleanly on SIGINT.
+    """MCP server starts its WM and exits cleanly on SIGINT.
 
-    Each test uses its own WM instance via ``--wm-port-file``, so tests are
-    fully isolated and can run even when a shared WM server is already running
-    (e.g. from a developer's IDE session).
+    Each test uses its own WM instance via ``--wm-port-file`` so tests are
+    fully isolated and can run alongside a developer's active IDE session.
 
-    The MCP server startup sequence:
-      1. ``wm_lifecycle.start_own_server(workdir, port_file=...)`` spawns a
-         dedicated WM subprocess that writes its port to the given file.
-      2. ``wm_lifecycle.wait_until_ready_from_file(port_file)`` polls that file.
-      3. ``mcp.run()`` enters the MCP event loop (lifespan connects to WM).
-
-    Because the WM child is spawned inside the MCP process group
-    (``start_new_session=True`` on the MCP process, plain ``Popen`` for WM),
-    a single ``os.killpg(SIGINT)`` reaches both.
-
-    Sequence:
-      1. Start ``start-mcp --workdir <workspace> --wm-port-file <port_file>``.
-      2. Poll the per-test port file — proves WM is up and MCP lifespan ran.
-      3. Brief pause to let MCP enter its stdio event loop.
-      4. Send SIGINT to the process group (hits both MCP and WM child).
-      5. Assert MCP process exits within 10 s.
+    The WM port file appearing proves both that WM is ready and that the MCP
+    lifespan completed. Exit code must be 0.
     """
     port_file = tmp_path / "wm_port"
 
@@ -70,27 +53,18 @@ def test_starts_and_exits_on_sigint(workspace_dir, tmp_path):
         # Kills MCP + WM child if they are still running (e.g. test failed before SIGINT)
         kill_group(proc)
 
-    # exit code 0 or 1: MCP / asyncio handles KeyboardInterrupt cleanly
-    assert proc.returncode in (0, 1), (
-        f"Expected clean exit (0 or 1), got {proc.returncode}"
+    assert proc.returncode == 0, (
+        f"Expected clean exit (0), got {proc.returncode}"
     )
 
 
 def test_child_wm_dies_on_mcp_sigkill(workspace_dir, tmp_path):
-    """WM child process dies when the MCP process group receives SIGKILL.
+    """WM child process dies when the MCP process is force-killed.
 
-    ``start_own_server()`` intentionally does *not* use ``start_new_session``
-    when spawning the dedicated WM subprocess, so both MCP and WM share the
-    same process group.  A SIGKILL to that group therefore kills both processes
-    simultaneously — preventing a ghost WM when the MCP server is force-killed
-    (e.g. IDE crash, OOM kill, or ``kill -9``).
-
-    Sequence:
-      1. Start the MCP server; it spawns a dedicated WM child.
-      2. Poll the per-test WM port file — proves WM is up.
-      3. Read the WM port and verify WM is accepting connections.
-      4. Send SIGKILL to the MCP process group (hits both MCP and WM child).
-      5. Assert the WM port becomes unavailable within 5 s — proves WM died.
+    When an IDE crashes or the process is OOM-killed, the WM spawned by MCP
+    must die with it. A surviving WM occupies a port and blocks the next MCP
+    startup — a ghost process the user cannot easily discover or stop without
+    inspecting the process tree.
     """
     port_file = tmp_path / "wm_port"
 
@@ -119,7 +93,7 @@ def test_child_wm_dies_on_mcp_sigkill(workspace_dir, tmp_path):
         # Force-kill the MCP process group — simulates IDE crash / OOM kill.
         # WM shares this group (start_own_server has no start_new_session),
         # so it must die immediately rather than becoming an orphan.
-        os.killpg(proc.pid, signal.SIGKILL)
+        kill_group(proc)
 
         # WM port must become unavailable quickly.
         deadline = time.monotonic() + 5.0
