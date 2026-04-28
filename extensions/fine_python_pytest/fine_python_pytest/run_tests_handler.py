@@ -93,13 +93,39 @@ class PytestRunTestsHandler(
                 await progress.report("Tests running")
                 await process.wait_for_end()
 
-            if not report_path.exists() or report_path.stat().st_size == 0:
-                error_output = process.get_error_output() or process.get_output()
+            exit_code = process.get_exit_code()
+            stdout = process.get_output()
+            stderr = process.get_error_output()
+
+            self.logger.debug(f"pytest exit code: {exit_code}")
+            if stdout:
+                self.logger.debug(f"pytest stdout:\n{stdout}")
+            if stderr:
+                self.logger.debug(f"pytest stderr:\n{stderr}")
+
+            # Exit codes 0 (all passed), 1 (some failed), 5 (no tests collected) are
+            # expected outcomes that produce a valid JSON report.  2 = interrupted,
+            # 3 = internal error, 4 = usage error — report may be absent or partial.
+            if exit_code not in (0, 1, 5):
+                descriptions: dict[int | None, str] = {
+                    2: "interrupted (e.g. by --exitfirst/-x or signal)",
+                    3: "internal error in pytest",
+                    4: "command-line usage error — check addopts config",
+                }
+                reason = descriptions.get(exit_code, f"unexpected exit code {exit_code}")
                 raise code_action.ActionFailedException(
-                    f"pytest did not produce a JSON report. Output:\n{error_output}"
+                    f"pytest exited with code {exit_code}: {reason}.\nOutput:\n{stderr or stdout}"
+                )
+
+            if not report_path.exists() or report_path.stat().st_size == 0:
+                raise code_action.ActionFailedException(
+                    f"pytest did not produce a JSON report (exit code {exit_code})."
+                    f"\nOutput:\n{stderr or stdout}"
                 )
 
             report_data = json.loads(report_path.read_text(encoding="utf-8"))
+            summary = report_data.get("summary", {})
+            self.logger.debug(f"pytest report summary: {summary}")
         finally:
             report_path.unlink(missing_ok=True)
 
@@ -108,10 +134,19 @@ class PytestRunTestsHandler(
         for test in report_data.get("tests", []):
             test_results.append(_map_test(test, project_dir))
 
-        # Collection errors (e.g. import errors) appear as failed collectors
+        # Collection errors (e.g. import errors) appear as failed collectors;
+        # module-level pytest.skip() produces skipped collectors.
         for collector in report_data.get("collectors", []):
-            if collector.get("outcome") == "failed":
+            outcome = collector.get("outcome")
+            if outcome == "failed":
                 test_results.append(_map_collector_error(collector, project_dir))
+            elif outcome == "skipped":
+                test_results.append(_map_collector_skipped(collector, project_dir))
+
+        if not test_results:
+            self.logger.warning(
+                f"No tests discovered. cmd={cmd!r} exit_code={exit_code} summary={summary}"
+            )
 
         return RunTestsRunResult(test_results=test_results)
 
@@ -166,6 +201,20 @@ def _map_collector_error(collector: dict, project_dir: Path) -> TestCaseResult:
         test_id=test_id,
         outcome=TestOutcome.ERROR,
         message=str(longrepr) if longrepr else "Collection error",
+        file_path=file_uri,
+    )
+
+
+def _map_collector_skipped(collector: dict, project_dir: Path) -> TestCaseResult:
+    nodeid = collector.get("nodeid", "unknown")
+    test_id = _parse_nodeid(nodeid, project_dir)
+    file_uri: ResourceUri | None = None
+    file_path = resource_uri_to_path(test_id.file_path)
+    if file_path.suffix == ".py":
+        file_uri = test_id.file_path
+    return TestCaseResult(
+        test_id=test_id,
+        outcome=TestOutcome.SKIPPED,
         file_path=file_uri,
     )
 

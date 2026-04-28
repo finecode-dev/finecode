@@ -177,6 +177,19 @@ class RunTestsRunResult(code_action.RunActionResult):
             else:
                 text.append("\n")
 
+        # Skipped test names
+        skipped_results = [t for t in self.test_results if t.outcome == TestOutcome.SKIPPED]
+        for result in skipped_results:
+            name = result.display_name or str(result.test_id)
+            text.append_styled("\nSKIPPED ", foreground=textstyler.Color.YELLOW, bold=True)
+            text.append_styled(name, bold=True)
+            if result.file_path is not None:
+                location = result.file_path
+                if result.line is not None:
+                    location += f":{result.line + 1}"
+                text.append(f" ({location})")
+            text.append("\n")
+
         return text
 
     @property
