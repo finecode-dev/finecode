@@ -106,6 +106,9 @@ async def _start_extension_runner_process(
 
     _project = ws_context.ws_projects[runner.working_dir_path]
     _default_env_config = domain.EnvConfig(runner_config=domain.RunnerConfig(debug=False))
+    # `dev_workspace` runner is started before the project config is fully collected, so
+    # `env_configs` are unavailable here for it; `defaultLevel` is applied later via
+    # `update_runner_config`
     env_config = (
         _project.env_configs.get(runner.env_name, _default_env_config)
         if isinstance(_project, domain.CollectedProject)

@@ -9,26 +9,28 @@ from loguru import logger
 from finecode_extension_runner import logs
 
 
-def init_logger(log_name: str, log_level: str = "INFO", stdout: bool = False) -> Path:
+def init_logger(
+    log_name: str,
+    log_level: str = "INFO",
+    stdout: bool = False,
+    log_groups: dict[str, str] | None = None,
+) -> Path:
     venv_dir_path = Path(sys.executable).parent.parent
     logs_dir_path = venv_dir_path / "logs"
 
     logger.remove()
-    # disable logging raw messages
-    # TODO: make configurable
-    logger.configure(
-        activation=[
-            ("pygls.protocol.json_rpc", False),
-            ("pygls.feature_manager", False),
-            # ("pygls.io_", False),
-        ]
-    )
-    logs.set_log_level_for_group(group="finecode_jsonrpc.client", level=logs.LogLevel.INFO)
     log_file_path = logs.save_logs_to_file(
         file_path=logs_dir_path / log_name / f"{log_name}.log",
         log_level=log_level,
         stdout=stdout,
     )
+
+    if log_groups:
+        for group, level_str in log_groups.items():
+            try:
+                logs.set_log_level_for_group(group, logs.LogLevel[level_str.upper()])
+            except KeyError:
+                pass
 
     # pygls uses standard python logger, intercept it and pass logs to loguru
     class InterceptHandler(logging.Handler):

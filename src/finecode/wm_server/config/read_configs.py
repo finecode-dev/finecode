@@ -126,7 +126,7 @@ def _resolve_er_logging_config(
 
     fallback = _read_er_logging_config(er_section)
 
-    env_raw = er_section.get(env_name, {})
+    env_raw = er_section.get("envs", {}).get(env_name, {})
     if not env_raw:
         return _apply_er_env_var_overrides(fallback, env_name)
 
@@ -168,14 +168,39 @@ def _apply_er_env_var_overrides(
     return config_models.ErLoggingConfig(default_level=level, log_groups=groups)
 
 
+def read_wm_logging_config(workspace_root: Path) -> config_models.ErLoggingConfig:
+    """Read WM logging config from [workspace.wm.logging] in finecode-workspace.toml.
+
+    Env vars FINECODE_WM_LOG_GROUP_<GROUP>=LEVEL override file values (uppercase
+    group name with dots replaced by underscores, e.g. FINECODE_WM_LOG_GROUP_FINECODE_JSONRPC=DEBUG).
+    """
+    import os
+
+    log_groups: dict[str, str] = {}
+
+    ws_config_path = workspace_root / "finecode-workspace.toml"
+    if ws_config_path.exists():
+        try:
+            with open(ws_config_path, "rb") as f:
+                ws_config = toml_loads(f.read()).unwrap()
+            logging_raw = ws_config.get("workspace", {}).get("wm", {}).get("logging", {})
+            log_groups = dict(logging_raw.get("log_groups", {}))
+        except Exception:
+            pass
+
+    for var, value in os.environ.items():
+        if var.startswith("FINECODE_WM_LOG_GROUP_"):
+            group_key = var[len("FINECODE_WM_LOG_GROUP_"):].lower().replace("_", ".")
+            log_groups[group_key] = value
+
+    return config_models.ErLoggingConfig(log_groups=log_groups)
+
+
 def read_env_configs(project_config: dict[str, Any]) -> dict[str, domain.EnvConfig]:
     env_configs: dict[str, domain.EnvConfig] = {}
 
     er_section = project_config.get("tool", {}).get("finecode", {}).get("er", {})
-    for env_name, env_raw in er_section.items():
-        if env_name == "logging":
-            # reserved key — project-level fallback, not an env name
-            continue
+    for env_name, env_raw in er_section.get("envs", {}).items():
         if not isinstance(env_raw, dict):
             continue
         debug = env_raw.get("debug", False)

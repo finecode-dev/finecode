@@ -1,4 +1,5 @@
 # docs: docs/cli.md
+import ast
 import asyncio
 import json
 import os
@@ -248,10 +249,18 @@ def deserialize_action_payload(raw_payload: dict[str, str]) -> dict[str, typing.
     deserialized_payload = {}
     for key, value in raw_payload.items():
         try:
-            # use json deserialize for objects, arrays, numbers, booleans
+            # JSON requires double-quoted strings: ["a", "b"] works, ['a', 'b'] does not.
+            # This is the preferred path for machine-generated payloads.
             deserialized_value = json.loads(value)
         except json.JSONDecodeError:
-            deserialized_value = value
+            try:
+                # Shell users naturally write single-quoted lists, e.g.
+                #   --file-paths="['file:///path/to/file.py']"
+                # json.loads rejects single quotes, but ast.literal_eval handles
+                # Python-literal syntax safely (only parses constants, no code execution).
+                deserialized_value = ast.literal_eval(value)
+            except (ValueError, SyntaxError):
+                deserialized_value = value
         deserialized_payload[key] = deserialized_value
     return deserialized_payload
 
@@ -609,8 +618,12 @@ def start_wm_server(
 ):
     """Start the FineCode WM Server standalone (TCP JSON-RPC). Auto-stops when all clients disconnect."""
     from finecode.wm_server import wal, wm_server
+    from finecode.wm_server.config import read_configs
 
-    log_file_path = logger_utils.init_logger(log_name="wm_server", log_level=log_level, stdout=False)
+    wm_logging = read_configs.read_wm_logging_config(pathlib.Path.cwd())
+    log_file_path = logger_utils.init_logger(
+        log_name="wm_server", log_level=log_level, stdout=False, log_groups=wm_logging.log_groups
+    )
     wm_server._log_file_path = log_file_path
     port_file_path = pathlib.Path(port_file) if port_file else None
 
