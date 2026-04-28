@@ -1,0 +1,25 @@
+[project]
+name = "fine_toml_tombi"
+version = "0.1.0a1"
+description = ""
+authors = [{ name = "Vladyslav Hnatiuk", email = "aders1234@gmail.com" }]
+readme = "README.md"
+requires-python = ">=3.11, < 3.15"
+dependencies = ["finecode_extension_api~=0.4.0a0", "fine_toml_lang~=0.1.0a0", "tombi>=0.3.0,<1.0.0"]
+
+[project.entry-points."finecode.activator"]
+fine_toml_tombi = "fine_toml_tombi.activator:Activator"
+
+[dependency-groups]
+dev_workspace = ["finecode~=0.4.0a0", "finecode_dev_common_preset~=0.3.0a0"]
+
+[tool.finecode]
+presets = [{ source = "finecode_dev_common_preset" }]
+
+[tool.finecode.env.dev_workspace.dependencies]
+finecode_dev_common_preset = { path = "../../finecode_dev_common_preset", editable = true }
+finecode = { path = "../../", editable = true }
+finecode_extension_runner = { path = "../../finecode_extension_runner", editable = true }
+
+[tool.setuptools]
+packages = ["fine_toml_tombi"]

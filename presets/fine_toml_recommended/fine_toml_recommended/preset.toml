@@ -1,0 +1,41 @@
+[tool.finecode.action.list_src_artifact_files_by_lang]
+source = "finecode_extension_api.actions.ListSrcArtifactFilesByLangAction"
+
+[[tool.finecode.action.list_src_artifact_files_by_lang.handlers]]
+name = "list_src_artifact_files_by_lang_toml"
+source = "fine_toml_lang.ListSrcArtifactFilesByLangTomlHandler"
+env = "dev_no_runtime"
+dependencies = ["fine_toml_lang~=0.1.0a0"]
+
+[tool.finecode.action.group_src_artifact_files_by_lang]
+source = "finecode_extension_api.actions.GroupSrcArtifactFilesByLangAction"
+
+[[tool.finecode.action.group_src_artifact_files_by_lang.handlers]]
+name = "group_src_artifact_files_by_lang_toml"
+source = "fine_toml_lang.GroupSrcArtifactFilesByLangTomlHandler"
+env = "dev_no_runtime"
+dependencies = ["fine_toml_lang~=0.1.0a0"]
+
+[tool.finecode.action.lint_toml_files]
+source = "fine_toml_lang.LintTomlFilesAction"
+
+[[tool.finecode.action.lint_toml_files.handlers]]
+name = "tombi"
+source = "fine_toml_tombi.TombiLintTomlFilesHandler"
+env = "dev_no_runtime"
+dependencies = ["fine_toml_tombi~=0.1.0a0"]
+
+[tool.finecode.action.format_toml_file]
+source = "fine_toml_lang.FormatTomlFileAction"
+
+[[tool.finecode.action.format_toml_file.handlers]]
+name = "tombi"
+source = "fine_toml_tombi.TombiFormatTomlFileHandler"
+env = "dev_no_runtime"
+dependencies = ["fine_toml_tombi~=0.1.0a0"]
+
+[[tool.finecode.service]]
+interface = "finecode_extension_api.interfaces.ilspclient.ILspClient"
+source = "finecode_extension_runner.impls.lsp_client.LspClientImpl"
+env = "dev_no_runtime"
+dependencies = []

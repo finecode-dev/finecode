@@ -3,4 +3,5 @@ presets = [
     { source = "fine_python_format" },
     { source = "fine_python_lint" },
     { source = "fine_python_test" },
+    { source = "fine_toml_recommended" },
 ]
