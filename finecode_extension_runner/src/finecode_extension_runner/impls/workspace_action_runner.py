@@ -6,7 +6,7 @@ import typing
 from typing import Any, Awaitable, Callable
 
 from finecode_extension_api import code_action
-from finecode_extension_api.interfaces import iworkspaceactionrunner
+from finecode_extension_api.interfaces import iprojectactionrunner, iworkspaceactionrunner
 from finecode_extension_runner._converter import converter as _converter
 
 PayloadT = typing.TypeVar("PayloadT", bound=code_action.RunActionPayload)
@@ -28,22 +28,32 @@ class WorkspaceActionRunnerImpl(iworkspaceactionrunner.IWorkspaceActionRunner):
         concurrently: bool = True,
     ) -> dict[pathlib.Path, ResultT]:
         action_source = f"{action_type.__module__}.{action_type.__qualname__}"
-        raw = await self._send(
-            "finecode/runActionInWorkspace",
-            {
-                "actionSource": action_source,
-                "payload": dataclasses.asdict(payload),
-                "meta": {
-                    "trigger": meta.trigger.value,
-                    "devEnv": meta.dev_env.value,
-                    "orchestrationDepth": meta.orchestration_depth,
+        try:
+            raw = await self._send(
+                "finecode/runActionInWorkspace",
+                {
+                    "actionSource": action_source,
+                    "payload": dataclasses.asdict(payload),
+                    "meta": {
+                        "trigger": meta.trigger.value,
+                        "devEnv": meta.dev_env.value,
+                        "orchestrationDepth": meta.orchestration_depth,
+                    },
+                    "projectPaths": [p.as_posix() for p in project_paths]
+                    if project_paths is not None
+                    else None,
+                    "concurrently": concurrently,
                 },
-                "projectPaths": [p.as_posix() for p in project_paths]
+            )
+        except Exception as e:
+            project_str = (
+                ", ".join(str(p) for p in project_paths)
                 if project_paths is not None
-                else None,
-                "concurrently": concurrently,
-            },
-        )
+                else "all workspace projects"
+            )
+            raise iprojectactionrunner.ActionRunFailed(
+                f"Running '{action_type.__name__}' in [{project_str}] failed: {e}"
+            ) from e
         results_by_project: dict = raw["resultsByProject"]
         return {
             pathlib.Path(k): _converter.structure(

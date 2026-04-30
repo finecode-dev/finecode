@@ -205,6 +205,10 @@ class JsonRpcServerSession:
             logger.warning(f"No pending future for response id={msg_id}")
             return
 
+        if future.cancelled():
+            logger.debug(f"Future for id={msg_id} already cancelled, dropping response")
+            return
+
         if "error" in message:
             future.set_exception(JsonRpcError(message["error"]))
         else:
