@@ -36,6 +36,23 @@ class CallerRunContextKwargs:
     See :doc:`docs/guides/designing-actions` for the full pattern.
     """
 
+    def serialize(self) -> dict | None:
+        """Serialize for cross-env transport. Return None to use default.
+
+        Override this method when the default unstructuring is not sufficient
+        (e.g. the state contains custom classes).
+        """
+        return None
+
+    @classmethod
+    def from_serialized(cls, data: dict) -> CallerRunContextKwargs:
+        """Reconstruct from a serialized dict.
+
+        Override this method when the default unstructuring is not sufficient
+        (e.g. the state contains custom classes).
+        """
+        raise NotImplementedError
+
 
 class RunActionTrigger(enum.StrEnum):
     USER = "user"

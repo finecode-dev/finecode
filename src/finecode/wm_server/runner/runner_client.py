@@ -180,6 +180,7 @@ async def run_handlers(
     params: dict[str, typing.Any] | None = None,
     previous_result: dict | None = None,
     previous_context: dict | None = None,
+    caller_kwargs: dict | None = None,
     options: dict[str, typing.Any] | None = None,
 ) -> RunHandlersResponse:
     """Call actions/runHandlers on the ER for multi-env segment orchestration.
@@ -207,6 +208,7 @@ async def run_handlers(
                 params=params or {},
                 previous_result=previous_result,
                 previous_context=previous_context,
+                caller_kwargs=caller_kwargs,
                 options=options,
             ),
             timeout=None,

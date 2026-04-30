@@ -3,6 +3,7 @@ import collections.abc
 import dataclasses
 import inspect
 import time
+import types
 import typing
 
 import cattrs
@@ -110,6 +111,41 @@ def _restore_context(run_context: code_action.RunActionContext, data: dict) -> N
         run_context.restore_context(data)
     else:
         run_context.state = _converter.structure(data, run_context.STATE_TYPE)
+
+
+def _serialize_caller_kwargs(kwargs: code_action.CallerRunContextKwargs) -> dict:
+    custom = kwargs.serialize()
+    if custom is not None:
+        return custom
+    return _converter.unstructure(kwargs)
+
+
+def _find_caller_kwargs_type(
+    run_context_type: type,
+) -> type[code_action.CallerRunContextKwargs] | None:
+    """Inspect run context __init__ to find the concrete CallerRunContextKwargs subtype."""
+    annotations = inspect.get_annotations(run_context_type.__init__, eval_str=True)
+    annotation = annotations.get("caller_kwargs")
+    if annotation is None:
+        return None
+    # Unwrap T | None → T
+    origin = typing.get_origin(annotation)
+    if origin is typing.Union or isinstance(annotation, types.UnionType):
+        args = [a for a in typing.get_args(annotation) if a is not type(None)]
+        if len(args) == 1 and issubclass(args[0], code_action.CallerRunContextKwargs):
+            return args[0]
+    elif isinstance(annotation, type) and issubclass(annotation, code_action.CallerRunContextKwargs):
+        return annotation
+    return None
+
+
+def _restore_caller_kwargs(
+    data: dict,
+    kwargs_type: type[code_action.CallerRunContextKwargs],
+) -> code_action.CallerRunContextKwargs:
+    if "from_serialized" in kwargs_type.__dict__:
+        return kwargs_type.from_serialized(data)
+    return _converter.structure(data, kwargs_type)
 
 
 def set_partial_result_sender(send_func: typing.Callable) -> None:
@@ -668,6 +704,16 @@ async def run_action_raw(
         payload={"run_id": run_id},
     )
 
+    caller_kwargs: code_action.CallerRunContextKwargs | None = None
+    if options.caller_kwargs is not None and action_exec_info.run_context_type is not None:
+        kwargs_type = _find_caller_kwargs_type(action_exec_info.run_context_type)
+        if kwargs_type is not None:
+            caller_kwargs = _restore_caller_kwargs(options.caller_kwargs, kwargs_type)
+        else:
+            logger.warning(
+                "callerKwargs received but run context has no caller_kwargs parameter — ignoring"
+            )
+
     action_result = await run_action(
         action_def=action,
         payload=payload,
@@ -676,6 +722,7 @@ async def run_action_raw(
         partial_result_token=options.partial_result_token,
         progress_token=options.progress_token,
         run_id=run_id,
+        caller_kwargs=caller_kwargs,
     )
 
     response = action_result_to_run_action_response(
@@ -788,6 +835,17 @@ async def run_handlers_raw(
 
     meta = dataclasses.replace(options.meta, wal_run_id=wal_run_id)
 
+    run_context_type = action_exec_info.run_context_type
+    caller_kwargs: code_action.CallerRunContextKwargs | None = None
+    if request.caller_kwargs is not None and run_context_type is not None:
+        kwargs_type = _find_caller_kwargs_type(run_context_type)
+        if kwargs_type is not None:
+            caller_kwargs = _restore_caller_kwargs(request.caller_kwargs, kwargs_type)
+        else:
+            logger.warning(
+                "callerKwargs received but run context has no caller_kwargs parameter — ignoring"
+            )
+
     ctx_out = _ContextOut()
     action_result = await run_action(
         action_def=filtered_action,
@@ -800,6 +858,7 @@ async def run_handlers_raw(
         initial_result=initial_result,
         previous_context=request.previous_context,
         context_out=ctx_out,
+        caller_kwargs=caller_kwargs,
     )
 
     # Raw serialized result for chaining to the next segment.

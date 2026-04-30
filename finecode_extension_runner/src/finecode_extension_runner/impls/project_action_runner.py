@@ -12,6 +12,7 @@ from finecode_extension_api import code_action
 from finecode_extension_api.interfaces import iprojectactionrunner
 from finecode_extension_runner import domain, run_utils
 from finecode_extension_runner._converter import converter as _converter
+from finecode_extension_runner._services.run_action import _serialize_caller_kwargs
 
 
 PayloadT = typing.TypeVar("PayloadT", bound=code_action.RunActionPayload)
@@ -170,27 +171,22 @@ class ProjectActionRunnerImpl(iprojectactionrunner.IProjectActionRunner):
                 outside,
             )
 
-        if caller_kwargs is not None:
-            logger.warning(
-                f"caller_kwargs passed to IProjectActionRunner.run_action for"
-                f" '{action_type.__qualname__}' but the action will be dispatched"
-                f" via the WM — caller_kwargs cannot cross process boundaries and"
-                f" will be ignored."
-                # TODO: support caller_kwargs for cross-env calls
-            )
-
         action_source = f"{action_type.__module__}.{action_type.__qualname__}"
+        serialized_kwargs = _serialize_caller_kwargs(caller_kwargs) if caller_kwargs is not None else None
+        wm_params: dict = {
+            "actionSource": action_source,
+            "payload": dataclasses.asdict(payload),
+            "meta": {
+                "trigger": meta.trigger.value,
+                "devEnv": meta.dev_env.value,
+                "orchestrationDepth": meta.orchestration_depth,
+            },
+        }
+        if serialized_kwargs is not None:
+            wm_params["callerKwargs"] = serialized_kwargs
         raw_result = await self._send(
             "finecode/runActionInProject",
-            {
-                "actionSource": action_source,
-                "payload": dataclasses.asdict(payload),
-                "meta": {
-                    "trigger": meta.trigger.value,
-                    "devEnv": meta.dev_env.value,
-                    "orchestrationDepth": meta.orchestration_depth,
-                },
-            },
+            wm_params,
         )
         raw_final_result = raw_result.get("result")
         if raw_final_result is None:
@@ -244,15 +240,6 @@ class ProjectActionRunnerImpl(iprojectactionrunner.IProjectActionRunner):
                 outside,
             )
 
-        if caller_kwargs is not None:
-            logger.warning(
-                f"caller_kwargs passed to IProjectActionRunner.run_action_iter for"
-                f" '{action_type.__qualname__}' but the action will be dispatched"
-                f" via the WM — caller_kwargs cannot cross process boundaries and"
-                f" will be ignored."
-                # TODO: support caller_kwargs for cross-env calls
-            )
-
         # WM path — streaming via $/progress notifications
         _last_wm_token += 1
         token = _last_wm_token
@@ -260,21 +247,25 @@ class ProjectActionRunnerImpl(iprojectactionrunner.IProjectActionRunner):
         _wm_partial_result_queues[token] = wm_queue
 
         action_source = f"{action_type.__module__}.{action_type.__qualname__}"
+        serialized_kwargs = _serialize_caller_kwargs(caller_kwargs) if caller_kwargs is not None else None
 
         async def _call_wm() -> None:
             try:
+                wm_params: dict = {
+                    "actionSource": action_source,
+                    "payload": dataclasses.asdict(payload),
+                    "meta": {
+                        "trigger": meta.trigger.value,
+                        "devEnv": meta.dev_env.value,
+                        "orchestrationDepth": meta.orchestration_depth,
+                    },
+                    "partialResultToken": token,
+                }
+                if serialized_kwargs is not None:
+                    wm_params["callerKwargs"] = serialized_kwargs
                 raw_result = await self._send(
                     "finecode/runActionInProject",
-                    {
-                        "actionSource": action_source,
-                        "payload": dataclasses.asdict(payload),
-                        "meta": {
-                            "trigger": meta.trigger.value,
-                            "devEnv": meta.dev_env.value,
-                            "orchestrationDepth": meta.orchestration_depth,
-                        },
-                        "partialResultToken": token,
-                    },
+                    wm_params,
                 )
                 # Terminal success item. Shape: ("final", {"result": {...}, "returnCode": ...}).
                 wm_queue.put_nowait(("final", raw_result))

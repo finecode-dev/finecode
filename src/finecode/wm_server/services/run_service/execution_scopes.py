@@ -44,6 +44,7 @@ class IProjectExecutionScope(typing.Protocol):
         result_formats: list[RunResultFormat] | None = None,
         progress_token: int | str | None = None,
         initialize_all_handlers: bool = False,
+        caller_kwargs: dict | None = None,
     ) -> RunActionResponse: ...
 
     @contextlib.asynccontextmanager
@@ -59,6 +60,7 @@ class IProjectExecutionScope(typing.Protocol):
         policy: OrchestrationPolicy = DEFAULT_ORCHESTRATION_POLICY,
         result_formats: list[RunResultFormat] | None = None,
         progress_token: int | str | None = None,
+        caller_kwargs: dict | None = None,
     ) -> collections.abc.AsyncIterator[RunWithPartialResultsContext]: ...
 
 

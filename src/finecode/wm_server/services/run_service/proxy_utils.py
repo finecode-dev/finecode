@@ -177,16 +177,19 @@ async def run_action_and_notify(
     wal_run_id: str,
     result_formats: list[runner_client.RunResultFormat] | None = None,
     progress_token: int | str | None = None,
+    caller_kwargs: dict | None = None,
 ) -> runner_client.RunActionResponse:
     options: dict[str, typing.Any] = {
-        "partial_result_token": partial_result_token,
-        "wal_run_id": wal_run_id,
-        "meta": {"trigger": run_trigger.value, "dev_env": dev_env.value},
+        "partialResultToken": partial_result_token,
+        "walRunId": wal_run_id,
+        "meta": {"trigger": run_trigger.value, "devEnv": dev_env.value},
     }
     if progress_token is not None:
-        options["progress_token"] = progress_token
+        options["progressToken"] = progress_token
     if result_formats is not None:
-        options["result_formats"] = result_formats
+        options["resultFormats"] = result_formats
+    if caller_kwargs is not None:
+        options["callerKwargs"] = caller_kwargs
     logger.trace(f"run_action_and_notify: sending to runner {runner.readable_id}, action={action_name}, token={partial_result_token}, options_keys={list(options.keys())}")
     response = await run_action_in_runner(
         action_name=action_name,
@@ -265,6 +268,7 @@ async def run_with_partial_results(
     initialize_all_handlers: bool = False,
     result_formats: list[runner_client.RunResultFormat] | None = None,
     progress_token: int | str | None = None,
+    caller_kwargs: dict | None = None,
 ) -> collections.abc.AsyncIterator[RunWithPartialResultsContext]:
     logger.trace(f"Run {action_name} in project {project_dir_path}")
     wal_run_id = wal.new_wal_run_id()
@@ -327,6 +331,7 @@ async def run_with_partial_results(
                         wal_run_id=wal_run_id,
                         result_formats=result_formats,
                         progress_token=progress_token,
+                        caller_kwargs=caller_kwargs,
                     )
                 )
 
@@ -704,6 +709,7 @@ async def run_action(
     initialize_all_handlers: bool = False,
     progress_token: int | str | None = None,
     orchestration_depth: int = 0,
+    caller_kwargs: dict | None = None,
 ) -> RunActionResponse:
     wal_run_id = wal.new_wal_run_id()
     formatted_params = str(params)
@@ -775,6 +781,7 @@ async def run_action(
             progress_token=progress_token,
             wal_run_id=wal_run_id,
             orchestration_depth=orchestration_depth,
+            caller_kwargs=caller_kwargs,
         )
     else:
         run_concurrently = action.runs_concurrently
@@ -793,6 +800,7 @@ async def run_action(
                 progress_token=progress_token,
                 wal_run_id=wal_run_id,
                 orchestration_depth=orchestration_depth,
+                caller_kwargs=caller_kwargs,
             )
         else:
             response = await _run_multi_env_sequential(
@@ -808,6 +816,7 @@ async def run_action(
                 progress_token=progress_token,
                 wal_run_id=wal_run_id,
                 orchestration_depth=orchestration_depth,
+                caller_kwargs=caller_kwargs,
             )
 
     return response
@@ -826,6 +835,7 @@ async def _run_action_in_env_runner(
     initialize_all_handlers: bool = False,
     progress_token: int | str | None = None,
     orchestration_depth: int = 0,
+    caller_kwargs: dict | None = None,
 ):
     wal.emit_run_event(
         ws_context.wal_writer,
@@ -853,12 +863,14 @@ async def _run_action_in_env_runner(
 
     try:
         options: dict[str, typing.Any] = {
-            "result_formats": result_formats,
-            "wal_run_id": wal_run_id,
-            "meta": {"trigger": run_trigger.value, "dev_env": dev_env.value, "orchestration_depth": orchestration_depth},
+            "resultFormats": result_formats,
+            "walRunId": wal_run_id,
+            "meta": {"trigger": run_trigger.value, "devEnv": dev_env.value, "orchestrationDepth": orchestration_depth},
         }
         if progress_token is not None:
-            options["progress_token"] = progress_token
+            options["progressToken"] = progress_token
+        if caller_kwargs is not None:
+            options["callerKwargs"] = caller_kwargs
         wal.emit_run_event(
             ws_context.wal_writer,
             event_type=wal.WalEventType.RUN_DISPATCHED,
@@ -960,6 +972,7 @@ async def _run_handlers_in_env_runner(
     progress_token: int | str | None = None,
     orchestration_depth: int = 0,
     previous_context: dict | None = None,
+    caller_kwargs: dict | None = None,
 ) -> runner_client.RunHandlersResponse:
     """Call actions/runHandlers on the ER for one segment of a multi-env run."""
     wal.emit_run_event(
@@ -987,16 +1000,16 @@ async def _run_handlers_in_env_runner(
         ) from exception
 
     options: dict[str, typing.Any] = {
-        "result_formats": result_formats,
-        "wal_run_id": wal_run_id,
+        "resultFormats": result_formats,
+        "walRunId": wal_run_id,
         "meta": {
             "trigger": run_trigger.value,
-            "dev_env": dev_env.value,
-            "orchestration_depth": orchestration_depth,
+            "devEnv": dev_env.value,
+            "orchestrationDepth": orchestration_depth,
         },
     }
     if progress_token is not None:
-        options["progress_token"] = progress_token
+        options["progressToken"] = progress_token
 
     wal.emit_run_event(
         ws_context.wal_writer,
@@ -1020,6 +1033,7 @@ async def _run_handlers_in_env_runner(
             params=payload,
             previous_result=previous_result,
             previous_context=previous_context,
+            caller_kwargs=caller_kwargs,
             options=options,
         )
     except runner_client.BaseRunnerRequestException as error:
@@ -1067,6 +1081,7 @@ async def _run_multi_env_sequential(
     initialize_all_handlers: bool = False,
     progress_token: int | str | None = None,
     orchestration_depth: int = 0,
+    caller_kwargs: dict | None = None,
 ) -> runner_client.RunActionResponse:
     """Drive multi-env sequential execution segment-by-segment."""
     segments = _build_sequential_segments(action.handlers)
@@ -1094,6 +1109,7 @@ async def _run_multi_env_sequential(
             initialize_all_handlers=initialize_all_handlers,
             progress_token=progress_token if is_last else None,
             orchestration_depth=orchestration_depth,
+            caller_kwargs=caller_kwargs,
         )
 
         if seg_response.status == "stopped":
@@ -1128,6 +1144,7 @@ async def _run_multi_env_concurrent(
     initialize_all_handlers: bool = False,
     progress_token: int | str | None = None,
     orchestration_depth: int = 0,
+    caller_kwargs: dict | None = None,
 ) -> runner_client.RunActionResponse:
     """Drive multi-env concurrent execution: dispatch all env groups in parallel."""
     groups = _build_concurrent_groups(action.handlers)
@@ -1152,6 +1169,7 @@ async def _run_multi_env_concurrent(
                         initialize_all_handlers=initialize_all_handlers,
                         progress_token=None,
                         orchestration_depth=orchestration_depth,
+                        caller_kwargs=caller_kwargs,
                     )
                 )
                 group_tasks.append(task)
@@ -1210,6 +1228,7 @@ async def _run_multi_env_concurrent(
         initialize_all_handlers=initialize_all_handlers,
         progress_token=progress_token,
         orchestration_depth=orchestration_depth,
+        caller_kwargs=caller_kwargs,
     )
 
     return runner_client.RunActionResponse(

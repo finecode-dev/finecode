@@ -1,18 +1,24 @@
 import types as _types
 
 import cattrs
+from cattrs.gen import make_dict_structure_fn, override
 
 import typing
 try:
-    from typing import Literal, Union, get_args
+    from typing import Literal
 except ImportError:
-    from typing_extensions import Literal, get_args
+    from typing_extensions import Literal
+
+from finecode_extension_api.code_action import RunActionMeta
+from finecode_extension_runner.schemas import RunActionOptions
+
 
 def _result_format_union_structure(val, _):
     # Accept only 'json' or 'string' as valid values
     if val in ("json", "string"):
         return val
     raise ValueError(f"Invalid result format: {val}")
+
 
 def _new_union_structure_fn(cls, conv):
     """Handle Python 3.10+ ``X | Y`` union syntax (types.UnionType).
@@ -45,3 +51,27 @@ converter.register_structure_hook_factory(
 
 _result_format_union = typing.Union[Literal["json"], Literal["string"]]
 converter.register_structure_hook(_result_format_union, _result_format_union_structure)
+
+# Camel-case structuring for protocol options (wire uses camelCase, Python fields use snake_case)
+converter.register_structure_hook(
+    RunActionMeta,
+    make_dict_structure_fn(
+        RunActionMeta,
+        converter,
+        dev_env=override(rename="devEnv"),
+        orchestration_depth=override(rename="orchestrationDepth"),
+    ),
+)
+
+converter.register_structure_hook(
+    RunActionOptions,
+    make_dict_structure_fn(
+        RunActionOptions,
+        converter,
+        wal_run_id=override(rename="walRunId"),
+        partial_result_token=override(rename="partialResultToken"),
+        progress_token=override(rename="progressToken"),
+        result_formats=override(rename="resultFormats"),
+        caller_kwargs=override(rename="callerKwargs"),
+    ),
+)

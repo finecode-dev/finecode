@@ -84,39 +84,40 @@ method names.
       - `orchestrationDepth`: cross-boundary hop counter, defaults to `0`. The ER propagates it unchanged via `RunActionMeta.orchestration_depth`.
     - `partialResultToken`: `int | string` (used to correlate `$/progress`)
     - `resultFormats`: `["json", "string"]` (defaults to `["json"]`)
+    - `callerKwargs` (object | null): serialized `CallerRunContextKwargs`, or `null` when none. The ER deserializes it into the action's run context `caller_kwargs` parameter.
   - Result (success):
     ```json
     {
       "status": "success",
-      "result_by_format": "{\"json\": {\"...\": \"...\"}}",
-      "return_code": 0
+      "resultByFormat": "{\"json\": {\"...\": \"...\"}}",
+      "returnCode": 0
     }
     ```
   - Result (streamed): used when `partialResultToken` was provided and all
     results were delivered via `$/progress` notifications. The final response
-    is an explicit completion signal — `result_by_format` is intentionally empty.
-    The WM treats this as a valid completion; an empty `result_by_format` with
+    is an explicit completion signal — `resultByFormat` is intentionally empty.
+    The WM treats this as a valid completion; an empty `resultByFormat` with
     any other status is a protocol error.
     ```json
     {
       "status": "streamed",
-      "result_by_format": "{}",
-      "return_code": 0
+      "resultByFormat": "{}",
+      "returnCode": 0
     }
     ```
   - Result (stopped):
     ```json
     {
       "status": "stopped",
-      "result_by_format": "{\"json\": {\"...\": \"...\"}}",
-      "return_code": 1
+      "resultByFormat": "{\"json\": {\"...\": \"...\"}}",
+      "returnCode": 1
     }
     ```
   - Result (error):
     ```json
     {"error": "message"}
     ```
-  - Note: `result_by_format` is a JSON-encoded string (not a nested object) —
+  - Note: `resultByFormat` is a JSON-encoded string (not a nested object) —
     the WM decodes it with `json.loads` after receiving the response.
 
 - `actions/runHandlers`
@@ -137,6 +138,10 @@ method names.
       the context has no `STATE_TYPE`. Restored into `context.state` before
       `context.init()` is called, so restored state is visible during
       initialization.
+    - `callerKwargs` (object | null): serialized `CallerRunContextKwargs`, forwarded
+      unchanged to all segments. Each segment deserializes it independently into the
+      run context `caller_kwargs` parameter. Unlike `previousContext`, it does not
+      chain across segments — the same dict is passed to every segment.
     - `options` (object | null): same keys as `actions/run`. `resultFormats`
       should be omitted (or `[]`) for intermediate segments and non-empty only
       for the final segment of a run.
@@ -274,6 +279,7 @@ method names.
       request will fail.
     - `payload` (object): serialized action payload (`dataclasses.asdict`)
     - `meta` (object): `{ "trigger": string, "devEnv": string, "orchestrationDepth": int }`
+    - `callerKwargs` (object | null): serialized `CallerRunContextKwargs`, or `null` when none. The WM passes it through opaquely to the target ER.
   - Result: `{ "result": <json result object>, "returnCode": 0|1 }`
   - Runs the action at project scope (all env-runners of the ER's own project). WM enforces `OrchestrationPolicy.max_recursion_depth` before dispatching.
 

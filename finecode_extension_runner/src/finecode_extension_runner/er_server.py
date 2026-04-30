@@ -551,13 +551,13 @@ async def run_action(server: ErServer, params: dict | None) -> dict:
     options: dict | None = params.get("options")
 
     logger.trace(f"Run action: {action_name}")
-    wal_run_id = (options or {}).get("wal_run_id")
+    wal_run_id = (options or {}).get("walRunId")
     if not isinstance(wal_run_id, str) or wal_run_id.strip() == "":
         return {"error": "Missing required wal_run_id in run options"}
 
     meta = (options or {}).get("meta") or {}
     trigger = meta.get("trigger", "unknown")
-    dev_env = meta.get("dev_env", "unknown")
+    dev_env = meta.get("devEnv", "unknown")
     if server._runner_context is None:
         return {"error": "Extension runner not initialized"}
     project_path = server._runner_context.project.dir_path
@@ -570,8 +570,8 @@ async def run_action(server: ErServer, params: dict | None) -> dict:
         trigger=trigger,
         dev_env=dev_env,
         payload={
-            "partial_result_token": (options or {}).get("partial_result_token"),
-            "progress_token": (options or {}).get("progress_token"),
+            "partial_result_token": (options or {}).get("partialResultToken"),
+            "progress_token": (options or {}).get("progressToken"),
         },
     )
 
@@ -651,6 +651,7 @@ async def run_handlers(server: ErServer, params: dict | None) -> dict:
     action_params: dict = params.get("params") or {}
     previous_result: dict | None = params.get("previousResult")
     previous_context: dict | None = params.get("previousContext")
+    caller_kwargs: dict | None = params.get("callerKwargs")   # NEW
     options: dict | None = params.get("options")
 
     logger.trace(
@@ -658,13 +659,13 @@ async def run_handlers(server: ErServer, params: dict | None) -> dict:
         f"has_previous_result={previous_result is not None}"
     )
 
-    wal_run_id = (options or {}).get("wal_run_id")
+    wal_run_id = (options or {}).get("walRunId")
     if not isinstance(wal_run_id, str) or wal_run_id.strip() == "":
         return {"error": "Missing required wal_run_id in run options"}
 
     meta = (options or {}).get("meta") or {}
     trigger = meta.get("trigger", "unknown")
-    dev_env = meta.get("dev_env", "unknown")
+    dev_env = meta.get("devEnv", "unknown")
     if server._runner_context is None:
         return {"error": "Extension runner not initialized"}
     project_path = server._runner_context.project.dir_path
@@ -685,6 +686,7 @@ async def run_handlers(server: ErServer, params: dict | None) -> dict:
         params=action_params,
         previous_result=previous_result,
         previous_context=previous_context,
+        caller_kwargs=caller_kwargs,
     )
     options_schema = _converter.structure(
         options if options is not None else {}, schemas.RunActionOptions

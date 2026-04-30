@@ -1447,6 +1447,7 @@ class RunActionInProjectParams:
     payload: dict
     meta: RunActionInProjectMeta
     partial_result_token: int | str | None = None
+    caller_kwargs: dict | None = None
 
 
 @dataclasses.dataclass
@@ -1658,6 +1659,7 @@ class ErRunHandlersParams:
     params: dict = dataclasses.field(default_factory=dict)
     previous_result: dict | None = None
     previous_context: dict | None = None
+    caller_kwargs: dict | None = None
     options: dict | None = None
 
 

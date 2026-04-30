@@ -285,6 +285,7 @@ async def _start_extension_runner_process(
                     run_trigger=RunActionTrigger(params.meta.trigger),
                     dev_env=DevEnv(params.meta.dev_env),
                     orchestration_depth=params.meta.orchestration_depth,
+                    caller_kwargs=params.caller_kwargs,
                 ) as ctx:
                     async for partial_raw in ctx:
                         partial_count += 1
@@ -325,6 +326,7 @@ async def _start_extension_runner_process(
                 run_trigger=RunActionTrigger(params.meta.trigger),
                 dev_env=DevEnv(params.meta.dev_env),
                 orchestration_depth=params.meta.orchestration_depth,
+                caller_kwargs=params.caller_kwargs,
             )
         except ActionRunFailed as exc:
             raise ValueError(exc.message) from exc

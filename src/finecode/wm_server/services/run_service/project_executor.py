@@ -60,6 +60,7 @@ class ProjectExecutor:
         result_formats: list[RunResultFormat] | None = None,
         progress_token: int | str | None = None,
         initialize_all_handlers: bool = False,
+        caller_kwargs: dict | None = None,
     ) -> RunActionResponse:
         if orchestration_depth >= policy.max_recursion_depth:
             raise ActionRunFailed(
@@ -86,6 +87,7 @@ class ProjectExecutor:
             initialize_all_handlers=initialize_all_handlers,
             progress_token=progress_token,
             orchestration_depth=orchestration_depth + 1,
+            caller_kwargs=caller_kwargs,
         )
 
     @contextlib.asynccontextmanager
@@ -101,6 +103,7 @@ class ProjectExecutor:
         policy: OrchestrationPolicy = DEFAULT_ORCHESTRATION_POLICY,
         result_formats: list[RunResultFormat] | None = None,
         progress_token: int | str | None = None,
+        caller_kwargs: dict | None = None,
     ) -> collections.abc.AsyncIterator[proxy_utils.RunWithPartialResultsContext]:
         if orchestration_depth >= policy.max_recursion_depth:
             raise ActionRunFailed(
@@ -126,5 +129,6 @@ class ProjectExecutor:
             ws_context=self._ws_context,
             result_formats=result_formats,
             progress_token=progress_token,
+            caller_kwargs=caller_kwargs,
         ) as ctx:
             yield ctx

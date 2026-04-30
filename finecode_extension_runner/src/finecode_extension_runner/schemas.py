@@ -64,6 +64,7 @@ class RunActionOptions(BaseSchema):
     partial_result_token: int | str | None = None
     progress_token: int | str | None = None
     result_formats: list[Literal["json"] | Literal["string"]] = field(default_factory=lambda: ["json"])
+    caller_kwargs: dict | None = None   # NEW
 
 
 @dataclass
@@ -80,6 +81,7 @@ class RunHandlersRequest(BaseSchema):
     params: dict[str, Any] = field(default_factory=dict)
     previous_result: dict[str, Any] | None = None
     previous_context: dict[str, Any] | None = None
+    caller_kwargs: dict | None = None   # NEW
 
 
 @dataclass
