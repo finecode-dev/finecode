@@ -1,0 +1,506 @@
+# docs: docs/cli.md
+import ast
+import asyncio
+import json
+import os
+import pathlib
+import sys
+import typing
+
+import click
+from loguru import logger
+
+from finecode import logger_utils, user_messages
+from finecode.wm_server.config.config_models import ConfigurationError
+
+
+FINECODE_CONFIG_ENV_PREFIX = "FINECODE_CONFIG_"
+_VALID_DEV_ENVS = {"ide", "cli", "ai", "ci", "git_hook"}
+
+
+def _parse_env_bool(name: str, default: bool) -> bool:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def detect_dev_env() -> str:
+    """Detect dev environment from context. CI env var overrides the default 'cli'."""
+    if os.environ.get("CI"):
+        return "ci"
+    return "cli"
+
+# TODO: unify possibilities of CLI options and env vars
+def parse_handler_config_from_env() -> dict[str, dict[str, dict[str, str]]]:
+    """
+    Parse handler config overrides from environment variables.
+
+    Format:
+    - FINECODE_CONFIG_<ACTION>__<PARAM>=value
+      -> action-level config for all handlers of action
+    - FINECODE_CONFIG_<ACTION>__<HANDLER>__<PARAM>=value
+      -> handler-specific config
+
+    Returns nested dict: {action_name: {handler_name_or_empty: {param: value}}}
+    Empty string key "" means action-level (applies to all handlers).
+    """
+    config_overrides: dict[str, dict[str, dict[str, str]]] = {}
+
+    for env_name, env_value in os.environ.items():
+        if not env_name.startswith(FINECODE_CONFIG_ENV_PREFIX):
+            continue
+
+        # Remove prefix and split by double underscore
+        config_key = env_name[len(FINECODE_CONFIG_ENV_PREFIX) :]
+        parts = config_key.split("__")
+
+        if len(parts) < 2:
+            logger.warning(
+                f"Invalid config env var format: {env_name}. "
+                f"Expected FINECODE_CONFIG_<ACTION>__<PARAM> or "
+                f"FINECODE_CONFIG_<ACTION>__<HANDLER>__<PARAM>"
+            )
+            continue
+
+        # Convert to lowercase for matching
+        action_name = parts[0].lower()
+
+        if len(parts) == 2:
+            # Action-level config: FINECODE_CONFIG_ACTION__PARAM
+            handler_name = ""  # empty means all handlers
+            param_name = parts[1].lower()
+        else:
+            # Handler-specific config: FINECODE_CONFIG_ACTION__HANDLER__PARAM
+            handler_name = parts[1].lower()
+            param_name = "__".join(parts[2:]).lower()
+
+        if action_name not in config_overrides:
+            config_overrides[action_name] = {}
+        if handler_name not in config_overrides[action_name]:
+            config_overrides[action_name][handler_name] = {}
+
+        try:
+            parsed_value = json.loads(env_value)
+        except json.JSONDecodeError as e:
+            raise ConfigurationError(
+                f"Failed to parse JSON value for env var '{env_name}': {env_value!r}"
+            ) from e
+
+        config_overrides[action_name][handler_name][param_name] = parsed_value
+
+    return config_overrides
+
+
+def parse_handler_config_from_cli(
+    config_args: list[str], actions: list[str]
+) -> dict[str, dict[str, dict[str, str]]]:
+    """
+    Parse handler config overrides from CLI arguments.
+
+    Format:
+    - --config.<param>=value
+      -> action-level config for all handlers of all specified actions
+    - --config.<handler>.<param>=value
+      -> handler-specific config for all specified actions
+
+    Returns nested dict: {action_name: {handler_name_or_empty: {param: value}}}
+    Empty string key "" means action-level (applies to all handlers).
+    """
+    config_overrides: dict[str, dict[str, dict[str, str]]] = {}
+
+    for arg in config_args:
+        if not arg.startswith("--config."):
+            continue
+
+        if "=" not in arg:
+            logger.warning(
+                f"Invalid config CLI arg format: {arg}. "
+                f"Expected --config.<param>=value or --config.<handler>.<param>=value"
+            )
+            continue
+
+        # Remove --config. prefix and split by =
+        config_part = arg[len("--config.") :]
+        key_part, raw_value = config_part.split("=", 1)
+        try:
+            value = json.loads(raw_value)
+        except json.JSONDecodeError:
+            # fallback for literal string, all other types can be parsed by json.loads
+            value = raw_value
+
+        # Split by . to determine if it's action-level or handler-specific
+        parts = key_part.split(".")
+
+        if len(parts) == 1:
+            # Action-level config: --config.<param>=value
+            handler_name = ""  # empty means all handlers
+            param_name = parts[0].lower().replace("-", "_")
+        else:
+            # Handler-specific config: --config.<handler>.<param>=value
+            handler_name = parts[0].lower().replace("-", "_")
+            param_name = ".".join(parts[1:]).lower().replace("-", "_")
+
+        # Apply to all specified actions
+        for action_name in actions:
+            action_name_lower = action_name.lower()
+            if action_name_lower not in config_overrides:
+                config_overrides[action_name_lower] = {}
+            if handler_name not in config_overrides[action_name_lower]:
+                config_overrides[action_name_lower][handler_name] = {}
+
+            config_overrides[action_name_lower][handler_name][param_name] = value
+
+    return config_overrides
+
+
+def merge_config_overrides(
+    env_overrides: dict[str, dict[str, dict[str, str]]],
+    cli_overrides: dict[str, dict[str, dict[str, str]]],
+) -> dict[str, dict[str, dict[str, str]]]:
+    """
+    Merge env var and CLI config overrides. CLI takes precedence.
+    """
+    merged = {}
+
+    # Copy env overrides
+    for action, handlers in env_overrides.items():
+        merged[action] = {}
+        for handler, params in handlers.items():
+            merged[action][handler] = dict(params)
+
+    # Merge CLI overrides (takes precedence)
+    for action, handlers in cli_overrides.items():
+        if action not in merged:
+            merged[action] = {}
+        for handler, params in handlers.items():
+            if handler not in merged[action]:
+                merged[action][handler] = {}
+            merged[action][handler].update(params)
+
+    return merged
+
+
+async def show_user_message(message: str, message_type: str) -> None:
+    # user messages in CLI are not needed because CLI outputs own messages
+    ...
+
+
+def deserialize_action_payload(raw_payload: dict[str, str]) -> dict[str, typing.Any]:
+    deserialized_payload = {}
+    for key, value in raw_payload.items():
+        try:
+            # JSON requires double-quoted strings: ["a", "b"] works, ['a', 'b'] does not.
+            # This is the preferred path for machine-generated payloads.
+            deserialized_value = json.loads(value)
+        except json.JSONDecodeError:
+            try:
+                # Shell users naturally write single-quoted lists, e.g.
+                #   --file-paths="['file:///path/to/file.py']"
+                # json.loads rejects single quotes, but ast.literal_eval handles
+                # Python-literal syntax safely (only parses constants, no code execution).
+                deserialized_value = ast.literal_eval(value)
+            except (ValueError, SyntaxError):
+                deserialized_value = value
+        deserialized_payload[key] = deserialized_value
+    return deserialized_payload
+
+
+@click.command(context_settings=dict(ignore_unknown_options=True, allow_extra_args=True))
+@click.pass_context
+def run(ctx) -> None:
+    from finecode.cli_app.commands import run_cmd
+
+    args: list[str] = ctx.args
+    actions_to_run: list[str] = []
+    projects: list[str] | None = None
+    workdir_path: pathlib.Path = pathlib.Path(os.getcwd())
+    processed_args_count: int = 0
+    concurrently: bool = False
+    log_level: str = "INFO"
+    no_env_config: bool = False
+    save_results: bool = True
+    map_payload_fields: set[str] = set()
+    shared_server: bool = False
+    dev_env: str = detect_dev_env()
+    wal_enabled: bool | None = None
+
+    # finecode run parameters
+    for arg in args:
+        if arg.startswith("--workdir"):
+            provided_workdir = arg.removeprefix("--workdir=")
+            provided_workdir_path = pathlib.Path(provided_workdir).resolve()
+            if not provided_workdir_path.exists():
+                click.echo(
+                    f"Provided workdir '{provided_workdir}' doesn't exist", err=True
+                )
+                sys.exit(1)
+            else:
+                workdir_path = provided_workdir_path
+        elif arg.startswith("--project"):
+            if projects is None:
+                projects = []
+            project = arg.removeprefix("--project=")
+            projects.append(project)
+        elif arg == "--concurrently":
+            concurrently = True
+        elif arg.startswith("--log-level"):
+            log_level = arg.removeprefix("--log-level=").upper()
+        elif arg == "--no-env-config":
+            no_env_config = True
+        elif arg == "--no-save-results":
+            save_results = False
+        elif arg.startswith("--map-payload-fields"):
+            fields = arg.removeprefix("--map-payload-fields=")
+            map_payload_fields = {f.replace("-", "_") for f in fields.split(",")}
+        elif arg == "--shared-server":
+            shared_server = True
+        elif arg == "--wal":
+            wal_enabled = True
+        elif arg.startswith("--dev-env"):
+            dev_env = arg.removeprefix("--dev-env=")
+            if dev_env not in _VALID_DEV_ENVS:
+                click.echo(
+                    f"Invalid --dev-env value '{dev_env}'. Valid values: {', '.join(sorted(_VALID_DEV_ENVS))}",
+                    err=True,
+                )
+                sys.exit(1)
+        elif not arg.startswith("--"):
+            break
+        processed_args_count += 1
+
+    logger_utils.init_logger(log_name="cli", log_level=log_level, stdout=True)
+
+    if wal_enabled is None:
+        wal_enabled = _parse_env_bool("FINECODE_WAL_ENABLED", False)
+
+    if shared_server and wal_enabled:
+        click.echo(
+            "Warning: --wal is ignored in --shared-server mode. "
+            "Enable WAL on the shared WM server process itself.",
+            err=True,
+        )
+
+    # Parse handler config from env vars
+    handler_config_overrides: dict[str, dict[str, dict[str, str]]] = {}
+    if not no_env_config:
+        try:
+            handler_config_overrides = parse_handler_config_from_env()
+        except ConfigurationError as exception:
+            click.echo(exception.message, err=True)
+            sys.exit(1)
+
+    # actions
+    for arg in args[processed_args_count:]:
+        if not arg.startswith("--"):
+            actions_to_run.append(arg)
+        else:
+            break
+        processed_args_count += 1
+
+    if len(actions_to_run) == 0:
+        click.echo("No actions to run", err=True)
+        sys.exit(1)
+
+    # action payload and config overrides
+    action_payload: dict[str, typing.Any] = {}
+    config_args: list[str] = []
+    for arg in args[processed_args_count:]:
+        if not arg.startswith("--"):
+            click.echo(
+                f"All action parameters should be named and have form '--<name>=<value>'. Wrong parameter: '{arg}'",
+                err=True,
+            )
+            sys.exit(1)
+        else:
+            if "=" not in arg:
+                click.echo(
+                    f"All action parameters should be named and have form '--<name>=<value>'. Wrong parameter: '{arg}'",
+                    err=True,
+                )
+                sys.exit(1)
+            elif arg.startswith("--config."):
+                config_args.append(arg)
+            else:
+                arg_name, arg_value = arg[2:].split("=", 1)
+                arg_name = arg_name.replace("-", "_")
+                action_payload[arg_name] = arg_value.strip('"').strip("'")
+        processed_args_count += 1
+
+    # Parse CLI config overrides and merge with env overrides
+    if config_args:
+        cli_config_overrides = parse_handler_config_from_cli(config_args, actions_to_run)
+        if cli_config_overrides:
+            logger.trace(f"Handler config overrides from CLI: {cli_config_overrides}")
+            handler_config_overrides = merge_config_overrides(
+                handler_config_overrides, cli_config_overrides
+            )
+
+    user_messages._notification_sender = show_user_message
+
+    deserialized_payload = deserialize_action_payload(action_payload)
+    try:
+        result = asyncio.run(
+            run_cmd.run_actions(
+                workdir_path,
+                projects,
+                actions_to_run,
+                deserialized_payload,
+                concurrently,
+                handler_config_overrides,
+                save_results,
+                map_payload_fields,
+                own_server=not shared_server,
+                log_level=log_level,
+                dev_env=dev_env,
+                wal_enabled=wal_enabled,
+            )
+        )
+
+        # if partial results were printed, final result is empty
+        if result.output != "":
+            click.echo(result.output)
+
+        if save_results:
+            results_dir = pathlib.Path(sys.executable).parent.parent / "cache" / "finecode" / "results"
+            results_dir.mkdir(parents=True, exist_ok=True)
+            for project_path, result_by_action in result.result_by_project.items():
+                for action_name, action_result in result_by_action.items():
+                    output_file = results_dir / f"{action_name}.json"
+                    json_result: dict[str, typing.Any] = {}
+                    if output_file.exists():
+                        json_result = json.loads(output_file.read_text())
+                    json_result[str(project_path)] = action_result.json()
+                    output_file.write_text(json.dumps(json_result, indent=2))
+        sys.exit(result.return_code)
+    except run_cmd.RunFailed as exception:
+        click.echo(exception.args[0], err=True)
+        sys.exit(1)
+    except Exception as exception:
+        logger.exception(exception)
+        click.echo("Unexpected error, see logs in file for more details", err=True)
+        sys.exit(2)
+
+
+@click.command()
+@click.option("--log-level", "log_level", default="INFO", type=click.Choice(["TRACE", "DEBUG", "INFO", "WARNING", "ERROR"], case_sensitive=False), show_default=True)
+@click.option("--debug", "debug", is_flag=True, default=False)
+@click.option("--recreate", "recreate", is_flag=True, default=False)
+@click.option("--shared-server", "shared_server", is_flag=True, default=False)
+@click.option("--dev-env", "dev_env", default=None, type=click.Choice(sorted(_VALID_DEV_ENVS)), help="Override detected dev environment")
+@click.option("--env", "env_names", multiple=True, metavar="ENV_NAME", help="Limit to specific environment(s). Can be specified multiple times.")
+@click.option("--project", "project_names", multiple=True, metavar="PROJECT_NAME", help="Limit to specific project(s). Can be specified multiple times.")
+def prepare_envs(log_level: str, debug: bool, recreate: bool, shared_server: bool, dev_env: str | None, env_names: tuple[str, ...], project_names: tuple[str, ...]) -> None:
+    """
+    `prepare-envs` should be called from workspace/project root directory.
+    """
+    from finecode.cli_app.commands import prepare_envs_cmd
+
+    if debug is True:
+        import debugpy
+
+        try:
+            debugpy.listen(5680)
+            debugpy.wait_for_client()
+        except Exception as e:
+            logger.info(e)
+
+    logger_utils.init_logger(log_name="cli", log_level=log_level, stdout=True)
+    user_messages._notification_sender = show_user_message
+
+    try:
+        asyncio.run(
+            prepare_envs_cmd.prepare_envs(
+                workdir_path=pathlib.Path(os.getcwd()),
+                recreate=recreate,
+                own_server=not shared_server,
+                log_level=log_level,
+                dev_env=dev_env or detect_dev_env(),
+                env_names=list(env_names) if env_names else None,
+                project_names=list(project_names) if project_names else None,
+            )
+        )
+    except prepare_envs_cmd.PrepareEnvsFailed as exception:
+        click.echo(exception.message, err=True)
+        sys.exit(1)
+    except Exception as exception:
+        logger.exception(exception)
+        click.echo("Unexpected error, see logs in file for more details", err=True)
+        sys.exit(2)
+
+
+@click.command()
+@click.option("--recreate", is_flag=True, default=False,
+              help="Delete and recreate dev_workspace if it already exists.")
+@click.option("--log-level", "log_level", default="INFO",
+              type=click.Choice(["TRACE", "DEBUG", "INFO", "WARNING", "ERROR"],
+              case_sensitive=False), show_default=True)
+def bootstrap(recreate: bool, log_level: str) -> None:
+    """Create the dev_workspace environment for the workspace root.
+
+    Intended as a one-time setup step before running prepare-envs.
+    Can be run via ``pipx run finecode bootstrap`` or ``uvx finecode bootstrap``
+    without a pre-existing virtualenv.
+    """
+    import asyncio
+
+    from finecode.cli_app.commands import bootstrap_cmd
+
+    logger_utils.init_logger(log_name="cli", log_level=log_level, stdout=True)
+    user_messages._notification_sender = show_user_message
+
+    try:
+        asyncio.run(
+            bootstrap_cmd.bootstrap(
+                workdir_path=pathlib.Path(os.getcwd()),
+                recreate=recreate,
+                log_level=log_level,
+            )
+        )
+    except bootstrap_cmd.BootstrapFailed as exception:
+        click.echo(exception.message, err=True)
+        sys.exit(1)
+    except Exception as exception:
+        logger.exception(exception)
+        click.echo("Unexpected error, see logs in file for more details", err=True)
+        sys.exit(2)
+
+
+@click.command()
+@click.option("--log-level", "log_level", default="INFO", type=click.Choice(["TRACE", "DEBUG", "INFO", "WARNING", "ERROR"], case_sensitive=False), show_default=True)
+@click.option("--debug", "debug", is_flag=True, default=False)
+@click.option("--project", "project", type=str)
+@click.option("--shared-server", "shared_server", is_flag=True, default=False)
+@click.option("--dev-env", "dev_env", default=None, type=click.Choice(sorted(_VALID_DEV_ENVS)), help="Override detected dev environment")
+def dump_config(log_level: str, debug: bool, project: str | None, shared_server: bool, dev_env: str | None):
+    from finecode.cli_app.commands import dump_config_cmd
+
+    if debug is True:
+        import debugpy
+
+        try:
+            debugpy.listen(5680)
+            debugpy.wait_for_client()
+        except Exception as e:
+            logger.info(e)
+
+    if project is None:
+        click.echo("--project parameter is required", err=True)
+        return
+
+    logger_utils.init_logger(log_name="cli", log_level=log_level, stdout=True)
+    user_messages._notification_sender = show_user_message
+
+    try:
+        asyncio.run(
+            dump_config_cmd.dump_config(
+                workdir_path=pathlib.Path(os.getcwd()),
+                project_name=project,
+                own_server=not shared_server,
+                log_level=log_level,
+                dev_env=dev_env or detect_dev_env(),
+            )
+        )
+    except dump_config_cmd.DumpFailed as exception:
+        click.echo(exception.message, err=True)
+        sys.exit(1)
