@@ -43,6 +43,7 @@ class GetSrcArtifactLanguageAction(
 ):
     """Detect the programming language of a source artifact."""
 
+    DESCRIPTION = "Detect the programming language of a source artifact."
     PAYLOAD_TYPE = GetSrcArtifactLanguageRunPayload
     RUN_CONTEXT_TYPE = GetSrcArtifactLanguageRunContext
     RESULT_TYPE = GetSrcArtifactLanguageRunResult

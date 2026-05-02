@@ -36,6 +36,7 @@ class FormatAction(
 ):
     """Format source code in a project or specific files."""
 
+    DESCRIPTION = "Format source code in a project or specific files."
     PAYLOAD_TYPE = FormatRunPayload
     RUN_CONTEXT_TYPE = FormatRunContext
     RESULT_TYPE = FormatRunResult

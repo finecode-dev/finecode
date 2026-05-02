@@ -50,6 +50,7 @@ class VerifyArtifactPublishedToRegistryAction(
 ):
     """Verify that artifact distributions are available in a registry."""
 
+    DESCRIPTION = "Verify that artifact distributions are available in a registry."
     PAYLOAD_TYPE = VerifyArtifactPublishedToRegistryRunPayload
     RUN_CONTEXT_TYPE = VerifyArtifactPublishedToRegistryRunContext
     RESULT_TYPE = VerifyArtifactPublishedToRegistryRunResult

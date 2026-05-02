@@ -65,6 +65,7 @@ class DumpConfigAction(
 ):
     """Resolve and dump the merged project configuration."""
 
+    DESCRIPTION = "Resolve and dump the merged project configuration."
     PAYLOAD_TYPE = DumpConfigRunPayload
     RUN_CONTEXT_TYPE = DumpConfigRunContext
     RESULT_TYPE = DumpConfigRunResult

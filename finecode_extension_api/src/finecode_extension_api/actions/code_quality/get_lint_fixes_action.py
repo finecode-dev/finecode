@@ -62,6 +62,7 @@ class GetLintFixesAction(
 ):
     """Compute fixes for linter diagnostics in a file."""
 
+    DESCRIPTION = "Compute fixes for linter diagnostics in a file."
     PAYLOAD_TYPE = GetLintFixesRunPayload
     RUN_CONTEXT_TYPE = GetLintFixesRunContext
     RESULT_TYPE = GetLintFixesRunResult

@@ -68,6 +68,7 @@ class InstallDepsInEnvRunResult(code_action.RunActionResult):
 class InstallDepsInEnvAction(code_action.Action):
     """Install dependencies into an environment."""
 
+    DESCRIPTION = "Install dependencies into an environment."
     PAYLOAD_TYPE = InstallDepsInEnvRunPayload
     RUN_CONTEXT_TYPE = InstallDepsInEnvRunContext
     RESULT_TYPE = InstallDepsInEnvRunResult

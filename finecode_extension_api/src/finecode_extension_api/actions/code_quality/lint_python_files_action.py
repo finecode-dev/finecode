@@ -16,6 +16,7 @@ class LintPythonFilesAction(
 ):
     """Lint Python source files and report diagnostics."""
 
+    DESCRIPTION = "Lint Python source files and report diagnostics."
     PAYLOAD_TYPE = LintFilesRunPayload
     RUN_CONTEXT_TYPE = LintFilesRunContext
     RESULT_TYPE = LintFilesRunResult

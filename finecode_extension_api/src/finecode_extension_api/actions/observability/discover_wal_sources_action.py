@@ -41,6 +41,7 @@ class DiscoverWalSourcesAction(
 ):
     """Discover WAL sources."""
 
+    DESCRIPTION = "Discover WAL sources."
     PAYLOAD_TYPE = DiscoverWalSourcesRunPayload
     RUN_CONTEXT_TYPE = DiscoverWalSourcesRunContext
     RESULT_TYPE = DiscoverWalSourcesRunResult

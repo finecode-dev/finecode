@@ -80,6 +80,7 @@ class InstallEnvsAction(
 ):
     """Install dependencies into all environments."""
 
+    DESCRIPTION = "Install dependencies into all environments."
     PAYLOAD_TYPE = InstallEnvsRunPayload
     RUN_CONTEXT_TYPE = InstallEnvsRunContext
     RESULT_TYPE = InstallEnvsRunResult

@@ -32,6 +32,7 @@ class LintRunContext(
 class LintAction(code_action.Action[LintRunPayload, LintRunContext, LintRunResult]):
     """Run linters on a project or specific files and report diagnostics."""
 
+    DESCRIPTION = "Run linters on a project or specific files and report diagnostics."
     PAYLOAD_TYPE = LintRunPayload
     RUN_CONTEXT_TYPE = LintRunContext
     RESULT_TYPE = LintRunResult

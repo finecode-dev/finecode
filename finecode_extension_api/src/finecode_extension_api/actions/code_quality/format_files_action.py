@@ -81,12 +81,21 @@ class FormatFilesRunContext(
 @dataclasses.dataclass
 class FormatRunFileResult:
     changed: bool
-    # changed code or empty string if code was not changed
+    # Formatted content when changed=True; empty string when changed=False.
+    # Callers must check changed before using code.
     code: str
 
 
 @dataclasses.dataclass
 class FormatFilesRunResult(code_action.RunActionResult):
+    """Result of a format_files run.
+
+    ``result_by_file_path`` contains an entry for every file that was passed
+    as input, regardless of whether it was changed.  A missing entry means the
+    file was not processed at all (e.g. the handler skipped it for an
+    unrecognised extension).
+    """
+
     result_by_file_path: dict[ResourceUri, FormatRunFileResult]
 
     @override
@@ -95,7 +104,8 @@ class FormatFilesRunResult(code_action.RunActionResult):
             return
 
         for file_path, other_result in other.result_by_file_path.items():
-            if other_result.changed is True:
+            existing = self.result_by_file_path.get(file_path)
+            if existing is None or other_result.changed:
                 self.result_by_file_path[file_path] = other_result
 
     def to_text(self) -> str | textstyler.StyledText:
@@ -124,6 +134,7 @@ class FormatFilesAction(
 ):
     """Format specific files. Internal action dispatched by format."""
 
+    DESCRIPTION = "Format specific files. Internal action dispatched by format."
     PAYLOAD_TYPE = FormatFilesRunPayload
     RUN_CONTEXT_TYPE = FormatFilesRunContext
     RESULT_TYPE = FormatFilesRunResult

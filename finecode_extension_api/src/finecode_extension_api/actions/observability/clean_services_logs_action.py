@@ -77,6 +77,7 @@ class CleanServicesLogsAction(
     service_ids is an empty list.
     """
 
+    DESCRIPTION = "Delete logs for multiple observability services."
     PAYLOAD_TYPE = CleanServicesLogsRunPayload
     RUN_CONTEXT_TYPE = CleanServicesLogsRunContext
     RESULT_TYPE = CleanServicesLogsRunResult

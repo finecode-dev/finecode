@@ -50,6 +50,7 @@ class PublishArtifactAction(
 ):
     """Publish a distribution artifact to all configured registries."""
 
+    DESCRIPTION = "Publish a distribution artifact to all configured registries."
     PAYLOAD_TYPE = PublishArtifactRunPayload
     RUN_CONTEXT_TYPE = PublishArtifactRunContext
     RESULT_TYPE = PublishArtifactRunResult

@@ -152,6 +152,7 @@ class ListTestsAction(
 ):
     """Discover tests and return their hierarchical structure without running them."""
 
+    DESCRIPTION = "Discover tests and return their hierarchical structure without running them."
     PAYLOAD_TYPE = ListTestsRunPayload
     RUN_CONTEXT_TYPE = ListTestsRunContext
     RESULT_TYPE = ListTestsRunResult

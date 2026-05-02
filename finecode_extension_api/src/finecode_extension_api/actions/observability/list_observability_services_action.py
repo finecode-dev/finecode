@@ -47,6 +47,7 @@ class ListObservabilityServicesAction(
 ):
     """Discover available observability services."""
 
+    DESCRIPTION = "Discover available observability services."
     PAYLOAD_TYPE = ListObservabilityServicesRunPayload
     RUN_CONTEXT_TYPE = ListObservabilityServicesRunContext
     RESULT_TYPE = ListObservabilityServicesRunResult

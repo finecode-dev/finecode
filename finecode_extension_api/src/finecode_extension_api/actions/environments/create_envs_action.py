@@ -73,6 +73,7 @@ class CreateEnvsAction(
 ):
     """Create environments for the workspace(without installing dependencies, only environment)."""
 
+    DESCRIPTION = "Create environments for the workspace (without installing dependencies, only environments)."
     PAYLOAD_TYPE = CreateEnvsRunPayload
     RUN_CONTEXT_TYPE = CreateEnvsRunContext
     RESULT_TYPE = CreateEnvsRunResult

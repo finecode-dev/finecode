@@ -61,6 +61,7 @@ class PublishAndVerifyArtifactAction(
         PublishAndVerifyArtifactRunResult,
     ]
 ):
+    DESCRIPTION = "Publish a distribution artifact and verify it is available in registries."
     PAYLOAD_TYPE = PublishAndVerifyArtifactRunPayload
     RUN_CONTEXT_TYPE = PublishAndVerifyArtifactRunContext
     RESULT_TYPE = PublishAndVerifyArtifactRunResult

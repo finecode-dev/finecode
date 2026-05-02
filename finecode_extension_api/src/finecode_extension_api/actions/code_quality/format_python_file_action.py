@@ -16,6 +16,7 @@ class FormatPythonFileAction(
 ):
     """Format a single Python file. Item-level action; handlers run sequentially (pipeline)."""
 
+    DESCRIPTION = "Format a single Python file. Item-level action; handlers run sequentially (pipeline mode)."
     PAYLOAD_TYPE = FormatFileRunPayload
     RUN_CONTEXT_TYPE = FormatFileRunContext
     RESULT_TYPE = FormatFileRunResult

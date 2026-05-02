@@ -42,6 +42,7 @@ class GetSrcArtifactVersionAction(
 ):
     """Read the current version from an source artifact definition file."""
 
+    DESCRIPTION = "Read the current version from an source artifact definition file."
     PAYLOAD_TYPE = GetSrcArtifactVersionRunPayload
     RUN_CONTEXT_TYPE = GetSrcArtifactVersionRunContext
     RESULT_TYPE = GetSrcArtifactVersionRunResult

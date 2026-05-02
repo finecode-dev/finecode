@@ -118,7 +118,11 @@ class FormatFileRunContext(code_action.RunActionContext[FormatFileRunPayload]):
 @dataclasses.dataclass
 class FormatFileRunResult(code_action.RunActionResult):
     changed: bool
+    """True iff the formatted output differs from the input."""
     code: str
+    """Formatted content when ``changed=True``; empty string when ``changed=False``.
+    Callers must check ``changed`` before using ``code``.
+    """
 
     @override
     def update(self, other: code_action.RunActionResult) -> None:
@@ -135,8 +139,33 @@ class FormatFileRunResult(code_action.RunActionResult):
 class FormatFileAction(
     code_action.Action[FormatFileRunPayload, FormatFileRunContext, FormatFileRunResult]
 ):
-    """Format a single file. Item-level action for use by per-file handlers."""
+    """Format a single file. Item-level action for use by per-file handlers.
 
+    **Action contract** — observable guarantees to callers:
+
+    - ``result.changed`` is ``True`` iff the formatted output differs from the
+      input; ``False`` when the file is already correctly formatted.
+    - ``result.code`` is the formatted content when ``changed=True``, and an
+      empty string when ``changed=False``. Callers must check ``changed`` before
+      reading ``code``.
+    - Formatting is idempotent: a handler run on already-formatted content must
+      produce ``changed=False``.
+    - ``payload.save=False`` is a hard invariant: no handler in the pipeline
+      may write to disk.
+
+    **Handler implementation contract** — pipeline participation rules:
+
+    - Read input content from ``run_context.file_info``, not directly from
+      disk. A prior handler may have already modified the content; the updated
+      content lives in the context, not yet on disk.
+    - Update ``run_context.file_info`` with the formatted content so the next
+      handler in the pipeline sees it.
+    - Never write the result to the source file. Return ``changed`` and
+      ``code``; the built-in ``SaveFormatFileHandler`` performs the write when
+      ``payload.save`` is ``True``.
+    """
+
+    DESCRIPTION = "Format a single file. Item-level action for use by per-file handlers."
     PAYLOAD_TYPE = FormatFileRunPayload
     RUN_CONTEXT_TYPE = FormatFileRunContext
     RESULT_TYPE = FormatFileRunResult

@@ -30,5 +30,6 @@ class InlayHintResult(code_action.RunActionResult):
 
 
 class TextDocumentInlayHintAction(code_action.Action):
+    DESCRIPTION = "Provide inlay hints for a text document."
     PAYLOAD_TYPE = InlayHintPayload
     RESULT_TYPE = InlayHintResult

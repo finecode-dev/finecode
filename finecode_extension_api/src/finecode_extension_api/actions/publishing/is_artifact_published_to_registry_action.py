@@ -56,6 +56,7 @@ class IsArtifactPublishedToRegistryAction(
 ):
     """Check whether artifact distributions are already published to a registry."""
 
+    DESCRIPTION = "Check whether artifact distributions are already published to a registry."
     PAYLOAD_TYPE = IsArtifactPublishedToRegistryRunPayload
     RUN_CONTEXT_TYPE = IsArtifactPublishedToRegistryRunContext
     RESULT_TYPE = IsArtifactPublishedToRegistryRunResult

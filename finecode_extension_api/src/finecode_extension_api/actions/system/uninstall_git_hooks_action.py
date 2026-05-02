@@ -84,6 +84,7 @@ class UninstallGitHooksAction(
     in `refused_hooks` on the result.
     """
 
+    DESCRIPTION = "Remove FineCode-managed git hooks from the project's git repository."
     PAYLOAD_TYPE = UninstallGitHooksRunPayload
     RUN_CONTEXT_TYPE = UninstallGitHooksRunContext
     RESULT_TYPE = UninstallGitHooksRunResult

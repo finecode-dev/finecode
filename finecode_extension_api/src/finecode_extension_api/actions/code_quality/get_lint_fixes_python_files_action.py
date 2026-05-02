@@ -16,6 +16,7 @@ class GetLintFixesPythonFilesAction(
 ):
     """Compute lint fixes for Python files."""
 
+    DESCRIPTION = "Compute lint fixes for Python files."
     PAYLOAD_TYPE = GetLintFixesRunPayload
     RUN_CONTEXT_TYPE = GetLintFixesRunContext
     RESULT_TYPE = GetLintFixesRunResult

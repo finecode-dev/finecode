@@ -87,6 +87,7 @@ class PrecommitAction(
 ):
     """Run configured code quality checks on git-staged files before commit."""
 
+    DESCRIPTION = "Run configured code quality checks on git-staged files before commit."
     PAYLOAD_TYPE = PrecommitRunPayload
     RUN_CONTEXT_TYPE = PrecommitRunContext
     RESULT_TYPE = PrecommitRunResult

@@ -70,6 +70,7 @@ class GroupSrcArtifactFilesByLangAction(
 ):
     """Group a given list of files by programming language."""
 
+    DESCRIPTION = "Group a given list of files by programming language."
     PAYLOAD_TYPE = GroupSrcArtifactFilesByLangRunPayload
     RUN_CONTEXT_TYPE = GroupSrcArtifactFilesByLangRunContext
     RESULT_TYPE = GroupSrcArtifactFilesByLangRunResult

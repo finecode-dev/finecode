@@ -379,6 +379,7 @@ class Action(Generic[RunPayloadType, RunContextType, RunResultType]):
     LANGUAGE: ClassVar[str | None] = None
     PARENT_ACTION: ClassVar[type[Action] | None] = None
     HANDLER_EXECUTION: ClassVar[HandlerExecution] = HandlerExecution.SEQUENTIAL
+    DESCRIPTION: ClassVar[str] = ""
 
 
 class StopActionRunWithResult(Exception):

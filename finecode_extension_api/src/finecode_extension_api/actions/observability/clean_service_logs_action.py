@@ -47,6 +47,7 @@ class CleanServiceLogsAction(
 ):
     """Delete all logs for a specific observability service."""
 
+    DESCRIPTION = "Delete all logs for a specific observability service."
     PAYLOAD_TYPE = CleanServiceLogsRunPayload
     RUN_CONTEXT_TYPE = CleanServiceLogsRunContext
     RESULT_TYPE = CleanServiceLogsRunResult

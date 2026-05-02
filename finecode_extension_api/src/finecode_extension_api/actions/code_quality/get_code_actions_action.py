@@ -57,6 +57,7 @@ class GetCodeActionsAction(
 ):
     """Return code actions (quickfixes, refactorings, source actions) for a location."""
 
+    DESCRIPTION = "Return code actions (quickfixes, refactorings, source actions) for a location."
     PAYLOAD_TYPE = GetCodeActionsRunPayload
     RUN_CONTEXT_TYPE = GetCodeActionsRunContext
     RESULT_TYPE = GetCodeActionsRunResult

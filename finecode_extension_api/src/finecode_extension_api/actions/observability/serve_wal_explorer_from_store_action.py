@@ -51,6 +51,7 @@ class ServeWalExplorerFromStoreAction(
 ):
     """Start a HTTP API over the WAL store and serve until interrupted."""
 
+    DESCRIPTION = "Start a HTTP API over the WAL store and serve until interrupted."
     PAYLOAD_TYPE = ServeWalExplorerFromStoreRunPayload
     RUN_CONTEXT_TYPE = ServeWalExplorerFromStoreRunContext
     RESULT_TYPE = ServeWalExplorerFromStoreRunResult

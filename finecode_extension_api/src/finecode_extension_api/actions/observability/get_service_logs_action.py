@@ -62,6 +62,7 @@ class GetServiceLogsAction(
 ):
     """Read recent log output from a specific observability service."""
 
+    DESCRIPTION = "Read recent log output from a specific observability service."
     PAYLOAD_TYPE = GetServiceLogsRunPayload
     RUN_CONTEXT_TYPE = GetServiceLogsRunContext
     RESULT_TYPE = GetServiceLogsRunResult

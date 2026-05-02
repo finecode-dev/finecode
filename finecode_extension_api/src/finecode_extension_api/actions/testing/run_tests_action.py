@@ -210,6 +210,7 @@ class RunTestsAction(
 ):
     """Execute tests and return structured pass/fail results."""
 
+    DESCRIPTION = "Execute tests and return structured pass/fail results."
     PAYLOAD_TYPE = RunTestsRunPayload
     RUN_CONTEXT_TYPE = RunTestsRunContext
     RESULT_TYPE = RunTestsRunResult

@@ -22,6 +22,7 @@ class CreateEnvAction(
 ):
     """Create a single environment(without installing dependencies, only environment)."""
 
+    DESCRIPTION = "Create a single environment (without installing dependencies, only environment)."
     PAYLOAD_TYPE = CreateEnvRunPayload
     RUN_CONTEXT_TYPE = CreateEnvRunContext
     RESULT_TYPE = CreateEnvsRunResult

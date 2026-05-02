@@ -149,6 +149,7 @@ class IngestWalToStoreAction(
 ):
     """Ingest write-ahead-log events from generic sources into a durable store."""
 
+    DESCRIPTION = "Ingest write-ahead-log events from generic sources into a durable store."
     PAYLOAD_TYPE = IngestWalToStoreRunPayload
     RUN_CONTEXT_TYPE = IngestWalToStoreRunContext
     RESULT_TYPE = IngestWalToStoreRunResult

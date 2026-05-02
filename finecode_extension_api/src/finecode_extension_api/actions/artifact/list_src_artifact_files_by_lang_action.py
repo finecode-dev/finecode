@@ -68,6 +68,7 @@ class ListSrcArtifactFilesByLangAction(
 ):
     """List source artifact files grouped by programming language."""
 
+    DESCRIPTION = "List source artifact files grouped by programming language."
     PAYLOAD_TYPE = ListSrcArtifactFilesByLangRunPayload
     RUN_CONTEXT_TYPE = ListSrcArtifactFilesByLangRunContext
     RESULT_TYPE = ListSrcArtifactFilesByLangRunResult

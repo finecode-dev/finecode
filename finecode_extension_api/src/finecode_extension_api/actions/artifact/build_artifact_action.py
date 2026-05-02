@@ -50,6 +50,7 @@ class BuildArtifactAction(
 ):
     """Build an artifact from source."""
 
+    DESCRIPTION = "Build an artifact from source."
     PAYLOAD_TYPE = BuildArtifactRunPayload
     RUN_CONTEXT_TYPE = BuildArtifactRunContext
     RESULT_TYPE = BuildArtifactRunResult

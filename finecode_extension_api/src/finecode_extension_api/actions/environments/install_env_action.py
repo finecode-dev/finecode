@@ -40,6 +40,7 @@ class InstallEnvAction(
 ):
     """Install dependencies into environment."""
 
+    DESCRIPTION = "Install dependencies into environment."
     PAYLOAD_TYPE = InstallEnvRunPayload
     RUN_CONTEXT_TYPE = InstallEnvRunContext
     RESULT_TYPE = InstallEnvsRunResult

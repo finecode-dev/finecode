@@ -73,6 +73,7 @@ class InstallGitHooksAction(
     that applies to projects with and without git.
     """
 
+    DESCRIPTION = "Install git hooks that run FineCode into the project's git repository."
     PAYLOAD_TYPE = InstallGitHooksRunPayload
     RUN_CONTEXT_TYPE = InstallGitHooksRunContext
     RESULT_TYPE = InstallGitHooksRunResult
