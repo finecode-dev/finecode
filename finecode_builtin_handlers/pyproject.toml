@@ -10,11 +10,6 @@ dependencies = ["finecode_extension_api~=0.4.0a0", "tomlkit==0.11.*"]
 [dependency-groups]
 dev_workspace = ["finecode~=0.4.0a0", "finecode_dev_common_preset~=0.3.0a0"]
 
-[tool.finecode.env.dev_workspace.dependencies]
-finecode_dev_common_preset = { path = "../finecode_dev_common_preset", editable = true }
-finecode = { path = "../", editable = true }
-finecode_extension_runner = { path = "../finecode_extension_runner", editable = true }
-
 [tool.finecode]
 presets = [{ source = "finecode_dev_common_preset" }]
 
