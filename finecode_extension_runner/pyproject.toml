@@ -22,15 +22,6 @@ dev_workspace = [
 ]
 dev = ["finecode_extension_runner", "pytest==7.4.*", "debugpy==1.8.*"]
 
-[tool.finecode.env.dev.dependencies]
-finecode_extension_runner = { path = "../finecode_extension_runner", editable = true }
-finecode_extension_api = { path = "../finecode_extension_api", editable = true }
-
-[tool.finecode.env.dev_workspace.dependencies]
-finecode_dev_common_preset = { path = "../finecode_dev_common_preset", editable = true }
-finecode = { path = "../", editable = true }
-finecode_extension_runner = { path = "../finecode_extension_runner", editable = true }
-
 [build-system]
 requires = ["setuptools>=64", "setuptools-scm>=8"]
 build-backend = "setuptools.build_meta"
