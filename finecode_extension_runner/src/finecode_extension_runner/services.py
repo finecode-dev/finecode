@@ -410,9 +410,9 @@ def get_payload_schemas(runner_context: context.RunnerContext) -> dict[str, dict
                 result[action_name] = None
             else:
                 schema = schema_utils.extract_payload_schema(payload_cls)
-                doc = getattr(action_cls, "__doc__", None)
-                if doc:
-                    schema["description"] = doc.strip()
+                description = getattr(action_cls, "DESCRIPTION", "").strip()
+                if description:
+                    schema["description"] = description
                 result[action_name] = schema
         except Exception as exception:
             logger.debug(f"Could not extract payload schema for action '{action_name}': {exception}")
