@@ -142,7 +142,10 @@ def apply_logging_config(config: dict) -> None:
             logger.warning(f"Unknown log level '{level_str}' for group '{group}', ignoring")
 
 
-def setup_logging(log_level: str, log_file_path: Path) -> Path:
+def setup_logging(
+    log_level: str,
+    log_file_path: Path,
+) -> Path:
     logger.remove()
 
     # ~~extension runner communicates with workspace manager with tcp, we can print logs

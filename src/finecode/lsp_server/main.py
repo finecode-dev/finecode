@@ -1,6 +1,7 @@
 # docs: docs/cli.md
 from __future__ import annotations
 
+import pathlib
 import socket
 import sys
 
@@ -21,7 +22,14 @@ async def start(
     port: int | None = None,
     log_level: str = "INFO",
 ) -> None:
-    global_state.lsp_log_file_path = logger_utils.init_logger(log_name="lsp_server", log_level=log_level)
+    from finecode.wm_server.config import read_configs
+    workspace_root = pathlib.Path.cwd()
+    wm_telemetry = read_configs.read_wm_telemetry_config(workspace_root)
+    global_state.lsp_log_file_path = logger_utils.init_logger(
+        log_name="lsp_server", log_level=log_level,
+        workspace_path=workspace_root,
+        otlp_endpoint=wm_telemetry.otlp_endpoint,
+    )
     global_state.wm_log_level = log_level
     server: LspServer = create_lsp_server()
     if comm_type == "tcp":

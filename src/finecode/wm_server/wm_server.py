@@ -480,6 +480,7 @@ async def start_standalone(
     port_file: pathlib.Path | None = None,
     disconnect_timeout: int = DISCONNECT_TIMEOUT_SECONDS,
     wal_config: wal.WalConfig | None = None,
+    otlp_endpoint: str | None = None,
 ) -> None:
     """Start the WM server as a standalone process with its own WorkspaceContext.
 
@@ -489,8 +490,10 @@ async def start_standalone(
             overwrite the shared server's discovery file.
         disconnect_timeout: Seconds to wait after the last client disconnects
             before shutting down.
+        otlp_endpoint: OTLP endpoint for telemetry forwarding to extension runners.
     """
     ws_context = context.WorkspaceContext([])
+    ws_context.otlp_endpoint = otlp_endpoint
     if wal_config is not None and wal_config.enabled:
         ws_context.wal_writer = wal.WalWriter(wal_config)
     _register_callbacks()

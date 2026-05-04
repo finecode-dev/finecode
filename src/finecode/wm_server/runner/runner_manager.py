@@ -13,6 +13,7 @@ import typing
 
 from loguru import logger
 
+from finecode import telemetry
 from finecode.wm_server import context, domain, domain_helpers
 from finecode.wm_server.config import collect_actions, config_models, read_configs
 from finecode.wm_server.runner import (
@@ -185,6 +186,8 @@ async def _start_extension_runner_process(
 
     async def on_exit():
         logger.debug(f"Extension Runner {runner.readable_id} exited")
+        if runner.status == runner_client.RunnerStatus.RUNNING:
+            telemetry.er_active_dec(runner.env_name)
         runner.status = runner_client.RunnerStatus.EXITED
         await notify_project_changed(
             ws_context.ws_projects[runner.working_dir_path]
@@ -566,6 +569,13 @@ async def get_or_start_runners_with_presets(
 async def start_runner(
     project_def: domain.Project, env_name: str, handlers_to_initialize: dict[str, list[str]] | None, ws_context: context.WorkspaceContext, debug: bool = False, cmd_override: str | None = None
 ) -> runner_client.ExtensionRunnerInfo:
+    with telemetry.er_startup_metrics(env_name):
+        return await _start_runner(project_def=project_def, env_name=env_name, handlers_to_initialize=handlers_to_initialize, ws_context=ws_context, debug=debug, cmd_override=cmd_override)
+
+
+async def _start_runner(
+    project_def: domain.Project, env_name: str, handlers_to_initialize: dict[str, list[str]] | None, ws_context: context.WorkspaceContext, debug: bool = False, cmd_override: str | None = None
+) -> runner_client.ExtensionRunnerInfo:
     # this function manages status of the runner and initialized event
     runner = runner_client.ExtensionRunnerInfo(
         working_dir_path=project_def.dir_path,
@@ -625,6 +635,7 @@ async def start_runner(
     await _finish_runner_init(runner=runner, project=project_def, ws_context=ws_context)
 
     runner.status = runner_client.RunnerStatus.RUNNING
+    telemetry.er_active_inc(runner.env_name)
     await notify_project_changed(project_def)
     runner.initialized_event.set()
 
@@ -727,6 +738,9 @@ async def update_runner_config(
         services=project.services,
         handlers_to_initialize=handlers_to_initialize,
         logging=env_config.runner_config.logging,
+        telemetry=runner_client.ErTelemetryConfig(
+            otlp_endpoint=ws_context.otlp_endpoint,
+        ),
     )
     try:
         await runner_client.update_config(runner, project.def_path, config)

@@ -29,6 +29,7 @@ class WorkspaceContext:
         default_factory=dict
     )
     runner_io_thread: AsyncIOThread | None = None
+    otlp_endpoint: str | None = None
 
     # LSP doesn't provide endpoint to get opened files on client. The server should
     # listen to didOpen and didClose events and manage state by itself. In this

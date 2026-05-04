@@ -50,9 +50,13 @@ def start_wm_server(
     from finecode.wm_server import wal, wm_server
     from finecode.wm_server.config import read_configs
 
-    wm_logging = read_configs.read_wm_logging_config(pathlib.Path.cwd())
+    workspace_root = pathlib.Path.cwd()
+    wm_logging = read_configs.read_wm_logging_config(workspace_root)
+    wm_telemetry = read_configs.read_wm_telemetry_config(workspace_root)
     log_file_path = logger_utils.init_logger(
-        log_name="wm_server", log_level=log_level, stdout=False, log_groups=wm_logging.log_groups
+        log_name="wm_server", log_level=log_level, stdout=False, log_groups=wm_logging.log_groups,
+        workspace_path=workspace_root,
+        otlp_endpoint=wm_telemetry.otlp_endpoint,
     )
     wm_server._log_file_path = log_file_path
     port_file_path = pathlib.Path(port_file) if port_file else None
@@ -69,5 +73,6 @@ def start_wm_server(
             port_file=port_file_path,
             disconnect_timeout=disconnect_timeout,
             wal_config=wal_config,
+            otlp_endpoint=wm_telemetry.otlp_endpoint,
         )
     )

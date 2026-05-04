@@ -14,6 +14,8 @@ def init_logger(
     log_level: str = "INFO",
     stdout: bool = False,
     log_groups: dict[str, str] | None = None,
+    workspace_path: Path | None = None,
+    otlp_endpoint: str | None = None,
 ) -> Path:
     venv_dir_path = Path(sys.executable).parent.parent
     logs_dir_path = venv_dir_path / "logs"
@@ -55,5 +57,11 @@ def init_logger(
             )
 
     logging.basicConfig(handlers=[InterceptHandler()], level=0, force=True)
+
+    from finecode import telemetry
+    service_name = f"finecode-{log_name.replace('_', '-')}"
+    telemetry.init_otel_logging(service_name, workspace_path, endpoint=otlp_endpoint)
+    telemetry.init_tracer_provider(service_name, workspace_path, endpoint=otlp_endpoint)
+    telemetry.init_meter_provider(service_name, workspace_path, endpoint=otlp_endpoint)
 
     return log_file_path

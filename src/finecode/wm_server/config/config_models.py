@@ -66,6 +66,11 @@ class ErLoggingConfig:
 
 
 @dataclass
+class WmTelemetryConfig:
+    otlp_endpoint: str | None = None
+
+
+@dataclass
 class ErEnvConfig:
     debug: bool = False
     logging: ErLoggingConfig = field(default_factory=ErLoggingConfig)

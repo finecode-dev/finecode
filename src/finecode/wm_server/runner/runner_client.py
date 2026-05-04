@@ -341,6 +341,11 @@ async def resolve_package_path(
 
 
 @dataclasses.dataclass
+class ErTelemetryConfig:
+    otlp_endpoint: str | None = None
+
+
+@dataclasses.dataclass
 class RunnerConfig:
     actions: list[domain.Action]
     # config by handler source
@@ -350,6 +355,7 @@ class RunnerConfig:
     # Keys are action names, values are lists of handler names within that action.
     handlers_to_initialize: dict[str, list[str]] | None = None
     logging: ErLoggingConfig = dataclasses.field(default_factory=ErLoggingConfig)
+    telemetry: ErTelemetryConfig = dataclasses.field(default_factory=ErTelemetryConfig)
 
     def to_dict(self) -> dict[str, typing.Any]:
         result: dict[str, typing.Any] = {
@@ -359,6 +365,9 @@ class RunnerConfig:
             "logging": {
                 "defaultLevel": self.logging.default_level,
                 "logGroups": self.logging.log_groups,
+            },
+            "telemetry": {
+                "otlp_endpoint": self.telemetry.otlp_endpoint,
             },
         }
         if self.handlers_to_initialize is not None:

@@ -17,6 +17,7 @@ from finecode_extension_api.interfaces import iprojectactionrunner
 from finecode_extension_runner import (
     context,
     domain,
+    er_telemetry,
     er_wal,
     partial_result_sender as partial_result_sender_module,
     run_utils,
@@ -1147,96 +1148,99 @@ async def execute_action_handler(
         known_args={"payload": get_run_payload, "run_context": get_run_context},
         registry=runner_context.di_registry,
     )
-    # TODO: cache parameters
-    try:
-        logger.trace(f"Call handler {handler.name}(run {run_id})")
-        # there is also `inspect.iscoroutinefunction` but it cannot recognize coroutine
-        # functions which are class methods. Use `isawaitable` on result instead.
-        call_result = handler_run_func(**args)
-        if inspect.isasyncgen(call_result):
-            stream_result: code_action.RunActionResult | None = None
-            async for partial_result in call_result:
-                partial_result = typing.cast(code_action.RunActionResult, partial_result)
-                # Both paths below forward the partial to a caller — they differ only
-                # in transport.  partial_result_token sends to an LSP/MCP client via
-                # the WM notification channel; partial_result_queue delivers to a parent
-                # action handler that called run_action_iter().  These could be unified
-                # into a single PartialResultForwarder abstraction in the future.
-                if partial_result_token is not None:
-                    if (
-                        tracking_sender is not None
-                        and wal_run_id is not None
-                        and not tracking_sender.has_sent
-                    ):
-                        er_wal.emit_run_event(
-                            runner_context.wal_writer,
-                            event_type=er_wal.ErWalEventType.PARTIAL_RESULT_FIRST_SENT,
-                            wal_run_id=wal_run_id,
-                            action_name=action_name,
-                            project_path=runner_context.project.dir_path,
-                            trigger=trigger,
-                            dev_env=dev_env,
-                            payload={"run_id": run_id, "handler": handler.name},
+
+    with er_telemetry.handler_span(handler.name, action_name, wal_run_id), \
+            er_telemetry.handler_metrics(handler.name, action_name):
+        try:
+            # TODO: cache parameters
+            logger.trace(f"Call handler {handler.name}(run {run_id})")
+            # there is also `inspect.iscoroutinefunction` but it cannot recognize coroutine
+            # functions which are class methods. Use `isawaitable` on result instead.
+            call_result = handler_run_func(**args)
+            if inspect.isasyncgen(call_result):
+                stream_result: code_action.RunActionResult | None = None
+                async for partial_result in call_result:
+                    partial_result = typing.cast(code_action.RunActionResult, partial_result)
+                    # Both paths below forward the partial to a caller — they differ only
+                    # in transport.  partial_result_token sends to an LSP/MCP client via
+                    # the WM notification channel; partial_result_queue delivers to a parent
+                    # action handler that called run_action_iter().  These could be unified
+                    # into a single PartialResultForwarder abstraction in the future.
+                    if partial_result_token is not None:
+                        if (
+                            tracking_sender is not None
+                            and wal_run_id is not None
+                            and not tracking_sender.has_sent
+                        ):
+                            er_wal.emit_run_event(
+                                runner_context.wal_writer,
+                                event_type=er_wal.ErWalEventType.PARTIAL_RESULT_FIRST_SENT,
+                                wal_run_id=wal_run_id,
+                                action_name=action_name,
+                                project_path=runner_context.project.dir_path,
+                                trigger=trigger,
+                                dev_env=dev_env,
+                                payload={"run_id": run_id, "handler": handler.name},
+                            )
+                            tracking_sender.has_sent = True
+                        await partial_result_sender.schedule_sending(
+                            partial_result_token, partial_result
                         )
-                        tracking_sender.has_sent = True
-                    await partial_result_sender.schedule_sending(
-                        partial_result_token, partial_result
-                    )
-                if partial_result_queue is not None:
-                    await partial_result_queue.put(partial_result)
-                if stream_result is None:
-                    stream_result = typing.cast(
-                        code_action.RunActionResult,
-                        _converter.structure(
-                            _converter.unstructure(partial_result),
-                            type(partial_result),
-                        ),
-                    )
+                    if partial_result_queue is not None:
+                        await partial_result_queue.put(partial_result)
+                    if stream_result is None:
+                        stream_result = typing.cast(
+                            code_action.RunActionResult,
+                            _converter.structure(
+                                _converter.unstructure(partial_result),
+                                type(partial_result),
+                            ),
+                        )
+                    else:
+                        stream_result.update(partial_result)
+                if partial_result_token is not None:
+                    await partial_result_sender.send_all_immediately()
+                    execution_result = None  # partials already sent
+                elif partial_result_queue is not None:
+                    execution_result = None  # each partial already forwarded to queue
                 else:
-                    stream_result.update(partial_result)
-            if partial_result_token is not None:
-                await partial_result_sender.send_all_immediately()
-                execution_result = None  # partials already sent
-            elif partial_result_queue is not None:
-                execution_result = None  # each partial already forwarded to queue
+                    execution_result = stream_result
+            elif inspect.isawaitable(call_result):
+                handler_result = await call_result
+                if tracking_sender is not None and tracking_sender.has_sent:
+                    await partial_result_sender.send_all_immediately()
+                    execution_result = None
+                else:
+                    execution_result = handler_result
             else:
-                execution_result = stream_result
-        elif inspect.isawaitable(call_result):
-            handler_result = await call_result
-            if tracking_sender is not None and tracking_sender.has_sent:
-                await partial_result_sender.send_all_immediately()
-                execution_result = None
+                execution_result = call_result
+        except Exception as exception:
+            if isinstance(exception, code_action.StopActionRunWithResult):
+                action_result = exception.result
+                response = action_result_to_run_action_response(action_result, ["string"])
+                raise StopWithResponse(response=response) from exception
+            elif isinstance(
+                exception, iprojectactionrunner.BaseRunActionException
+            ) or isinstance(exception, code_action.ActionFailedException):
+                error_str = exception.message
             else:
-                execution_result = handler_result
-        else:
-            execution_result = call_result
-    except Exception as exception:
-        if isinstance(exception, code_action.StopActionRunWithResult):
-            action_result = exception.result
-            response = action_result_to_run_action_response(action_result, ["string"])
-            raise StopWithResponse(response=response) from exception
-        elif isinstance(
-            exception, iprojectactionrunner.BaseRunActionException
-        ) or isinstance(exception, code_action.ActionFailedException):
-            error_str = exception.message
-        else:
-            logger.error("Unhandled exception in action handler:")
-            error_str = str(exception)
-            logger.exception(exception)
-        if wal_run_id is not None:
-            er_wal.emit_run_event(
-                runner_context.wal_writer,
-                event_type=er_wal.ErWalEventType.HANDLER_FAILED,
-                wal_run_id=wal_run_id,
-                action_name=action_name,
-                project_path=runner_context.project.dir_path,
-                trigger=trigger,
-                dev_env=dev_env,
-                payload={"run_id": run_id, "handler": handler.name, "error": error_str},
-            )
-        raise ActionFailedException(
-            f"Running action handler '{handler.name}' failed(Run {run_id}): {error_str}"
-        ) from exception
+                logger.error("Unhandled exception in action handler:")
+                error_str = str(exception)
+                logger.exception(exception)
+            if wal_run_id is not None:
+                er_wal.emit_run_event(
+                    runner_context.wal_writer,
+                    event_type=er_wal.ErWalEventType.HANDLER_FAILED,
+                    wal_run_id=wal_run_id,
+                    action_name=action_name,
+                    project_path=runner_context.project.dir_path,
+                    trigger=trigger,
+                    dev_env=dev_env,
+                    payload={"run_id": run_id, "handler": handler.name, "error": error_str},
+                )
+            raise ActionFailedException(
+                f"Running action handler '{handler.name}' failed(Run {run_id}): {error_str}"
+            ) from exception
 
     end_time = time.time_ns()
     duration = (end_time - start_time) / 1_000_000

@@ -66,7 +66,10 @@ def start(
         / "runner"
         / "runner.log")
 
-    global_state.log_file_path = logs.setup_logging(log_level=log_level, log_file_path=log_file_path)
+    global_state.log_file_path = logs.setup_logging(
+        log_level=log_level,
+        log_file_path=log_file_path,
+    )
 
     if debug is True:
         logger.info(f"Started debugger on 127.0.0.1:{debug_port}")

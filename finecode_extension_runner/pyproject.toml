@@ -13,6 +13,8 @@ dependencies = [
     "debugpy==1.8.*",
     "ordered-set==4.1.*",
     "cattrs==26.1.*",
+    "opentelemetry-sdk==1.41.*",
+    "opentelemetry-exporter-otlp-proto-grpc==1.41.*",
 ]
 
 [dependency-groups]

@@ -32,7 +32,7 @@ from loguru import logger
 import finecode_jsonrpc as finecode_jsonrpc_module
 from finecode_extension_api import code_action
 from finecode_extension_api.interfaces import ifileeditor
-from finecode_extension_runner import context, er_wal, global_state, logs, schemas, services
+from finecode_extension_runner import context, er_telemetry, er_wal, global_state, logs, schemas, services
 from finecode_extension_runner._converter import converter as _converter
 from finecode_extension_runner._services import merge_results as merge_results_service
 from finecode_extension_runner._services import run_action as run_action_service
@@ -489,6 +489,13 @@ async def update_config(server: ErServer, params: dict | None) -> dict:
 
         if logging_config := config.get("logging"):
             logs.apply_logging_config(logging_config)
+
+        if telemetry_config := config.get("telemetry"):
+            er_telemetry.apply_telemetry_config(
+                telemetry_config,
+                project_path=global_state.project_dir_path,
+                env_name=global_state.env_name,
+            )
 
         async def _send_request_to_wm(method: str, req_params: dict):
             return await server.send_request_to_wm(method, req_params)

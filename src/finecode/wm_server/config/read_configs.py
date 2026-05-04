@@ -196,6 +196,30 @@ def read_wm_logging_config(workspace_root: Path) -> config_models.ErLoggingConfi
     return config_models.ErLoggingConfig(log_groups=log_groups)
 
 
+def read_wm_telemetry_config(workspace_root: Path) -> config_models.WmTelemetryConfig:
+    """Read WM telemetry config from [workspace.wm.telemetry] in finecode-workspace.toml.
+
+    FINECODE_OTLP_ENDPOINT env var overrides the file value (highest priority).
+    """
+    import os
+
+    otlp_endpoint: str | None = None
+
+    ws_config_path = workspace_root / "finecode-workspace.toml"
+    if ws_config_path.exists():
+        try:
+            with open(ws_config_path, "rb") as f:
+                ws_config = toml_loads(f.read()).unwrap()
+            telemetry_raw = ws_config.get("workspace", {}).get("wm", {}).get("telemetry", {})
+            otlp_endpoint = telemetry_raw.get("otlp_endpoint", None)
+        except Exception:
+            pass
+
+    otlp_endpoint = os.environ.get("FINECODE_OTLP_ENDPOINT") or otlp_endpoint
+
+    return config_models.WmTelemetryConfig(otlp_endpoint=otlp_endpoint)
+
+
 def read_env_configs(project_config: dict[str, Any]) -> dict[str, domain.EnvConfig]:
     env_configs: dict[str, domain.EnvConfig] = {}
 
@@ -333,8 +357,7 @@ async def get_preset_project_path(
                 "Preset "
                 f"{preset.source} is referenced in project {def_path.parent}, "
                 "but this preset package is not installed in the dev_workspace "
-                "environment. Add it to [tool.finecode.env.dev_workspace.dependencies] "
-                "or install it manually, then run prepare-envs again. "
+                "environment. "
                 f"Runner error: {error_message}"
             )
 
@@ -888,7 +911,20 @@ def add_extension_runner_to_dependencies(project_config: dict[str, Any]) -> None
     except KeyError:
         return
 
-    finecode_version = metadata.version("finecode")
+    try:
+        finecode_version = metadata.version("finecode")
+    except metadata.PackageNotFoundError:
+        # In editable/source-run setups package metadata for "finecode" may be
+        # unavailable (e.g. uv + python -m finecode). Fall back to source version.
+        try:
+            from finecode._version import version as finecode_version
+        except Exception:
+            # TODO: raise an error?
+            logger.warning(
+                "Could not resolve finecode version from package metadata or source; "
+                "skip automatic finecode_extension_runner pin injection"
+            )
+            return
 
     for group_name, group_packages in deps_groups.items():
         if group_name == "dev_workspace" or group_name == "runtime":

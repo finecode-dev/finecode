@@ -9,7 +9,7 @@ import typing
 import ordered_set
 from loguru import logger
 
-from finecode import user_messages
+from finecode import telemetry, user_messages
 from finecode.wm_server import find_project, context, domain, domain_helpers, wal
 from finecode.wm_server.runner import runner_manager
 from finecode.wm_server.runner import runner_client
@@ -273,104 +273,105 @@ async def run_with_partial_results(
     logger.trace(f"Run {action_name} in project {project_dir_path}")
     wal_run_id = wal.new_wal_run_id()
 
-    result: AsyncList[domain.PartialResultRawValue] = AsyncList()
-    progress_result: AsyncList[domain.ProgressRawValue] | None = None
-    if progress_token is not None:
-        progress_result = AsyncList()
-    ctx = RunWithPartialResultsContext(partials=result, progress=progress_result)
-    project = ws_context.ws_projects[project_dir_path]
-    try:
-        action_tasks: list[asyncio.Task] = []
-        async with asyncio.TaskGroup() as tg:
-            action = next(
-                action for action in project.actions if action.name == action_name
-            )
-            action_envs = ordered_set.OrderedSet(
-                [handler.env for handler in action.handlers]
-            )
-            for env_name in action_envs:
-                try:
-                    runner = await runner_manager.get_or_start_runner(
-                        project_def=project,
-                        env_name=env_name,
-                        ws_context=ws_context,
-                        initialize_all_handlers=initialize_all_handlers,
-                        action_names_to_initialize=[action_name],
-                    )
-                except runner_manager.RunnerFailedToStart as exception:
-                    raise ActionRunFailed(
-                        f"Runner {env_name} in project {project.dir_path} failed: {exception.message}"
-                    ) from exception
-
-                runner_partial_results_task = tg.create_task(
-                    get_partial_results(
-                        result_list=result,
-                        partial_result_token=partial_result_token,
-                        runner=runner,
-                    )
+    with telemetry.action_run_span(action_name, project_dir_path, wal_run_id):
+        result: AsyncList[domain.PartialResultRawValue] = AsyncList()
+        progress_result: AsyncList[domain.ProgressRawValue] | None = None
+        if progress_token is not None:
+            progress_result = AsyncList()
+        ctx = RunWithPartialResultsContext(partials=result, progress=progress_result)
+        project = ws_context.ws_projects[project_dir_path]
+        try:
+            action_tasks: list[asyncio.Task] = []
+            async with asyncio.TaskGroup() as tg:
+                action = next(
+                    action for action in project.actions if action.name == action_name
                 )
+                action_envs = ordered_set.OrderedSet(
+                    [handler.env for handler in action.handlers]
+                )
+                for env_name in action_envs:
+                    try:
+                        runner = await runner_manager.get_or_start_runner(
+                            project_def=project,
+                            env_name=env_name,
+                            ws_context=ws_context,
+                            initialize_all_handlers=initialize_all_handlers,
+                            action_names_to_initialize=[action_name],
+                        )
+                    except runner_manager.RunnerFailedToStart as exception:
+                        raise ActionRunFailed(
+                            f"Runner {env_name} in project {project.dir_path} failed: {exception.message}"
+                        ) from exception
 
-                runner_progress_task: asyncio.Task | None = None
-                if progress_token is not None and progress_result is not None:
-                    runner_progress_task = tg.create_task(
-                        get_progress(
-                            result_list=progress_result,
-                            progress_token=progress_token,
+                    runner_partial_results_task = tg.create_task(
+                        get_partial_results(
+                            result_list=result,
+                            partial_result_token=partial_result_token,
                             runner=runner,
                         )
                     )
 
-                action_task = tg.create_task(
-                    run_action_and_notify(
-                        action_name=action_name,
-                        params=params,
-                        partial_result_token=partial_result_token,
-                        runner=runner,
-                        run_trigger=run_trigger,
-                        dev_env=dev_env,
-                        wal_run_id=wal_run_id,
-                        result_formats=result_formats,
-                        progress_token=progress_token,
-                        caller_kwargs=caller_kwargs,
+                    runner_progress_task: asyncio.Task | None = None
+                    if progress_token is not None and progress_result is not None:
+                        runner_progress_task = tg.create_task(
+                            get_progress(
+                                result_list=progress_result,
+                                progress_token=progress_token,
+                                runner=runner,
+                            )
+                        )
+
+                    action_task = tg.create_task(
+                        run_action_and_notify(
+                            action_name=action_name,
+                            params=params,
+                            partial_result_token=partial_result_token,
+                            runner=runner,
+                            run_trigger=run_trigger,
+                            dev_env=dev_env,
+                            wal_run_id=wal_run_id,
+                            result_formats=result_formats,
+                            progress_token=progress_token,
+                            caller_kwargs=caller_kwargs,
+                        )
                     )
-                )
 
-                def _make_cleanup(
-                    partial_task: asyncio.Task,
-                    prog_task: asyncio.Task | None,
-                ) -> typing.Callable[[asyncio.Future], None]:
-                    def _cleanup(_fut: asyncio.Future) -> None:
-                        logger.trace(f"run_action_and_notify: ending result_list, cancelling partial_results_task for token={partial_result_token}")
-                        result.end()
-                        partial_task.cancel("Got final result")
-                        if progress_result is not None:
-                            progress_result.end()
-                        if prog_task is not None:
-                            prog_task.cancel("Got final result")
-                    return _cleanup
+                    def _make_cleanup(
+                        partial_task: asyncio.Task,
+                        prog_task: asyncio.Task | None,
+                    ) -> typing.Callable[[asyncio.Future], None]:
+                        def _cleanup(_fut: asyncio.Future) -> None:
+                            logger.trace(f"run_action_and_notify: ending result_list, cancelling partial_results_task for token={partial_result_token}")
+                            result.end()
+                            partial_task.cancel("Got final result")
+                            if progress_result is not None:
+                                progress_result.end()
+                            if prog_task is not None:
+                                prog_task.cancel("Got final result")
+                        return _cleanup
 
-                action_task.add_done_callback(
-                    _make_cleanup(runner_partial_results_task, runner_progress_task)
-                )
-                action_tasks.append(action_task)
+                    action_task.add_done_callback(
+                        _make_cleanup(runner_partial_results_task, runner_progress_task)
+                    )
+                    action_tasks.append(action_task)
 
-            yield ctx
-        # TaskGroup exited — all tasks completed, collect final responses
-        for task in action_tasks:
-            ctx.responses.append(task.result())
-    except ExceptionGroup as eg:
-        errors: list[str] = []
-        for exception in eg.exceptions:
-            if isinstance(exception, ActionRunFailed):
-                errors.append(exception.message)
-            else:
-                errors.append(str(exception))
-                logger.error("Unexpected exception:")
-                logger.exception(exception)
-        errors_str = ", ".join(errors)
-        raise ActionRunFailed(
-            f"Run of {action_name} in {project.dir_path} failed: {errors_str}. See logs for more details"
-        ) from eg
+                yield ctx
+            # TaskGroup exited — all tasks completed, collect final responses
+            for task in action_tasks:
+                ctx.responses.append(task.result())
+        except ExceptionGroup as eg:
+            errors: list[str] = []
+            for exception in eg.exceptions:
+                if isinstance(exception, ActionRunFailed):
+                    errors.append(exception.message)
+                else:
+                    errors.append(str(exception))
+                    logger.error("Unexpected exception:")
+                    logger.exception(exception)
+            errors_str = ", ".join(errors)
+            raise ActionRunFailed(
+                f"Run of {action_name} in {project.dir_path} failed: {errors_str}. See logs for more details"
+            ) from eg
 
 
 @contextlib.asynccontextmanager
@@ -722,75 +723,57 @@ async def run_action(
     else:
         _result_formats = result_formats
 
-    if project_def.status != domain.ProjectStatus.CONFIG_VALID:
+    with telemetry.action_metrics(action_name, project_def.dir_path.name), telemetry.action_run_span(action_name, project_def.dir_path, wal_run_id):
+        if project_def.status != domain.ProjectStatus.CONFIG_VALID:
+            wal.emit_run_event(
+                ws_context.wal_writer,
+                event_type=wal.WalEventType.RUN_REJECTED,
+                wal_run_id=wal_run_id,
+                action_name=action_name,
+                project_path=project_def.dir_path,
+                run_trigger=run_trigger.value,
+                dev_env=dev_env.value,
+                payload=wal.RunRejectedPayload(reason="invalid_project_config"),
+            )
+            raise ActionRunFailed(
+                f"Project {project_def.dir_path} has no valid configuration and finecode."
+                + " Please check logs."
+            )
+
         wal.emit_run_event(
             ws_context.wal_writer,
-            event_type=wal.WalEventType.RUN_REJECTED,
+            event_type=wal.WalEventType.RUN_ACCEPTED,
             wal_run_id=wal_run_id,
             action_name=action_name,
             project_path=project_def.dir_path,
             run_trigger=run_trigger.value,
             dev_env=dev_env.value,
-            payload=wal.RunRejectedPayload(reason="invalid_project_config"),
-        )
-        raise ActionRunFailed(
-            f"Project {project_def.dir_path} has no valid configuration and finecode."
-            + " Please check logs."
+            payload=wal.RunAcceptedPayload(params_hash=wal.params_hash(params)),
         )
 
-    wal.emit_run_event(
-        ws_context.wal_writer,
-        event_type=wal.WalEventType.RUN_ACCEPTED,
-        wal_run_id=wal_run_id,
-        action_name=action_name,
-        project_path=project_def.dir_path,
-        run_trigger=run_trigger.value,
-        dev_env=dev_env.value,
-        payload=wal.RunAcceptedPayload(params_hash=wal.params_hash(params)),
-    )
+        payload = params
 
-    payload = params
-
-    # cases:
-    # - base: all action handlers are in one env
-    #   -> send `run_action` request to runner in env and let it handle concurrency etc.
-    #      It could be done also in workspace manager, but handlers share run context
-    # - mixed envs: action handlers are in different envs
-    # -- concurrent execution of handlers
-    # -- sequential execution of handlers
-    action = next(
-        action for action in project_def.actions if action.name == action_name
-    )
-    all_handlers_envs = ordered_set.OrderedSet(
-        [handler.env for handler in action.handlers]
-    )
-    all_handlers_are_in_one_env = len(all_handlers_envs) == 1
-
-    if all_handlers_are_in_one_env:
-        env_name = all_handlers_envs[0]
-        response = await _run_action_in_env_runner(
-            action_name=action_name,
-            payload=payload,
-            env_name=env_name,
-            project_def=project_def,
-            ws_context=ws_context,
-            run_trigger=run_trigger,
-            dev_env=dev_env,
-            result_formats=_result_formats,
-            initialize_all_handlers=initialize_all_handlers,
-            progress_token=progress_token,
-            wal_run_id=wal_run_id,
-            orchestration_depth=orchestration_depth,
-            caller_kwargs=caller_kwargs,
+        # cases:
+        # - base: all action handlers are in one env
+        #   -> send `run_action` request to runner in env and let it handle concurrency etc.
+        #      It could be done also in workspace manager, but handlers share run context
+        # - mixed envs: action handlers are in different envs
+        # -- concurrent execution of handlers
+        # -- sequential execution of handlers
+        action = next(
+            action for action in project_def.actions if action.name == action_name
         )
-    else:
-        run_concurrently = action.runs_concurrently
+        all_handlers_envs = ordered_set.OrderedSet(
+            [handler.env for handler in action.handlers]
+        )
+        all_handlers_are_in_one_env = len(all_handlers_envs) == 1
 
-        if run_concurrently:
-            response = await _run_multi_env_concurrent(
+        if all_handlers_are_in_one_env:
+            env_name = all_handlers_envs[0]
+            response = await _run_action_in_env_runner(
                 action_name=action_name,
-                action=action,
                 payload=payload,
+                env_name=env_name,
                 project_def=project_def,
                 ws_context=ws_context,
                 run_trigger=run_trigger,
@@ -803,23 +786,42 @@ async def run_action(
                 caller_kwargs=caller_kwargs,
             )
         else:
-            response = await _run_multi_env_sequential(
-                action_name=action_name,
-                action=action,
-                payload=payload,
-                project_def=project_def,
-                ws_context=ws_context,
-                run_trigger=run_trigger,
-                dev_env=dev_env,
-                result_formats=_result_formats,
-                initialize_all_handlers=initialize_all_handlers,
-                progress_token=progress_token,
-                wal_run_id=wal_run_id,
-                orchestration_depth=orchestration_depth,
-                caller_kwargs=caller_kwargs,
-            )
+            run_concurrently = action.runs_concurrently
 
-    return response
+            if run_concurrently:
+                response = await _run_multi_env_concurrent(
+                    action_name=action_name,
+                    action=action,
+                    payload=payload,
+                    project_def=project_def,
+                    ws_context=ws_context,
+                    run_trigger=run_trigger,
+                    dev_env=dev_env,
+                    result_formats=_result_formats,
+                    initialize_all_handlers=initialize_all_handlers,
+                    progress_token=progress_token,
+                    wal_run_id=wal_run_id,
+                    orchestration_depth=orchestration_depth,
+                    caller_kwargs=caller_kwargs,
+                )
+            else:
+                response = await _run_multi_env_sequential(
+                    action_name=action_name,
+                    action=action,
+                    payload=payload,
+                    project_def=project_def,
+                    ws_context=ws_context,
+                    run_trigger=run_trigger,
+                    dev_env=dev_env,
+                    result_formats=_result_formats,
+                    initialize_all_handlers=initialize_all_handlers,
+                    progress_token=progress_token,
+                    wal_run_id=wal_run_id,
+                    orchestration_depth=orchestration_depth,
+                    caller_kwargs=caller_kwargs,
+                )
+
+        return response
 
 
 async def _run_action_in_env_runner(
@@ -849,13 +851,14 @@ async def _run_action_in_env_runner(
     )
 
     try:
-        runner = await runner_manager.get_or_start_runner(
-            project_def=project_def,
-            env_name=env_name,
-            ws_context=ws_context,
-            initialize_all_handlers=initialize_all_handlers,
-            action_names_to_initialize=[action_name],
-        )
+        with telemetry.runner_start_span(env_name):
+            runner = await runner_manager.get_or_start_runner(
+                project_def=project_def,
+                env_name=env_name,
+                ws_context=ws_context,
+                initialize_all_handlers=initialize_all_handlers,
+                action_names_to_initialize=[action_name],
+            )
     except runner_manager.RunnerFailedToStart as exception:
         raise ActionRunFailed(
             f"Runner {env_name} in project {project_def.dir_path} failed: {exception.message}"
@@ -884,12 +887,13 @@ async def _run_action_in_env_runner(
                 env_name=env_name,
             ),
         )
-        response = await runner_client.run_action(
-            runner=runner,
-            action_name=action_name,
-            params=payload,
-            options=options,
-        )
+        with telemetry.er_dispatch_span(env_name, runner.readable_id):
+            response = await runner_client.run_action(
+                runner=runner,
+                action_name=action_name,
+                params=payload,
+                options=options,
+            )
         wal.emit_run_event(
             ws_context.wal_writer,
             event_type=wal.WalEventType.RUN_COMPLETED,

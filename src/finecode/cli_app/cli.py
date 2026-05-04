@@ -269,7 +269,13 @@ def run(ctx) -> None:
             break
         processed_args_count += 1
 
-    logger_utils.init_logger(log_name="cli", log_level=log_level, stdout=True)
+    from finecode.wm_server.config import read_configs
+    wm_telemetry = read_configs.read_wm_telemetry_config(workdir_path)
+    logger_utils.init_logger(
+        log_name="cli", log_level=log_level, stdout=True,
+        workspace_path=workdir_path,
+        otlp_endpoint=wm_telemetry.otlp_endpoint,
+    )
 
     if wal_enabled is None:
         wal_enabled = _parse_env_bool("FINECODE_WAL_ENABLED", False)
@@ -405,7 +411,14 @@ def prepare_envs(log_level: str, debug: bool, recreate: bool, shared_server: boo
         except Exception as e:
             logger.info(e)
 
-    logger_utils.init_logger(log_name="cli", log_level=log_level, stdout=True)
+    from finecode.wm_server.config import read_configs
+    _cwd = pathlib.Path(os.getcwd())
+    wm_telemetry = read_configs.read_wm_telemetry_config(_cwd)
+    logger_utils.init_logger(
+        log_name="cli", log_level=log_level, stdout=True,
+        workspace_path=_cwd,
+        otlp_endpoint=wm_telemetry.otlp_endpoint,
+    )
     user_messages._notification_sender = show_user_message
 
     try:
@@ -446,7 +459,14 @@ def bootstrap(recreate: bool, log_level: str) -> None:
 
     from finecode.cli_app.commands import bootstrap_cmd
 
-    logger_utils.init_logger(log_name="cli", log_level=log_level, stdout=True)
+    from finecode.wm_server.config import read_configs
+    _cwd = pathlib.Path(os.getcwd())
+    wm_telemetry = read_configs.read_wm_telemetry_config(_cwd)
+    logger_utils.init_logger(
+        log_name="cli", log_level=log_level, stdout=True,
+        workspace_path=_cwd,
+        otlp_endpoint=wm_telemetry.otlp_endpoint,
+    )
     user_messages._notification_sender = show_user_message
 
     try:
@@ -488,7 +508,14 @@ def dump_config(log_level: str, debug: bool, project: str | None, shared_server:
         click.echo("--project parameter is required", err=True)
         return
 
-    logger_utils.init_logger(log_name="cli", log_level=log_level, stdout=True)
+    from finecode.wm_server.config import read_configs
+    _cwd = pathlib.Path(os.getcwd())
+    wm_telemetry = read_configs.read_wm_telemetry_config(_cwd)
+    logger_utils.init_logger(
+        log_name="cli", log_level=log_level, stdout=True,
+        workspace_path=_cwd,
+        otlp_endpoint=wm_telemetry.otlp_endpoint,
+    )
     user_messages._notification_sender = show_user_message
 
     try:

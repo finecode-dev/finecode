@@ -27,9 +27,14 @@ finecode = "finecode.cli:cli"
 
 [dependency-groups]
 dev_workspace = [
-    "finecode~=0.3.0a0",
-    "finecode_dev_common_preset~=0.3.0a0",
+    # `finecode` and `finecode_dev_common_preset` have no version, because they
+    # are always installed as editables
+    "finecode",
+    "finecode_dev_common_preset",
     "debugpy==1.8.*",
+    "opentelemetry-sdk==1.41.*",
+    "opentelemetry-exporter-otlp-proto-grpc==1.41.*",
+    "opentelemetry-instrumentation==0.62.*"
 ]
 dev = ["finecode", "psutil==7.2.*", "debugpy==1.8.*"]
 docs = [
