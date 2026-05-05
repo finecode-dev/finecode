@@ -333,6 +333,12 @@ async def _handle_client(
                     writer, _jsonrpc_error(req_id, NOT_IMPLEMENTED_CODE, str(exc))
                 )
                 await writer.drain()
+            except ValueError as exc:
+                logger.warning(f"FineCode API: invalid request for {method}: {exc}")
+                _write_message(
+                    writer, _jsonrpc_error(req_id, -32602, str(exc))
+                )
+                await writer.drain()
             except Exception as exc:
                 logger.exception(f"FineCode API: error handling {method} (client: {label})")
                 _write_message(
