@@ -1,11 +1,13 @@
 [project]
-name = "fine_python_isort"
-version = "0.3.0a1"
+name = "fine_python_lang"
+version = "0.1.0a1"
 description = ""
 authors = [{ name = "Vladyslav Hnatiuk", email = "aders1234@gmail.com" }]
 readme = "README.md"
-requires-python = ">= 3.11, <= 3.14"
-dependencies = ["finecode_extension_api~=0.4.0a0", "fine_python_lang~=0.1.0a0", "isort (>=5.13, <6)"]
+requires-python = ">=3.11, < 3.15"
+dependencies = [
+    "finecode_extension_api~=0.4.0a0",
+]
 
 [dependency-groups]
 dev_workspace = ["finecode~=0.4.0a0", "finecode_dev_common_preset~=0.3.0a0"]
@@ -14,4 +16,4 @@ dev_workspace = ["finecode~=0.4.0a0", "finecode_dev_common_preset~=0.3.0a0"]
 presets = [{ source = "finecode_dev_common_preset" }]
 
 [tool.setuptools]
-packages = ["fine_python_isort"]
+packages = ["fine_python_lang"]

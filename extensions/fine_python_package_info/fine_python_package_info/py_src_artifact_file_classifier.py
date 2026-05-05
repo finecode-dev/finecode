@@ -1,6 +1,6 @@
 import pathlib
 
-from fine_python_package_info import ipypackagelayoutinfoprovider
+from fine_python_lang import ipypackagelayoutinfoprovider
 from finecode_extension_api import service
 from finecode_extension_api.interfaces import (iprojectinfoprovider,
                                                isrcartifactfileclassifier)

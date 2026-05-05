@@ -7,7 +7,7 @@ import isort.api as isort_api
 import isort.settings as isort_settings
 from finecode_extension_api import code_action
 from finecode_extension_api.actions.code_quality import format_file_action
-from finecode_extension_api.actions.code_quality.format_python_file_action import (
+from fine_python_lang.format_python_file_action import (
     FormatPythonFileAction,
 )
 from finecode_extension_api.interfaces import ilogger, iprocessexecutor

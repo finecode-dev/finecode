@@ -9,7 +9,7 @@ from finecode_extension_api import code_action
 from finecode_extension_api.actions.artifact import list_src_artifact_files_by_lang_action
 from finecode_extension_api.resource_uri import ResourceUri, path_to_resource_uri
 
-from fine_python_package_info import ipypackagelayoutinfoprovider
+from fine_python_lang import ipypackagelayoutinfoprovider
 
 
 @dataclasses.dataclass

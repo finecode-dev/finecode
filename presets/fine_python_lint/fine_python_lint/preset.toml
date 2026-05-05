@@ -1,5 +1,5 @@
 [tool.finecode.action.lint_python_files]
-source = "finecode_extension_api.actions.LintPythonFilesAction"
+source = "fine_python_lang.LintPythonFilesAction"
 handlers = [
     { name = "ruff", source = "fine_python_ruff.RuffLintFilesHandler", env = "dev_no_runtime", dependencies = [
         "fine_python_ruff[jsonrpc]~=0.2.0a0",
@@ -13,7 +13,7 @@ handlers = [
 ]
 
 [tool.finecode.action.get_lint_fixes_python_files]
-source = "finecode_extension_api.actions.GetLintFixesPythonFilesAction"
+source = "fine_python_lang.GetLintFixesPythonFilesAction"
 handlers = [
     { name = "ruff", source = "fine_python_ruff.RuffGetLintFixesHandler", env = "dev_no_runtime", dependencies = [
         "fine_python_ruff[jsonrpc]~=0.2.0a0",

@@ -9,7 +9,7 @@ from finecode_extension_api.interfaces import (
 )
 from finecode_extension_api import service
 
-from fine_python_package_info import ipypackagelayoutinfoprovider
+from fine_python_lang import ipypackagelayoutinfoprovider
 
 class ConfigParseError(Exception):
     def __init__(self, message: str) -> None:

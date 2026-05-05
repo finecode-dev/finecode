@@ -12,7 +12,7 @@ from finecode_extension_api.actions.code_quality.get_lint_fixes_action import (
     GetLintFixesRunPayload,
     GetLintFixesRunResult,
 )
-from finecode_extension_api.actions.code_quality.get_lint_fixes_python_files_action import (
+from fine_python_lang.get_lint_fixes_python_files_action import (
     GetLintFixesPythonFilesAction,
 )
 from finecode_extension_api.actions.code_quality.lint_fix import (

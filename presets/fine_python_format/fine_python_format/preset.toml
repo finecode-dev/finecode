@@ -1,3 +1,4 @@
+# TODO: move in general 'format'
 [tool.finecode.action.format_file]
 source = "finecode_extension_api.actions.FormatFileAction"
 handlers = [
@@ -10,7 +11,7 @@ handlers = [
 ]
 
 [tool.finecode.action.format_python_file]
-source = "finecode_extension_api.actions.FormatPythonFileAction"
+source = "fine_python_lang.FormatPythonFileAction"
 handlers = [
     # ruff formatter doesn't handle imports, run isort to sort them first
     { name = "isort", source = "fine_python_isort.IsortFormatFileHandler", env = "dev_no_runtime", dependencies = [

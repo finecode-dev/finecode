@@ -1,5 +1,5 @@
+from fine_python_lang import ipypackagelayoutinfoprovider
 from fine_python_package_info import (
-    ipypackagelayoutinfoprovider,
     py_package_layout_info_provider,
     py_src_artifact_file_classifier,
 )
