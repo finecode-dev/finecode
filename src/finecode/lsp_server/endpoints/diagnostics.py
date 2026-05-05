@@ -16,20 +16,6 @@ if TYPE_CHECKING:
     from finecode.lsp_server.lsp_server import LspServer
 
 
-async def _find_project_dir_for_file(file_path: Path) -> str | None:
-    """Return the absolute directory path of the project containing *file_path*.
-
-    This helper delegates the lookup to the WM server via
-    ``workspace/findProjectForFile``; the server applies the same logic that
-    would otherwise live locally.  ``None`` is returned if the file does not
-    belong to any known project.
-    """
-    # delegate the resolution to the WM server
-    assert global_state.wm_client is not None, "WM client required for project lookup"
-    project = await global_state.wm_client.find_project_for_file(str(file_path))
-    return project
-
-
 def map_lint_message_to_diagnostic(
     lint_message: lint_action.LintMessage,
 ) -> types.Diagnostic:
@@ -70,17 +56,12 @@ async def document_diagnostic_with_full_result(
         logger.error("Diagnostics requested but WM client not connected")
         return None
 
-    project_dir = await _find_project_dir_for_file(file_path)
-    if project_dir is None:
-        logger.error(f"Cannot determine project for diagnostics: {file_path}")
-        return None
-
     file_uri = file_path.as_uri()
 
     try:
         response = await global_state.wm_client.run_action(
             action_source="finecode_extension_api.actions.LintAction",
-            project=project_dir,
+            project="",
             params={
                 "target": "files",
                 "file_paths": [file_uri],
@@ -141,19 +122,14 @@ async def document_diagnostic_with_partial_results(
         logger.error("Diagnostics requested but WM client not connected")
         return None
 
-    project_dir = await _find_project_dir_for_file(file_path)
-    if project_dir is None:
-        logger.error(f"Cannot determine project for diagnostics: {file_path}")
-        return None
-
     # Store the expected response type for this token
     global_state.partial_result_tokens[partial_result_token] = ("finecode_extension_api.actions.LintAction", "document_diagnostic")
 
     try:
         await global_state.wm_client.run_action(
             action_source="finecode_extension_api.actions.LintAction",
-            project=project_dir,
-            params={"file_paths": [file_path.as_uri()]},
+            project="",
+            params={"target": "files", "file_paths": [file_path.as_uri()]},
             options={"resultFormats": ["json"], "trigger": "system", "devEnv": "ide"},
             partial_result_token=str(partial_result_token),
         )
