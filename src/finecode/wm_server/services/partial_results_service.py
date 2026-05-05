@@ -15,6 +15,7 @@ import uuid
 from loguru import logger
 
 from finecode.wm_server import context, domain
+from finecode.wm_server.context import pick_workspace_root_dir
 from finecode.wm_server.runner import runner_client
 from finecode.wm_server.services.run_service import (
     find_all_projects_with_action,
@@ -172,10 +173,28 @@ async def run_action_with_partial_results(
         projects = [project]
     else:
         paths = find_all_projects_with_action(action_name, ws_context)
-        projects = [
+        all_projects = [
             p for path in paths
             if isinstance(p := ws_context.ws_projects[path], domain.CollectedProject)
         ]
+        # For workspace-scoped actions, run in the workspace root project only.
+        first_action = next(
+            (a for proj in all_projects for a in proj.actions if a.name == action_name),
+            None,
+        )
+        if first_action is not None and first_action.scope == domain.ActionScope.WORKSPACE:
+            workspace_root = pick_workspace_root_dir(ws_context)
+            root_project = ws_context.ws_projects.get(workspace_root) if workspace_root else None
+            if isinstance(root_project, domain.CollectedProject):
+                projects = [root_project]
+            else:
+                logger.warning(
+                    f"Workspace-scoped action '{action_name}': no project at workspace root, "
+                    f"falling back to first declaring project"
+                )
+                projects = all_projects[:1] if all_projects else []
+        else:
+            projects = all_projects
 
     # start runners so that run_with_partial_results can attach
     await start_required_environments(

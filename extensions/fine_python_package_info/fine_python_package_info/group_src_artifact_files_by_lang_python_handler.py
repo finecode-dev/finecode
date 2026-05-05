@@ -7,7 +7,7 @@ import pathlib
 
 from finecode_extension_api import code_action
 from finecode_extension_api.actions.artifact import group_src_artifact_files_by_lang_action
-from finecode_extension_api.resource_uri import ResourceUri, path_to_resource_uri
+from finecode_extension_api.resource_uri import ResourceUri, resource_uri_to_path
 
 from fine_python_package_info import ipypackagelayoutinfoprovider
 
@@ -49,24 +49,17 @@ class GroupSrcArtifactFilesByLangPythonHandler(
         payload: group_src_artifact_files_by_lang_action.GroupSrcArtifactFilesByLangRunPayload,
         run_context: group_src_artifact_files_by_lang_action.GroupSrcArtifactFilesByLangRunContext,
     ) -> group_src_artifact_files_by_lang_action.GroupSrcArtifactFilesByLangRunResult:
-        # TODO
-        py_files: list[pathlib.Path] = []
         project_package_src_root_dir_path = (
             await self.py_package_layout_info_provider.get_package_src_root_dir_path(
                 package_dir_path=self.current_project_dir_path
             )
         )
-        py_files += list(project_package_src_root_dir_path.rglob("*.py"))
 
+        python_dirs: list[pathlib.Path] = [project_package_src_root_dir_path]
         if self.scripts_dir_path.exists():
-            py_files += list(self.scripts_dir_path.rglob("*.py"))
-
+            python_dirs.append(self.scripts_dir_path)
         if self.tests_dir_path.exists():
-            py_files += list(self.tests_dir_path.rglob("*.py"))
-
-        if self.setup_py_path.exists():
-            py_files.append(self.setup_py_path)
-
+            python_dirs.append(self.tests_dir_path)
         if self.config.additional_dirs is not None:
             for dir_path in self.config.additional_dirs:
                 dir_absolute_path = self.current_project_dir_path / dir_path
@@ -75,12 +68,19 @@ class GroupSrcArtifactFilesByLangPythonHandler(
                         f"Skip {dir_path} because {dir_absolute_path} doesn't exist"
                     )
                     continue
+                python_dirs.append(dir_absolute_path)
 
-                py_files += list(dir_absolute_path.rglob("*.py"))
+        py_uris: list[ResourceUri] = []
+        for uri in payload.file_paths:
+            file_path = resource_uri_to_path(uri)
+            if file_path.suffix != ".py":
+                continue
+            if file_path == self.setup_py_path:
+                py_uris.append(uri)
+                continue
+            if any(file_path.is_relative_to(d) for d in python_dirs):
+                py_uris.append(uri)
 
-        py_uris: list[ResourceUri] = [
-            path_to_resource_uri(p) for p in py_files
-        ]
         return group_src_artifact_files_by_lang_action.GroupSrcArtifactFilesByLangRunResult(
             files_by_lang={"python": py_uris}
         )

@@ -55,6 +55,19 @@ flowchart LR
 
 **Concurrent mode** (`HANDLER_EXECUTION = HandlerExecution.CONCURRENT`): all handlers run in parallel and results are merged afterward. Accessing `context.current_result` in concurrent mode raises `RuntimeError`. Useful for independent linters.
 
+### Project scope vs. workspace scope
+
+An action declares its **execution scope** via `SCOPE`:
+
+- `ActionScope.PROJECT` (default): the WM dispatches the action once per project that declares it. This is the right choice for most actions where each project is self-contained.
+- `ActionScope.WORKSPACE`: the WM dispatches the action exactly once, routing it to the workspace root project. The handler receives the full workspace context and is responsible for orchestrating per-project work internally (e.g. fanning out `LintFilesAction` to each project). Use this when an action must reason about all projects together — see [ADR-0035](adr/0035-action-declares-execution-scope-project-or-workspace.md) and the `LintAction` example in [Designing Actions Guide](guides/designing-actions-guide.md).
+
+```python
+class LintAction(code_action.Action[LintRunPayload, LintRunContext, LintRunResult]):
+    SCOPE = code_action.ActionScope.WORKSPACE
+    ...
+```
+
 ## Service
 
 A **Service** is a long-lived dependency that handlers (and other services) can request via dependency injection. The Extension Runner resolves services by type annotation and injects them into handler constructors.

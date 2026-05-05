@@ -73,3 +73,18 @@ class CachedAction:
     action_id: str
     project_path: Path
     action_source: str
+
+
+def pick_workspace_root_dir(ws_context: WorkspaceContext) -> Path | None:
+    """Return the workspace root directory.
+
+    Single ws dir → return it directly.
+    Multiple ws dirs → return the one containing finecode-workspace.toml.
+    Returns None when multiple dirs exist and none has finecode-workspace.toml.
+    """
+    if len(ws_context.ws_dirs_paths) == 1:
+        return ws_context.ws_dirs_paths[0]
+    for ws_dir in ws_context.ws_dirs_paths:
+        if (ws_dir / "finecode-workspace.toml").exists():
+            return ws_dir
+    return None

@@ -2,12 +2,17 @@ from __future__ import annotations
 
 import dataclasses
 import typing
-from enum import Enum, auto
+from enum import Enum, StrEnum, auto
 from pathlib import Path
 
 import ordered_set
 
 from finecode.wm_server.config.config_models import ErLoggingConfig
+
+
+class ActionScope(StrEnum):
+    PROJECT = "project"
+    WORKSPACE = "workspace"
 
 
 class Preset:
@@ -93,6 +98,7 @@ class Action:
         # Canonical (fully qualified) import path resolved by the Extension Runner
         # at startup. May differ from source when source is a re-exported path.
         self.canonical_source: str | None = None
+        self.scope: ActionScope = ActionScope.PROJECT
         # True when the action declares CONCURRENT handler execution.
         self.runs_concurrently: bool = False
         self.handlers: list[ActionHandler] = handlers

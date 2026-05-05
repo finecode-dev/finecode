@@ -263,11 +263,11 @@ method names.
 
 - `workspace/getProjectPaths`
   - Params: `{}`
-  - Result: `{ "projectPaths": ["/abs/path/to/project", ...] }`
-  - Returns the directory paths of all projects currently known to the WM.
-    Used by handlers that need to group files by owning project (e.g. bridge
-    handlers that fan out an action across only the projects that own the
-    relevant files).
+  - Result: `{ "projects": [{ "path": "/abs/path/to/project", "configStatus": "valid" }, ...] }`
+  - `configStatus` is one of `"valid"` (has FineCode config), `"no_config"` (no
+    FineCode config, expected), or `"invalid"` (config present but invalid).
+  - Returns all projects currently known to the WM with their config status.
+    Handlers that need to run actions should filter to `"valid"` projects only.
 
 - `finecode/runActionInProject`
   - Params:

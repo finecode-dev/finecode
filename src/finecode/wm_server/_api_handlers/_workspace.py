@@ -326,6 +326,7 @@ async def _handle_list_actions(
             actions.append({
                 "name": action.name,
                 "source": action.source,
+                "scope": action.scope.value,
                 "project": str(project.dir_path),
                 "handlers": [
                     {"name": h.name, "source": h.source, "env": h.env}

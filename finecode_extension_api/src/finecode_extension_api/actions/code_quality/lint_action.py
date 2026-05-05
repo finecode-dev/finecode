@@ -15,9 +15,11 @@ class LintTarget(enum.StrEnum):
 @dataclasses.dataclass
 class LintRunPayload(code_action.RunActionPayload):
     target: LintTarget = LintTarget.PROJECT
-    """Scope of linting: 'project' (default) lints the whole project, 'files' lints only file_paths."""
+    """Scope of linting: 'project' (default) lints the whole workspace, 'files' lints only file_paths."""
     file_paths: list[ResourceUri] = dataclasses.field(default_factory=list)
     """Files to lint (``file://`` URIs). Only used when target is 'files'."""
+    project_paths: list[ResourceUri] | None = None
+    """Restrict the workspace operation to these project root URIs (``file://`` URIs). None means the whole workspace."""
 
 
 @dataclasses.dataclass
@@ -30,9 +32,8 @@ class LintRunContext(
 
 
 class LintAction(code_action.Action[LintRunPayload, LintRunContext, LintRunResult]):
-    """Run linters on a project or specific files and report diagnostics."""
-
-    DESCRIPTION = "Run linters on a project or specific files and report diagnostics."
+    DESCRIPTION = "Run linters across the workspace and report diagnostics."
+    SCOPE = code_action.ActionScope.WORKSPACE
     PAYLOAD_TYPE = LintRunPayload
     RUN_CONTEXT_TYPE = LintRunContext
     RESULT_TYPE = LintRunResult

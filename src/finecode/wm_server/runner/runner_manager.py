@@ -256,10 +256,20 @@ async def _start_extension_runner_process(
         get_workspace_editable_packages,
     )
 
+    _PROJECT_STATUS_MAP = {
+        domain.ProjectStatus.CONFIG_VALID: "valid",
+        domain.ProjectStatus.NO_FINECODE: "no_config",
+        domain.ProjectStatus.CONFIG_INVALID: "invalid",
+    }
+
     async def get_workspace_project_paths(_params):
         return {
-            "projectPaths": [
-                str(p.dir_path) for p in ws_context.ws_projects.values()
+            "projects": [
+                {
+                    "path": str(p.dir_path),
+                    "configStatus": _PROJECT_STATUS_MAP.get(p.status, "invalid"),
+                }
+                for p in ws_context.ws_projects.values()
             ]
         }
 
@@ -768,6 +778,9 @@ async def update_runner_config(
         if action.canonical_source is None:
             action.canonical_source = meta["canonical_source"]
         action.runs_concurrently = meta["runs_concurrently"]
+        action.scope = domain.ActionScope(
+            meta.get("scope", domain.ActionScope.PROJECT.value)
+        )
 
     ws_context.ws_action_schemas.pop(project.dir_path, None)
     logger.debug(f"Updated config of runner {runner.readable_id}")

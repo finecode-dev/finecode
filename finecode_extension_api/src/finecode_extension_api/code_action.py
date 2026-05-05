@@ -367,6 +367,11 @@ class HandlerExecution(enum.Enum):
     CONCURRENT = "concurrent"
 
 
+class ActionScope(enum.StrEnum):
+    PROJECT = "project"
+    WORKSPACE = "workspace"
+
+
 @dataclasses.dataclass
 class ActionConfig: ...
 
@@ -378,6 +383,7 @@ class Action(Generic[RunPayloadType, RunContextType, RunResultType]):
     CONFIG_TYPE: type[ActionConfig] = ActionConfig
     LANGUAGE: ClassVar[str | None] = None
     PARENT_ACTION: ClassVar[type[Action] | None] = None
+    SCOPE: ClassVar[ActionScope] = ActionScope.PROJECT
     HANDLER_EXECUTION: ClassVar[HandlerExecution] = HandlerExecution.SEQUENTIAL
     DESCRIPTION: ClassVar[str] = ""
 

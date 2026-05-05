@@ -9,6 +9,7 @@ from loguru import logger
 
 from finecode.wm_server import context, domain
 from finecode.wm_server._jsonrpc import _write_message
+from finecode.wm_server.context import pick_workspace_root_dir as _pick_workspace_root_dir
 
 
 # ---------------------------------------------------------------------------
@@ -171,30 +172,48 @@ async def _parse_and_validate_run_action_params(
     from finecode.wm_server.services import run_service
 
     action_source = params.get("actionSource")
-    project_name = params.get("project")
+    project_name = params.get("project", "")
     action_params = params.get("params", {})
     options = params.get("options", {})
 
     if not action_source:
         raise ValueError("actionSource parameter is required")
-    if not project_name:
-        raise ValueError("project parameter is required")
 
-    # Find the project by its absolute directory path (canonical external identifier)
-    project = _find_project_by_path(ws_context, project_name)
-    if project is None:
-        raise ValueError(f"Project '{project_name}' not found")
-    if not isinstance(project, domain.CollectedProject):
-        raise ValueError(
-            f"Project '{project_name}' actions are not collected yet. "
-            "Ensure the project is initialized before running actions."
+    if project_name:
+        # Explicit project path — find it and validate.
+        project = _find_project_by_path(ws_context, project_name)
+        if project is None:
+            raise ValueError(f"Project '{project_name}' not found")
+        if not isinstance(project, domain.CollectedProject):
+            raise ValueError(
+                f"Project '{project_name}' actions are not collected yet. "
+                "Ensure the project is initialized before running actions."
+            )
+        action = await find_action_by_source(project.actions, action_source, project, ws_context)
+        if action is None:
+            raise ValueError(
+                f"Action with source '{action_source}' not found in project '{project_name}'"
+            )
+        if action.scope == domain.ActionScope.WORKSPACE:
+            raise ValueError(
+                f"Action '{action_source}' is workspace-scoped; do not pass a project path."
+            )
+    else:
+        # No project specified — valid only for workspace-scoped actions.
+        workspace_root = _pick_workspace_root_dir(ws_context)
+        root_project = ws_context.ws_projects.get(workspace_root) if workspace_root else None
+        if not isinstance(root_project, domain.CollectedProject):
+            raise ValueError("project parameter is required")
+        action = await find_action_by_source(
+            root_project.actions, action_source, root_project, ws_context
         )
-
-    action = await find_action_by_source(project.actions, action_source, project, ws_context)
-    if action is None:
-        raise ValueError(
-            f"Action with source '{action_source}' not found in project '{project_name}'"
-        )
+        if action is None:
+            raise ValueError(
+                f"Action with source '{action_source}' not found in workspace root project"
+            )
+        if action.scope != domain.ActionScope.WORKSPACE:
+            raise ValueError("project parameter is required")
+        project = root_project
 
     result_format_strs: list[str] = options.get("resultFormats", ["json"])
     result_formats = [
@@ -294,6 +313,17 @@ async def _resolve_actions_by_project(
             actions_by_project[project.dir_path] = project_action_names
     else:
         # Auto-discover: find projects that have at least one of the requested actions.
+        # For workspace-scoped actions, restrict to the workspace root project so the
+        # action runs exactly once.
+        workspace_root = _pick_workspace_root_dir(ws_context)
+        workspace_root_project = (
+            ws_context.ws_projects.get(workspace_root)
+            if workspace_root is not None
+            else None
+        )
+        has_workspace_root_project = isinstance(workspace_root_project, domain.CollectedProject)
+        unrooted_ws_sources: set[str] = set()
+
         actions_by_project = {}
         for project in ws_context.ws_projects.values():
             if not isinstance(project, domain.CollectedProject):
@@ -303,11 +333,26 @@ async def _resolve_actions_by_project(
                 action = await find_action_by_source(
                     project.actions, source, project, ws_context
                 )
-                if action is not None:
-                    project_action_names.append(action.name)
-                    name_to_source[action.name] = source
+                if action is None:
+                    continue
+                if action.scope == domain.ActionScope.WORKSPACE:
+                    if has_workspace_root_project:
+                        if project.dir_path != workspace_root_project.dir_path:
+                            continue
+                    else:
+                        unrooted_ws_sources.add(source)
+                project_action_names.append(action.name)
+                name_to_source[action.name] = source
             if project_action_names:
                 actions_by_project[project.dir_path] = project_action_names
+
+        if unrooted_ws_sources:
+            logger.warning(
+                f"Workspace-scoped actions {sorted(unrooted_ws_sources)} found but no "
+                f"project at the workspace root could be identified. "
+                f"Add finecode-workspace.toml to the workspace root or ensure it "
+                f"contains a pyproject.toml. All projects exposing the action are included."
+            )
 
         if not actions_by_project:
             all_projects = list(ws_context.ws_projects.keys())

@@ -1419,6 +1419,12 @@ class GetWorkspaceEditablePackagesResponse(BaseResponse):
 
 
 @dataclasses.dataclass
+class WorkspaceProjectInfo:
+    path: str
+    config_status: str
+
+
+@dataclasses.dataclass
 class GetWorkspaceProjectPathsRequest(BaseRequest):
     params: dict | None = None
     method = WORKSPACE_PROJECT_PATHS_GET
@@ -1426,7 +1432,7 @@ class GetWorkspaceProjectPathsRequest(BaseRequest):
 
 @dataclasses.dataclass
 class GetWorkspaceProjectPathsResult(BaseResult):
-    project_paths: list[str]
+    projects: list[WorkspaceProjectInfo]
 
 
 @dataclasses.dataclass

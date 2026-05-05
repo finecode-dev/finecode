@@ -149,10 +149,11 @@ async def resolve_action_meta(runner_context: context.RunnerContext) -> dict[str
       config source when the source is a re-exported alias).
     - ``runs_concurrently``: True when the action declares CONCURRENT handler
       execution (``HANDLER_EXECUTION = HandlerExecution.CONCURRENT``).
+    - ``scope``: ``"project"`` or ``"workspace"`` (from ``Action.SCOPE``).
 
     Actions that fail to import are omitted.
     """
-    from finecode_extension_api.code_action import HandlerExecution
+    from finecode_extension_api.code_action import Action, HandlerExecution
 
     actions = runner_context.project.actions
     resolved: dict[str, dict] = {}
@@ -161,12 +162,12 @@ async def resolve_action_meta(runner_context: context.RunnerContext) -> dict[str
             continue
         try:
             cls = run_utils.import_module_member_by_source_str(action.source)
+            if not (isinstance(cls, type) and issubclass(cls, Action)):
+                raise TypeError(f"{action.source} is not a subclass of Action")
             resolved[action.source] = {
                 "canonical_source": f"{cls.__module__}.{cls.__qualname__}",
-                "runs_concurrently": (
-                    getattr(cls, "HANDLER_EXECUTION", HandlerExecution.SEQUENTIAL)
-                    == HandlerExecution.CONCURRENT
-                ),
+                "runs_concurrently": cls.HANDLER_EXECUTION == HandlerExecution.CONCURRENT,
+                "scope": cls.SCOPE.value,
             }
         except Exception as exception:
             logger.trace(f'Failed to import action {action.source}: {exception}')

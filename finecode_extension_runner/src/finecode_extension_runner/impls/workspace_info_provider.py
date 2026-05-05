@@ -10,6 +10,12 @@ class WorkspaceInfoProviderImpl(iworkspaceinfoprovider.IWorkspaceInfoProvider):
     def __init__(self, send_request_to_wm: Callable[[str, dict], Awaitable[Any]]) -> None:
         self._send = send_request_to_wm
 
-    async def get_workspace_project_paths(self) -> list[pathlib.Path]:
+    async def get_workspace_projects(self) -> list[iworkspaceinfoprovider.WorkspaceProject]:
         raw = await self._send("workspace/getProjectPaths", {})
-        return [pathlib.Path(p) for p in raw["projectPaths"]]
+        return [
+            iworkspaceinfoprovider.WorkspaceProject(
+                path=pathlib.Path(p["path"]),
+                config_status=iworkspaceinfoprovider.ProjectConfigStatus(p["configStatus"]),
+            )
+            for p in raw["projects"]
+        ]
