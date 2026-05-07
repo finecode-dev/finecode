@@ -7,6 +7,7 @@ The FineCode documentation is organized into the following sections:
 ### User-Facing Documentation
 - **Home** (`index.md`): Landing page highlighting main benefits and quick start
 - **Getting Started** (`getting-started.md`): Installation and basic usage
+- **Supported Development Environments** (`supported-environments.md`): Supported user-facing integration surfaces and recommended setup paths
 - **IDE and MCP Setup** (`getting-started-ide-mcp.md`): VSCode and MCP-client integration setup
 - **Concepts** (`concepts.md`): Core concepts and architecture overview
 - **Configuration** (`configuration.md`): Detailed configuration options
@@ -16,6 +17,7 @@ The FineCode documentation is organized into the following sections:
 - **Guides**:
   - Creating an Extension (`guides/creating-extension.md`)
   - Creating a Preset (`guides/creating-preset.md`)
+  - Git Hooks (`guides/using-git-hooks.md`)
   - Multi-Project Workspace (`guides/workspace.md`)
 
 ### Reference

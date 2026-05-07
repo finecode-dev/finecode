@@ -31,6 +31,16 @@ build-backend = "setuptools.build_meta"
 ```python
 ```
 
+## What goes inside a preset package
+
+A preset package contains:
+
+- A `preset.toml` declaring action and handler registrations.
+- For **cross-language feature presets** (e.g. `fine_format`, `fine_lint`): the definitions of the inter-language action contracts they register. The action class and its canonical registration ship and version together. See [ADR-0036](../adr/0036-feature-presets-own-their-action-contracts.md).
+- Optionally, an `__init__.py` re-exporting those action classes for convenient imports.
+
+Preset packages must stay **lightweight in their runtime dependencies**: only `finecode_extension_api` (for base classes) and other feature presets (when an action contract references types defined elsewhere) are allowed. Heavy tool dependencies belong to extension packages and are pulled in through dependency groups when handlers are activated.
+
 ## 2. Declare actions in `preset.toml`
 
 The `preset.toml` file lives inside the package directory (next to `__init__.py`). It uses the same `[tool.finecode.*]` syntax as `pyproject.toml`.
@@ -113,6 +123,12 @@ presets = [
 ```
 
 A preset can itself reference other presets in its `preset.toml` if needed.
+
+## Package naming
+
+Preset package names follow the pattern `fine_<lang?>_<role>`, where `<role>` is drawn from the closed set of FineCode role words and the language segment is optional.
+
+See [Package Naming](package-naming.md) for the shared extension and preset naming convention.
 
 ## Publishing
 

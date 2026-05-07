@@ -365,7 +365,7 @@ server to build accurate `inputSchema` entries for each tool.
 **Params:**
 
 ```json
-{"project": "/abs/path/to/project", "actionSources": ["finecode_extension_api.actions.LintAction", "finecode_extension_api.actions.FormatAction"]}
+{"project": "/abs/path/to/project", "actionSources": ["finecode_extension_api.actions.LintAction", "fine_format.FormatAction"]}
 ```
 
 **Result:**
@@ -380,7 +380,7 @@ server to build accurate `inputSchema` entries for each tool.
       },
       "required": []
     },
-    "finecode_extension_api.actions.FormatAction": {
+    "fine_format.FormatAction": {
       "properties": {
         "save": {"type": "boolean"},
         "target": {"type": "string"},
@@ -560,7 +560,7 @@ Execute multiple actions across multiple projects. Used for batch operations.
 {
   "actionSources": [
     "finecode_extension_api.actions.LintAction",
-    "finecode_extension_api.actions.FormatAction"
+    "fine_format.FormatAction"
   ],
   "projects": ["/abs/path/to/project_a", "/abs/path/to/project_b"],
   "params": {},
@@ -592,7 +592,7 @@ requested actions.
   "results": {
     "/abs/path/to/project_a": {
       "finecode_extension_api.actions.LintAction": {"resultByFormat": {"...": "..."}, "returnCode": 0},
-      "finecode_extension_api.actions.FormatAction": {"resultByFormat": {"...": "..."}, "returnCode": 0}
+      "fine_format.FormatAction": {"resultByFormat": {"...": "..."}, "returnCode": 0}
     }
   },
   "returnCode": 0

@@ -21,7 +21,7 @@ FineCode lets you define actions once and run them through the surfaces develope
 
 - Local CLI: `python -m finecode run lint`
 - CI: run the same actions instead of re-creating tool wiring in pipelines
-- IDE and AI: use the [VSCode and MCP setup guide](getting-started-ide-mcp.md) (extension path recommended, MCP fallback available)
+- IDE, git hooks, and AI: use the [Supported Development Environments](supported-environments.md) guide to choose the right integration path
 - AI assistants: expose the same action surface through MCP-compatible clients
 
 That means less duplicated glue code and fewer mismatches between "what works on my machine" and "what CI expects".
@@ -116,6 +116,7 @@ FineCode is not just a wrapper around linters and formatters. It gives those too
 ## Where to go next
 
 - [Getting Started](getting-started.md) for the full setup path
+- [Supported Development Environments](supported-environments.md) for the current support matrix and recommended setup paths
 - [IDE and MCP Setup](getting-started-ide-mcp.md) for the recommended VSCode extension path and MCP fallback options
 - [Concepts](concepts.md) for the core mental model
 - [Why FineCode's Action Model Works](theory/why-action-model.md) for the design rationale
@@ -124,4 +125,4 @@ FineCode is not just a wrapper around linters and formatters. It gives those too
 
 ## Community
 
-Have questions or feedback? Join [Discord](https://discord.gg/nwb3CRVN).
+Have questions or feedback? Join [Matrix](https://matrix.to/#/#finecode:matrix.org) or [Discord](https://discord.gg/AbpKU39cgY).

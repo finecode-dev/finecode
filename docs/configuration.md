@@ -107,6 +107,37 @@ env = "dev_no_runtime"
 dependencies = ["my_company_http~=1.2.0"]
 ```
 
+### Configuring Extension Runner logging
+
+Each Extension Runner is a separate subprocess. Its log level and per-group overrides are configured under `[tool.finecode.er]`. The WM reads this at startup and delivers the resolved config to the ER — the ER never reads config files directly.
+
+`[tool.finecode.er.logging]` is the **project-level fallback** that applies to all ERs in the project. Per-env overrides live under `[tool.finecode.er.envs.<env_name>.logging]` and merge additively with the fallback.
+
+```toml
+# project-level fallback — applies to all ERs
+[tool.finecode.er.logging]
+default_level = "INFO"
+
+[tool.finecode.er.logging.log_groups]
+"finecode_extension_runner" = "WARNING"
+
+# per-env override — applies only to the dev_no_runtime ER
+[tool.finecode.er.envs.dev_no_runtime.logging]
+default_level = "DEBUG"
+
+[tool.finecode.er.envs.dev_no_runtime.logging.log_groups]
+"fine_python_ruff" = "TRACE"
+```
+
+Env var overrides (highest priority):
+
+| Variable | Effect |
+| --- | --- |
+| `FINECODE_ER_LOG_LEVEL` | project-level `default_level` |
+| `FINECODE_ER_ENV_<ENV>_LOG_LEVEL` | per-env `default_level` (`<ENV>` uppercased, `-`→`_`) |
+| `FINECODE_ER_LOG_GROUP_<GROUP>` | project-level `log_groups` entry (`<GROUP>` uppercased, `.`→`_`) |
+| `FINECODE_ER_ENV_<ENV>_LOG_GROUP_<GROUP>` | per-env `log_groups` entry |
+
 ## finecode.toml
 
 `finecode.toml` is an alternative location for project-scoped configuration. It uses a `[finecode]` top-level table instead of `[tool.finecode]`; every sub-table and field name is identical otherwise. The two files are mutually exclusive — if both exist for the same project, FineCode raises an error at startup.
@@ -157,6 +188,36 @@ editable_packages = [
 ```
 
 Any dependency whose package name matches a workspace editable package is automatically rewritten to an editable install from its declared path, across every env in every project. The resolved set is the union of every discovered project (when `all_workspace_packages_editable` is `true`) and every explicit `editable_packages` entry.
+
+### WM telemetry
+
+Configure the OTLP endpoint for the Workspace Manager and all Extension Runners under `[workspace.wm.telemetry]`:
+
+```toml
+[workspace.wm.telemetry]
+otlp_endpoint = "http://localhost:4317"
+```
+
+The `FINECODE_OTLP_ENDPOINT` environment variable overrides this value (higher priority).
+
+### WM logging
+
+The Workspace Manager process reads its per-group log level overrides from `[workspace.wm.logging]`. This section controls only the WM process — it has no effect on ERs.
+
+```toml
+[workspace.wm.logging.log_groups]
+"finecode.wm_server.runner.runner_manager" = "DEBUG"
+"finecode_jsonrpc.client" = "TRACE"
+```
+
+The overall default log level is set via the `--log-level` CLI flag (default `INFO`). Env vars override the file config:
+
+```bash
+FINECODE_WM_LOG_GROUP_FINECODE_WM_SERVER_RUNNER_RUNNER_MANAGER=DEBUG
+FINECODE_WM_LOG_GROUP_FINECODE_JSONRPC_CLIENT=TRACE
+```
+
+(`<GROUP>` is uppercased with `.` → `_`.)
 
 ## Environment variables
 

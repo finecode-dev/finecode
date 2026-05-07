@@ -71,7 +71,7 @@ python -m pip install --group="dev_workspace"
 ### Available presets
 
 | Preset | What it includes |
-|---|---|
+| --- | --- |
 | `fine_python_recommended` | Ruff + Flake8 linting, Ruff formatter + isort |
 | `fine_python_lint` | Ruff, Flake8, Pyrefly linting only |
 | `fine_python_format` | Ruff formatter + isort only |
@@ -83,6 +83,15 @@ Tell FineCode which preset to use:
 ```toml
 [tool.finecode]
 presets = [{ source = "fine_python_recommended" }]
+```
+
+This goes in the project's `pyproject.toml`. You can also put project configuration in a separate `finecode.toml` file at the project root (see [Configuration](configuration.md#finecodetoml)).
+
+**Multiple projects?** Create a `finecode-workspace.toml` at the workspace root to declare workspace-scoped settings for multi-project workspaces, such as which local packages should be installed as editable installs:
+
+```toml
+[workspace]
+all_workspace_packages_editable = true
 ```
 
 ## 4. Prepare environments
@@ -113,6 +122,7 @@ python -m finecode run --concurrently lint check_formatting
 
 ## Next steps
 
+- [Supported Development Environments](supported-environments.md) — see what FineCode supports today across VSCode, CLI, CI, git hooks, and AI assistants
 - [IDE and MCP Setup](getting-started-ide-mcp.md) — connect FineCode to VSCode and MCP-compatible AI clients
 - [Configuration](configuration.md) — customize tool settings and override handler config
 - [Concepts](concepts.md) — understand how Actions, Handlers, and Presets fit together

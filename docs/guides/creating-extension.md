@@ -4,7 +4,7 @@ An extension is a Python package that implements one or more **ActionHandlers**.
 
 ## 1. Create the package
 
-```
+```text
 my_linter/
     pyproject.toml
     my_linter/
@@ -171,6 +171,70 @@ class MyLspHandler(code_action.ActionHandler[...]):
         self._process.terminate()
 ```
 
+## Logging in handlers
+
+Handlers receive an `ILogger` instance via dependency injection by declaring `logger: ilogger.ILogger` in their constructor:
+
+```python
+from finecode_extension_api.interfaces import ilogger
+
+class MyToolHandler(code_action.ActionHandler[...]):
+    def __init__(self, ..., logger: ilogger.ILogger) -> None:
+        self.logger = logger
+```
+
+### What the framework already logs
+
+The framework logs the full action payload at `TRACE` level before calling your handler. Enable it with `"finecode_extension_runner" = "TRACE"` in your ER log groups config. Do not repeat this in the handler — it creates noise without adding value (R-504).
+
+### What handlers should log
+
+For handlers that spawn an external process, log the following at `DEBUG`:
+
+- exit code — always
+- stdout and stderr — when non-empty
+- result summary — key metrics from the tool's report (counts, durations)
+
+Emit a `WARNING` when the handler's primary job is to produce results but returns nothing:
+
+```python
+process = await self.command_runner.run(cmd, cwd=project_dir)
+await process.wait_for_end()
+
+exit_code = process.get_exit_code()
+stdout = process.get_output()
+stderr = process.get_error_output()
+
+self.logger.debug(f"mytool exit code: {exit_code}")
+if stdout:
+    self.logger.debug(f"mytool stdout:\n{stdout}")
+if stderr:
+    self.logger.debug(f"mytool stderr:\n{stderr}")
+
+# ... parse the tool's report into results ...
+
+if not results:
+    self.logger.warning(f"No results produced. cmd={cmd!r} exit_code={exit_code}")
+```
+
+### Exit code handling
+
+Do not rely on the absence of an output file as the sole error indicator. Check exit codes explicitly and document their meaning for your specific tool (R-501):
+
+```python
+# exit codes 0 (ok) and 1 (warnings) are normal for mytool; 2 = usage error
+if exit_code not in (0, 1):
+    descriptions: dict[int | None, str] = {
+        2: "command-line usage error — check your config",
+    }
+    reason = descriptions.get(exit_code, f"unexpected exit code {exit_code}")
+    raise code_action.ActionFailedException(
+        f"mytool exited with code {exit_code}: {reason}.\nOutput:\n{stderr or stdout}"
+    )
+```
+
+See [Designing Actions Rules](designing-actions-rules.md) R-501 through R-504 for the normative statements.
+
 ## Sequential handlers: using `current_result`
 
 If your handler runs in sequential mode and depends on the result of a previous handler, read it from the context:
@@ -189,4 +253,59 @@ async def run(self, payload, context):
 
 See the [Built-in Actions reference](../reference/actions.md) for the full list of action classes, payload types, and result types you can implement handlers for.
 
-If you are defining a new action (not just a handler), see [Designing Actions](designing-actions.md) for principles on inter-language design, language-specific subactions, and where to place parameters.
+If you are defining a new action (not just a handler), start with [Designing Actions](designing-actions.md), then use [Designing Your First Action](designing-actions-guide.md) for the workflow and the [Designing Actions Rules](designing-actions-rules.md) for the normative constraints. Use the [Designing Actions Reference](designing-actions-reference.md) when the action needs advanced patterns.
+
+## Tool versioning
+
+An extension wraps a specific tool and has its own version lifecycle separate from the tool's. Extension authors must declare which tool versions the handler supports.
+
+### Compatibility range
+
+Declare the tool as a versioned dependency in the extension's `pyproject.toml`:
+
+```toml
+dependencies = ["ruff (>=0.8.0,<1.0.0)"]
+```
+
+This range is a **compatibility guarantee**: every version within it exposes an interface that the handler code can correctly drive. "Interface" means whatever channel the handler uses to communicate with the tool — for example:
+
+- **CLI**: the command flags, invocation format, output format, and exit codes the handler relies on
+- **LSP**: the capabilities, request/response shapes, and initialization options of the tool's language server
+- **HTTP/JSON API**: the request and response schemas of any programmatic API the tool exposes
+- **Python API**: the public classes and functions the handler imports directly from the tool's package
+
+An interface change that breaks the handler — a renamed flag, a changed JSON schema, a removed LSP capability — requires updating the range.
+
+### Extension author responsibilities
+
+- Declare the **widest range you can actually support**. Overly narrow ranges force unnecessary upgrades on users.
+- When a new tool version introduces interface changes that require handler updates: update the handler code and widen or shift the range accordingly.
+- When a new tool version adds features or changes behavior but leaves the interface the handler uses unchanged: the existing range already covers it — no update needed.
+- Annotate significant range changes in the changelog so users can see which tool versions a given extension version supports.
+
+### User's responsibility
+
+Within the extension's declared range, users choose the exact tool version for their project. This is a behavioral decision: a user may prefer a specific version because it produces the results they expect, avoids a known regression in the tool, or matches the version their team has standardized on.
+
+To pin a specific version or add tool extensions, use `dependencies_override` on the handler entry in `pyproject.toml`:
+
+```toml
+[[tool.finecode.action_handler]]
+source = "fine_python_ruff.RuffLintFilesHandler"
+dependencies_override = ["ruff==0.9.0", "ruff-plugin-foo==1.2.3"]
+```
+
+FineCode resolves the handler's full dependency tree first, then applies `dependencies_override` entries by name:
+
+- If a package is **already in the resolved tree** — the user's specifier replaces whatever the extension declared. This lets you pin to a version outside the extension's stated compatibility range if you need to.
+- If a package is **not in the resolved tree** — it is added as a new dependency. This covers tool extensions or plugins that the extension itself does not declare.
+
+When you override a package to a version outside the extension's compatibility range, the extension author's range becomes documentation only — you take responsibility for verifying that the handler code works correctly with the chosen version.
+
+## Package naming
+
+Extension package names follow the pattern `fine_<lang>_<qualifier>`.
+Use a tool name or capability descriptor as the qualifier, and keep bare
+`fine_<word>` names reserved for presets.
+
+See [Package Naming](package-naming.md) for the shared extension and preset naming convention.

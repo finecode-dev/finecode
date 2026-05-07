@@ -2,6 +2,8 @@
 
 After completing the base setup in [Getting Started](getting-started.md), connect FineCode to your IDE and AI tooling.
 
+For the full support overview across CLI, CI, git hooks, IDEs, and MCP clients, see [Supported Development Environments](supported-environments.md).
+
 ## VSCode setup
 
 Install the [FineCode VSCode extension](https://marketplace.visualstudio.com/items?itemName=VladyslavHnatiuk.finecode-vscode).
@@ -32,6 +34,17 @@ The Testing panel (beaker icon) is populated automatically when the workspace lo
 - `RunTestsAction` — executes tests and reports pass/fail/skip/error per test case
 
 To use the Testing panel, you need handlers registered for both actions. The `fine_python_test` preset provides pytest-based handlers for both. If you are already using `fine_python_recommended`, testing support is included — no extra preset needed, since `fine_python_recommended` already pulls in `fine_python_test`.
+
+## Other IDEs and editors
+
+FineCode already provides an LSP server, but the only packaged IDE integration documented and tested today is the VSCode extension above.
+
+If you want to integrate FineCode into another IDE or editor, treat that as a custom LSP-client integration for now. The server architecture and client protocol are documented here:
+
+- [LSP and MCP Architecture](reference/lsp-mcp-architecture.md)
+- [LSP Client Protocol](reference/lsp-protocol.md)
+
+Additional first-party IDE integrations are planned, but VSCode is the recommended path today.
 
 ## MCP setup for AI clients
 

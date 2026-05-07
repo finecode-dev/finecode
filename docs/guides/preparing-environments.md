@@ -20,10 +20,9 @@ Each env name found in `[dependency-groups]` becomes a virtualenv:
 [dependency-groups]
 dev_workspace    = ["finecode==0.3.*", ...]
 dev_no_runtime   = ["fine_python_ruff~=0.2.0", ...]
-runtime          = ["fastapi>=0.100", ...]
 ```
 
-→ Creates `.venvs/dev_workspace/`, `.venvs/dev_no_runtime/`, `.venvs/runtime/`.
+→ Creates `.venvs/dev_workspace/`, `.venvs/dev_no_runtime/`.
 
 ### Step 2 — `install_envs`
 
@@ -39,7 +38,7 @@ A FineCode environment is usually declared by adding an entry to `[dependency-gr
 
 ```toml
 [dependency-groups]
-dev  = ["finecode", "pytest==7.4.*", "debugpy==1.8.*"]
+dev  = ["pytest==7.4.*", "debugpy==1.8.*"]
 docs = ["mkdocs==1.6.*", "mkdocs-material==9.7.*"]
 ```
 
@@ -51,20 +50,27 @@ Even so, explicit `[dependency-groups]` entries are still preferred when you wan
 
 Environments that need the project's runtime dependencies reference the project itself by name — for example `dev = ["finecode", ...]`. This pulls `[project.dependencies]` transitively through the project package and keeps the runtime dependency list in exactly one place. Do not re-list the project's runtime deps inside the group.
 
-### Editable path installs
+### Workspace editable packages
 
-PEP 508 requirement strings cannot express editable installs from a local path. For development workspaces that need them, add a companion table under `[tool.finecode.env.<name>.dependencies]`:
+In a workspace, local packages can be installed as editable installs. PEP 508 requirement strings cannot express editable installs from a local path, so FineCode provides a workspace-level mechanism in `finecode-workspace.toml` at the workspace root:
 
 ```toml
-[dependency-groups]
-dev = ["finecode", "pytest==7.4.*"]
+[workspace]
+# When true, every project discovered in this workspace is automatically
+# installed as an editable install when it appears as a dependency.
+all_workspace_packages_editable = true
 
-[tool.finecode.env.dev.dependencies]
-finecode               = { path = "./",                       editable = true }
-finecode_extension_api = { path = "./finecode_extension_api", editable = true }
+# Optional: explicit paths to treat as editable installs — useful for
+# vendored forks outside normal project discovery. Paths are relative to
+# the workspace root.
+editable_packages = [
+    "./vendored_forks/some_lib",
+]
 ```
 
-The companion table is a **supplement**: FineCode's install logic rewrites matching entries in the group to use the editable local path. It does not introduce new environments by itself, and it is ignored by tools that only understand PEP 735 (`uv sync --group=dev`, `pip install --group=dev`). The env must still come from either a `[dependency-groups]` entry of the same name or from a handler/service that references that `env` name — the supplement alone is not enough.
+Any dependency whose package name matches a workspace editable package is automatically rewritten to an editable install from its declared path, across every env in every project. No per-env supplement tables are needed.
+
+The resolved editable-packages set is the union of every discovered project (when `all_workspace_packages_editable` is `true`) and every explicit `editable_packages` entry.
 
 ### Composing environments
 
@@ -82,7 +88,33 @@ Because every FineCode environment is also a real `[dependency-groups]` entry, `
 
 ## The `dev_workspace` bootstrap
 
-The `dev_workspace` env is special: it contains FineCode itself and the preset packages. The handlers that implement `create_envs` and `install_envs` live inside `dev_workspace` — which creates a bootstrapping constraint.
+The `dev_workspace` env is special: it contains the FineCode packages that are needed to prepare the rest of the workspace. The handlers that implement `create_envs` and `install_envs` run from `dev_workspace` — which creates a bootstrapping constraint.
+
+### Two-phase installation
+
+`dev_workspace` installation happens in two distinct phases. The workspace root is the important case to understand: you run `bootstrap` once to create its `dev_workspace`, then `prepare-envs` can use that environment to prepare the rest of the workspace.
+
+| Phase | When | Config source | What gets installed |
+| --- | --- | --- | --- |
+| 1 | `bootstrap` for the workspace root | Raw `pyproject.toml` only (no preset resolution) | The seed requirements listed directly in `[dependency-groups].dev_workspace` |
+| 2 | `prepare-envs` after runners start | Merged config (presets resolved via the real venv runner) | Preset-contributed packages (`finecode_extension_api`, `finecode_jsonrpc`, extensions, …) |
+
+Phase 1 installs only the requirements written directly in the `dev_workspace` group, because presets have not been resolved yet, for example:
+
+```toml
+[dependency-groups]
+dev_workspace = [
+    "finecode~=0.3.*",
+    "finecode_extension_runner~=0.3.*",
+    "finecode_dev_common_preset~=0.3.*",
+]
+```
+
+After the root `dev_workspace` exists, FineCode can start its runner. `prepare-envs` then resolves presets, merges the full configuration, and runs Phase 2. The preset can then contribute the additional packages needed by its handlers and services.
+
+In a multi-project workspace, subproject `dev_workspace` envs follow the same raw-then-merged pattern, but you do not run `bootstrap` for them manually. `prepare-envs` creates their raw `dev_workspace` envs automatically before starting their runners, then runs the preset-resolved install after those runners are available.
+
+Editable installs are only relevant for packages that are local to your workspace and that you want FineCode to install from source. If you enable workspace editable packages in `finecode-workspace.toml`, those local packages are rewritten to editable installs automatically (see [Workspace editable packages](#workspace-editable-packages)). Published FineCode packages such as `finecode` and `finecode_extension_runner` remain ordinary dependency requirements unless you are developing FineCode itself in a local checkout.
 
 ### Workspace root bootstrap (one-time)
 
@@ -98,7 +130,7 @@ pipx run finecode bootstrap
 uvx finecode bootstrap
 ```
 
-> **Note:** `bootstrap` uses the built-in default handlers: `virtualenv` for environment creation and `pip` for dependency installation. If your project requires custom handlers for either action (e.g. a different package manager or venv backend), `bootstrap` is not suitable — you must bootstrap the `dev_workspace` manually (see the **Manual alternative** below) or via your own tooling.
+> **Note:** `bootstrap` uses the built-in default handlers: `uv` for both environment creation and for dependency installation. If your project requires custom handlers for either action (e.g. a different package manager or venv backend), `bootstrap` is not suitable — you must bootstrap the `dev_workspace` manually (see the **Manual alternative** below) or via your own tooling.
 
 To delete and recreate an existing `dev_workspace`:
 
@@ -118,10 +150,12 @@ See [Getting Started](../getting-started.md) for the full first-time setup seque
 
 ### Subproject bootstrap (automated by `prepare-envs`)
 
-For subprojects in the workspace, `prepare-envs` creates their `dev_workspace` envs automatically — **before** starting any runners — using the workspace root's handler configuration:
+For subprojects in the workspace, `prepare-envs` creates their `dev_workspace` envs automatically — **before** starting any subproject runners — using the workspace root's handler configuration:
 
 1. `create_envs` (subproject `dev_workspace` envs) — create the venvs
-2. `install_envs` (subproject `dev_workspace` envs) — install FineCode + presets
+2. `install_envs` (subproject `dev_workspace` envs) — install the raw `dev_workspace` requirements only, no preset resolution yet
+3. Runners start in each `dev_workspace`
+4. `install_envs` runs again — presets are now resolved and their contributed packages are installed
 
 **Requirement:** the workspace root's `create_envs` and `install_envs` configuration must produce a valid `dev_workspace` for every subproject. In practice this is rarely a constraint: `dev_workspace` envs exist only to run FineCode and preset packages, so their setup is uniform across projects. If a subproject genuinely requires different handler configuration for either action, its `dev_workspace` must be bootstrapped manually the same way as the workspace root's.
 
@@ -182,7 +216,7 @@ Useful when you've added a new handler in one env and want to update only that e
 The two actions (`create_envs`, `install_envs`) are standard FineCode actions and can be invoked individually via the WM API or `python -m finecode run`. This is useful when writing custom orchestration.
 
 | Action | Source |
-|---|---|
+| --- | --- |
 | `create_envs` | `finecode_extension_api.actions.create_envs.CreateEnvsAction` |
 | `install_envs` | `finecode_extension_api.actions.install_envs.InstallEnvsAction` |
 
