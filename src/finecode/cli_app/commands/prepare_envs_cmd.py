@@ -186,7 +186,7 @@ async def _run(
     # Step 4 — start dev_workspace runners (resolves preset-defined actions).
     logger.info("Starting dev_workspace runners...")
     try:
-        await client.start_runners()
+        await client.start_runners(projects=project_paths)
     except ApiError as exc:
         raise PrepareEnvsFailed(f"Starting runners failed: {exc}") from exc
 
