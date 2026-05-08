@@ -34,6 +34,9 @@ source = "fine_toml_tombi.TombiFormatTomlFileHandler"
 env = "dev_no_runtime"
 dependencies = ["fine_toml_tombi~=0.1.0a0"]
 
+[tool.finecode.extension.fine_python_tombi]
+dependencies_override = ["tombi==0.11.*"]
+
 [[tool.finecode.service]]
 interface = "finecode_extension_api.interfaces.ilspclient.ILspClient"
 source = "finecode_extension_runner.impls.lsp_client.LspClientImpl"

@@ -13,3 +13,6 @@ handlers = [
         "fine_python_pytest~=0.1.0a0",
     ] },
 ]
+
+[tool.finecode.extension.fine_python_pytest]
+dependencies_override = ["pytest==9.0.*"]

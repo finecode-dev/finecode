@@ -1,14 +1,6 @@
-# TODO: move in general 'format'
-[tool.finecode.action.format_file]
-source = "finecode_extension_api.actions.FormatFileAction"
-handlers = [
-    { name = "dispatch", source = "finecode_builtin_handlers.FormatFileDispatchHandler", env = "dev_no_runtime", dependencies = [
-        "finecode_builtin_handlers~=0.2.0a1",
-    ] },
-    { name = "save", source = "finecode_builtin_handlers.SaveFormatFileHandler", env = "dev_no_runtime", dependencies = [
-        "finecode_builtin_handlers~=0.2.0a1",
-    ] },
-]
+[tool.finecode]
+presets = [{ source = "fine_format" }]
+
 
 [tool.finecode.action.format_python_file]
 source = "fine_python_lang.FormatPythonFileAction"
@@ -21,6 +13,12 @@ handlers = [
         "fine_python_ruff~=0.2.0a0",
     ] },
 ]
+
+[tool.finecode.extension.fine_python_ruff]
+dependencies_override = ["ruff==0.15.*"]
+
+[tool.finecode.extension.fine_python_isort]
+dependencies_override = ["isort==8.0.*"]
 
 [[tool.finecode.action_handler]]
 source = "fine_python_isort.IsortFormatFileHandler"

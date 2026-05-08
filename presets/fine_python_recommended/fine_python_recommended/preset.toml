@@ -5,3 +5,20 @@ presets = [
     { source = "fine_python_test" },
     { source = "fine_toml_recommended" },
 ]
+
+[tool.finecode.action.text_document_semantic_tokens]
+source = "finecode_extension_api.actions.TextDocumentSemanticTokensAction"
+handlers = [
+    { name = "dispatch", source = "finecode_builtin_handlers.SemanticTokensDispatchHandler", env = "dev_workspace", dependencies = [] },
+]
+
+[tool.finecode.action.text_document_semantic_tokens_python]
+source = "fine_python_lang.TextDocumentSemanticTokensPythonAction"
+handlers = [
+    { name = "ruff", source = "fine_python_ruff.RuffSemanticTokensHandler", env = "dev_no_runtime", dependencies = [
+        "fine_python_ruff[jsonrpc]~=0.2.0a0",
+    ] },
+]
+
+[tool.finecode.extension.fine_python_ruff]
+dependencies_override = ["ruff==0.15.*"]

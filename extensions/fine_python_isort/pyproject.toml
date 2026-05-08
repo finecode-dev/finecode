@@ -5,7 +5,10 @@ description = ""
 authors = [{ name = "Vladyslav Hnatiuk", email = "aders1234@gmail.com" }]
 readme = "README.md"
 requires-python = ">= 3.11, <= 3.14"
-dependencies = ["finecode_extension_api~=0.4.0a0", "fine_python_lang~=0.1.0a0", "isort (>=5.13, <6)"]
+# isort changelog: https://github.com/PyCQA/isort/releases
+# between 5.* and 8.* the only breaking changes were dropping supported Python versions
+# the minimal supported version of Python in 8.* is 3.9
+dependencies = ["finecode_extension_api~=0.4.0a0", "fine_python_lang~=0.1.0a0", "isort (>=5.13, <9)"]
 
 [dependency-groups]
 dev_workspace = ["finecode~=0.4.0a0", "finecode_dev_common_preset~=0.3.0a0"]
