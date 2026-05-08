@@ -466,6 +466,21 @@ async def collect_config_from_py_presets(
     return config
 
 
+def _merge_override_specs(existing: list[str], new: list[str]) -> list[str]:
+    """Merge two PEP 508 override spec lists; later list wins per canonical package name."""
+    import re
+
+    def _canonical(spec: str) -> str:
+        m = re.match(r"^([A-Za-z0-9]([A-Za-z0-9._-]*[A-Za-z0-9])?)", spec.strip())
+        name = m.group(1) if m else spec.strip()
+        return re.sub(r"[-_.]+", "-", name).lower()
+
+    merged: dict[str, str] = {_canonical(s): s for s in existing}
+    for s in new:
+        merged[_canonical(s)] = s
+    return list(merged.values())
+
+
 def _merge_object_array_by_key(
     existing_array: list[dict[str, Any]],
     new_array: list[dict[str, Any]],
@@ -673,6 +688,19 @@ def _merge_projects_configs(
                             all_envs_config1[env_name]["dependencies"][
                                 updated_dep_name
                             ]["path"] = new_path
+        elif key == "extension":
+            if "extension" not in tool_finecode_config1:
+                tool_finecode_config1["extension"] = {}
+            ext_config1 = tool_finecode_config1["extension"]
+            for ext_name, ext_data in value.items():
+                if ext_name not in ext_config1:
+                    ext_config1[ext_name] = dict(ext_data)
+                else:
+                    existing_overrides = ext_config1[ext_name].get("dependencies_override", [])
+                    new_overrides = ext_data.get("dependencies_override", [])
+                    ext_config1[ext_name]["dependencies_override"] = _merge_override_specs(
+                        existing_overrides, new_overrides
+                    )
         elif key in config1:
             tool_finecode_config1[key].update(value)
         else:

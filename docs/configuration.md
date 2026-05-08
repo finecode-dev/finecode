@@ -85,6 +85,17 @@ config.max_line_length = 88
 config.extend_ignore = ["E203", "E501"]
 ```
 
+### Pinning extension tool versions
+
+Each extension declares a compatibility range for the tool it wraps (see [Creating an Extension — Tool versioning](guides/creating-extension.md#tool-versioning)). To pin a specific version across every handler the extension contributes, configure the extension once by its package name:
+
+```toml
+[tool.finecode.extension.fine_python_ruff]
+dependencies_override = ["ruff==0.9.0", "ruff-plugin-foo==1.2.3"]
+```
+
+For the rare case where you need different tool versions for different handlers from the same extension, fall back to a handler-level `dependencies_override` — it wins over the extension-level value for that handler.
+
 ### Declaring services
 
 Services are shared, long-lived dependencies used by handlers. Declare service bindings with `[[tool.finecode.service]]` entries:

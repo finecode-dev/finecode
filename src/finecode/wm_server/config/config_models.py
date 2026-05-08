@@ -28,11 +28,18 @@ class PresetDefinition:
 
 
 @dataclass
+class ExtensionDefinition:
+    name: str
+    dependencies_override: list[str] = field(default_factory=list)
+
+
+@dataclass
 class ActionHandlerDefinition:
     name: str
     source: str = ""
     env: str = ""
     dependencies: list[str] = field(default_factory=list)
+    dependencies_override: list[str] = field(default_factory=list)
     config: dict[str, Any] | None = None
     enabled: bool = True
 

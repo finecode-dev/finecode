@@ -287,20 +287,51 @@ An interface change that breaks the handler — a renamed flag, a changed JSON s
 
 Within the extension's declared range, users choose the exact tool version for their project. This is a behavioral decision: a user may prefer a specific version because it produces the results they expect, avoids a known regression in the tool, or matches the version their team has standardized on.
 
-To pin a specific version or add tool extensions, use `dependencies_override` on the handler entry in `pyproject.toml`:
+#### Pinning at the extension level (recommended)
+
+In almost all cases, the user wants the same tool version everywhere a given extension is used. Configure that once at the extension level, keyed by the extension's package name:
+
+```toml
+[tool.finecode.extension.fine_python_ruff]
+dependencies_override = ["ruff==0.9.0", "ruff-plugin-foo==1.2.3"]
+```
+
+The override applies to every env that contains a handler from `fine_python_ruff`.
+
+#### Pinning at the handler level
+
+When you genuinely need different versions for different handlers from the same extension (rare), override per handler:
 
 ```toml
 [[tool.finecode.action_handler]]
 source = "fine_python_ruff.RuffLintFilesHandler"
-dependencies_override = ["ruff==0.9.0", "ruff-plugin-foo==1.2.3"]
+dependencies_override = ["ruff==0.9.0"]
 ```
 
-FineCode resolves the handler's full dependency tree first, then applies `dependencies_override` entries by name:
+Handler-level overrides take precedence over extension-level overrides for the targeted handler.
 
-- If a package is **already in the resolved tree** — the user's specifier replaces whatever the extension declared. This lets you pin to a version outside the extension's stated compatibility range if you need to.
-- If a package is **not in the resolved tree** — it is added as a new dependency. This covers tool extensions or plugins that the extension itself does not declare.
+#### How overrides are resolved
+
+FineCode resolves each env's full dependency tree first, then applies overrides by package name in this order (later wins):
+
+1. The extension's declared dependency range (from the extension's `pyproject.toml`)
+2. Extension-level `dependencies_override`
+3. Handler-level `dependencies_override`
+
+For each package the user targets:
+
+- If the package is **already in the resolved tree** — the user's specifier replaces whatever the extension declared. This lets you pin to a version outside the extension's stated compatibility range if you need to.
+- If the package is **not in the resolved tree** — it is added as a new dependency. This covers tool extensions or plugins that the extension itself does not declare.
 
 When you override a package to a version outside the extension's compatibility range, the extension author's range becomes documentation only — you take responsibility for verifying that the handler code works correctly with the chosen version.
+
+#### When two extensions wrap the same tool
+
+Two extensions may legitimately depend on the same tool (e.g. a `lint` extension and a `format` extension both wrapping ruff). Each env resolves a single version of the tool that satisfies the union of every extension's declared range, so when both extensions are used together in the same env you get one consistent tool version automatically.
+
+If you want to pin that shared tool, place the override on **one** of the extensions — typically the one that drives the version choice. If both extensions declare a `dependencies_override` for the same package in the same env with conflicting specifiers, the package manager will fail to install: resolve the conflict by removing one of the overrides or by using a handler-level override only on the handler you want to differ.
+
+If you genuinely need different versions of the same tool for different extensions, place each extension's handlers in a different env.
 
 ## Package naming
 
