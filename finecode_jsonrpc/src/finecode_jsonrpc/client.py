@@ -733,13 +733,12 @@ class JsonRpcClient:
             logger.debug(f"Sending response for request {message_id}")
             self._send_data(response_str)
         except Exception as exception:
-            logger.warning(
-                f"Error occured on running handler of message {message_id} | {self.readable_id}"
-            )
-            logger.exception(exception)
             message = getattr(exception, "message", None) or str(exception)
             if not message:
                 message = type(exception).__name__
+            logger.warning(
+                f"Error occured on running handler of message {message_id} | {self.readable_id}: {message}"
+            )
 
             data = getattr(exception, "data", None)
             if data is None:

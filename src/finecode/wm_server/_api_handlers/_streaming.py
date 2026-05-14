@@ -8,6 +8,7 @@ import uuid
 from loguru import logger
 
 from finecode.wm_server import context, domain
+from finecode.wm_server.services.run_service.exceptions import ActionRunFailed
 from finecode.wm_server._api_handlers._helpers import (
     _build_batch_result,
     _notify_client,
@@ -130,13 +131,17 @@ async def _handle_run_action_with_partial_results_task(
             _jsonrpc_error(req_id, NOT_IMPLEMENTED_CODE, str(exc)),
         )
         await writer.drain()
+    except ActionRunFailed as exc:
+        logger.error(
+            "FineCode API: error handling actions/run with partialResultToken: {}", exc
+        )
+        _write_message(writer, _jsonrpc_error(req_id, -32603, str(exc)))
+        await writer.drain()
     except Exception as exc:
         logger.exception(
             "FineCode API: error handling actions/run with partialResultToken"
         )
-        _write_message(
-            writer, _jsonrpc_error(req_id, -32603, str(exc))
-        )
+        _write_message(writer, _jsonrpc_error(req_id, -32603, str(exc)))
         await writer.drain()
 
 
@@ -275,6 +280,10 @@ async def _handle_run_batch_with_partial_results_task(
         await writer.drain()
     except _NotImplementedError as exc:
         _write_message(writer, _jsonrpc_error(req_id, NOT_IMPLEMENTED_CODE, str(exc)))
+        await writer.drain()
+    except ActionRunFailed as exc:
+        logger.error(f"FineCode API: error handling actions/runBatch with partialResultToken: {exc.message}")
+        _write_message(writer, _jsonrpc_error(req_id, -32603, exc.message))
         await writer.drain()
     except Exception as exc:
         logger.exception("FineCode API: error handling actions/runBatch with partialResultToken")

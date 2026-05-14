@@ -273,7 +273,7 @@ async def run_with_partial_results(
     logger.trace(f"Run {action_name} in project {project_dir_path}")
     wal_run_id = wal.new_wal_run_id()
 
-    with telemetry.action_run_span(action_name, project_dir_path, wal_run_id):
+    with telemetry.action_run_span(action_name, project_dir_path, wal_run_id, dev_env=dev_env.value):
         result: AsyncList[domain.PartialResultRawValue] = AsyncList()
         progress_result: AsyncList[domain.ProgressRawValue] | None = None
         if progress_token is not None:
@@ -723,7 +723,7 @@ async def run_action(
     else:
         _result_formats = result_formats
 
-    with telemetry.action_metrics(action_name, project_def.dir_path.name), telemetry.action_run_span(action_name, project_def.dir_path, wal_run_id):
+    with telemetry.action_metrics(action_name, project_def.dir_path.name), telemetry.action_run_span(action_name, project_def.dir_path, wal_run_id, dev_env=dev_env.value, orchestration_depth=orchestration_depth):
         if project_def.status != domain.ProjectStatus.CONFIG_VALID:
             wal.emit_run_event(
                 ws_context.wal_writer,
@@ -752,6 +752,7 @@ async def run_action(
         )
 
         payload = params
+        traceparent = telemetry.get_current_traceparent()
 
         # cases:
         # - base: all action handlers are in one env
@@ -782,6 +783,7 @@ async def run_action(
                 initialize_all_handlers=initialize_all_handlers,
                 progress_token=progress_token,
                 wal_run_id=wal_run_id,
+                traceparent=traceparent,
                 orchestration_depth=orchestration_depth,
                 caller_kwargs=caller_kwargs,
             )
@@ -801,6 +803,7 @@ async def run_action(
                     initialize_all_handlers=initialize_all_handlers,
                     progress_token=progress_token,
                     wal_run_id=wal_run_id,
+                    traceparent=traceparent,
                     orchestration_depth=orchestration_depth,
                     caller_kwargs=caller_kwargs,
                 )
@@ -817,6 +820,7 @@ async def run_action(
                     initialize_all_handlers=initialize_all_handlers,
                     progress_token=progress_token,
                     wal_run_id=wal_run_id,
+                    traceparent=traceparent,
                     orchestration_depth=orchestration_depth,
                     caller_kwargs=caller_kwargs,
                 )
@@ -834,6 +838,7 @@ async def _run_action_in_env_runner(
     dev_env: runner_client.DevEnv,
     result_formats: list[runner_client.RunResultFormat],
     wal_run_id: str,
+    traceparent: str | None = None,
     initialize_all_handlers: bool = False,
     progress_token: int | str | None = None,
     orchestration_depth: int = 0,
@@ -868,6 +873,7 @@ async def _run_action_in_env_runner(
         options: dict[str, typing.Any] = {
             "resultFormats": result_formats,
             "walRunId": wal_run_id,
+            "traceparent": traceparent,
             "meta": {"trigger": run_trigger.value, "devEnv": dev_env.value, "orchestrationDepth": orchestration_depth},
         }
         if progress_token is not None:
@@ -972,6 +978,7 @@ async def _run_handlers_in_env_runner(
     dev_env: runner_client.DevEnv,
     result_formats: list[runner_client.RunResultFormat],
     wal_run_id: str,
+    traceparent: str | None = None,
     initialize_all_handlers: bool = False,
     progress_token: int | str | None = None,
     orchestration_depth: int = 0,
@@ -1006,6 +1013,7 @@ async def _run_handlers_in_env_runner(
     options: dict[str, typing.Any] = {
         "resultFormats": result_formats,
         "walRunId": wal_run_id,
+        "traceparent": traceparent,
         "meta": {
             "trigger": run_trigger.value,
             "devEnv": dev_env.value,
@@ -1082,6 +1090,7 @@ async def _run_multi_env_sequential(
     dev_env: runner_client.DevEnv,
     result_formats: list[runner_client.RunResultFormat],
     wal_run_id: str,
+    traceparent: str | None = None,
     initialize_all_handlers: bool = False,
     progress_token: int | str | None = None,
     orchestration_depth: int = 0,
@@ -1110,6 +1119,7 @@ async def _run_multi_env_sequential(
             dev_env=dev_env,
             result_formats=segment_formats,
             wal_run_id=wal_run_id,
+            traceparent=traceparent,
             initialize_all_handlers=initialize_all_handlers,
             progress_token=progress_token if is_last else None,
             orchestration_depth=orchestration_depth,
@@ -1145,6 +1155,7 @@ async def _run_multi_env_concurrent(
     dev_env: runner_client.DevEnv,
     result_formats: list[runner_client.RunResultFormat],
     wal_run_id: str,
+    traceparent: str | None = None,
     initialize_all_handlers: bool = False,
     progress_token: int | str | None = None,
     orchestration_depth: int = 0,
@@ -1170,6 +1181,7 @@ async def _run_multi_env_concurrent(
                         dev_env=dev_env,
                         result_formats=[],
                         wal_run_id=wal_run_id,
+                        traceparent=traceparent,
                         initialize_all_handlers=initialize_all_handlers,
                         progress_token=None,
                         orchestration_depth=orchestration_depth,
@@ -1229,6 +1241,7 @@ async def _run_multi_env_concurrent(
         dev_env=dev_env,
         result_formats=result_formats,
         wal_run_id=wal_run_id,
+        traceparent=traceparent,
         initialize_all_handlers=initialize_all_handlers,
         progress_token=progress_token,
         orchestration_depth=orchestration_depth,
