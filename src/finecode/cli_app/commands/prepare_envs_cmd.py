@@ -84,9 +84,11 @@ async def _run(
     project_names: list[str] | None = None,
 ) -> None:
     # Step 1 — discover projects without starting runners (envs may not exist).
+    # add_dir only returns newly discovered projects; on a shared server the
+    # workspace may already be initialized, so use list_projects for the lookup.
     logger.info("Discovering projects...")
-    result = await client.add_dir(workdir_path, start_runners=False)
-    projects: list[dict] = result.get("projects", [])
+    await client.add_dir(workdir_path, start_runners=False)
+    projects: list[dict] = await client.list_projects()
 
     workdir_str = str(workdir_path)
     current_project = next((p for p in projects if p["path"] == workdir_str), None)

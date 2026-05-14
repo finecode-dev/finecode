@@ -1,6 +1,8 @@
 # docs: docs/cli.md
 import pathlib
 
+from loguru import logger
+
 from finecode.wm_client import ApiClient, ApiError
 from finecode_extension_api.resource_uri import path_to_resource_uri
 from finecode.wm_server import wm_lifecycle
@@ -32,13 +34,15 @@ async def dump_config(
         client = ApiClient()
         await client.connect("127.0.0.1", port)
         try:
-            result = await client.add_dir(workdir_path)
-            projects = result.get("projects", [])
+            # add_dir only returns newly discovered projects; on a shared server
+            # the workspace may already be initialized, so use list_projects for lookup.
+            await client.add_dir(workdir_path)
+            projects = await client.list_projects()
             project = next(
                 (p for p in projects if p["name"] == project_name), None
             )
             if project is None:
-                raise DumpFailed(f"Project '{project_name}' not found")
+                raise DumpFailed(f"Project '{project_name}' not found. Projects: {projects}")
 
             project_path = project["path"]
             project_dir_path = pathlib.Path(project_path)
@@ -67,6 +71,7 @@ async def dump_config(
                 )
             except ApiError as exc:
                 raise DumpFailed(str(exc)) from exc
+            logger.info(f"Config dumped to '{target_file_path}'")
         finally:
             await client.close()
     finally:
