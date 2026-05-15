@@ -60,7 +60,7 @@ flowchart LR
 An action declares its **execution scope** via `SCOPE`:
 
 - `ActionScope.PROJECT` (default): the WM dispatches the action once per project that declares it. This is the right choice for most actions where each project is self-contained.
-- `ActionScope.WORKSPACE`: the WM dispatches the action exactly once, routing it to the workspace root project. The handler receives the full workspace context and is responsible for orchestrating per-project work internally (e.g. fanning out `LintFilesAction` to each project). Use this when an action must reason about all projects together — see [ADR-0035](adr/0035-action-declares-execution-scope-project-or-workspace.md) and the `LintAction` example in [Designing Actions Guide](guides/designing-actions-guide.md).
+- `ActionScope.WORKSPACE`: the WM dispatches the action exactly once, routing it to the workspace root project. The handler receives the full workspace context and is responsible for orchestrating per-project work internally (e.g. fanning out `LintFilesAction` to each project). Use this when an action must reason about all projects together — see [ADR-0035](adr/0035-action-declares-execution-scope-project-or-workspace.md) and the `LintAction` example in [Designing Actions Reference](guides/designing-actions-reference.md).
 
 ```python
 class LintAction(code_action.Action[LintRunPayload, LintRunContext, LintRunResult]):
@@ -102,7 +102,7 @@ A **Preset** is a Python package that bundles action and handler declarations in
 presets = [{ source = "fine_python_recommended" }]
 ```
 
-A preset contains a `preset.toml` file that declares which handlers to activate for which actions. The user's `pyproject.toml` configuration is merged on top of the preset, giving the user full control to override, extend, or disable individual handlers.
+A preset contains a `preset.toml` file that declares which handlers to activate for which actions. It may also contain **action class definitions** and **lightweight orchestration handlers** — see [Creating a Preset — Handlers in presets](guides/creating-preset.md#5-handlers-in-presets). The user's `pyproject.toml` configuration is merged on top of the preset, giving the user full control to override, extend, or disable individual handlers.
 
 ### Handler modes
 

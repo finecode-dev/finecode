@@ -2,7 +2,7 @@ import pathlib
 import sys
 
 from finecode_extension_api import code_action
-from finecode_extension_api.actions.system import dump_config_action
+from fine_envs import dump_config_action
 from finecode_extension_api.interfaces import ilogger, iprojectactionrunner, iprojectinfoprovider
 from finecode_extension_api.resource_uri import path_to_resource_uri
 

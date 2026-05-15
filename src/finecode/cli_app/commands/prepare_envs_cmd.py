@@ -205,7 +205,7 @@ async def _run(
     # Step 5 — create all virtualenvs (no env filter).
     try:
         create_result = await client.run_batch(
-            action_sources=["finecode_extension_api.actions.CreateEnvsAction"],
+            action_sources=["fine_envs.CreateEnvsAction"],
             projects=project_paths,
             options=common_options,
         )
@@ -217,7 +217,7 @@ async def _run(
     handler_params = {"env_names": env_names} if env_names is not None else {}
     try:
         batch_result = await client.run_batch(
-            action_sources=["finecode_extension_api.actions.InstallEnvsAction"],
+            action_sources=["fine_envs.InstallEnvsAction"],
             projects=project_paths,
             params=handler_params,
             options=common_options,

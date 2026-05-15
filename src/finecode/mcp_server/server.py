@@ -341,7 +341,7 @@ async def _handle_call_tool(params: dict | None) -> dict:
         project_path = pathlib.Path(project)
         raw_config = await _wm_client.get_project_raw_config(project)
         result = await _wm_client.run_action(
-            action_source="finecode_extension_api.actions.DumpConfigAction",
+            action_source="fine_envs.DumpConfigAction",
             project=project,
             params={
                 "source_file_path": str(

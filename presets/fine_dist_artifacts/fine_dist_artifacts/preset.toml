@@ -1,0 +1,23 @@
+[tool.finecode.action.publish_artifact]
+source = "fine_dist_artifacts.PublishArtifactAction"
+# no default handlers — registered by tool extensions
+
+[tool.finecode.action.publish_artifact_to_registry]
+source = "fine_dist_artifacts.PublishArtifactToRegistryAction"
+# no default handlers — registered by tool extensions
+
+[tool.finecode.action.is_artifact_published_to_registry]
+source = "fine_dist_artifacts.IsArtifactPublishedToRegistryAction"
+# no default handlers — registered by tool extensions
+
+[tool.finecode.action.verify_artifact_published_to_registry]
+source = "fine_dist_artifacts.VerifyArtifactPublishedToRegistryAction"
+# no default handlers — registered by tool extensions
+
+[tool.finecode.action.get_dist_artifact_version]
+source = "fine_dist_artifacts.GetDistArtifactVersionAction"
+# no default handlers — registered by tool extensions
+
+[tool.finecode.action.init_repository_provider]
+source = "fine_dist_artifacts.InitRepositoryProviderAction"
+# no default handlers — registered by tool extensions

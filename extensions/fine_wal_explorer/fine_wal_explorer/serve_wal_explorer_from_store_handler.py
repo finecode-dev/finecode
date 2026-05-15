@@ -15,12 +15,12 @@ from typing import Any, Callable, cast
 import duckdb
 from fine_wal_explorer import store_queries
 from finecode_extension_api import code_action
-from finecode_extension_api.actions.observability.ingest_wal_to_store_action import (
+from fine_wal_events.ingest_wal_to_store_action import (
     IngestWalToStoreAction,
     IngestWalToStoreRunPayload,
     IngestWalToStoreRunResult,
 )
-from finecode_extension_api.actions.observability.serve_wal_explorer_from_store_action import (
+from fine_wal_events.serve_wal_explorer_from_store_action import (
     DEFAULT_WAL_EXPLORER_PORT,
     ServeWalExplorerFromStoreAction,
     ServeWalExplorerFromStoreRunPayload,

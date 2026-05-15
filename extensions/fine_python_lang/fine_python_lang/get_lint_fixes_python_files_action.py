@@ -1,5 +1,5 @@
 from finecode_extension_api import code_action
-from finecode_extension_api.actions.code_quality.get_lint_fixes_action import (
+from fine_lint.get_lint_fixes_action import (
     GetLintFixesAction,
     GetLintFixesRunContext,
     GetLintFixesRunPayload,

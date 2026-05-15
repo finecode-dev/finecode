@@ -1,0 +1,11 @@
+[tool.finecode.action.discover_wal_sources]
+source = "fine_wal_events.DiscoverWalSourcesAction"
+# no default handlers — registered by tool extensions (e.g. fine_wal_explorer)
+
+[tool.finecode.action.ingest_wal_to_store]
+source = "fine_wal_events.IngestWalToStoreAction"
+# no default handlers — registered by tool extensions (e.g. fine_wal_explorer)
+
+[tool.finecode.action.serve_wal_explorer_from_store]
+source = "fine_wal_events.ServeWalExplorerFromStoreAction"
+# no default handlers — registered by tool extensions (e.g. fine_wal_explorer)

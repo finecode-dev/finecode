@@ -7,7 +7,7 @@ from lsprotocol import types
 
 from finecode._converter import converter as _converter
 from finecode.lsp_server import global_state, pygls_types_utils
-from finecode_extension_api.actions.code_quality import format_files_action
+from fine_format import format_files_action
 from finecode_extension_api.resource_uri import ResourceUri
 
 if TYPE_CHECKING:
@@ -33,7 +33,7 @@ async def format_document(_ls: LspServer, params: types.DocumentFormattingParams
 
     try:
         response = await global_state.wm_client.run_action(
-            action_source="finecode_extension_api.actions.FormatAction",
+            action_source="fine_format.FormatAction",
             project=project_dir,
             params={"file_paths": [file_uri], "save": False, "target": "files"},
             options={"trigger": "user", "devEnv": "ide"},

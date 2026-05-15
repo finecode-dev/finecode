@@ -3,7 +3,7 @@ from __future__ import annotations
 import dataclasses
 
 from finecode_extension_api import code_action
-from finecode_extension_api.actions.code_quality import lint_files_action
+from fine_lint import lint_files_action
 from fine_toml_lang.lint_toml_files_action import LintTomlFilesAction
 from finecode_extension_api.interfaces import iprojectinfoprovider
 from finecode_extension_api.resource_uri import ResourceUri, resource_uri_to_path

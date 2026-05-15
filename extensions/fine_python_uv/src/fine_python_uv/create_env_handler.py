@@ -2,8 +2,8 @@ import dataclasses
 from pathlib import Path
 
 from finecode_extension_api import code_action
-from finecode_extension_api.actions.environments import create_env_action
-from finecode_extension_api.actions.environments.create_envs_action import CreateEnvsRunResult
+from fine_envs import create_env_action
+from fine_envs.create_envs_action import CreateEnvsRunResult
 from finecode_extension_api.interfaces import icommandrunner, ifilemanager, ilogger, iprojectactionrunner, iprojectinfoprovider
 from finecode_extension_api.resource_uri import resource_uri_to_path
 

@@ -2,12 +2,12 @@ import dataclasses
 import pathlib
 
 from finecode_extension_api import code_action
-from finecode_extension_api.actions.observability.discover_wal_sources_action import (
+from fine_wal_events.discover_wal_sources_action import (
     DiscoverWalSourcesAction,
     DiscoverWalSourcesRunPayload,
     DiscoverWalSourcesRunResult,
 )
-from finecode_extension_api.actions.observability.ingest_wal_to_store_action import WalSourceSpec
+from fine_wal_events.ingest_wal_to_store_action import WalSourceSpec
 from finecode_extension_api.interfaces import (
     iextensionrunnerinfoprovider,
     ilogger,

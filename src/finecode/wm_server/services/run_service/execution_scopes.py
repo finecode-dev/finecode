@@ -28,7 +28,7 @@ class IProjectExecutionScope(typing.Protocol):
     """WM-internal contract for project-scope action execution.
 
     action_source is the action class import path (e.g.
-    "finecode_extension_api.actions.lint.LintAction").
+    "fine_lint.LintAction").
     The executor resolves it to an action name via domain.Action.source.
     """
 

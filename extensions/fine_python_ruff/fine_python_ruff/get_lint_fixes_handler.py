@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from finecode_extension_api import code_action
-from finecode_extension_api.actions.code_quality.get_lint_fixes_action import (
+from fine_lint.get_lint_fixes_action import (
     GetLintFixesRunContext,
     GetLintFixesRunPayload,
     GetLintFixesRunResult,
@@ -15,7 +15,7 @@ from finecode_extension_api.actions.code_quality.get_lint_fixes_action import (
 from fine_python_lang.get_lint_fixes_python_files_action import (
     GetLintFixesPythonFilesAction,
 )
-from finecode_extension_api.actions.code_quality.lint_fix import (
+from fine_lint.lint_fix import (
     FixApplicability,
     LintFix,
     Position,

@@ -9,7 +9,7 @@ import tempfile
 from pathlib import Path
 
 from finecode_extension_api import code_action
-from finecode_extension_api.actions.testing.run_tests_action import (
+from fine_test.run_tests_action import (
     RunTestsAction,
     RunTestsRunContext,
     RunTestsRunPayload,
@@ -17,7 +17,7 @@ from finecode_extension_api.actions.testing.run_tests_action import (
     TestCaseResult,
     TestOutcome,
 )
-from finecode_extension_api.actions.testing.test_id import TestId
+from fine_test.test_id import TestId
 from finecode_extension_api.interfaces import (
     icommandrunner,
     ilogger,

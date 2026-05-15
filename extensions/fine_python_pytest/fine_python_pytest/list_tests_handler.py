@@ -6,14 +6,14 @@ import sys
 from pathlib import Path
 
 from finecode_extension_api import code_action
-from finecode_extension_api.actions.testing.list_tests_action import (
+from fine_test.list_tests_action import (
     ListTestsAction,
     ListTestsRunContext,
     ListTestsRunPayload,
     ListTestsRunResult,
     TestItem,
 )
-from finecode_extension_api.actions.testing.test_id import TestId
+from fine_test.test_id import TestId
 from finecode_extension_api.interfaces import (
     icommandrunner,
     ilogger,

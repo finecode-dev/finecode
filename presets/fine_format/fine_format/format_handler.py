@@ -1,0 +1,77 @@
+# docs: docs/reference/actions.md
+import dataclasses
+
+from finecode_extension_api import code_action
+from fine_src_artifacts import list_src_artifact_files_by_lang_action
+from fine_format import format_action, format_files_action
+from finecode_extension_api.interfaces import ifileeditor, ilogger, iprojectactionrunner
+from finecode_extension_api.resource_uri import ResourceUri, path_to_resource_uri
+
+
+@dataclasses.dataclass
+class FormatHandlerConfig(code_action.ActionHandlerConfig): ...
+
+
+class FormatHandler(
+    code_action.ActionHandler[format_action.FormatAction, FormatHandlerConfig]
+):
+    def __init__(
+        self,
+        action_runner: iprojectactionrunner.IProjectActionRunner,
+        logger: ilogger.ILogger,
+        file_editor: ifileeditor.IFileEditor,
+    ) -> None:
+        self.action_runner = action_runner
+        self.file_editor = file_editor
+        self.logger = logger
+
+    async def run(
+        self,
+        payload: format_action.FormatRunPayload,
+        run_context: format_action.FormatRunContext,
+    ):
+        run_meta = run_context.meta
+        file_uris: list[ResourceUri]
+
+        if payload.target == format_action.FormatTarget.PROJECT:
+            if (
+                run_meta.dev_env == code_action.DevEnv.IDE
+                and run_meta.trigger == code_action.RunActionTrigger.SYSTEM
+            ):
+                # Performance optimisation: when the IDE triggers a background project
+                # format automatically, only format the currently opened files.
+                file_uris = [
+                    path_to_resource_uri(p)
+                    for p in self.file_editor.get_opened_files()
+                ]
+            else:
+                files_by_lang_result = await self.action_runner.run_action(
+                    action_type=list_src_artifact_files_by_lang_action.ListSrcArtifactFilesByLangAction,
+                    payload=list_src_artifact_files_by_lang_action.ListSrcArtifactFilesByLangRunPayload(
+                        langs=None
+                    ),
+                    meta=run_meta,
+                )
+                file_uris = [
+                    f
+                    for files in files_by_lang_result.files_by_lang.values()
+                    for f in files
+                ]
+        else:
+            file_uris = payload.file_paths
+
+        async with run_context.progress("Formatting files", total=len(file_uris)) as progress:
+            async for partial in self.action_runner.run_action_iter(
+                action_type=format_files_action.FormatFilesAction,
+                payload=format_files_action.FormatFilesRunPayload(
+                    file_paths=file_uris,
+                    save=payload.save,
+                ),
+                meta=run_meta,
+            ):
+                files = list(partial.result_by_file_path.keys())
+                msg = str(files[0]) if files else None
+                await progress.advance(message=msg)
+                yield format_action.FormatRunResult(
+                    result_by_file_path=partial.result_by_file_path
+                )

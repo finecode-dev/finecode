@@ -13,7 +13,7 @@ The role-word vocabulary (`recommended`, `format`, `lint`, `test`, ...) is off-l
 
 ## Presets
 
-Preset package names follow the pattern `fine_<lang?>_<role>`, where `<role>` is drawn from a closed set of **role words** and the language segment is optional:
+Preset package names follow the pattern `fine_<lang?>_<role>`, where `<role>` is a **role word** and the language segment is optional:
 
 - **Language-specific** preset: `fine_<lang>_<role>` (e.g. `fine_python_format`, `fine_python_lint`, `fine_toml_recommended`). Configures a role for one language.
 - **Cross-language** preset: `fine_<role>` (e.g. `fine_format`, `fine_lint`, `fine_test`, `fine_recommended`). Holds registrations for inter-language actions whose contract is language-agnostic (e.g. `format_file`, `lint`).
@@ -24,7 +24,9 @@ The bare language name `fine_<lang>` is **reserved** for a base preset that prov
 
 ## Role Words
 
-Role words form a closed, curated set. They double as suffixes for language-specific presets and as bare-slot names for cross-language presets.
+Role words double as suffixes for language-specific presets and as bare-slot names for cross-language presets. Role words may be compound (`code_hierarchy`, `symbol_info`).
+
+The following table lists known role words for reference:
 
 | Role word | Language-specific | Cross-language | Meaning |
 | --- | --- | --- | --- |
@@ -32,7 +34,18 @@ Role words form a closed, curated set. They double as suffixes for language-spec
 | `format` | `fine_python_format` | `fine_format` | Formatting-only preset |
 | `lint` | `fine_python_lint` | `fine_lint` | Linting-only preset |
 | `test` | `fine_python_test` | `fine_test` | Test runner preset |
+| `code_hierarchy` | `fine_python_code_hierarchy` | `fine_code_hierarchy` | Call hierarchy and type hierarchy navigation |
+| `symbol_info` | `fine_python_symbol_info` | `fine_symbol_info` | Point queries about a symbol at cursor: hover, definition, references |
 
-The `fine_<word>` slot is overloaded: `<word>` is read as a role word when it matches the table above, and as a language name otherwise. Role words and language names do not collide in practice, so the meaning is unambiguous from the name alone. Adding a new role word requires updating [ADR-0026](../adr/0026-extension-and-preset-package-naming.md).
+The `fine_<word>` slot is overloaded: `<word>` is read as a role word when it matches the table above, and as a language name otherwise. Role words and language names do not collide in practice, so the meaning is unambiguous from the name alone.
+
+## Choosing a role word
+
+Name presets after the **semantic domain** they cover, not the query mechanism or access pattern.
+
+- **Describe what information the preset provides**, not how you retrieve it. `fine_symbol_info` is better than `fine_code_lookup` because "lookup" describes the retrieval pattern, not the domain.
+- **Avoid terms that overlap with adjacent families.** `fine_code_navigation` was rejected for hover/definition/references because hierarchy navigation (`fine_code_hierarchy`) is also navigation — the boundary disappears. `fine_symbol_info` is unambiguous: it covers information about a specific symbol at cursor, not tree traversal.
+- **Be self-explanatory in a flat list.** A developer reading `fine_symbol_info` alongside `fine_format`, `fine_lint`, `fine_code_hierarchy` should immediately understand what each provides without opening its source.
+- **Prefer concrete nouns over abstract ones.** `symbol_info` (concrete: symbols, information) is clearer than `code_intelligence` (abstract) or `language_features` (LSP-internal jargon).
 
 This rule ensures that the package name alone unambiguously identifies whether a package is an extension or a preset, regardless of which directory it lives in. See [ADR-0026](../adr/0026-extension-and-preset-package-naming.md) for the rationale.

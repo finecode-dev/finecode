@@ -12,7 +12,7 @@ from typing import Any
 
 import duckdb
 from finecode_extension_api import code_action
-from finecode_extension_api.actions.observability.ingest_wal_to_store_action import (
+from fine_wal_events.ingest_wal_to_store_action import (
     IngestWalToStoreAction,
     IngestWalToStoreRunContext,
     IngestWalToStoreRunPayload,

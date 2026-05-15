@@ -1,5 +1,5 @@
 from finecode_extension_api import code_action
-from finecode_extension_api.actions.code_quality.lint_files_action import (
+from fine_lint.lint_files_action import (
     LintFilesAction,
     LintFilesRunContext,
     LintFilesRunPayload,

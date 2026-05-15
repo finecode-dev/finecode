@@ -5,7 +5,7 @@ description = ""
 authors = [{ name = "Vladyslav Hnatiuk", email = "aders1234@gmail.com" }]
 readme = "README.md"
 requires-python = ">=3.11, < 3.15"
-dependencies = ["finecode_extension_api~=0.4.0a0", "fine_toml_lang~=0.1.0a0", "tombi>=0.3.0,<0.12.0"]
+dependencies = ["finecode_extension_api~=0.4.0a0", "fine_lint~=0.1.0a0", "fine_semantic_tokens~=0.1.0a0", "fine_toml_lang~=0.1.0a0", "tombi>=0.3.0,<0.12.0"]
 
 [project.entry-points."finecode.activator"]
 fine_toml_tombi = "fine_toml_tombi.activator:Activator"

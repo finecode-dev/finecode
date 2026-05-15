@@ -1,7 +1,7 @@
 import dataclasses
 
 from finecode_extension_api import code_action
-from finecode_extension_api.actions.publishing import (
+from fine_dist_artifacts import (
     get_dist_artifact_version_action,
     publish_artifact_action,
     verify_artifact_published_to_registry_action,

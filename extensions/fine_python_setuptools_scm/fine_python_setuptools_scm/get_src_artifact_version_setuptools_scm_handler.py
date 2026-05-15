@@ -1,10 +1,10 @@
 import dataclasses
 
 from setuptools_scm import Configuration
-from setuptools_scm._get_version_impl import _get_version
+from setuptools_scm._get_version import _get_version
 
 from finecode_extension_api import code_action
-from finecode_extension_api.actions.artifact import get_src_artifact_version_action
+from fine_src_artifacts import get_src_artifact_version_action
 from finecode_extension_api.interfaces import iprojectinfoprovider, ilogger
 
 

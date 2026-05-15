@@ -8,14 +8,14 @@ from lsprotocol import types
 
 from finecode._converter import converter as _converter
 from finecode.lsp_server import global_state, pygls_types_utils
-from finecode_extension_api.actions.code_quality.code_action_types import (
+from fine_lint.code_action_types import (
     CodeAction,
     DiagnosticRef,
 )
-from finecode_extension_api.actions.code_quality.get_code_actions_action import (
+from fine_lint.get_code_actions_action import (
     GetCodeActionsRunResult,
 )
-from finecode_extension_api.actions.code_quality.lint_fix import (
+from fine_lint.lint_fix import (
     Position,
     Range,
     TextEdit,
@@ -152,7 +152,7 @@ async def document_code_action(
 
     try:
         response = await global_state.wm_client.run_action(
-            action_source="finecode_extension_api.actions.GetCodeActionsAction",
+            action_source="fine_lint.GetCodeActionsAction",
             project=project_dir,
             params=action_params,
             options={"trigger": "user", "devEnv": "ide"},

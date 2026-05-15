@@ -5,7 +5,7 @@ description = ""
 authors = [{ name = "Vladyslav Hnatiuk", email = "aders1234@gmail.com" }]
 readme = "README.md"
 requires-python = ">=3.11, < 3.15"
-dependencies = ["finecode_extension_api~=0.4.0a0", "setuptools-scm>=8"]
+dependencies = ["finecode_extension_api~=0.4.0a0", "setuptools-scm>=8", "fine_src_artifacts~=0.1.0a0"]
 
 [dependency-groups]
 dev_workspace = ["finecode~=0.4.0a0", "finecode_dev_common_preset~=0.3.0a0"]

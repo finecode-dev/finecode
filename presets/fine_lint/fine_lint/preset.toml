@@ -1,0 +1,30 @@
+[tool.finecode.action.lint]
+source = "fine_lint.LintAction"
+
+[[tool.finecode.action.lint.handlers]]
+name = "lint"
+source = "fine_lint.LintHandler"
+env = "dev_workspace"
+dependencies = ["fine_lint~=0.1.0a0"]
+
+[tool.finecode.action.lint_files]
+source = "fine_lint.LintFilesAction"
+
+[[tool.finecode.action.lint_files.handlers]]
+name = "dispatch"
+source = "fine_lint.LintFilesDispatchHandler"
+env = "dev_no_runtime"
+dependencies = ["fine_lint~=0.1.0a0"]
+
+[tool.finecode.action.get_code_actions]
+source = "fine_lint.GetCodeActionsAction"
+
+[[tool.finecode.action.get_code_actions.handlers]]
+name = "lint_fixes_bridge"
+source = "fine_lint.LintFixesCodeActionsBridgeHandler"
+env = "dev_workspace"
+dependencies = ["fine_lint~=0.1.0a0"]
+
+[tool.finecode.action.get_lint_fixes]
+source = "fine_lint.GetLintFixesAction"
+# no default handlers — registered by language presets (e.g. fine_python_lint)

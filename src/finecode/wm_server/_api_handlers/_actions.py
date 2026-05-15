@@ -210,8 +210,8 @@ async def _handle_get_payload_schemas(
 ) -> dict:
     """Return payload schemas for the given actions in a project.
 
-    Params: ``{"project": "/abs/path/to/project", "actionSources": ["finecode_extension_api.actions.LintAction"]}``
-    Result: ``{"schemas": {"finecode_extension_api.actions.LintAction": {...} | null}}``
+    Params: ``{"project": "/abs/path/to/project", "actionSources": ["fine_lint.LintAction"]}``
+    Result: ``{"schemas": {"fine_lint.LintAction": {...} | null}}``
 
     Schemas are fetched on-demand from Extension Runners keyed by the canonical
     action name internally, then re-keyed by the requested source for the response.

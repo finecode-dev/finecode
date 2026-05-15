@@ -1,7 +1,7 @@
 import dataclasses
 
 from finecode_extension_api import code_action
-from finecode_extension_api.actions.artifact import get_src_artifact_registries_action
+from fine_src_artifacts import get_src_artifact_registries_action
 from finecode_extension_api.interfaces import (
     ilogger,
     irepositorycredentialsprovider,

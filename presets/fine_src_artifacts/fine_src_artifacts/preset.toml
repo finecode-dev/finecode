@@ -1,0 +1,37 @@
+[tool.finecode.action.build_artifact]
+source = "fine_src_artifacts.BuildArtifactAction"
+# no default handlers — registered by tool extensions
+
+[tool.finecode.action.get_src_artifact_language]
+source = "fine_src_artifacts.GetSrcArtifactLanguageAction"
+# no default handlers — registered by language extensions
+
+[tool.finecode.action.get_src_artifact_registries]
+source = "fine_src_artifacts.GetSrcArtifactRegistriesAction"
+# no default handlers — registered by language extensions
+
+[tool.finecode.action.get_src_artifact_version]
+source = "fine_src_artifacts.GetSrcArtifactVersionAction"
+# no default handlers — registered by language extensions
+
+[tool.finecode.action.list_src_artifact_files_by_lang]
+source = "fine_src_artifacts.ListSrcArtifactFilesByLangAction"
+
+[[tool.finecode.action.list_src_artifact_files_by_lang.handlers]]
+name = "list_src_artifact_files_by_lang_python"
+source = "fine_python_lang.ListSrcArtifactFilesByLangPythonHandler"
+env = "dev_no_runtime"
+dependencies = ["fine_python_lang~=0.1.0a0"]
+
+[tool.finecode.action.group_src_artifact_files_by_lang]
+source = "fine_src_artifacts.GroupSrcArtifactFilesByLangAction"
+
+[[tool.finecode.action.group_src_artifact_files_by_lang.handlers]]
+name = "group_src_artifact_files_by_lang_python"
+source = "fine_python_lang.GroupSrcArtifactFilesByLangPythonHandler"
+env = "dev_no_runtime"
+dependencies = ["fine_python_lang~=0.1.0a0"]
+
+[tool.finecode.action.lock_dependencies]
+source = "fine_src_artifacts.LockDependenciesAction"
+# no default handlers — registered by language extensions

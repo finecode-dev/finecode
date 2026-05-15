@@ -2,12 +2,29 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
-from typing import override
+from typing import Any, override
 
 from finecode_extension_api import service
-from finecode_extension_api.actions.code_quality import lint_files_action
+from fine_lint import lint_files_action
+from finecode_extension_api.contrib.lsp_service import LspService, apply_text_edits, map_diagnostics_to_lint_messages
 from finecode_extension_api.interfaces import ifileeditor, ilspclient, ilogger
-from finecode_extension_api.contrib.lsp_service import LspService, map_diagnostics_to_lint_messages, apply_text_edits
+
+
+_RUFF_CLIENT_CAPABILITIES: dict[str, Any] = {
+    "textDocument": {
+        "synchronization": {
+            "dynamicRegistration": False,
+            "didSave": True,
+        },
+        "completion": {"dynamicRegistration": False},
+        "hover": {"dynamicRegistration": False},
+        "publishDiagnostics": {"relatedInformation": True},
+    },
+    "workspace": {
+        "workspaceFolders": True,
+        "configuration": True,
+    },
+}
 
 
 class RuffLspService(service.DisposableService):
@@ -27,6 +44,7 @@ class RuffLspService(service.DisposableService):
             cmd=f"{ruff_bin} server",
             language_id="python",
             readable_id="ruff-lsp",
+            client_capabilities=_RUFF_CLIENT_CAPABILITIES,
         )
 
     @override
@@ -73,3 +91,4 @@ class RuffLspService(service.DisposableService):
         if not raw_edits:
             return file_content
         return apply_text_edits(file_content, raw_edits)
+

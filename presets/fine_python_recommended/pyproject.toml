@@ -6,6 +6,7 @@ authors = [{ name = "Vladyslav Hnatiuk", email = "aders1234@gmail.com" }]
 readme = "README.md"
 requires-python = ">=3.11, < 3.15"
 dependencies = [
+    "fine_python_code_hierarchy~=0.1.0a0",
     "fine_python_format~=0.4.0a0",
     "fine_python_lint~=0.5.0a0",
     "fine_python_test~=0.1.0a0",

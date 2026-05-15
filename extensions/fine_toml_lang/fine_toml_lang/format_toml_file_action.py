@@ -1,5 +1,5 @@
 from finecode_extension_api import code_action
-from finecode_extension_api.actions.code_quality.format_file_action import (
+from fine_format.format_file_action import (
     FormatFileAction,
     FormatFileRunContext,
     FormatFileRunPayload,

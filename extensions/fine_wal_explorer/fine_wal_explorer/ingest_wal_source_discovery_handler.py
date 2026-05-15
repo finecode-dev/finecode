@@ -1,11 +1,11 @@
 import dataclasses
 
 from finecode_extension_api import code_action
-from finecode_extension_api.actions.observability.discover_wal_sources_action import (
+from fine_wal_events.discover_wal_sources_action import (
     DiscoverWalSourcesAction,
     DiscoverWalSourcesRunPayload,
 )
-from finecode_extension_api.actions.observability.ingest_wal_to_store_action import (
+from fine_wal_events.ingest_wal_to_store_action import (
     IngestWalToStoreAction,
     IngestWalToStoreRunContext,
     IngestWalToStoreRunPayload,

@@ -1,8 +1,8 @@
 import dataclasses
 
 from finecode_extension_api import code_action
-from finecode_extension_api.actions.artifact import get_src_artifact_registries_action
-from finecode_extension_api.actions.publishing import is_artifact_published_to_registry_action
+from fine_src_artifacts import get_src_artifact_registries_action
+from fine_dist_artifacts import is_artifact_published_to_registry_action
 from finecode_extension_api.resource_uri import resource_uri_to_path
 from finecode_extension_api.interfaces import (
     ihttpclient,

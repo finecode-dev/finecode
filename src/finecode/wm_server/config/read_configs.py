@@ -269,31 +269,29 @@ async def read_project_config(
                 project_def["tool"] = {}
             project_def["tool"]["finecode"] = finecode_section
 
-        base_config_path = Path(__file__).parent.parent.parent / "base_config.toml"
-        # TODO: cache instead of reading each time
-        with open(base_config_path, "r") as base_config_file:
-            base_config = toml_loads(base_config_file.read()).unwrap()
         project_config = {}
-        _merge_projects_configs(
-            project_config, project.def_path, base_config, base_config_path
-        )
 
+        # fine_envs is always loaded as a mandatory preset; user presets are loaded
+        # only when resolve_presets=True. Both require a dev_workspace runner.
         finecode_raw_config = project_def.get("tool", {}).get("finecode", None)
+        preset_sources: list[str] = ["fine_envs"]
         if finecode_raw_config and resolve_presets:
             try:
-                presets = [
+                user_presets = [
                     _converter.structure(raw_preset, config_models.FinecodePresetDefinition)
                     for raw_preset in finecode_raw_config.get("presets", [])
                 ]
             except cattrs.ClassValidationError as exception:
                 raise config_models.ConfigurationError(str(exception))
+            preset_sources += [preset.source for preset in user_presets]
 
-            # all presets expected to be in `dev_workspace` environment
-            project_runners = ws_context.ws_projects_extension_runners[project.dir_path]
-            # TODO: can it be the case that there is no such runner?
-            dev_workspace_runner = project_runners["dev_workspace"]
+        # TODO: can it be the case that there is no such runner? 
+        dev_workspace_runner = ws_context.ws_projects_extension_runners.get(
+            project.dir_path, {}
+        ).get("dev_workspace")
+        if dev_workspace_runner is not None:
             new_config = await collect_config_from_py_presets(
-                presets_sources=[preset.source for preset in presets],
+                presets_sources=preset_sources,
                 def_path=project.def_path,
                 runner=dev_workspace_runner,
             )
@@ -724,7 +722,7 @@ def add_action_to_config_if_new(
 
     # example of action definition:
     # [tool.finecode.action.text_document_inlay_hint]
-    # source = "finecode_extension_api.actions.ide.text_document_inlay_hint.TextDocumentInlayHintAction"
+    # source = "fine_inlay_hints.TextDocumentInlayHintAction"
     # handlers = [
     #     { name = 'module_exports_inlay_hint', source = 'fine_python_module_exports.extension.get_document_inlay_hints', env = "dev_no_runtime", dependencies = [
     #         "fine_python_module_exports @ git+https://github.com/finecode-dev/finecode.git#subdirectory=extensions/fine_python_module_exports",

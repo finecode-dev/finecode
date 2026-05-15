@@ -1,7 +1,7 @@
 import dataclasses
 
 from finecode_extension_api import code_action
-from finecode_extension_api.actions.environments import install_deps_in_env_action
+from fine_envs import install_deps_in_env_action
 from finecode_extension_api.interfaces import icommandrunner, ilogger, iprojectactionrunner, iprojectinfoprovider
 from finecode_extension_api.resource_uri import resource_uri_to_path
 

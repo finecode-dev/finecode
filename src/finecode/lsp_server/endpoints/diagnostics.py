@@ -9,7 +9,7 @@ from lsprotocol import types
 
 from finecode._converter import converter as _converter
 from finecode.lsp_server import global_state, pygls_types_utils
-from finecode_extension_api.actions.code_quality import lint_action
+from fine_lint import lint_action
 from finecode_extension_api.resource_uri import ResourceUri
 
 if TYPE_CHECKING:
@@ -60,7 +60,7 @@ async def document_diagnostic_with_full_result(
 
     try:
         response = await global_state.wm_client.run_action(
-            action_source="finecode_extension_api.actions.LintAction",
+            action_source="fine_lint.LintAction",
             project="",
             params={
                 "target": "files",
@@ -123,11 +123,11 @@ async def document_diagnostic_with_partial_results(
         return None
 
     # Store the expected response type for this token
-    global_state.partial_result_tokens[partial_result_token] = ("finecode_extension_api.actions.LintAction", "document_diagnostic")
+    global_state.partial_result_tokens[partial_result_token] = ("fine_lint.LintAction", "document_diagnostic")
 
     try:
         await global_state.wm_client.run_action(
-            action_source="finecode_extension_api.actions.LintAction",
+            action_source="fine_lint.LintAction",
             project="",
             params={"target": "files", "file_paths": [file_path.as_uri()]},
             options={"resultFormats": ["json"], "trigger": "system", "devEnv": "ide"},
@@ -182,12 +182,12 @@ async def run_workspace_diagnostic_with_partial_results(
     assert global_state.wm_client is not None, "WM client must be connected"
 
     # Store the expected response type for this token
-    global_state.partial_result_tokens[partial_result_token] = ("finecode_extension_api.actions.LintAction", "workspace_diagnostic")
+    global_state.partial_result_tokens[partial_result_token] = ("fine_lint.LintAction", "workspace_diagnostic")
 
     try:
         # send request to WM server; notifications will trigger progress reporter
         await global_state.wm_client.run_action(
-            action_source="finecode_extension_api.actions.LintAction",
+            action_source="fine_lint.LintAction",
             project="",  # empty project = all relevant projects
             params={"target": "project"},
             options={"resultFormats": ["json"], "trigger": "system", "devEnv": "ide"},
@@ -222,7 +222,7 @@ async def workspace_diagnostic_with_full_result() -> types.WorkspaceDiagnosticRe
 
     try:
         response = await global_state.wm_client.run_action(
-            action_source="finecode_extension_api.actions.LintAction",
+            action_source="fine_lint.LintAction",
             project="",  # empty project = all relevant projects
             params={"target": "project"},
             options={"trigger": "system", "devEnv": "ide"},

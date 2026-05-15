@@ -1,0 +1,40 @@
+[tool.finecode.action.precommit]
+source = "fine_git_hooks.PrecommitAction"
+
+# Discovery must be first — populates run_context.staged_files for all bridge handlers
+[[tool.finecode.action.precommit.handlers]]
+name = "staged_files_discovery"
+source = "fine_git_hooks.StagedFilesDiscoveryHandler"
+env = "dev_workspace"
+dependencies = ["fine_git_hooks~=0.1.0a0"]
+
+# Bridge handlers — order determines execution order
+[[tool.finecode.action.precommit.handlers]]
+name = "lint_precommit_bridge"
+source = "fine_git_hooks.LintPrecommitBridgeHandler"
+env = "dev_workspace"
+dependencies = ["fine_git_hooks~=0.1.0a0"]
+
+[[tool.finecode.action.precommit.handlers]]
+name = "format_precommit_bridge"
+source = "fine_git_hooks.FormatPrecommitBridgeHandler"
+env = "dev_workspace"
+dependencies = ["fine_git_hooks~=0.1.0a0"]
+
+[tool.finecode.action.install_git_hooks]
+source = "fine_git_hooks.InstallGitHooksAction"
+
+[[tool.finecode.action.install_git_hooks.handlers]]
+name = "install_git_hooks"
+source = "fine_git_hooks.InstallGitHooksHandler"
+env = "dev_workspace"
+dependencies = ["fine_git_hooks~=0.1.0a0"]
+
+[tool.finecode.action.uninstall_git_hooks]
+source = "fine_git_hooks.UninstallGitHooksAction"
+
+[[tool.finecode.action.uninstall_git_hooks.handlers]]
+name = "uninstall_git_hooks"
+source = "fine_git_hooks.UninstallGitHooksHandler"
+env = "dev_workspace"
+dependencies = ["fine_git_hooks~=0.1.0a0"]

@@ -1,0 +1,7 @@
+[tool.finecode.action.list_tests]
+source = "fine_test.ListTestsAction"
+# no default handlers — registered by language presets (e.g. fine_python_test)
+
+[tool.finecode.action.run_tests]
+source = "fine_test.RunTestsAction"
+# no default handlers — registered by language presets (e.g. fine_python_test)

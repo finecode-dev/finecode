@@ -1,0 +1,34 @@
+[tool.finecode.action.format]
+source = "fine_format.FormatAction"
+
+[[tool.finecode.action.format.handlers]]
+name = "format"
+source = "fine_format.FormatHandler"
+env = "dev_no_runtime"
+dependencies = ["fine_format~=0.1.0a0"]
+
+
+[tool.finecode.action.format_files]
+source = "fine_format.FormatFilesAction"
+
+[[tool.finecode.action.format_files.handlers]]
+name = "format_files_iterate"
+source = "fine_format.FormatFilesIterateHandler"
+env = "dev_no_runtime"
+dependencies = ["fine_format~=0.1.0a0"]
+
+
+[tool.finecode.action.format_file]
+source = "fine_format.FormatFileAction"
+
+[[tool.finecode.action.format_file.handlers]]
+name = "dispatch"
+source = "fine_format.FormatFileDispatchHandler"
+env = "dev_no_runtime"
+dependencies = ["fine_format~=0.1.0a0"]
+
+[[tool.finecode.action.format_file.handlers]]
+name = "save"
+source = "fine_format.SaveFormatFileHandler"
+env = "dev_no_runtime"
+dependencies = ["fine_format~=0.1.0a0"]

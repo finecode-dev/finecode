@@ -1,5 +1,5 @@
 [tool.finecode.action.list_src_artifact_files_by_lang]
-source = "finecode_extension_api.actions.ListSrcArtifactFilesByLangAction"
+source = "fine_src_artifacts.ListSrcArtifactFilesByLangAction"
 
 [[tool.finecode.action.list_src_artifact_files_by_lang.handlers]]
 name = "list_src_artifact_files_by_lang_toml"
@@ -8,7 +8,7 @@ env = "dev_no_runtime"
 dependencies = ["fine_toml_lang~=0.1.0a0"]
 
 [tool.finecode.action.group_src_artifact_files_by_lang]
-source = "finecode_extension_api.actions.GroupSrcArtifactFilesByLangAction"
+source = "fine_src_artifacts.GroupSrcArtifactFilesByLangAction"
 
 [[tool.finecode.action.group_src_artifact_files_by_lang.handlers]]
 name = "group_src_artifact_files_by_lang_toml"
@@ -33,6 +33,20 @@ name = "tombi"
 source = "fine_toml_tombi.TombiFormatTomlFileHandler"
 env = "dev_no_runtime"
 dependencies = ["fine_toml_tombi~=0.1.0a0"]
+
+[tool.finecode.action.text_document_semantic_tokens]
+source = "fine_semantic_tokens.TextDocumentSemanticTokensAction"
+handlers = [
+    { name = "dispatch", source = "fine_semantic_tokens.SemanticTokensDispatchHandler", env = "dev_no_runtime", dependencies = ["fine_semantic_tokens~=0.1.0a0"] },
+]
+
+[tool.finecode.action.text_document_semantic_tokens_toml]
+source = "fine_toml_lang.TextDocumentSemanticTokensTomlAction"
+handlers = [
+    { name = "tombi", source = "fine_toml_tombi.TombiSemanticTokensHandler", env = "dev_no_runtime", dependencies = [
+        "fine_toml_tombi~=0.1.0a0",
+    ] },
+]
 
 [tool.finecode.extension.fine_python_tombi]
 dependencies_override = ["tombi==0.11.*"]

@@ -1,0 +1,3 @@
+[tool.finecode.action.text_document_inlay_hint]
+source = "fine_inlay_hints.TextDocumentInlayHintAction"
+# no default handlers — registered by language extensions

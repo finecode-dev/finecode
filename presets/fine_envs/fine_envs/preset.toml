@@ -1,0 +1,81 @@
+[tool.finecode.action.create_env]
+source = "fine_envs.CreateEnvAction"
+
+[[tool.finecode.action.create_env.handlers]]
+name = "create_env_with_uv"
+source = "fine_python_uv.UvCreateEnvHandler"
+env = "dev_workspace"
+dependencies = ["fine_python_uv~=0.1.0a0"]
+
+
+[tool.finecode.action.create_envs]
+source = "fine_envs.CreateEnvsAction"
+
+[[tool.finecode.action.create_envs.handlers]]
+name = "create_envs_discover_envs"
+source = "fine_envs.CreateEnvsDiscoverEnvsHandler"
+env = "dev_workspace"
+dependencies = ["fine_envs~=0.1.0a0"]
+
+[[tool.finecode.action.create_envs.handlers]]
+name = "create_envs_dispatch"
+source = "fine_envs.CreateEnvsDispatchHandler"
+env = "dev_workspace"
+dependencies = ["fine_envs~=0.1.0a0"]
+
+[tool.finecode.action.install_env]
+source = "fine_envs.InstallEnvAction"
+
+[[tool.finecode.action.install_env.handlers]]
+name = "install_env_read_config"
+source = "fine_envs.InstallEnvReadConfigHandler"
+env = "dev_workspace"
+dependencies = ["fine_envs~=0.1.0a0"]
+
+[[tool.finecode.action.install_env.handlers]]
+name = "install_env_install_deps"
+source = "fine_envs.InstallEnvInstallDepsHandler"
+env = "dev_workspace"
+dependencies = ["fine_envs~=0.1.0a0"]
+
+
+[tool.finecode.action.install_envs]
+source = "fine_envs.InstallEnvsAction"
+
+[[tool.finecode.action.install_envs.handlers]]
+name = "install_envs_discover_envs"
+source = "fine_envs.InstallEnvsDiscoverEnvsHandler"
+env = "dev_workspace"
+dependencies = ["fine_envs~=0.1.0a0"]
+
+[[tool.finecode.action.install_envs.handlers]]
+name = "install_envs_dispatch"
+source = "fine_envs.InstallEnvsDispatchHandler"
+env = "dev_workspace"
+dependencies = ["fine_envs~=0.1.0a0"]
+
+
+[tool.finecode.action.dump_config]
+source = "fine_envs.DumpConfigAction"
+
+[[tool.finecode.action.dump_config.handlers]]
+name = "dump_config"
+source = "fine_envs.DumpConfigHandler"
+env = "dev_workspace"
+dependencies = ["fine_envs~=0.1.0a0"]
+
+[[tool.finecode.action.dump_config.handlers]]
+name = "dump_config_save"
+source = "fine_envs.DumpConfigSaveHandler"
+env = "dev_workspace"
+dependencies = ["fine_envs~=0.1.0a0"]
+
+
+[tool.finecode.action.install_deps_in_env]
+source = "fine_envs.InstallDepsInEnvAction"
+
+[[tool.finecode.action.install_deps_in_env.handlers]]
+name = "install_deps_with_uv"
+source = "fine_python_uv.UvInstallDepsInEnvHandler"
+env = "dev_workspace"
+dependencies = ["fine_python_uv~=0.1.0a0"]

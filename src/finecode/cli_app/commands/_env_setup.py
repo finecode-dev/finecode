@@ -26,7 +26,7 @@ async def create_and_install_envs(
 
     try:
         create_result = await client.run_action(
-            action_source="finecode_extension_api.actions.CreateEnvsAction",
+            action_source="fine_envs.CreateEnvsAction",
             project=project_path,
             params={"envs": envs},
             options=options,
@@ -42,7 +42,7 @@ async def create_and_install_envs(
 
     try:
         install_result = await client.run_action(
-            action_source="finecode_extension_api.actions.InstallEnvsAction",
+            action_source="fine_envs.InstallEnvsAction",
             project=project_path,
             params={"envs": envs},
             options=options,

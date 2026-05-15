@@ -186,8 +186,7 @@ The monorepo contains interdependent packages that must be released in order:
 2. `finecode_httpclient`
 3. `finecode_extension_api`
 4. `finecode_extension_runner`
-5. `finecode_builtin_handlers`
-6. `finecode` (main package)
+5. `finecode` (main package)
 
 ### Pre-release Versions
 Use alpha/beta/rc suffixes for pre-releases:

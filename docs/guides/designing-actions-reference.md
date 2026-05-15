@@ -243,7 +243,7 @@ class MyRunContext(code_action.RunActionContext[MyRunPayload]):
 
 When possible, prefer not overriding `__init__` at all. If you do override it, keep it compatible with the base `RunActionContext` constructor unless you have a concrete reason not to.
 
-See `finecode_builtin_handlers/src/finecode_builtin_handlers/install_envs_discover_envs_handler.py`
+See `presets/fine_envs/fine_envs/install_envs_discover_envs_handler.py`
 for a concrete example of this constructor-forwarding pattern.
 <!-- 
 This is currently still an idea, not implemented:
@@ -894,7 +894,7 @@ flowchart TD
 ```toml
 [[tool.finecode.action.lock_dependencies.handlers]]
 name = "dispatch"
-source = "finecode_builtin_handlers.LockDependenciesDispatchHandler"
+source = "fine_src_artifacts.LockDependenciesDispatchHandler"
 env = "dev_workspace"
 
 [[tool.finecode.action.lock_python_dependencies.handlers]]

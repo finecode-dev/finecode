@@ -3,8 +3,8 @@ import dataclasses
 import virtualenv
 
 from finecode_extension_api import code_action
-from finecode_extension_api.actions.environments import create_env_action
-from finecode_extension_api.actions.environments.create_envs_action import CreateEnvsRunResult
+from fine_envs import create_env_action
+from fine_envs.create_envs_action import CreateEnvsRunResult
 from finecode_extension_api.interfaces import ifilemanager, ilogger
 from finecode_extension_api.resource_uri import resource_uri_to_path
 

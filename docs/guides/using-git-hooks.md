@@ -56,9 +56,9 @@ source = "finecode_extension_api.actions.PrecommitAction"
 
 [[tool.finecode.action.precommit.handlers]]
 name = "staged_files_discovery"
-source = "finecode_builtin_handlers.StagedFilesDiscoveryHandler"
+source = "fine_git_hooks.StagedFilesDiscoveryHandler"
 env = "dev_workspace"
-dependencies = ["finecode_builtin_handlers~=0.2.0a0"]
+dependencies = ["fine_git_hooks~=0.1.0a0"]
 
 [[tool.finecode.action.precommit.handlers]]
 name = "mypy_precommit_bridge"

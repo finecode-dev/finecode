@@ -7,7 +7,7 @@ from fine_python_ast import iast_provider
 from fine_python_module_exports import api
 
 from finecode_extension_api import common_types
-from finecode_extension_api.actions.ide import text_document_inlay_hint
+from fine_inlay_hints import text_document_inlay_hint
 
 # from finecode_extension_api import code_action
 

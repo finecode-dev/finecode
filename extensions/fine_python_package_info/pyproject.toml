@@ -11,6 +11,8 @@ dependencies = [
     "tomlkit==0.11.*",
     "twine==6.2.*",
     "build==1.4.*",
+    "fine_src_artifacts~=0.1.0a0",
+    "fine_dist_artifacts~=0.1.0a0",
 ]
 
 [project.entry-points."finecode.activator"]
