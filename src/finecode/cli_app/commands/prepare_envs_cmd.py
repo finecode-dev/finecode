@@ -27,8 +27,10 @@ async def prepare_envs(
     Orchestration steps:
     1. Discover projects (without starting runners — envs may not exist yet).
     2. Check / remove dev_workspace environments as needed.
+    2.5. Start workspace root dev_workspace runner (resolves preset-contributed
+         actions such as ``fine_envs.CreateEnvsAction`` needed in step 3).
     3. Run ``create_envs`` + ``install_envs`` to create / update dev_workspace envs.
-    4. Start dev_workspace runners (resolves preset actions).
+    4. Start all dev_workspace runners (resolves preset actions for all projects).
     5. Run ``create_envs`` to create all virtualenvs.
     6. Run ``install_envs`` to install all dependencies.
 
@@ -53,6 +55,9 @@ async def prepare_envs(
 
         client = ApiClient()
         await client.connect("127.0.0.1", port)
+        # Silence "unhandled notification" trace log — treeChanged is irrelevant in CLI mode.
+        async def _noop(_: object) -> None: pass
+        client.on_notification("actions/treeChanged", _noop)
         try:
             await _run(
                 client, workdir_path, recreate, dev_env, env_names, project_names
@@ -83,6 +88,15 @@ async def _run(
     env_names: list[str] | None = None,
     project_names: list[str] | None = None,
 ) -> None:
+    # Orchestration:
+    #   1. Discover projects (no runners — envs may not exist yet)
+    #   2. Check / remove dev_workspace envs as needed
+    #   2.5 Start workspace root dev_workspace runner (resolves preset actions)
+    #   3. create_envs + install_envs for subproject dev_workspace envs
+    #   4. Start all dev_workspace runners
+    #   5. create_envs across all projects
+    #   6. install_envs across all projects
+    #
     # Step 1 — discover projects without starting runners (envs may not exist).
     # add_dir only returns newly discovered projects; on a shared server the
     # workspace may already be initialized, so use list_projects for the lookup.
@@ -158,6 +172,18 @@ async def _run(
                 tg.create_task(_check_or_remove_dw(project))
     except* PrepareEnvsFailed as eg:
         raise eg.exceptions[0]
+
+    # Step 2.5 — start workspace root dev_workspace runner so that
+    # preset-contributed actions (fine_envs.CreateEnvsAction / InstallEnvsAction)
+    # are resolved before step 3 calls them.
+    if other_projects:
+        logger.info("Starting workspace root dev_workspace runner...")
+        try:
+            await client.start_runners(projects=[current_project["path"]])
+        except ApiError as exc:
+            raise PrepareEnvsFailed(
+                f"Starting workspace root runner failed: {exc}"
+            ) from exc
 
     # Step 3 — create / update dev_workspace environments.
     logger.info("Creating/updating dev workspace environments...")

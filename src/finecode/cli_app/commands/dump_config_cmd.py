@@ -33,6 +33,9 @@ async def dump_config(
 
         client = ApiClient()
         await client.connect("127.0.0.1", port)
+        # Silence "unhandled notification" trace log — treeChanged is irrelevant in CLI mode.
+        async def _noop(_: object) -> None: pass
+        client.on_notification("actions/treeChanged", _noop)
         try:
             # add_dir only returns newly discovered projects; on a shared server
             # the workspace may already be initialized, so use list_projects for lookup.
