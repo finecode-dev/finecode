@@ -3,6 +3,7 @@ import pathlib
 from typing import Any, Callable
 
 from finecode_extension_api.interfaces import iprojectinfoprovider
+from finecode_extension_runner import er_errors
 
 
 class ProjectInfoProvider(iprojectinfoprovider.IProjectInfoProvider):
@@ -40,7 +41,10 @@ class ProjectInfoProvider(iprojectinfoprovider.IProjectInfoProvider):
     async def get_project_raw_config(
         self, project_def_path: pathlib.Path
     ) -> dict[str, Any]:
-        return await self.project_raw_config_getter(str(project_def_path))
+        try:
+            return await self.project_raw_config_getter(str(project_def_path))
+        except er_errors.WmCommunicationError as exc:
+            raise iprojectinfoprovider.ProjectInfoUnavailableError(exc.message) from exc
 
     async def get_current_project_raw_config(self) -> dict[str, Any]:
         current_project_path = self.get_current_project_def_path()
@@ -52,4 +56,7 @@ class ProjectInfoProvider(iprojectinfoprovider.IProjectInfoProvider):
     async def get_workspace_editable_packages(self) -> dict[str, pathlib.Path]:
         if self.workspace_editable_packages_getter is None:
             return {}
-        return await self.workspace_editable_packages_getter()
+        try:
+            return await self.workspace_editable_packages_getter()
+        except er_errors.WmCommunicationError as exc:
+            raise iprojectinfoprovider.ProjectInfoUnavailableError(exc.message) from exc

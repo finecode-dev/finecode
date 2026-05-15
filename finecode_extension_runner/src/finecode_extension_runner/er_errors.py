@@ -1,0 +1,14 @@
+"""ER-internal exception vocabulary.
+
+These exceptions represent failures at the ER's own layer boundaries. They are
+not part of any public interface contract and must be translated to interface-level
+exceptions (e.g. ProjectInfoUnavailableError) before crossing into higher layers.
+"""
+
+
+class WmCommunicationError(Exception):
+    """Raised when a request to the Workspace Manager fails or times out."""
+
+    def __init__(self, message: str) -> None:
+        self.message = message
+        super().__init__(message)

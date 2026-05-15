@@ -31,8 +31,8 @@ from loguru import logger
 
 import finecode_jsonrpc as finecode_jsonrpc_module
 from finecode_extension_api import code_action
-from finecode_extension_api.interfaces import ifileeditor
-from finecode_extension_runner import context, er_telemetry, er_wal, global_state, logs, schemas, services
+from finecode_extension_api.interfaces import ifileeditor, iprojectinfoprovider
+from finecode_extension_runner import context, er_errors, er_telemetry, er_wal, global_state, logs, schemas, services
 from finecode_extension_runner._converter import converter as _converter
 from finecode_extension_runner._services import merge_results as merge_results_service
 from finecode_extension_runner._services import run_action as run_action_service
@@ -423,22 +423,52 @@ async def _document_did_change(server: ErServer, params: dict | None) -> None:
 async def get_project_raw_config(
     server: ErServer, project_def_path: str
 ) -> dict[str, typing.Any]:
-    raw_config = await asyncio.wait_for(
-        server.send_request_to_wm(
-            "projects/getRawConfig", params={"projectDefPath": project_def_path}
-        ),
-        10,
-    )
+    """Fetch raw project config from WM for the given project definition file.
+
+    Raises:
+        WmCommunicationError: WM did not respond within 10s, or returned an
+            error response (e.g. the project path is not known to WM).
+    """
+    try:
+        raw_config = await asyncio.wait_for(
+            server.send_request_to_wm(
+                "projects/getRawConfig", params={"projectDefPath": project_def_path}
+            ),
+            10,
+        )
+    except TimeoutError as exc:
+        raise er_errors.WmCommunicationError(
+            f"WM did not respond to getRawConfig for '{project_def_path}' within 10s"
+        ) from exc
+    except finecode_jsonrpc_module.JsonRpcError as exc:
+        raise er_errors.WmCommunicationError(
+            f"WM returned error for getRawConfig '{project_def_path}': {exc.rpc_message}"
+        ) from exc
     return raw_config["config"]
 
 
 async def get_workspace_editable_packages(
     server: ErServer,
 ) -> dict[str, pathlib.Path]:
-    result = await asyncio.wait_for(
-        server.send_request_to_wm("workspace/getWorkspaceEditablePackages", params={}),
-        10,
-    )
+    """Fetch workspace editable packages from WM.
+
+    Raises:
+        WmCommunicationError: WM did not respond within 10s, or returned an
+            error response.
+    """
+    try:
+        result = await asyncio.wait_for(
+            server.send_request_to_wm("workspace/getWorkspaceEditablePackages", params={}),
+            10,
+        )
+    except TimeoutError as exc:
+        raise er_errors.WmCommunicationError(
+            "WM did not respond to getWorkspaceEditablePackages within 10s"
+        ) from exc
+    except finecode_jsonrpc_module.JsonRpcError as exc:
+        raise er_errors.WmCommunicationError(
+            f"WM returned error for getWorkspaceEditablePackages: {exc.rpc_message}"
+        ) from exc
     return {name: pathlib.Path(posix) for name, posix in result.get("packages", {}).items()}
 
 
