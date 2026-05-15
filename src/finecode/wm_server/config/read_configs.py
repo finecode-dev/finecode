@@ -1,4 +1,5 @@
 # docs: docs/configuration.md
+import os
 from importlib import metadata
 from pathlib import Path
 from typing import Any, NamedTuple
@@ -37,10 +38,29 @@ async def read_projects_in_dir(
 ) -> list[domain.Project]:
     # Find all projects in directory
     # `dir_path` expected to be absolute path
+    #
+    # Directories that are never FineCode projects and are often large.
+    # Skipping them avoids traversing thousands of files in virtualenvs,
+    # caches, and third-party package trees.
+    _SKIP_DIRS = {
+        ".venv", ".venvs",
+        ".git",
+        "node_modules",
+        "__pycache__",
+        ".tox",
+        "dist", "build",
+        ".mypy_cache", ".ruff_cache", ".pytest_cache",
+    }
+
     logger.trace(f"Read directories in {dir_path}")
     new_projects: list[domain.Project] = []
-    def_files_generator = dir_path.rglob("pyproject.toml")
-    for def_file in def_files_generator:
+    def_files: list[Path] = []
+    for root, dirs, files in os.walk(dir_path):
+        dirs[:] = [d for d in dirs if d not in _SKIP_DIRS]
+        if "pyproject.toml" in files:
+            def_files.append(Path(root) / "pyproject.toml")
+
+    for def_file in def_files:
         # ignore definition files in `__testdata__` directory, projects in test data
         # can be started only in tests, not from outside
         # TODO: make configurable?
