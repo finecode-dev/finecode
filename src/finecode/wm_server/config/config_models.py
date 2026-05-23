@@ -54,7 +54,11 @@ class ServiceDefinition:
 
 @dataclass
 class ActionDefinition:
-    source: str
+    # source is optional because a project-level config entry may only provide
+    # handler overrides (config, enabled, env, …) for an action whose source is
+    # declared by a preset. The complete merged action must have a source; that
+    # is enforced when actions are collected for use.
+    source: str | None = None
     handlers: list[ActionHandlerDefinition] = field(default_factory=list)
     handlers_mode: str = "merge"  # "merge" or "replace"
     config: dict[str, Any] | None = None
@@ -83,6 +87,6 @@ class ErEnvConfig:
     logging: ErLoggingConfig = field(default_factory=ErLoggingConfig)
 
 
-class ConfigurationError(Exception):
-    def __init__(self, message: str) -> None:
-        self.message = message
+from finecode.wm_server.errors import ConfigurationError, PresetPackageNotInstalledError
+
+__all__ = ["ConfigurationError", "PresetPackageNotInstalledError"]

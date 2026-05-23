@@ -340,9 +340,17 @@ async def read_project_config(
         # add runtime dependency group if it's not explicitly declared
         add_runtime_dependency_group_if_new(project_config)
 
-        merge_handlers_dependencies_into_groups(project_config)
-        merge_services_dependencies_into_groups(project_config)
-        # add extension runner after mergin handlers dependencies into groups
+        finecode_section = project_config.get("tool", {}).get("finecode", {})
+        actions = _structure_actions(finecode_section.get("action", {}))
+        services = _structure_services(finecode_section.get("service", []))
+
+        deps_groups: dict[str, list[Any]] = project_config.setdefault(
+            "dependency-groups", {}
+        )
+        merge_handlers_dependencies_into_groups(actions, deps_groups)
+        merge_services_dependencies_into_groups(services, deps_groups)
+        _deduplicate_deps_groups(deps_groups)
+        # add extension runner after merging handlers dependencies into groups
         # because env may be missing in dependency-groups and be used in handlers
         add_extension_runner_to_dependencies(project_config)
 
@@ -371,7 +379,7 @@ async def get_preset_project_path(
         error_message = error.message
         lower_message = error_message.lower()
         if "cannot find package" in lower_message or "no module named" in lower_message:
-            raise config_models.ConfigurationError(
+            raise config_models.PresetPackageNotInstalledError(
                 "Preset "
                 f"{preset.source} is referenced in project {def_path.parent}, "
                 "but this preset package is not installed in the dev_workspace "
@@ -387,8 +395,8 @@ async def get_preset_project_path(
     try:
         preset_project_path = Path(resolve_path_result["packagePath"])
     except KeyError as exception:
-        raise ValueError(
-            f"Preset source cannot be resolved: {preset.source}"
+        raise config_models.ConfigurationError(
+            f"Preset source cannot be resolved — ER response missing 'packagePath': {preset.source}"
         ) from exception
 
     logger.trace(f"Got: {preset.source} -> {preset_project_path}")
@@ -571,12 +579,21 @@ def _merge_projects_configs(
     for key, value in tool_finecode_config2.items():
         if key == "action":
             # first process actions explicitly to merge correct configs
-            assert isinstance(value, dict)
+            if not isinstance(value, dict):
+                raise config_models.ConfigurationError(
+                    f"[tool.finecode.action] must be a TOML table, got {type(value).__name__}"
+                )
             if key not in tool_finecode_config1:
                 tool_finecode_config1[key] = {}
             for action_name, action_info in value.items():
                 if action_name not in tool_finecode_config1[key]:
-                    # new action, just add as it is
+                    # new action — normalize dict-keyed handlers before storing
+                    if isinstance(action_info.get("handlers"), dict):
+                        action_info = dict(action_info)
+                        action_info["handlers"] = [
+                            {"name": name, **fields}
+                            for name, fields in action_info["handlers"].items()
+                        ]
                     tool_finecode_config1[key][action_name] = action_info
                 else:
                     # action with the same name, merge
@@ -607,6 +624,16 @@ def _merge_projects_configs(
                                 "handlers"
                             ]
                             new_handlers = action_info["handlers"]
+
+                            # Dict-keyed shorthand:
+                            # [tool.finecode.action.X.handlers.handler_name]
+                            # <any handler field> = value
+                            # Normalize to [{"name": handler_name, <fields>}]
+                            if isinstance(new_handlers, dict):
+                                new_handlers = [
+                                    {"name": name, **fields}
+                                    for name, fields in new_handlers.items()
+                                ]
 
                             # Merge handlers by name
                             _merge_object_array_by_key(
@@ -814,72 +841,69 @@ def add_runtime_dependency_group_if_new(project_config: dict[str, Any]) -> None:
         deps_groups["runtime"] = runtime_dependencies
 
 
-def merge_handlers_dependencies_into_groups(project_config: dict[str, Any]) -> None:
-    # tool.finecode.action.<action_name>.handlers[x].dependencies
-    actions_dict = project_config.get("tool", {}).get("finecode", {}).get("action", {})
-    if "dependency-groups" not in project_config:
-        project_config["dependency-groups"] = {}
-    deps_groups = project_config["dependency-groups"]
+def _structure_actions(
+    actions_raw: dict[str, Any],
+) -> dict[str, config_models.ActionDefinition]:
+    actions: dict[str, config_models.ActionDefinition] = {}
+    for action_name, action_def_raw in actions_raw.items():
+        try:
+            actions[action_name] = _converter.structure(
+                action_def_raw, config_models.ActionDefinition
+            )
+        except cattrs.ClassValidationError as exception:
+            errors = "\n  ".join(cattrs.transform_error(exception))
+            raise config_models.ConfigurationError(
+                f"Invalid configuration for action '{action_name}':\n  {errors}"
+            ) from exception
+    return actions
 
-    for action_info in actions_dict.values():
-        action_handlers = action_info.get("handlers", [])
 
-        for handler in action_handlers:
-            handler_env = handler.get("env", None)
-            if handler_env is None:
-                logger.warning(f"Handler {handler} has no env, skip it")
+def _structure_services(
+    services_raw: list[Any],
+) -> list[config_models.ServiceDefinition]:
+    services: list[config_models.ServiceDefinition] = []
+    for i, service_def_raw in enumerate(services_raw):
+        try:
+            services.append(
+                _converter.structure(service_def_raw, config_models.ServiceDefinition)
+            )
+        except cattrs.ClassValidationError as exception:
+            errors = "\n  ".join(cattrs.transform_error(exception))
+            raise config_models.ConfigurationError(
+                f"Invalid configuration for service at index {i}:\n  {errors}"
+            ) from exception
+    return services
+
+
+def merge_handlers_dependencies_into_groups(
+    actions: dict[str, config_models.ActionDefinition],
+    deps_groups: dict[str, list[Any]],
+) -> None:
+    for action in actions.values():
+        for handler in action.handlers:
+            if not handler.env:
                 continue
-            deps = handler.get("dependencies", [])
+            if handler.env not in deps_groups:
+                deps_groups[handler.env] = []
+            deps_groups[handler.env] += handler.dependencies
 
-            if handler_env not in deps_groups:
-                deps_groups[handler_env] = []
 
-            env_deps = deps_groups[handler_env]
-            # should we remove duplicates here?
-            env_deps += deps
+def merge_services_dependencies_into_groups(
+    services: list[config_models.ServiceDefinition],
+    deps_groups: dict[str, list[Any]],
+) -> None:
+    for service in services:
+        if service.env not in deps_groups:
+            deps_groups[service.env] = []
+        deps_groups[service.env] += service.dependencies
 
-    # remove duplicates in dependencies because multiple handlers can have the same
-    # dependencies / be from the same package
+
+def _deduplicate_deps_groups(deps_groups: dict[str, list[Any]]) -> None:
+    # dependency list can contain not only strings, but also dicts like
+    # `{ 'include-group': 'runtime' }` which are not hashable, so use list-based dedup
     for group_name in deps_groups.keys():
-        deps_list = deps_groups[group_name]
-
-        # another possibility would be to use `ordered_set.OrderedSet`, but dependency
-        # list can contain not only strings, but also dictionaries like
-        # `{ 'include-group': 'runtime' }` which are not hashable
-        unique_deps = []
-        for dep in deps_list:
-            if dep not in unique_deps:
-                unique_deps.append(dep)
-
-        deps_groups[group_name] = unique_deps
-
-
-def merge_services_dependencies_into_groups(project_config: dict[str, Any]) -> None:
-    # tool.finecode.service[x].dependencies
-    services_list = (
-        project_config.get("tool", {}).get("finecode", {}).get("service", [])
-    )
-    if "dependency-groups" not in project_config:
-        project_config["dependency-groups"] = {}
-    deps_groups = project_config["dependency-groups"]
-
-    for service in services_list:
-        service_env = service.get("env", None)
-        if service_env is None:
-            logger.warning(f"Service {service} has no env, skip it")
-            continue
-        deps = service.get("dependencies", [])
-
-        if service_env not in deps_groups:
-            deps_groups[service_env] = []
-
-        env_deps = deps_groups[service_env]
-        env_deps += deps
-
-    for group_name in deps_groups.keys():
-        deps_list = deps_groups[group_name]
-        unique_deps = []
-        for dep in deps_list:
+        unique_deps: list[Any] = []
+        for dep in deps_groups[group_name]:
             if dep not in unique_deps:
                 unique_deps.append(dep)
         deps_groups[group_name] = unique_deps

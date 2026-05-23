@@ -13,6 +13,7 @@ from finecode.wm_server.config.read_configs import read_env_configs
 def collect_project(
     project_path: Path,
     ws_context: context.WorkspaceContext,
+    presets_resolved: bool = True,
 ) -> domain.CollectedProject:
     """Collect actions, services, and handler configs from the project's raw config.
 
@@ -20,22 +21,31 @@ def collect_project(
     replaces the existing entry in ``ws_context.ws_projects``.  The raw config
     must already be present (call ``read_project_config`` first).
 
-    Note: presets are **not** resolved here.
+    Args:
+        presets_resolved: Whether preset configs have already been merged into the
+            raw config.  When ``True``,
+            an action without a ``source`` is a configuration error.  When ``False``
+            (early collection before any runner is available), sourceless entries are
+            silently skipped — they are config-only overrides whose source will arrive
+            once presets are merged.
     """
     try:
         project = ws_context.ws_projects[project_path]
     except KeyError as exception:
         raise ValueError(
-            f"Project {project_path} doesn't exist."
-            + f" Existing projects: {ws_context.ws_projects}"
+            f"collect_project called for unknown project {project_path}. "
+            f"Known projects: {list(ws_context.ws_projects)}"
         ) from exception
 
     try:
         config = ws_context.ws_projects_raw_configs[project_path]
     except KeyError as exception:
-        raise Exception("First you need to parse config of project") from exception
+        raise ValueError(
+            f"collect_project called before raw config was read for {project_path}. "
+            f"Call read_project_config first."
+        ) from exception
 
-    actions = _collect_actions_in_config(config)
+    actions = _collect_actions_in_config(config, presets_resolved=presets_resolved)
     action_handler_configs = _collect_action_handler_configs_in_config(config)
     services = _collect_services_in_config(config)
     env_configs = read_env_configs(project_config=config)
@@ -95,6 +105,7 @@ def _collect_action_handler_configs_in_config(
 
 def _collect_actions_in_config(
     config: dict[str, Any],
+    presets_resolved: bool = True,
 ) -> list[domain.Action]:
     actions: list[domain.Action] = []
     for action_name, action_def_raw in (
@@ -104,6 +115,18 @@ def _collect_actions_in_config(
             action_def = _converter.structure(action_def_raw, config_models.ActionDefinition)
         except cattrs.ClassValidationError as exception:
             raise config_models.ConfigurationError(str(exception)) from exception
+
+        if action_def.source is None:
+            if presets_resolved:
+                raise config_models.ConfigurationError(
+                    f"Action '{action_name}' has no source. "
+                    f"Add 'source = \"<module.ClassName>\"' to "
+                    f"[tool.finecode.action.{action_name}] or the preset that declares it."
+                )
+            # Presets not yet resolved: this entry is a config-only override for an
+            # action declared in a preset. Skip silently — the action will be
+            # collected once presets are merged into the raw config.
+            continue
 
         new_action = domain.Action(
             name=action_name,
