@@ -18,6 +18,7 @@ from finecode.wm_server import context, domain
 from finecode.wm_server.context import pick_workspace_root_dir
 from finecode.wm_server.runner import runner_client
 from finecode.wm_server.services.run_service import (
+    ActionRunFailed,
     find_all_projects_with_action,
     run_with_partial_results,
     start_required_environments,
@@ -292,9 +293,19 @@ async def run_action_with_partial_results(
                 logger.trace(f"partial_results: no partials received for project={project.name}, emitting final result as partial")
                 stream.put({"project": str(project.dir_path), "resultByFormat": result_by_format})
 
-    async with asyncio.TaskGroup() as tg:
-        for proj in projects:
-            tg.create_task(run_one(proj))
+    try:
+        async with asyncio.TaskGroup() as tg:
+            for proj in projects:
+                tg.create_task(run_one(proj))
+    except ExceptionGroup as eg:
+        errors: list[str] = []
+        for exc in eg.exceptions:
+            if isinstance(exc, ActionRunFailed):
+                errors.append(exc.message)
+            else:
+                errors.append(str(exc))
+                logger.exception(exc)
+        raise ActionRunFailed("; ".join(errors)) from eg
 
     if progress_stream is not None:
         progress_stream.set_done()

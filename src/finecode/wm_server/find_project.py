@@ -4,13 +4,13 @@ from loguru import logger
 
 from finecode.wm_server import domain
 from finecode.wm_server.context import WorkspaceContext
-from finecode.wm_server.runner import runner_manager
-
-
-class FileNotInWorkspaceException(BaseException): ...
-
-
-class FileHasNotActionException(BaseException): ...
+from finecode.wm_server.errors import (
+    ConfigurationError,
+    FileNotInWorkspaceError,
+    FileHasNoActionError,
+    StartingEnvironmentsFailed,
+)
+from finecode.wm_server.services import runner_start_service
 
 
 async def find_project_with_action_for_file(
@@ -44,7 +44,7 @@ async def find_project_with_action_for_file(
             f"File {file_path} doesn't belong to one of projects in "
             f"workspace. Workspace projects: {sorted_project_dirs}"
         )
-        raise FileNotInWorkspaceException(
+        raise FileNotInWorkspaceError(
             f"File {file_path} doesn't belong to one of projects in workspace"
         )
 
@@ -71,21 +71,21 @@ async def find_project_with_action_for_file(
                 continue
             elif project.status == domain.ProjectStatus.CONFIG_VALID:
                 try:
-                    await runner_manager.get_or_start_runners_with_presets(
+                    await runner_start_service.get_or_start_runners_with_presets(
                         project_dir_path=project_dir_path, ws_context=ws_context
                     )
-                except runner_manager.RunnerFailedToStart as exception:
-                    raise ValueError(
-                        f"Action is related to project {project_dir_path} but runner "
-                        f"with presets failed to start in it: {exception.message}"
-                    )
+                except runner_start_service.RunnerFailedToStart as exception:
+                    raise StartingEnvironmentsFailed(
+                        f"Runner with presets failed to start for project "
+                        f"{project_dir_path}: {exception.message}"
+                    ) from exception
                 # Re-fetch after preset resolution — now a CollectedProject
                 project = ws_context.ws_projects[project_dir_path]
                 assert isinstance(project, domain.CollectedProject)
             else:
-                raise ValueError(
-                    f"Action is related to project {project_dir_path} but its action "
-                    f"cannot be resolved({project.status})"
+                raise ConfigurationError(
+                    f"Cannot resolve action for project {project_dir_path}: "
+                    f"project has invalid configuration (status={project.status})"
                 )
 
         try:
@@ -98,7 +98,7 @@ async def find_project_with_action_for_file(
         )
         return project_dir_path
 
-    raise FileHasNotActionException(
+    raise FileHasNoActionError(
         f"File belongs to project(s), but no of them has action {action_name}: "
         f"{file_projects_pathes}"
     )

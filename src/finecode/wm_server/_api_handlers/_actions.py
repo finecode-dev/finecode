@@ -7,6 +7,7 @@ import pathlib
 from loguru import logger
 
 from finecode.wm_server import context, domain
+from finecode.wm_server.services.run_service.exceptions import ActionNotFoundError
 from finecode.wm_server._api_handlers._helpers import (
     _apply_config_overrides_to_projects,
     _build_batch_result,
@@ -80,7 +81,7 @@ async def _handle_actions_reload(
 
     action = await find_action_by_source(project.actions, action_source, project, ws_context)
     if action is None:
-        raise ValueError(f"Action with source '{action_source}' not found in project '{project_path}'")
+        raise ActionNotFoundError(f"Action with source '{action_source}' not found in project '{project_path}'")
 
     runners_by_env = ws_context.ws_projects_extension_runners.get(project_path, {})
     for runner in runners_by_env.values():

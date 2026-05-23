@@ -10,6 +10,7 @@ from finecode.wm_server._api_handlers._workspace import (
     _handle_add_dir,
     _handle_remove_dir,
     _handle_list_actions,
+    _handle_prepare_envs,
 )
 from finecode.wm_server._api_handlers._actions import (
     _handle_get_tree,
@@ -48,6 +49,7 @@ __all__ = [
     "_handle_add_dir",
     "_handle_remove_dir",
     "_handle_list_actions",
+    "_handle_prepare_envs",
     "_handle_run_action",
     "_handle_actions_reload",
     "_handle_run_batch",

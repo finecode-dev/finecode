@@ -363,6 +363,28 @@ class ApiClient:
             params["resolvePresets"] = False
         await self.request("workspace/startRunners", params)
 
+    async def prepare_envs(
+        self,
+        workdir_path: pathlib.Path,
+        recreate: bool = False,
+        env_names: list[str] | None = None,
+        project_names: list[str] | None = None,
+    ) -> None:
+        """Prepare all environments for the workspace.
+
+        Raises:
+            ApiServerError: if the server returns an error.
+        """
+        params: dict = {
+            "dirPath": str(workdir_path),
+            "recreate": recreate,
+        }
+        if env_names is not None:
+            params["envNames"] = env_names
+        if project_names is not None:
+            params["projectNames"] = project_names
+        await self.request("workspace/prepareEnvs", params)
+
     async def list_runners(self) -> list[dict]:
         """List all extension runners and their status."""
         result = await self.request("runners/list")

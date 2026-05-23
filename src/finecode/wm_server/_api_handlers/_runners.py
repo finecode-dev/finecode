@@ -95,8 +95,9 @@ async def _handle_start_runners(
         return {}
 
     # Phase 2: slow — runner startup outside the global lock.
+    from finecode.wm_server.services import runner_start_service
     try:
-        await runner_manager.start_runners_with_presets(
+        await runner_start_service.start_runners_with_auto_prepare(
             projects=projects,
             ws_context=ws_context,
             python_overrides=python_overrides,
@@ -169,5 +170,5 @@ async def _handle_runners_remove_env(
     if runner is not None:
         await runner_manager.stop_extension_runner(runner=runner)
 
-    runner_manager.remove_runner_venv(runner_dir=project.dir_path, env_name=env_name)
+    runner_manager.remove_runner_env(runner_dir=project.dir_path, env_name=env_name)
     return {}

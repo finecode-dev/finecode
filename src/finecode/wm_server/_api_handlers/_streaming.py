@@ -8,7 +8,7 @@ import uuid
 from loguru import logger
 
 from finecode.wm_server import context, domain
-from finecode.wm_server.services.run_service.exceptions import ActionRunFailed
+from finecode.wm_server.services.run_service.exceptions import ActionNotFoundError, ActionRunFailed, StartingEnvironmentsFailed
 from finecode.wm_server._api_handlers._helpers import (
     _build_batch_result,
     _notify_client,
@@ -131,11 +131,21 @@ async def _handle_run_action_with_partial_results_task(
             _jsonrpc_error(req_id, NOT_IMPLEMENTED_CODE, str(exc)),
         )
         await writer.drain()
+    except ActionNotFoundError as exc:
+        logger.error(
+            "FineCode API: error handling actions/run with partialResultToken: {}", exc
+        )
+        _write_message(writer, _jsonrpc_error(req_id, -32603, str(exc)))
+        await writer.drain()
     except ActionRunFailed as exc:
         logger.error(
             "FineCode API: error handling actions/run with partialResultToken: {}", exc
         )
         _write_message(writer, _jsonrpc_error(req_id, -32603, str(exc)))
+        await writer.drain()
+    except StartingEnvironmentsFailed as exc:
+        logger.error(f"FineCode API: error handling actions/run with partialResultToken: {exc.message}")
+        _write_message(writer, _jsonrpc_error(req_id, -32603, exc.message))
         await writer.drain()
     except Exception as exc:
         logger.exception(
@@ -281,7 +291,15 @@ async def _handle_run_batch_with_partial_results_task(
     except _NotImplementedError as exc:
         _write_message(writer, _jsonrpc_error(req_id, NOT_IMPLEMENTED_CODE, str(exc)))
         await writer.drain()
+    except ActionNotFoundError as exc:
+        logger.error(f"FineCode API: error handling actions/runBatch with partialResultToken: {exc.message}")
+        _write_message(writer, _jsonrpc_error(req_id, -32603, exc.message))
+        await writer.drain()
     except ActionRunFailed as exc:
+        logger.error(f"FineCode API: error handling actions/runBatch with partialResultToken: {exc.message}")
+        _write_message(writer, _jsonrpc_error(req_id, -32603, exc.message))
+        await writer.drain()
+    except StartingEnvironmentsFailed as exc:
         logger.error(f"FineCode API: error handling actions/runBatch with partialResultToken: {exc.message}")
         _write_message(writer, _jsonrpc_error(req_id, -32603, exc.message))
         await writer.drain()
@@ -393,6 +411,22 @@ async def _handle_run_action_with_progress_task(
             writer,
             _jsonrpc_error(req_id, NOT_IMPLEMENTED_CODE, str(exc)),
         )
+        await writer.drain()
+    except ActionNotFoundError as exc:
+        logger.error(
+            "FineCode API: error handling actions/run with progress: {}", exc
+        )
+        _write_message(writer, _jsonrpc_error(req_id, -32603, str(exc)))
+        await writer.drain()
+    except ActionRunFailed as exc:
+        logger.error(
+            "FineCode API: error handling actions/run with progress: {}", exc
+        )
+        _write_message(writer, _jsonrpc_error(req_id, -32603, str(exc)))
+        await writer.drain()
+    except StartingEnvironmentsFailed as exc:
+        logger.error(f"FineCode API: error handling actions/run with progress: {exc.message}")
+        _write_message(writer, _jsonrpc_error(req_id, -32603, exc.message))
         await writer.drain()
     except Exception as exc:
         logger.exception(
@@ -541,6 +575,18 @@ async def _handle_run_batch_with_progress_task(
     except _NotImplementedError as exc:
         _write_message(writer, _jsonrpc_error(req_id, NOT_IMPLEMENTED_CODE, str(exc)))
         await writer.drain()
+    except ActionNotFoundError as exc:
+        logger.error(f"FineCode API: error handling actions/runBatch with progress: {exc.message}")
+        _write_message(writer, _jsonrpc_error(req_id, -32603, exc.message))
+        await writer.drain()
+    except ActionRunFailed as exc:
+        logger.error(f"FineCode API: error handling actions/runBatch with progress: {exc.message}")
+        _write_message(writer, _jsonrpc_error(req_id, -32603, exc.message))
+        await writer.drain()
+    except StartingEnvironmentsFailed as exc:
+        logger.error(f"FineCode API: error handling actions/runBatch with progress: {exc.message}")
+        _write_message(writer, _jsonrpc_error(req_id, -32603, exc.message))
+        await writer.drain()
     except Exception as exc:
         logger.exception("FineCode API: error handling actions/runBatch with progress")
         _write_message(writer, _jsonrpc_error(req_id, -32603, str(exc)))
@@ -570,7 +616,7 @@ async def _resolve_source_to_name(
             raise ValueError(f"Project '{project_path_str}' not found or not initialized")
         action = await find_action_by_source(project.actions, action_source, project, ws_context)
         if action is None:
-            raise ValueError(
+            raise ActionNotFoundError(
                 f"Action with source '{action_source}' not found in project '{project_path_str}'"
             )
         return action.name
@@ -585,6 +631,6 @@ async def _resolve_source_to_name(
             )
             if action is not None:
                 return action.name
-        raise ValueError(
+        raise ActionNotFoundError(
             f"Action with source '{action_source}' not found in any project"
         )

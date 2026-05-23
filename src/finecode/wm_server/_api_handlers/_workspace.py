@@ -94,6 +94,7 @@ async def _handle_find_project_for_file(
     return {"project": None}
 
 
+
 async def _handle_add_dir(
     params: dict | None, ws_context: context.WorkspaceContext
 ) -> dict:
@@ -214,7 +215,9 @@ async def _handle_add_dir(
                 if project.status == domain.ProjectStatus.CONFIG_VALID:
                     try:
                         collect_actions.collect_project(
-                            project_path=project.dir_path, ws_context=ws_context
+                            project_path=project.dir_path,
+                            ws_context=ws_context,
+                            presets_resolved=False,
                         )
                     except config_models.ConfigurationError as exc:
                         logger.warning(
@@ -222,8 +225,9 @@ async def _handle_add_dir(
                         )
             return {"projects": [_project_to_dict(p) for p in projects_to_init]}
 
+        from finecode.wm_server.services import runner_start_service
         try:
-            await runner_manager.start_runners_with_presets(
+            await runner_start_service.start_runners_with_auto_prepare(
                 projects=projects_to_init,
                 ws_context=ws_context,
                 initialize_all_handlers=True,
@@ -231,8 +235,7 @@ async def _handle_add_dir(
         except runner_manager.RunnerFailedToStart as exc:
             from finecode.wm_server import wm_server as _wm
             _wm._notify_all_clients("server/userMessage", {
-                "message": f"Starting runners failed: {exc.message}. "
-                           f"Did you run `finecode prepare-envs`?",
+                "message": f"Starting runners failed: {exc.message}",
                 "type": "ERROR",
             })
             raise
@@ -334,3 +337,41 @@ async def _handle_list_actions(
                 ],
             })
     return {"actions": actions}
+
+
+async def _handle_prepare_envs(
+    params: dict | None, ws_context: context.WorkspaceContext
+) -> dict:
+    """Prepare all virtual environments for the workspace.
+
+    Params:
+      dirPath: str - absolute path to the workspace root directory
+      recreate: bool - delete and recreate dev_workspace venvs (default false)
+      envNames: list[str] | null - limit install_envs to these env names
+      projectNames: list[str] | null - limit to these projects
+    Result: {}
+    """
+    from finecode.wm_server.services.prepare_envs_service import (
+        PrepareEnvsFailed,
+        prepare_envs,
+    )
+
+    params = params or {}
+    dir_path_str = params.get("dirPath")
+    if not dir_path_str:
+        raise ValueError("dirPath parameter is required")
+    recreate: bool = params.get("recreate", False)
+    env_names: list[str] | None = params.get("envNames")
+    project_names: list[str] | None = params.get("projectNames")
+
+    try:
+        await prepare_envs(
+            ws_context=ws_context,
+            workdir_path=pathlib.Path(dir_path_str),
+            recreate=recreate,
+            env_names=env_names,
+            project_names=project_names,
+        )
+    except PrepareEnvsFailed as exc:
+        raise ValueError(exc.message) from exc
+    return {}

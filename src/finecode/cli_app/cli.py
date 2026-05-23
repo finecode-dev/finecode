@@ -11,7 +11,7 @@ import click
 from loguru import logger
 
 from finecode import logger_utils, user_messages
-from finecode.wm_server.config.config_models import ConfigurationError
+from finecode.wm_server.errors import ConfigurationError
 
 
 FINECODE_CONFIG_ENV_PREFIX = "FINECODE_CONFIG_"
@@ -428,7 +428,6 @@ def prepare_envs(log_level: str, debug: bool, recreate: bool, shared_server: boo
                 recreate=recreate,
                 own_server=not shared_server,
                 log_level=log_level,
-                dev_env=dev_env or detect_dev_env(),
                 env_names=list(env_names) if env_names else None,
                 project_names=list(project_names) if project_names else None,
             )

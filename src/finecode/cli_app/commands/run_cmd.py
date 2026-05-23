@@ -129,6 +129,12 @@ async def run_actions(
 
             client.on_notification("actions/treeChanged", _ignore_tree_changed)
 
+            async def _on_user_message(params: dict) -> None:
+                value = params or {}
+                click.echo(value.get("message", ""), err=True)
+
+            client.on_notification("server/userMessage", _on_user_message)
+
             # When a project filter is given and we own the server, discover
             # projects first (no runners), resolve names to paths, then start
             # runners only for the requested projects.  In shared-server mode

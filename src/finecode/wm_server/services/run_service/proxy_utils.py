@@ -49,13 +49,13 @@ async def find_action_project(
             action_name=action_name,
             ws_context=ws_context,
         )
-    except find_project.FileNotInWorkspaceException as error:
-        raise error
-    except find_project.FileHasNotActionException as error:
-        raise error
+    except find_project.FileNotInWorkspaceError:
+        raise
+    except find_project.FileHasNoActionError:
+        raise
     except ValueError as error:
         logger.warning(f"Skip {action_name} on {file_path}: {error}")
-        raise ActionRunFailed(error) from error
+        raise ActionRunFailed(str(error)) from error
 
     project_status = ws_context.ws_projects[project_path].status
     if project_status != domain.ProjectStatus.CONFIG_VALID:
@@ -85,19 +85,15 @@ async def find_action_project_and_run(
     )
     project = ws_context.ws_projects[project_path]
 
-    try:
-        response = await run_action(
-            action_name=action_name,
-            params=params,
-            project_def=project,
-            ws_context=ws_context,
-            run_trigger=run_trigger,
-            dev_env=dev_env,
-            initialize_all_handlers=initialize_all_handlers,
-        )
-    except ActionRunFailed as exception:
-        raise exception
-
+    response = await run_action(
+        action_name=action_name,
+        params=params,
+        project_def=project,
+        ws_context=ws_context,
+        run_trigger=run_trigger,
+        dev_env=dev_env,
+        initialize_all_handlers=initialize_all_handlers,
+    )
     return response
 
 
@@ -374,33 +370,6 @@ async def run_with_partial_results(
             ) from eg
 
 
-@contextlib.asynccontextmanager
-async def find_action_project_and_run_with_partial_results(
-    file_path: pathlib.Path,
-    action_name: str,
-    params: dict[str, typing.Any],
-    partial_result_token: int | str,
-    run_trigger: runner_client.RunActionTrigger,
-    dev_env: runner_client.DevEnv,
-    ws_context: context.WorkspaceContext,
-    initialize_all_handlers: bool = False,
-) -> collections.abc.AsyncIterator[runner_client.RunActionRawResult]:
-    logger.trace(f"Run {action_name} on {file_path}")
-    project_path = await find_action_project(
-        file_path=file_path, action_name=action_name, ws_context=ws_context
-    )
-    return run_with_partial_results(
-        action_name=action_name,
-        params=params,
-        partial_result_token=partial_result_token,
-        project_dir_path=project_path,
-        run_trigger=run_trigger,
-        dev_env=dev_env,
-        ws_context=ws_context,
-        initialize_all_handlers=initialize_all_handlers,
-    )
-
-
 def find_all_projects_with_action(
     action_name: str, ws_context: context.WorkspaceContext
 ) -> list[pathlib.Path]:
@@ -411,10 +380,12 @@ def find_all_projects_with_action(
         if project.status != domain.ProjectStatus.NO_FINECODE
     }
 
-    # exclude projects without valid config and projects without requested action
+    # exclude projects that are not fully resolved and projects without requested action
     for project_dir_path, project_def in relevant_projects.copy().items():
-        if not isinstance(project_def, domain.CollectedProject):
-            # projects without collected actions cannot be matched
+        if not isinstance(project_def, domain.ResolvedProject):
+            # unresolved projects (CollectedProject or plain Project) have incomplete
+            # action sets — preset-contributed actions are not yet visible
+            del relevant_projects[project_dir_path]
             continue
 
         try:
@@ -528,6 +499,22 @@ async def _start_runner_or_update_config(
                 project_def=project, env_name=env_name, handlers_to_initialize=handlers_to_initialize, ws_context=ws_context
             )
         except runner_manager.RunnerFailedToStart as exception:
+            if "No module named" in exception.message:
+                from finecode.wm_server.services.prepare_envs_service import (
+                    install_env_for_project,
+                    PrepareEnvsFailed,
+                )
+                try:
+                    await install_env_for_project(project, env_name, ws_context)
+                    await runner_manager.start_runner(
+                        project_def=project,
+                        env_name=env_name,
+                        handlers_to_initialize=handlers_to_initialize,
+                        ws_context=ws_context,
+                    )
+                    return  # retry succeeded
+                except (PrepareEnvsFailed, runner_manager.RunnerFailedToStart):
+                    pass  # fall through to raise below
             raise StartingEnvironmentsFailed(
                 f"Failed to start runner for env '{env_name}' in project '{project.name}': {exception.message}"
             ) from exception
@@ -583,13 +570,19 @@ async def run_actions_in_running_project(
                     )
                     run_tasks.append(run_task)
         except ExceptionGroup as eg:
+            error_messages: list[str] = []
             for exception in eg.exceptions:
                 if isinstance(exception, ActionRunFailed):
                     logger.error(f"{exception.message} in {project.name}")
+                    error_messages.append(exception.message)
                 else:
                     logger.error("Unexpected exception:")
                     logger.exception(exception)
-            raise ActionRunFailed(f"Running of actions {actions} failed") from eg
+                    error_messages.append(str(exception))
+            combined = "; ".join(error_messages)
+            raise ActionRunFailed(
+                f"Running of actions {actions} in project '{project.dir_path}' failed: {combined}"
+            ) from eg
 
         for idx, run_task in enumerate(run_tasks):
             run_result = run_task.result()
@@ -659,9 +652,14 @@ async def run_actions_in_projects(
                 )
                 project_handler_tasks.append(project_task)
     except ExceptionGroup as eg:
+        error_messages = []
         for exception in eg.exceptions:
-            # TODO: merge all in one?
-            raise exception from eg
+            if isinstance(exception, ActionRunFailed):
+                error_messages.append(exception.message)
+            else:
+                logger.exception(exception)
+                error_messages.append(str(exception))
+        raise ActionRunFailed("; ".join(error_messages)) from eg
 
     results = {}
     projects_paths = list(actions_by_project.keys())
@@ -679,7 +677,7 @@ def find_projects_with_actions(
     actions_set = ordered_set.OrderedSet(actions)
 
     for project in ws_context.ws_projects.values():
-        if not isinstance(project, domain.CollectedProject):
+        if not isinstance(project, domain.ResolvedProject):
             continue
         project_actions_names = [action.name for action in project.actions]
         # find which of requested actions are available in the project
@@ -702,7 +700,7 @@ DevEnv: typing.TypeAlias = runner_client.DevEnv
 async def run_action(
     action_name: str,
     params: dict[str, typing.Any],
-    project_def: domain.CollectedProject,
+    project_def: domain.Project,
     ws_context: context.WorkspaceContext,
     run_trigger: runner_client.RunActionTrigger,
     dev_env: runner_client.DevEnv,
@@ -712,19 +710,28 @@ async def run_action(
     orchestration_depth: int = 0,
     caller_kwargs: dict | None = None,
 ) -> RunActionResponse:
+    """Run a single action in the project's extension runner(s).
+
+    ``project_def`` must be a :class:`~finecode.wm_server.domain.ResolvedProject`
+    at call time.  A plain ``Project`` or ``CollectedProject`` (presets not yet
+    resolved) is rejected with a WAL ``RUN_REJECTED`` event and an
+    :exc:`ActionRunFailed` exception.  Callers that retrieve a project from
+    ``ws_context.ws_projects`` may receive any subtype — validation happens here
+    so call sites do not need to duplicate the check.
+    """
     wal_run_id = wal.new_wal_run_id()
     formatted_params = str(params)
     if len(formatted_params) > 100:
         formatted_params = f"{formatted_params[:100]}..."
     logger.trace(f"Execute action {action_name} with {formatted_params}")
-    
+
     if result_formats is None:
         _result_formats = [RunResultFormat.JSON]
     else:
         _result_formats = result_formats
 
     with telemetry.action_metrics(action_name, project_def.dir_path.name), telemetry.action_run_span(action_name, project_def.dir_path, wal_run_id, dev_env=dev_env.value, orchestration_depth=orchestration_depth):
-        if project_def.status != domain.ProjectStatus.CONFIG_VALID:
+        if not isinstance(project_def, domain.ResolvedProject):
             wal.emit_run_event(
                 ws_context.wal_writer,
                 event_type=wal.WalEventType.RUN_REJECTED,
@@ -733,10 +740,10 @@ async def run_action(
                 project_path=project_def.dir_path,
                 run_trigger=run_trigger.value,
                 dev_env=dev_env.value,
-                payload=wal.RunRejectedPayload(reason="invalid_project_config"),
+                payload=wal.RunRejectedPayload(reason="project_not_resolved"),
             )
             raise ActionRunFailed(
-                f"Project {project_def.dir_path} has no valid configuration and finecode."
+                f"Project {project_def.dir_path} is not ready to run actions yet."
                 + " Please check logs."
             )
 
@@ -761,9 +768,14 @@ async def run_action(
         # - mixed envs: action handlers are in different envs
         # -- concurrent execution of handlers
         # -- sequential execution of handlers
-        action = next(
-            action for action in project_def.actions if action.name == action_name
-        )
+        try:
+            action = next(
+                action for action in project_def.actions if action.name == action_name
+            )
+        except StopIteration:
+            raise ActionRunFailed(
+                f"Action '{action_name}' not found in project '{project_def.dir_path}'"
+            )
         all_handlers_envs = ordered_set.OrderedSet(
             [handler.env for handler in action.handlers]
         )
@@ -1200,30 +1212,50 @@ async def _run_multi_env_concurrent(
 
     raw_results = [task.result().raw_result for task in group_tasks]
 
-    # Pick any running runner to call merge_results
-    runners_by_env = ws_context.ws_projects_extension_runners.get(project_def.dir_path, {})
-    merge_runner: runner_client.ExtensionRunnerInfo | None = None
-    for env_name in groups:
-        candidate = runners_by_env.get(env_name)
-        if candidate is not None and candidate.status == runner_client.RunnerStatus.RUNNING:
-            merge_runner = candidate
-            break
+    if len(raw_results) == 1:
+        merged_raw = raw_results[0]
+    else:
+        # Pick any running runner to call merge_results
+        runners_by_env = ws_context.ws_projects_extension_runners.get(project_def.dir_path, {})
+        merge_runner: runner_client.ExtensionRunnerInfo | None = None
+        for env_name in groups:
+            candidate = runners_by_env.get(env_name)
+            if candidate is not None and candidate.status == runner_client.RunnerStatus.RUNNING:
+                merge_runner = candidate
+                break
 
-    if merge_runner is None:
-        raise ActionRunFailed(
-            f"No running runner available to merge results for {action_name}"
-        )
+        if merge_runner is None:
+            if not groups:
+                raise ActionRunFailed(
+                    f"Cannot merge results for {action_name}: no env groups were built "
+                    f"(action has no handlers assigned to any environment)"
+                )
+            non_running = {
+                env: runners_by_env[env].status.value
+                for env in groups
+                if env in runners_by_env
+            }
+            missing = [env for env in groups if env not in runners_by_env]
+            details = ", ".join(
+                [f"{env}={status}" for env, status in non_running.items()]
+                + [f"{env}=<not found>" for env in missing]
+            )
+            raise ActionRunFailed(
+                f"Cannot merge results for {action_name}: no runner is in RUNNING status "
+                f"among the env groups {list(groups.keys())}. "
+                f"Runner statuses: {details}"
+            )
 
-    try:
-        merged_raw = await runner_client.merge_results(
-            runner=merge_runner,
-            action_name=action_name,
-            results=raw_results,
-        )
-    except runner_client.BaseRunnerRequestException as error:
-        raise ActionRunFailed(
-            f"merge_results failed for {action_name}: {error.message}"
-        ) from error
+        try:
+            merged_raw = await runner_client.merge_results(
+                runner=merge_runner,
+                action_name=action_name,
+                results=raw_results,
+            )
+        except runner_client.BaseRunnerRequestException as error:
+            raise ActionRunFailed(
+                f"merge_results failed for {action_name}: {error.message}"
+            ) from error
 
     # Now format the merged result via a final run_handlers call on any env
     # with an empty handler list but the merged previousResult, requesting the
@@ -1257,7 +1289,6 @@ async def _run_multi_env_concurrent(
 
 __all__ = [
     "find_action_project_and_run",
-    "find_action_project_and_run_with_partial_results",
     "find_projects_with_actions",
     "find_all_projects_with_action",
     "run_with_partial_results",

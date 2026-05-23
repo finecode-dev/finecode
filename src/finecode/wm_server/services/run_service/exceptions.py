@@ -1,12 +1,8 @@
-class ActionRunFailed(Exception):
-    def __init__(self, message: str) -> None:
-        super().__init__(message)
-        self.message = message
+# Re-exported from wm_server.errors — import from there in new code.
+from finecode.wm_server.errors import (
+    ActionRunFailed,
+    ActionNotFoundError,
+    StartingEnvironmentsFailed,
+)
 
-
-class StartingEnvironmentsFailed(Exception):
-    def __init__(self, message: str) -> None:
-        super().__init__(message)
-        self.message = message
-
-
+__all__ = ["ActionRunFailed", "ActionNotFoundError", "StartingEnvironmentsFailed"]

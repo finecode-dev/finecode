@@ -10,6 +10,7 @@ from loguru import logger
 from finecode.wm_server import context, domain
 from finecode.wm_server._jsonrpc import _write_message
 from finecode.wm_server.context import pick_workspace_root_dir as _pick_workspace_root_dir
+from finecode.wm_server.services.run_service.exceptions import ActionNotFoundError
 
 
 # ---------------------------------------------------------------------------
@@ -366,7 +367,7 @@ async def _resolve_actions_by_project(
                 f"Known projects: {[str(p) for p in all_projects]}. "
                 f"Actions per project: {projects_with_actions}"
             )
-            raise ValueError(f"No projects found with actionSources: {action_sources}")
+            raise ActionNotFoundError(f"No projects found with actionSources: {action_sources}")
 
     return actions_by_project, name_to_source
 
