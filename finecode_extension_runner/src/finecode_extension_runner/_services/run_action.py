@@ -13,7 +13,7 @@ from loguru import logger
 from finecode_extension_runner._converter import converter as _converter
 
 from finecode_extension_api import code_action, textstyler, service
-from finecode_extension_api.interfaces import iprojectactionrunner
+from finecode_extension_api.interfaces import iprojectactionrunner, iprojectinfoprovider
 from finecode_extension_runner import (
     context,
     domain,
@@ -24,7 +24,7 @@ from finecode_extension_runner import (
     schemas,
 )
 from finecode_extension_runner.di import resolver as di_resolver
-from finecode_extension_runner.di.registry import Registry
+from finecode_extension_runner.di.registry import Registry, ServiceNotFoundError
 
 last_run_id: int = 0
 partial_result_sender: partial_result_sender_module.PartialResultSender
@@ -230,6 +230,7 @@ async def run_action(
     initial_result: code_action.RunActionResult | None = None,
     previous_context: dict | None = None,
     context_out: _ContextOut | None = None,
+    traceparent: str | None = None,
 ) -> code_action.RunActionResult | None:
     # design decisions:
     # - keep payload unchanged between all subaction runs.
@@ -367,6 +368,7 @@ async def run_action(
                         runner_context=runner_context,
                         partial_result_token=partial_result_token,
                         wal_run_id=wal_run_id,
+                        traceparent=traceparent,
                         trigger=meta.trigger,
                         dev_env=meta.dev_env,
                         tracking_sender=tracking_sender,
@@ -535,6 +537,7 @@ async def run_action(
                                         runner_context=runner_context,
                                         partial_result_token=partial_result_token,
                                         wal_run_id=wal_run_id,
+                                        traceparent=traceparent,
                                         trigger=meta.trigger,
                                         dev_env=meta.dev_env,
                                         tracking_sender=tracking_sender,
@@ -544,8 +547,10 @@ async def run_action(
                                 handlers_tasks.append(handler_task)
                     except ExceptionGroup as eg:
                         for exc in eg.exceptions:
-                            # TODO: expected / unexpected?
-                            logger.exception(exc)
+                            if isinstance(exc, ActionFailedException):
+                                logger.error(str(exc))
+                            else:
+                                logger.exception(exc)
                         raise ActionFailedException(
                             f"Running action handlers of '{action_def.name}' failed"
                             f"(Run {run_id}). See ER logs for more details"
@@ -572,6 +577,7 @@ async def run_action(
                                 runner_context=runner_context,
                                 partial_result_token=partial_result_token,
                                 wal_run_id=wal_run_id,
+                                traceparent=traceparent,
                                 trigger=meta.trigger,
                                 dev_env=meta.dev_env,
                                 tracking_sender=tracking_sender,
@@ -692,6 +698,8 @@ async def run_action_raw(
     if not isinstance(wal_run_id, str) or wal_run_id.strip() == "":
         raise ActionFailedException("Missing required wal_run_id in run options")
 
+    traceparent = getattr(options, "traceparent", None)
+
     meta = dataclasses.replace(options.meta, wal_run_id=wal_run_id)
 
     er_wal.emit_run_event(
@@ -724,6 +732,7 @@ async def run_action_raw(
         progress_token=options.progress_token,
         run_id=run_id,
         caller_kwargs=caller_kwargs,
+        traceparent=traceparent,
     )
 
     response = action_result_to_run_action_response(
@@ -834,6 +843,8 @@ async def run_handlers_raw(
     if not isinstance(wal_run_id, str) or wal_run_id.strip() == "":
         raise ActionFailedException("Missing required wal_run_id in run options")
 
+    traceparent = getattr(options, "traceparent", None)
+
     meta = dataclasses.replace(options.meta, wal_run_id=wal_run_id)
 
     run_context_type = action_exec_info.run_context_type
@@ -860,6 +871,7 @@ async def run_handlers_raw(
         previous_context=request.previous_context,
         context_out=ctx_out,
         caller_kwargs=caller_kwargs,
+        traceparent=traceparent,
     )
 
     # Raw serialized result for chaining to the next segment.
@@ -936,9 +948,15 @@ async def resolve_func_args_with_di(
             # value in known args is a callable factory to instantiate param value
             args[param_name] = known_args[param_name](param_type)
         else:
-            # TODO: handle errors
             param_type = func_annotations[param_name]
-            param_value = await di_resolver.get_service_instance(param_type, registry)
+            try:
+                param_value = await di_resolver.get_service_instance(param_type, registry)
+            except ServiceNotFoundError as error:
+                raise ActionFailedException(
+                    f"Service not registered: {param_type}. "
+                    "Check that the extension providing this service has a "
+                    "registered activator and its entry points are installed."
+                ) from error
             args[param_name] = param_value
 
     return args
@@ -1080,6 +1098,7 @@ async def execute_action_handler(
     runner_context: context.RunnerContext,
     partial_result_token: int | str | None = None,
     wal_run_id: str | None = None,
+    traceparent: str | None = None,
     trigger: str = "unknown",
     dev_env: str = "unknown",
     tracking_sender: _TrackingPartialResultSender | None = None,
@@ -1149,7 +1168,7 @@ async def execute_action_handler(
         registry=runner_context.di_registry,
     )
 
-    with er_telemetry.handler_span(handler.name, action_name, wal_run_id), \
+    with er_telemetry.handler_span(handler.name, action_name, traceparent), \
             er_telemetry.handler_metrics(handler.name, action_name):
         try:
             # TODO: cache parameters
@@ -1221,8 +1240,24 @@ async def execute_action_handler(
                 raise StopWithResponse(response=response) from exception
             elif isinstance(
                 exception, iprojectactionrunner.BaseRunActionException
-            ) or isinstance(exception, code_action.ActionFailedException):
+            ) or isinstance(exception, code_action.ActionFailedException) or isinstance(
+                exception, iprojectinfoprovider.ProjectInfoUnavailableError
+            ):
                 error_str = exception.message
+            elif isinstance(exception, BaseExceptionGroup):
+                msgs = []
+                has_unknown = False
+                for sub in exception.exceptions:
+                    if isinstance(sub, (iprojectactionrunner.BaseRunActionException, code_action.ActionFailedException, iprojectinfoprovider.ProjectInfoUnavailableError)):
+                        msgs.append(sub.message)
+                    else:
+                        has_unknown = True
+                if has_unknown:
+                    logger.error("Unhandled exception in action handler:")
+                    logger.exception(exception)
+                    error_str = str(exception)
+                else:
+                    error_str = "; ".join(msgs)
             else:
                 logger.error("Unhandled exception in action handler:")
                 error_str = str(exception)

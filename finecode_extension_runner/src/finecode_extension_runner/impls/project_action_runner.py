@@ -10,7 +10,7 @@ from loguru import logger
 
 from finecode_extension_api import code_action
 from finecode_extension_api.interfaces import iprojectactionrunner
-from finecode_extension_runner import domain, run_utils
+from finecode_extension_runner import domain, er_errors, er_telemetry, run_utils
 from finecode_extension_runner._converter import converter as _converter
 from finecode_extension_runner._services.run_action import _serialize_caller_kwargs
 
@@ -173,6 +173,7 @@ class ProjectActionRunnerImpl(iprojectactionrunner.IProjectActionRunner):
 
         action_source = f"{action_type.__module__}.{action_type.__qualname__}"
         serialized_kwargs = _serialize_caller_kwargs(caller_kwargs) if caller_kwargs is not None else None
+        traceparent = er_telemetry.get_current_traceparent()
         wm_params: dict = {
             "actionSource": action_source,
             "payload": dataclasses.asdict(payload),
@@ -181,13 +182,17 @@ class ProjectActionRunnerImpl(iprojectactionrunner.IProjectActionRunner):
                 "devEnv": meta.dev_env.value,
                 "orchestrationDepth": meta.orchestration_depth,
             },
+            "traceparent": traceparent,
         }
         if serialized_kwargs is not None:
             wm_params["callerKwargs"] = serialized_kwargs
-        raw_result = await self._send(
-            "finecode/runActionInProject",
-            wm_params,
-        )
+        try:
+            raw_result = await self._send(
+                "finecode/runActionInProject",
+                wm_params,
+            )
+        except er_errors.WmCommunicationError as exc:
+            raise iprojectactionrunner.ActionRunFailed(exc.message) from exc
         raw_final_result = raw_result.get("result")
         if raw_final_result is None:
             raise iprojectactionrunner.ActionRunFailed(
@@ -248,6 +253,7 @@ class ProjectActionRunnerImpl(iprojectactionrunner.IProjectActionRunner):
 
         action_source = f"{action_type.__module__}.{action_type.__qualname__}"
         serialized_kwargs = _serialize_caller_kwargs(caller_kwargs) if caller_kwargs is not None else None
+        traceparent = er_telemetry.get_current_traceparent()
 
         async def _call_wm() -> None:
             try:
@@ -260,6 +266,7 @@ class ProjectActionRunnerImpl(iprojectactionrunner.IProjectActionRunner):
                         "orchestrationDepth": meta.orchestration_depth,
                     },
                     "partialResultToken": token,
+                    "traceparent": traceparent,
                 }
                 if serialized_kwargs is not None:
                     wm_params["callerKwargs"] = serialized_kwargs
@@ -269,6 +276,8 @@ class ProjectActionRunnerImpl(iprojectactionrunner.IProjectActionRunner):
                 )
                 # Terminal success item. Shape: ("final", {"result": {...}, "returnCode": ...}).
                 wm_queue.put_nowait(("final", raw_result))
+            except er_errors.WmCommunicationError as exc:
+                wm_queue.put_nowait(("error", iprojectactionrunner.ActionRunFailed(exc.message)))
             except Exception as exc:
                 # Terminal error item. Shape: ("error", Exception(...)).
                 wm_queue.put_nowait(("error", exc))

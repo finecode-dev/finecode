@@ -58,6 +58,10 @@ def init_otel_logging(service_name: str, workspace_path: Path | None = None, end
         from opentelemetry import context as otel_context
 
         rec = message.record
+        # Skip OTel's own logs to avoid a feedback loop: OTel export failure →
+        # InterceptHandler → Loguru → _otel_sink → export failure → …
+        if rec["name"].startswith("opentelemetry"):
+            return
         sev = _severity_map.get(rec["level"].name, SeverityNumber.UNSPECIFIED)
         otel_logger.emit(
             timestamp=int(rec["time"].timestamp() * 1e9),

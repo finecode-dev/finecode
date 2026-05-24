@@ -1454,6 +1454,7 @@ class RunActionInProjectParams:
     meta: RunActionInProjectMeta
     partial_result_token: int | str | None = None
     caller_kwargs: dict | None = None
+    traceparent: str | None = None
 
 
 @dataclasses.dataclass
@@ -1480,6 +1481,7 @@ class RunActionInWorkspaceParams:
     meta: RunActionInProjectMeta
     project_paths: list[str] | None = None
     concurrently: bool = True
+    traceparent: str | None = None
 
 
 @dataclasses.dataclass

@@ -1,8 +1,12 @@
 import collections.abc
 import functools
 import importlib.metadata
+import json
 import pathlib
 import re
+import tomllib
+import urllib.parse
+import urllib.request
 from typing import Any, Callable
 
 import ordered_set
@@ -41,6 +45,23 @@ from finecode_extension_runner.impls import (  # dev_env_info_provider,
     workspace_action_runner,
     workspace_info_provider,
 )
+
+
+class StaleEntryPointsError(Exception):
+    """Raised when handler packages are installed but missing their activator entry points.
+
+    This happens when a ``finecode.activator`` entry point is added to a package's
+    ``pyproject.toml`` after it was already installed as an editable install.
+    """
+
+    def __init__(self, packages: set[str]) -> None:
+        self.packages = packages
+        super().__init__(
+            f"Activator entry points missing for installed packages: "
+            f"{', '.join(sorted(packages))}. "
+            "Reinstall the env to register the entry points."
+        )
+
 
 def bootstrap(
     registry: Registry,
@@ -137,15 +158,85 @@ def _activate_extensions(
         ep.name: ep
         for ep in importlib.metadata.entry_points(group="finecode.activator")
     }
+    logger.debug(f"Found activator entry points: {list(all_eps.keys())}")
+
+    stale = _find_installed_packages_with_missing_eps(handler_packages, all_eps)
+    if stale:
+        raise StaleEntryPointsError(stale)
+
     packages_to_activate = _collect_activatable_packages(handler_packages, all_eps)
+    logger.debug(f"Handler packages: {handler_packages}; packages to activate: {list(packages_to_activate)}")
 
     for pkg_name in packages_to_activate:
         try:
             activator_cls = all_eps[pkg_name].load()
             activator_cls(registry=svc_registry).activate()
-            logger.trace(f"Activated extension '{pkg_name}'")
+            logger.debug(f"Activated extension '{pkg_name}'")
         except Exception as e:
             logger.error(f"Failed to activate extension '{pkg_name}': {e}")
+
+
+def _find_installed_packages_with_missing_eps(
+    handler_packages: set[str],
+    all_eps: dict[str, importlib.metadata.EntryPoint],
+) -> set[str]:
+    """Return handler packages that are installed but have a stale activator entry point.
+
+    For editable installs the pyproject.toml in the source directory is the source of
+    truth: if it declares a ``finecode.activator`` entry point but the installed metadata
+    doesn't expose it yet, the install is stale and the env needs to be reinstalled.
+
+    For non-editable installs the installed metadata is authoritative — entry points are
+    always registered at install time, so a missing entry point simply means the package
+    doesn't define one.
+    """
+    missing = set()
+    for pkg in handler_packages:
+        if _normalize_pkg_name(pkg) in all_eps:
+            continue
+        try:
+            dist = importlib.metadata.distribution(pkg)
+        except importlib.metadata.PackageNotFoundError:
+            continue  # not installed at all — different problem
+
+        source_path = _get_editable_source_path(dist)
+        if source_path is not None and _pyproject_has_activator_ep(source_path):
+            missing.add(pkg)
+        # Non-editable: installed metadata is authoritative; absence is intentional.
+    return missing
+
+
+def _get_editable_source_path(
+    dist: importlib.metadata.Distribution,
+) -> pathlib.Path | None:
+    """Return the source directory for an editable install, or None if not editable."""
+    direct_url_text = dist.read_text("direct_url.json")
+    if not direct_url_text:
+        return None
+    try:
+        data = json.loads(direct_url_text)
+    except (json.JSONDecodeError, ValueError):
+        return None
+    if not data.get("dir_info", {}).get("editable", False):
+        return None
+    url = data.get("url", "")
+    parsed = urllib.parse.urlparse(url)
+    if parsed.scheme != "file":
+        return None
+    return pathlib.Path(urllib.request.url2pathname(parsed.path))
+
+
+def _pyproject_has_activator_ep(source_path: pathlib.Path) -> bool:
+    """Return True if pyproject.toml in source_path declares a finecode.activator entry point."""
+    pyproject_path = source_path / "pyproject.toml"
+    if not pyproject_path.exists():
+        return False
+    try:
+        with open(pyproject_path, "rb") as f:
+            data = tomllib.load(f)
+    except Exception:
+        return False
+    return "finecode.activator" in data.get("project", {}).get("entry-points", {})
 
 
 def _apply_user_service_config(

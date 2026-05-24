@@ -24,3 +24,9 @@ class ServiceRegistry(iserviceregistry.IServiceRegistry):
             return impl(**args)
 
         self._di_registry.register_factory(interface, factory)
+
+        if singleton and interface is not impl:
+            async def through_factory(registry) -> T:
+                return await registry.get_instance(interface)
+
+            self._di_registry.register_factory(impl, through_factory)

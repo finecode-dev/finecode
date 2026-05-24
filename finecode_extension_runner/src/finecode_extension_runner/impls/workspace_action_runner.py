@@ -5,8 +5,10 @@ import pathlib
 import typing
 from typing import Any, Awaitable, Callable
 
+import cattrs.errors
 from finecode_extension_api import code_action
 from finecode_extension_api.interfaces import iprojectactionrunner, iworkspaceactionrunner
+from finecode_extension_runner import er_telemetry
 from finecode_extension_runner._converter import converter as _converter
 
 PayloadT = typing.TypeVar("PayloadT", bound=code_action.RunActionPayload)
@@ -28,6 +30,7 @@ class WorkspaceActionRunnerImpl(iworkspaceactionrunner.IWorkspaceActionRunner):
         concurrently: bool = True,
     ) -> dict[pathlib.Path, ResultT]:
         action_source = f"{action_type.__module__}.{action_type.__qualname__}"
+        traceparent = er_telemetry.get_current_traceparent()
         try:
             raw = await self._send(
                 "finecode/runActionInWorkspace",
@@ -43,6 +46,7 @@ class WorkspaceActionRunnerImpl(iworkspaceactionrunner.IWorkspaceActionRunner):
                     if project_paths is not None
                     else None,
                     "concurrently": concurrently,
+                    "traceparent": traceparent,
                 },
             )
         except Exception as e:
@@ -55,9 +59,15 @@ class WorkspaceActionRunnerImpl(iworkspaceactionrunner.IWorkspaceActionRunner):
                 f"Running '{action_type.__name__}' in [{project_str}] failed: {e}"
             ) from e
         results_by_project: dict = raw["resultsByProject"]
-        return {
-            pathlib.Path(k): _converter.structure(
-                next(iter(v.values()), {}), action_type.RESULT_TYPE
-            )
-            for k, v in results_by_project.items()
-        }
+        results: dict[pathlib.Path, ResultT] = {}
+        for k, v in results_by_project.items():
+            raw_result = next(iter(v.values()), {})
+            try:
+                results[pathlib.Path(k)] = _converter.structure(
+                    raw_result, action_type.RESULT_TYPE
+                )
+            except cattrs.errors.ClassValidationError as e:
+                raise iprojectactionrunner.ActionRunFailed(
+                    f"Failed to parse result of '{action_type.__name__}' for project '{k}': {e}"
+                ) from e
+        return results

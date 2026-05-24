@@ -4,6 +4,7 @@ from pathlib import Path
 
 _handler_duration_hist = None
 _handler_errors_counter = None
+_telemetry_initialized = False
 
 
 def apply_telemetry_config(
@@ -11,6 +12,11 @@ def apply_telemetry_config(
     project_path: Path,
     env_name: str | None = None,
 ) -> None:
+    # OTel SDK forbids replacing a TracerProvider/MeterProvider once set, so
+    # telemetry can only be configured once per process lifetime.
+    global _telemetry_initialized
+    if _telemetry_initialized:
+        return
     endpoint: str | None = config.get("otlp_endpoint") or None
     if not endpoint:
         return
@@ -18,6 +24,7 @@ def apply_telemetry_config(
     init_otel_logging(service_name=service_name, project_path=project_path, endpoint=endpoint)
     init_tracer_provider(service_name=service_name, project_path=project_path, endpoint=endpoint)
     init_meter_provider(service_name=service_name, project_path=project_path, endpoint=endpoint)
+    _telemetry_initialized = True
 
 
 def init_otel_logging(service_name: str, project_path: Path, endpoint: str) -> None:
@@ -62,10 +69,17 @@ def init_otel_logging(service_name: str, project_path: Path, endpoint: str) -> N
     }
 
     def _otel_sink(message) -> None:
+        from opentelemetry import context as otel_context
+
         rec = message.record
+        # Skip OTel's own logs to avoid a feedback loop: OTel export failure →
+        # InterceptHandler → Loguru → _otel_sink → export failure → …
+        if rec["name"].startswith("opentelemetry"):
+            return
         sev = _severity_map.get(rec["level"].name, SeverityNumber.UNSPECIFIED)
         otel_logger.emit(
             timestamp=int(rec["time"].timestamp() * 1e9),
+            context=otel_context.get_current(),
             severity_number=sev,
             severity_text=rec["level"].name,
             body=rec["message"],
@@ -150,36 +164,36 @@ def init_meter_provider(service_name: str, project_path: Path, endpoint: str) ->
     )
 
 
+def get_current_traceparent() -> str | None:
+    """Return the W3C traceparent header for the currently active span, or None if no active span."""
+    if not _telemetry_initialized:
+        return None
+    from opentelemetry import propagate, trace
+
+    span = trace.get_current_span()
+    if not span.get_span_context().is_valid:
+        return None
+    carrier: dict[str, str] = {}
+    propagate.inject(carrier)
+    return carrier.get("traceparent")
+
+
 @contextlib.contextmanager
-def handler_span(handler_name: str, action_name: str, wal_run_id: str | None):
-    if wal_run_id is None:
+def handler_span(handler_name: str, action_name: str, traceparent: str | None):
+    if traceparent is None:
         yield None
         return
 
-    import uuid
-
-    from opentelemetry import trace
-    from opentelemetry.trace import NonRecordingSpan, SpanContext, TraceFlags
+    from opentelemetry import propagate, trace
 
     tracer = trace.get_tracer("finecode.er")
-    trace_id = int(uuid.UUID(wal_run_id))
-    parent_ctx = trace.set_span_in_context(
-        NonRecordingSpan(
-            SpanContext(
-                trace_id=trace_id,
-                span_id=0x0000000000000001,
-                is_remote=True,
-                trace_flags=TraceFlags(TraceFlags.SAMPLED),
-            )
-        )
-    )
+    parent_ctx = propagate.extract({"traceparent": traceparent})
     with tracer.start_as_current_span(
-        "handler.run",
+        f"handler.run/{handler_name}",
         context=parent_ctx,
         attributes={
             "handler.name": handler_name,
             "action.name": action_name,
-            "wal.run_id": wal_run_id,
         },
         record_exception=True,
         set_status_on_exception=True,

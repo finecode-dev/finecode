@@ -31,8 +31,9 @@ from loguru import logger
 
 import finecode_jsonrpc as finecode_jsonrpc_module
 from finecode_extension_api import code_action
-from finecode_extension_api.interfaces import ifileeditor, iprojectinfoprovider
+from finecode_extension_api.interfaces import ifileeditor, iprojectactionrunner, iprojectinfoprovider
 from finecode_extension_runner import context, er_errors, er_telemetry, er_wal, global_state, logs, schemas, services
+from finecode_extension_runner.di import bootstrap as di_bootstrap
 from finecode_extension_runner._converter import converter as _converter
 from finecode_extension_runner._services import merge_results as merge_results_service
 from finecode_extension_runner._services import run_action as run_action_service
@@ -109,6 +110,10 @@ class DidChangeTextDocumentParams:
     text_document: TextDocumentId
     content_changes: list[TextDocumentContentChangePartial | TextDocumentContentChangeWhole]
 
+
+# JSON-RPC error code signalling that the WM should reinstall the env and restart the ER.
+# Value is in the implementation-defined server error range (-32000 to -32099).
+_ENV_REINSTALL_NEEDED_ERROR_CODE = -32001
 
 # Converter for the protocol types — handles camelCase ↔ snake_case.
 _protocol_converter = Converter()
@@ -528,7 +533,10 @@ async def update_config(server: ErServer, params: dict | None) -> dict:
             )
 
         async def _send_request_to_wm(method: str, req_params: dict):
-            return await server.send_request_to_wm(method, req_params)
+            try:
+                return await server.send_request_to_wm(method, req_params)
+            except finecode_jsonrpc_module.JsonRpcError as exc:
+                raise er_errors.WmCommunicationError(str(exc)) from exc
 
         response, runner_context = await services.update_config(
             request=request,
@@ -575,6 +583,11 @@ async def update_config(server: ErServer, params: dict | None) -> dict:
         server._finecode_async_tasks.append(task)
 
         return response.to_dict()
+    except di_bootstrap.StaleEntryPointsError as exc:
+        logger.info(str(exc))
+        raise finecode_jsonrpc_module.JsonRpcHandlerError(
+            _ENV_REINSTALL_NEEDED_ERROR_CODE, str(exc)
+        ) from exc
     except Exception as exc:
         logger.exception(f"Update config error: {exc}")
         raise

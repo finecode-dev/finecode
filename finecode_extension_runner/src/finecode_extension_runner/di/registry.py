@@ -4,6 +4,10 @@ from typing import Any, Callable, Type, TypeVar
 T = TypeVar("T")
 
 
+class ServiceNotFoundError(ValueError):
+    """Raised when no implementation is registered for a requested type."""
+
+
 class Registry:
     def __init__(self) -> None:
         self._container: dict[type, Any] = {}
@@ -24,7 +28,7 @@ class Registry:
             return self._container[type_]
 
         if type_ not in self._factories:
-            raise ValueError(f"No implementation found for {type_}")
+            raise ServiceNotFoundError(f"No implementation found for {type_}")
 
         factory_result = self._factories[type_](self)
 

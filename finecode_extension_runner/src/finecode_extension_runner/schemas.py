@@ -65,6 +65,7 @@ class RunActionOptions(BaseSchema):
     progress_token: int | str | None = None
     result_formats: list[Literal["json"] | Literal["string"]] = field(default_factory=lambda: ["json"])
     caller_kwargs: dict | None = None   # NEW
+    traceparent: str | None = None
 
 
 @dataclass
