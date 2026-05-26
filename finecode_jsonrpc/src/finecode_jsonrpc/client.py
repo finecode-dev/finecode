@@ -68,13 +68,13 @@ class WriterFromQueue:
         self._out_queue.put(data)
 
 
-class RunnerFailedToStart(Exception):
+class ServerFailedToStart(Exception):
     def __init__(self, message: str) -> None:
         super().__init__(message)
         self.message: typing.Final = message
 
 
-class RunnerExitedBeforePort(Exception):
+class ServerExitedBeforePort(Exception):
     def __init__(self, return_code: int | None) -> None:
         super().__init__()
         self.return_code: typing.Final = return_code
@@ -779,19 +779,19 @@ class JsonRpcClient:
 
             try:
                 await asyncio.wait_for(self._tcp_port_future, timeout)
-            except RunnerExitedBeforePort as exception:
+            except ServerExitedBeforePort as exception:
                 for task in self._async_tasks_in_io_thread:
                     task.cancel()
 
-                raise RunnerFailedToStart(
-                    f"Runner exited before publishing TCP port (exit code: {exception.return_code})"
+                raise ServerFailedToStart(
+                    f"Server exited before publishing TCP port (exit code: {exception.return_code})"
                     f"{self._stderr_tail()}"
                 ) from exception
             except TimeoutError as exception:
                 for task in self._async_tasks_in_io_thread:
                     task.cancel()
 
-                raise RunnerFailedToStart(
+                raise ServerFailedToStart(
                     f"Didn't get port in {timeout} seconds{self._stderr_tail()}"
                 ) from exception
 
@@ -808,7 +808,7 @@ class JsonRpcClient:
                 for task in self._async_tasks_in_io_thread:
                     task.cancel()
 
-                raise RunnerFailedToStart(
+                raise ServerFailedToStart(
                     f"Failed to open connection: {exception}"
                 ) from exception
 
@@ -850,7 +850,7 @@ class JsonRpcClient:
             return ""
 
         recent = "\n".join(self._stderr_buffer[-max_lines:])
-        return f"\nRunner stderr output:\n{recent}"
+        return f"\nServer stderr output:\n{recent}"
 
 
 async def start_server(
@@ -985,7 +985,7 @@ async def wait_for_stop_event_and_clean(
 
     process_finished_first = wait_process_task in done
     if process_finished_first and port_future is not None and not port_future.done():
-        port_future.set_exception(RunnerExitedBeforePort(server_process.returncode))
+        port_future.set_exception(ServerExitedBeforePort(server_process.returncode))
 
     if not stop_event.is_set():
         stop_event.set()
@@ -1159,7 +1159,7 @@ async def read_messages_from_reader(
                         content_length = 0
                         continue
 
-                    logger.debug(f"Got content {server_id}: {body}")
+                    logger.trace(f"Got content {server_id}: {body}")
                     try:
                         message = json.loads(body)
                     except json.JSONDecodeError as exc:

@@ -33,6 +33,19 @@ _INTERNAL_ERROR = -32603
 _REQUEST_CANCELLED = -32800
 
 
+class JsonRpcHandlerError(Exception):
+    """Raise from a request handler to return a specific JSON-RPC error code.
+
+    Use this instead of letting an arbitrary exception propagate (which would
+    always produce INTERNAL_ERROR -32603).
+    """
+
+    def __init__(self, code: int, message: str) -> None:
+        super().__init__(message)
+        self.code = code
+        self.message = message
+
+
 class JsonRpcServerSession:
     """Bidirectional JSON-RPC session for the *server* role.
 
@@ -236,6 +249,8 @@ class JsonRpcServerSession:
             )
         except asyncio.CancelledError:
             self._send_response(msg_id, None, _REQUEST_CANCELLED, "Request cancelled")
+        except JsonRpcHandlerError as exc:
+            self._send_response(msg_id, None, exc.code, exc.message)
         except Exception as exc:
             logger.exception(f"Error handling request '{method}': {exc}")
             self._send_response(msg_id, None, _INTERNAL_ERROR, str(exc))
