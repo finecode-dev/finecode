@@ -6,12 +6,12 @@ import asyncio
 import typing
 from pathlib import Path
 
-import apischema
 from loguru import logger
 from lsprotocol import converters as lsp_converters
 from lsprotocol import types
 
 import finecode_jsonrpc as finecode_jsonrpc_module
+from finecode._converter import converter as _converter
 from finecode.wm_server import wm_lifecycle
 from finecode.wm_client import ApiClient
 from finecode.lsp_server import global_state
@@ -22,6 +22,10 @@ from finecode.lsp_server.endpoints import diagnostics as diagnostics_endpoints
 from finecode.lsp_server.endpoints import document_sync as document_sync_endpoints
 from finecode.lsp_server.endpoints import formatting as formatting_endpoints
 from finecode.lsp_server.endpoints import inlay_hints as inlay_hints_endpoints
+from finecode.lsp_server.endpoints import semantic_tokens as semantic_tokens_endpoints
+from finecode.lsp_server.endpoints import call_hierarchy as call_hierarchy_endpoints
+from finecode.lsp_server.endpoints import navigation as navigation_endpoints
+from finecode.lsp_server.endpoints import type_hierarchy as type_hierarchy_endpoints
 
 _lsp_converter = lsp_converters.get_converter()
 
@@ -201,6 +205,59 @@ def create_lsp_server() -> LspServer:
     session.on_request("textDocument/inlayHint", _wrap(_on_inlay_hint))
     session.on_request("inlayHint/resolve", _wrap(_on_inlay_hint_resolve))
 
+    # Semantic tokens
+    session.on_request(
+        "textDocument/semanticTokens/full",
+        _wrap(semantic_tokens_endpoints.document_semantic_tokens_full),
+    )
+    session.on_request(
+        "textDocument/semanticTokens/range",
+        _wrap(semantic_tokens_endpoints.document_semantic_tokens_range),
+    )
+    session.on_request(
+        "textDocument/semanticTokens/full/delta",
+        _wrap(semantic_tokens_endpoints.document_semantic_tokens_full_delta),
+    )
+
+    # Navigation (hover, definition, references, …)
+    session.on_request(
+        "textDocument/hover",
+        _wrap(navigation_endpoints.hover),
+    )
+    session.on_request("textDocument/definition", _wrap(navigation_endpoints.definition))
+    session.on_request("textDocument/references", _wrap(navigation_endpoints.references))
+    session.on_request("textDocument/typeDefinition", _wrap(navigation_endpoints.type_definition))
+    session.on_request("textDocument/implementation", _wrap(navigation_endpoints.implementation))
+    session.on_request("textDocument/documentHighlight", _wrap(navigation_endpoints.document_highlight))
+
+    # Call hierarchy
+    session.on_request(
+        "textDocument/prepareCallHierarchy",
+        _wrap(call_hierarchy_endpoints.prepare_call_hierarchy),
+    )
+    session.on_request(
+        "callHierarchy/incomingCalls",
+        _wrap(call_hierarchy_endpoints.call_hierarchy_incoming_calls),
+    )
+    session.on_request(
+        "callHierarchy/outgoingCalls",
+        _wrap(call_hierarchy_endpoints.call_hierarchy_outgoing_calls),
+    )
+
+    # Type hierarchy
+    session.on_request(
+        "textDocument/prepareTypeHierarchy",
+        _wrap(type_hierarchy_endpoints.prepare_type_hierarchy),
+    )
+    session.on_request(
+        "typeHierarchy/supertypes",
+        _wrap(type_hierarchy_endpoints.type_hierarchy_supertypes),
+    )
+    session.on_request(
+        "typeHierarchy/subtypes",
+        _wrap(type_hierarchy_endpoints.type_hierarchy_subtypes),
+    )
+
     return server
 
 
@@ -233,6 +290,22 @@ async def _on_initialize(server: LspServer, params: dict | None) -> dict:
                 "workspaceDiagnostics": True,
             },
             "inlayHintProvider": {"resolveProvider": True},
+            "semanticTokensProvider": {
+                "legend": {
+                    "tokenTypes": semantic_tokens_endpoints.SEMANTIC_TOKEN_TYPES,
+                    "tokenModifiers": semantic_tokens_endpoints.SEMANTIC_TOKEN_MODIFIERS,
+                },
+                "full": {"delta": True},
+                "range": True,
+            },
+            "hoverProvider": True,
+            "definitionProvider": True,
+            "referencesProvider": True,
+            "typeDefinitionProvider": True,
+            "implementationProvider": True,
+            "documentHighlightProvider": True,
+            "callHierarchyProvider": True,
+            "typeHierarchyProvider": True,
             "executeCommandProvider": {"commands": _EXECUTE_COMMANDS},
             "workspace": {
                 "workspaceFolders": {
@@ -246,6 +319,34 @@ async def _on_initialize(server: LspServer, params: dict | None) -> dict:
             "version": "v1",
         },
     }
+
+
+def _report_wm_start_failure(server: LspServer) -> None:
+    """Forward WM-server failure to the LSP client with stderr output and log path."""
+    stderr_path = wm_lifecycle.startup_stderr_log_path()
+    try:
+        stderr_content = stderr_path.read_text().strip()
+    except OSError:
+        stderr_content = ""
+
+    if stderr_content:
+        server.log_message(
+            f"FineCode WM Server stderr:\n{stderr_content}",
+            types.MessageType.Error.value,
+        )
+    else:
+        if global_state.lsp_log_file_path is not None:
+            expected_wm_log = (
+                global_state.lsp_log_file_path.parent.parent / "wm_server" / "wm_server.log"
+            )
+            server.log_message(
+                f"FineCode WM Server log: {expected_wm_log}",
+                types.MessageType.Error.value,
+            )
+        server.log_message(
+            "FineCode WM Server failed to start. See log file above for details.",
+            types.MessageType.Error.value,
+        )
 
 
 async def _on_initialized(server: LspServer, _params: dict | None) -> None:
@@ -264,8 +365,15 @@ async def _on_initialized(server: LspServer, _params: dict | None) -> None:
         logger.warning(f"FineCode WM server did not start: {exc}")
         port = None
 
+    if global_state.lsp_log_file_path:
+        server.log_message(
+            f"FineCode LSP Server log: {global_state.lsp_log_file_path}",
+            types.MessageType.Info.value,
+        )
+
     if port is None:
         logger.error("Cannot connect to FineCode WM server — no port available")
+        _report_wm_start_failure(server)
         return
 
     try:
@@ -274,13 +382,8 @@ async def _on_initialized(server: LspServer, _params: dict | None) -> None:
     except (ConnectionRefusedError, OSError) as exc:
         logger.error(f"Could not connect to FineCode WM server: {exc}")
         global_state.wm_client = None
+        _report_wm_start_failure(server)
         return
-
-    if global_state.lsp_log_file_path:
-        server.log_message(
-            f"FineCode LSP Server log: {global_state.lsp_log_file_path}",
-            types.MessageType.Info.value,
-        )
 
     log_path = global_state.wm_client.server_info.get("logFilePath")
     if log_path:
@@ -304,11 +407,11 @@ async def _on_initialized(server: LspServer, _params: dict | None) -> None:
     global_state.wm_client.on_notification("server/userMessage", on_user_message)
 
     # Forward progress notifications to the IDE progress reporter.
-    from finecode_extension_api.actions.code_quality import lint_action
+    from fine_inspect_code import inspect_code_action
     from finecode.lsp_server.endpoints.diagnostics import map_lint_message_to_diagnostic
 
     def _map_lint_to_document_diagnostic_partial(
-        lint_result: lint_action.LintRunResult,
+        lint_result: inspect_code_action.InspectCodeRunResult,
     ) -> dict:
         related_documents = {}
         for file_path_str, lint_messages in lint_result.messages.items():
@@ -323,7 +426,7 @@ async def _on_initialized(server: LspServer, _params: dict | None) -> None:
         return _lsp_converter.unstructure(partial)
 
     def _map_lint_to_workspace_diagnostic_partial(
-        lint_result: lint_action.LintRunResult,
+        lint_result: inspect_code_action.InspectCodeRunResult,
     ) -> dict:
         items = [
             types.WorkspaceFullDocumentDiagnosticReport(
@@ -350,13 +453,13 @@ async def _on_initialized(server: LspServer, _params: dict | None) -> None:
             logger.error(f"No mapping found for partial result token {token}")
             return
 
-        if action == "finecode_extension_api.actions.LintAction":
+        if action == "fine_inspect_code.InspectCodeAction":
             result_by_format = value.get("resultByFormat") or {}
             json_result = result_by_format.get("json")
             if json_result is None:
                 logger.error(f"No json result in partial result for token {token}")
                 return
-            lint_result = apischema.deserialize(lint_action.LintRunResult, json_result)
+            lint_result = _converter.structure(json_result, inspect_code_action.InspectCodeRunResult)
 
             if endpoint_type == "document_diagnostic":
                 partial_dict = _map_lint_to_document_diagnostic_partial(lint_result)
@@ -406,16 +509,16 @@ async def _on_initialized(server: LspServer, _params: dict | None) -> None:
     )
 
     # Add workspace directories via the WM server.
+    # server_initialized is set only on success — handlers must not call WM before it fires.
     try:
         async with asyncio.TaskGroup() as tg:
             for folder in server._workspace_folders:
                 dir_path = Path(folder["uri"].replace("file://", ""))
                 tg.create_task(global_state.wm_client.add_dir(dir_path))
+        global_state.server_initialized.set()
+        logger.trace("Workspace directories added, end of initialized handler")
     except ExceptionGroup as error:
-        logger.exception(error)
-
-    global_state.server_initialized.set()
-    logger.trace("Workspace directories added, end of initialized handler")
+        logger.error(f"Workspace initialization failed, FineCode features are disabled: {error}")
 
 
 async def _on_shutdown(_server: LspServer, _params: dict | None) -> None:

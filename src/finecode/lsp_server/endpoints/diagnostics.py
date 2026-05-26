@@ -9,7 +9,8 @@ from lsprotocol import types
 
 from finecode._converter import converter as _converter
 from finecode.lsp_server import global_state, pygls_types_utils
-from fine_lint import lint_action
+from fine_inspect_code import inspect_code_action
+from fine_inspect_code.diagnostic_types import Diagnostic
 from finecode_extension_api.resource_uri import ResourceUri
 
 if TYPE_CHECKING:
@@ -17,7 +18,7 @@ if TYPE_CHECKING:
 
 
 def map_lint_message_to_diagnostic(
-    lint_message: lint_action.LintMessage,
+    lint_message: Diagnostic,
 ) -> types.Diagnostic:
     code_description_url = lint_message.code_description
     return types.Diagnostic(
@@ -60,7 +61,7 @@ async def document_diagnostic_with_full_result(
 
     try:
         response = await global_state.wm_client.run_action(
-            action_source="fine_lint.LintAction",
+            action_source="fine_inspect_code.InspectCodeAction",
             project="",
             params={
                 "target": "files",
@@ -81,10 +82,10 @@ async def document_diagnostic_with_full_result(
     json_result = (response.get("resultByFormat") or {}).get("json")
     if json_result is None:
         return None
-    lint_result = _converter.structure(json_result, lint_action.LintRunResult)
+    inspect_result = _converter.structure(json_result, inspect_code_action.InspectCodeRunResult)
 
     try:
-        requested_file_messages = lint_result.messages.pop(
+        requested_file_messages = inspect_result.messages.pop(
             cast(ResourceUri, file_uri)
         )
     except KeyError:
@@ -98,7 +99,7 @@ async def document_diagnostic_with_full_result(
     )
 
     related_files_diagnostics: dict[str, types.FullDocumentDiagnosticReport] = {}
-    for related_file_uri, file_lint_messages in lint_result.messages.items():
+    for related_file_uri, file_lint_messages in inspect_result.messages.items():
         file_report = types.FullDocumentDiagnosticReport(
             items=[
                 map_lint_message_to_diagnostic(lint_message)
@@ -123,11 +124,11 @@ async def document_diagnostic_with_partial_results(
         return None
 
     # Store the expected response type for this token
-    global_state.partial_result_tokens[partial_result_token] = ("fine_lint.LintAction", "document_diagnostic")
+    global_state.partial_result_tokens[partial_result_token] = ("fine_inspect_code.InspectCodeAction", "document_diagnostic")
 
     try:
         await global_state.wm_client.run_action(
-            action_source="fine_lint.LintAction",
+            action_source="fine_inspect_code.InspectCodeAction",
             project="",
             params={"target": "files", "file_paths": [file_path.as_uri()]},
             options={"resultFormats": ["json"], "trigger": "system", "devEnv": "ide"},
@@ -182,12 +183,12 @@ async def run_workspace_diagnostic_with_partial_results(
     assert global_state.wm_client is not None, "WM client must be connected"
 
     # Store the expected response type for this token
-    global_state.partial_result_tokens[partial_result_token] = ("fine_lint.LintAction", "workspace_diagnostic")
+    global_state.partial_result_tokens[partial_result_token] = ("fine_inspect_code.InspectCodeAction", "workspace_diagnostic")
 
     try:
         # send request to WM server; notifications will trigger progress reporter
         await global_state.wm_client.run_action(
-            action_source="fine_lint.LintAction",
+            action_source="fine_inspect_code.InspectCodeAction",
             project="",  # empty project = all relevant projects
             params={"target": "project"},
             options={"resultFormats": ["json"], "trigger": "system", "devEnv": "ide"},
@@ -222,7 +223,7 @@ async def workspace_diagnostic_with_full_result() -> types.WorkspaceDiagnosticRe
 
     try:
         response = await global_state.wm_client.run_action(
-            action_source="fine_lint.LintAction",
+            action_source="fine_inspect_code.InspectCodeAction",
             project="",  # empty project = all relevant projects
             params={"target": "project"},
             options={"trigger": "system", "devEnv": "ide"},
@@ -237,10 +238,10 @@ async def workspace_diagnostic_with_full_result() -> types.WorkspaceDiagnosticRe
     json_result = (response.get("resultByFormat") or {}).get("json")
     if not json_result:
         return types.WorkspaceDiagnosticReport(items=[])
-    lint_result = _converter.structure(json_result, lint_action.LintRunResult)
+    inspect_result = _converter.structure(json_result, inspect_code_action.InspectCodeRunResult)
 
     items: list[types.WorkspaceDocumentDiagnosticReport] = []
-    for file_uri, lint_messages in lint_result.messages.items():
+    for file_uri, lint_messages in inspect_result.messages.items():
         new_report = types.WorkspaceFullDocumentDiagnosticReport(
             uri=file_uri,  # ResourceUri is already a file:// URI string
             items=[
