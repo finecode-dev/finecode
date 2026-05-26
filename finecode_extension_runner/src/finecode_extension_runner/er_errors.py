@@ -12,3 +12,12 @@ class WmCommunicationError(Exception):
     def __init__(self, message: str) -> None:
         self.message = message
         super().__init__(message)
+
+
+class PackageNotInstalledError(Exception):
+    """Raised when a Python module required during ``update_config`` is not installed in the env.
+    """
+
+    def __init__(self, module_name: str) -> None:
+        self.module_name = module_name
+        super().__init__(f"No module named '{module_name}'")

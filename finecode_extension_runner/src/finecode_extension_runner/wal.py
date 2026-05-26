@@ -1,3 +1,31 @@
+"""Shared append-only WAL writer used by both the WM and ER processes.
+
+On-disk format
+--------------
+Each WAL is a directory of JSONL segment files (``wal-000001.jsonl``, …).
+Every line is one JSON object — a *WAL event* — with the following fields:
+
+Always present
+~~~~~~~~~~~~~~
+``schema_version``  int   Schema version of this event (see *Version history* below).
+``sequence``        int   Monotonically increasing counter within a writer session.
+``ts``              str   UTC timestamp in ISO-8601 format.
+``event_type``      str   Dot-separated event identifier (e.g. ``"run.accepted"``).
+``project_path``    str   Absolute path of the project this event is associated with.
+``writer_id``       str   Unique ID of the writer process that produced this event.
+``payload``         obj   Event-specific data; always an object, empty ``{}`` when unused.
+
+Present for run events (``run.*``, ``runner.selected``)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+``wal_run_id``      str   UUID correlating all events for a single action invocation.
+``action_name``     str   Fully qualified action name (e.g. ``"lint_files"``).
+``trigger``         str   What initiated the run (``"user"``, ``"system"``, …).
+``dev_env``         str   Developer environment kind (``"ide"``, ``"cli"``, ``"ai"``, …).
+
+Present for runner lifecycle events (``runner.*``)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+``env_name``        str   Execution environment name (e.g. ``"dev_no_runtime"``).
+"""
 from __future__ import annotations
 
 import dataclasses
@@ -60,29 +88,36 @@ class WalWriter:
         self,
         *,
         event_type: str,
-        wal_run_id: str,
-        action_name: str,
         project_path: str,
-        trigger: str,
-        dev_env: str,
+        wal_run_id: str | None = None,
+        action_name: str | None = None,
+        trigger: str | None = None,
+        dev_env: str | None = None,
+        env_name: str | None = None,
         payload: dict[str, typing.Any] | None = None,
     ) -> None:
         with self._lock:
             self._rotate_if_needed()
             self._sequence += 1
-            event = {
-                "schema_version": 1,
+            event: dict[str, typing.Any] = {
+                "schema_version": 2,
                 "sequence": self._sequence,
                 "ts": utc_now_iso(),
                 "event_type": event_type,
-                "wal_run_id": wal_run_id,
-                "action_name": action_name,
                 "project_path": project_path,
-                "trigger": trigger,
-                "dev_env": dev_env,
                 "writer_id": self._writer_id,
                 "payload": payload or {},
             }
+            if wal_run_id is not None:
+                event["wal_run_id"] = wal_run_id
+            if action_name is not None:
+                event["action_name"] = action_name
+            if trigger is not None:
+                event["trigger"] = trigger
+            if dev_env is not None:
+                event["dev_env"] = dev_env
+            if env_name is not None:
+                event["env_name"] = env_name
             with self._active_path.open("a", encoding="utf-8") as handle:
                 handle.write(json.dumps(event, ensure_ascii=True, default=str))
                 handle.write("\n")

@@ -67,7 +67,8 @@ class WorkspaceActionRunnerImpl(iworkspaceactionrunner.IWorkspaceActionRunner):
                     raw_result, action_type.RESULT_TYPE
                 )
             except cattrs.errors.ClassValidationError as e:
+                details = "; ".join(cattrs.transform_error(e))
                 raise iprojectactionrunner.ActionRunFailed(
-                    f"Failed to parse result of '{action_type.__name__}' for project '{k}': {e}"
+                    f"Failed to parse result of '{action_type.__name__}' for project '{k}': {details}"
                 ) from e
         return results

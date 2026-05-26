@@ -21,6 +21,7 @@ class ActionDeclaration:
         self.config: dict[str, typing.Any] = config
         self.handlers: list[ActionHandlerDeclaration] = handlers
         self.source: str = source
+        self.metadata: ActionMetadata | None = None
 
 
 class ActionHandlerDeclaration:
@@ -29,6 +30,12 @@ class ActionHandlerDeclaration:
         self.source = source
         self.config = config
         self.env = env
+
+
+@dataclasses.dataclass
+class ActionMetadata:
+    parent_action_source: str | None
+    language: str | None
 
 
 class Project:

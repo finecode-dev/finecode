@@ -107,6 +107,9 @@ def save_logs_to_file(
         # set encoding explicitly to be able to handle special symbols
         encoding="utf8",
         filter=filter_logs,
+        # Serialise all writes through a background thread so rotation checks
+        # remain deterministic under concurrent (multi-threaded / asyncio + IO thread) load.
+        enqueue=True,
     )
     logger.trace(f"Log file: {file_path_with_id}")
     return file_path_with_id

@@ -17,6 +17,7 @@ from finecode_extension_api.interfaces import iprojectactionrunner, iprojectinfo
 from finecode_extension_runner import (
     context,
     domain,
+    er_errors,
     er_telemetry,
     er_wal,
     partial_result_sender as partial_result_sender_module,
@@ -892,6 +893,8 @@ async def run_handlers_raw(
 def create_action_exec_info(action: domain.ActionDeclaration) -> domain.ActionExecInfo:
     try:
         action_type_def = run_utils.import_module_member_by_source_str(action.source)
+    except ModuleNotFoundError as e:
+        raise er_errors.PackageNotInstalledError(e.name or str(e)) from e
     except Exception as e:
         logger.error(f"Error importing action type: {e}")
         raise e
