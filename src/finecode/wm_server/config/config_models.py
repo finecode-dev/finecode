@@ -82,6 +82,11 @@ class WmTelemetryConfig:
 
 
 @dataclass
+class WmWalConfig:
+    enabled: bool = False
+
+
+@dataclass
 class ErEnvConfig:
     debug: bool = False
     logging: ErLoggingConfig = field(default_factory=ErLoggingConfig)

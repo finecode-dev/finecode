@@ -20,7 +20,14 @@ import typing
 
 from loguru import logger
 
+import finecode_jsonrpc.client as jsonrpc_client
+
 from finecode.wm_server import context, domain
+from finecode.wm_server.errors import ConfigurationError
+from finecode.wm_server.services.run_service.exceptions import (
+    ActionRunFailed,
+    StartingEnvironmentsFailed,
+)
 from finecode.wm_server._api_handlers import (
     _handle_actions_reload,
     _handle_add_dir,
@@ -29,6 +36,7 @@ from finecode.wm_server._api_handlers import (
     _handle_get_tree,
     _handle_list_actions,
     _handle_list_projects,
+    _handle_prepare_envs,
     _handle_get_project_raw_config,
     _handle_get_workspace_editable_packages,
     _handle_remove_dir,
@@ -132,6 +140,7 @@ _METHODS: dict[str, MethodHandler] = {
     "workspace/getProjectRawConfig": _handle_get_project_raw_config,
     "workspace/getWorkspaceEditablePackages": _handle_get_workspace_editable_packages,
     "workspace/startRunners": _handle_start_runners,
+    "workspace/prepareEnvs": _handle_prepare_envs,
     # actions/
     "actions/list": _handle_list_actions,
     "actions/getTree": _handle_get_tree,
@@ -189,6 +198,49 @@ async def _no_client_timeout() -> None:
             f"FineCode API: no client connected within {NO_CLIENT_TIMEOUT_SECONDS}s after startup, shutting down"
         )
         stop()
+
+
+async def _handle_request_task(
+    handler: MethodHandler,
+    params: dict | None,
+    ws_context: context.WorkspaceContext,
+    writer: asyncio.StreamWriter,
+    req_id: int,
+    label: str,
+    method: str,
+) -> None:
+    """Run a request handler and write the response. Runs as a task so multiple
+    requests from the same client can be handled concurrently."""
+    try:
+        result = await handler(params, ws_context)
+        _write_message(writer, _jsonrpc_response(req_id, result))
+        await writer.drain()
+    except _NotImplementedError as exc:
+        _write_message(writer, _jsonrpc_error(req_id, NOT_IMPLEMENTED_CODE, str(exc)))
+        await writer.drain()
+    except ValueError as exc:
+        logger.warning(f"FineCode API: invalid request for {method}: {exc}")
+        _write_message(writer, _jsonrpc_error(req_id, -32602, str(exc)))
+        await writer.drain()
+    except ConfigurationError as exc:
+        logger.warning(f"FineCode API: configuration error in {method}: {exc.message}")
+        _write_message(writer, _jsonrpc_error(req_id, -32603, exc.message))
+        await writer.drain()
+    except (ActionRunFailed, StartingEnvironmentsFailed) as exc:
+        logger.error(f"FineCode API: error handling {method} (client: {label}): {exc}")
+        _write_message(writer, _jsonrpc_error(req_id, -32603, str(exc)))
+        await writer.drain()
+    except jsonrpc_client.ServerFailedToStart as exc:
+        # Already logged with details in runner_manager; no traceback needed here.
+        logger.error(f"FineCode API: error handling {method} (client: {label}): {exc.message}")
+        _write_message(writer, _jsonrpc_error(req_id, -32603, exc.message))
+        await writer.drain()
+    except Exception as exc:
+        logger.exception(f"FineCode API: error handling {method} (client: {label})")
+        _write_message(writer, _jsonrpc_error(req_id, -32603, str(exc)))
+        await writer.drain()
+    except asyncio.CancelledError:
+        pass
 
 
 async def _handle_client(
@@ -324,27 +376,19 @@ async def _handle_client(
                 await writer.drain()
                 continue
 
-            try:
-                result = await handler(params, ws_context)
-                _write_message(writer, _jsonrpc_response(req_id, result))
-                await writer.drain()
-            except _NotImplementedError as exc:
-                _write_message(
-                    writer, _jsonrpc_error(req_id, NOT_IMPLEMENTED_CODE, str(exc))
-                )
-                await writer.drain()
-            except ValueError as exc:
-                logger.warning(f"FineCode API: invalid request for {method}: {exc}")
-                _write_message(
-                    writer, _jsonrpc_error(req_id, -32602, str(exc))
-                )
-                await writer.drain()
-            except Exception as exc:
-                logger.exception(f"FineCode API: error handling {method} (client: {label})")
-                _write_message(
-                    writer, _jsonrpc_error(req_id, -32603, str(exc))
-                )
-                await writer.drain()
+            # Dispatch as a task so the read loop can immediately pick up the
+            # next request — this lets concurrent client requests (e.g. multiple
+            # runners/checkEnv from a TaskGroup) run in parallel on the server.
+            task = asyncio.create_task(
+                _handle_request_task(handler, params, ws_context, writer, req_id, label, method)
+            )
+            if writer not in _running_partial_result_tasks:
+                _running_partial_result_tasks[writer] = set()
+            _running_partial_result_tasks[writer].add(task)
+            task.add_done_callback(
+                lambda t: _running_partial_result_tasks[writer].discard(t)
+                if writer in _running_partial_result_tasks else None
+            )
     except (asyncio.IncompleteReadError, ConnectionResetError):
         pass
     finally:

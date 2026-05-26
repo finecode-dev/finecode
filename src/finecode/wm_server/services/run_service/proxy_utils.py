@@ -14,6 +14,7 @@ from finecode.wm_server import find_project, context, domain, domain_helpers, wa
 from finecode.wm_server.runner import runner_manager
 from finecode.wm_server.runner import runner_client
 from finecode.wm_server.runner.runner_manager import RunnerFailedToStart
+from finecode.wm_server.services import runner_start_service
 from finecode.wm_server.runner.runner_client import RunResultFormat  # reexport
 
 from .exceptions import ActionRunFailed, StartingEnvironmentsFailed
@@ -287,7 +288,7 @@ async def run_with_partial_results(
                 )
                 for env_name in action_envs:
                     try:
-                        runner = await runner_manager.get_or_start_runner(
+                        runner = await runner_start_service.get_or_start_runner_with_auto_prepare(
                             project_def=project,
                             env_name=env_name,
                             ws_context=ws_context,
@@ -869,7 +870,7 @@ async def _run_action_in_env_runner(
 
     try:
         with telemetry.runner_start_span(env_name):
-            runner = await runner_manager.get_or_start_runner(
+            runner = await runner_start_service.get_or_start_runner_with_auto_prepare(
                 project_def=project_def,
                 env_name=env_name,
                 ws_context=ws_context,
@@ -1010,7 +1011,7 @@ async def _run_handlers_in_env_runner(
     )
 
     try:
-        runner = await runner_manager.get_or_start_runner(
+        runner = await runner_start_service.get_or_start_runner_with_auto_prepare(
             project_def=project_def,
             env_name=env_name,
             ws_context=ws_context,

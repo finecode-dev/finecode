@@ -61,6 +61,7 @@ class ProjectExecutor:
         progress_token: int | str | None = None,
         initialize_all_handlers: bool = False,
         caller_kwargs: dict | None = None,
+        allow_no_handlers: bool = False,
     ) -> RunActionResponse:
         if orchestration_depth >= policy.max_recursion_depth:
             raise ActionRunFailed(
@@ -88,6 +89,7 @@ class ProjectExecutor:
             progress_token=progress_token,
             orchestration_depth=orchestration_depth + 1,
             caller_kwargs=caller_kwargs,
+            allow_no_handlers=allow_no_handlers,
         )
 
     @contextlib.asynccontextmanager

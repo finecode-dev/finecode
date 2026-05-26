@@ -511,12 +511,20 @@ class ApiClient:
                 if "id" in msg:
                     # Response to a pending request.
                     future = self._pending.pop(msg["id"], None)
-                    if future is not None and not future.done():
-                        future.set_result(msg)
-                    else:
+                    if future is None:
                         logger.warning(
                             f"WmClient: received response for unknown id {msg['id']}"
                         )
+                    elif future.cancelled():
+                        logger.debug(
+                            f"WmClient: received late response for cancelled request {msg['id']}, discarding"
+                        )
+                    elif future.done():
+                        logger.warning(
+                            f"WmClient: received response for already-resolved id {msg['id']}"
+                        )
+                    else:
+                        future.set_result(msg)
                 else:
                     # Server→client notification.
                     method = msg.get("method")

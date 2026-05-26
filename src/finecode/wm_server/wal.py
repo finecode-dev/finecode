@@ -1,3 +1,42 @@
+"""WM-side WAL: event catalog, typed payloads, and emit helpers.
+
+This module defines the complete set of events the WM writes to the WAL.
+The underlying on-disk format is documented in
+``finecode_extension_runner.wal`` (the shared writer).
+
+Event catalog
+-------------
+Run lifecycle  (top-level fields: wal_run_id, action_name, trigger, dev_env, project_path)
+~~~~~~~~~~~~~
+``run.accepted``     WM accepted an incoming run request.
+                     Payload: ``RunAcceptedPayload`` — ``params_hash``.
+
+``run.rejected``     WM rejected a run before dispatch (e.g. unknown action).
+                     Payload: ``RunRejectedPayload`` — ``reason``.
+
+``runner.selected``  WM chose the target environment for a run segment.
+                     Payload: ``RunnerSelectedPayload`` — ``env_name``.
+
+``run.dispatched``   WM sent the request to a concrete ER.
+                     Payload: ``RunDispatchedPayload`` — ``runner_id``, ``env_name``.
+
+``run.completed``    ER returned a successful result.
+                     Payload: ``RunCompletedPayload`` — ``return_code``.
+
+``run.failed``       ER returned an error or the runner was unreachable.
+                     Payload: ``RunFailedPayload`` — ``error``, ``env_name``.
+
+Runner lifecycle  (top-level fields: env_name, project_path)
+~~~~~~~~~~~~~~~~
+``runner.started``   Runner reached RUNNING status and is accepting requests.
+                     No payload.
+
+``runner.failed``    Runner failed to start or crashed during initialization.
+                     Payload: ``RunnerLifecyclePayload`` — ``reason``.
+
+``runner.stopped``   Runner process exited cleanly (EXITED status).
+                     No payload.
+"""
 from __future__ import annotations
 
 import dataclasses
@@ -28,6 +67,9 @@ class WalEventType(enum.StrEnum):
     RUN_DISPATCHED = "run.dispatched"
     RUN_COMPLETED = "run.completed"
     RUN_FAILED = "run.failed"
+    RUNNER_STARTED = "runner.started"
+    RUNNER_FAILED = "runner.failed"
+    RUNNER_STOPPED = "runner.stopped"
 
 
 @dataclasses.dataclass(frozen=True)
@@ -74,6 +116,13 @@ class RunFailedPayload:
     env_name: str
 
 
+@dataclasses.dataclass(frozen=True)
+class RunnerLifecyclePayload:
+    """Fields written for runner.failed events; env_name is at top level."""
+
+    reason: str
+
+
 WalPayload = (
     RunAcceptedPayload
     | RunRejectedPayload
@@ -81,6 +130,7 @@ WalPayload = (
     | RunDispatchedPayload
     | RunCompletedPayload
     | RunFailedPayload
+    | RunnerLifecyclePayload
     | dict[str, typing.Any]
 )
 
@@ -112,12 +162,30 @@ def emit_run_event(
         return
     wal_writer.append(
         event_type=event_type,
+        project_path=str(project_path),
         wal_run_id=wal_run_id,
         action_name=action_name,
-        project_path=str(project_path),
         trigger=run_trigger,
         dev_env=dev_env,
         payload=payload,
+    )
+
+
+def emit_runner_event(
+    wal_writer: WalWriter | None,
+    *,
+    event_type: WalEventType,
+    env_name: str,
+    project_path: pathlib.Path | str,
+    reason: str | None = None,
+) -> None:
+    if wal_writer is None:
+        return
+    wal_writer.append(
+        event_type=event_type,
+        project_path=str(project_path),
+        env_name=env_name,
+        payload=RunnerLifecyclePayload(reason=reason) if reason is not None else None,
     )
 
 
@@ -170,11 +238,12 @@ class WalWriter:
         self,
         *,
         event_type: WalEventType | str,
-        wal_run_id: str,
-        action_name: str,
         project_path: str,
-        trigger: str,
-        dev_env: str,
+        wal_run_id: str | None = None,
+        action_name: str | None = None,
+        trigger: str | None = None,
+        dev_env: str | None = None,
+        env_name: str | None = None,
         payload: WalPayload | None = None,
     ) -> None:
         serialized_event_type = (
@@ -182,11 +251,12 @@ class WalWriter:
         )
         self._writer.append(
             event_type=serialized_event_type,
+            project_path=project_path,
             wal_run_id=wal_run_id,
             action_name=action_name,
-            project_path=project_path,
             trigger=trigger,
             dev_env=dev_env,
+            env_name=env_name,
             payload=_serialize_payload(payload),
         )
 

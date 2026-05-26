@@ -80,8 +80,13 @@ async def read_projects_in_dir(
 
         status = domain.ProjectStatus.CONFIG_VALID
 
-        with open(def_file, "rb") as pyproject_file:
-            project_def = toml_loads(pyproject_file.read()).unwrap()
+        try:
+            with open(def_file, "rb") as pyproject_file:
+                project_def = toml_loads(pyproject_file.read()).unwrap()
+        except Exception as e:
+            raise config_models.ConfigurationError(
+                f"Failed to parse '{def_file}': {e}"
+            ) from e
 
         finecode_toml_exists = (def_file.parent / "finecode.toml").exists()
         has_pyproject_finecode = project_def.get("tool", {}).get("finecode") is not None
@@ -238,6 +243,24 @@ def read_wm_telemetry_config(workspace_root: Path) -> config_models.WmTelemetryC
     otlp_endpoint = os.environ.get("FINECODE_OTLP_ENDPOINT") or otlp_endpoint
 
     return config_models.WmTelemetryConfig(otlp_endpoint=otlp_endpoint)
+
+
+def read_wm_wal_config(workspace_root: Path) -> config_models.WmWalConfig:
+    """Read WM WAL config from [workspace.wm.wal] in finecode-workspace.toml.
+    """
+    enabled = False
+
+    ws_config_path = workspace_root / "finecode-workspace.toml"
+    if ws_config_path.exists():
+        try:
+            with open(ws_config_path, "rb") as f:
+                ws_config = toml_loads(f.read()).unwrap()
+            wal_raw = ws_config.get("workspace", {}).get("wm", {}).get("wal", {})
+            enabled = bool(wal_raw.get("enabled", False))
+        except Exception:
+            pass
+
+    return config_models.WmWalConfig(enabled=enabled)
 
 
 def read_env_configs(project_config: dict[str, Any]) -> dict[str, domain.EnvConfig]:
@@ -597,6 +620,14 @@ def _merge_projects_configs(
                     tool_finecode_config1[key][action_name] = action_info
                 else:
                     # action with the same name, merge
+                    #
+                    # Propagate source if the existing entry doesn't have one yet.
+                    # Presets are processed in non-deterministic order, so a preset
+                    # that adds handlers to an action declared by another preset may
+                    # be merged before the declaring preset supplies the source.
+                    if "source" in action_info and "source" not in tool_finecode_config1[key][action_name]:
+                        tool_finecode_config1[key][action_name]["source"] = action_info["source"]
+
                     if "config" in action_info:
                         if "config" not in tool_finecode_config1[key][action_name]:
                             tool_finecode_config1[key][action_name]["config"] = {}

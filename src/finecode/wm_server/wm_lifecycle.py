@@ -33,6 +33,10 @@ def discovery_file_path() -> pathlib.Path:
     return _cache_dir() / "wm_port"
 
 
+def startup_stderr_log_path() -> pathlib.Path:
+    return _cache_dir() / "wm_startup_stderr.log"
+
+
 def read_port() -> int | None:
     """Read the WM server port from the discovery file. Returns None if not found."""
     path = discovery_file_path()
@@ -81,13 +85,15 @@ def ensure_running(workdir: pathlib.Path, log_level: str = "INFO") -> None:
             return
 
         python_cmd = sys.executable
+        stderr_path = startup_stderr_log_path()
         logger.info(f"Starting FineCode WM server subprocess in {workdir}")
-        subprocess.Popen(
-            [python_cmd, "-m", "finecode", "start-wm-server", f"--log-level={log_level}"],
-            cwd=str(workdir),
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
+        with open(stderr_path, "w") as stderr_file:
+            subprocess.Popen(
+                [python_cmd, "-m", "finecode", "start-wm-server", f"--log-level={log_level}"],
+                cwd=str(workdir),
+                stdout=subprocess.DEVNULL,
+                stderr=stderr_file,
+            )
 
         # Keep the lock until the spawned server is observable via discovery and
         # TCP probe so competing callers do not start a duplicate process.

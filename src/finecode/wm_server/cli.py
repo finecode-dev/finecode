@@ -61,7 +61,8 @@ def start_wm_server(
     wm_server._log_file_path = log_file_path
     port_file_path = pathlib.Path(port_file) if port_file else None
 
-    env_wal_enabled = _parse_env_bool("FINECODE_WAL_ENABLED", False)
+    wm_wal = read_configs.read_wm_wal_config(workspace_root)
+    env_wal_enabled = _parse_env_bool("FINECODE_WAL_ENABLED", wm_wal.enabled)
     final_wal_enabled = wal_enabled if wal_enabled is not None else env_wal_enabled
 
     wal_config = wal.WalConfig(
