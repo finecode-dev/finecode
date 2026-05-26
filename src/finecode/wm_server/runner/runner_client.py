@@ -300,6 +300,36 @@ async def resolve_source(runner: ExtensionRunnerInfo, source: str) -> str | None
     return response.result.canonical_source
 
 
+async def get_action_metadata(
+    runner: ExtensionRunnerInfo, action_source: str
+) -> dict | None:
+    """Ask the ER to resolve ``PARENT_ACTION`` and ``LANGUAGE`` for *action_source*.
+
+    Returns a dict with ``parentActionSource`` and ``language`` keys on success,
+    or ``None`` when the ER cannot import the action class.
+    """
+    if not runner.initialized_event.is_set():
+        await runner.initialized_event.wait()
+
+    if runner.status != RunnerStatus.RUNNING:
+        return None
+
+    try:
+        response = await runner.client.send_request(
+            method=_internal_client_types.ER_GET_ACTION_METADATA,
+            params=_internal_client_types.ErGetActionMetadataParams(source=action_source),
+            timeout=10,
+        )
+    except jsonrpc_client.BaseRunnerRequestException as exc:
+        logger.debug(f"ER could not get action metadata for '{action_source}': {exc}")
+        return None
+    result = response.result
+    return {
+        "parentActionSource": result.parent_action_source,
+        "language": result.language,
+    }
+
+
 async def resolve_action_meta(runner: ExtensionRunnerInfo) -> dict[str, dict]:
     """Ask the ER to resolve action meta info (canonical source + execution mode)."""
     response = await runner.client.send_request(
@@ -433,6 +463,7 @@ __all__ = [
     "run_action",
     "merge_results",
     "reload_action",
+    "get_action_metadata",
     "resolve_action_meta",
     "get_payload_schemas",
     "resolve_package_path",

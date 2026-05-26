@@ -31,6 +31,7 @@ ER_RESOLVE_PACKAGE_PATH = "packages/resolvePath"
 ER_UPDATE_CONFIG = "finecodeRunner/updateConfig"
 ER_RESOLVE_ACTION_META = "finecodeRunner/resolveActionMeta"
 ER_GET_INFO = "finecodeRunner/getInfo"
+ER_GET_ACTION_METADATA = "actions/getActionMetadata"
 WORKSPACE_APPLY_EDIT = "workspace/applyEdit"
 
 PROJECT_RAW_CONFIG_GET = "projects/getRawConfig"
@@ -38,6 +39,7 @@ WORKSPACE_EDITABLE_PACKAGES_GET = "workspace/getWorkspaceEditablePackages"
 WORKSPACE_PROJECT_PATHS_GET = "workspace/getProjectPaths"
 RUN_ACTION_IN_PROJECT = "finecode/runActionInProject"
 RUN_ACTION_IN_WORKSPACE = "finecode/runActionInWorkspace"
+GET_ACTION_METADATA = "finecode/getActionMetadata"
 
 
 @dataclasses.dataclass
@@ -1826,6 +1828,60 @@ class ExitNotification(BaseNotification):
     """The method to be invoked."""
 
 
+# ---------------------------------------------------------------------------
+# actions/getActionMetadata  (WM → ER)
+# ---------------------------------------------------------------------------
+
+
+@dataclasses.dataclass
+class ErGetActionMetadataParams:
+    source: str
+
+
+@dataclasses.dataclass
+class ErGetActionMetadataRequest(BaseRequest):
+    params: ErGetActionMetadataParams
+    method = ER_GET_ACTION_METADATA
+
+
+@dataclasses.dataclass
+class ErGetActionMetadataResult(BaseResult):
+    parent_action_source: str | None = None
+    language: str | None = None
+
+
+@dataclasses.dataclass
+class ErGetActionMetadataResponse(BaseResponse):
+    result: ErGetActionMetadataResult
+
+
+# ---------------------------------------------------------------------------
+# finecode/getActionMetadata  (ER → WM)
+# ---------------------------------------------------------------------------
+
+
+@dataclasses.dataclass
+class GetActionMetadataParams:
+    action_source: str
+
+
+@dataclasses.dataclass
+class GetActionMetadataRequest(BaseRequest):
+    params: GetActionMetadataParams
+    method = GET_ACTION_METADATA
+
+
+@dataclasses.dataclass
+class GetActionMetadataResult(BaseResult):
+    parent_action_source: str | None = None
+    language: str | None = None
+
+
+@dataclasses.dataclass
+class GetActionMetadataResponse(BaseResponse):
+    result: GetActionMetadataResult
+
+
 METHOD_TO_TYPES: dict[
     str,
     tuple[type[BaseRequest], type | None, type[BaseResponse], type[BaseResult] | None]
@@ -1894,6 +1950,8 @@ METHOD_TO_TYPES: dict[
         RunActionInWorkspaceResult,
     ),
     ER_RESOLVE_ACTION_META: (None, None, ErResolveActionMetaResponse, None),
+    ER_GET_ACTION_METADATA: (ErGetActionMetadataRequest, ErGetActionMetadataParams, ErGetActionMetadataResponse, ErGetActionMetadataResult),
+    GET_ACTION_METADATA: (GetActionMetadataRequest, GetActionMetadataParams, GetActionMetadataResponse, GetActionMetadataResult),
     WORKSPACE_EDITABLE_PACKAGES_GET: (
         GetWorkspaceEditablePackagesRequest,
         None,

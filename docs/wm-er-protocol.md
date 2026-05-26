@@ -227,6 +227,14 @@ method names.
   - Used during action lookup when a caller provides an alias not already known
     from `finecodeRunner/resolveActionMeta` (full ADR-0019 support).
 
+- `actions/getActionMetadata`
+  - Params: `{ "source": string }` — fully qualified import path of an action class.
+  - Result: `{ "parentActionSource": string | null, "language": string | null }`
+    — the `PARENT_ACTION` canonical source and `LANGUAGE` attribute of the class.
+  - Raises a JSON-RPC error if the source cannot be imported.
+  - Used by the WM when another ER requests metadata for an action class that
+    lives in this ER's environment (see `finecode/getActionMetadata` below).
+
 - `packages/resolvePath`
   - Params: `{ "packageName": string }`
   - Result: `{ "packagePath": "/abs/path/to/package" }`
@@ -282,6 +290,16 @@ method names.
     - `callerKwargs` (object | null): serialized `CallerRunContextKwargs`, or `null` when none. The WM passes it through opaquely to the target ER.
   - Result: `{ "result": <json result object>, "returnCode": 0|1 }`
   - Runs the action at project scope (all env-runners of the ER's own project). WM enforces `OrchestrationPolicy.max_recursion_depth` before dispatching.
+
+- `finecode/getActionMetadata`
+  - Params: `{ "actionSource": string }` — fully qualified import path of an action class.
+  - Result: `{ "parentActionSource": string | null, "language": string | null }`
+    — the `PARENT_ACTION` canonical source and `LANGUAGE` of the action class.
+  - Raises a JSON-RPC error when no other runner for the project can import the source.
+  - Used by an ER when `get_actions_for_parent` cannot import an action class locally
+    (because the class belongs to another env). The WM routes the request to every
+    other runner for the same project and returns the first successful response.
+    The result is cached in `ActionDeclaration.metadata` to avoid repeated round-trips.
 
 - `finecode/runActionInWorkspace`
   - Params:

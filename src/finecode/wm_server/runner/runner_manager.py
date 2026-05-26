@@ -416,6 +416,40 @@ async def _start_extension_runner_process(
         handle_run_action_in_workspace,
     )
 
+    async def handle_get_action_metadata(
+        params: _internal_client_types.GetActionMetadataParams,
+    ) -> _internal_client_types.GetActionMetadataResult:
+        """Route ``finecode/getActionMetadata`` from ER to another ER that can import *action_source*.
+
+        Tries all runners registered for the same project (excluding the caller)
+        until one succeeds.  Raises ``ValueError`` when no runner can resolve the source.
+        """
+        action_source: str = params.action_source
+        runners_by_env = ws_context.ws_projects_extension_runners.get(
+            runner.working_dir_path, {}
+        )
+        for env_name, candidate in runners_by_env.items():
+            if candidate is runner:
+                continue
+            result = await runner_client.get_action_metadata(candidate, action_source)
+            if result is not None and (
+                result.get("parentActionSource") is not None
+                or result.get("language") is not None
+            ):
+                return _internal_client_types.GetActionMetadataResult(
+                    parent_action_source=result.get("parentActionSource"),
+                    language=result.get("language"),
+                )
+        raise ValueError(
+            f"No runner for project '{runner.working_dir_path}' could resolve"
+            f" action metadata for source '{action_source}'"
+        )
+
+    runner.client.feature(
+        _internal_client_types.GET_ACTION_METADATA,
+        handle_get_action_metadata,
+    )
+
 
 async def stop_extension_runner(runner: runner_client.ExtensionRunnerInfo) -> None:
     logger.trace(f"Trying to stop extension runner {runner.readable_id}")

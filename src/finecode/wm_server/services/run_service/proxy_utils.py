@@ -500,22 +500,6 @@ async def _start_runner_or_update_config(
                 project_def=project, env_name=env_name, handlers_to_initialize=handlers_to_initialize, ws_context=ws_context
             )
         except runner_manager.RunnerFailedToStart as exception:
-            if "No module named" in exception.message:
-                from finecode.wm_server.services.prepare_envs_service import (
-                    install_env_for_project,
-                    PrepareEnvsFailed,
-                )
-                try:
-                    await install_env_for_project(project, env_name, ws_context)
-                    await runner_manager.start_runner(
-                        project_def=project,
-                        env_name=env_name,
-                        handlers_to_initialize=handlers_to_initialize,
-                        ws_context=ws_context,
-                    )
-                    return  # retry succeeded
-                except (PrepareEnvsFailed, runner_manager.RunnerFailedToStart):
-                    pass  # fall through to raise below
             raise StartingEnvironmentsFailed(
                 f"Failed to start runner for env '{env_name}' in project '{project.name}': {exception.message}"
             ) from exception
@@ -533,6 +517,28 @@ async def _start_runner_or_update_config(
                     handlers_to_initialize=handlers_to_initialize,
                     ws_context=ws_context
                 )
+            except runner_manager.EnvReinstallNeeded as exception:
+                from finecode.wm_server.services.prepare_envs_service import (
+                    install_env_for_project,
+                    PrepareEnvsFailed,
+                )
+                try:
+                    await install_env_for_project(project, env_name, ws_context)
+                except PrepareEnvsFailed as exc:
+                    raise StartingEnvironmentsFailed(
+                        f"Failed to reinstall env '{env_name}' for runner {runner.readable_id}"
+                        + (f": {exception.reason}" if exception.reason else "")
+                    ) from exc
+                try:
+                    await runner_manager.restart_extension_runner(
+                        runner_working_dir_path=runner.working_dir_path,
+                        env_name=env_name,
+                        ws_context=ws_context,
+                    )
+                except runner_manager.RunnerFailedToStart as exc:
+                    raise StartingEnvironmentsFailed(
+                        f"Failed to restart runner {runner.readable_id} after env reinstall"
+                    ) from exc
             except RunnerFailedToStart as exception:
                 raise StartingEnvironmentsFailed(
                     f"Failed to update config of runner {runner.readable_id}"
@@ -710,6 +716,7 @@ async def run_action(
     progress_token: int | str | None = None,
     orchestration_depth: int = 0,
     caller_kwargs: dict | None = None,
+    allow_no_handlers: bool = False,
 ) -> RunActionResponse:
     """Run a single action in the project's extension runner(s).
 
@@ -781,6 +788,21 @@ async def run_action(
             [handler.env for handler in action.handlers]
         )
         all_handlers_are_in_one_env = len(all_handlers_envs) == 1
+
+        if not all_handlers_envs:
+            if allow_no_handlers:
+                logger.info(
+                    f"Action '{action_name}' has no handlers (expected by caller)"
+                )
+            else:
+                logger.warning(
+                    f"Action '{action_name}' has no handlers — check your configuration"
+                )
+            return RunActionResponse(
+                result_by_format={},
+                return_code=0,
+                status="no_handlers",
+            )
 
         if all_handlers_are_in_one_env:
             env_name = all_handlers_envs[0]
