@@ -1,0 +1,19 @@
+[tool.finecode.action.build_docs]
+source = "fine_docs.BuildDocsAction"
+handlers = [
+    { name = "mkdocs_build", source = "fine_docs_mkdocs.MkdocsBuildDocsHandler", env = "docs", dependencies = ["fine_docs_mkdocs~=0.1.0a0"] }
+]
+
+[tool.finecode.action.serve_docs]
+source = "fine_docs.ServeDocsAction"
+handlers = [
+    { name = "mkdocs_serve", source = "fine_docs_mkdocs.MkdocsServeDocsHandler", env = "docs", dependencies = ["fine_docs_mkdocs~=0.1.0a0"] }
+]
+
+[tool.finecode.extension.fine_docs_mkdocs]
+dependencies_override = [
+    "mkdocs==1.6.*",
+    "mkdocs-material==9.7.*",
+    # TODO: make optional or move in root project?
+    "mkdocstrings[python]==1.0.*",
+]

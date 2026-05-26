@@ -1,0 +1,5 @@
+[tool.finecode.action.build_docs]
+source = "fine_docs.BuildDocsAction"
+
+[tool.finecode.action.serve_docs]
+source = "fine_docs.ServeDocsAction"

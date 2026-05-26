@@ -1,0 +1,16 @@
+[project]
+name = "fine_docs_mkdocs"
+version = "0.1.0a0"
+description = ""
+authors = [{ name = "Vladyslav Hnatiuk", email = "aders1234@gmail.com" }]
+requires-python = ">=3.11, < 3.15"
+dependencies = ["finecode_extension_api~=0.4.0a0", "mkdocs>=1.5.0,<2.0.0"]
+
+[dependency-groups]
+dev_workspace = ["finecode~=0.4.0a0", "finecode_dev_common_preset~=0.3.0a0"]
+
+[tool.finecode]
+presets = [{ source = "finecode_dev_common_preset" }]
+
+[tool.setuptools]
+packages = ["fine_docs_mkdocs"]
