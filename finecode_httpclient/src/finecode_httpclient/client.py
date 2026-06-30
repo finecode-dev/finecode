@@ -45,7 +45,7 @@ class HttpSession(ihttpclient.IHttpSession):
     async def __aenter__(self) -> Self:
         """Async context manager entry. Creates and initializes the httpx client."""
         self.logger.debug("HTTP session opened")
-        self._client = httpx.AsyncClient()
+        self._client = httpx.AsyncClient(follow_redirects=True)
         return self
 
     async def __aexit__(

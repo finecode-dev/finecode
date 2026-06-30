@@ -33,6 +33,33 @@ def read_project_finecode_config(project_dir: Path) -> dict | None:
         )
 
 
+def read_project_user_config(project_dir: Path) -> dict | None:
+    """Read finecode-user.toml at the project root.
+
+    Returns the parsed mapping, or None if the file does not exist.
+
+    Raises:
+        ConfigurationError: File is malformed or contains a [workspace] table.
+    """
+    user_config_path = project_dir / "finecode-user.toml"
+    if not user_config_path.exists():
+        return None
+    try:
+        with open(user_config_path, "rb") as f:
+            raw = dict(toml_loads(f.read()).unwrap())
+    except Exception as e:
+        raise config_models.ConfigurationError(
+            f"Failed to parse {user_config_path}: {e}"
+        )
+    if "workspace" in raw:
+        raise config_models.ConfigurationError(
+            f"The [workspace] table is not allowed in "
+            f"{user_config_path}. "
+            f"Workspace configuration must live in finecode-workspace.toml."
+        )
+    return raw
+
+
 async def read_projects_in_dir(
     dir_path: Path, ws_context: context.WorkspaceContext
 ) -> list[domain.Project]:
@@ -314,6 +341,9 @@ async def read_project_config(
 
         project_config = {}
 
+        user_config_raw = read_project_user_config(project.def_path.parent)
+        user_config_path = project.def_path.parent / "finecode-user.toml"
+
         # fine_envs is always loaded as a mandatory preset; user presets are loaded
         # only when resolve_presets=True. Both require a dev_workspace runner.
         finecode_raw_config = project_def.get("tool", {}).get("finecode", None)
@@ -327,6 +357,16 @@ async def read_project_config(
             except cattrs.ClassValidationError as exception:
                 raise config_models.ConfigurationError(str(exception))
             preset_sources += [preset.source for preset in user_presets]
+
+        if user_config_raw and resolve_presets:
+            try:
+                user_file_preset_defs = [
+                    _converter.structure(raw, config_models.FinecodePresetDefinition)
+                    for raw in user_config_raw.get("presets", [])
+                ]
+            except cattrs.ClassValidationError as exception:
+                raise config_models.ConfigurationError(str(exception))
+            preset_sources += [p.source for p in user_file_preset_defs]
 
         # TODO: can it be the case that there is no such runner? 
         dev_workspace_runner = ws_context.ws_projects_extension_runners.get(
@@ -360,6 +400,34 @@ async def read_project_config(
                 if key != "finecode":
                     project_tool_config[key] = value
 
+        if user_config_raw is not None:
+            # Exclude 'presets' (already resolved in preset_sources above) and
+            # 'dependency-groups' (handled separately below).
+            # Presets are excluded to avoid overwriting the project's presets list in
+            # the merged config — the else-branch in _merge_projects_configs assigns
+            # unknown keys directly, which would lose the project's preset entries.
+            user_finecode_section = {
+                k: v for k, v in user_config_raw.items()
+                if k not in ("dependency-groups", "presets")
+            }
+            wrapped_user: dict[str, Any] = {"tool": {"finecode": user_finecode_section}}
+            # config2 (user) overwrites config1 (project) for conflicting items — user wins
+            _merge_projects_configs(
+                project_config, project.def_path, wrapped_user, user_config_path
+            )
+
+            if "dependency-groups" in user_config_raw:
+                dep_groups: dict[str, list[Any]] = project_config.setdefault(
+                    "dependency-groups", {}
+                )
+                for group_name, packages in user_config_raw["dependency-groups"].items():
+                    if group_name not in dep_groups:
+                        dep_groups[group_name] = list(packages)
+                    else:
+                        for pkg in packages:
+                            if pkg not in dep_groups[group_name]:
+                                dep_groups[group_name].append(pkg)
+
         # add runtime dependency group if it's not explicitly declared
         add_runtime_dependency_group_if_new(project_config)
 
@@ -387,6 +455,7 @@ async def read_project_config(
 class PresetToProcess(NamedTuple):
     source: str
     project_def_path: Path
+    declared_by: str | None = None  # None means declared directly by the project
 
 
 async def get_preset_project_path(
@@ -402,13 +471,22 @@ async def get_preset_project_path(
         error_message = error.message
         lower_message = error_message.lower()
         if "cannot find package" in lower_message or "no module named" in lower_message:
-            raise config_models.PresetPackageNotInstalledError(
-                "Preset "
-                f"{preset.source} is referenced in project {def_path.parent}, "
-                "but this preset package is not installed in the dev_workspace "
-                "environment. "
-                f"Runner error: {error_message}"
-            )
+            if preset.declared_by is not None:
+                description = (
+                    f"Preset '{preset.source}' is declared by preset '{preset.declared_by}' "
+                    f"(used in project {def_path.parent}) "
+                    f"but '{preset.source}' is not installed in the dev_workspace environment. "
+                    f"Add '{preset.source}' to the pip dependencies of '{preset.declared_by}' "
+                    f"in its pyproject.toml, then re-run 'prepare-envs'."
+                )
+            else:
+                description = (
+                    f"Preset '{preset.source}' is declared in project {def_path.parent} "
+                    f"but is not installed in the dev_workspace environment. "
+                    f"Add '{preset.source}' to the project's dev_workspace pip dependencies "
+                    f"in its pyproject.toml, then re-run 'prepare-envs'."
+                )
+            raise config_models.PresetPackageNotInstalledError(description)
 
         await user_messages.error(f"Failed to get preset project path: {error_message}")
         raise config_models.ConfigurationError(
@@ -467,6 +545,42 @@ def read_preset_config(
             f"Invalid preset extension in {preset_id}: {exception}"
         )
 
+    preset_user_config_path = config_path.parent / "finecode-user.toml"
+    if preset_user_config_path.exists():
+        try:
+            with open(preset_user_config_path, "rb") as f:
+                preset_user_raw = dict(toml_loads(f.read()).unwrap())
+        except Exception as e:
+            raise config_models.ConfigurationError(
+                f"Failed to parse {preset_user_config_path}: {e}"
+            )
+        if "workspace" in preset_user_raw:
+            raise config_models.ConfigurationError(
+                f"The [workspace] table is not allowed in {preset_user_config_path}."
+            )
+        if "dependency-groups" in preset_user_raw:
+            logger.warning(
+                f"[dependency-groups] in {preset_user_config_path} is not supported "
+                "at preset level; declare it in your project-root finecode-user.toml instead."
+            )
+        finecode_section = {k: v for k, v in preset_user_raw.items() if k != "dependency-groups"}
+        wrapped_user: dict[str, Any] = {"tool": {"finecode": finecode_section}}
+        # config2 (user) overwrites config1 (preset) for conflicting items — user wins
+        _merge_projects_configs(preset_toml, config_path, wrapped_user, preset_user_config_path)
+        # Re-derive preset_config so user-declared sub-presets are queued for resolution
+        try:
+            presets_raw = preset_toml.get("tool", {}).get("finecode", {}).get("presets", [])
+            preset_config = config_models.PresetDefinition(
+                extends=[
+                    _converter.structure(p, config_models.FinecodePresetDefinition)
+                    for p in presets_raw
+                ]
+            )
+        except cattrs.ClassValidationError as exception:
+            raise config_models.ConfigurationError(
+                f"Invalid preset extension declared in {preset_user_config_path}: {exception}"
+            )
+
     logger.trace(f"Reading preset config finished: {preset_id}")
     return (preset_toml, preset_config)
 
@@ -509,6 +623,7 @@ async def collect_config_from_py_presets(
                 PresetToProcess(
                     source=new_preset_source,
                     project_def_path=def_path,
+                    declared_by=preset.source,
                 )
             )
 

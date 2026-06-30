@@ -200,7 +200,7 @@ class Action:
 
     Post-construction fields
     ------------------------
-    Three fields are intentionally left unset at construction time and are
+    Five fields are intentionally left unset at construction time and are
     populated later during config collection and ER startup:
 
     * ``canonical_source`` — set by the ER when it resolves the action class.
@@ -210,6 +210,12 @@ class Action:
       ``SCOPE`` attribute from the ER.  Defaults to ``ActionScope.PROJECT``.
     * ``runs_concurrently`` — set by the config collector after it reads the
       action class's ``HANDLER_EXECUTION`` attribute.  Defaults to ``False``.
+    * ``parent_action_source`` — set by the ER's ``resolveActionMeta`` response.
+      Canonical source of the parent action class, or ``None`` for top-level
+      actions.  Remains ``None`` until the ER resolves it.
+    * ``language`` — set by the ER's ``resolveActionMeta`` response.
+      Language tag this action is specific to (e.g. ``"python"``), or ``None``
+      for language-agnostic actions.  Remains ``None`` until the ER resolves it.
 
     Attributes:
         name: Config alias (e.g. ``"lint"``).
@@ -241,6 +247,8 @@ class Action:
         self.scope: ActionScope = ActionScope.PROJECT
         # True when the action declares CONCURRENT handler execution.
         self.runs_concurrently: bool = False
+        self.parent_action_source: str | None = None
+        self.language: str | None = None
         self.handlers: list[ActionHandler] = handlers
         self.config = config
 

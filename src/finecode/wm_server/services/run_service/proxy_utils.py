@@ -288,6 +288,14 @@ async def run_with_partial_results(
                 action_envs = ordered_set.OrderedSet(
                     [handler.env for handler in action.handlers]
                 )
+                if not action_envs:
+                    await user_messages.warning(
+                        f"Action '{action_name}' has no handlers configured in project"
+                        f" '{project.dir_path}'. No tasks will run."
+                    )
+                    result.end()
+                    if progress_result is not None:
+                        progress_result.end()
                 for env_name in action_envs:
                     try:
                         runner = await runner_start_service.get_or_start_runner_with_auto_prepare(
@@ -404,7 +412,6 @@ def find_all_projects_with_action(
 async def start_required_environments(
     actions_by_projects: dict[pathlib.Path, list[str]],
     ws_context: context.WorkspaceContext,
-    update_config_in_running_runners: bool = False,
     initialize_handlers: bool = True,
     initialize_all_handlers: bool = False,
 ) -> None:
@@ -461,7 +468,6 @@ async def start_required_environments(
                             env_name=env_name,
                             existing_runners=existing_runners,
                             project=project,
-                            update_config_in_running_runners=update_config_in_running_runners,
                             ws_context=ws_context,
                             handlers_to_initialize=handlers_to_init,
                         )
@@ -480,7 +486,6 @@ async def _start_runner_or_update_config(
     env_name: str,
     existing_runners: dict[str, runner_client.ExtensionRunnerInfo],
     project: domain.Project,
-    update_config_in_running_runners: bool,
     ws_context: context.WorkspaceContext,
     handlers_to_initialize: dict[str, list[str]] | None,
 ):
@@ -509,46 +514,6 @@ async def _start_runner_or_update_config(
             raise StartingEnvironmentsFailed(
                 f"Failed to start runner for env '{env_name}' in project '{project.name}': {exception.message}"
             ) from exception
-    else:
-        if update_config_in_running_runners:
-            runner = existing_runners[env_name]
-            logger.trace(
-                f"Runner {runner.readable_id} is running already, update config"
-            )
-
-            try:
-                await runner_manager.update_runner_config(
-                    runner=runner,
-                    project=project,
-                    handlers_to_initialize=handlers_to_initialize,
-                    ws_context=ws_context
-                )
-            except runner_manager.EnvReinstallNeeded as exception:
-                from finecode.wm_server.services.prepare_envs_service import (
-                    install_env_for_project,
-                    PrepareEnvsFailed,
-                )
-                try:
-                    await install_env_for_project(project, env_name, ws_context)
-                except PrepareEnvsFailed as exc:
-                    raise StartingEnvironmentsFailed(
-                        f"Failed to reinstall env '{env_name}' for runner {runner.readable_id}"
-                        + (f": {exception.reason}" if exception.reason else "")
-                    ) from exc
-                try:
-                    await runner_manager.restart_extension_runner(
-                        runner_working_dir_path=runner.working_dir_path,
-                        env_name=env_name,
-                        ws_context=ws_context,
-                    )
-                except runner_manager.RunnerFailedToStart as exc:
-                    raise StartingEnvironmentsFailed(
-                        f"Failed to restart runner {runner.readable_id} after env reinstall"
-                    ) from exc
-            except RunnerFailedToStart as exception:
-                raise StartingEnvironmentsFailed(
-                    f"Failed to update config of runner {runner.readable_id}"
-                ) from exception
 
 
 async def run_actions_in_running_project(
@@ -778,6 +743,7 @@ async def run_action(
                 dev_env=dev_env.value,
                 payload=wal.RunRejectedPayload(reason="project_not_resolved"),
             )
+            telemetry.add_span_event("run.rejected", {"reason": "project_not_resolved"})
             runner = (
                 ws_context.ws_projects_extension_runners
                 .get(project_def.dir_path, {})
@@ -804,8 +770,15 @@ async def run_action(
             dev_env=dev_env.value,
             payload=wal.RunAcceptedPayload(params_hash=wal.params_hash(params)),
         )
+        telemetry.add_span_event("run.accepted")
 
         payload = params
+        # Captured here (inside action_run_span, outside er_dispatch_span) so that
+        # handler_span on the ER becomes a child of action_run_span.  This explicit
+        # application-level propagation is required for multi-hop chains
+        # (WM → ER1 → WM → ER2 → …): JsonRpcServerSession is long-running and holds
+        # no per-request OTel context, so ambient context cannot carry the parent
+        # across process boundaries.  See ITracingHooks docstring for the full rationale.
         traceparent = telemetry.get_current_traceparent()
 
         # cases:
@@ -928,6 +901,7 @@ async def _run_action_in_env_runner(
         dev_env=dev_env.value,
         payload=wal.RunnerSelectedPayload(env_name=env_name),
     )
+    telemetry.add_span_event("runner.selected", {"env_name": env_name})
 
     try:
         with telemetry.runner_start_span(env_name):
@@ -967,7 +941,8 @@ async def _run_action_in_env_runner(
                 env_name=env_name,
             ),
         )
-        with telemetry.er_dispatch_span(env_name, runner.readable_id):
+        telemetry.add_span_event("run.dispatched", {"env_name": env_name, "runner_id": runner.readable_id})
+        with telemetry.er_dispatch_span(env_name, runner.readable_id, action_name):
             response = await runner_client.run_action(
                 runner=runner,
                 action_name=action_name,
@@ -984,6 +959,7 @@ async def _run_action_in_env_runner(
             dev_env=dev_env.value,
             payload=wal.RunCompletedPayload(return_code=response.return_code),
         )
+        telemetry.add_span_event("run.completed", {"return_code": response.return_code})
     except runner_client.BaseRunnerRequestException as error:
         error_message = _format_runner_failure_message(
             action_name=action_name,
@@ -1000,6 +976,7 @@ async def _run_action_in_env_runner(
             dev_env=dev_env.value,
             payload=wal.RunFailedPayload(error=error_message, env_name=env_name),
         )
+        telemetry.add_span_event("run.failed", {"env_name": env_name, "error": error_message})
         await user_messages.error(error_message)
         raise ActionRunFailed(error_message) from error
 
@@ -1070,6 +1047,7 @@ async def _run_handlers_in_env_runner(
         dev_env=dev_env.value,
         payload=wal.RunnerSelectedPayload(env_name=env_name),
     )
+    telemetry.add_span_event("runner.selected", {"env_name": env_name})
 
     try:
         runner = await runner_start_service.get_or_start_runner_with_auto_prepare(
@@ -1110,6 +1088,7 @@ async def _run_handlers_in_env_runner(
             env_name=env_name,
         ),
     )
+    telemetry.add_span_event("run.dispatched", {"env_name": env_name, "runner_id": runner.readable_id})
 
     try:
         response = await runner_client.run_handlers(
@@ -1138,6 +1117,7 @@ async def _run_handlers_in_env_runner(
             dev_env=dev_env.value,
             payload=wal.RunFailedPayload(error=error_message, env_name=env_name),
         )
+        telemetry.add_span_event("run.failed", {"env_name": env_name, "error": error_message})
         await user_messages.error(error_message)
         raise ActionRunFailed(error_message) from error
 
@@ -1151,6 +1131,7 @@ async def _run_handlers_in_env_runner(
         dev_env=dev_env.value,
         payload=wal.RunCompletedPayload(return_code=response.return_code),
     )
+    telemetry.add_span_event("run.completed", {"return_code": response.return_code})
     return response
 
 

@@ -55,16 +55,19 @@ class _TrackingPartialResultSender:
         self,
         token: int | str,
         send_func: collections.abc.Callable[
-            [int | str, code_action.RunActionResult], collections.abc.Awaitable[None]
+            [int | str, code_action.RunActionResult, list[str] | None],
+            collections.abc.Awaitable[None],
         ],
+        result_formats: list[str] | None = None,
     ) -> None:
         self._token = token
         self._send_func = send_func
+        self.result_formats = result_formats
         self.has_sent = False
 
     async def send(self, result: code_action.RunActionResult) -> None:
         self.has_sent = True
-        await self._send_func(self._token, result)
+        await self._send_func(self._token, result, self.result_formats)
 
 
 class _AccumulatingPartialResultSender:
@@ -232,6 +235,7 @@ async def run_action(
     previous_context: dict | None = None,
     context_out: _ContextOut | None = None,
     traceparent: str | None = None,
+    result_formats: list[str] | None = None,
 ) -> code_action.RunActionResult | None:
     # design decisions:
     # - keep payload unchanged between all subaction runs.
@@ -278,6 +282,7 @@ async def run_action(
         tracking_sender = _TrackingPartialResultSender(
             token=partial_result_token,
             send_func=partial_result_sender.schedule_sending,
+            result_formats=result_formats,
         )
         context_sender: code_action.PartialResultSender = tracking_sender
         accumulating_sender = None
@@ -436,6 +441,7 @@ async def run_action(
                         dev_env=meta.dev_env,
                         payload={"run_id": run_id, "part_count": len(parts)},
                     )
+                    er_telemetry.add_span_event("handler.parts_started", {"run_id": run_id, "part_count": len(parts)})
                     parts_start_time = time.time_ns()
                     try:
                         async with asyncio.TaskGroup() as tg:
@@ -506,6 +512,7 @@ async def run_action(
                             "duration_ms": (time.time_ns() - parts_start_time) / 1_000_000,
                         },
                     )
+                    er_telemetry.add_span_event("handler.parts_completed", {"run_id": run_id, "part_count": len(parts), "duration_ms": (time.time_ns() - parts_start_time) / 1_000_000})
 
                     if send_partial_results:
                         # all subresults are ready
@@ -557,7 +564,7 @@ async def run_action(
                             f"(Run {run_id}). See ER logs for more details"
                         ) from eg
 
-                    for handler_task in handlers_tasks:
+                    for handler, handler_task in zip(action_def.handlers, handlers_tasks):
                         coro_result = handler_task.result()
                         if coro_result is not None:
                             if action_result is None:
@@ -595,6 +602,12 @@ async def run_action(
 
                             run_context_info.update(action_result)
 
+                        # Flush partial results sent by this handler immediately so
+                        # sequential handlers stream results one-by-one rather than
+                        # buffering all of them until the 300 ms debounce fires.
+                        if send_partial_results and tracking_sender is not None and tracking_sender.has_sent:
+                            await partial_result_sender.send_all_immediately()
+
                 # Surface results sent via run_context.partial_result_sender.send()
                 # (accumulated in accumulating_sender) — these are not captured by
                 # handler return values but must contribute to the final result.
@@ -603,6 +616,11 @@ async def run_action(
                         action_result = accumulating_sender.accumulated
                     elif accumulating_sender.accumulated is not None:
                         action_result.update(accumulating_sender.accumulated)
+                # Flush partial results sent via partial_result_sender.send() in
+                # streaming mode. Without this flush, scheduled sends are delayed
+                # 300 ms and arrive after the WM has already ended the stream.
+                if tracking_sender is not None and tracking_sender.has_sent:
+                    await partial_result_sender.send_all_immediately()
     finally:
         if context_out is not None and isinstance(run_context_instance, code_action.RunActionContext):
             context_out.context = _serialize_context(run_context_instance)
@@ -632,6 +650,7 @@ async def run_action(
             dev_env=meta.dev_env,
             payload={"run_id": run_id},
         )
+        er_telemetry.add_span_event("partial_result.final_sent", {"run_id": run_id})
 
     # if partial results were sent, `action_result` may be None
     if action_result is not None and not isinstance(
@@ -713,6 +732,7 @@ async def run_action_raw(
         dev_env=options.meta.dev_env,
         payload={"run_id": run_id},
     )
+    er_telemetry.add_span_event("run.dispatched", {"run_id": run_id})
 
     caller_kwargs: code_action.CallerRunContextKwargs | None = None
     if options.caller_kwargs is not None and action_exec_info.run_context_type is not None:
@@ -734,6 +754,7 @@ async def run_action_raw(
         run_id=run_id,
         caller_kwargs=caller_kwargs,
         traceparent=traceparent,
+        result_formats=options.result_formats,
     )
 
     response = action_result_to_run_action_response(
@@ -873,6 +894,7 @@ async def run_handlers_raw(
         context_out=ctx_out,
         caller_kwargs=caller_kwargs,
         traceparent=traceparent,
+        result_formats=options.result_formats,
     )
 
     # Raw serialized result for chaining to the next segment.
@@ -1124,6 +1146,7 @@ async def execute_action_handler(
             dev_env=dev_env,
             payload={"run_id": run_id, "handler": handler.name},
         )
+    er_telemetry.add_span_event("handler.started", {"run_id": run_id, "handler": handler.name})
     if handler.name in action_cache.handler_cache_by_name:
         handler_cache = action_cache.handler_cache_by_name[handler.name]
     else:
@@ -1133,152 +1156,162 @@ async def execute_action_handler(
     start_time = time.time_ns()
     execution_result: code_action.RunActionResult | None = None
 
-    if handler_cache.instance is not None:
-        handler_instance = handler_cache.instance
-        handler_run_func = handler_instance.run
-        # TODO: check status of exec_info?
-        logger.trace(
-            f"R{run_id} | Instance of action handler {handler.name} found in cache"
-        )
-    else:
-        await ensure_handler_instantiated(
-            handler=handler,
-            handler_cache=handler_cache,
-            action_exec_info=action_exec_info,
-            runner_context=runner_context,
-        )
-        if handler_cache.instance is not None:
-            handler_run_func = handler_cache.instance.run
-        else:
-            # handler is a plain function
-            action_handler = run_utils.import_module_member_by_source_str(
-                handler.source
-            )
-            handler_run_func = action_handler
-
     def get_run_payload(param_type):
         return payload
 
     def get_run_context(param_type):
         return run_context
 
-    # DI in `run` function is allowed only for action handlers in form of functions.
-    # `run` in classes may not have additional parameters, constructor parameters should
-    # be used instead. TODO: Validate?
-    args = await resolve_func_args_with_di(
-        func=handler_run_func,
-        known_args={"payload": get_run_payload, "run_context": get_run_context},
-        registry=runner_context.di_registry,
-    )
-
-    with er_telemetry.handler_span(handler.name, action_name, traceparent), \
-            er_telemetry.handler_metrics(handler.name, action_name):
-        try:
-            # TODO: cache parameters
-            logger.trace(f"Call handler {handler.name}(run {run_id})")
-            # there is also `inspect.iscoroutinefunction` but it cannot recognize coroutine
-            # functions which are class methods. Use `isawaitable` on result instead.
-            call_result = handler_run_func(**args)
-            if inspect.isasyncgen(call_result):
-                stream_result: code_action.RunActionResult | None = None
-                async for partial_result in call_result:
-                    partial_result = typing.cast(code_action.RunActionResult, partial_result)
-                    # Both paths below forward the partial to a caller — they differ only
-                    # in transport.  partial_result_token sends to an LSP/MCP client via
-                    # the WM notification channel; partial_result_queue delivers to a parent
-                    # action handler that called run_action_iter().  These could be unified
-                    # into a single PartialResultForwarder abstraction in the future.
-                    if partial_result_token is not None:
-                        if (
-                            tracking_sender is not None
-                            and wal_run_id is not None
-                            and not tracking_sender.has_sent
-                        ):
-                            er_wal.emit_run_event(
-                                runner_context.wal_writer,
-                                event_type=er_wal.ErWalEventType.PARTIAL_RESULT_FIRST_SENT,
-                                wal_run_id=wal_run_id,
-                                action_name=action_name,
-                                project_path=runner_context.project.dir_path,
-                                trigger=trigger,
-                                dev_env=dev_env,
-                                payload={"run_id": run_id, "handler": handler.name},
-                            )
-                            tracking_sender.has_sent = True
-                        await partial_result_sender.schedule_sending(
-                            partial_result_token, partial_result
-                        )
-                    if partial_result_queue is not None:
-                        await partial_result_queue.put(partial_result)
-                    if stream_result is None:
-                        stream_result = typing.cast(
-                            code_action.RunActionResult,
-                            _converter.structure(
-                                _converter.unstructure(partial_result),
-                                type(partial_result),
-                            ),
-                        )
-                    else:
-                        stream_result.update(partial_result)
-                if partial_result_token is not None:
-                    await partial_result_sender.send_all_immediately()
-                    execution_result = None  # partials already sent
-                elif partial_result_queue is not None:
-                    execution_result = None  # each partial already forwarded to queue
-                else:
-                    execution_result = stream_result
-            elif inspect.isawaitable(call_result):
-                handler_result = await call_result
-                if tracking_sender is not None and tracking_sender.has_sent:
-                    await partial_result_sender.send_all_immediately()
-                    execution_result = None
-                else:
-                    execution_result = handler_result
-            else:
-                execution_result = call_result
-        except Exception as exception:
-            if isinstance(exception, code_action.StopActionRunWithResult):
-                action_result = exception.result
-                response = action_result_to_run_action_response(action_result, ["string"])
-                raise StopWithResponse(response=response) from exception
-            elif isinstance(
-                exception, iprojectactionrunner.BaseRunActionException
-            ) or isinstance(exception, code_action.ActionFailedException) or isinstance(
-                exception, iprojectinfoprovider.ProjectInfoUnavailableError
-            ):
-                error_str = exception.message
-            elif isinstance(exception, BaseExceptionGroup):
-                msgs = []
-                has_unknown = False
-                for sub in exception.exceptions:
-                    if isinstance(sub, (iprojectactionrunner.BaseRunActionException, code_action.ActionFailedException, iprojectinfoprovider.ProjectInfoUnavailableError)):
-                        msgs.append(sub.message)
-                    else:
-                        has_unknown = True
-                if has_unknown:
-                    logger.error("Unhandled exception in action handler:")
-                    logger.exception(exception)
-                    error_str = str(exception)
-                else:
-                    error_str = "; ".join(msgs)
-            else:
-                logger.error("Unhandled exception in action handler:")
-                error_str = str(exception)
-                logger.exception(exception)
-            if wal_run_id is not None:
-                er_wal.emit_run_event(
-                    runner_context.wal_writer,
-                    event_type=er_wal.ErWalEventType.HANDLER_FAILED,
-                    wal_run_id=wal_run_id,
-                    action_name=action_name,
-                    project_path=runner_context.project.dir_path,
-                    trigger=trigger,
-                    dev_env=dev_env,
-                    payload={"run_id": run_id, "handler": handler.name, "error": error_str},
+    with er_telemetry.handler_span(handler.name, action_name, traceparent, trigger=trigger, dev_env=dev_env):
+        if handler_cache.instance is not None:
+            handler_instance = handler_cache.instance
+            handler_run_func = handler_instance.run
+            # TODO: check status of exec_info?
+            logger.trace(
+                f"R{run_id} | Instance of action handler {handler.name} found in cache"
+            )
+        else:
+            with er_telemetry.handler_initialize_span(handler.name, action_name):
+                await ensure_handler_instantiated(
+                    handler=handler,
+                    handler_cache=handler_cache,
+                    action_exec_info=action_exec_info,
+                    runner_context=runner_context,
                 )
-            raise ActionFailedException(
-                f"Running action handler '{handler.name}' failed(Run {run_id}): {error_str}"
-            ) from exception
+            if handler_cache.instance is not None:
+                handler_run_func = handler_cache.instance.run
+            else:
+                # handler is a plain function
+                action_handler = run_utils.import_module_member_by_source_str(
+                    handler.source
+                )
+                handler_run_func = action_handler
+
+        # DI in `run` function is allowed only for action handlers in form of functions.
+        # `run` in classes may not have additional parameters, constructor parameters should
+        # be used instead. TODO: Validate?
+        args = await resolve_func_args_with_di(
+            func=handler_run_func,
+            known_args={"payload": get_run_payload, "run_context": get_run_context},
+            registry=runner_context.di_registry,
+        )
+
+        with er_telemetry.handler_metrics(handler.name, action_name):
+            try:
+                # TODO: cache parameters
+                logger.trace(f"Call handler {handler.name}(run {run_id})")
+                # there is also `inspect.iscoroutinefunction` but it cannot recognize coroutine
+                # functions which are class methods. Use `isawaitable` on result instead.
+                call_result = handler_run_func(**args)
+                if inspect.isasyncgen(call_result):
+                    stream_result: code_action.RunActionResult | None = None
+                    async for partial_result in call_result:
+                        partial_result = typing.cast(code_action.RunActionResult, partial_result)
+                        # Both paths below forward the partial to a caller — they differ only
+                        # in transport.  partial_result_token sends to an LSP/MCP client via
+                        # the WM notification channel; partial_result_queue delivers to a parent
+                        # action handler that called run_action_iter().  These could be unified
+                        # into a single PartialResultForwarder abstraction in the future.
+                        if partial_result_token is not None:
+                            if (
+                                tracking_sender is not None
+                                and wal_run_id is not None
+                                and not tracking_sender.has_sent
+                            ):
+                                er_wal.emit_run_event(
+                                    runner_context.wal_writer,
+                                    event_type=er_wal.ErWalEventType.PARTIAL_RESULT_FIRST_SENT,
+                                    wal_run_id=wal_run_id,
+                                    action_name=action_name,
+                                    project_path=runner_context.project.dir_path,
+                                    trigger=trigger,
+                                    dev_env=dev_env,
+                                    payload={"run_id": run_id, "handler": handler.name},
+                                )
+                                er_telemetry.add_span_event("partial_result.first_sent", {"run_id": run_id, "handler": handler.name})
+                                tracking_sender.has_sent = True
+                            await partial_result_sender.schedule_sending(
+                                partial_result_token,
+                                partial_result,
+                                tracking_sender.result_formats if tracking_sender is not None else None,
+                            )
+                        if partial_result_queue is not None:
+                            await partial_result_queue.put(partial_result)
+                        if stream_result is None:
+                            stream_result = typing.cast(
+                                code_action.RunActionResult,
+                                _converter.structure(
+                                    _converter.unstructure(partial_result),
+                                    type(partial_result),
+                                ),
+                            )
+                        else:
+                            stream_result.update(partial_result)
+                    if partial_result_token is not None:
+                        await partial_result_sender.send_all_immediately()
+                        execution_result = None  # partials already sent
+                    elif partial_result_queue is not None:
+                        execution_result = None  # each partial already forwarded to queue
+                    else:
+                        execution_result = stream_result
+                elif inspect.isawaitable(call_result):
+                    handler_result = await call_result
+                    if tracking_sender is not None and tracking_sender.has_sent:
+                        # Do not flush here: let the caller flush at the right time.
+                        # For concurrent handlers, flushing per-handler causes duplicate
+                        # partial-result notifications (each handler's task flushes before
+                        # the others have accumulated their results).  The caller flushes
+                        # once after all concurrent handlers complete, or after each
+                        # sequential handler via the sequential loop.
+                        execution_result = None
+                    else:
+                        execution_result = handler_result
+                else:
+                    execution_result = call_result
+            except Exception as exception:
+                if isinstance(exception, code_action.StopActionRunWithResult):
+                    action_result = exception.result
+                    response = action_result_to_run_action_response(action_result, ["string"])
+                    raise StopWithResponse(response=response) from exception
+                elif isinstance(
+                    exception, iprojectactionrunner.BaseRunActionException
+                ) or isinstance(exception, code_action.ActionFailedException) or isinstance(
+                    exception, iprojectinfoprovider.ProjectInfoUnavailableError
+                ):
+                    error_str = exception.message
+                elif isinstance(exception, BaseExceptionGroup):
+                    msgs = []
+                    has_unknown = False
+                    for sub in exception.exceptions:
+                        if isinstance(sub, (iprojectactionrunner.BaseRunActionException, code_action.ActionFailedException, iprojectinfoprovider.ProjectInfoUnavailableError)):
+                            msgs.append(sub.message)
+                        else:
+                            has_unknown = True
+                    if has_unknown:
+                        logger.error("Unhandled exception in action handler:")
+                        logger.exception(exception)
+                        error_str = str(exception)
+                    else:
+                        error_str = "; ".join(msgs)
+                else:
+                    logger.error("Unhandled exception in action handler:")
+                    error_str = str(exception)
+                    logger.exception(exception)
+                if wal_run_id is not None:
+                    er_wal.emit_run_event(
+                        runner_context.wal_writer,
+                        event_type=er_wal.ErWalEventType.HANDLER_FAILED,
+                        wal_run_id=wal_run_id,
+                        action_name=action_name,
+                        project_path=runner_context.project.dir_path,
+                        trigger=trigger,
+                        dev_env=dev_env,
+                        payload={"run_id": run_id, "handler": handler.name, "error": error_str},
+                    )
+                er_telemetry.add_span_event("handler.failed", {"run_id": run_id, "handler": handler.name, "error": error_str})
+                raise ActionFailedException(
+                    f"Running action handler '{handler.name}' failed(Run {run_id}): {error_str}"
+                ) from exception
 
     end_time = time.time_ns()
     duration = (end_time - start_time) / 1_000_000
@@ -1297,6 +1330,7 @@ async def execute_action_handler(
             dev_env=dev_env,
             payload={"run_id": run_id, "handler": handler.name, "duration_ms": duration},
         )
+    er_telemetry.add_span_event("handler.completed", {"run_id": run_id, "handler": handler.name, "duration_ms": duration})
     return execution_result
 
 
@@ -1367,10 +1401,13 @@ async def run_subresult_coros_concurrently(
                 dev_env=dev_env,
                 payload={"run_id": run_id},
             )
+            er_telemetry.add_span_event("partial_result.first_sent", {"run_id": run_id})
             tracking_sender.has_sent = True
         assert partial_result_token is not None
         await partial_result_sender.schedule_sending(
-            partial_result_token, action_subresult
+            partial_result_token,
+            action_subresult,
+            tracking_sender.result_formats if tracking_sender is not None else None,
         )
         return None
     else:
@@ -1427,10 +1464,13 @@ async def run_subresult_coros_sequentially(
                 dev_env=dev_env,
                 payload={"run_id": run_id},
             )
+            er_telemetry.add_span_event("partial_result.first_sent", {"run_id": run_id})
             tracking_sender.has_sent = True
         assert partial_result_token is not None
         await partial_result_sender.schedule_sending(
-            partial_result_token, action_subresult
+            partial_result_token,
+            action_subresult,
+            tracking_sender.result_formats if tracking_sender is not None else None,
         )
         return None
     else:

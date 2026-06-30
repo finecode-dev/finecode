@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import collections.abc
 import concurrent.futures
+import contextlib
 import dataclasses
 import enum
 import functools
@@ -21,6 +22,7 @@ import cattrs
 import culsans
 from finecode_jsonrpc._converter import converter as _converter
 from finecode_jsonrpc import _io_thread
+from finecode_jsonrpc.tracing import ITracingHooks
 from loguru import logger
 
 
@@ -82,7 +84,7 @@ class ServerExitedBeforePort(Exception):
 
 class BaseRunnerRequestException(Exception):
     def __init__(self, message: str) -> None:
-        super().__init__()
+        super().__init__(message)
         self.message: typing.Final = message
 
 
@@ -141,6 +143,11 @@ class RequestCancelledError(asyncio.CancelledError):
         self.request_id = request_id
 
 
+class ServerStoppedError(BaseRunnerRequestException):
+    """Raised on pending requests when the server process exits."""
+    pass
+
+
 class JsonRpcClient:
     CHARSET: typing.Final[str] = "utf-8"
     CONTENT_TYPE: typing.Final[str] = "application/vscode-jsonrpc"
@@ -151,6 +158,7 @@ class JsonRpcClient:
         message_types: dict[str, typing.Any],
         readable_id: str,
         communication_type: CommunicationType = CommunicationType.TCP,
+        tracing: ITracingHooks | None = None,
     ) -> None:
         self.server_process_stopped: typing.Final = threading.Event()
         self.server_exit_callback: (
@@ -170,6 +178,7 @@ class JsonRpcClient:
         self._stderr_buffer: list[str] = []
         self._expected_result_type_by_msg_id: dict[str, typing.Any] = {}
 
+        self._tracing = tracing
         self.feature_impls: dict[str, collections.abc.Callable] = {}
 
         # NOTE: reader and writer can be accessed only in IO thread
@@ -303,10 +312,10 @@ class JsonRpcClient:
         ):
             if not fut.done():
                 fut.set_exception(
-                    RuntimeError("Server was stopped before getting the response")
+                    ServerStoppedError("Server was stopped before getting the response")
                 )
                 logger.debug(
-                    f"Cancelled pending request '{id_}': Server was stopped before getting the response"
+                    f"Cancelled pending request '{id_}': server was stopped"
                 )
 
         if self.server_exit_callback is not None:
@@ -326,6 +335,8 @@ class JsonRpcClient:
 
         try:
             self.writer.write(data.encode(self.CHARSET))
+        except culsans.QueueShutDown:
+            logger.debug(f"Cannot send data to {self.readable_id}: client already disconnected")
         except Exception as error:
             # the writer puts a message in the queue without size, so no exception
             # are expected. If one internal come such as shutdown exception because of
@@ -375,11 +386,15 @@ class JsonRpcClient:
         else:
             notification_params_dict = None
 
-        notification_dict = {
+        notification_dict: dict[str, typing.Any] = {
             "method": method,
             "params": notification_params_dict,
             "jsonrpc": self.VERSION,
         }
+        if self._tracing is not None:
+            traceparent = self._tracing.get_traceparent()
+            if traceparent is not None:
+                notification_dict["_meta"] = {"traceparent": traceparent}
 
         try:
             notification_str = json.dumps(notification_dict)
@@ -389,6 +404,8 @@ class JsonRpcClient:
             ) from error
         logger.trace(notification_str)
         self._send_data(notification_str)
+        if self._tracing is not None:
+            self._tracing.notification_sent(method)
 
     def send_request_sync(
         self,
@@ -419,12 +436,16 @@ class JsonRpcClient:
 
         self._sync_request_futures[msg_id] = future
 
-        request_dict = {
+        request_dict: dict[str, typing.Any] = {
             "id": msg_id,
             "method": method,
             "params": request_params_dict,
             "jsonrpc": self.VERSION,
         }
+        if self._tracing is not None:
+            traceparent = self._tracing.get_traceparent()
+            if traceparent is not None:
+                request_dict["_meta"] = {"traceparent": traceparent}
 
         try:
             request_str = json.dumps(request_dict)
@@ -470,43 +491,49 @@ class JsonRpcClient:
         else:
             request_params_dict = None
 
-        message_dict = {
+        message_dict: dict[str, typing.Any] = {
             "id": msg_id,
             "method": method,
             "params": request_params_dict,
             "jsonrpc": self.VERSION,
         }
 
-        # Serialize request to JSON
-        try:
-            request_str = json.dumps(message_dict)
-        except (TypeError, ValueError) as error:
-            raise InvalidResponse(f"Failed to serialize request: {error}") from error
+        span_ctx = self._tracing.client_span(method, self.readable_id) if self._tracing else contextlib.nullcontext()
+        with span_ctx:
+            if self._tracing is not None:
+                traceparent = self._tracing.get_traceparent()
+                if traceparent is not None:
+                    message_dict["_meta"] = {"traceparent": traceparent}
 
-        future = asyncio.Future()
-        self._async_request_futures[msg_id] = future
+            try:
+                request_str = json.dumps(message_dict)
+            except (TypeError, ValueError) as error:
+                raise InvalidResponse(f"Failed to serialize request: {error}") from error
 
-        try:
-            self._expected_result_type_by_msg_id[msg_id] = self.message_types[method][2]
-        except KeyError:
-            raise ValueError(f"Message type not found for {method}")
+            future = asyncio.Future()
+            self._async_request_futures[msg_id] = future
 
-        self._send_data(request_str)
+            try:
+                self._expected_result_type_by_msg_id[msg_id] = self.message_types[method][2]
+            except KeyError:
+                raise ValueError(f"Message type not found for {method}")
 
-        try:
-            response = await asyncio.wait_for(
-                future,
-                timeout,
-            )
-            logger.debug(f"Got response on {method} from {self.readable_id}")
-            return response
-        except TimeoutError:
-            raise ResponseTimeout(
-                f"Timeout {timeout}s for response on {method} to"
-                f" runner {self.readable_id}"
-            )
-        except asyncio.CancelledError as error:
-            raise RequestCancelledError(request_id=msg_id) from error
+            self._send_data(request_str)
+
+            try:
+                response = await asyncio.wait_for(
+                    future,
+                    timeout,
+                )
+                logger.debug(f"Got response on {method} from {self.readable_id}")
+                return response
+            except TimeoutError:
+                raise ResponseTimeout(
+                    f"Timeout {timeout}s for response on {method} to"
+                    f" runner {self.readable_id}"
+                )
+            except asyncio.CancelledError as error:
+                raise RequestCancelledError(request_id=msg_id) from error
 
     async def process_incoming_messages(self) -> None:
         logger.debug(f"Start processing messages from server {self.readable_id}")
@@ -708,6 +735,10 @@ class JsonRpcClient:
                 )
                 # For notifications, we don't send error responses
                 return
+
+            if self._tracing is not None:
+                traceparent = (message.get("_meta") or {}).get("traceparent")
+                self._tracing.notification_received(method, traceparent)
 
             impl = self.feature_impls[method]
             new_task = asyncio.create_task(

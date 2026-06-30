@@ -15,6 +15,7 @@ WmError
 │   ├── ActionNotFoundError
 │   ├── ActionRunFailed
 │   └── ActionNotResolvableError
+├── InternalError
 └── RunnerError
     └── StartingEnvironmentsFailed
 """
@@ -99,6 +100,18 @@ class ActionNotResolvableError(ActionError):
 # ---------------------------------------------------------------------------
 # Runner errors
 # ---------------------------------------------------------------------------
+
+
+class InternalError(WmError):
+    """An unexpected internal inconsistency in WM state or the WM–ER protocol.
+
+    Raised when the WM encounters a condition that should never occur during
+    normal operation (e.g. the ER asks about a project the WM doesn't know).
+    """
+
+    def __init__(self, message: str) -> None:
+        super().__init__(message)
+        self.message = message
 
 
 class RunnerError(WmError):

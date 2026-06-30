@@ -12,6 +12,12 @@ class Registry:
     def __init__(self) -> None:
         self._container: dict[type, Any] = {}
         self._factories: dict[type, Callable] = {}
+        self._deferred_activators: list[Callable[[], None]] = []
+        self._next_deferred: int = 0
+
+    def set_deferred_activators(self, activators: list[Callable[[], None]]) -> None:
+        self._deferred_activators = activators
+        self._next_deferred = 0
 
     def register_instance(self, type_: type, instance: Any, *, override: bool = False) -> None:
         if type_ in self._container and not override:
@@ -27,6 +33,13 @@ class Registry:
         if type_ in self._container:
             return self._container[type_]
 
+        if type_ not in self._factories:
+            while self._next_deferred < len(self._deferred_activators):
+                activate = self._deferred_activators[self._next_deferred]
+                self._next_deferred += 1
+                activate()
+                if type_ in self._factories:
+                    break
         if type_ not in self._factories:
             raise ServiceNotFoundError(f"No implementation found for {type_}")
 

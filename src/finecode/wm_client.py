@@ -321,6 +321,7 @@ class ApiClient:
         dir_path: pathlib.Path,
         start_runners: bool = True,
         projects: list[str] | None = None,
+        initialize_all_handlers: bool = True,
     ) -> dict:
         """Add a workspace directory. Returns {projects: [...]}.
 
@@ -332,10 +333,15 @@ class ApiClient:
         their configs read and runners started — the rest are still discovered
         but not initialised.  Only use this in own-server mode where the server
         lifetime matches a single CLI invocation.
+
+        When ``initialize_all_handlers=False`` runners are started without
+        eagerly initializing handlers; handlers are initialized on demand.
         """
         body: dict = {"dirPath": str(dir_path), "startRunners": start_runners}
         if projects is not None:
             body["projects"] = projects
+        if not initialize_all_handlers:
+            body["initializeAllHandlers"] = False
         return await self.request("workspace/addDir", body)
 
     async def start_runners(
@@ -475,11 +481,18 @@ class ApiClient:
 
         self._request_id += 1
         rid = self._request_id
+
+        from finecode import telemetry
+        effective_params = dict(params or {})
+        tp = telemetry.get_current_traceparent()
+        if tp is not None:
+            effective_params["_traceparent"] = tp
+
         msg = {
             "jsonrpc": "2.0",
             "id": rid,
             "method": method,
-            "params": params or {},
+            "params": effective_params,
         }
 
         future: asyncio.Future = asyncio.get_running_loop().create_future()

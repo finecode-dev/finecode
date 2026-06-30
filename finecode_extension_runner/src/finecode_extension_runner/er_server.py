@@ -173,7 +173,7 @@ class ErServer:
     """
 
     def __init__(self) -> None:
-        self._session = finecode_jsonrpc_module.JsonRpcServerSession()
+        self._session = finecode_jsonrpc_module.JsonRpcServerSession(tracing=er_telemetry.JsonRpcTracingHooks())
         self._finecode_async_tasks: list[asyncio.Task] = []
         self._finecode_exit_stack = contextlib.AsyncExitStack()
         self._finecode_file_editor_session: ifileeditor.IFileEditorSession
@@ -874,36 +874,6 @@ async def resolve_source(_server: ErServer, params: dict | None) -> dict:
     return {"canonicalSource": canonical}
 
 
-async def get_action_metadata_cmd(_server: ErServer, params: dict | None) -> dict:
-    """Handler for ``actions/getActionMetadata``.
-
-    Imports the action class identified by *source* and returns its
-    ``PARENT_ACTION`` and ``LANGUAGE`` class attributes as a dict.
-
-    Raises ``ValueError`` when the source cannot be imported.
-    """
-    assert params is not None
-    source: str = params["source"]
-    logger.trace(f"Get action metadata for source: {source}")
-    last_dot = source.rfind(".")
-    if last_dot == -1:
-        raise ValueError(f"Invalid source (no dot separator): {source!r}")
-    import importlib
-    module_path = source[:last_dot]
-    attr_name = source[last_dot + 1:]
-    try:
-        mod = importlib.import_module(module_path)
-        cls = getattr(mod, attr_name)
-    except (ImportError, AttributeError) as exc:
-        raise ValueError(f"Cannot resolve source '{source}': {exc}") from exc
-    parent = getattr(cls, "PARENT_ACTION", None)
-    parent_source = (
-        f"{parent.__module__}.{parent.__qualname__}" if parent is not None else None
-    )
-    language = getattr(cls, "LANGUAGE", None)
-    return {"parentActionSource": parent_source, "language": language}
-
-
 async def resolve_action_meta(server: ErServer, _params: dict | None) -> dict:
     """Handler for ``finecodeRunner/resolveActionMeta``."""
     if server._runner_context is None:
@@ -971,7 +941,6 @@ def create_er_server(wal_writer: er_wal.ErWalWriter | None = None) -> ErServer:
     session.on_request("actions/run", _wrap(run_action))
     session.on_request("actions/runHandlers", _wrap(run_handlers))
     session.on_request("actions/resolveSource", _wrap(resolve_source))
-    session.on_request("actions/getActionMetadata", _wrap(get_action_metadata_cmd))
     session.on_request("actions/reload", _wrap(reload_action))
     session.on_request("packages/resolvePath", _wrap(resolve_package_path))
     session.on_request("actions/mergeResults", _wrap(merge_results_cmd))

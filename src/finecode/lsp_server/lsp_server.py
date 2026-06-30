@@ -12,6 +12,7 @@ from lsprotocol import types
 
 import finecode_jsonrpc as finecode_jsonrpc_module
 from finecode._converter import converter as _converter
+from finecode import telemetry
 from finecode.wm_server import wm_lifecycle
 from finecode.wm_client import ApiClient
 from finecode.lsp_server import global_state
@@ -158,104 +159,105 @@ def create_lsp_server() -> LspServer:
     server = LspServer()
     session = server._session
 
-    def _wrap(handler):
+    def _wrap(method: str, handler):
         """Wrap a handler that takes (server, params) for use with the session."""
         async def _wrapped(params: dict | None) -> typing.Any:
-            return await handler(server, params)
+            with telemetry.lsp_request_span(method):
+                return await handler(server, params)
         return _wrapped
 
     # LSP lifecycle
-    session.on_request("initialize", _wrap(_on_initialize))
-    session.on_request("shutdown", _wrap(_on_shutdown))
-    session.on_notification("initialized", _wrap(_on_initialized))
-    session.on_notification("exit", _wrap(_on_exit))
+    session.on_request("initialize", _wrap("initialize", _on_initialize))
+    session.on_request("shutdown", _wrap("shutdown", _on_shutdown))
+    session.on_notification("initialized", _wrap("initialized", _on_initialized))
+    session.on_notification("exit", _wrap("exit", _on_exit))
 
     # Workspace
     session.on_notification(
         "workspace/didChangeWorkspaceFolders",
-        _wrap(_workspace_did_change_workspace_folders),
+        _wrap("workspace/didChangeWorkspaceFolders", _workspace_did_change_workspace_folders),
     )
-    session.on_request("workspace/executeCommand", _wrap(_on_execute_command))
-    session.on_request("server/shutdown", _wrap(_lsp_server_shutdown))
+    session.on_request("workspace/executeCommand", _wrap("workspace/executeCommand", _on_execute_command))
+    session.on_request("server/shutdown", _wrap("server/shutdown", _lsp_server_shutdown))
 
     # Text document sync
-    session.on_notification("textDocument/didOpen", _wrap(_document_did_open))
-    session.on_notification("textDocument/didClose", _wrap(_document_did_close))
-    session.on_notification("textDocument/didSave", _wrap(_document_did_save))
-    session.on_notification("textDocument/didChange", _wrap(_document_did_change))
+    session.on_notification("textDocument/didOpen", _wrap("textDocument/didOpen", _document_did_open))
+    session.on_notification("textDocument/didClose", _wrap("textDocument/didClose", _document_did_close))
+    session.on_notification("textDocument/didSave", _wrap("textDocument/didSave", _document_did_save))
+    session.on_notification("textDocument/didChange", _wrap("textDocument/didChange", _document_did_change))
 
     # Formatting
-    session.on_request("textDocument/formatting", _wrap(_on_formatting))
-    session.on_request("textDocument/rangeFormatting", _wrap(_on_range_formatting))
-    session.on_request("textDocument/rangesFormatting", _wrap(_on_ranges_formatting))
+    session.on_request("textDocument/formatting", _wrap("textDocument/formatting", _on_formatting))
+    session.on_request("textDocument/rangeFormatting", _wrap("textDocument/rangeFormatting", _on_range_formatting))
+    session.on_request("textDocument/rangesFormatting", _wrap("textDocument/rangesFormatting", _on_ranges_formatting))
 
     # Code actions
-    session.on_request("textDocument/codeAction", _wrap(_on_code_action))
-    session.on_request("codeAction/resolve", _wrap(_on_code_action_resolve))
+    session.on_request("textDocument/codeAction", _wrap("textDocument/codeAction", _on_code_action))
+    session.on_request("codeAction/resolve", _wrap("codeAction/resolve", _on_code_action_resolve))
 
     # Code lens
-    session.on_request("textDocument/codeLens", _wrap(_on_code_lens))
-    session.on_request("codeLens/resolve", _wrap(_on_code_lens_resolve))
+    session.on_request("textDocument/codeLens", _wrap("textDocument/codeLens", _on_code_lens))
+    session.on_request("codeLens/resolve", _wrap("codeLens/resolve", _on_code_lens_resolve))
 
     # Diagnostics
-    session.on_request("textDocument/diagnostic", _wrap(_on_document_diagnostic))
-    session.on_request("workspace/diagnostic", _wrap(_on_workspace_diagnostic))
+    session.on_request("textDocument/diagnostic", _wrap("textDocument/diagnostic", _on_document_diagnostic))
+    session.on_request("workspace/diagnostic", _wrap("workspace/diagnostic", _on_workspace_diagnostic))
 
     # Inlay hints
-    session.on_request("textDocument/inlayHint", _wrap(_on_inlay_hint))
-    session.on_request("inlayHint/resolve", _wrap(_on_inlay_hint_resolve))
+    session.on_request("textDocument/inlayHint", _wrap("textDocument/inlayHint", _on_inlay_hint))
+    session.on_request("inlayHint/resolve", _wrap("inlayHint/resolve", _on_inlay_hint_resolve))
 
     # Semantic tokens
     session.on_request(
         "textDocument/semanticTokens/full",
-        _wrap(semantic_tokens_endpoints.document_semantic_tokens_full),
+        _wrap("textDocument/semanticTokens/full", semantic_tokens_endpoints.document_semantic_tokens_full),
     )
     session.on_request(
         "textDocument/semanticTokens/range",
-        _wrap(semantic_tokens_endpoints.document_semantic_tokens_range),
+        _wrap("textDocument/semanticTokens/range", semantic_tokens_endpoints.document_semantic_tokens_range),
     )
     session.on_request(
         "textDocument/semanticTokens/full/delta",
-        _wrap(semantic_tokens_endpoints.document_semantic_tokens_full_delta),
+        _wrap("textDocument/semanticTokens/full/delta", semantic_tokens_endpoints.document_semantic_tokens_full_delta),
     )
 
     # Navigation (hover, definition, references, …)
     session.on_request(
         "textDocument/hover",
-        _wrap(navigation_endpoints.hover),
+        _wrap("textDocument/hover", navigation_endpoints.hover),
     )
-    session.on_request("textDocument/definition", _wrap(navigation_endpoints.definition))
-    session.on_request("textDocument/references", _wrap(navigation_endpoints.references))
-    session.on_request("textDocument/typeDefinition", _wrap(navigation_endpoints.type_definition))
-    session.on_request("textDocument/implementation", _wrap(navigation_endpoints.implementation))
-    session.on_request("textDocument/documentHighlight", _wrap(navigation_endpoints.document_highlight))
+    session.on_request("textDocument/definition", _wrap("textDocument/definition", navigation_endpoints.definition))
+    session.on_request("textDocument/references", _wrap("textDocument/references", navigation_endpoints.references))
+    session.on_request("textDocument/typeDefinition", _wrap("textDocument/typeDefinition", navigation_endpoints.type_definition))
+    session.on_request("textDocument/implementation", _wrap("textDocument/implementation", navigation_endpoints.implementation))
+    session.on_request("textDocument/documentHighlight", _wrap("textDocument/documentHighlight", navigation_endpoints.document_highlight))
 
     # Call hierarchy
     session.on_request(
         "textDocument/prepareCallHierarchy",
-        _wrap(call_hierarchy_endpoints.prepare_call_hierarchy),
+        _wrap("textDocument/prepareCallHierarchy", call_hierarchy_endpoints.prepare_call_hierarchy),
     )
     session.on_request(
         "callHierarchy/incomingCalls",
-        _wrap(call_hierarchy_endpoints.call_hierarchy_incoming_calls),
+        _wrap("callHierarchy/incomingCalls", call_hierarchy_endpoints.call_hierarchy_incoming_calls),
     )
     session.on_request(
         "callHierarchy/outgoingCalls",
-        _wrap(call_hierarchy_endpoints.call_hierarchy_outgoing_calls),
+        _wrap("callHierarchy/outgoingCalls", call_hierarchy_endpoints.call_hierarchy_outgoing_calls),
     )
 
     # Type hierarchy
     session.on_request(
         "textDocument/prepareTypeHierarchy",
-        _wrap(type_hierarchy_endpoints.prepare_type_hierarchy),
+        _wrap("textDocument/prepareTypeHierarchy", type_hierarchy_endpoints.prepare_type_hierarchy),
     )
     session.on_request(
         "typeHierarchy/supertypes",
-        _wrap(type_hierarchy_endpoints.type_hierarchy_supertypes),
+        _wrap("typeHierarchy/supertypes", type_hierarchy_endpoints.type_hierarchy_supertypes),
     )
     session.on_request(
         "typeHierarchy/subtypes",
-        _wrap(type_hierarchy_endpoints.type_hierarchy_subtypes),
+        _wrap("typeHierarchy/subtypes", type_hierarchy_endpoints.type_hierarchy_subtypes),
     )
 
     return server

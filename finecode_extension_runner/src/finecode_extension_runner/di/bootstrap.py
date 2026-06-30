@@ -154,14 +154,19 @@ def bootstrap(
     )
 
     svc_registry = service_registry.ServiceRegistry(di_registry=registry)
-    _activate_extensions(handler_packages, svc_registry)
+    all_eps, activated = _activate_extensions(handler_packages, svc_registry)
     _apply_user_service_config(service_declarations, svc_registry)
+
+    remaining = sorted(set(all_eps.keys()) - set(activated))
+    if remaining:
+        deferred = [_make_deferred_activator(pkg, all_eps[pkg], svc_registry) for pkg in remaining]
+        registry.set_deferred_activators(deferred)
 
 
 def _activate_extensions(
     handler_packages: set[str],
     svc_registry: service_registry.ServiceRegistry,
-) -> None:
+) -> tuple[dict[str, importlib.metadata.EntryPoint], ordered_set.OrderedSet[str]]:
     all_eps = {
         ep.name: ep
         for ep in importlib.metadata.entry_points(group="finecode.activator")
@@ -182,6 +187,24 @@ def _activate_extensions(
             logger.debug(f"Activated extension '{pkg_name}'")
         except Exception as e:
             logger.error(f"Failed to activate extension '{pkg_name}': {e}")
+
+    return all_eps, packages_to_activate
+
+
+def _make_deferred_activator(
+    pkg_name: str,
+    ep: importlib.metadata.EntryPoint,
+    svc_registry: service_registry.ServiceRegistry,
+) -> Callable[[], None]:
+    def activate() -> None:
+        try:
+            activator_cls = ep.load()
+            activator_cls(registry=svc_registry).activate()
+            logger.debug(f"On-demand activated extension '{pkg_name}'")
+        except Exception as e:
+            logger.error(f"Failed to on-demand activate extension '{pkg_name}': {e}")
+
+    return activate
 
 
 def _find_installed_packages_with_missing_eps(

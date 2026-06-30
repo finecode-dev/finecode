@@ -40,6 +40,10 @@ class ActionRunStopped(jsonrpc_client.BaseRunnerRequestException): ...
 class ExtensionRunnerInfo(domain.ExtensionRunner):
     # NOTE: initialized doesn't mean the runner is running, check its status
     initialized_event: asyncio.Event = dataclasses.field(default_factory=asyncio.Event)
+    # Set when status transitions to REPAIRING; fired when repair completes
+    # (regardless of outcome).  Waiters re-fetch the runner from context after
+    # the event fires because repair replaces the runner object in context.
+    repair_complete_event: asyncio.Event | None = None
     # e.g. if there is no venv for env, client can be None
     client: jsonrpc_client.JsonRpcClient | None = None
     partial_results: IterableSubscribe = dataclasses.field(
@@ -135,10 +139,15 @@ async def run_action(
     if not runner.initialized_event.is_set():
         await runner.initialized_event.wait()
 
-        if runner.status != RunnerStatus.RUNNING:
-            raise ActionRunFailed(
-                f"Runner {runner.readable_id} is not running: {runner.status}"
-            )
+    if runner.status != RunnerStatus.RUNNING:
+        raise ActionRunFailed(
+            f"Runner {runner.readable_id} is not running: {runner.status}"
+        )
+
+    if runner.client is None:
+        raise ActionRunFailed(
+            f"Runner {runner.readable_id} has no active client connection (status: {runner.status})"
+        )
 
     try:
         response = await runner.client.send_request(
@@ -148,6 +157,11 @@ async def run_action(
             ),
             timeout=None,
         )
+    except jsonrpc_client.ServerStoppedError as exc:
+        raise ActionRunFailed(
+            "Runner stopped during execution — it may have been restarted."
+            " Try again."
+        ) from exc
     except jsonrpc_client.RequestCancelledError as error:
         logger.trace(
             f"Request {error.request_id} to {runner.readable_id} was cancelled"
@@ -194,10 +208,15 @@ async def run_handlers(
     if not runner.initialized_event.is_set():
         await runner.initialized_event.wait()
 
-        if runner.status != RunnerStatus.RUNNING:
-            raise ActionRunFailed(
-                f"Runner {runner.readable_id} is not running: {runner.status}"
-            )
+    if runner.status != RunnerStatus.RUNNING:
+        raise ActionRunFailed(
+            f"Runner {runner.readable_id} is not running: {runner.status}"
+        )
+
+    if runner.client is None:
+        raise ActionRunFailed(
+            f"Runner {runner.readable_id} has no active client connection (status: {runner.status})"
+        )
 
     try:
         response = await runner.client.send_request(
@@ -269,6 +288,9 @@ async def reload_action(runner: ExtensionRunnerInfo, action_name: str) -> None:
     if not runner.initialized_event.is_set():
         await runner.initialized_event.wait()
 
+    if runner.status != RunnerStatus.RUNNING:
+        return
+
     await runner.client.send_request(
         method=_internal_client_types.ER_RELOAD_ACTION,
         params=_internal_client_types.ErReloadActionParams(action_name=action_name),
@@ -298,36 +320,6 @@ async def resolve_source(runner: ExtensionRunnerInfo, source: str) -> str | None
         logger.debug(f"ER could not resolve source '{source}': {exc}")
         return None
     return response.result.canonical_source
-
-
-async def get_action_metadata(
-    runner: ExtensionRunnerInfo, action_source: str
-) -> dict | None:
-    """Ask the ER to resolve ``PARENT_ACTION`` and ``LANGUAGE`` for *action_source*.
-
-    Returns a dict with ``parentActionSource`` and ``language`` keys on success,
-    or ``None`` when the ER cannot import the action class.
-    """
-    if not runner.initialized_event.is_set():
-        await runner.initialized_event.wait()
-
-    if runner.status != RunnerStatus.RUNNING:
-        return None
-
-    try:
-        response = await runner.client.send_request(
-            method=_internal_client_types.ER_GET_ACTION_METADATA,
-            params=_internal_client_types.ErGetActionMetadataParams(source=action_source),
-            timeout=10,
-        )
-    except jsonrpc_client.BaseRunnerRequestException as exc:
-        logger.debug(f"ER could not get action metadata for '{action_source}': {exc}")
-        return None
-    result = response.result
-    return {
-        "parentActionSource": result.parent_action_source,
-        "language": result.language,
-    }
 
 
 async def resolve_action_meta(runner: ExtensionRunnerInfo) -> dict[str, dict]:
@@ -463,7 +455,6 @@ __all__ = [
     "run_action",
     "merge_results",
     "reload_action",
-    "get_action_metadata",
     "resolve_action_meta",
     "get_payload_schemas",
     "resolve_package_path",

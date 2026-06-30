@@ -152,6 +152,10 @@ async def resolve_action_meta(runner_context: context.RunnerContext) -> dict[str
     - ``runs_concurrently``: True when the action declares CONCURRENT handler
       execution (``HANDLER_EXECUTION = HandlerExecution.CONCURRENT``).
     - ``scope``: ``"project"`` or ``"workspace"`` (from ``Action.SCOPE``).
+    - ``parentActionSource``: canonical source of the parent action class, or
+      ``None`` for top-level actions (from ``Action.PARENT_ACTION``).
+    - ``language``: language tag this action is specific to, or ``None`` for
+      language-agnostic actions (from ``Action.LANGUAGE``).
 
     Actions that fail to import are omitted.
     """
@@ -166,13 +170,20 @@ async def resolve_action_meta(runner_context: context.RunnerContext) -> dict[str
             cls = run_utils.import_module_member_by_source_str(action.source)
             if not (isinstance(cls, type) and issubclass(cls, Action)):
                 raise TypeError(f"{action.source} is not a subclass of Action")
+            parent = getattr(cls, "PARENT_ACTION", None)
             resolved[action.source] = {
                 "canonical_source": f"{cls.__module__}.{cls.__qualname__}",
                 "runs_concurrently": cls.HANDLER_EXECUTION == HandlerExecution.CONCURRENT,
                 "scope": cls.SCOPE.value,
+                "parentActionSource": (
+                    f"{parent.__module__}.{parent.__qualname__}"
+                    if parent is not None
+                    else None
+                ),
+                "language": getattr(cls, "LANGUAGE", None),
             }
         except Exception as exception:
-            logger.trace(f'Failed to import action {action.source}: {exception}')
+            logger.warning(f'Failed to import action {action.source}: {exception}')
     return resolved
 
 

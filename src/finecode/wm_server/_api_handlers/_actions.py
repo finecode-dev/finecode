@@ -6,6 +6,7 @@ import pathlib
 
 from loguru import logger
 
+from finecode import telemetry
 from finecode.wm_server import context, domain
 from finecode.wm_server.services.run_service.exceptions import ActionNotFoundError
 from finecode.wm_server._api_handlers._helpers import (
@@ -26,34 +27,36 @@ async def _handle_run_action(
     """Run an action on a project."""
     from finecode.wm_server.services import run_service
 
-    parsed = await _parse_and_validate_run_action_params(params or {}, ws_context)
+    raw_params = params or {}
+    with telemetry.attach_incoming_traceparent(raw_params):
+        parsed = await _parse_and_validate_run_action_params(raw_params, ws_context)
 
-    try:
-        # Start required environments so that canonical_source is populated for all
-        # importable action classes (ADR-0021: canonical_source is the WM's internal
-        # identifier after runner initialization; only find_action_by_source at the
-        # external API boundary may match by config source alias).
-        await run_service.start_required_environments(
-            {parsed.project.dir_path: [parsed.action.name]},
-            ws_context,
-            initialize_all_handlers=True,
-        )
-        executor = run_service.ProjectExecutor(ws_context)
-        result = await executor.run_action(
-            action_source=parsed.action.canonical_source,
-            params=parsed.action_params,
-            project_path=parsed.project.dir_path,
-            run_trigger=parsed.trigger,
-            dev_env=parsed.dev_env,
-            result_formats=parsed.result_formats,
-            initialize_all_handlers=True,
-        )
-        return {
-            "resultByFormat": result.result_by_format,
-            "returnCode": result.return_code,
-        }
-    except run_service.ActionRunFailed:
-        raise
+        try:
+            # Start required environments so that canonical_source is populated for all
+            # importable action classes (ADR-0021: canonical_source is the WM's internal
+            # identifier after runner initialization; only find_action_by_source at the
+            # external API boundary may match by config source alias).
+            await run_service.start_required_environments(
+                {parsed.project.dir_path: [parsed.action.name]},
+                ws_context,
+                initialize_all_handlers=True,
+            )
+            executor = run_service.ProjectExecutor(ws_context)
+            result = await executor.run_action(
+                action_source=parsed.action.canonical_source,
+                params=parsed.action_params,
+                project_path=parsed.project.dir_path,
+                run_trigger=parsed.trigger,
+                dev_env=parsed.dev_env,
+                result_formats=parsed.result_formats,
+                initialize_all_handlers=True,
+            )
+            return {
+                "resultByFormat": result.result_by_format,
+                "returnCode": result.return_code,
+            }
+        except run_service.ActionRunFailed:
+            raise
 
 
 async def _handle_actions_reload(
@@ -111,35 +114,37 @@ async def _handle_run_batch(
     """
     from finecode.wm_server.services import run_service
 
-    parsed = _parse_run_batch_params(params or {})
+    raw_params = params or {}
+    with telemetry.attach_incoming_traceparent(raw_params):
+        parsed = _parse_run_batch_params(raw_params)
 
-    if not parsed.action_sources:
-        raise ValueError("actionSources list is required and must be non-empty")
+        if not parsed.action_sources:
+            raise ValueError("actionSources list is required and must be non-empty")
 
-    logger.debug(f"runBatch: actionSources={parsed.action_sources} projects={parsed.project_names} formats={parsed.result_format_strs}")
+        logger.debug(f"runBatch: actionSources={parsed.action_sources} projects={parsed.project_names} formats={parsed.result_format_strs}")
 
-    actions_by_project, name_to_source = await _resolve_actions_by_project(
-        parsed.project_names, parsed.action_sources, ws_context
-    )
+        actions_by_project, name_to_source = await _resolve_actions_by_project(
+            parsed.project_names, parsed.action_sources, ws_context
+        )
 
-    await run_service.start_required_environments(
-        actions_by_project, ws_context, update_config_in_running_runners=True
-    )
+        await run_service.start_required_environments(
+            actions_by_project, ws_context
+        )
 
-    workspace_executor = run_service.WorkspaceExecutor(ws_context)
-    result_by_project = await workspace_executor.run_actions_in_projects(
-        actions_by_project=actions_by_project,
-        params=parsed.action_params,
-        run_trigger=parsed.trigger,
-        dev_env=parsed.dev_env,
-        concurrently=parsed.concurrently,
-        result_formats=parsed.result_formats,
-        payload_overrides_by_project=parsed.params_by_project,
-    )
+        workspace_executor = run_service.WorkspaceExecutor(ws_context)
+        result_by_project = await workspace_executor.run_actions_in_projects(
+            actions_by_project=actions_by_project,
+            params=parsed.action_params,
+            run_trigger=parsed.trigger,
+            dev_env=parsed.dev_env,
+            concurrently=parsed.concurrently,
+            result_formats=parsed.result_formats,
+            payload_overrides_by_project=parsed.params_by_project,
+        )
 
-    results, overall_return_code = _build_batch_result(result_by_project, name_to_source)
-    logger.debug(f"runBatch: done, projects_count={len(results)} returnCode={overall_return_code}")
-    return {"results": results, "returnCode": overall_return_code}
+        results, overall_return_code = _build_batch_result(result_by_project, name_to_source)
+        logger.debug(f"runBatch: done, projects_count={len(results)} returnCode={overall_return_code}")
+        return {"results": results, "returnCode": overall_return_code}
 
 
 async def _handle_server_reset(

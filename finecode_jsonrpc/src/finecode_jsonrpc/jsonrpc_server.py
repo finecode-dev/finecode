@@ -21,11 +21,13 @@ from __future__ import annotations
 
 import asyncio
 import collections.abc
+import contextlib
 from typing import Any
 
 from loguru import logger
 
 from finecode_jsonrpc.jsonrpc_client import JsonRpcError
+from finecode_jsonrpc.tracing import ITracingHooks
 
 # JSON-RPC error codes
 _METHOD_NOT_FOUND = -32601
@@ -79,8 +81,9 @@ class JsonRpcServerSession:
     error is sent back to the client.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, tracing: ITracingHooks | None = None) -> None:
         self._transport: Any | None = None
+        self._tracing = tracing
 
         self._next_id: int = 0
         # Pending outbound requests (server → client)
@@ -181,8 +184,14 @@ class JsonRpcServerSession:
         message: dict[str, Any] = {"jsonrpc": "2.0", "method": method}
         if params is not None:
             message["params"] = params
+        if self._tracing is not None:
+            traceparent = self._tracing.get_traceparent()
+            if traceparent is not None:
+                message["_meta"] = {"traceparent": traceparent}
         assert self._transport is not None, "Transport not attached"
         self._transport.send(message)
+        if self._tracing is not None:
+            self._tracing.notification_sent(method)
 
     # ------------------------------------------------------------------
     # Internal message dispatch
@@ -231,6 +240,7 @@ class JsonRpcServerSession:
         """Execute an incoming request as an isolated task."""
         method = message["method"]
         msg_id = message["id"]
+        traceparent = (message.get("_meta") or {}).get("traceparent")
         handler = self._request_handlers.get(method)
 
         if handler is None:
@@ -242,20 +252,22 @@ class JsonRpcServerSession:
         assert task is not None
         self._active_request_tasks[msg_id] = task
 
-        try:
-            result = await handler(message.get("params"))
-            self._transport.send(
-                {"jsonrpc": "2.0", "id": msg_id, "result": result}
-            )
-        except asyncio.CancelledError:
-            self._send_response(msg_id, None, _REQUEST_CANCELLED, "Request cancelled")
-        except JsonRpcHandlerError as exc:
-            self._send_response(msg_id, None, exc.code, exc.message)
-        except Exception as exc:
-            logger.exception(f"Error handling request '{method}': {exc}")
-            self._send_response(msg_id, None, _INTERNAL_ERROR, str(exc))
-        finally:
-            self._active_request_tasks.pop(msg_id, None)
+        span_ctx = self._tracing.server_span(method, traceparent) if self._tracing else contextlib.nullcontext()
+        with span_ctx:
+            try:
+                result = await handler(message.get("params"))
+                self._transport.send(
+                    {"jsonrpc": "2.0", "id": msg_id, "result": result}
+                )
+            except asyncio.CancelledError:
+                self._send_response(msg_id, None, _REQUEST_CANCELLED, "Request cancelled")
+            except JsonRpcHandlerError as exc:
+                self._send_response(msg_id, None, exc.code, exc.message)
+            except Exception as exc:
+                logger.exception(f"Error handling request '{method}': {exc}")
+                self._send_response(msg_id, None, _INTERNAL_ERROR, str(exc))
+            finally:
+                self._active_request_tasks.pop(msg_id, None)
 
     def _send_response(
         self,
@@ -278,6 +290,9 @@ class JsonRpcServerSession:
 
     async def _handle_incoming_notification(self, message: dict[str, Any]) -> None:
         method = message["method"]
+        if self._tracing is not None:
+            traceparent = (message.get("_meta") or {}).get("traceparent")
+            self._tracing.notification_received(method, traceparent)
         handler = self._notification_handlers.get(method)
         if handler is not None:
             try:

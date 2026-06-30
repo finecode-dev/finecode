@@ -14,6 +14,7 @@ import sys
 import uuid
 
 import finecode_jsonrpc
+from finecode import telemetry
 from finecode.wm_client import ApiClient
 from finecode.wm_server import wm_lifecycle
 from finecode_extension_api.resource_uri import path_to_resource_uri
@@ -314,57 +315,58 @@ async def _handle_call_tool(params: dict | None) -> dict:
         return {"content": [{"type": "text", "text": "Missing params"}], "isError": True}
 
     name = params.get("name", "")
-    arguments: dict = dict(params.get("arguments") or {})
+    with telemetry.mcp_tool_span(name):
+        arguments: dict = dict(params.get("arguments") or {})
 
-    await _ensure_wm_connected()
+        await _ensure_wm_connected()
 
-    if name == "list_projects":
-        result = await _wm_client.list_projects()
-        return {"content": [{"type": "text", "text": json.dumps({"projects": result})}]}
+        if name == "list_projects":
+            result = await _wm_client.list_projects()
+            return {"content": [{"type": "text", "text": json.dumps({"projects": result})}]}
 
-    if name == "list_runners":
-        result = await _wm_client.list_runners()
-        return {"content": [{"type": "text", "text": json.dumps({"runners": result})}]}
+        if name == "list_runners":
+            result = await _wm_client.list_runners()
+            return {"content": [{"type": "text", "text": json.dumps({"runners": result})}]}
 
-    if name == "list_actions":
-        project = arguments.get("project")
-        result = await _wm_client.list_actions(project=project)
-        return {"content": [{"type": "text", "text": json.dumps({"actions": result})}]}
+        if name == "list_actions":
+            project = arguments.get("project")
+            result = await _wm_client.list_actions(project=project)
+            return {"content": [{"type": "text", "text": json.dumps({"actions": result})}]}
 
-    if name == "get_project_raw_config":
-        project = arguments["project"]
-        result = await _wm_client.get_project_raw_config(project)
-        return {"content": [{"type": "text", "text": json.dumps({"rawConfig": result})}]}
+        if name == "get_project_raw_config":
+            project = arguments["project"]
+            result = await _wm_client.get_project_raw_config(project)
+            return {"content": [{"type": "text", "text": json.dumps({"rawConfig": result})}]}
 
-    if name == "dump_config":
-        project = arguments["project"]
-        project_path = pathlib.Path(project)
-        raw_config = await _wm_client.get_project_raw_config(project)
-        result = await _wm_client.run_action(
-            action_source="fine_envs.DumpConfigAction",
-            project=project,
-            params={
-                "source_file_path": str(
-                    path_to_resource_uri(project_path / "pyproject.toml")
-                ),
-                "project_raw_config": raw_config,
-                "target_file_path": str(
-                    path_to_resource_uri(
-                        project_path / "finecode_config_dump" / "pyproject.toml"
-                    )
-                ),
-            },
-            options={"resultFormats": ["json"], "trigger": "user", "devEnv": "ai"},
+        if name == "dump_config":
+            project = arguments["project"]
+            project_path = pathlib.Path(project)
+            raw_config = await _wm_client.get_project_raw_config(project)
+            result = await _wm_client.run_action(
+                action_source="fine_envs.DumpConfigAction",
+                project=project,
+                params={
+                    "source_file_path": str(
+                        path_to_resource_uri(project_path / "pyproject.toml")
+                    ),
+                    "project_raw_config": raw_config,
+                    "target_file_path": str(
+                        path_to_resource_uri(
+                            project_path / "finecode_config_dump" / "pyproject.toml"
+                        )
+                    ),
+                },
+                options={"resultFormats": ["json"], "trigger": "user", "devEnv": "ai"},
+            )
+            return {"content": [{"type": "text", "text": json.dumps(result)}]}
+
+        project = arguments.pop("project", None)
+        action_source = _tool_name_to_source.get(name, name)
+        options = {"resultFormats": ["json"], "trigger": "user", "devEnv": "ai"}
+        result = await _run_with_progress(
+            action_source, project or "", arguments or {}, options
         )
         return {"content": [{"type": "text", "text": json.dumps(result)}]}
-
-    project = arguments.pop("project", None)
-    action_source = _tool_name_to_source.get(name, name)
-    options = {"resultFormats": ["json"], "trigger": "user", "devEnv": "ai"}
-    result = await _run_with_progress(
-        action_source, project or "", arguments or {}, options
-    )
-    return {"content": [{"type": "text", "text": json.dumps(result)}]}
 
 
 async def _noop(_params: dict | None) -> None:

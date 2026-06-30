@@ -75,10 +75,16 @@ async def _auto_prepare_and_retry(
     # Projects whose tasks were cancelled before save_runner_in_context ran have no runner
     # entry in context at all (_runner_status returns None).  Their venv may or may not
     # exist; install_env_for_project is idempotent and handles both cases.
-    no_runner_projects = [p for p in projects if _runner_status(p) is None]
+    # Only CONFIG_VALID projects are expected to have a runner; others (e.g. NO_FINECODE)
+    # are intentionally skipped by start_runners_with_presets and must not be auto-repaired.
+    no_runner_projects = [
+        p for p in projects
+        if _runner_status(p) is None
+        and p.status == domain.ProjectStatus.CONFIG_VALID
+    ]
     affected_projects = no_venv_projects + failed_projects + no_runner_projects
 
-    logger.debugg(
+    logger.debug(
         f"_auto_prepare_and_retry: {len(projects)} project(s), statuses: "
         + ", ".join(f"{p.name}={_runner_status(p)}" for p in projects)
     )

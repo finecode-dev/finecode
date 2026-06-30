@@ -109,6 +109,8 @@ async def prepare_envs(
                 project=project, ws_context=ws_context, resolve_presets=False
             )
 
+    ws_context.ws_editable_packages = read_configs.resolve_workspace_editable_packages(ws_context)
+
     workdir_project = ws_context.ws_projects.get(workdir_path)
     if workdir_project is None:
         raise PrepareEnvsFailed(
@@ -354,10 +356,14 @@ async def install_env_for_project(
 
         # Serialize concurrent root-runner initializations so that canonical_source
         # values are populated before the env-creation calls below.
-        root_init_lock = ws_context.project_init_locks.get(root_dir)
+        # Use env_install_locks (not project_init_locks) to avoid deadlocking
+        # with _handle_add_dir / _handle_start_runners, which hold project_init_locks
+        # for the entire slow startup phase and call into this function indirectly
+        # via _auto_prepare_and_retry.
+        root_init_lock = ws_context.env_install_locks.get(root_dir)
         if root_init_lock is None:
             root_init_lock = asyncio.Lock()
-            ws_context.project_init_locks[root_dir] = root_init_lock
+            ws_context.env_install_locks[root_dir] = root_init_lock
 
         async with root_init_lock:
             root_project = ws_context.ws_projects.get(root_dir)
@@ -382,10 +388,10 @@ async def install_env_for_project(
         # Non-dev_workspace env: use the subproject's own dev_workspace runner.
         # Its dev_workspace must already exist (it was set up before any other envs
         # are created), so starting it here is safe and idempotent.
-        project_init_lock = ws_context.project_init_locks.get(project.dir_path)
+        project_init_lock = ws_context.env_install_locks.get(project.dir_path)
         if project_init_lock is None:
             project_init_lock = asyncio.Lock()
-            ws_context.project_init_locks[project.dir_path] = project_init_lock
+            ws_context.env_install_locks[project.dir_path] = project_init_lock
 
         async with project_init_lock:
             try:

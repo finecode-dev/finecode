@@ -179,7 +179,19 @@ def get_current_traceparent() -> str | None:
 
 
 @contextlib.contextmanager
-def handler_span(handler_name: str, action_name: str, traceparent: str | None):
+def handler_span(
+    handler_name: str,
+    action_name: str,
+    traceparent: str | None,
+    trigger: str = "unknown",
+    dev_env: str = "unknown",
+):
+    # traceparent is passed explicitly from the action payload (options.traceparent),
+    # not taken from the ambient OTel context.  This is intentional: JsonRpcServerSession
+    # is a long-running, concurrent session whose event loop has no per-request span
+    # context, so the ambient context at call time is not the correct parent.
+    # options.traceparent carries the action_run_span identity explicitly across
+    # WM → ER → WM → ER hops, which ambient context propagation cannot do.
     if traceparent is None:
         yield None
         return
@@ -194,11 +206,109 @@ def handler_span(handler_name: str, action_name: str, traceparent: str | None):
         attributes={
             "handler.name": handler_name,
             "action.name": action_name,
+            "run.trigger": trigger,
+            "run.dev_env": dev_env,
         },
         record_exception=True,
         set_status_on_exception=True,
     ) as span:
         yield span
+
+
+@contextlib.contextmanager
+def handler_initialize_span(handler_name: str, action_name: str):
+    """Span for handler cold-start initialization — must be entered within a handler_span context.
+
+    Emits no span when telemetry is off or when there is no active parent span
+    (i.e. handler_span was a no-op because traceparent was absent).
+    """
+    if not _telemetry_initialized:
+        yield None
+        return
+    from opentelemetry import trace
+    if not trace.get_current_span().get_span_context().is_valid:
+        yield None
+        return
+    tracer = trace.get_tracer("finecode.er")
+    with tracer.start_as_current_span(
+        f"handler.initialize/{handler_name}",
+        attributes={
+            "handler.name": handler_name,
+            "action.name": action_name,
+        },
+        record_exception=True,
+        set_status_on_exception=True,
+    ) as span:
+        yield span
+
+
+@contextlib.contextmanager
+def _jsonrpc_client_span(method: str, peer_id: str):
+    from opentelemetry import trace
+
+    tracer = trace.get_tracer("finecode.jsonrpc")
+    with tracer.start_as_current_span(
+        f"jsonrpc.client/{method}",
+        attributes={"rpc.system": "jsonrpc", "rpc.method": method, "peer.id": peer_id},
+        record_exception=True,
+        set_status_on_exception=True,
+    ) as span:
+        yield span
+
+
+@contextlib.contextmanager
+def _jsonrpc_server_span(method: str, traceparent: str | None):
+    from opentelemetry import propagate, trace
+
+    tracer = trace.get_tracer("finecode.jsonrpc")
+    parent_ctx = propagate.extract({"traceparent": traceparent}) if traceparent else None
+    with tracer.start_as_current_span(
+        f"jsonrpc.server/{method}",
+        context=parent_ctx,
+        attributes={"rpc.system": "jsonrpc", "rpc.method": method},
+        record_exception=True,
+        set_status_on_exception=True,
+    ) as span:
+        yield span
+
+
+class JsonRpcTracingHooks:
+    """OTel implementation of ITracingHooks for ER processes.
+
+    Provides single-hop envelope tracing for JSON-RPC messages.  Does not
+    replace options.traceparent in action payloads — see ITracingHooks docstring
+    and the comment on handler_span for the rationale.
+    """
+
+    def get_traceparent(self) -> str | None:
+        return get_current_traceparent()
+
+    def client_span(self, method: str, peer_id: str):
+        return _jsonrpc_client_span(method, peer_id)
+
+    def server_span(self, method: str, traceparent: str | None):
+        return _jsonrpc_server_span(method, traceparent)
+
+    def notification_sent(self, method: str) -> None:
+        from opentelemetry import trace
+        span = trace.get_current_span()
+        if span.is_recording():
+            span.add_event("jsonrpc.notification.sent", {"rpc.method": method})
+
+    def notification_received(self, method: str, traceparent: str | None) -> None:
+        from opentelemetry import trace
+        span = trace.get_current_span()
+        if span.is_recording():
+            span.add_event("jsonrpc.notification.received", {"rpc.method": method})
+
+
+def add_span_event(name: str, attributes: dict | None = None) -> None:
+    if not _telemetry_initialized:
+        return
+    from opentelemetry import trace
+    span = trace.get_current_span()
+    if span.is_recording():
+        span.add_event(name, attributes or {})
 
 
 @contextlib.contextmanager

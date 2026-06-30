@@ -7,6 +7,7 @@ import typing
 import uuid
 
 import click
+from loguru import logger
 from finecode.wm_client import ApiClient, ApiError
 from finecode.wm_server import wm_lifecycle
 from finecode.wm_server.runner import runner_client
@@ -139,8 +140,13 @@ async def run_actions(
             # runners only for the requested projects.  In shared-server mode
             # runners are already running, so always use the normal path.
             deferred_runner_start = own_server and projects_names is not None
+            logger.info("Initializing workspace...")
             try:
-                await client.add_dir(workdir_path, start_runners=not deferred_runner_start)
+                await client.add_dir(
+                    workdir_path,
+                    start_runners=not deferred_runner_start,
+                    initialize_all_handlers=not own_server,
+                )
             except ApiError as exc:
                 raise RunFailed(str(exc)) from exc
 
@@ -218,6 +224,7 @@ async def run_actions(
 
             client.on_notification("actions/partialResult", _on_partial_result)
 
+            logger.info(f"Running {', '.join(actions)}...")
             try:
                 batch_result = await client.run_batch(
                     action_sources=action_sources,

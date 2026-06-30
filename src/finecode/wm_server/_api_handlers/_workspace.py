@@ -111,6 +111,9 @@ async def _handle_add_dir(
         started. Omit (or pass null) to initialize all projects.
         Calling add_dir again for the same dir with a different filter (or no
         filter) will initialize the previously skipped projects.
+      initialize_all_handlers: bool - whether to eagerly initialize all action handlers
+        when starting runners (default true). When false, handlers are not initialized
+        during runner startup and will be initialized on demand.
     """
     from finecode.wm_server.config import collect_actions, read_configs
     from finecode.wm_server.runner import runner_manager
@@ -126,6 +129,7 @@ async def _handle_add_dir(
         params = params or {}
         dir_path = pathlib.Path(params["dirPath"])
         start_runners: bool = params.get("startRunners", True)
+        initialize_all_handlers: bool = params.get("initializeAllHandlers", True)
         projects_filter: set[str] | None = (
             set(params["projects"]) if params.get("projects") else None
         )
@@ -230,7 +234,7 @@ async def _handle_add_dir(
             await runner_start_service.start_runners_with_auto_prepare(
                 projects=projects_to_init,
                 ws_context=ws_context,
-                initialize_all_handlers=True,
+                initialize_all_handlers=initialize_all_handlers,
             )
         except runner_manager.RunnerFailedToStart as exc:
             from finecode.wm_server import wm_server as _wm

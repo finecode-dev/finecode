@@ -147,6 +147,22 @@ class WorkspaceContext:
     # A locked entry means initialization is in progress for that project.
     project_init_locks: dict[Path, asyncio.Lock] = field(default_factory=dict)
 
+    # Locks used by install_env_for_project to serialize concurrent root-runner
+    # startups during env installation.  Intentionally separate from
+    # project_init_locks: the handlers (_handle_add_dir, _handle_start_runners)
+    # hold project_init_locks for the entire slow Phase 2, so reusing them here
+    # would deadlock when _auto_prepare_and_retry calls install_env_for_project
+    # from inside that same Phase 2.
+    env_install_locks: dict[Path, asyncio.Lock] = field(default_factory=dict)
+
+    # In-progress auto-repair events keyed by (project_dir_path, env_name).
+    # Set synchronously (no await) before repair starts; cleared in finally.
+    # Prevents duplicate install+restart when many coroutines reach the repair
+    # path simultaneously and no runner object exists yet to carry the status.
+    pending_repair_events: dict[tuple[Path, str], asyncio.Event] = field(
+        default_factory=dict
+    )
+
 
 @dataclass
 class CachedAction:

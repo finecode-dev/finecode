@@ -367,6 +367,11 @@ def run(ctx) -> None:
         if result.output != "":
             click.echo(result.output)
 
+        if result.return_code == 0:
+            logger.info("Done.")
+        else:
+            logger.info(f"Done (exit code {result.return_code}).")
+
         if save_results:
             results_dir = pathlib.Path(sys.executable).parent.parent / "cache" / "finecode" / "results"
             results_dir.mkdir(parents=True, exist_ok=True)

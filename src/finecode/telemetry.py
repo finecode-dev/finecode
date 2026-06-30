@@ -228,7 +228,12 @@ def action_run_span(
         attrs["run.dev_env"] = dev_env
     if orchestration_depth:
         attrs["run.orchestration_depth"] = orchestration_depth
-    with tracer.start_as_current_span(f"action.run/{action_name}", attributes=attrs) as span:
+    with tracer.start_as_current_span(
+        f"action.run/{action_name}",
+        attributes=attrs,
+        record_exception=True,
+        set_status_on_exception=True,
+    ) as span:
         yield span
 
 
@@ -252,17 +257,138 @@ def runner_start_span(env_name: str):
     with tracer.start_as_current_span(
         "action.runner_start",
         attributes={"env.name": env_name},
+        record_exception=True,
+        set_status_on_exception=True,
     ) as span:
         yield span
 
 
 @contextlib.contextmanager
-def er_dispatch_span(env_name: str, runner_id: str):
+def er_dispatch_span(env_name: str, runner_id: str, action_name: str):
     from opentelemetry import trace
 
     tracer = trace.get_tracer("finecode.wm")
     with tracer.start_as_current_span(
         "action.er_dispatch",
-        attributes={"env.name": env_name, "runner.id": runner_id},
+        attributes={"env.name": env_name, "runner.id": runner_id, "action.name": action_name},
+        record_exception=True,
+        set_status_on_exception=True,
     ) as span:
         yield span
+
+
+@contextlib.contextmanager
+def _jsonrpc_client_span(method: str, peer_id: str):
+    from opentelemetry import trace
+
+    tracer = trace.get_tracer("finecode.jsonrpc")
+    with tracer.start_as_current_span(
+        f"jsonrpc.client/{method}",
+        attributes={"rpc.system": "jsonrpc", "rpc.method": method, "peer.id": peer_id},
+        record_exception=True,
+        set_status_on_exception=True,
+    ) as span:
+        yield span
+
+
+@contextlib.contextmanager
+def _jsonrpc_server_span(method: str, traceparent: str | None):
+    from opentelemetry import propagate, trace
+
+    tracer = trace.get_tracer("finecode.jsonrpc")
+    parent_ctx = propagate.extract({"traceparent": traceparent}) if traceparent else None
+    with tracer.start_as_current_span(
+        f"jsonrpc.server/{method}",
+        context=parent_ctx,
+        attributes={"rpc.system": "jsonrpc", "rpc.method": method},
+        record_exception=True,
+        set_status_on_exception=True,
+    ) as span:
+        yield span
+
+
+class JsonRpcTracingHooks:
+    """OTel implementation of ITracingHooks for the WM process.
+
+    Provides single-hop envelope tracing for JSON-RPC messages.  Does not
+    replace options.traceparent in action payloads — see ITracingHooks docstring
+    and the comment on proxy_utils.traceparent capture for the rationale.
+    """
+
+    def get_traceparent(self) -> str | None:
+        return get_current_traceparent()
+
+    def client_span(self, method: str, peer_id: str):
+        return _jsonrpc_client_span(method, peer_id)
+
+    def server_span(self, method: str, traceparent: str | None):
+        return _jsonrpc_server_span(method, traceparent)
+
+    def notification_sent(self, method: str) -> None:
+        from opentelemetry import trace
+        span = trace.get_current_span()
+        if span.is_recording():
+            span.add_event("jsonrpc.notification.sent", {"rpc.method": method})
+
+    def notification_received(self, method: str, traceparent: str | None) -> None:
+        from opentelemetry import trace
+        span = trace.get_current_span()
+        if span.is_recording():
+            span.add_event("jsonrpc.notification.received", {"rpc.method": method})
+
+
+def add_span_event(name: str, attributes: dict | None = None) -> None:
+    from opentelemetry import trace
+    span = trace.get_current_span()
+    if span.is_recording():
+        span.add_event(name, attributes or {})
+
+
+@contextlib.contextmanager
+def lsp_request_span(method: str):
+    from opentelemetry import trace
+
+    tracer = trace.get_tracer("finecode.lsp")
+    with tracer.start_as_current_span(
+        f"lsp.request/{method}",
+        attributes={"lsp.method": method},
+        record_exception=True,
+        set_status_on_exception=True,
+    ) as span:
+        yield span
+
+
+@contextlib.contextmanager
+def mcp_tool_span(tool_name: str):
+    from opentelemetry import trace
+
+    tracer = trace.get_tracer("finecode.mcp")
+    with tracer.start_as_current_span(
+        f"mcp.tool/{tool_name}",
+        attributes={"mcp.tool_name": tool_name},
+        record_exception=True,
+        set_status_on_exception=True,
+    ) as span:
+        yield span
+
+
+@contextlib.contextmanager
+def attach_incoming_traceparent(params: dict):
+    """Restore a traceparent carried in params as the current OTel context.
+
+    Pops ``_traceparent`` from params so it is not forwarded to action payload
+    or other downstream consumers.  No-op when the key is absent or OTel is
+    inactive.
+    """
+    incoming = params.pop("_traceparent", None)
+    if not incoming:
+        yield
+        return
+    from opentelemetry import context as otel_context, propagate
+
+    parent_ctx = propagate.extract({"traceparent": incoming})
+    token = otel_context.attach(parent_ctx)
+    try:
+        yield
+    finally:
+        otel_context.detach(token)
