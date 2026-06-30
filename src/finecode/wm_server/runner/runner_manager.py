@@ -993,6 +993,35 @@ async def _init_lsp_client(
     logger.debug(f"LSP Client for initialized: {runner.readable_id}")
 
 
+def _propagate_action_meta(
+    resolved: domain.Action,
+    source_project: domain.CollectedProject,
+    ws_context: context.WorkspaceContext,
+) -> None:
+    """Copy class-level metadata from a just-resolved action to every other
+    project that registers the same action class.
+    """
+    for project in ws_context.ws_projects.values():
+        if project is source_project or not isinstance(project, domain.CollectedProject):
+            continue
+        for action in project.actions:
+            if action is resolved:
+                continue
+            if action.source != resolved.source and (
+                resolved.canonical_source is None
+                or action.canonical_source != resolved.canonical_source
+            ):
+                continue
+            if action.canonical_source is None:
+                action.canonical_source = resolved.canonical_source
+            action.scope = resolved.scope
+            action.runs_concurrently = resolved.runs_concurrently
+            if action.parent_action_source is None:
+                action.parent_action_source = resolved.parent_action_source
+            if action.language is None:
+                action.language = resolved.language
+
+
 async def update_runner_config(
     runner: runner_client.ExtensionRunnerInfo,
     project: domain.CollectedProject,
@@ -1044,13 +1073,17 @@ async def update_runner_config(
             action.canonical_source = meta["canonical_source"]
 
         action.runs_concurrently = meta["runs_concurrently"]
-        action.scope = domain.ActionScope(
-            meta.get("scope", domain.ActionScope.PROJECT.value)
-        )
+        action.scope = domain.ActionScope(meta["scope"])
         if action.parent_action_source is None:
             action.parent_action_source = meta.get("parentActionSource")
         if action.language is None:
             action.language = meta.get("language")
+
+        # Scope and other class-level attributes are identical across every
+        # project that registers the same action class.  Propagate immediately
+        # so the dispatch layer sees the correct scope even before each
+        # project's own ER has started.
+        _propagate_action_meta(action, project, ws_context)
 
     ws_context.ws_action_schemas.pop(project.dir_path, None)
     logger.debug(f"Updated config of runner {runner.readable_id}")

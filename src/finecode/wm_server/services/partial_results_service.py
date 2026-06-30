@@ -17,6 +17,7 @@ from loguru import logger
 from finecode.wm_server import context, domain
 from finecode.wm_server.context import pick_workspace_root_dir
 from finecode.wm_server.runner import runner_client
+from finecode.wm_server.errors import ActionNotResolvableError
 from finecode.wm_server.services.run_service import (
     ActionRunFailed,
     find_all_projects_with_action,
@@ -183,6 +184,11 @@ async def run_action_with_partial_results(
             (a for proj in all_projects for a in proj.actions if a.name == action_name),
             None,
         )
+        if first_action is not None and first_action.scope is None:
+            raise ActionNotResolvableError(
+                f"Action '{action_name}' scope has not been resolved. "
+                f"Metadata resolution must complete before dispatch."
+            )
         if first_action is not None and first_action.scope == domain.ActionScope.WORKSPACE:
             workspace_root = pick_workspace_root_dir(ws_context)
             root_project = ws_context.ws_projects.get(workspace_root) if workspace_root else None

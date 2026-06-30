@@ -212,6 +212,9 @@ async def _parse_and_validate_run_action_params(
             raise ValueError(
                 f"Action with source '{action_source}' not found in workspace root project"
             )
+        if action.canonical_source is None:
+            from finecode.wm_server.services import run_service
+            await run_service.ensure_action_metadata(action, root_project, ws_context)
         if action.scope != domain.ActionScope.WORKSPACE:
             raise ValueError("project parameter is required")
         project = root_project
@@ -336,6 +339,12 @@ async def _resolve_actions_by_project(
                 )
                 if action is None:
                     continue
+                if action.canonical_source is None:
+                    # Metadata not yet resolved — start the env runner that has
+                    # the action's package so update_runner_config can import
+                    # the class and set scope (+ propagate to other projects).
+                    from finecode.wm_server.services import run_service
+                    await run_service.ensure_action_metadata(action, project, ws_context)
                 if action.scope == domain.ActionScope.WORKSPACE:
                     if has_workspace_root_project:
                         if project.dir_path != workspace_root_project.dir_path:

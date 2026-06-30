@@ -207,7 +207,8 @@ class Action:
       It may differ from ``source`` when ``source`` is a re-exported alias.
       Remains ``None`` until the ER resolves it.
     * ``scope`` — set by the config collector after it reads the action class's
-      ``SCOPE`` attribute from the ER.  Defaults to ``ActionScope.PROJECT``.
+      ``SCOPE`` attribute from the ER.  ``None`` until the ER that hosts the
+      action class resolves it (the ER that has the action's package installed).
     * ``runs_concurrently`` — set by the config collector after it reads the
       action class's ``HANDLER_EXECUTION`` attribute.  Defaults to ``False``.
     * ``parent_action_source`` — set by the ER's ``resolveActionMeta`` response.
@@ -244,7 +245,8 @@ class Action:
         # Canonical (fully qualified) import path resolved by the Extension Runner
         # at startup. May differ from source when source is a re-exported path.
         self.canonical_source: str | None = None
-        self.scope: ActionScope = ActionScope.PROJECT
+        # None until the ER that hosts the action class resolves it.
+        self.scope: ActionScope | None = None
         # True when the action declares CONCURRENT handler execution.
         self.runs_concurrently: bool = False
         self.parent_action_source: str | None = None

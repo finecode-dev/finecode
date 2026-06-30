@@ -330,10 +330,19 @@ async def _handle_list_actions(
         if not isinstance(project, domain.CollectedProject):
             continue
         for action in project.actions:
+            if action.canonical_source is None:
+                from finecode.wm_server.services import run_service
+                try:
+                    await run_service.ensure_action_metadata(action, project, ws_context)
+                except Exception as exc:
+                    logger.warning(
+                        f"actions/list: could not resolve metadata for {action.source!r} "
+                        f"in {project.dir_path}: {exc}"
+                    )
             actions.append({
                 "name": action.name,
                 "source": action.source,
-                "scope": action.scope.value,
+                "scope": action.scope.value if action.scope is not None else None,
                 "project": str(project.dir_path),
                 "handlers": [
                     {"name": h.name, "source": h.source, "env": h.env}

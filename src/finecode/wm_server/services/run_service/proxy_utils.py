@@ -409,6 +409,64 @@ def find_all_projects_with_action(
     return relevant_projects_paths
 
 
+async def ensure_action_metadata(
+    action: domain.Action,
+    project: domain.CollectedProject,
+    ws_context: context.WorkspaceContext,
+) -> None:
+    """Ensure action metadata (scope, canonical_source, etc.) is resolved.
+
+    The unified signal for resolved metadata is ``canonical_source is not None``:
+    ``update_runner_config`` sets canonical_source, scope, runs_concurrently,
+    parent_action_source, and language all in one pass when the ER imports the
+    action class.  Until then all of those fields are ``None`` / default and
+    cannot be trusted for dispatch decisions.
+
+    When metadata is absent, starts the first handler env runner (the env whose
+    package contains the action class), which causes ``update_runner_config`` to
+    resolve and propagate the metadata to all other projects.
+
+    Raises ``ActionNotResolvableError`` if the environment cannot be started or
+    the action class cannot be imported in that environment.
+    """
+    if action.canonical_source is not None:
+        return
+
+    if not action.handlers:
+        from finecode.wm_server.errors import ActionNotResolvableError
+        raise ActionNotResolvableError(
+            f"Action '{action.source}' has no handlers configured — "
+            f"its metadata cannot be resolved from any ER."
+        )
+
+    resolution_env = action.handlers[0].env
+    existing_runners = ws_context.ws_projects_extension_runners.get(project.dir_path, {})
+    try:
+        await _start_runner_or_update_config(
+            env_name=resolution_env,
+            existing_runners=existing_runners,
+            project=project,
+            ws_context=ws_context,
+            handlers_to_initialize=None,
+        )
+    except StartingEnvironmentsFailed as exc:
+        from finecode.wm_server.errors import ActionNotResolvableError
+        raise ActionNotResolvableError(
+            f"Action '{action.source}' metadata could not be resolved: "
+            f"failed to start env '{resolution_env}' in project '{project.name}'. "
+            f"Ensure the environment is prepared (finecode prepare-envs). "
+            f"Details: {exc.message}"
+        ) from exc
+
+    if action.canonical_source is None:
+        from finecode.wm_server.errors import ActionNotResolvableError
+        raise ActionNotResolvableError(
+            f"Action '{action.source}' metadata was not resolved after starting "
+            f"env '{resolution_env}' in project '{project.name}'. "
+            f"Ensure the action class is importable in that environment."
+        )
+
+
 async def start_required_environments(
     actions_by_projects: dict[pathlib.Path, list[str]],
     ws_context: context.WorkspaceContext,
