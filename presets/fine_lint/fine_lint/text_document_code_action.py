@@ -1,13 +1,7 @@
-import dataclasses
 import enum
+import dataclasses
 
-from finecode_extension_api import code_action, common_types
-
-
-@dataclasses.dataclass
-class CodeActionPayload(code_action.RunActionPayload):
-    text_document: common_types.TextDocumentIdentifier
-    range: common_types.Range
+from finecode_extension_api import code_action
 
 
 class CodeActionKind(enum.Enum):

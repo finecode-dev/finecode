@@ -739,6 +739,9 @@ class JsonRpcClient:
             logger.warning(
                 f"Error occured on running handler of message {message_id} | {self.readable_id}: {message}"
             )
+            if not hasattr(exception, "message"):
+                # Unexpected exception (not a known JSONRPC/domain error) — log traceback
+                logger.exception(exception)
 
             data = getattr(exception, "data", None)
             if data is None:

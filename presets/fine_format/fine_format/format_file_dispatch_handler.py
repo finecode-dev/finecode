@@ -35,7 +35,7 @@ class FormatFileDispatchHandler(
         payload: format_file_action.FormatFileRunPayload,
         run_context: format_file_action.FormatFileRunContext,
     ) -> format_file_action.FormatFileRunResult:
-        subactions_by_lang = self.action_runner.get_actions_for_parent(
+        subactions_by_lang = await self.action_runner.get_actions_for_parent(
             format_file_action.FormatFileAction
         )
 
@@ -46,7 +46,7 @@ class FormatFileDispatchHandler(
             )
 
         files_by_lang_result = await self.action_runner.run_action(
-            action_type=group_src_artifact_files_by_lang_action.GroupSrcArtifactFilesByLangAction,
+            action_type=iprojectactionrunner.ActionRef.from_type(group_src_artifact_files_by_lang_action.GroupSrcArtifactFilesByLangAction),
             payload=group_src_artifact_files_by_lang_action.GroupSrcArtifactFilesByLangRunPayload(
                 file_paths=[payload.file_path],
                 langs=list(subactions_by_lang.keys()),

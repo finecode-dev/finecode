@@ -1,0 +1,58 @@
+[tool.finecode.action.text_document_hover]
+source = "fine_symbol_info.TextDocumentHoverAction"
+
+[[tool.finecode.action.text_document_hover.handlers]]
+name = "dispatch"
+source = "fine_symbol_info.HoverDispatchHandler"
+env = "dev_no_runtime"
+dependencies = ["fine_symbol_info~=0.1.0a0"]
+
+
+[tool.finecode.action.text_document_definition]
+source = "fine_symbol_info.TextDocumentDefinitionAction"
+
+[[tool.finecode.action.text_document_definition.handlers]]
+name = "dispatch"
+source = "fine_symbol_info.DefinitionDispatchHandler"
+env = "dev_no_runtime"
+dependencies = ["fine_symbol_info~=0.1.0a0"]
+
+
+[tool.finecode.action.text_document_references]
+source = "fine_symbol_info.TextDocumentReferencesAction"
+
+[[tool.finecode.action.text_document_references.handlers]]
+name = "dispatch"
+source = "fine_symbol_info.ReferencesDispatchHandler"
+env = "dev_no_runtime"
+dependencies = ["fine_symbol_info~=0.1.0a0"]
+
+
+[tool.finecode.action.text_document_type_definition]
+source = "fine_symbol_info.TextDocumentTypeDefinitionAction"
+
+[[tool.finecode.action.text_document_type_definition.handlers]]
+name = "dispatch"
+source = "fine_symbol_info.TypeDefinitionDispatchHandler"
+env = "dev_no_runtime"
+dependencies = ["fine_symbol_info~=0.1.0a0"]
+
+
+[tool.finecode.action.text_document_implementation]
+source = "fine_symbol_info.TextDocumentImplementationAction"
+
+[[tool.finecode.action.text_document_implementation.handlers]]
+name = "dispatch"
+source = "fine_symbol_info.ImplementationDispatchHandler"
+env = "dev_no_runtime"
+dependencies = ["fine_symbol_info~=0.1.0a0"]
+
+
+[tool.finecode.action.text_document_document_highlight]
+source = "fine_symbol_info.TextDocumentDocumentHighlightAction"
+
+[[tool.finecode.action.text_document_document_highlight.handlers]]
+name = "dispatch"
+source = "fine_symbol_info.DocumentHighlightDispatchHandler"
+env = "dev_no_runtime"
+dependencies = ["fine_symbol_info~=0.1.0a0"]

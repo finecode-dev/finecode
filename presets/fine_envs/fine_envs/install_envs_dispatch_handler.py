@@ -39,7 +39,7 @@ class InstallEnvsDispatchHandler(
         async with run_context.progress("Installing environments", total=len(run_context.envs)) as progress:
             async def _install_and_advance(env):
                 result = await self.action_runner.run_action(
-                    action_type=install_env_action.InstallEnvAction,
+                    action_type=iprojectactionrunner.ActionRef.from_type(install_env_action.InstallEnvAction),
                     payload=install_env_action.InstallEnvRunPayload(env=env),
                     meta=run_context.meta,
                 )

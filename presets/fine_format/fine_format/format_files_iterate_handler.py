@@ -50,7 +50,7 @@ class FormatFilesIterateHandler(
         run_context: format_files_action.FormatFilesRunContext,
     ) -> format_files_action.FormatFilesRunResult:
         item_result: FormatFileRunResult = await self.action_runner.run_action(
-            action_type=FormatFileAction,
+            action_type=iprojectactionrunner.ActionRef.from_type(FormatFileAction),
             payload=FormatFileRunPayload(
                 file_path=file_uri,
                 save=save,

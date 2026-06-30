@@ -45,6 +45,7 @@ async def update_config(
         [], collections.abc.Awaitable[dict[str, Path]]
     ] | None = None,
     send_request_to_wm: typing.Callable[[str, dict], collections.abc.Awaitable[typing.Any]] | None = None,
+    send_user_message_notification: typing.Callable[[str, str], None] | None = None,
 ) -> tuple[schemas.UpdateConfigResponse, context.RunnerContext]:
     project_dir_path = Path(request.working_dir)
 
@@ -133,6 +134,7 @@ async def update_config(
         handler_packages=handler_packages,
         service_declarations=request.services,
         send_request_to_wm=send_request_to_wm,
+        send_user_message_notification=send_user_message_notification,
     )
 
     if request.handlers_to_initialize is not None:

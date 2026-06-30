@@ -46,7 +46,7 @@ class IngestWalSourceDiscoveryHandler(
             return IngestWalToStoreRunResult()
 
         discover_result = await self.action_runner.run_action(
-            action_type=DiscoverWalSourcesAction,
+            action_type=iprojectactionrunner.ActionRef.from_type(DiscoverWalSourcesAction),
             payload=DiscoverWalSourcesRunPayload(),
             meta=run_context.meta,
         )

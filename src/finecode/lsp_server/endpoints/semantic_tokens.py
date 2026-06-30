@@ -70,7 +70,7 @@ async def _run_full_or_range(
     if project_dir is None:
         return None
 
-    params: dict[str, Any] = {"text_document": {"uri": uri}}
+    params: dict[str, Any] = {"uri": uri}
     if range_dict is not None:
         params["range"] = range_dict
 
@@ -152,7 +152,7 @@ async def document_semantic_tokens_full_delta(
             action_source="fine_semantic_tokens.TextDocumentSemanticTokensDeltaAction",
             project=project_dir,
             params={
-                "text_document": {"uri": uri},
+                "uri": uri,
                 "previous_result_id": previous_result_id,
             },
             options={"trigger": "system", "devEnv": "ide"},

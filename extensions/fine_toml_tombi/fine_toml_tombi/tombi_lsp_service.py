@@ -2,16 +2,45 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
-from typing import override
+from typing import Any, override
 
 from finecode_extension_api import service
-from finecode_extension_api.actions.code_quality import lint_files_action
-from finecode_extension_api.interfaces import ifileeditor, ilspclient, ilogger
-from finecode_extension_api.contrib.lsp_service import (
-    LspService,
-    apply_text_edits,
-    map_diagnostics_to_lint_messages,
+from fine_lint.diagnostic_types import Diagnostic
+from fine_semantic_tokens.text_document_semantic_tokens_action import (
+    SEMANTIC_TOKEN_MODIFIERS,
+    SEMANTIC_TOKEN_TYPES,
 )
+from finecode_extension_api.interfaces import ifileeditor, ilspclient, ilogger
+from finecode_extension_api.contrib.lsp_service import LspService, apply_text_edits
+from fine_inspect_code.diagnostic_types import map_lsp_diagnostics
+
+
+_TOMBI_CLIENT_CAPABILITIES: dict[str, Any] = {
+    "textDocument": {
+        "synchronization": {
+            "dynamicRegistration": False,
+            "didSave": True,
+        },
+        "publishDiagnostics": {"relatedInformation": True},
+        "semanticTokens": {
+            "dynamicRegistration": False,
+            "tokenTypes": SEMANTIC_TOKEN_TYPES,
+            "tokenModifiers": SEMANTIC_TOKEN_MODIFIERS,
+            "formats": ["relative"],
+            # tombi doesn't support range requests, keep only full
+            "requests": {"full": True},
+            "multilineTokenSupport": False,
+            "overlappingTokenSupport": False,
+        },
+    },
+    "workspace": {
+        # workspaceFolders must stay False: LspService has no workspace/workspaceFolders
+        # request handler. Declaring True would tell tombi we support the pull-based
+        # request, but we pass folders once in initialize — no dynamic updates needed.
+        "workspaceFolders": False,
+        "configuration": True,
+    },
+}
 
 
 class TombiLspService(service.DisposableService):
@@ -31,6 +60,7 @@ class TombiLspService(service.DisposableService):
             cmd=f"{tombi_bin} lsp",
             language_id="toml",
             readable_id="tombi-lsp",
+            client_capabilities=_TOMBI_CLIENT_CAPABILITIES,
         )
 
     @override
@@ -48,9 +78,9 @@ class TombiLspService(service.DisposableService):
         self,
         file_path: Path,
         timeout: float = 30.0,
-    ) -> list[lint_files_action.LintMessage]:
+    ) -> list[Diagnostic]:
         raw_diagnostics = await self._lsp_service.check_file(file_path, timeout)
-        return map_diagnostics_to_lint_messages(raw_diagnostics, default_source="tombi")
+        return map_lsp_diagnostics(raw_diagnostics, default_source="tombi")
 
     async def format_file(
         self,
@@ -62,3 +92,18 @@ class TombiLspService(service.DisposableService):
         if not raw_edits:
             return file_content
         return apply_text_edits(file_content, raw_edits)
+
+    @property
+    def server_capabilities(self) -> dict[str, Any]:
+        return self._lsp_service.server_capabilities
+
+    async def get_semantic_tokens(
+        self,
+        file_path: Path,
+        content: str,
+        range_dict: dict[str, Any] | None = None,
+        timeout: float = 30.0,
+    ) -> dict[str, Any] | None:
+        return await self._lsp_service.get_semantic_tokens(
+            file_path, content, range_dict=range_dict, timeout=timeout
+        )

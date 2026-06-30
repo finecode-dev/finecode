@@ -37,7 +37,7 @@ class CreateEnvsDispatchHandler(
         async with run_context.progress("Creating environments", total=len(run_context.envs)) as progress:
             async def _create_and_advance(env):
                 result = await self.action_runner.run_action(
-                    action_type=create_env_action.CreateEnvAction,
+                    action_type=iprojectactionrunner.ActionRef.from_type(create_env_action.CreateEnvAction),
                     payload=create_env_action.CreateEnvRunPayload(
                         env=env,
                         recreate=payload.recreate,

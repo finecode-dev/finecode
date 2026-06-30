@@ -3,9 +3,9 @@ import re
 
 from loguru import logger
 
-from fine_lint.lint_files_action import (
-    LintMessage,
-    LintMessageSeverity,
+from fine_type_check.diagnostic_types import (
+    Diagnostic,
+    DiagnosticSeverity,
     Position,
     Range,
 )
@@ -38,22 +38,22 @@ def absolute_path(file_path: str) -> str:
 
 def _get_severity(
     code: str, code_type: str, severity: dict[str, str]
-) -> LintMessageSeverity:
+) -> DiagnosticSeverity:
     value = severity.get(code, None) or severity.get(code_type, "error")
     try:
-        return LintMessageSeverity[value.upper()]
+        return DiagnosticSeverity[value.upper()]
     except ValueError:
-        logger.debug(f"Severity {value.upper()} doesn't exist in LintMessageSeverity")
+        logger.debug(f"Severity {value.upper()} doesn't exist in DiagnosticSeverity")
         pass
 
-    return LintMessageSeverity.INFO
+    return DiagnosticSeverity.INFO
 
 
 def parse_output_using_regex(
     content: str, severity: dict[str, str]
-) -> dict[str, list[LintMessage]]:
+) -> dict[str, list[Diagnostic]]:
     lines: list[str] = content.splitlines()
-    diagnostics: dict[str, list[LintMessage]] = {}
+    diagnostics: dict[str, list[Diagnostic]] = {}
 
     notes = []
     see_href = None
@@ -113,7 +113,7 @@ def parse_output_using_regex(
             character=end_char - CHAR_OFFSET,
         )
 
-        diagnostic = LintMessage(
+        diagnostic = Diagnostic(
             range=Range(start=start, end=end),
             message=message,
             severity=_get_severity(code or "", data["type"], severity),

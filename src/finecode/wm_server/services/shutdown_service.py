@@ -8,7 +8,10 @@ def on_shutdown(ws_context: context.WorkspaceContext):
     running_runners = []
     for runners_by_env in ws_context.ws_projects_extension_runners.values():
         for runner in runners_by_env.values():
-            if runner.status == runner_client.RunnerStatus.RUNNING:
+            if runner.status in (
+                runner_client.RunnerStatus.RUNNING,
+                runner_client.RunnerStatus.REPAIRING,
+            ):
                 running_runners.append(runner)
 
     logger.trace(f"Stop all {len(running_runners)} running extension runners")

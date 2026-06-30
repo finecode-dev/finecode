@@ -156,8 +156,10 @@ class AsyncListIterator[T](collections.abc.AsyncIterator[T]):
             # not ended yet, wait for the next change
             await self.async_list.change_event.wait()
             self.async_list.change_event.clear()
-            if self.async_list.ended:
-                # the last change ended the list
+            # Check data BEFORE checking ended: items may have been appended
+            # just before end() was called but after we started waiting. If we
+            # checked ended first we would silently drop those items.
+            if len(self.async_list.data) <= self.current_index:
                 raise StopAsyncIteration()
 
         self.current_index += 1
@@ -488,6 +490,10 @@ async def _start_runner_or_update_config(
         runner = existing_runners[env_name]
         if runner.status == runner_client.RunnerStatus.INITIALIZING:
             await runner.initialized_event.wait()
+        elif runner.status == runner_client.RunnerStatus.REPAIRING:
+            if runner.repair_complete_event is not None:
+                await runner.repair_complete_event.wait()
+            runner = existing_runners.get(env_name, runner)
 
         runner_is_running = (
             runner.status == runner_client.RunnerStatus.RUNNING
@@ -635,6 +641,28 @@ async def run_actions_in_projects(
     progress_token_by_project: dict[pathlib.Path, dict[str, str]] | None = None,
 ) -> dict[pathlib.Path, dict[str, RunActionResponse]]:
     _payload_overrides_by_project = payload_overrides_by_project or {}
+
+    # Lazily start runners for projects that are not yet resolved.  This handles
+    # the case where a workspace-scope action fans out to projects whose runners
+    # were not started upfront (e.g. CLI run with --project filter).
+    unresolved = [
+        ws_context.ws_projects[p]
+        for p in actions_by_project
+        if not isinstance(ws_context.ws_projects.get(p), domain.ResolvedProject)
+        and ws_context.ws_projects.get(p) is not None
+    ]
+    if unresolved:
+        from finecode.wm_server.services import runner_start_service
+        unresolved_names = ", ".join(p.name for p in unresolved)
+        logger.debug(
+            f"Lazily starting runners for {len(unresolved)} unresolved project(s): {unresolved_names}"
+        )
+        await runner_start_service.start_runners_with_auto_prepare(
+            projects=unresolved,
+            ws_context=ws_context,
+            initialize_all_handlers=True,
+        )
+
     project_handler_tasks: list[asyncio.Task] = []
     try:
         async with asyncio.TaskGroup() as tg:
@@ -750,9 +778,20 @@ async def run_action(
                 dev_env=dev_env.value,
                 payload=wal.RunRejectedPayload(reason="project_not_resolved"),
             )
+            runner = (
+                ws_context.ws_projects_extension_runners
+                .get(project_def.dir_path, {})
+                .get("dev_workspace")
+            )
+            if runner is not None:
+                runner_detail = f"runner status={runner.status.name}"
+                if runner.log_file_path is not None:
+                    runner_detail += f", logs={runner.log_file_path}"
+            else:
+                runner_detail = "no runner started"
             raise ActionRunFailed(
-                f"Project {project_def.dir_path} is not ready to run actions yet."
-                + " Please check logs."
+                f"Project {project_def.dir_path} is not ready to run actions yet"
+                f" ({runner_detail})."
             )
 
         wal.emit_run_event(

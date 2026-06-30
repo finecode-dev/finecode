@@ -61,7 +61,15 @@ class WorkspaceActionRunnerImpl(iworkspaceactionrunner.IWorkspaceActionRunner):
         results_by_project: dict = raw["resultsByProject"]
         results: dict[pathlib.Path, ResultT] = {}
         for k, v in results_by_project.items():
-            raw_result = next(iter(v.values()), {})
+            raw_entry = next(iter(v.values()), None)
+            if raw_entry is None or raw_entry.get("status") == "no_handlers":
+                continue
+            raw_result = raw_entry.get("result")
+            if raw_result is None:
+                raise iprojectactionrunner.ActionRunFailed(
+                    f"'{action_type.__name__}' handler returned no result for project '{k}' "
+                    f"(status={raw_entry.get('status')}). The handler must always send a result."
+                )
             try:
                 results[pathlib.Path(k)] = _converter.structure(
                     raw_result, action_type.RESULT_TYPE

@@ -13,7 +13,8 @@ WmError
 │   └── PresetPackageNotInstalledError
 ├── ActionError
 │   ├── ActionNotFoundError
-│   └── ActionRunFailed
+│   ├── ActionRunFailed
+│   └── ActionNotResolvableError
 └── RunnerError
     └── StartingEnvironmentsFailed
 """
@@ -77,6 +78,18 @@ class ActionNotFoundError(ActionError):
 
 class ActionRunFailed(ActionError):
     """Action execution failed in the Extension Runner."""
+
+    def __init__(self, message: str) -> None:
+        super().__init__(message)
+        self.message = message
+
+
+class ActionNotResolvableError(ActionError):
+    """Action metadata could not be resolved from any of its configured handler environments.
+
+    Raised when all handler envs for an action have been tried (including auto
+    prepare-envs repair) and none could import the action class.
+    """
 
     def __init__(self, message: str) -> None:
         super().__init__(message)

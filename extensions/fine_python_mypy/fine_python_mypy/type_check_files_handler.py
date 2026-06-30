@@ -9,10 +9,13 @@ from pathlib import Path
 import fine_python_mypy.output_parser as output_parser
 
 from finecode_extension_api import code_action
-from fine_lint import lint_files_action
-from fine_python_lang.lint_python_files_action import (
-    LintPythonFilesAction,
+from fine_type_check.diagnostic_types import (
+    Diagnostic,
+    DiagnosticFilesRunPayload,
+    DiagnosticFilesRunContext,
+    DiagnosticFilesRunResult,
 )
+from fine_python_lang.type_check_python_files_action import TypeCheckPythonFilesAction
 from finecode_extension_api.interfaces import (
     icache,
     icommandrunner,
@@ -28,11 +31,11 @@ class DmypyFailedError(Exception): ...
 
 
 @dataclasses.dataclass
-class MypyLintFilesHandlerConfig(code_action.ActionHandlerConfig): ...
+class MypyTypeCheckFilesHandlerConfig(code_action.ActionHandlerConfig): ...
 
 
-class MypyLintFilesHandler(
-    code_action.ActionHandler[LintPythonFilesAction, MypyLintFilesHandlerConfig]
+class MypyTypeCheckFilesHandler(
+    code_action.ActionHandler[TypeCheckPythonFilesAction, MypyTypeCheckFilesHandlerConfig]
 ):
     CACHE_KEY = "mypy"
     FILE_OPERATION_AUTHOR = ifileeditor.FileOperationAuthor('Mypy')
@@ -81,18 +84,18 @@ class MypyLintFilesHandler(
         project_path: Path,
         all_project_files: list[Path],
         action_run_id: int,
-    ) -> lint_files_action.LintFilesRunResult:
+    ) -> DiagnosticFilesRunResult:
         # if mypy was run on the file, the result will be found in cache. If result
         # is not in cache, we need additionally to check whether mypy is not running
         # on the file right now, because we run mypy on the whole packages.
-        messages: dict[str, list[lint_files_action.LintMessage]] = {}
+        messages: dict[str, list[Diagnostic]] = {}
         # TODO: right cache with dependencies
         try:
             cached_lint_messages = await self.cache.get_file_cache(
                 file_path, self.CACHE_KEY
             )
             messages[file_uri] = cached_lint_messages
-            return lint_files_action.LintFilesRunResult(messages=messages)
+            return DiagnosticFilesRunResult(messages=messages)
         except icache.CacheMissException:
             pass
 
@@ -111,7 +114,7 @@ class MypyLintFilesHandler(
                 cached_lint_messages = []
 
             messages[file_uri] = cached_lint_messages
-            return lint_files_action.LintFilesRunResult(messages=messages)
+            return DiagnosticFilesRunResult(messages=messages)
         else:
             # save file versions at the beginning because file can be changed during
             # checking and we want to cache result for current version, not for changed
@@ -164,12 +167,12 @@ class MypyLintFilesHandler(
                 project_checked_event.set()
                 del self._projects_being_checked_done_events[project_path]
 
-            return lint_files_action.LintFilesRunResult(messages=messages)
+            return DiagnosticFilesRunResult(messages=messages)
 
     async def _run_dmypy_on_project(
         self, project_dir_path: Path, all_project_files: list[Path]
-    ) -> dict[Path, list[lint_files_action.LintMessage]]:
-        new_messages: dict[str, list[lint_files_action.LintMessage]] = {}
+    ) -> dict[Path, list[Diagnostic]]:
+        new_messages: dict[str, list[Diagnostic]] = {}
         if project_dir_path not in self._process_lock_by_cwd:
             self._process_lock_by_cwd[project_dir_path] = asyncio.Lock()
 
@@ -187,7 +190,7 @@ class MypyLintFilesHandler(
         )
         new_messages.update(project_lint_messages)
         all_processed_files_with_messages: dict[
-            Path, list[lint_files_action.LintMessage]
+            Path, list[Diagnostic]
         ] = {
             file_path: [] for file_path in all_project_files
         }
@@ -201,8 +204,8 @@ class MypyLintFilesHandler(
 
     async def run(
         self,
-        payload: lint_files_action.LintFilesRunPayload,
-        run_context: lint_files_action.LintFilesRunContext,
+        payload: DiagnosticFilesRunPayload,
+        run_context: DiagnosticFilesRunContext,
     ) -> None:
         file_uris = [file_uri async for file_uri in payload]
         file_paths = [resource_uri_to_path(file_uri) for file_uri in file_uris]

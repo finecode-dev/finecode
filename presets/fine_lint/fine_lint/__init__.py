@@ -12,6 +12,7 @@ from fine_lint.lint_handler import LintHandler
 from fine_lint.lint_files_dispatch_handler import LintFilesDispatchHandler
 from fine_lint.lint_fixes_code_actions_bridge_handler import LintFixesCodeActionsBridgeHandler
 from fine_lint.get_lint_fixes_files_dispatch_handler import GetLintFixesFilesDispatchHandler
+from fine_lint.lint_inspect_code_bridge_handler import LintInspectCodeBridgeHandler
 
 __all__ = [
     "LintAction",
@@ -26,4 +27,5 @@ __all__ = [
     "LintFilesDispatchHandler",
     "LintFixesCodeActionsBridgeHandler",
     "GetLintFixesFilesDispatchHandler",
+    "LintInspectCodeBridgeHandler",
 ]

@@ -10,9 +10,8 @@ from loguru import logger
 
 from finecode_extension_api import code_action
 from finecode_extension_api.interfaces import iprojectactionrunner
-from finecode_extension_runner import domain, er_errors, er_telemetry, run_utils
+from finecode_extension_runner import domain, run_utils
 from finecode_extension_runner._converter import converter as _converter
-from finecode_extension_runner._services.run_action import _serialize_caller_kwargs
 
 
 PayloadT = typing.TypeVar("PayloadT", bound=code_action.RunActionPayload)
@@ -103,53 +102,114 @@ class ProjectActionRunnerImpl(iprojectactionrunner.IProjectActionRunner):
             self._source_cls_cache[source] = cls
         return cls
 
-    def get_actions_for_parent(self, parent_action_type: type) -> dict[str, type]:
-        result: dict[str, type] = {}
+    async def get_actions_for_parent(self, parent_action_type: type) -> dict[str, iprojectactionrunner.ActionRef]:
+        parent_canonical = f"{parent_action_type.__module__}.{parent_action_type.__qualname__}"
+        result: dict[str, iprojectactionrunner.ActionRef] = {}
         for action_def in self._actions_getter().values():
             cls = self._resolve_type(action_def.source)
-            if cls is None:
-                continue
-            if getattr(cls, "PARENT_ACTION", None) is parent_action_type:
-                lang = getattr(cls, "LANGUAGE", None)
-                if lang is not None:
+            if cls is not None:
+                # Local import succeeded — use type identity check
+                if getattr(cls, "PARENT_ACTION", None) is parent_action_type:
+                    lang = getattr(cls, "LANGUAGE", None)
+                    if lang is not None:
+                        if lang in result:
+                            logger.error(
+                                "Multiple subactions registered for language {!r} under parent"
+                                " {!r}: {!r} and {!r}. Only one subaction per language is"
+                                " allowed; {!r} will be ignored.",
+                                lang,
+                                parent_action_type,
+                                result[lang],
+                                cls,
+                                result[lang],
+                            )
+                        result[lang] = iprojectactionrunner.ActionRef(
+                            source=action_def.source,
+                            result_type=cls.RESULT_TYPE,
+                            action_type=cls,
+                        )
+            else:
+                # Local import failed — check metadata cache or ask WM
+                if action_def.metadata is None:
+                    try:
+                        raw = await self._send(
+                            "finecode/getActionMetadata",
+                            {"actionSource": action_def.source},
+                        )
+                        action_def.metadata = domain.ActionMetadata(
+                            parent_action_source=raw.get("parentActionSource"),
+                            language=raw.get("language"),
+                        )
+                    except Exception as exc:
+                        logger.debug(
+                            f"WM metadata fallback failed for {action_def.source!r}: {exc}"
+                        )
+                        # Cache a null sentinel so this source is not retried on
+                        # subsequent get_actions_for_parent calls.
+                        action_def.metadata = domain.ActionMetadata(
+                            parent_action_source=None, language=None
+                        )
+                        # Emit OTel span event only when both local import and WM fail
+                        try:
+                            from opentelemetry import trace
+                            span = trace.get_current_span()
+                            if span.is_recording():
+                                span.add_event(
+                                    "subaction.import_failed",
+                                    {"action.source": action_def.source},
+                                )
+                        except Exception:
+                            pass
+                        continue
+
+                meta = action_def.metadata
+                if (
+                    meta.parent_action_source == parent_canonical
+                    and meta.language is not None
+                ):
+                    lang = meta.language
                     if lang in result:
                         logger.error(
                             "Multiple subactions registered for language {!r} under parent"
                             " {!r}: {!r} and {!r}. Only one subaction per language is"
                             " allowed; {!r} will be ignored.",
                             lang,
-                            parent_action_type,
+                            parent_canonical,
                             result[lang],
-                            cls,
+                            action_def.source,
                             result[lang],
                         )
-                    result[lang] = cls
+                    result[lang] = iprojectactionrunner.ActionRef(
+                        source=action_def.source,
+                        result_type=parent_action_type.RESULT_TYPE,
+                    )
+
         return result
 
     def _build_result(
         self,
-        action_type: type[code_action.Action[PayloadT, typing.Any, ResultT]],
+        action_type: iprojectactionrunner.ActionRef,
         raw_result: dict[str, Any],
     ) -> ResultT:
         return typing.cast(
             ResultT,
-            _converter.structure(raw_result, action_type.RESULT_TYPE),
+            _converter.structure(raw_result, action_type.result_type),
         )
 
     async def run_action(
         self,
-        action_type: type[code_action.Action[PayloadT, typing.Any, ResultT]],
+        action_type: iprojectactionrunner.ActionRef,
         payload: PayloadT,
         meta: code_action.RunActionMeta,
         caller_kwargs: code_action.CallerRunContextKwargs | None = None,
     ) -> ResultT:
-        action_def = self._find_local_action(action_type)
-        if action_def is None:
-            # Two valid reasons to reach here:
-            # 1. Action belongs to a different project — WM dispatch below will route it correctly.
-            # 2. Bug: action should have been found locally but wasn't — WM dispatch may still
-            #    succeed, masking the problem.
-            logger.debug(f"Action not found locally: {action_type}")
+        action_source = action_type.source
+        if action_type.action_type is not None:
+            action_def = self._find_local_action(action_type.action_type)
+            if action_def is None:
+                logger.debug(f"Action not found locally: {action_type.source}")
+        else:
+            action_def = None
 
         if action_def is not None and self._all_handlers_in_current_env(action_def):
             result = await self._run_action_func(
@@ -196,26 +256,24 @@ class ProjectActionRunnerImpl(iprojectactionrunner.IProjectActionRunner):
         raw_final_result = raw_result.get("result")
         if raw_final_result is None:
             raise iprojectactionrunner.ActionRunFailed(
-                f"Action '{action_type.__qualname__}' returned no final result payload"
+                f"Action '{action_type.source}' returned no final result payload"
             )
         return self._build_result(action_type, raw_final_result)
 
     async def run_action_iter(
         self,
-        action_type: type[code_action.Action[PayloadT, typing.Any, ResultT]],
+        action_type: iprojectactionrunner.ActionRef,
         payload: PayloadT,
         meta: code_action.RunActionMeta,
         caller_kwargs: code_action.CallerRunContextKwargs | None = None,
     ) -> collections.abc.AsyncIterator[ResultT]:
         global _last_wm_token
 
-        action_def = self._find_local_action(action_type)
-        if action_def is None:
-            # Two valid reasons to reach here:
-            # 1. Action belongs to a different project — WM dispatch below will route it correctly.
-            # 2. Bug: action should have been found locally but wasn't — WM dispatch may still
-            #    succeed, masking the problem.
-            logger.debug(f"Action not found locally: {action_type}")
+        action_source = action_type.source
+        if action_type.action_type is not None:
+            action_def = self._find_local_action(action_type.action_type)
+        else:
+            action_def = None
 
         if action_def is not None and self._all_handlers_in_current_env(action_def):
             queue: asyncio.Queue[dict[str, Any] | object] = asyncio.Queue()

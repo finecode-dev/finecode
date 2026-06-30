@@ -13,8 +13,8 @@ dev_workspace = ["finecode~=0.4.0a0", "finecode_dev_common_preset~=0.3.0a0"]
 [tool.finecode]
 presets = [{ source = "finecode_dev_common_preset" }]
 
+[tool.setuptools]
+packages = ["fine_python_uv"]
+
 [tool.setuptools.package-dir]
 "" = "src"
-
-[tool.setuptools.packages.find]
-where = ["src"]

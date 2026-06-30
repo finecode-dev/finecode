@@ -6,7 +6,6 @@ from pathlib import Path
 from typing import Any, override
 
 from finecode_extension_api import service
-from finecode_extension_api.actions.code_quality import lint_files_action
 from finecode_extension_api.interfaces import ifileeditor, ilogger, ilspclient
 
 
@@ -46,6 +45,7 @@ class LspService(service.DisposableService):
         cmd: str,
         language_id: str,
         readable_id: str = "",
+        client_capabilities: dict[str, Any] | None = None,
     ) -> None:
         self._lsp_client = lsp_client
         self._file_editor = file_editor
@@ -53,6 +53,7 @@ class LspService(service.DisposableService):
         self._cmd = cmd
         self._language_id = language_id
         self._readable_id = readable_id
+        self._client_capabilities = client_capabilities
         self._file_operation_author = ifileeditor.FileOperationAuthor(
             id=readable_id or "LspService"
         )
@@ -71,6 +72,8 @@ class LspService(service.DisposableService):
         self._document_version: dict[str, int] = {}
         # current settings, accumulated via update_settings and sent on start
         self._settings: dict[str, Any] = {}
+        # server capabilities populated once after the initialize handshake
+        self._server_capabilities: dict[str, Any] = {}
 
     @override
     async def init(self) -> None:
@@ -98,6 +101,7 @@ class LspService(service.DisposableService):
         self._file_versions.clear()
         self._open_documents.clear()
         self._document_version.clear()
+        self._server_capabilities = {}
 
     async def ensure_started(
         self,
@@ -120,9 +124,11 @@ class LspService(service.DisposableService):
             if self._settings
             else None,
             readable_id=self._readable_id,
+            client_capabilities=self._client_capabilities,
         )
         await session.__aenter__()
         self._session = session
+        self._server_capabilities = session.server_capabilities
         self._session.on_notification(
             "textDocument/publishDiagnostics",
             self._handle_diagnostics,
@@ -132,6 +138,14 @@ class LspService(service.DisposableService):
         self._session.on_request(
             "workspace/configuration",
             self._handle_configuration_request,
+        )
+        # Some LSP servers send client/registerCapability regardless of whether
+        # we declared dynamicRegistration: false for individual capabilities.
+        # Returning null (None) is the correct LSP response: we acknowledge the
+        # registration silently and apply no behaviour change.
+        self._session.on_request(
+            "client/registerCapability",
+            self._handle_register_capability,
         )
 
         # some LSP servers read settings from didChangeConfiguration (e.g. pyrefly)
@@ -164,6 +178,10 @@ class LspService(service.DisposableService):
             "workspace/didChangeConfiguration",
             {"settings": self._settings},
         )
+
+    @property
+    def server_capabilities(self) -> dict[str, Any]:
+        return self._server_capabilities
 
     async def request(
         self,
@@ -304,6 +322,656 @@ class LspService(service.DisposableService):
 
         return result or []
 
+    async def get_semantic_tokens(
+        self,
+        file_path: Path,
+        content: str,
+        range_dict: dict[str, Any] | None = None,
+        timeout: float = 30.0,
+    ) -> dict[str, Any] | None:
+        """Request semantic tokens for a file and return the raw LSP result."""
+        assert self._session is not None, "LspService not started"
+
+        uri = file_path.as_uri()
+
+        lsp_version = self._next_version(uri)
+        if uri not in self._open_documents:
+            await self._session.send_notification(
+                "textDocument/didOpen",
+                {
+                    "textDocument": {
+                        "uri": uri,
+                        "languageId": self._language_id,
+                        "version": lsp_version,
+                        "text": content,
+                    },
+                },
+            )
+            self._open_documents.add(uri)
+        else:
+            await self._session.send_notification(
+                "textDocument/didChange",
+                {
+                    "textDocument": {"uri": uri, "version": lsp_version},
+                    "contentChanges": [{"text": content}],
+                },
+            )
+
+        semantic_tokens_provider = self._server_capabilities.get(
+            "semanticTokensProvider", {}
+        )
+        server_supports_range = bool(semantic_tokens_provider.get("range"))
+        if range_dict is not None and server_supports_range:
+            method = "textDocument/semanticTokens/range"
+            params: dict[str, Any] = {"textDocument": {"uri": uri}, "range": range_dict}
+        else:
+            method = "textDocument/semanticTokens/full"
+            params = {"textDocument": {"uri": uri}}
+
+        result = await self._session.send_request(method, params, timeout=timeout)
+
+        if file_path not in self._file_editor.get_opened_files():
+            await self._session.send_notification(
+                "textDocument/didClose",
+                {"textDocument": {"uri": uri}},
+            )
+            self._open_documents.discard(uri)
+
+        return result
+
+    async def get_hover(
+        self,
+        file_path: Path,
+        content: str,
+        position: dict[str, Any],
+        timeout: float = 30.0,
+    ) -> dict[str, Any] | None:
+        """Request hover information for a position and return the raw LSP result."""
+        assert self._session is not None, "LspService not started"
+
+        uri = file_path.as_uri()
+        lsp_version = self._next_version(uri)
+        if uri not in self._open_documents:
+            await self._session.send_notification(
+                "textDocument/didOpen",
+                {
+                    "textDocument": {
+                        "uri": uri,
+                        "languageId": self._language_id,
+                        "version": lsp_version,
+                        "text": content,
+                    },
+                },
+            )
+            self._open_documents.add(uri)
+        else:
+            await self._session.send_notification(
+                "textDocument/didChange",
+                {
+                    "textDocument": {"uri": uri, "version": lsp_version},
+                    "contentChanges": [{"text": content}],
+                },
+            )
+
+        result = await self._session.send_request(
+            "textDocument/hover",
+            {"textDocument": {"uri": uri}, "position": position},
+            timeout=timeout,
+        )
+
+        if file_path not in self._file_editor.get_opened_files():
+            await self._session.send_notification(
+                "textDocument/didClose",
+                {"textDocument": {"uri": uri}},
+            )
+            self._open_documents.discard(uri)
+
+        return result
+
+    async def get_definition(
+        self,
+        file_path: Path,
+        content: str,
+        position: dict[str, Any],
+        timeout: float = 30.0,
+    ) -> list[dict[str, Any]] | dict[str, Any] | None:
+        """Request definition location(s) for a position and return the raw LSP result."""
+        assert self._session is not None, "LspService not started"
+
+        uri = file_path.as_uri()
+        lsp_version = self._next_version(uri)
+        if uri not in self._open_documents:
+            await self._session.send_notification(
+                "textDocument/didOpen",
+                {
+                    "textDocument": {
+                        "uri": uri,
+                        "languageId": self._language_id,
+                        "version": lsp_version,
+                        "text": content,
+                    },
+                },
+            )
+            self._open_documents.add(uri)
+        else:
+            await self._session.send_notification(
+                "textDocument/didChange",
+                {
+                    "textDocument": {"uri": uri, "version": lsp_version},
+                    "contentChanges": [{"text": content}],
+                },
+            )
+
+        result = await self._session.send_request(
+            "textDocument/definition",
+            {"textDocument": {"uri": uri}, "position": position},
+            timeout=timeout,
+        )
+
+        if file_path not in self._file_editor.get_opened_files():
+            await self._session.send_notification(
+                "textDocument/didClose",
+                {"textDocument": {"uri": uri}},
+            )
+            self._open_documents.discard(uri)
+
+        return result
+
+    async def get_references(
+        self,
+        file_path: Path,
+        content: str,
+        position: dict[str, Any],
+        include_declaration: bool = True,
+        timeout: float = 30.0,
+    ) -> list[dict[str, Any]] | None:
+        """Request reference locations for a position and return the raw LSP result."""
+        assert self._session is not None, "LspService not started"
+
+        uri = file_path.as_uri()
+        lsp_version = self._next_version(uri)
+        if uri not in self._open_documents:
+            await self._session.send_notification(
+                "textDocument/didOpen",
+                {
+                    "textDocument": {
+                        "uri": uri,
+                        "languageId": self._language_id,
+                        "version": lsp_version,
+                        "text": content,
+                    },
+                },
+            )
+            self._open_documents.add(uri)
+        else:
+            await self._session.send_notification(
+                "textDocument/didChange",
+                {
+                    "textDocument": {"uri": uri, "version": lsp_version},
+                    "contentChanges": [{"text": content}],
+                },
+            )
+
+        result = await self._session.send_request(
+            "textDocument/references",
+            {
+                "textDocument": {"uri": uri},
+                "position": position,
+                "context": {"includeDeclaration": include_declaration},
+            },
+            timeout=timeout,
+        )
+
+        if file_path not in self._file_editor.get_opened_files():
+            await self._session.send_notification(
+                "textDocument/didClose",
+                {"textDocument": {"uri": uri}},
+            )
+            self._open_documents.discard(uri)
+
+        return result
+
+    async def get_type_definition(
+        self,
+        file_path: Path,
+        content: str,
+        position: dict[str, Any],
+        timeout: float = 30.0,
+    ) -> list[dict[str, Any]] | dict[str, Any] | None:
+        """Request type definition location(s) for a position and return the raw LSP result."""
+        assert self._session is not None, "LspService not started"
+
+        uri = file_path.as_uri()
+        lsp_version = self._next_version(uri)
+        if uri not in self._open_documents:
+            await self._session.send_notification(
+                "textDocument/didOpen",
+                {
+                    "textDocument": {
+                        "uri": uri,
+                        "languageId": self._language_id,
+                        "version": lsp_version,
+                        "text": content,
+                    },
+                },
+            )
+            self._open_documents.add(uri)
+        else:
+            await self._session.send_notification(
+                "textDocument/didChange",
+                {
+                    "textDocument": {"uri": uri, "version": lsp_version},
+                    "contentChanges": [{"text": content}],
+                },
+            )
+
+        result = await self._session.send_request(
+            "textDocument/typeDefinition",
+            {"textDocument": {"uri": uri}, "position": position},
+            timeout=timeout,
+        )
+
+        if file_path not in self._file_editor.get_opened_files():
+            await self._session.send_notification(
+                "textDocument/didClose",
+                {"textDocument": {"uri": uri}},
+            )
+            self._open_documents.discard(uri)
+
+        return result
+
+    async def get_implementation(
+        self,
+        file_path: Path,
+        content: str,
+        position: dict[str, Any],
+        timeout: float = 30.0,
+    ) -> list[dict[str, Any]] | dict[str, Any] | None:
+        """Request implementation location(s) for a position and return the raw LSP result."""
+        assert self._session is not None, "LspService not started"
+
+        uri = file_path.as_uri()
+        lsp_version = self._next_version(uri)
+        if uri not in self._open_documents:
+            await self._session.send_notification(
+                "textDocument/didOpen",
+                {
+                    "textDocument": {
+                        "uri": uri,
+                        "languageId": self._language_id,
+                        "version": lsp_version,
+                        "text": content,
+                    },
+                },
+            )
+            self._open_documents.add(uri)
+        else:
+            await self._session.send_notification(
+                "textDocument/didChange",
+                {
+                    "textDocument": {"uri": uri, "version": lsp_version},
+                    "contentChanges": [{"text": content}],
+                },
+            )
+
+        result = await self._session.send_request(
+            "textDocument/implementation",
+            {"textDocument": {"uri": uri}, "position": position},
+            timeout=timeout,
+        )
+
+        if file_path not in self._file_editor.get_opened_files():
+            await self._session.send_notification(
+                "textDocument/didClose",
+                {"textDocument": {"uri": uri}},
+            )
+            self._open_documents.discard(uri)
+
+        return result
+
+    async def get_document_highlight(
+        self,
+        file_path: Path,
+        content: str,
+        position: dict[str, Any],
+        timeout: float = 30.0,
+    ) -> list[dict[str, Any]] | None:
+        """Request document highlights for a position and return the raw LSP result."""
+        assert self._session is not None, "LspService not started"
+
+        uri = file_path.as_uri()
+        lsp_version = self._next_version(uri)
+        if uri not in self._open_documents:
+            await self._session.send_notification(
+                "textDocument/didOpen",
+                {
+                    "textDocument": {
+                        "uri": uri,
+                        "languageId": self._language_id,
+                        "version": lsp_version,
+                        "text": content,
+                    },
+                },
+            )
+            self._open_documents.add(uri)
+        else:
+            await self._session.send_notification(
+                "textDocument/didChange",
+                {
+                    "textDocument": {"uri": uri, "version": lsp_version},
+                    "contentChanges": [{"text": content}],
+                },
+            )
+
+        result = await self._session.send_request(
+            "textDocument/documentHighlight",
+            {"textDocument": {"uri": uri}, "position": position},
+            timeout=timeout,
+        )
+
+        if file_path not in self._file_editor.get_opened_files():
+            await self._session.send_notification(
+                "textDocument/didClose",
+                {"textDocument": {"uri": uri}},
+            )
+            self._open_documents.discard(uri)
+
+        return result
+
+    async def get_call_hierarchy_prepare(
+        self,
+        file_path: Path,
+        content: str,
+        position: dict[str, Any],
+        timeout: float = 30.0,
+    ) -> list[dict[str, Any]] | None:
+        """Request call hierarchy preparation and return the raw LSP result."""
+        assert self._session is not None, "LspService not started"
+
+        uri = file_path.as_uri()
+        lsp_version = self._next_version(uri)
+        if uri not in self._open_documents:
+            await self._session.send_notification(
+                "textDocument/didOpen",
+                {
+                    "textDocument": {
+                        "uri": uri,
+                        "languageId": self._language_id,
+                        "version": lsp_version,
+                        "text": content,
+                    },
+                },
+            )
+            self._open_documents.add(uri)
+        else:
+            await self._session.send_notification(
+                "textDocument/didChange",
+                {
+                    "textDocument": {"uri": uri, "version": lsp_version},
+                    "contentChanges": [{"text": content}],
+                },
+            )
+
+        result = await self._session.send_request(
+            "textDocument/prepareCallHierarchy",
+            {"textDocument": {"uri": uri}, "position": position},
+            timeout=timeout,
+        )
+
+        if file_path not in self._file_editor.get_opened_files():
+            await self._session.send_notification(
+                "textDocument/didClose",
+                {"textDocument": {"uri": uri}},
+            )
+            self._open_documents.discard(uri)
+
+        return result
+
+    async def get_call_hierarchy_incoming_calls(
+        self,
+        file_path: Path,
+        content: str,
+        item: dict[str, Any],
+        timeout: float = 30.0,
+    ) -> list[dict[str, Any]] | None:
+        """Request incoming calls for a call hierarchy item and return the raw LSP result."""
+        assert self._session is not None, "LspService not started"
+
+        uri = file_path.as_uri()
+        lsp_version = self._next_version(uri)
+        if uri not in self._open_documents:
+            await self._session.send_notification(
+                "textDocument/didOpen",
+                {
+                    "textDocument": {
+                        "uri": uri,
+                        "languageId": self._language_id,
+                        "version": lsp_version,
+                        "text": content,
+                    },
+                },
+            )
+            self._open_documents.add(uri)
+        else:
+            await self._session.send_notification(
+                "textDocument/didChange",
+                {
+                    "textDocument": {"uri": uri, "version": lsp_version},
+                    "contentChanges": [{"text": content}],
+                },
+            )
+
+        result = await self._session.send_request(
+            "callHierarchy/incomingCalls",
+            {"item": item},
+            timeout=timeout,
+        )
+
+        if file_path not in self._file_editor.get_opened_files():
+            await self._session.send_notification(
+                "textDocument/didClose",
+                {"textDocument": {"uri": uri}},
+            )
+            self._open_documents.discard(uri)
+
+        return result
+
+    async def get_call_hierarchy_outgoing_calls(
+        self,
+        file_path: Path,
+        content: str,
+        item: dict[str, Any],
+        timeout: float = 30.0,
+    ) -> list[dict[str, Any]] | None:
+        """Request outgoing calls for a call hierarchy item and return the raw LSP result."""
+        assert self._session is not None, "LspService not started"
+
+        uri = file_path.as_uri()
+        lsp_version = self._next_version(uri)
+        if uri not in self._open_documents:
+            await self._session.send_notification(
+                "textDocument/didOpen",
+                {
+                    "textDocument": {
+                        "uri": uri,
+                        "languageId": self._language_id,
+                        "version": lsp_version,
+                        "text": content,
+                    },
+                },
+            )
+            self._open_documents.add(uri)
+        else:
+            await self._session.send_notification(
+                "textDocument/didChange",
+                {
+                    "textDocument": {"uri": uri, "version": lsp_version},
+                    "contentChanges": [{"text": content}],
+                },
+            )
+
+        result = await self._session.send_request(
+            "callHierarchy/outgoingCalls",
+            {"item": item},
+            timeout=timeout,
+        )
+
+        if file_path not in self._file_editor.get_opened_files():
+            await self._session.send_notification(
+                "textDocument/didClose",
+                {"textDocument": {"uri": uri}},
+            )
+            self._open_documents.discard(uri)
+
+        return result
+
+    async def get_type_hierarchy_prepare(
+        self,
+        file_path: Path,
+        content: str,
+        position: dict[str, Any],
+        timeout: float = 30.0,
+    ) -> list[dict[str, Any]] | None:
+        """Request type hierarchy preparation and return the raw LSP result."""
+        assert self._session is not None, "LspService not started"
+
+        uri = file_path.as_uri()
+        lsp_version = self._next_version(uri)
+        if uri not in self._open_documents:
+            await self._session.send_notification(
+                "textDocument/didOpen",
+                {
+                    "textDocument": {
+                        "uri": uri,
+                        "languageId": self._language_id,
+                        "version": lsp_version,
+                        "text": content,
+                    },
+                },
+            )
+            self._open_documents.add(uri)
+        else:
+            await self._session.send_notification(
+                "textDocument/didChange",
+                {
+                    "textDocument": {"uri": uri, "version": lsp_version},
+                    "contentChanges": [{"text": content}],
+                },
+            )
+
+        result = await self._session.send_request(
+            "textDocument/prepareTypeHierarchy",
+            {"textDocument": {"uri": uri}, "position": position},
+            timeout=timeout,
+        )
+
+        if file_path not in self._file_editor.get_opened_files():
+            await self._session.send_notification(
+                "textDocument/didClose",
+                {"textDocument": {"uri": uri}},
+            )
+            self._open_documents.discard(uri)
+
+        return result
+
+    async def get_type_hierarchy_supertypes(
+        self,
+        file_path: Path,
+        content: str,
+        item: dict[str, Any],
+        timeout: float = 30.0,
+    ) -> list[dict[str, Any]] | None:
+        """Request supertypes for a type hierarchy item and return the raw LSP result."""
+        assert self._session is not None, "LspService not started"
+
+        uri = file_path.as_uri()
+        lsp_version = self._next_version(uri)
+        if uri not in self._open_documents:
+            await self._session.send_notification(
+                "textDocument/didOpen",
+                {
+                    "textDocument": {
+                        "uri": uri,
+                        "languageId": self._language_id,
+                        "version": lsp_version,
+                        "text": content,
+                    },
+                },
+            )
+            self._open_documents.add(uri)
+        else:
+            await self._session.send_notification(
+                "textDocument/didChange",
+                {
+                    "textDocument": {"uri": uri, "version": lsp_version},
+                    "contentChanges": [{"text": content}],
+                },
+            )
+
+        result = await self._session.send_request(
+            "typeHierarchy/supertypes",
+            {"item": item},
+            timeout=timeout,
+        )
+
+        if file_path not in self._file_editor.get_opened_files():
+            await self._session.send_notification(
+                "textDocument/didClose",
+                {"textDocument": {"uri": uri}},
+            )
+            self._open_documents.discard(uri)
+
+        return result
+
+    async def get_type_hierarchy_subtypes(
+        self,
+        file_path: Path,
+        content: str,
+        item: dict[str, Any],
+        timeout: float = 30.0,
+    ) -> list[dict[str, Any]] | None:
+        """Request subtypes for a type hierarchy item and return the raw LSP result."""
+        assert self._session is not None, "LspService not started"
+
+        uri = file_path.as_uri()
+        lsp_version = self._next_version(uri)
+        if uri not in self._open_documents:
+            await self._session.send_notification(
+                "textDocument/didOpen",
+                {
+                    "textDocument": {
+                        "uri": uri,
+                        "languageId": self._language_id,
+                        "version": lsp_version,
+                        "text": content,
+                    },
+                },
+            )
+            self._open_documents.add(uri)
+        else:
+            await self._session.send_notification(
+                "textDocument/didChange",
+                {
+                    "textDocument": {"uri": uri, "version": lsp_version},
+                    "contentChanges": [{"text": content}],
+                },
+            )
+
+        result = await self._session.send_request(
+            "typeHierarchy/subtypes",
+            {"item": item},
+            timeout=timeout,
+        )
+
+        if file_path not in self._file_editor.get_opened_files():
+            await self._session.send_notification(
+                "textDocument/didClose",
+                {"textDocument": {"uri": uri}},
+            )
+            self._open_documents.discard(uri)
+
+        return result
+
     async def _run_event_loop(self, ready: asyncio.Event) -> None:
         async with self._file_editor.session(
             author=self._file_operation_author
@@ -415,6 +1083,17 @@ class LspService(service.DisposableService):
         self._document_version[uri] = version
         return version
 
+    async def _handle_register_capability(
+        self, params: dict[str, Any] | None
+    ) -> None:
+        """Handle client/registerCapability from the LSP server.
+
+        Many servers send this even when the client declared dynamicRegistration:
+        false for specific capabilities. Returning null (None) acknowledges the
+        registration per LSP spec without actually applying any behaviour change.
+        """
+        return None
+
     async def _handle_configuration_request(
         self, params: dict[str, Any] | None
     ) -> list[dict[str, Any]]:
@@ -435,47 +1114,6 @@ class LspService(service.DisposableService):
         event = self._diagnostics.get(uri)
         if event is not None:
             event.set()
-
-
-def map_diagnostics_to_lint_messages(
-    raw_diagnostics: list[dict[str, Any]],
-    default_source: str = "lsp",
-) -> list[lint_files_action.LintMessage]:
-    """Convert raw LSP diagnostics to LintMessage objects."""
-    severity_map = {
-        1: lint_files_action.LintMessageSeverity.ERROR,
-        2: lint_files_action.LintMessageSeverity.WARNING,
-        3: lint_files_action.LintMessageSeverity.INFO,
-        4: lint_files_action.LintMessageSeverity.HINT,
-    }
-
-    messages: list[lint_files_action.LintMessage] = []
-    for diag in raw_diagnostics:
-        rng = diag.get("range", {})
-        start = rng.get("start", {})
-        end = rng.get("end", {})
-
-        messages.append(
-            lint_files_action.LintMessage(
-                range=lint_files_action.Range(
-                    start=lint_files_action.Position(
-                        line=start.get("line", 0),
-                        character=start.get("character", 0),
-                    ),
-                    end=lint_files_action.Position(
-                        line=end.get("line", 0),
-                        character=end.get("character", 0),
-                    ),
-                ),
-                message=diag.get("message", ""),
-                code=str(diag.get("code", ""))
-                if diag.get("code") is not None
-                else None,
-                source=diag.get("source", default_source),
-                severity=severity_map.get(diag.get("severity")),
-            )
-        )
-    return messages
 
 
 def apply_text_edits(content: str, edits: list[dict[str, Any]]) -> str:
@@ -510,3 +1148,5 @@ def apply_text_edits(content: str, edits: list[dict[str, Any]]) -> str:
         result = result[:start] + edit["newText"] + result[end:]
 
     return result
+
+

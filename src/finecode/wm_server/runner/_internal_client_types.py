@@ -33,6 +33,7 @@ ER_RESOLVE_ACTION_META = "finecodeRunner/resolveActionMeta"
 ER_GET_INFO = "finecodeRunner/getInfo"
 ER_GET_ACTION_METADATA = "actions/getActionMetadata"
 WORKSPACE_APPLY_EDIT = "workspace/applyEdit"
+ER_USER_MESSAGE = "er/userMessage"
 
 PROJECT_RAW_CONFIG_GET = "projects/getRawConfig"
 WORKSPACE_EDITABLE_PACKAGES_GET = "workspace/getWorkspaceEditablePackages"

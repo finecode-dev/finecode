@@ -114,7 +114,7 @@ class InstallEnvInstallDepsHandler(
 
             await progress.report("Installing dependencies")
             result = await self.action_runner.run_action(
-                action_type=install_deps_in_env_action.InstallDepsInEnvAction,
+                action_type=iprojectactionrunner.ActionRef.from_type(install_deps_in_env_action.InstallDepsInEnvAction),
                 payload=install_deps_payload,
                 meta=run_context.meta,
             )

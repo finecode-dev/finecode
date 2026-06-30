@@ -33,7 +33,8 @@ apply_workspace_edit: typing.Callable[[], collections.abc.Coroutine] | None = No
 start_debug_session: typing.Callable[[int], collections.abc.Coroutine] | None = None
 
 # reexport
-RunnerFailedToStart = jsonrpc_client.RunnerFailedToStart
+RunnerFailedToStart = jsonrpc_client.ServerFailedToStart
+ServerConfigurationError = config_models.ConfigurationError
 
 
 async def notify_project_changed(project: domain.Project) -> None:
@@ -96,7 +97,7 @@ async def _start_extension_runner_process(
             f"Project {runner.working_dir_path} uses finecode, but env (venv) doesn't exist yet. Run `prepare_env` command to create it"
         )
 
-        raise jsonrpc_client.RunnerFailedToStart(
+        raise RunnerFailedToStart(
             f"Runner '{runner.readable_id}' failed to start"
         ) from exception
 
@@ -138,7 +139,7 @@ async def _start_extension_runner_process(
     
     try:
         await client.start(server_cmd=f"{python_cmd} -m finecode_extension_runner.cli start {process_args_str}", working_dir_path=runner.working_dir_path, io_thread=ws_context.runner_io_thread, debug_port_future=debug_port_future, connect=not start_with_debug)
-    except jsonrpc_client.RunnerFailedToStart as exception:
+    except RunnerFailedToStart as exception:
         logger.error(f"Runner {runner.readable_id} failed to start: {exception.message}")
         runner.status = runner_client.RunnerStatus.FAILED
         runner.initialized_event.set()
@@ -529,7 +530,7 @@ async def start_runners_with_presets(
                         )
                         new_runners_tasks.append(task)
                 elif project_status != domain.ProjectStatus.NO_FINECODE:
-                    raise jsonrpc_client.RunnerFailedToStart(
+                    raise RunnerFailedToStart(
                         f"Project '{project.name}' has invalid configuration, status: {project_status.name}"
                     )
 
@@ -540,12 +541,12 @@ async def start_runners_with_presets(
         for exception in eg.exceptions:
             if isinstance(
                 exception, jsonrpc_client.BaseRunnerRequestException
-            ) or isinstance(exception, jsonrpc_client.RunnerFailedToStart):
+            ) or isinstance(exception, RunnerFailedToStart):
                 logger.error(exception.message)
             else:
                 logger.error("Unexpected exception:")
                 logger.exception(exception)
-        raise jsonrpc_client.RunnerFailedToStart(
+        raise RunnerFailedToStart(
             "Failed to initialize runner(s). See previous logs for more details"
         ) from eg
 
@@ -561,7 +562,7 @@ async def start_runners_with_presets(
                 project_path=project.dir_path, ws_context=ws_context
             )
         except config_models.ConfigurationError as exception:
-            raise jsonrpc_client.RunnerFailedToStart(
+            raise RunnerFailedToStart(
                 f"Reading project config with presets and collecting actions in {project.dir_path} failed: {exception.message}"
             ) from exception
 
@@ -605,7 +606,7 @@ async def get_or_start_runners_with_presets(
         await dev_workspace_runner.initialized_event.wait()
         return dev_workspace_runner
     else:
-        raise jsonrpc_client.RunnerFailedToStart(
+        raise RunnerFailedToStart(
             f"Status of dev_workspace runner: {dev_workspace_runner.status}, logs: {dev_workspace_runner.logs_path}"
         )
 
@@ -634,7 +635,7 @@ async def _start_runner(
 
     try:
         await _init_lsp_client(runner=runner, project=project_def)
-    except jsonrpc_client.RunnerFailedToStart as exception:
+    except RunnerFailedToStart as exception:
         runner.status = runner_client.RunnerStatus.FAILED
         await notify_project_changed(project_def)
         runner.initialized_event.set()
@@ -665,7 +666,7 @@ async def _start_runner(
             runner.status = runner_client.RunnerStatus.FAILED
             runner.initialized_event.set()
             await notify_project_changed(project_def)
-            raise jsonrpc_client.RunnerFailedToStart(
+            raise RunnerFailedToStart(
                 f"Found problem in configuration of {project_def.dir_path}: {exception.message}"
             ) from exception
 
@@ -725,7 +726,7 @@ async def get_or_start_runner(
             runner_error = True
 
         if runner_error:
-            raise jsonrpc_client.RunnerFailedToStart(
+            raise RunnerFailedToStart(
                 f"Runner {env_name} in project {project_def.dir_path} is not running. Status: {runner.status}"
             )
 
@@ -752,7 +753,7 @@ async def _init_lsp_client(
             client_workspace_dir=runner.working_dir_path
         )
     except jsonrpc_client.BaseRunnerRequestException as exception:
-        raise jsonrpc_client.RunnerFailedToStart(
+        raise RunnerFailedToStart(
             f"Runner failed to initialize: {exception.message}"
         ) from exception
 
@@ -761,7 +762,7 @@ async def _init_lsp_client(
     except Exception as exception:
         logger.error(f"Failed to notify runner about initialization: {exception}")
         logger.exception(exception)
-        raise jsonrpc_client.RunnerFailedToStart(
+        raise RunnerFailedToStart(
             f"Runner failed to notify about initialization: {exception}"
         ) from exception
 
@@ -792,7 +793,7 @@ async def update_runner_config(
         runner.status = runner_client.RunnerStatus.FAILED
         await notify_project_changed(project)
         runner.initialized_event.set()
-        raise jsonrpc_client.RunnerFailedToStart(
+        raise RunnerFailedToStart(
             f"Runner failed to update config: {exception.message}"
         ) from exception
 

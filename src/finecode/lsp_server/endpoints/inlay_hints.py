@@ -13,9 +13,7 @@ if TYPE_CHECKING:
 
 def inlay_hint_params_to_dict(params: types.InlayHintParams) -> dict[str, Any]:
     return {
-        "text_document": {
-            "uri": params.text_document.uri,
-        },
+        "uri": params.text_document.uri,
         "range": {
             "start": {
                 "line": params.range.start.line + 1,

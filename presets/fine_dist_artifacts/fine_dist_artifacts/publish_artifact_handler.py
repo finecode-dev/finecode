@@ -57,7 +57,7 @@ class PublishArtifactHandler(
         async with run_context.progress("Publishing artifact") as progress:
             await progress.report("Getting artifact version")
             version_result = await self.action_runner.run_action(
-                action_type=get_src_artifact_version_action.GetSrcArtifactVersionAction,
+                action_type=iprojectactionrunner.ActionRef.from_type(get_src_artifact_version_action.GetSrcArtifactVersionAction),
                 payload=get_src_artifact_version_action.GetSrcArtifactVersionRunPayload(
                     src_artifact_def_path=src_artifact_def_path
                 ),
@@ -66,7 +66,7 @@ class PublishArtifactHandler(
             version = version_result.version
 
             registries_result = await self.action_runner.run_action(
-                action_type=get_src_artifact_registries_action.GetSrcArtifactRegistriesAction,
+                action_type=iprojectactionrunner.ActionRef.from_type(get_src_artifact_registries_action.GetSrcArtifactRegistriesAction),
                 payload=get_src_artifact_registries_action.GetSrcArtifactRegistriesRunPayload(
                     src_artifact_def_path=src_artifact_def_path
                 ),
@@ -99,7 +99,7 @@ class PublishArtifactHandler(
                             )
                             task = tg.create_task(
                                 self.action_runner.run_action(
-                                    action_type=is_artifact_published_to_registry_action.IsArtifactPublishedToRegistryAction,
+                                    action_type=iprojectactionrunner.ActionRef.from_type(is_artifact_published_to_registry_action.IsArtifactPublishedToRegistryAction),
                                     payload=check_payload,
                                     meta=run_meta,
                                 )
@@ -135,7 +135,7 @@ class PublishArtifactHandler(
                         )
                         task = tg.create_task(
                             self.action_runner.run_action(
-                                action_type=publish_artifact_to_registry_action.PublishArtifactToRegistryAction,
+                                action_type=iprojectactionrunner.ActionRef.from_type(publish_artifact_to_registry_action.PublishArtifactToRegistryAction),
                                 payload=publish_payload,
                                 meta=run_meta,
                             )

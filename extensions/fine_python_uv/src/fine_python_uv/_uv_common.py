@@ -26,7 +26,7 @@ async def dump_project_config(
     logger.debug(f"Dumping config for {project_def_path} to {dump_target_path}")
     project_raw_config = await project_info_provider.get_project_raw_config(project_def_path)
     await action_runner.run_action(
-        action_type=dump_config_action.DumpConfigAction,
+        action_type=iprojectactionrunner.ActionRef.from_type(dump_config_action.DumpConfigAction),
         payload=dump_config_action.DumpConfigRunPayload(
             source_file_path=path_to_resource_uri(project_def_path),
             project_raw_config=project_raw_config,

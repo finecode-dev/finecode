@@ -1,5 +1,5 @@
 from finecode_extension_api import code_action
-from finecode_extension_api.actions.ide.text_document_semantic_tokens_action import (
+from fine_semantic_tokens.text_document_semantic_tokens_action import (
     TextDocumentSemanticTokensAction,
     SemanticTokensPayload,
     SemanticTokensResult,

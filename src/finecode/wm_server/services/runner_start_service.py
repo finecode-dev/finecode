@@ -78,10 +78,17 @@ async def _auto_prepare_and_retry(
     no_runner_projects = [p for p in projects if _runner_status(p) is None]
     affected_projects = no_venv_projects + failed_projects + no_runner_projects
 
-    logger.debug(
+    logger.debugg(
         f"_auto_prepare_and_retry: {len(projects)} project(s), statuses: "
         + ", ".join(f"{p.name}={_runner_status(p)}" for p in projects)
     )
+
+    initializing_projects = [p for p in projects if _runner_status(p) == rc.RunnerStatus.INITIALIZING]
+    if initializing_projects:
+        logger.warning(
+            "Projects with runners stuck in INITIALIZING state (will not be auto-repaired): "
+            + ", ".join(p.name for p in initializing_projects)
+        )
 
     if not affected_projects:
         _notify(
@@ -108,7 +115,9 @@ async def _auto_prepare_and_retry(
         except PrepareEnvsFailed as prep_exc:
             logger.error(f"Auto install_env failed for {project.name}: {prep_exc.message}")
             _notify(f"Auto prepare failed for {project.name}: {prep_exc.message}")
-            raise exc
+            raise runner_manager.RunnerFailedToStart(
+                f"Auto prepare-envs failed for '{project.name}': {prep_exc.message}"
+            ) from prep_exc
 
     # Restart runners so they pick up the newly populated venvs.
     for project in affected_projects:
@@ -287,6 +296,11 @@ async def get_or_start_runners_with_presets(
         return dev_workspace_runner
     elif dev_workspace_runner.status == runner_client.RunnerStatus.INITIALIZING:
         await dev_workspace_runner.initialized_event.wait()
+        return dev_workspace_runner
+    elif dev_workspace_runner.status == runner_client.RunnerStatus.REPAIRING:
+        if dev_workspace_runner.repair_complete_event is not None:
+            await dev_workspace_runner.repair_complete_event.wait()
+        dev_workspace_runner = ws_context.ws_projects_extension_runners[project_dir_path]["dev_workspace"]
         return dev_workspace_runner
     else:
         raise runner_manager.RunnerFailedToStart(

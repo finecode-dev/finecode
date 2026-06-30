@@ -64,7 +64,7 @@ class IsArtifactPublishedToRegistryPyHandler(
 
         # Get registries using the action
         registries_result = await self.action_runner.run_action(
-            action_type=get_src_artifact_registries_action.GetSrcArtifactRegistriesAction,
+            action_type=iprojectactionrunner.ActionRef.from_type(get_src_artifact_registries_action.GetSrcArtifactRegistriesAction),
             payload=get_src_artifact_registries_action.GetSrcArtifactRegistriesRunPayload(
                 src_artifact_def_path=payload.src_artifact_def_path
             ),

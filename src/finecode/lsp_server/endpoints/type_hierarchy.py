@@ -77,7 +77,7 @@ async def prepare_type_hierarchy(
             action_source="fine_code_hierarchy.TextDocumentPrepareTypeHierarchyAction",
             project=project_dir,
             params={
-                "text_document": {"uri": uri},
+                "uri": uri,
                 "position": {"line": position["line"], "character": position["character"]},
             },
             options={"trigger": "user", "devEnv": "ide"},

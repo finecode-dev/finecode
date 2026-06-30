@@ -1027,6 +1027,7 @@ def add_extension_runner_to_dependencies(project_config: dict[str, Any]) -> None
             )
             return
 
+    injected_groups: list[str] = []
     for group_name, group_packages in deps_groups.items():
         if group_name == "dev_workspace" or group_name == "runtime":
             # - skip `dev_workspace` because it contains finecode already
@@ -1035,3 +1036,8 @@ def add_extension_runner_to_dependencies(project_config: dict[str, Any]) -> None
             continue
 
         group_packages.append(f"finecode_extension_runner == {finecode_version}")
+        injected_groups.append(group_name)
+    if injected_groups:
+        logger.trace(
+            f"Injected finecode_extension_runner == {finecode_version} into groups: {injected_groups}"
+        )

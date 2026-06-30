@@ -245,16 +245,9 @@ async def run_action_with_partial_results(
                     partial_count += 1
                     value_preview = str(value)[:200] if value else "None"
                     logger.trace(f"partial_results: got partial #{partial_count} from runner for project={project.name}: {value_preview}")
-                    # TODO: partial results are single-format (bare value, no
-                    # result_by_format envelope) so only JSON is supported here.
-                    # To support other formats (e.g. "string"), the runner would
-                    # need to send {format: value} pairs and get_partial_results /
-                    # AsyncList would need to carry format information alongside
-                    # each value.
-                    result_by_format: dict[str, domain.PartialResultRawValue] = {}
-                    if "json" in requested_formats:
-                        result_by_format["json"] = value
-                    stream.put({"project": str(project.dir_path), "resultByFormat": result_by_format})
+                    # value is a result_by_format envelope {"json": ..., "styled_text_json": ...}
+                    # already filtered to requested formats by the ER.
+                    stream.put({"project": str(project.dir_path), "resultByFormat": value})
                 logger.trace(f"partial_results: partial iteration done for project={project.name}, got {partial_count} partials")
 
             async def _forward_progress() -> None:
@@ -279,19 +272,15 @@ async def run_action_with_partial_results(
                     "expected 'streamed' status when result_by_format is empty"
                 )
 
-            json_result = resp.json()
-            logger.trace(f"partial_results: final result for project={project.name}: return_code={resp.return_code}, keys={list(json_result.keys()) if isinstance(json_result, dict) else type(json_result)}")
+            logger.trace(f"partial_results: final result for project={project.name}: return_code={resp.return_code}, keys={list(resp.result_by_format.keys())}")
             return_codes.append(resp.return_code)
 
             # If the runner sent no partial results (collected everything internally
             # and returned it all as the final response), emit the final result as a
             # partial result so the client still receives streaming updates.
-            if partial_count == 0 and json_result:
-                result_by_format: dict[str, domain.PartialResultRawValue] = {}
-                if "json" in requested_formats:
-                    result_by_format["json"] = json_result
+            if partial_count == 0 and resp.result_by_format:
                 logger.trace(f"partial_results: no partials received for project={project.name}, emitting final result as partial")
-                stream.put({"project": str(project.dir_path), "resultByFormat": result_by_format})
+                stream.put({"project": str(project.dir_path), "resultByFormat": resp.result_by_format})
 
     try:
         async with asyncio.TaskGroup() as tg:

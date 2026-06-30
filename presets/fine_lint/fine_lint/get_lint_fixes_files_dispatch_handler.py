@@ -36,7 +36,7 @@ class GetLintFixesFilesDispatchHandler(
         payload: get_lint_fixes_action.GetLintFixesRunPayload,
         run_context: get_lint_fixes_action.GetLintFixesRunContext,
     ) -> None:
-        subactions_by_lang = self.action_runner.get_actions_for_parent(
+        subactions_by_lang = await self.action_runner.get_actions_for_parent(
             get_lint_fixes_action.GetLintFixesAction
         )
 
@@ -53,7 +53,7 @@ class GetLintFixesFilesDispatchHandler(
 
         # Group the single file by language to find the correct language subaction.
         files_by_lang_result = await self.action_runner.run_action(
-            action_type=group_src_artifact_files_by_lang_action.GroupSrcArtifactFilesByLangAction,
+            action_type=iprojectactionrunner.ActionRef.from_type(group_src_artifact_files_by_lang_action.GroupSrcArtifactFilesByLangAction),
             payload=group_src_artifact_files_by_lang_action.GroupSrcArtifactFilesByLangRunPayload(
                 file_paths=[payload.file_path],
                 langs=list(subactions_by_lang.keys()),

@@ -6,7 +6,16 @@ import sys
 from pathlib import Path
 
 from finecode_extension_api import code_action
-from fine_lint import lint_files_action
+from fine_type_check.diagnostic_types import (
+    Diagnostic,
+    DiagnosticFilesRunPayload,
+    DiagnosticFilesRunContext,
+    DiagnosticFilesRunResult,
+    DiagnosticSeverity,
+    Position,
+    Range,
+)
+from fine_python_lang.type_check_python_files_action import TypeCheckPythonFilesAction
 from finecode_extension_api.interfaces import (
     icache,
     icommandrunner,
@@ -21,14 +30,14 @@ from fine_python_pyrefly.pyrefly_lsp_service import PyreflyLspService
 
 
 @dataclasses.dataclass
-class PyreflyLintFilesHandlerConfig(code_action.ActionHandlerConfig):
+class PyreflyTypeCheckFilesHandlerConfig(code_action.ActionHandlerConfig):
     python_version: str | None = None
     use_cli: bool = False
 
 
-class PyreflyLintFilesHandler(
+class PyreflyTypeCheckFilesHandler(
     code_action.ActionHandler[
-        lint_files_action.LintFilesAction, PyreflyLintFilesHandlerConfig
+        TypeCheckPythonFilesAction, PyreflyTypeCheckFilesHandlerConfig
     ]
 ):
     """
@@ -37,14 +46,14 @@ class PyreflyLintFilesHandler(
     save of a file.
     """
 
-    CACHE_KEY = "PyreflyLinter"
+    CACHE_KEY = "PyreflyTypeChecker"
     FILE_OPERATION_AUTHOR = ifileeditor.FileOperationAuthor(
-        id="PyreflyLinter"
+        id="PyreflyTypeChecker"
     )
 
     def __init__(
         self,
-        config: PyreflyLintFilesHandlerConfig,
+        config: PyreflyTypeCheckFilesHandlerConfig,
         cache: icache.ICache,
         logger: ilogger.ILogger,
         file_editor: ifileeditor.IFileEditor,
@@ -84,15 +93,15 @@ class PyreflyLintFilesHandler(
 
     async def run_on_single_file(
         self, file_uri: ResourceUri
-    ) -> lint_files_action.LintFilesRunResult:
+    ) -> DiagnosticFilesRunResult:
         file_path = resource_uri_to_path(file_uri)
-        messages: dict[ResourceUri, list[lint_files_action.LintMessage]] = {}
+        messages: dict[ResourceUri, list[Diagnostic]] = {}
         try:
-            cached_lint_messages = await self.cache.get_file_cache(
+            cached_messages = await self.cache.get_file_cache(
                 file_path, self.CACHE_KEY
             )
-            messages[file_uri] = cached_lint_messages
-            return lint_files_action.LintFilesRunResult(messages=messages)
+            messages[file_uri] = cached_messages
+            return DiagnosticFilesRunResult(messages=messages)
         except icache.CacheMissException:
             pass
 
@@ -102,24 +111,24 @@ class PyreflyLintFilesHandler(
             file_version = await session.read_file_version(file_path)
 
         if self.config.use_cli:
-            lint_messages = await self.run_pyrefly_lint_on_single_file(file_path)
+            type_check_messages = await self.run_pyrefly_type_check_on_single_file(file_path)
         else:
             root_uri = self.project_info_provider.get_current_project_dir_path().as_uri()
             await self.lsp_service.ensure_started(root_uri)
 
-            lint_messages = await self.lsp_service.check_file(file_path)
+            type_check_messages = await self.lsp_service.check_file(file_path)
 
-        messages[file_uri] = lint_messages
+        messages[file_uri] = type_check_messages
         await self.cache.save_file_cache(
-            file_path, file_version, self.CACHE_KEY, lint_messages
+            file_path, file_version, self.CACHE_KEY, type_check_messages
         )
 
-        return lint_files_action.LintFilesRunResult(messages=messages)
+        return DiagnosticFilesRunResult(messages=messages)
 
     async def run(
         self,
-        payload: lint_files_action.LintFilesRunPayload,
-        run_context: lint_files_action.LintFilesRunContext,
+        payload: DiagnosticFilesRunPayload,
+        run_context: DiagnosticFilesRunContext,
     ) -> None:
         file_uris = [file_uri async for file_uri in payload]
 
@@ -129,12 +138,12 @@ class PyreflyLintFilesHandler(
                 self.run_on_single_file(file_uri),
             )
 
-    async def run_pyrefly_lint_on_single_file(
+    async def run_pyrefly_type_check_on_single_file(
         self,
         file_path: Path,
-    ) -> list[lint_files_action.LintMessage]:
+    ) -> list[Diagnostic]:
         """Run pyrefly type checking on a single file"""
-        lint_messages: list[lint_files_action.LintMessage] = []
+        type_check_messages: list[Diagnostic] = []
 
         try:
             # src artifact file classifier caches result, we can just get it each time again
@@ -148,7 +157,7 @@ class PyreflyLintFilesHandler(
             self.logger.warning(
                 f"Skip {file_path} because file type or env for it could be determined"
             )
-            return lint_messages
+            return type_check_messages
 
         venv_dir_path = self.extension_runner_info_provider.get_venv_dir_path_of_env(
             env_name=file_env
@@ -194,33 +203,31 @@ class PyreflyLintFilesHandler(
         try:
             pyrefly_results = json.loads(output)
             for error in pyrefly_results["errors"]:
-                lint_message = map_pyrefly_error_to_lint_message(error)
-                lint_messages.append(lint_message)
+                type_check_messages.append(map_pyrefly_error_to_diagnostic(error))
         except json.JSONDecodeError as exception:
             raise code_action.ActionFailedException(
                 f"Output of pyrefly is not json: {output}"
             ) from exception
 
-        return lint_messages
+        return type_check_messages
 
 
-def map_pyrefly_error_to_lint_message(error: dict) -> lint_files_action.LintMessage:
-    """Map a pyrefly error to a lint message"""
+def map_pyrefly_error_to_diagnostic(error: dict) -> Diagnostic:
+    """Map a pyrefly error to a diagnostic"""
     # Extract line/column info (pyrefly uses 1-based indexing)
     start_line = error["line"]
     start_column = error["column"]
     end_line = error["stop_line"]
     end_column = error["stop_column"]
 
-    # Determine severity based on error type
     error_code = str(error.get("code", ""))
     code_description = error.get("name", "")
-    severity = lint_files_action.LintMessageSeverity.ERROR
+    severity = DiagnosticSeverity.ERROR
 
-    return lint_files_action.LintMessage(
-        range=lint_files_action.Range(
-            start=lint_files_action.Position(line=start_line - 1, character=start_column),
-            end=lint_files_action.Position(line=end_line - 1, character=end_column),
+    return Diagnostic(
+        range=Range(
+            start=Position(line=start_line - 1, character=start_column),
+            end=Position(line=end_line - 1, character=end_column),
         ),
         message=error.get("description", ""),
         code=error_code,

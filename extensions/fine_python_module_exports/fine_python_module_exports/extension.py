@@ -7,15 +7,12 @@ from fine_python_ast import iast_provider
 from fine_python_module_exports import api
 
 from finecode_extension_api import common_types
+from finecode_extension_api.resource_uri import resource_uri_to_path
 from fine_inlay_hints import text_document_inlay_hint
 
 # from finecode_extension_api import code_action
 
 # from finecode.extension_runner.interfaces import icache
-
-
-def uri_str_to_path(uri_str: str) -> Path:
-    return Path(uri_str.replace("file://", ""))
 
 
 async def get_document_inlay_hints(
@@ -27,8 +24,7 @@ async def get_document_inlay_hints(
     ~~It's cheap enough to calculate access type for the whole file, so calculate and
     cache. Then get nodes and access types for asked range.~~
     """
-    # use uri?
-    file_path: Path = uri_str_to_path(payload.text_document.uri)
+    file_path: Path = resource_uri_to_path(payload.uri)
     try:
         module_ast: ast.Module = await ast_provider.get_file_ast(file_path=file_path)
     except SyntaxError:

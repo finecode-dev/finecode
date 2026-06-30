@@ -2,11 +2,12 @@ import dataclasses
 import enum
 
 from finecode_extension_api import code_action, common_types
+from finecode_extension_api.resource_uri import ResourceUri
 
 
 @dataclasses.dataclass
 class InlayHintPayload(code_action.RunActionPayload):
-    text_document: common_types.TextDocumentIdentifier
+    uri: ResourceUri
     range: common_types.Range
 
 

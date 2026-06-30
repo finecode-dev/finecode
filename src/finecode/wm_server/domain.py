@@ -347,6 +347,14 @@ class CollectedProject(Project):
         self.action_handler_configs: dict[str, dict[str, typing.Any]] = (
             action_handler_configs
         )
+        # Action sources for which WM metadata resolution has permanently failed
+        # (all handler envs tried, including auto-repair).  Persists across ER
+        # reconnections so repeated requests return null without re-running auto-repair.
+        self.unresolvable_metadata_sources: set[str] = set()
+        # Envs for which auto-repair (install + runner restart) already ran and failed.
+        # Prevents re-triggering the same expensive install+restart for every subsequent
+        # action that lives in the same broken env.
+        self.failed_repair_envs: set[str] = set()
 
     @property
     def envs(self) -> list[str]:
@@ -457,6 +465,10 @@ class ExtensionRunnerStatus(Enum):
             Run ``prepare-envs`` to create it.
         INITIALIZING: The ER process has been started and the WM is waiting
             for it to signal readiness.
+        REPAIRING: ``install_env_for_project`` is running for this env before a
+            runner restart.  ``get_or_start_runner`` waits on
+            ``ExtensionRunnerInfo.repair_complete_event`` when it sees this
+            status, preventing concurrent duplicate repairs.
         FAILED: The ER process failed to start or crashed during
             initialization.
         RUNNING: The ER process is up and accepting requests.
@@ -465,6 +477,7 @@ class ExtensionRunnerStatus(Enum):
 
     NO_VENV = auto()
     INITIALIZING = auto()
+    REPAIRING = auto()
     FAILED = auto()
     RUNNING = auto()
     EXITED = auto()

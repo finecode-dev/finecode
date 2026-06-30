@@ -5,8 +5,9 @@ from pathlib import Path
 from typing import Any, override
 
 from finecode_extension_api import service
-from fine_lint import lint_files_action
-from finecode_extension_api.contrib.lsp_service import LspService, apply_text_edits, map_diagnostics_to_lint_messages
+from fine_lint.diagnostic_types import Diagnostic
+from finecode_extension_api.contrib.lsp_service import LspService, apply_text_edits
+from fine_inspect_code.diagnostic_types import map_lsp_diagnostics
 from finecode_extension_api.interfaces import ifileeditor, ilspclient, ilogger
 
 
@@ -74,9 +75,9 @@ class RuffLspService(service.DisposableService):
         self,
         file_path: Path,
         timeout: float = 30.0,
-    ) -> list[lint_files_action.LintMessage]:
+    ) -> list[Diagnostic]:
         raw_diagnostics = await self._lsp_service.check_file(file_path, timeout)
-        return map_diagnostics_to_lint_messages(
+        return map_lsp_diagnostics(
             raw_diagnostics, default_source="ruff"
         )
 

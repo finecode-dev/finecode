@@ -46,7 +46,7 @@ class FormatHandler(
                 ]
             else:
                 files_by_lang_result = await self.action_runner.run_action(
-                    action_type=list_src_artifact_files_by_lang_action.ListSrcArtifactFilesByLangAction,
+                    action_type=iprojectactionrunner.ActionRef.from_type(list_src_artifact_files_by_lang_action.ListSrcArtifactFilesByLangAction),
                     payload=list_src_artifact_files_by_lang_action.ListSrcArtifactFilesByLangRunPayload(
                         langs=None
                     ),
@@ -62,7 +62,7 @@ class FormatHandler(
 
         async with run_context.progress("Formatting files", total=len(file_uris)) as progress:
             async for partial in self.action_runner.run_action_iter(
-                action_type=format_files_action.FormatFilesAction,
+                action_type=iprojectactionrunner.ActionRef.from_type(format_files_action.FormatFilesAction),
                 payload=format_files_action.FormatFilesRunPayload(
                     file_paths=file_uris,
                     save=payload.save,

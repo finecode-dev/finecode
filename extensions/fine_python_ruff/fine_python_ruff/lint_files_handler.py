@@ -6,7 +6,16 @@ import sys
 from pathlib import Path
 
 from finecode_extension_api import code_action
-from fine_lint import lint_files_action
+from fine_lint.lint_files_action import LintFilesAction
+from fine_lint.diagnostic_types import (
+    Diagnostic,
+    DiagnosticFilesRunPayload,
+    DiagnosticFilesRunContext,
+    DiagnosticFilesRunResult,
+    DiagnosticSeverity,
+    Position,
+    Range,
+)
 from finecode_extension_api.interfaces import (
     icache,
     icommandrunner,
@@ -31,7 +40,7 @@ class RuffLintFilesHandlerConfig(code_action.ActionHandlerConfig):
 
 class RuffLintFilesHandler(
     code_action.ActionHandler[
-        lint_files_action.LintFilesAction, RuffLintFilesHandlerConfig
+        LintFilesAction, RuffLintFilesHandlerConfig
     ]
 ):
     CACHE_KEY = "RuffLinter"
@@ -77,15 +86,15 @@ class RuffLintFilesHandler(
 
     async def run_on_single_file(
         self, file_uri: ResourceUri
-    ) -> lint_files_action.LintFilesRunResult:
+    ) -> DiagnosticFilesRunResult:
         file_path = resource_uri_to_path(file_uri)
-        messages: dict[ResourceUri, list[lint_files_action.LintMessage]] = {}
+        messages: dict[ResourceUri, list[Diagnostic]] = {}
         try:
             cached_lint_messages = await self.cache.get_file_cache(
                 file_path, self.CACHE_KEY
             )
             messages[file_uri] = cached_lint_messages
-            return lint_files_action.LintFilesRunResult(messages=messages)
+            return DiagnosticFilesRunResult(messages=messages)
         except icache.CacheMissException:
             pass
 
@@ -108,12 +117,12 @@ class RuffLintFilesHandler(
             file_path, file_version, self.CACHE_KEY, lint_messages
         )
 
-        return lint_files_action.LintFilesRunResult(messages=messages)
+        return DiagnosticFilesRunResult(messages=messages)
 
     async def run(
         self,
-        payload: lint_files_action.LintFilesRunPayload,
-        run_context: lint_files_action.LintFilesRunContext,
+        payload: DiagnosticFilesRunPayload,
+        run_context: DiagnosticFilesRunContext,
     ) -> None:
         file_uris = [file_uri async for file_uri in payload]
 
@@ -127,9 +136,9 @@ class RuffLintFilesHandler(
         self,
         file_path: Path,
         file_content: str,
-    ) -> list[lint_files_action.LintMessage]:
+    ) -> list[Diagnostic]:
         """Run ruff linting on a single file"""
-        lint_messages: list[lint_files_action.LintMessage] = []
+        lint_messages: list[Diagnostic] = []
 
         # Build ruff check command
         cmd = [
@@ -180,7 +189,7 @@ class RuffLintFilesHandler(
 
 def map_ruff_violation_to_lint_message(
     violation: dict,
-) -> lint_files_action.LintMessage:
+) -> Diagnostic:
     """Map a ruff violation to a lint message"""
     location = violation.get("location", {})
     end_location = violation.get("end_location", {})
@@ -195,16 +204,16 @@ def map_ruff_violation_to_lint_message(
     code = violation.get("code", "")
     code_description = violation.get("url", "")
     if code.startswith(("E", "F")):  # Error codes
-        severity = lint_files_action.LintMessageSeverity.ERROR
+        severity = DiagnosticSeverity.ERROR
     elif code.startswith("W"):  # Warning codes
-        severity = lint_files_action.LintMessageSeverity.WARNING
+        severity = DiagnosticSeverity.WARNING
     else:
-        severity = lint_files_action.LintMessageSeverity.INFO
+        severity = DiagnosticSeverity.INFO
 
-    return lint_files_action.LintMessage(
-        range=lint_files_action.Range(
-            start=lint_files_action.Position(line=start_line - 1, character=start_column),
-            end=lint_files_action.Position(line=end_line - 1, character=end_column),
+    return Diagnostic(
+        range=Range(
+            start=Position(line=start_line - 1, character=start_column),
+            end=Position(line=end_line - 1, character=end_column),
         ),
         message=violation.get("message", ""),
         code=code,

@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import dataclasses
 
 
@@ -11,16 +13,3 @@ class Position:
 class Range:
     start: Position
     end: Position
-
-
-@dataclasses.dataclass
-class TextDocumentIdentifier:
-    uri: str
-
-
-@dataclasses.dataclass
-class TextDocumentItem:
-    uri: str
-    language_id: str
-    version: int
-    text: str

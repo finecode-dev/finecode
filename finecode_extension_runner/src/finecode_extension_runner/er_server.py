@@ -30,7 +30,7 @@ from cattrs.gen import make_dict_structure_fn, make_dict_unstructure_fn, overrid
 from loguru import logger
 
 import finecode_jsonrpc as finecode_jsonrpc_module
-from finecode_extension_api import code_action
+from finecode_extension_api import code_action, textstyler as _textstyler
 from finecode_extension_api.interfaces import ifileeditor, iprojectactionrunner, iprojectinfoprovider
 from finecode_extension_runner import context, er_errors, er_telemetry, er_wal, global_state, logs, schemas, services
 from finecode_extension_runner.di import bootstrap as di_bootstrap
@@ -197,6 +197,16 @@ class ErServer:
                 "jsonrpc": "2.0",
                 "method": "$/progress",
                 "params": {"token": token, "value": value},
+            }
+        )
+
+    def send_user_message_notification(self, message: str, level: str) -> None:
+        """Send ``er/userMessage`` notification (thread-safe, fire-and-forget)."""
+        self._session._transport.send(  # type: ignore[union-attr]
+            {
+                "jsonrpc": "2.0",
+                "method": "er/userMessage",
+                "params": {"message": message, "type": level},
             }
         )
 
@@ -543,6 +553,7 @@ async def update_config(server: ErServer, params: dict | None) -> dict:
             project_raw_config_getter=functools.partial(get_project_raw_config, server),
             workspace_editable_packages_getter=functools.partial(get_workspace_editable_packages, server),
             send_request_to_wm=_send_request_to_wm,
+            send_user_message_notification=server.send_user_message_notification,
         )
         runner_context.wal_writer = server._wal_writer
         server._runner_context = runner_context
@@ -977,13 +988,24 @@ def create_er_server(wal_writer: er_wal.ErWalWriter | None = None) -> ErServer:
     atexit.register(on_process_exit)
 
     def send_partial_result(
-        token: int | str, partial_result: code_action.RunActionResult
+        token: int | str,
+        partial_result: code_action.RunActionResult,
+        result_formats: list[str] | None = None,
     ) -> None:
-        partial_result_dict = dataclasses.asdict(partial_result)
-        partial_result_json = json.dumps(partial_result_dict)
+        _formats = result_formats or ["json"]
+        result_by_format: dict = {}
+        if "json" in _formats:
+            result_by_format["json"] = dataclasses.asdict(partial_result)
+        if "string" in _formats:
+            text = partial_result.to_text()
+            if isinstance(text, _textstyler.StyledText):
+                result_by_format["styled_text_json"] = text.to_json()
+            else:
+                result_by_format["string"] = text
+        partial_result_json = json.dumps(result_by_format)
         logger.trace(
-            f"send_partial_result: token={token}, length={len(partial_result_json)}, "
-            f"preview={partial_result_json[:200]}"
+            f"send_partial_result: token={token}, formats={_formats}, "
+            f"length={len(partial_result_json)}, preview={partial_result_json[:200]}"
         )
         server.send_progress_sync(token, partial_result_json)
 

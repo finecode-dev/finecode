@@ -46,12 +46,29 @@ def path_to_resource_uri(path: pathlib.Path) -> ResourceUri:
 def resource_uri_to_path(uri: ResourceUri) -> pathlib.Path:
     """Convert a ``file://`` :class:`ResourceUri` back to a local :class:`~pathlib.Path`.
 
+    Supports relative ``file://`` URIs: ``file://relative/path`` is resolved
+    against the current working directory.  When ``urlparse`` sees two slashes
+    it treats the first path segment as the netloc (hostname); this function
+    detects that case and reconstructs the relative path as ``netloc + path``.
+
     Raises :class:`ValueError` if the URI scheme is not ``file``.
     """
     parsed = urlparse(uri)
     if parsed.scheme != "file":
         raise ValueError(f"Cannot convert non-file URI to Path: {uri}")
     decoded_path = unquote(parsed.path)
+    # file://relative/path — urlparse treats the first path segment as netloc.
+    # Reconstruct the relative path and resolve it against cwd.
+    # NOTE: this is only correct when the caller's CWD matches the user's
+    # terminal directory.  The ER runs in a different CWD (project path), so
+    # relative URIs reaching the ER will be resolved incorrectly.  The proper
+    # fix is to expand relative URIs to absolute ones at the CLI boundary
+    # before sending them over the wire.
+    if parsed.netloc:
+        combined = pathlib.Path(parsed.netloc + decoded_path)
+        if not combined.is_absolute():
+            return pathlib.Path.cwd() / combined
+        return combined
     # On Windows, file:///C:/foo is parsed as path="/C:/foo" — strip the
     # leading slash so pathlib recognises the drive letter.
     if (

@@ -48,7 +48,7 @@ class PublishAndVerifyArtifactInitRepositoryProviderHandler(
         run_meta = run_context.meta
 
         await self.action_runner.run_action(
-            action_type=init_repository_provider_action.InitRepositoryProviderAction,
+            action_type=iprojectactionrunner.ActionRef.from_type(init_repository_provider_action.InitRepositoryProviderAction),
             payload=init_repository_provider_action.InitRepositoryProviderRunPayload(
                 repositories=self.config.repositories,
                 credentials_by_repository=self.config.credentials_by_repository,

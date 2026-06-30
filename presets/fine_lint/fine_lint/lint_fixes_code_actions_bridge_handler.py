@@ -82,7 +82,7 @@ class LintFixesCodeActionsBridgeHandler(
             )
 
         lint_fix_result = await self.action_runner.run_action(
-            action_type=GetLintFixesAction,
+            action_type=iprojectactionrunner.ActionRef.from_type(GetLintFixesAction),
             payload=GetLintFixesRunPayload(
                 file_path=payload.file_path,
                 range=payload.range,

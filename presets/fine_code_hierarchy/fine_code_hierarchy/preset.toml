@@ -1,0 +1,58 @@
+[tool.finecode.action.text_document_prepare_call_hierarchy]
+source = "fine_code_hierarchy.TextDocumentPrepareCallHierarchyAction"
+
+[[tool.finecode.action.text_document_prepare_call_hierarchy.handlers]]
+name = "dispatch"
+source = "fine_code_hierarchy.PrepareCallHierarchyDispatchHandler"
+env = "dev_no_runtime"
+dependencies = ["fine_code_hierarchy~=0.1.0a0"]
+
+
+[tool.finecode.action.call_hierarchy_incoming_calls]
+source = "fine_code_hierarchy.CallHierarchyIncomingCallsAction"
+
+[[tool.finecode.action.call_hierarchy_incoming_calls.handlers]]
+name = "dispatch"
+source = "fine_code_hierarchy.CallHierarchyIncomingCallsDispatchHandler"
+env = "dev_no_runtime"
+dependencies = ["fine_code_hierarchy~=0.1.0a0"]
+
+
+[tool.finecode.action.call_hierarchy_outgoing_calls]
+source = "fine_code_hierarchy.CallHierarchyOutgoingCallsAction"
+
+[[tool.finecode.action.call_hierarchy_outgoing_calls.handlers]]
+name = "dispatch"
+source = "fine_code_hierarchy.CallHierarchyOutgoingCallsDispatchHandler"
+env = "dev_no_runtime"
+dependencies = ["fine_code_hierarchy~=0.1.0a0"]
+
+
+[tool.finecode.action.text_document_prepare_type_hierarchy]
+source = "fine_code_hierarchy.TextDocumentPrepareTypeHierarchyAction"
+
+[[tool.finecode.action.text_document_prepare_type_hierarchy.handlers]]
+name = "dispatch"
+source = "fine_code_hierarchy.PrepareTypeHierarchyDispatchHandler"
+env = "dev_no_runtime"
+dependencies = ["fine_code_hierarchy~=0.1.0a0"]
+
+
+[tool.finecode.action.type_hierarchy_supertypes]
+source = "fine_code_hierarchy.TypeHierarchySupertypesAction"
+
+[[tool.finecode.action.type_hierarchy_supertypes.handlers]]
+name = "dispatch"
+source = "fine_code_hierarchy.TypeHierarchySupertypesDispatchHandler"
+env = "dev_no_runtime"
+dependencies = ["fine_code_hierarchy~=0.1.0a0"]
+
+
+[tool.finecode.action.type_hierarchy_subtypes]
+source = "fine_code_hierarchy.TypeHierarchySubtypesAction"
+
+[[tool.finecode.action.type_hierarchy_subtypes.handlers]]
+name = "dispatch"
+source = "fine_code_hierarchy.TypeHierarchySubtypesDispatchHandler"
+env = "dev_no_runtime"
+dependencies = ["fine_code_hierarchy~=0.1.0a0"]

@@ -23,6 +23,7 @@ from finecode_extension_api.interfaces import (  # idevenvinfoprovider,
     iprojectactionrunner,
     iprojectinfoprovider,
     irepositorycredentialsprovider,
+    iuser_messenger,
     iworkspaceactionrunner,
     iworkspaceinfoprovider,
 )
@@ -42,6 +43,7 @@ from finecode_extension_runner.impls import (  # dev_env_info_provider,
     project_info_provider,
     repository_credentials_provider,
     service_registry,
+    user_messenger as user_messenger_module,
     workspace_action_runner,
     workspace_info_provider,
 )
@@ -80,6 +82,7 @@ def bootstrap(
         [], collections.abc.Awaitable[dict[str, pathlib.Path]]
     ] | None = None,
     send_request_to_wm: Callable[[str, dict], collections.abc.Awaitable[Any]] | None = None,
+    send_user_message_notification: Callable[[str, str], None] | None = None,
 ):
     # logger_instance = loguru_logger.LoguruLogger()
     logger_instance = loguru_logger.get_logger()
@@ -96,6 +99,11 @@ def bootstrap(
         file_editor=file_editor_instance, logger=logger_instance
     )
     registry.register_instance(ilogger.ILogger, logger_instance)
+    _send_user_message = send_user_message_notification or (lambda msg, level: None)
+    registry.register_instance(
+        iuser_messenger.IUserMessenger,
+        user_messenger_module.UserMessenger(send_notification=_send_user_message),
+    )
     registry.register_instance(icommandrunner.ICommandRunner, command_runner_instance)
     registry.register_instance(ifilemanager.IFileManager, file_manager_instance)
     registry.register_instance(ifileeditor.IFileEditor, file_editor_instance)

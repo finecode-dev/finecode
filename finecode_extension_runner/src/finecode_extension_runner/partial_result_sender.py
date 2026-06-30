@@ -16,15 +16,21 @@ class PartialResultSender:
         self.results_scheduled_to_send_by_token: dict[
             str | int, code_action.RunActionResult
         ] = {}
+        self.formats_by_token: dict[str | int, list[str]] = {}
 
     async def schedule_sending(
-        self, token: int | str, value: code_action.RunActionResult
+        self,
+        token: int | str,
+        value: code_action.RunActionResult,
+        result_formats: list[str] | None = None,
     ) -> None:
         logger.trace(f"PartialResultSender: schedule_sending for token={token}, value_type={type(value).__name__}")
         if token not in self.results_scheduled_to_send_by_token:
             self.results_scheduled_to_send_by_token[token] = value
         else:
             self.results_scheduled_to_send_by_token[token].update(value)
+        if result_formats is not None:
+            self.formats_by_token[token] = result_formats
 
         if self.scheduled_task is None:
             self.scheduled_task = asyncio.create_task(self._wait_and_send())
@@ -51,6 +57,7 @@ class PartialResultSender:
                 break
 
             count += 1
+            formats = self.formats_by_token.pop(token, None)
             logger.trace(f"PartialResultSender: _send_all sending token={token}")
-            self.sender(token, value)
+            self.sender(token, value, formats)
         logger.trace(f"PartialResultSender: _send_all done, sent {count} results")

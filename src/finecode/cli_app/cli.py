@@ -11,7 +11,7 @@ import click
 from loguru import logger
 
 from finecode import logger_utils, user_messages
-from finecode.wm_server.errors import ConfigurationError
+from finecode.wm_server.errors import ConfigurationError, WmError
 
 
 FINECODE_CONFIG_ENV_PREFIX = "FINECODE_CONFIG_"
@@ -381,6 +381,9 @@ def run(ctx) -> None:
         sys.exit(result.return_code)
     except run_cmd.RunFailed as exception:
         click.echo(exception.args[0], err=True)
+        sys.exit(1)
+    except WmError as exception:
+        click.echo(str(exception), err=True)
         sys.exit(1)
     except Exception as exception:
         logger.exception(exception)

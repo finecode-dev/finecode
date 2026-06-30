@@ -12,7 +12,15 @@ from flake8.api import legacy as flake8
 from flake8.plugins import finder
 
 from finecode_extension_api import code_action
-from fine_lint import lint_files_action
+from fine_lint.diagnostic_types import (
+    Diagnostic,
+    DiagnosticFilesRunPayload,
+    DiagnosticFilesRunContext,
+    DiagnosticFilesRunResult,
+    DiagnosticSeverity,
+    Position,
+    Range,
+)
 from fine_python_lang.lint_python_files_action import (
     LintPythonFilesAction,
 )
@@ -25,12 +33,12 @@ from finecode_extension_api.interfaces import (
 from finecode_extension_api.resource_uri import ResourceUri, resource_uri_to_path
 
 
-def map_flake8_check_result_to_lint_message(result: tuple) -> lint_files_action.LintMessage:
+def map_flake8_check_result_to_lint_message(result: tuple) -> Diagnostic:
     error_code, line_number, column, text, physical_line = result
-    return lint_files_action.LintMessage(
-        range=lint_files_action.Range(
-            start=lint_files_action.Position(line=line_number - 1, character=column),
-            end=lint_files_action.Position(
+    return Diagnostic(
+        range=Range(
+            start=Position(line=line_number - 1, character=column),
+            end=Position(
                 line=line_number - 1,
                 character=len(physical_line) if physical_line is not None else column,
             ),
@@ -39,9 +47,9 @@ def map_flake8_check_result_to_lint_message(result: tuple) -> lint_files_action.
         code=error_code,
         source="flake8",
         severity=(
-            lint_files_action.LintMessageSeverity.WARNING
+            DiagnosticSeverity.WARNING
             if error_code.startswith("W")
-            else lint_files_action.LintMessageSeverity.ERROR
+            else DiagnosticSeverity.ERROR
         ),
     )
 
@@ -51,8 +59,8 @@ def run_flake8_on_single_file(
     file_content: str,
     file_ast: ast.Module,
     config: Flake8LintFilesHandlerConfig,
-) -> list[lint_files_action.LintMessage]:
-    lint_messages: list[lint_files_action.LintMessage] = []
+) -> list[Diagnostic]:
+    lint_messages: list[Diagnostic] = []
     # flake8 expects lines with newline at the end
     file_lines = [line + "\n" for line in file_content.split("\n")]
     # TODO: investigate whether guide and decider can be reused. They cannot be
@@ -152,15 +160,15 @@ class Flake8LintFilesHandler(
 
     async def run_on_single_file(
         self, file_uri: ResourceUri
-    ) -> lint_files_action.LintFilesRunResult | None:
+    ) -> DiagnosticFilesRunResult | None:
         file_path = resource_uri_to_path(file_uri)
-        messages: dict[ResourceUri, list[lint_files_action.LintMessage]] = {}
+        messages: dict[ResourceUri, list[Diagnostic]] = {}
         try:
             cached_lint_messages = await self.cache.get_file_cache(
                 file_path, self.CACHE_KEY
             )
             messages[file_uri] = cached_lint_messages
-            return lint_files_action.LintFilesRunResult(messages=messages)
+            return DiagnosticFilesRunResult(messages=messages)
         except icache.CacheMissException:
             pass
 
@@ -188,12 +196,12 @@ class Flake8LintFilesHandler(
             file_path, file_version, self.CACHE_KEY, lint_messages
         )
 
-        return lint_files_action.LintFilesRunResult(messages=messages)
+        return DiagnosticFilesRunResult(messages=messages)
 
     async def run(
         self,
-        payload: lint_files_action.LintFilesRunPayload,
-        run_context: lint_files_action.LintFilesRunContext,
+        payload: DiagnosticFilesRunPayload,
+        run_context: DiagnosticFilesRunContext,
     ) -> None:
         if self.config.select is not None and len(self.config.select) == 0:
             # empty set of rules is selected, no need to run flake8

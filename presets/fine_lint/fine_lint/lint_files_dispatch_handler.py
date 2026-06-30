@@ -38,7 +38,7 @@ class LintFilesDispatchHandler(
 
     async def _lint_lang(
         self,
-        subaction: type,
+        subaction: iprojectactionrunner.ActionRef,
         file_uris: list[ResourceUri],
         meta: code_action.RunActionMeta,
         partial_result_sender: code_action.PartialResultSender,
@@ -55,7 +55,7 @@ class LintFilesDispatchHandler(
         payload: lint_files_action.LintFilesRunPayload,
         run_context: lint_files_action.LintFilesRunContext,
     ) -> None:
-        subactions_by_lang = self.action_runner.get_actions_for_parent(
+        subactions_by_lang = await self.action_runner.get_actions_for_parent(
             lint_files_action.LintFilesAction
         )
 
@@ -65,7 +65,7 @@ class LintFilesDispatchHandler(
 
         # Group files by language — single pass, O(files).
         files_by_lang_result = await self.action_runner.run_action(
-            action_type=group_src_artifact_files_by_lang_action.GroupSrcArtifactFilesByLangAction,
+            action_type=iprojectactionrunner.ActionRef.from_type(group_src_artifact_files_by_lang_action.GroupSrcArtifactFilesByLangAction),
             payload=group_src_artifact_files_by_lang_action.GroupSrcArtifactFilesByLangRunPayload(
                 file_paths=payload.file_paths,
                 langs=list(subactions_by_lang.keys()),

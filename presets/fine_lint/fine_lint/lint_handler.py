@@ -80,6 +80,16 @@ class LintHandler(
             meta=run_meta,
             project_paths=[project_path],
         )
+        if not results:
+            self.logger.warning(
+                f"LintHandler: no LintFilesAction handlers found for project '{project_path}' "
+                f"— sending empty results for {len(project_files)} file(s)"
+            )
+            await progress.advance(steps=len(project_files), message=None)
+            await partial_result_sender.send(
+                lint_action.LintRunResult(messages={uri: [] for uri in project_file_uris})
+            )
+            return
         for result in results.values():
             uris = list(result.messages)
             msg = str(uris[0]) if uris else None
@@ -119,10 +129,27 @@ class LintHandler(
             )
             file_uris = [path_to_resource_uri(f) for f in files]
 
-        files_by_project = group_files_by_project(
-            [resource_uri_to_path(u) for u in file_uris],
-            project_paths,
-        )
+        if not file_uris:
+            self.logger.warning(
+                f"LintHandler: no files to lint (target={payload.target}, "
+                f"dev_env={run_meta.dev_env}, trigger={run_meta.trigger})"
+            )
+            await run_context.partial_result_sender.send(lint_action.LintRunResult(messages={}))
+            return
+
+        file_paths = [resource_uri_to_path(u) for u in file_uris]
+        files_by_project = group_files_by_project(file_paths, project_paths)
+
+        # R-307: every requested file must be covered by a partial result
+        assigned_paths = {f for project_files in files_by_project.values() for f in project_files}
+        unassigned_uris = [u for u, p in zip(file_uris, file_paths) if p not in assigned_paths]
+        if unassigned_uris:
+            self.logger.warning(
+                f"LintHandler: {len(unassigned_uris)} file(s) could not be matched to any project "
+                f"and will receive empty results: "
+                + ", ".join(str(u) for u in unassigned_uris[:5])
+                + ("..." if len(unassigned_uris) > 5 else "")
+            )
 
         async with run_context.progress("Linting files", total=len(file_uris)) as progress:
             async with asyncio.TaskGroup() as tg:
@@ -136,3 +163,7 @@ class LintHandler(
                             run_context.partial_result_sender,
                         )
                     )
+            if unassigned_uris:
+                await run_context.partial_result_sender.send(
+                    lint_action.LintRunResult(messages={u: [] for u in unassigned_uris})
+                )
