@@ -1,3 +1,6 @@
+[tool.finecode]
+presets = [{ source = "fine_lint" }]
+
 [tool.finecode.action.lint_python_files]
 source = "fine_python_lang.LintPythonFilesAction"
 handlers = [
@@ -6,9 +9,6 @@ handlers = [
     ] },
     { name = "flake8", source = "fine_python_flake8.Flake8LintFilesHandler", env = "dev_no_runtime", dependencies = [
         "fine_python_flake8~=0.3.0a0",
-    ] },
-    { name = "pyrefly", source = "fine_python_pyrefly.PyreflyLintFilesHandler", env = "dev_no_runtime", dependencies = [
-        "fine_python_pyrefly[jsonrpc]~=0.2.0a0",
     ] },
 ]
 
@@ -26,12 +26,12 @@ dependencies_override = ["ruff==0.15.*"]
 [tool.finecode.extension.fine_python_flake8]
 dependencies_override = ["flake8==7.3.*"]
 
-[tool.finecode.extension.fine_python_pyrefly]
-dependencies_override = ["pyrefly==0.64.*"]
-
 [[tool.finecode.action_handler]]
 source = "fine_python_ruff.RuffLintFilesHandler"
-config.extend_select = ["B", "I"]
+# PLC0415 (import-outside-top-level): Checks for import statements outside of a module's
+#                                     top-level scope, such as within a function or
+#                                     class definition.
+config.extend_select = ["B", "I", "PLC0415"]
 
 # flake8 is used only for custom rules, all standard rules are checked by ruff, but
 # keep flake8 configuration if someone activates some rules or uses flake8 config
