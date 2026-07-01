@@ -69,25 +69,13 @@ class FileAlreadyOpenError(Exception):
 
 
 class IFileEditorSession(Protocol):
-    # Reasons for using sessions:
-    # - all operations should be authored to provide tracebility
-    # - some operations are author-specific, e.g. subscribe to changes of all opened by
-    #   author files
-    async def change_file(
-        self, file_path: pathlib.Path, change: FileChange
-    ) -> None: ...
+    """Read/write access to file content, for actions and handlers.
 
-    async def subscribe_to_changes_of_opened_files(
-        self,
-    ) -> contextlib.AbstractAsyncContextManager[FileChangeEvent]:
-        # TODO: bunch of change events at once?
-        ...
-
-    async def open_file(self, file_path: pathlib.Path) -> None: ...
-
-    async def save_opened_file(self, file_path: pathlib.Path) -> None: ...
-
-    async def close_file(self, file_path: pathlib.Path) -> None: ...
+    Reasons for using sessions:
+    - all operations should be authored to provide tracebility
+    - some operations are author-specific, e.g. subscribe to changes of all opened by
+      author files
+    """
 
     def subscribe_to_all_events(
         self,
@@ -107,6 +95,35 @@ class IFileEditorSession(Protocol):
 
     # TODO
     # async def reread_file()
+
+
+class IFileEditorProviderSession(IFileEditorSession, Protocol):
+    """Everything in :class:`IFileEditorSession`, plus the file lifecycle
+    operations used to mirror an external editor's state (open/close/change) —
+    for the ER-server bridge that translates wire notifications into tracked
+    file state. Not for use by actions or handlers.
+    """
+
+    async def open_file(self, file_path: pathlib.Path, content: str) -> None:
+        # `content` seeds the tracked content directly — the caller (the
+        # wire-protocol bridge) always already has it from the notification
+        # that triggered the open, so there's never a need to read the file
+        # from disk here.
+        ...
+
+    async def close_file(self, file_path: pathlib.Path) -> None: ...
+
+    async def change_file(
+        self, file_path: pathlib.Path, change: FileChange
+    ) -> None: ...
+
+    async def save_opened_file(self, file_path: pathlib.Path) -> None: ...
+
+    async def subscribe_to_changes_of_opened_files(
+        self,
+    ) -> contextlib.AbstractAsyncContextManager[FileChangeEvent]:
+        # TODO: bunch of change events at once?
+        ...
 
 
 class IFileEditor(Protocol):
@@ -135,7 +152,7 @@ class IFileEditor(Protocol):
 
     def session(
         self, author: FileOperationAuthor
-    ) -> typing.AsyncContextManager[IFileEditorSession]:
+    ) -> typing.AsyncContextManager[IFileEditorProviderSession]:
         """Create a session for a specific author."""
         ...
 

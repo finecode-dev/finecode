@@ -80,6 +80,12 @@ class TextDocumentId:
 
 
 @dataclasses.dataclass
+class TextDocumentItem:
+    uri: str
+    text: str
+
+
+@dataclasses.dataclass
 class TextDocumentEdit:
     text_document: TextDocumentId
     edits: list[TextEdit]
@@ -97,7 +103,7 @@ class ApplyWorkspaceEditParams:
 
 @dataclasses.dataclass
 class DidOpenTextDocumentParams:
-    text_document: TextDocumentId
+    text_document: TextDocumentItem
 
 
 @dataclasses.dataclass
@@ -176,7 +182,7 @@ class ErServer:
         self._session = finecode_jsonrpc_module.JsonRpcServerSession(tracing=er_telemetry.JsonRpcTracingHooks())
         self._finecode_async_tasks: list[asyncio.Task] = []
         self._finecode_exit_stack = contextlib.AsyncExitStack()
-        self._finecode_file_editor_session: ifileeditor.IFileEditorSession
+        self._finecode_file_editor_session: ifileeditor.IFileEditorProviderSession
         self._finecode_file_operation_author = ifileeditor.FileOperationAuthor(
             id="FineCode_Extension_Runner_Server"
         )
@@ -390,7 +396,13 @@ async def _document_did_open(server: ErServer, params: dict | None) -> None:
     typed = _protocol_converter.structure(params, DidOpenTextDocumentParams)
     logger.info(f"document did open: {typed.text_document.uri}")
     file_path = uri_to_path(uri=typed.text_document.uri)
-    await server._finecode_file_editor_session.open_file(file_path=file_path)
+    # Seed from the client's buffer (`text`), never re-read from disk here: the
+    # IDE may send `didOpen` for a file that no longer exists on disk (e.g. a
+    # stale tab left open after the file was deleted), and the buffer is the
+    # source of truth for "open" content regardless of what's on disk.
+    await server._finecode_file_editor_session.open_file(
+        file_path=file_path, content=typed.text_document.text
+    )
 
 
 async def _document_did_close(server: ErServer, params: dict | None) -> None:

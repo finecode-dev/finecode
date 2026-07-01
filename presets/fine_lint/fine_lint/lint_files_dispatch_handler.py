@@ -61,6 +61,10 @@ class LintFilesDispatchHandler(
 
         if not subactions_by_lang:
             self.logger.debug("LintFilesDispatchHandler: no language subactions registered")
+            if payload.file_paths:
+                await run_context.partial_result_sender.send(
+                    lint_files_action.LintFilesRunResult(messages={uri: [] for uri in payload.file_paths})
+                )
             return
 
         # Group files by language — single pass, O(files).
@@ -74,11 +78,14 @@ class LintFilesDispatchHandler(
         )
         files_by_lang = files_by_lang_result.files_by_lang
 
-        # Files not matched by any language subaction get an empty result so that
-        # the caller can clear stale IDE diagnostics for them.
+        # Files not matched by any language subaction — or matched to a language
+        # without a registered subaction (e.g. "toml" when no lint_toml_files
+        # subaction exists) — get an empty result so the caller can clear stale
+        # IDE diagnostics for them, and so the handler always sends something.
         matched_files: set[ResourceUri] = set()
-        for file_uris in files_by_lang.values():
-            matched_files.update(file_uris)
+        for lang, file_uris in files_by_lang.items():
+            if lang in subactions_by_lang:
+                matched_files.update(file_uris)
 
         unmatched = [f for f in payload.file_paths if f not in matched_files]
         if unmatched:

@@ -193,29 +193,25 @@ class LspService(service.DisposableService):
         assert self._session is not None, "LspService not started"
         return await self._session.send_request(method, params, timeout=timeout)
 
-    async def check_file(
-        self,
-        file_path: Path,
-        timeout: float = 30.0,
-    ) -> list[dict[str, Any]]:
-        """Check a file and return raw LSP diagnostics."""
+    async def _sync_document(self, uri: str, content: str) -> bool:
+        """Send didOpen/didChange only if content differs from what the server last saw.
+
+        Every LSP feature call used to send a didChange unconditionally, bumping the
+        document version even when content was unchanged. A concurrent call (e.g. a
+        diagnostics run overlapping a hover) would then see a "changed" document and
+        emit its own didChange, which servers like pyrefly treat as a real mutation
+        and use it to cancel any older in-flight request for that document — turning
+        two harmless concurrent reads into a spurious cancellation error. Gating on
+        content identity here keeps notifications limited to actual changes.
+
+        Returns True if a didOpen/didChange notification was sent, False if the
+        cached content already matched and nothing was sent.
+        """
         assert self._session is not None, "LspService not started"
 
-        uri = file_path.as_uri()
-
-        async with self._file_editor.session(
-            author=self._file_operation_author
-        ) as fe_session:
-            async with fe_session.read_file(file_path) as file_info:
-                content = file_info.content
-                version = file_info.version
-
-        if self._file_versions.get(uri) == version:
-            # LSP already has the current content; return cached diagnostics
-            return self._diagnostics_data.get(uri, [])
-
-        event = threading.Event()
-        self._diagnostics[uri] = event
+        content_hash = str(hash(content))
+        if self._file_versions.get(uri) == content_hash:
+            return False
 
         lsp_version = self._next_version(uri)
         if uri not in self._open_documents:
@@ -239,8 +235,32 @@ class LspService(service.DisposableService):
                     "contentChanges": [{"text": content}],
                 },
             )
+        self._file_versions[uri] = content_hash
+        return True
 
-        self._file_versions[uri] = version
+    async def check_file(
+        self,
+        file_path: Path,
+        timeout: float = 30.0,
+    ) -> list[dict[str, Any]]:
+        """Check a file and return raw LSP diagnostics."""
+        assert self._session is not None, "LspService not started"
+
+        uri = file_path.as_uri()
+
+        async with self._file_editor.session(
+            author=self._file_operation_author
+        ) as fe_session:
+            async with fe_session.read_file(file_path) as file_info:
+                content = file_info.content
+
+        event = threading.Event()
+        self._diagnostics[uri] = event
+
+        if not await self._sync_document(uri, content):
+            # LSP already has the current content; return cached diagnostics
+            self._diagnostics.pop(uri, None)
+            return self._diagnostics_data.get(uri, [])
 
         was_set = await asyncio.to_thread(event.wait, timeout)
         if not was_set:
@@ -280,28 +300,7 @@ class LspService(service.DisposableService):
 
         uri = file_path.as_uri()
 
-        lsp_version = self._next_version(uri)
-        if uri not in self._open_documents:
-            await self._session.send_notification(
-                "textDocument/didOpen",
-                {
-                    "textDocument": {
-                        "uri": uri,
-                        "languageId": self._language_id,
-                        "version": lsp_version,
-                        "text": content,
-                    },
-                },
-            )
-            self._open_documents.add(uri)
-        else:
-            await self._session.send_notification(
-                "textDocument/didChange",
-                {
-                    "textDocument": {"uri": uri, "version": lsp_version},
-                    "contentChanges": [{"text": content}],
-                },
-            )
+        await self._sync_document(uri, content)
 
         formatting_options = options or {"tabSize": 4, "insertSpaces": True}
         result = await self._session.send_request(
@@ -334,28 +333,7 @@ class LspService(service.DisposableService):
 
         uri = file_path.as_uri()
 
-        lsp_version = self._next_version(uri)
-        if uri not in self._open_documents:
-            await self._session.send_notification(
-                "textDocument/didOpen",
-                {
-                    "textDocument": {
-                        "uri": uri,
-                        "languageId": self._language_id,
-                        "version": lsp_version,
-                        "text": content,
-                    },
-                },
-            )
-            self._open_documents.add(uri)
-        else:
-            await self._session.send_notification(
-                "textDocument/didChange",
-                {
-                    "textDocument": {"uri": uri, "version": lsp_version},
-                    "contentChanges": [{"text": content}],
-                },
-            )
+        await self._sync_document(uri, content)
 
         semantic_tokens_provider = self._server_capabilities.get(
             "semanticTokensProvider", {}
@@ -390,28 +368,7 @@ class LspService(service.DisposableService):
         assert self._session is not None, "LspService not started"
 
         uri = file_path.as_uri()
-        lsp_version = self._next_version(uri)
-        if uri not in self._open_documents:
-            await self._session.send_notification(
-                "textDocument/didOpen",
-                {
-                    "textDocument": {
-                        "uri": uri,
-                        "languageId": self._language_id,
-                        "version": lsp_version,
-                        "text": content,
-                    },
-                },
-            )
-            self._open_documents.add(uri)
-        else:
-            await self._session.send_notification(
-                "textDocument/didChange",
-                {
-                    "textDocument": {"uri": uri, "version": lsp_version},
-                    "contentChanges": [{"text": content}],
-                },
-            )
+        await self._sync_document(uri, content)
 
         result = await self._session.send_request(
             "textDocument/hover",
@@ -439,28 +396,7 @@ class LspService(service.DisposableService):
         assert self._session is not None, "LspService not started"
 
         uri = file_path.as_uri()
-        lsp_version = self._next_version(uri)
-        if uri not in self._open_documents:
-            await self._session.send_notification(
-                "textDocument/didOpen",
-                {
-                    "textDocument": {
-                        "uri": uri,
-                        "languageId": self._language_id,
-                        "version": lsp_version,
-                        "text": content,
-                    },
-                },
-            )
-            self._open_documents.add(uri)
-        else:
-            await self._session.send_notification(
-                "textDocument/didChange",
-                {
-                    "textDocument": {"uri": uri, "version": lsp_version},
-                    "contentChanges": [{"text": content}],
-                },
-            )
+        await self._sync_document(uri, content)
 
         result = await self._session.send_request(
             "textDocument/definition",
@@ -489,28 +425,7 @@ class LspService(service.DisposableService):
         assert self._session is not None, "LspService not started"
 
         uri = file_path.as_uri()
-        lsp_version = self._next_version(uri)
-        if uri not in self._open_documents:
-            await self._session.send_notification(
-                "textDocument/didOpen",
-                {
-                    "textDocument": {
-                        "uri": uri,
-                        "languageId": self._language_id,
-                        "version": lsp_version,
-                        "text": content,
-                    },
-                },
-            )
-            self._open_documents.add(uri)
-        else:
-            await self._session.send_notification(
-                "textDocument/didChange",
-                {
-                    "textDocument": {"uri": uri, "version": lsp_version},
-                    "contentChanges": [{"text": content}],
-                },
-            )
+        await self._sync_document(uri, content)
 
         result = await self._session.send_request(
             "textDocument/references",
@@ -542,28 +457,7 @@ class LspService(service.DisposableService):
         assert self._session is not None, "LspService not started"
 
         uri = file_path.as_uri()
-        lsp_version = self._next_version(uri)
-        if uri not in self._open_documents:
-            await self._session.send_notification(
-                "textDocument/didOpen",
-                {
-                    "textDocument": {
-                        "uri": uri,
-                        "languageId": self._language_id,
-                        "version": lsp_version,
-                        "text": content,
-                    },
-                },
-            )
-            self._open_documents.add(uri)
-        else:
-            await self._session.send_notification(
-                "textDocument/didChange",
-                {
-                    "textDocument": {"uri": uri, "version": lsp_version},
-                    "contentChanges": [{"text": content}],
-                },
-            )
+        await self._sync_document(uri, content)
 
         result = await self._session.send_request(
             "textDocument/typeDefinition",
@@ -591,28 +485,7 @@ class LspService(service.DisposableService):
         assert self._session is not None, "LspService not started"
 
         uri = file_path.as_uri()
-        lsp_version = self._next_version(uri)
-        if uri not in self._open_documents:
-            await self._session.send_notification(
-                "textDocument/didOpen",
-                {
-                    "textDocument": {
-                        "uri": uri,
-                        "languageId": self._language_id,
-                        "version": lsp_version,
-                        "text": content,
-                    },
-                },
-            )
-            self._open_documents.add(uri)
-        else:
-            await self._session.send_notification(
-                "textDocument/didChange",
-                {
-                    "textDocument": {"uri": uri, "version": lsp_version},
-                    "contentChanges": [{"text": content}],
-                },
-            )
+        await self._sync_document(uri, content)
 
         result = await self._session.send_request(
             "textDocument/implementation",
@@ -640,28 +513,7 @@ class LspService(service.DisposableService):
         assert self._session is not None, "LspService not started"
 
         uri = file_path.as_uri()
-        lsp_version = self._next_version(uri)
-        if uri not in self._open_documents:
-            await self._session.send_notification(
-                "textDocument/didOpen",
-                {
-                    "textDocument": {
-                        "uri": uri,
-                        "languageId": self._language_id,
-                        "version": lsp_version,
-                        "text": content,
-                    },
-                },
-            )
-            self._open_documents.add(uri)
-        else:
-            await self._session.send_notification(
-                "textDocument/didChange",
-                {
-                    "textDocument": {"uri": uri, "version": lsp_version},
-                    "contentChanges": [{"text": content}],
-                },
-            )
+        await self._sync_document(uri, content)
 
         result = await self._session.send_request(
             "textDocument/documentHighlight",
@@ -689,28 +541,7 @@ class LspService(service.DisposableService):
         assert self._session is not None, "LspService not started"
 
         uri = file_path.as_uri()
-        lsp_version = self._next_version(uri)
-        if uri not in self._open_documents:
-            await self._session.send_notification(
-                "textDocument/didOpen",
-                {
-                    "textDocument": {
-                        "uri": uri,
-                        "languageId": self._language_id,
-                        "version": lsp_version,
-                        "text": content,
-                    },
-                },
-            )
-            self._open_documents.add(uri)
-        else:
-            await self._session.send_notification(
-                "textDocument/didChange",
-                {
-                    "textDocument": {"uri": uri, "version": lsp_version},
-                    "contentChanges": [{"text": content}],
-                },
-            )
+        await self._sync_document(uri, content)
 
         result = await self._session.send_request(
             "textDocument/prepareCallHierarchy",
@@ -738,28 +569,7 @@ class LspService(service.DisposableService):
         assert self._session is not None, "LspService not started"
 
         uri = file_path.as_uri()
-        lsp_version = self._next_version(uri)
-        if uri not in self._open_documents:
-            await self._session.send_notification(
-                "textDocument/didOpen",
-                {
-                    "textDocument": {
-                        "uri": uri,
-                        "languageId": self._language_id,
-                        "version": lsp_version,
-                        "text": content,
-                    },
-                },
-            )
-            self._open_documents.add(uri)
-        else:
-            await self._session.send_notification(
-                "textDocument/didChange",
-                {
-                    "textDocument": {"uri": uri, "version": lsp_version},
-                    "contentChanges": [{"text": content}],
-                },
-            )
+        await self._sync_document(uri, content)
 
         result = await self._session.send_request(
             "callHierarchy/incomingCalls",
@@ -787,28 +597,7 @@ class LspService(service.DisposableService):
         assert self._session is not None, "LspService not started"
 
         uri = file_path.as_uri()
-        lsp_version = self._next_version(uri)
-        if uri not in self._open_documents:
-            await self._session.send_notification(
-                "textDocument/didOpen",
-                {
-                    "textDocument": {
-                        "uri": uri,
-                        "languageId": self._language_id,
-                        "version": lsp_version,
-                        "text": content,
-                    },
-                },
-            )
-            self._open_documents.add(uri)
-        else:
-            await self._session.send_notification(
-                "textDocument/didChange",
-                {
-                    "textDocument": {"uri": uri, "version": lsp_version},
-                    "contentChanges": [{"text": content}],
-                },
-            )
+        await self._sync_document(uri, content)
 
         result = await self._session.send_request(
             "callHierarchy/outgoingCalls",
@@ -836,28 +625,7 @@ class LspService(service.DisposableService):
         assert self._session is not None, "LspService not started"
 
         uri = file_path.as_uri()
-        lsp_version = self._next_version(uri)
-        if uri not in self._open_documents:
-            await self._session.send_notification(
-                "textDocument/didOpen",
-                {
-                    "textDocument": {
-                        "uri": uri,
-                        "languageId": self._language_id,
-                        "version": lsp_version,
-                        "text": content,
-                    },
-                },
-            )
-            self._open_documents.add(uri)
-        else:
-            await self._session.send_notification(
-                "textDocument/didChange",
-                {
-                    "textDocument": {"uri": uri, "version": lsp_version},
-                    "contentChanges": [{"text": content}],
-                },
-            )
+        await self._sync_document(uri, content)
 
         result = await self._session.send_request(
             "textDocument/prepareTypeHierarchy",
@@ -885,28 +653,7 @@ class LspService(service.DisposableService):
         assert self._session is not None, "LspService not started"
 
         uri = file_path.as_uri()
-        lsp_version = self._next_version(uri)
-        if uri not in self._open_documents:
-            await self._session.send_notification(
-                "textDocument/didOpen",
-                {
-                    "textDocument": {
-                        "uri": uri,
-                        "languageId": self._language_id,
-                        "version": lsp_version,
-                        "text": content,
-                    },
-                },
-            )
-            self._open_documents.add(uri)
-        else:
-            await self._session.send_notification(
-                "textDocument/didChange",
-                {
-                    "textDocument": {"uri": uri, "version": lsp_version},
-                    "contentChanges": [{"text": content}],
-                },
-            )
+        await self._sync_document(uri, content)
 
         result = await self._session.send_request(
             "typeHierarchy/supertypes",
@@ -934,28 +681,7 @@ class LspService(service.DisposableService):
         assert self._session is not None, "LspService not started"
 
         uri = file_path.as_uri()
-        lsp_version = self._next_version(uri)
-        if uri not in self._open_documents:
-            await self._session.send_notification(
-                "textDocument/didOpen",
-                {
-                    "textDocument": {
-                        "uri": uri,
-                        "languageId": self._language_id,
-                        "version": lsp_version,
-                        "text": content,
-                    },
-                },
-            )
-            self._open_documents.add(uri)
-        else:
-            await self._session.send_notification(
-                "textDocument/didChange",
-                {
-                    "textDocument": {"uri": uri, "version": lsp_version},
-                    "contentChanges": [{"text": content}],
-                },
-            )
+        await self._sync_document(uri, content)
 
         result = await self._session.send_request(
             "typeHierarchy/subtypes",

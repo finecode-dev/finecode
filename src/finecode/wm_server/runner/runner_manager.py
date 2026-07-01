@@ -382,12 +382,49 @@ async def _start_extension_runner_process(
         project = ws_context.ws_projects.get(runner.working_dir_path)
         if not isinstance(project, domain.CollectedProject):
             raise errors.InternalError(f"Project {runner.working_dir_path} has no valid config")
-        try:
-            action_name = next(
-                a.name for a in project.actions
-                if a.canonical_source == params.action_source
+
+        def _find_action_name() -> str | None:
+            return next(
+                (
+                    a.name for a in project.actions
+                    if a.canonical_source == params.action_source
+                ),
+                None,
             )
-        except StopIteration:
+
+        action_name = _find_action_name()
+        if action_name is None:
+            # canonical_source is resolved asynchronously by each env's runner
+            # (update_runner_config -> resolveActionMeta). Right after a restart
+            # the runner that owns this action's handlers may still be
+            # initializing when this back-channel call arrives. Give any
+            # not-yet-resolved action in this project a chance to resolve
+            # before giving up, reusing the same mechanism the external API
+            # boundary already relies on (ensure_action_metadata). Each attempt
+            # TODO: untested — handle_run_action_in_workspace is a closure inside
+            # _start_extension_runner_process, not independently callable. A real
+            # regression test needs this extracted to a standalone
+            # (params, runner, ws_context) -> dict function first, then a unit test
+            # with ensure_action_metadata stubbed to resolve canonical_source as a
+            # side effect (race recovers) and stubbed as a no-op (still raises
+            # ActionNotFoundError).
+            # is independent — one action's metadata being unresolvable must
+            # not cancel another action's resolution that is about to succeed,
+            # so gather (not TaskGroup) with return_exceptions=True.
+            from finecode.wm_server.services import run_service
+
+            unresolved = [a for a in project.actions if a.canonical_source is None]
+            if unresolved:
+                await asyncio.gather(
+                    *(
+                        run_service.ensure_action_metadata(a, project, ws_context)
+                        for a in unresolved
+                    ),
+                    return_exceptions=True,
+                )
+                action_name = _find_action_name()
+
+        if action_name is None:
             known = [
                 f"{a.name}(source={a.source!r}, canonical={a.canonical_source!r})"
                 for a in project.actions
@@ -1129,9 +1166,7 @@ async def send_opened_files(
                 tg.create_task(
                     runner_client.notify_document_did_open(
                         runner=runner,
-                        document_info=domain.TextDocumentInfo(
-                            uri=file_info.uri, version=file_info.version
-                        ),
+                        document_info=file_info,
                     )
                 )
     except ExceptionGroup as eg:

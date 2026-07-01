@@ -136,7 +136,7 @@ class SubscriptionToAllEvents(BaseSubscription):
         self.event_queue: asyncio.Queue[ifileeditor.FileEvent] = asyncio.Queue()
 
 
-class FileEditorSession(ifileeditor.IFileEditorSession):
+class FileEditorSession(ifileeditor.IFileEditorProviderSession):
     def __init__(
         self,
         logger: ilogger.ILogger,
@@ -372,7 +372,7 @@ class FileEditorSession(ifileeditor.IFileEditorSession):
         for subscription in self._all_events_subscriptions.values():
             subscription.event_queue.put_nowait(file_change_event)
 
-    async def open_file(self, file_path: pathlib.Path) -> None:
+    async def open_file(self, file_path: pathlib.Path, content: str) -> None:
         if file_path in self._opened_files:
             # file is already opened by one of the sessions, just add current session to
             # the `opened_by` list
@@ -384,15 +384,9 @@ class FileEditorSession(ifileeditor.IFileEditorSession):
 
             opened_file_info.opened_by.append(self)
         else:
-            initial_file_content = await self._file_manager.get_content(
-                file_path=file_path
-            )
-            initial_file_version = await self._file_manager.get_file_version(
-                file_path=file_path
-            )
             new_opened_file_info = OpenedFileInfo(
-                content=initial_file_content,
-                version=initial_file_version,
+                content=content,
+                version=str(hash(content)),
                 opened_by=[self],
             )
             self._opened_files[file_path] = new_opened_file_info

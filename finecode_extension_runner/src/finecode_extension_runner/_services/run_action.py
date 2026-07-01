@@ -597,10 +597,17 @@ async def run_action(
                         if handler_result is not None:
                             if action_result is None:
                                 action_result = handler_result
+                                # Aliases run_context_info._current_result to this same
+                                # object (no copy) — see the else branch below.
+                                run_context_info.update(action_result)
                             else:
+                                # No run_context_info.update() call here: it already
+                                # aliases action_result (set above), so mutating
+                                # action_result in place is visible through
+                                # run_context_info.current_result automatically. Calling
+                                # update() again would merge action_result into itself,
+                                # doubling every value it already accumulated.
                                 action_result.update(handler_result)
-
-                            run_context_info.update(action_result)
 
                         # Flush partial results sent by this handler immediately so
                         # sequential handlers stream results one-by-one rather than
@@ -773,7 +780,7 @@ def action_result_to_run_action_response(
         run_return_code = action_result.return_code
         for asked_result_format in asked_result_formats:
             if asked_result_format == "json":
-                result_by_format["json"] = dataclasses.asdict(action_result)
+                result_by_format["json"] = _converter.unstructure(action_result)
             elif asked_result_format == "string":
                 result_text = action_result.to_text()
                 if isinstance(result_text, textstyler.StyledText):
@@ -898,7 +905,7 @@ async def run_handlers_raw(
     )
 
     # Raw serialized result for chaining to the next segment.
-    raw_result: dict = dataclasses.asdict(action_result) if action_result is not None else {}
+    raw_result: dict = _converter.unstructure(action_result) if action_result is not None else {}
 
     # Formatted result — only populated when the caller requests formats.
     formatted = action_result_to_run_action_response(action_result, options.result_formats)

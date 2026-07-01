@@ -27,7 +27,7 @@ method names.
 4. WM sends `finecodeRunner/updateConfig` to bootstrap handlers and services.
    - ER processes it and returns `{}`.
 5. WM sends `finecodeRunner/resolveActionMeta` to get action meta info.
-   - ER returns a complete map of `configSource → { canonical_source, runs_concurrently }` for every action
+   - ER returns a complete map of `configSource → { canonical_source, runs_concurrently, scope, parentActionSource, language }` for every action
      whose class can be imported in this env.  Actions that fail to import are omitted.
    - WM stores these on its `Action` domain objects before the runner is considered ready.
 6. On shutdown: WM sends `shutdown` then `exit`.
@@ -65,7 +65,7 @@ method names.
     - `actions`: list of action objects (`name`, `handlers`, `source`, `config`)
     - `action_handler_configs`: map of handler source → config
     - `services`: list of service declarations (optional)
-    - `handlers_to_initialize`: map of action name → handler names (optional)
+    - `handlers_to_initialize`: map of action name → handler names (optional). When present, the ER eagerly initializes the listed handlers so they are ready before the first `actions/run` request. When absent or null, no eager initialization is performed and handlers are initialized on first use.
     - `logging`: logging configuration for this ER instance (optional)
       - `defaultLevel` (string): global log level, e.g. `"INFO"`, `"DEBUG"`, `"TRACE"`. Overrides the `--log-level` startup value when present.
       - `logGroups` (object): map of logger-name prefix → level string. Prefix matching applies — a key of `"fine_python_ruff"` covers `fine_python_ruff`, `fine_python_ruff.linter`, etc. The longest matching prefix wins. Example: `{ "fine_python_ruff": "TRACE", "finecode_extension_runner": "WARNING" }`
@@ -209,15 +209,17 @@ method names.
 
 - `finecodeRunner/resolveActionMeta`
   - Params: `{}` (no params)
-  - Result: complete map of `{ "<configSource>": { "canonical_source": string, "runs_concurrently": bool }, ... }` for every
+  - Result: complete map of `{ "<configSource>": { "canonical_source": string, "runs_concurrently": bool, "scope": string, "parentActionSource": string | null, "language": string | null }, ... }` for every
     action whose class can be imported in this env.  Actions that fail to import are
     omitted entirely.
-    Example: `{ "myext.LintAction": { "canonical_source": "myext.actions.lint.LintAction", "runs_concurrently": true } }`
-  - Called by the WM after `finecodeRunner/updateConfig` completes to store canonical
-    sources and execution modes on its `Action` domain objects before the runner is
-    considered ready.  The WM uses `canonical_source` as the primary identifier in all
-    subsequent action lookups.  Actions absent from the response (import failure) keep
-    `canonical_source = None` until another runner for the same project resolves them.
+    Example: `{ "myext.LintAction": { "canonical_source": "myext.actions.lint.LintAction", "runs_concurrently": true, "scope": "project", "parentActionSource": null, "language": null } }`
+  - Called by the WM after `finecodeRunner/updateConfig` completes to store all action
+    metadata on its `Action` domain objects before the runner is considered ready.  The
+    WM uses `canonical_source` as the primary identifier in all subsequent action
+    lookups.  `parentActionSource` and `language` are used to serve
+    `finecode/getActionMetadata` requests from cache (see ER→WM section).  Fields absent
+    from the response (import failure) remain `None` until another runner for the same
+    project resolves them; if still unresolved when requested, auto-repair is triggered.
 
 - `actions/resolveSource`
   - Params: `{ "source": string }` — an arbitrary import-path alias to resolve.
@@ -227,14 +229,6 @@ method names.
   - Used during action lookup when a caller provides an alias not already known
     from `finecodeRunner/resolveActionMeta` (full ADR-0019 support).
 
-- `actions/getActionMetadata`
-  - Params: `{ "source": string }` — fully qualified import path of an action class.
-  - Result: `{ "parentActionSource": string | null, "language": string | null }`
-    — the `PARENT_ACTION` canonical source and `LANGUAGE` attribute of the class.
-  - Raises a JSON-RPC error if the source cannot be imported.
-  - Used by the WM when another ER requests metadata for an action class that
-    lives in this ER's environment (see `finecode/getActionMetadata` below).
-
 - `packages/resolvePath`
   - Params: `{ "packageName": string }`
   - Result: `{ "packagePath": "/abs/path/to/package" }`
@@ -243,6 +237,12 @@ method names.
 
 - `initialized` (standard LSP)
 - `textDocument/didOpen`
+  - Params: standard LSP `DidOpenTextDocumentParams` — `{ "textDocument": { "uri": string, "languageId": string, "version": int, "text": string } }`.
+  - The ER seeds the file's tracked content directly from `text_document.text` —
+    it never re-reads the file from disk for this notification. `text` is the
+    client's buffer and is the source of truth regardless of what's on disk;
+    the file may even no longer exist on disk (e.g. a stale IDE tab left open
+    after the file was deleted), which would otherwise crash a disk read.
 - `textDocument/didChange`
 - `textDocument/didClose`
 - `$/cancelRequest`
@@ -295,11 +295,15 @@ method names.
   - Params: `{ "actionSource": string }` — fully qualified import path of an action class.
   - Result: `{ "parentActionSource": string | null, "language": string | null }`
     — the `PARENT_ACTION` canonical source and `LANGUAGE` of the action class.
-  - Raises a JSON-RPC error when no other runner for the project can import the source.
+  - Raises a JSON-RPC error when the action cannot be resolved even after auto-repair.
   - Used by an ER when `get_actions_for_parent` cannot import an action class locally
-    (because the class belongs to another env). The WM routes the request to every
-    other runner for the same project and returns the first successful response.
-    The result is cached in `ActionDeclaration.metadata` to avoid repeated round-trips.
+    (because the class belongs to another env). The WM serves this from its metadata
+    cache, which is populated at runner startup via `finecodeRunner/resolveActionMeta`.
+    If the cache has no entry for the action (it was not importable at startup), the WM
+    triggers auto-repair for the handler env (prepare-envs + runner restart), which
+    re-runs `resolveActionMeta` and repopulates the cache, then returns the result.
+    The ER caches the response in `ActionDeclaration.metadata` to avoid repeated
+    round-trips.
 
 - `finecode/runActionInWorkspace`
   - Params:
@@ -322,6 +326,27 @@ method names.
   - When `$/progress` is used to deliver results, the final `actions/run` or
     `actions/runHandlers` response must have `status: "streamed"` and empty
     `result_by_format`. See result (streamed) entries above.
+
+### WM obligation: bridging both delivery modes to callers
+
+When the WM runs an action on behalf of a caller that supplied a
+`partialResultToken` (via `actions/runBatch`), it must forward the result to
+the caller as `actions/partialResult` notifications regardless of which ER
+delivery mode was used:
+
+- **Streaming mode** (`status: "streamed"`, empty `resultByFormat`): each
+  `$/progress` notification is forwarded as an `actions/partialResult`
+  notification as it arrives.  The final RPC response carries no result data.
+
+- **Direct result mode** (`status: "success"`, non-empty `resultByFormat`):
+  no `$/progress` notifications are sent by the ER.  After the RPC call
+  completes the WM must emit a single `actions/partialResult` notification
+  containing the `resultByFormat` from the RPC response.
+
+The two modes are mutually exclusive: a handler that uses `$/progress`
+produces an empty `resultByFormat`; one that does not produces a non-empty
+`resultByFormat`.  The WM detects which mode was used by checking whether any
+`$/progress` notifications arrived before the RPC call returned.
 
 ## Multi-Env Action Orchestration
 
@@ -401,3 +426,12 @@ correlated across envs for the same logical run.
 WM forwards open-file events to ER so actions can operate on in-memory document
 state. ER may send `workspace/applyEdit` when handlers modify files; WM applies
 these edits via its active client when possible.
+
+The WM keeps its own copy of every open document's content
+(`WorkspaceContext.opened_documents`), populated from the IDE's own
+`didOpen`/`didChange` notifications, so it can re-supply the current content
+to an ER that (re)starts while the file is already open — see
+`send_opened_files` in `runner_manager.py`. That re-supply must forward the
+already-known `text` unchanged; reconstructing a fresh `TextDocumentInfo`
+without `text` would make the ER seed an empty buffer instead of the real
+content on every runner restart.

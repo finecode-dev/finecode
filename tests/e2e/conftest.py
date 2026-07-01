@@ -167,7 +167,7 @@ def workspace_dir_with_er(tmp_path: Path) -> Path:
         "[[tool.finecode.actions]]\n"
         'name = "test_action"\n\n'
         "[[tool.finecode.actions.handlers]]\n"
-        'handler = "finecode_builtin_handlers.DumpConfigHandler"\n'
+        'handler = "fine_envs.DumpConfigHandler"\n'
         'env = "dev_workspace"\n'
     )
     venvs_dir = tmp_path / ".venvs"
