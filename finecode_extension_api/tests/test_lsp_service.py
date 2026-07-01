@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import dataclasses
 from pathlib import Path
@@ -24,6 +25,9 @@ class _FakeLspSession:
 
     def __init__(self) -> None:
         self.notifications: list[_SentNotification] = []
+        # When set, send_notification blocks until this event fires, letting a
+        # test force two concurrent syncs to interleave at a specific point.
+        self.release_send: asyncio.Event | None = None
 
     async def __aenter__(self) -> "_FakeLspSession":
         return self
@@ -42,6 +46,8 @@ class _FakeLspSession:
     async def send_notification(
         self, method: str, params: dict[str, Any] | None = None
     ) -> None:
+        if self.release_send is not None:
+            await self.release_send.wait()
         self.notifications.append(_SentNotification(method, params))
 
     def on_notification(self, method: str, handler: Any) -> None:
@@ -222,3 +228,53 @@ async def test_lsp_feature_call_resyncs_after_file_content_changes(
         await service.get_hover(file_path, "x = 2\n", {"line": 0, "character": 0})
 
         assert session.sync_notification_count(file_path.as_uri()) == 2
+
+
+async def test_file_open_event_and_hover_race_do_not_double_sync(
+    tmp_path: Path,
+) -> None:
+    """A file-open event forwarded from the IDE and a hover request racing on the
+    same file must not each independently sync the document.
+
+    ``_handle_file_event`` (the event-forwarding loop) and ``get_hover`` (a direct
+    handler call, via ``_sync_document``) both decide whether a document needs a
+    fresh didOpen/didChange by checking then updating shared state. If that
+    check-then-act isn't atomic across the two call paths, both can observe
+    "not synced yet" for the same uri and each send their own notification —
+    turning a harmless race into two didOpen calls, the second of which the
+    language server treats as an edit to a document with an in-flight request
+    and cancels it. This is the exact shape of the original bug report: opening
+    a file in the IDE and immediately hovering over it.
+
+    The race is in the shared ``_sync_document``/``_handle_file_event`` path, so
+    it applies to every LSP feature method (``get_definition``, ``get_references``,
+    ``get_call_hierarchy_prepare``, etc.), not just hover — hover is exercised
+    here as one representative call site, not because it's special-cased.
+    """
+    file_path = tmp_path / "subject.py"
+    content = "x = 1\n"
+    file_path.write_text(content)
+
+    async with _running_service(file_path, content) as (service, session, _):
+        release = asyncio.Event()
+        session.release_send = release
+
+        open_event_task = asyncio.create_task(
+            service._handle_file_event(ifileeditor.FileOpenEvent(file_path=file_path))
+        )
+        # Let the open-event handler reach send_notification and block there,
+        # still holding the uri lock (if the fix is in place).
+        await asyncio.sleep(0)
+
+        hover_task = asyncio.create_task(
+            service.get_hover(file_path, content, {"line": 0, "character": 0})
+        )
+        # Let the hover call attempt its own sync — with the fix, it blocks
+        # trying to acquire the same uri lock instead of racing ahead.
+        await asyncio.sleep(0)
+
+        release.set()
+        await open_event_task
+        await hover_task
+
+        assert session.sync_notification_count(file_path.as_uri()) == 1

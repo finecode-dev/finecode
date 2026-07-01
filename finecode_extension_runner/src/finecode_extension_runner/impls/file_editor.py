@@ -231,6 +231,7 @@ class FileEditorSession(ifileeditor.IFileEditorProviderSession):
             new_file_content = FileEditorSession.apply_change_to_file_content(
                 change=change, file_content=file_content
             )
+            content_changed = new_file_content != file_content
             self._update_opened_file_info(
                 file_path=file_path, new_file_content=new_file_content
             )
@@ -240,6 +241,7 @@ class FileEditorSession(ifileeditor.IFileEditorProviderSession):
             new_file_content = FileEditorSession.apply_change_to_file_content(
                 change=change, file_content=file_content
             )
+            content_changed = new_file_content != file_content
             await self._file_manager.save_file(
                 file_path=file_path, file_content=new_file_content
             )
@@ -247,8 +249,16 @@ class FileEditorSession(ifileeditor.IFileEditorProviderSession):
                 f"File {file_path} is not opened, saved it in file system"
             )
 
-        # notify subscribers
-        if file_path in self._file_change_subscriptions or len(self._all_events_subscriptions) > 0:
+        # Notify subscribers, unless the change is a no-op (e.g. an IDE resyncing
+        # an already-open document after reconnecting, re-sending content it
+        # already sent). Broadcasting a no-op as a real FileChangeEvent looks like
+        # an edit to consumers that forward it to external servers (e.g. the
+        # pyrefly LSP bridge), which then cancel any in-flight request for the
+        # document even though nothing actually changed.
+        if content_changed and (
+            file_path in self._file_change_subscriptions
+            or len(self._all_events_subscriptions) > 0
+        ):
             self._notify_subscribers_about_file_change(
                 file_path=file_path, change=change
             )
@@ -515,6 +525,16 @@ class FileEditorSession(ifileeditor.IFileEditorProviderSession):
 
     async def save_file(self, file_path: pathlib.Path, file_content: str) -> None:
         self.logger.debug(f"Save file {file_path}")
+
+        # Only opened files have cached content cheap enough to diff against; for
+        # files that aren't open, treat the write as a real change (matches prior
+        # behavior) rather than reading from disk just to check.
+        previous_content = (
+            self._opened_files[file_path].content
+            if file_path in self._opened_files
+            else None
+        )
+
         await self._file_manager.save_file(
             file_path=file_path, file_content=file_content
         )
@@ -524,7 +544,11 @@ class FileEditorSession(ifileeditor.IFileEditorProviderSession):
                 file_path=file_path, new_file_content=file_content
             )
 
-        if file_path in self._file_change_subscriptions or len(self._all_events_subscriptions) > 0:
+        content_changed = previous_content is None or previous_content != file_content
+        if content_changed and (
+            file_path in self._file_change_subscriptions
+            or len(self._all_events_subscriptions) > 0
+        ):
             file_change = ifileeditor.FileChangeFull(text=file_content)
             self._notify_subscribers_about_file_change(
                 file_path=file_path, change=file_change

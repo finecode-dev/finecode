@@ -68,6 +68,13 @@ class LspService(service.DisposableService):
         self._file_versions: dict[str, str] = {}
         # uris currently open in the LSP server
         self._open_documents: set[str] = set()
+        # uri -> lock serializing check-then-send-notification sequences, so the
+        # event-forwarding loop (_handle_file_event) and direct handler calls
+        # (_sync_document, e.g. from get_hover) can't both observe "not synced yet"
+        # for the same uri and each send their own didOpen/didChange. Without this,
+        # one notification can land on the wire after the other call's request is
+        # already in flight, and the server cancels it as a "subsequent mutation".
+        self._uri_locks: dict[str, asyncio.Lock] = {}
         # LSP protocol version counter per uri
         self._document_version: dict[str, int] = {}
         # current settings, accumulated via update_settings and sent on start
@@ -101,6 +108,7 @@ class LspService(service.DisposableService):
         self._file_versions.clear()
         self._open_documents.clear()
         self._document_version.clear()
+        self._uri_locks.clear()
         self._server_capabilities = {}
 
     async def ensure_started(
@@ -206,37 +214,49 @@ class LspService(service.DisposableService):
 
         Returns True if a didOpen/didChange notification was sent, False if the
         cached content already matched and nothing was sent.
+
+        Holds the per-uri lock across the whole check-then-send sequence so this
+        can't interleave with `_handle_file_event`'s own check-then-send for the
+        same uri (see `_uri_locks`).
         """
         assert self._session is not None, "LspService not started"
 
         content_hash = str(hash(content))
-        if self._file_versions.get(uri) == content_hash:
-            return False
+        async with self._get_uri_lock(uri):
+            if self._file_versions.get(uri) == content_hash:
+                return False
 
-        lsp_version = self._next_version(uri)
-        if uri not in self._open_documents:
-            await self._session.send_notification(
-                "textDocument/didOpen",
-                {
-                    "textDocument": {
-                        "uri": uri,
-                        "languageId": self._language_id,
-                        "version": lsp_version,
-                        "text": content,
+            lsp_version = self._next_version(uri)
+            if uri not in self._open_documents:
+                await self._session.send_notification(
+                    "textDocument/didOpen",
+                    {
+                        "textDocument": {
+                            "uri": uri,
+                            "languageId": self._language_id,
+                            "version": lsp_version,
+                            "text": content,
+                        },
                     },
-                },
-            )
-            self._open_documents.add(uri)
-        else:
-            await self._session.send_notification(
-                "textDocument/didChange",
-                {
-                    "textDocument": {"uri": uri, "version": lsp_version},
-                    "contentChanges": [{"text": content}],
-                },
-            )
-        self._file_versions[uri] = content_hash
-        return True
+                )
+                self._open_documents.add(uri)
+            else:
+                await self._session.send_notification(
+                    "textDocument/didChange",
+                    {
+                        "textDocument": {"uri": uri, "version": lsp_version},
+                        "contentChanges": [{"text": content}],
+                    },
+                )
+            self._file_versions[uri] = content_hash
+            return True
+
+    def _get_uri_lock(self, uri: str) -> asyncio.Lock:
+        lock = self._uri_locks.get(uri)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._uri_locks[uri] = lock
+        return lock
 
     async def check_file(
         self,
@@ -718,91 +738,94 @@ class LspService(service.DisposableService):
 
         if isinstance(event, ifileeditor.FileOpenEvent):
             uri = event.file_path.as_uri()
-            if uri not in self._open_documents:
-                try:
-                    content = event.file_path.read_text()
-                except OSError:
-                    return
-                lsp_version = self._next_version(uri)
-                await self._session.send_notification(
-                    "textDocument/didOpen",
-                    {
-                        "textDocument": {
-                            "uri": uri,
-                            "languageId": self._language_id,
-                            "version": lsp_version,
-                            "text": content,
-                        },
-                    },
-                )
-                self._open_documents.add(uri)
-                self._file_versions[uri] = str(hash(content))
-
-        elif isinstance(event, ifileeditor.FileChangeEvent):
-            uri = event.file_path.as_uri()
-            lsp_version = self._next_version(uri)
-            change = event.change
-
-            if uri not in self._open_documents:
-                if isinstance(change, ifileeditor.FileChangeFull):
-                    content = change.text
-                else:
+            async with self._get_uri_lock(uri):
+                if uri not in self._open_documents:
                     try:
                         content = event.file_path.read_text()
                     except OSError:
                         return
-                await self._session.send_notification(
-                    "textDocument/didOpen",
-                    {
-                        "textDocument": {
-                            "uri": uri,
-                            "languageId": self._language_id,
-                            "version": lsp_version,
-                            "text": content,
-                        },
-                    },
-                )
-                self._open_documents.add(uri)
-                self._file_versions[uri] = str(hash(content))
-            else:
-                if isinstance(change, ifileeditor.FileChangeFull):
-                    content_changes = [{"text": change.text}]
-                    self._file_versions[uri] = str(hash(change.text))
-                else:
-                    content_changes = [
+                    lsp_version = self._next_version(uri)
+                    await self._session.send_notification(
+                        "textDocument/didOpen",
                         {
-                            "range": {
-                                "start": {
-                                    "line": change.range.start.line,
-                                    "character": change.range.start.character,
-                                },
-                                "end": {
-                                    "line": change.range.end.line,
-                                    "character": change.range.end.character,
-                                },
+                            "textDocument": {
+                                "uri": uri,
+                                "languageId": self._language_id,
+                                "version": lsp_version,
+                                "text": content,
                             },
-                            "text": change.text,
-                        }
-                    ]
-                    # Partial change: invalidate cached version so check_file
-                    # will re-read and send the full updated content next time.
-                    self._file_versions.pop(uri, None)
-                await self._session.send_notification(
-                    "textDocument/didChange",
-                    {
-                        "textDocument": {"uri": uri, "version": lsp_version},
-                        "contentChanges": content_changes,
-                    },
-                )
+                        },
+                    )
+                    self._open_documents.add(uri)
+                    self._file_versions[uri] = str(hash(content))
+
+        elif isinstance(event, ifileeditor.FileChangeEvent):
+            uri = event.file_path.as_uri()
+            change = event.change
+
+            async with self._get_uri_lock(uri):
+                lsp_version = self._next_version(uri)
+                if uri not in self._open_documents:
+                    if isinstance(change, ifileeditor.FileChangeFull):
+                        content = change.text
+                    else:
+                        try:
+                            content = event.file_path.read_text()
+                        except OSError:
+                            return
+                    await self._session.send_notification(
+                        "textDocument/didOpen",
+                        {
+                            "textDocument": {
+                                "uri": uri,
+                                "languageId": self._language_id,
+                                "version": lsp_version,
+                                "text": content,
+                            },
+                        },
+                    )
+                    self._open_documents.add(uri)
+                    self._file_versions[uri] = str(hash(content))
+                else:
+                    if isinstance(change, ifileeditor.FileChangeFull):
+                        content_changes = [{"text": change.text}]
+                        self._file_versions[uri] = str(hash(change.text))
+                    else:
+                        content_changes = [
+                            {
+                                "range": {
+                                    "start": {
+                                        "line": change.range.start.line,
+                                        "character": change.range.start.character,
+                                    },
+                                    "end": {
+                                        "line": change.range.end.line,
+                                        "character": change.range.end.character,
+                                    },
+                                },
+                                "text": change.text,
+                            }
+                        ]
+                        # Partial change: invalidate cached version so check_file
+                        # will re-read and send the full updated content next time.
+                        self._file_versions.pop(uri, None)
+                    await self._session.send_notification(
+                        "textDocument/didChange",
+                        {
+                            "textDocument": {"uri": uri, "version": lsp_version},
+                            "contentChanges": content_changes,
+                        },
+                    )
 
         elif isinstance(event, ifileeditor.FileCloseEvent):
             uri = event.file_path.as_uri()
-            if uri in self._open_documents:
-                await self._session.send_notification(
-                    "textDocument/didClose",
-                    {"textDocument": {"uri": uri}},
-                )
-                self._open_documents.discard(uri)
+            async with self._get_uri_lock(uri):
+                if uri in self._open_documents:
+                    await self._session.send_notification(
+                        "textDocument/didClose",
+                        {"textDocument": {"uri": uri}},
+                    )
+                    self._open_documents.discard(uri)
 
     def _next_version(self, uri: str) -> int:
         version = self._document_version.get(uri, 0) + 1
