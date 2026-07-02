@@ -398,6 +398,26 @@ class ActionFailedException(Exception):
         self.message = message
 
 
+class ActionCancelledException(Exception):
+    """Raised by a handler to signal a benign, non-error abort of its own
+    accord — the action did not fail, it was deliberately not completed.
+
+    Distinct from LspRequestCancelledError (finecode_extension_api.interfaces.
+    ilspclient), which is specifically for a downstream LSP server cancelling
+    a request. Both are treated identically by the ER (both become a
+    cancelled outcome, not a failure) — this class is for any handler that
+    wants the same treatment for its own reasons, unrelated to LSP.
+
+    Also distinct from the IDE/WM-client cancelling its own outstanding
+    request via `$/cancelRequest` — that case never becomes a named
+    exception at all; it is handled via real `asyncio.CancelledError`/task
+    cancellation inside finecode_jsonrpc's transport layer.
+    """
+
+    def __init__(self, message: str) -> None:
+        self.message = message
+
+
 InitializeCallable = collections.abc.Callable[[], None]
 ShutdownCallable = collections.abc.Callable[[], None]
 ExitCallable = collections.abc.Callable[[], None]

@@ -10,7 +10,7 @@ from loguru import logger
 
 from finecode_extension_api import code_action
 from finecode_extension_api.interfaces import iprojectactionrunner
-from finecode_extension_runner import domain, run_utils
+from finecode_extension_runner import domain, er_errors, er_telemetry, run_utils
 from finecode_extension_runner._converter import converter as _converter
 
 
@@ -251,6 +251,8 @@ class ProjectActionRunnerImpl(iprojectactionrunner.IProjectActionRunner):
                 "finecode/runActionInProject",
                 wm_params,
             )
+        except er_errors.WmCommunicationCancelled as exc:
+            raise iprojectactionrunner.ActionRunCancelled(exc.message) from exc
         except er_errors.WmCommunicationError as exc:
             raise iprojectactionrunner.ActionRunFailed(exc.message) from exc
         raw_final_result = raw_result.get("result")
@@ -334,6 +336,8 @@ class ProjectActionRunnerImpl(iprojectactionrunner.IProjectActionRunner):
                 )
                 # Terminal success item. Shape: ("final", {"result": {...}, "returnCode": ...}).
                 wm_queue.put_nowait(("final", raw_result))
+            except er_errors.WmCommunicationCancelled as exc:
+                wm_queue.put_nowait(("error", iprojectactionrunner.ActionRunCancelled(exc.message)))
             except er_errors.WmCommunicationError as exc:
                 wm_queue.put_nowait(("error", iprojectactionrunner.ActionRunFailed(exc.message)))
             except Exception as exc:

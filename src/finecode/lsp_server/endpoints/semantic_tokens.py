@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING, Any
 from loguru import logger
 
 from finecode.lsp_server import global_state, pygls_types_utils
+from finecode.lsp_server.endpoints import _cancellation
 from fine_semantic_tokens.text_document_semantic_tokens_action import (
     SEMANTIC_TOKEN_TYPES,
     SEMANTIC_TOKEN_MODIFIERS,
@@ -82,6 +83,7 @@ async def _run_full_or_range(
             options={"trigger": "system", "devEnv": "ide"},
         )
     except Exception as error:
+        _cancellation.reraise_if_cancelled(error, context=f"Error getting semantic tokens for {uri}")
         logger.error(f"Error getting semantic tokens for {uri}: {error}")
         return None
 
@@ -158,6 +160,7 @@ async def document_semantic_tokens_full_delta(
             options={"trigger": "system", "devEnv": "ide"},
         )
     except Exception as error:
+        _cancellation.reraise_if_cancelled(error, context=f"Error getting semantic token delta for {uri}")
         logger.error(f"Error getting semantic token delta for {uri}: {error}")
         return None
 

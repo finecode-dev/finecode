@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING, Any
 from loguru import logger
 
 from finecode.lsp_server import global_state, pygls_types_utils
+from finecode.lsp_server.endpoints import _cancellation
 
 if TYPE_CHECKING:
     from finecode.lsp_server.lsp_server import LspServer
@@ -37,6 +38,7 @@ async def hover(_ls: LspServer, params: dict[str, Any] | None) -> dict[str, Any]
             options={"trigger": "user", "devEnv": "ide"},
         )
     except Exception as error:
+        _cancellation.reraise_if_cancelled(error, context=f"Error getting hover for {uri}")
         logger.error(f"Error getting hover for {uri}: {error}")
         return None
     json_result = (response.get("resultByFormat") or {}).get("json") if response else None
@@ -72,6 +74,7 @@ async def definition(_ls: LspServer, params: dict[str, Any] | None) -> list[dict
             options={"trigger": "user", "devEnv": "ide"},
         )
     except Exception as error:
+        _cancellation.reraise_if_cancelled(error, context=f"Error getting definition for {uri}")
         logger.error(f"Error getting definition for {uri}: {error}")
         return None
     json_result = (response.get("resultByFormat") or {}).get("json") if response else None
@@ -105,6 +108,7 @@ async def references(_ls: LspServer, params: dict[str, Any] | None) -> list[dict
             options={"trigger": "user", "devEnv": "ide"},
         )
     except Exception as error:
+        _cancellation.reraise_if_cancelled(error, context=f"Error getting references for {uri}")
         logger.error(f"Error getting references for {uri}: {error}")
         return None
     json_result = (response.get("resultByFormat") or {}).get("json") if response else None
@@ -136,6 +140,7 @@ async def type_definition(_ls: LspServer, params: dict[str, Any] | None) -> list
             options={"trigger": "user", "devEnv": "ide"},
         )
     except Exception as error:
+        _cancellation.reraise_if_cancelled(error, context=f"Error getting type definition for {uri}")
         logger.error(f"Error getting type definition for {uri}: {error}")
         return None
     json_result = (response.get("resultByFormat") or {}).get("json") if response else None
@@ -167,6 +172,7 @@ async def implementation(_ls: LspServer, params: dict[str, Any] | None) -> list[
             options={"trigger": "user", "devEnv": "ide"},
         )
     except Exception as error:
+        _cancellation.reraise_if_cancelled(error, context=f"Error getting implementation for {uri}")
         logger.error(f"Error getting implementation for {uri}: {error}")
         return None
     json_result = (response.get("resultByFormat") or {}).get("json") if response else None
@@ -198,6 +204,7 @@ async def document_highlight(_ls: LspServer, params: dict[str, Any] | None) -> l
             options={"trigger": "user", "devEnv": "ide"},
         )
     except Exception as error:
+        _cancellation.reraise_if_cancelled(error, context=f"Error getting document highlight for {uri}")
         logger.error(f"Error getting document highlight for {uri}: {error}")
         return None
     json_result = (response.get("resultByFormat") or {}).get("json") if response else None

@@ -32,7 +32,7 @@ from finecode_jsonrpc.tracing import ITracingHooks
 # JSON-RPC error codes
 _METHOD_NOT_FOUND = -32601
 _INTERNAL_ERROR = -32603
-_REQUEST_CANCELLED = -32800
+REQUEST_CANCELLED = -32800
 
 
 class JsonRpcHandlerError(Exception):
@@ -260,7 +260,7 @@ class JsonRpcServerSession:
                     {"jsonrpc": "2.0", "id": msg_id, "result": result}
                 )
             except asyncio.CancelledError:
-                self._send_response(msg_id, None, _REQUEST_CANCELLED, "Request cancelled")
+                self._send_response(msg_id, None, REQUEST_CANCELLED, "Request cancelled")
             except JsonRpcHandlerError as exc:
                 self._send_response(msg_id, None, exc.code, exc.message)
             except Exception as exc:

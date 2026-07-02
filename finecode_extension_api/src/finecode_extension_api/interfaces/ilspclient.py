@@ -32,7 +32,15 @@ class ILspSession(Protocol):
         params: dict[str, Any] | None = None,
         timeout: float | None = None,
     ) -> Any:
-        """Send an LSP request and return the result."""
+        """Send an LSP request and return the result.
+
+        Raises:
+            Exception: implementation-specific transport errors, e.g. when the
+                LSP server responds with an error `[untranslated]` at this
+                layer. Translation into a well-known exception such as
+                :class:`LspRequestCancelledError` happens one layer up, in
+                consumers of this session (e.g. ``LspService``).
+        """
         ...
 
     async def send_notification(
@@ -140,3 +148,20 @@ class ILspClient(Protocol):
             An async context manager yielding ILspSession.
         """
         ...
+
+
+class LspRequestCancelledError(Exception):
+    """Raised when the LSP server cancelled an in-flight request.
+
+    Some LSP servers (e.g. pyrefly, like rust-analyzer/salsa) use a global
+    analysis snapshot: anything that invalidates it — most commonly a
+    document mutating anywhere in the workspace, not just the file the
+    request targets — can cancel in-flight requests. The exact set of
+    triggers is server-specific and not something this client observes
+    directly. This is a normal, expected condition during active editing,
+    not a failure.
+    """
+
+    def __init__(self, message: str) -> None:
+        self.message = message
+        super().__init__(message)

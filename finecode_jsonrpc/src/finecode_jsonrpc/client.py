@@ -779,9 +779,12 @@ class JsonRpcClient:
                 data = {
                     "exceptionType": type(exception).__name__,
                 }
+            code = getattr(exception, "code", None)
+            if code is None:
+                code = JsonRpcErrorCode.INTERNAL_ERROR
             self._send_error_response(
                 request_id=message_id,
-                code=JsonRpcErrorCode.INTERNAL_ERROR,
+                code=code,
                 message=message,
                 data=data,
             )

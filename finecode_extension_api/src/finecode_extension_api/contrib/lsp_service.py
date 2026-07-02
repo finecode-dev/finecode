@@ -8,6 +8,9 @@ from typing import Any, override
 from finecode_extension_api import service
 from finecode_extension_api.interfaces import ifileeditor, ilogger, ilspclient
 
+# JSON-RPC "RequestCancelled" code
+_REQUEST_CANCELLED_CODE = -32800
+
 
 class LspService(service.DisposableService):
     """Generic long-running LSP service with document synchronization.
@@ -258,6 +261,36 @@ class LspService(service.DisposableService):
             self._uri_locks[uri] = lock
         return lock
 
+    async def _send_cancellable_request(
+        self,
+        method: str,
+        params: dict[str, Any],
+        timeout: float,
+    ) -> Any:
+        """Send a request; translate a server-side cancellation into LspRequestCancelledError.
+
+        LSP servers with a global analysis snapshot (e.g. pyrefly, like
+        rust-analyzer) can cancel an in-flight request whenever something
+        elsewhere in the workspace invalidates that snapshot — most commonly
+        a document mutating, though the exact trigger is server-specific and
+        not something this client observes directly. The concrete transport
+        raises an exception carrying ``code == -32800`` for this. Detected
+        via duck typing (``getattr(exc, "code", None)``) rather than
+        ``isinstance`` because this module must not depend on the concrete
+        JSON-RPC transport package.
+        """
+        assert self._session is not None, "LspService not started"
+        try:
+            return await self._session.send_request(method, params, timeout=timeout)
+        except Exception as exc:
+            if getattr(exc, "code", None) == _REQUEST_CANCELLED_CODE:
+                raise ilspclient.LspRequestCancelledError(
+                    f"{method} was cancelled by the server, likely because its"
+                    " analysis state was invalidated by something elsewhere in"
+                    " the workspace"
+                ) from exc
+            raise
+
     async def check_file(
         self,
         file_path: Path,
@@ -366,7 +399,7 @@ class LspService(service.DisposableService):
             method = "textDocument/semanticTokens/full"
             params = {"textDocument": {"uri": uri}}
 
-        result = await self._session.send_request(method, params, timeout=timeout)
+        result = await self._send_cancellable_request(method, params, timeout=timeout)
 
         if file_path not in self._file_editor.get_opened_files():
             await self._session.send_notification(
@@ -390,7 +423,7 @@ class LspService(service.DisposableService):
         uri = file_path.as_uri()
         await self._sync_document(uri, content)
 
-        result = await self._session.send_request(
+        result = await self._send_cancellable_request(
             "textDocument/hover",
             {"textDocument": {"uri": uri}, "position": position},
             timeout=timeout,
@@ -418,7 +451,7 @@ class LspService(service.DisposableService):
         uri = file_path.as_uri()
         await self._sync_document(uri, content)
 
-        result = await self._session.send_request(
+        result = await self._send_cancellable_request(
             "textDocument/definition",
             {"textDocument": {"uri": uri}, "position": position},
             timeout=timeout,
@@ -447,7 +480,7 @@ class LspService(service.DisposableService):
         uri = file_path.as_uri()
         await self._sync_document(uri, content)
 
-        result = await self._session.send_request(
+        result = await self._send_cancellable_request(
             "textDocument/references",
             {
                 "textDocument": {"uri": uri},
@@ -479,7 +512,7 @@ class LspService(service.DisposableService):
         uri = file_path.as_uri()
         await self._sync_document(uri, content)
 
-        result = await self._session.send_request(
+        result = await self._send_cancellable_request(
             "textDocument/typeDefinition",
             {"textDocument": {"uri": uri}, "position": position},
             timeout=timeout,
@@ -507,7 +540,7 @@ class LspService(service.DisposableService):
         uri = file_path.as_uri()
         await self._sync_document(uri, content)
 
-        result = await self._session.send_request(
+        result = await self._send_cancellable_request(
             "textDocument/implementation",
             {"textDocument": {"uri": uri}, "position": position},
             timeout=timeout,
@@ -535,7 +568,7 @@ class LspService(service.DisposableService):
         uri = file_path.as_uri()
         await self._sync_document(uri, content)
 
-        result = await self._session.send_request(
+        result = await self._send_cancellable_request(
             "textDocument/documentHighlight",
             {"textDocument": {"uri": uri}, "position": position},
             timeout=timeout,
@@ -563,7 +596,7 @@ class LspService(service.DisposableService):
         uri = file_path.as_uri()
         await self._sync_document(uri, content)
 
-        result = await self._session.send_request(
+        result = await self._send_cancellable_request(
             "textDocument/prepareCallHierarchy",
             {"textDocument": {"uri": uri}, "position": position},
             timeout=timeout,
@@ -591,7 +624,7 @@ class LspService(service.DisposableService):
         uri = file_path.as_uri()
         await self._sync_document(uri, content)
 
-        result = await self._session.send_request(
+        result = await self._send_cancellable_request(
             "callHierarchy/incomingCalls",
             {"item": item},
             timeout=timeout,
@@ -619,7 +652,7 @@ class LspService(service.DisposableService):
         uri = file_path.as_uri()
         await self._sync_document(uri, content)
 
-        result = await self._session.send_request(
+        result = await self._send_cancellable_request(
             "callHierarchy/outgoingCalls",
             {"item": item},
             timeout=timeout,
@@ -647,7 +680,7 @@ class LspService(service.DisposableService):
         uri = file_path.as_uri()
         await self._sync_document(uri, content)
 
-        result = await self._session.send_request(
+        result = await self._send_cancellable_request(
             "textDocument/prepareTypeHierarchy",
             {"textDocument": {"uri": uri}, "position": position},
             timeout=timeout,
@@ -675,7 +708,7 @@ class LspService(service.DisposableService):
         uri = file_path.as_uri()
         await self._sync_document(uri, content)
 
-        result = await self._session.send_request(
+        result = await self._send_cancellable_request(
             "typeHierarchy/supertypes",
             {"item": item},
             timeout=timeout,
@@ -703,7 +736,7 @@ class LspService(service.DisposableService):
         uri = file_path.as_uri()
         await self._sync_document(uri, content)
 
-        result = await self._session.send_request(
+        result = await self._send_cancellable_request(
             "typeHierarchy/subtypes",
             {"item": item},
             timeout=timeout,

@@ -13,7 +13,11 @@ dependencies = [
     "click==8.1.*",
     "finecode_extension_api~=0.4.0a0",
     "finecode_extension_runner~=0.4.0a0",
-    "finecode_builtin_handlers~=0.2.0a0",
+    "fine_format~=0.1.0a0",
+    "fine_envs~=0.1.0a0",
+    "fine_inspect_code~=0.1.0a0",
+    "fine_semantic_tokens~=0.1.0a0",
+    "fine_inlay_hints~=0.1.0a0",
     "finecode_jsonrpc~=0.1.0a0",
     "ordered-set==4.1.*",
     "fine_python_uv~=0.1.0a0",
@@ -31,24 +35,22 @@ dev_workspace = [
     # are always installed as editables
     "finecode",
     "finecode_dev_common_preset",
+    "finecode_httpclient~=0.1.0a1",
+    "fine_docs_markdown",
     "debugpy==1.8.*",
     "opentelemetry-sdk==1.41.*",
     "opentelemetry-exporter-otlp-proto-grpc==1.41.*",
     "opentelemetry-instrumentation==0.62.*"
 ]
 dev = ["finecode", "psutil==7.2.*", "debugpy==1.8.*"]
-docs = [
-    "mkdocs==1.6.*",
-    "mkdocs-material==9.7.*",
-    "mkdocstrings[python]==1.0.*",
-]
+dep_graph = ["fine_dep_graph~=0.1.0a0", "fine_dep_graph_falkordb~=0.1.0a0"]
 
 [build-system]
 requires = ["setuptools>=64", "setuptools-scm>=8"]
 build-backend = "setuptools.build_meta"
 
 [tool.finecode]
-presets = [{ source = "finecode_dev_common_preset" }]
+presets = [{ source = "finecode_dev_common_preset" }, { source = "fine_docs_markdown" }, { source = "fine_system_setup" }]
 
 # [tool.finecode.action.lint]
 # handlers = [
@@ -57,40 +59,132 @@ presets = [{ source = "finecode_dev_common_preset" }]
 #     ] },
 # ]
 
-[tool.importlinter]
-root_package = "finecode"
-include_external_packages = true
-
-[[tool.importlinter.contracts]]
-id = "wm-layered"
-name = "WM layered architecture"
-type = "layers"
-layers = [
-    "finecode.lsp_server.lsp_server",
-    "finecode.lsp_server.services",
-    "finecode.domain",
+[tool.finecode.action.setup_system]
+handlers = [
+    { name = "install_claude_code", source = "fine_system_claude_code.InstallClaudeCodeHandler", env = "dev_workspace", dependencies = [
+        "fine_system_claude_code~=0.1.0a0",
+    ] },
 ]
 
 
+[tool.importlinter]
+root_package = "finecode"
+include_external_packages = true
+contract_types = ["domain_purity: fine_python_import_linter.contracts.DomainPurityContract"]
+
+# NOTE (KG conformance project, Part A — 2026-06-10): the original `wm-layered` contract
+# referenced `finecode.lsp_server.services` (only exception classes) and `finecode.domain`
+# (no such module — the real domain is `finecode.wm_server.domain`), so it could not run.
+# Corrected below to the documented WM stack (docs/guides/wm-server-internals.md) and the
+# subsystem relationship in docs/architecture.md. PENDING HUMAN SIGN-OFF.
+
+# WM server internal stack. Source: docs/guides/wm-server-internals.md layer diagram
+# ("Dependencies flow strictly downward. Upper layers may import from lower ones, never
+# the reverse."). domain/errors/context grouped (they are the pure-data bottom and import
+# one another, e.g. context -> domain).
 [[tool.importlinter.contracts]]
-# such check doesn't control whether there are no raw requests in lsp_server, currently this should
-# be checked manually. We should check access to `runner.client.protocol` to avoid this?
+id = "wm-layered"
+name = "WM server layered architecture"
+type = "layers"
+containers = ["finecode.wm_server"]
+layers = [
+    "wm_server",
+    "_api_handlers",
+    "services",
+    "runner",
+    "config",
+    "domain : errors : context",
+]
+
+
+# Client subsystems sit above the WM server core; clients import the core, never the
+# reverse, and are independent of each other. Source: docs/architecture.md (subsystems
+# table: LSP/MCP/CLI are clients of WM).
+[[tool.importlinter.contracts]]
+id = "wm-subsystems-layered"
+name = "WM client subsystems sit above the WM server core"
+type = "layers"
+containers = ["finecode"]
+layers = [
+    "lsp_server | mcp_server | cli_app",
+    "wm_server",
+]
+
+
+# The WM server core must not import its client subsystems (explicit forbidden form of the
+# direction enforced above). Verified no such imports exist today.
+[[tool.importlinter.contracts]]
+id = "wm-core-no-client-imports"
+name = "WM server core must not import client subsystems"
+type = "forbidden"
+source_modules = ["finecode.wm_server"]
+forbidden_modules = [
+    "finecode.lsp_server",
+    "finecode.mcp_server",
+    "finecode.cli_app",
+]
+
+
+# lsprotocol types must stay confined to the LSP server subsystem. The original contract
+# ignored `finecode.runner.runner_client` (no such module) and `lsp_server.lsp_server`;
+# since then the LSP code was refactored into `lsp_server/endpoints/*`, which legitimately
+# use lsprotocol. Ignores updated to the real LSP-boundary importers. PENDING SIGN-OFF.
+[[tool.importlinter.contracts]]
 id = "wm-use-runner-client"
-name = "WM uses LSP requests only in runner_client and lsp_server, no raw requests in app"
+name = "lsprotocol types confined to the LSP server subsystem"
 type = "forbidden"
 source_modules = ["finecode"]
 forbidden_modules = ["lsprotocol"]
 ignore_imports = [
-    "finecode.runner.runner_client -> lsprotocol",
     "finecode.lsp_server.lsp_server -> lsprotocol",
+    "finecode.lsp_server.endpoints.diagnostics -> lsprotocol",
+    "finecode.lsp_server.endpoints.code_actions -> lsprotocol",
+    "finecode.lsp_server.endpoints.code_lens -> lsprotocol",
+    "finecode.lsp_server.endpoints.document_sync -> lsprotocol",
+    "finecode.lsp_server.endpoints.formatting -> lsprotocol",
+    "finecode.lsp_server.endpoints.inlay_hints -> lsprotocol",
+]
+
+
+# errors.py and domain.py are wm-layered's pure-data bottom in the sense that matters
+# here: they only ever hold data types and exceptions, with no legitimate reason to
+# reference infrastructure. context.py is deliberately excluded even though wm-layered
+# groups it with them — WorkspaceContext is the WM's shared *mutable* state and by design
+# holds live handles to running infrastructure (e.g. runner_io_thread: AsyncIOThread,
+# ws_projects_extension_runners: dict[..., ExtensionRunnerInfo]). wm-layered's grouping is
+# about import *direction* (doesn't import upward); this contract is about *purity*
+# (references nothing but itself + stdlib) — those are different properties that happen to
+# coincide for errors.py/domain.py but not for context.py.
+#
+# This is stricter than a forbidden-list of specific infra packages (e.g. finecode_jsonrpc):
+# it catches ANY future infrastructure dependency automatically, rather than needing this
+# contract updated every time a new one is introduced. A domain exception that imports a
+# transport package (to carry e.g. a wire-protocol code) couples the domain to one specific
+# protocol and makes the exception meaningless outside that boundary — that mapping belongs
+# at the actual dispatch boundary (wm_server.py), which is already infrastructure-aware. See
+# "Generality in comments, docstrings, and messages" / "Layered exception translation" in
+# docs/guides/developing-finecode.md.
+[[tool.importlinter.contracts]]
+id = "wm-domain-purity"
+name = "WM domain layer depends only on itself and the standard library"
+type = "domain_purity"
+domain_modules = [
+    "finecode.wm_server.errors",
+    "finecode.wm_server.domain",
+]
+# Pre-existing debt, out of scope for the contract that introduced this rule — real
+# wm-layered direction violations (domain, the bottom layer, importing config, a layer
+# above it) and a judgment call on whether a small utility/collections library counts as
+# "infrastructure" for this purpose. Flagged for separate cleanup, not silently allowed.
+ignore_imports = [
+    "finecode.wm_server.domain -> finecode.wm_server.config.config_models",
+    "finecode.wm_server.domain -> ordered_set",
 ]
 
 
 [tool.setuptools_scm]
 version_file = "src/finecode/_version.py"
 
-[tool.setuptools.package-data]
-finecode = ["base_config.toml"]
 
 [tool.setuptools.package-dir]
 "" = "src"
@@ -98,11 +192,11 @@ finecode = ["base_config.toml"]
 [tool.setuptools.packages.find]
 where = ["src"]
 
-[tool.pyright]
-reportUnusedCallResult = false
+[tool.finecode.action.init_falkordb.handlers.init_falkordb]
+config.falkordb_host = "falkordb"
 
 [tool.finecode.action.get_src_artifact_version]
-source = "finecode_extension_api.actions.GetSrcArtifactVersionAction"
+source = "fine_src_artifacts.GetSrcArtifactVersionAction"
 handlers_mode = "replace"
 handlers = [
     { name = 'get_src_artifact_version_setuptools_scm', source = 'fine_python_setuptools_scm.GetSrcArtifactVersionSetuptoolsScmHandler', env = "dev_no_runtime", dependencies = [
@@ -111,7 +205,7 @@ handlers = [
 ]
 
 [tool.finecode.action.serve_wal_explorer_from_store]
-source = "finecode_extension_api.actions.ServeWalExplorerFromStoreAction"
+source = "fine_wal_events.ServeWalExplorerFromStoreAction"
 handlers = [
     { name = "serve_wal_explorer_from_store", source = "fine_wal_explorer.ServeWalExplorerFromStoreHandler", env = "wal_explorer", dependencies = [
         "fine_wal_explorer~=0.1.0a0",

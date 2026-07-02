@@ -9,7 +9,7 @@ from typing import Any, AsyncIterator
 import pytest
 
 from finecode_extension_api.contrib.lsp_service import LspService
-from finecode_extension_api.interfaces import ifileeditor
+from finecode_extension_api.interfaces import ifileeditor, ilspclient
 
 pytestmark = pytest.mark.anyio
 
@@ -28,6 +28,10 @@ class _FakeLspSession:
         # When set, send_notification blocks until this event fires, letting a
         # test force two concurrent syncs to interleave at a specific point.
         self.release_send: asyncio.Event | None = None
+        # When set, send_request raises this instead of its normal behavior —
+        # lets a test simulate a transport-level error (e.g. a server-side
+        # cancellation) without a real LSP server.
+        self.raise_on_send_request: Exception | None = None
 
     async def __aenter__(self) -> "_FakeLspSession":
         return self
@@ -41,6 +45,8 @@ class _FakeLspSession:
         params: dict[str, Any] | None = None,
         timeout: float | None = None,
     ) -> Any:
+        if self.raise_on_send_request is not None:
+            raise self.raise_on_send_request
         return None
 
     async def send_notification(
@@ -278,3 +284,49 @@ async def test_file_open_event_and_hover_race_do_not_double_sync(
         await hover_task
 
         assert session.sync_notification_count(file_path.as_uri()) == 1
+
+
+class _FakeTransportError(Exception):
+    """Duck-typed shape of a transport-level JSON-RPC error carrying a code,
+    without depending on finecode_jsonrpc (which this package must not
+    import).
+    """
+
+    def __init__(self, code: int, message: str) -> None:
+        super().__init__(message)
+        self.code = code
+        self.message = message
+
+
+async def test_server_cancellation_is_translated_to_lsp_request_cancelled_error(
+    tmp_path: Path,
+) -> None:
+    """A transport error carrying code -32800 (RequestCancelled) must be
+    translated into ilspclient.LspRequestCancelledError, not left as the raw
+    transport exception or swallowed.
+    """
+    file_path = tmp_path / "subject.py"
+    content = "x = 1\n"
+
+    async with _running_service(file_path, content) as (service, session, _):
+        session.raise_on_send_request = _FakeTransportError(-32800, "cancelled")
+
+        with pytest.raises(ilspclient.LspRequestCancelledError):
+            await service.get_hover(file_path, content, {"line": 0, "character": 0})
+
+
+async def test_unrelated_send_request_error_is_not_mistranslated(
+    tmp_path: Path,
+) -> None:
+    """A transport error without a -32800 code (or without a code attribute at
+    all) must propagate unchanged — it must not be swallowed or mistranslated
+    into LspRequestCancelledError.
+    """
+    file_path = tmp_path / "subject.py"
+    content = "x = 1\n"
+
+    async with _running_service(file_path, content) as (service, session, _):
+        session.raise_on_send_request = RuntimeError("boom")
+
+        with pytest.raises(RuntimeError, match="boom"):
+            await service.get_hover(file_path, content, {"line": 0, "character": 0})

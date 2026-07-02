@@ -558,6 +558,8 @@ async def update_config(server: ErServer, params: dict | None) -> dict:
             try:
                 return await server.send_request_to_wm(method, req_params)
             except finecode_jsonrpc_module.JsonRpcError as exc:
+                if exc.code == finecode_jsonrpc_module.REQUEST_CANCELLED:
+                    raise er_errors.WmCommunicationCancelled(str(exc)) from exc
                 raise er_errors.WmCommunicationError(str(exc)) from exc
 
         response, runner_context = await services.update_config(
@@ -673,7 +675,23 @@ async def run_action(server: ErServer, params: dict | None) -> dict:
                 payload={"error": "stopped"},
             )
         else:
-            if isinstance(exception, services.ActionFailedException):
+            if isinstance(exception, services.ActionCancelledException):
+                error_msg = exception.message
+                logger.debug(f"Run action cancelled: {error_msg}")
+                er_wal.emit_run_event(
+                    server._wal_writer,
+                    event_type=er_wal.ErWalEventType.RUN_FAILED,
+                    wal_run_id=wal_run_id,
+                    action_name=action_name,
+                    project_path=project_path,
+                    trigger=trigger,
+                    dev_env=dev_env,
+                    payload={"error": f"cancelled: {error_msg}"},
+                )
+                raise finecode_jsonrpc_module.JsonRpcHandlerError(
+                    finecode_jsonrpc_module.REQUEST_CANCELLED, error_msg
+                ) from exception
+            elif isinstance(exception, services.ActionFailedException):
                 logger.error(f"Run action failed: {exception.message}")
                 error_msg = exception.message
             else:
@@ -771,7 +789,23 @@ async def run_handlers(server: ErServer, params: dict | None) -> dict:
             request=request, options=options_schema, runner_context=server._runner_context
         )
     except Exception as exception:
-        if isinstance(exception, services.ActionFailedException):
+        if isinstance(exception, services.ActionCancelledException):
+            error_msg = exception.message
+            logger.debug(f"Run handlers cancelled: {error_msg}")
+            er_wal.emit_run_event(
+                server._wal_writer,
+                event_type=er_wal.ErWalEventType.RUN_FAILED,
+                wal_run_id=wal_run_id,
+                action_name=action_name,
+                project_path=project_path,
+                trigger=trigger,
+                dev_env=dev_env,
+                payload={"error": f"cancelled: {error_msg}"},
+            )
+            raise finecode_jsonrpc_module.JsonRpcHandlerError(
+                finecode_jsonrpc_module.REQUEST_CANCELLED, error_msg
+            ) from exception
+        elif isinstance(exception, services.ActionFailedException):
             logger.error(f"Run handlers failed: {exception.message}")
             error_msg = exception.message
         else:

@@ -36,6 +36,9 @@ class ActionRunFailed(jsonrpc_client.BaseRunnerRequestException): ...
 class ActionRunStopped(jsonrpc_client.BaseRunnerRequestException): ...
 
 
+class ActionRunCancelled(jsonrpc_client.BaseRunnerRequestException): ...
+
+
 @dataclasses.dataclass
 class ExtensionRunnerInfo(domain.ExtensionRunner):
     # NOTE: initialized doesn't mean the runner is running, check its status
@@ -170,6 +173,10 @@ async def run_action(
             client=runner.client, request_id=error.request_id
         )
         raise error
+    except jsonrpc_client.ErrorOnRequest as error:
+        if error.error.code == jsonrpc_client.REQUEST_CANCELLED:
+            raise ActionRunCancelled(error.error.message) from error
+        raise
 
     run_result = response.result
 
@@ -240,6 +247,10 @@ async def run_handlers(
             client=runner.client, request_id=error.request_id
         )
         raise error
+    except jsonrpc_client.ErrorOnRequest as error:
+        if error.error.code == jsonrpc_client.REQUEST_CANCELLED:
+            raise ActionRunCancelled(error.error.message) from error
+        raise
 
     run_result = response.result
 
@@ -447,6 +458,7 @@ async def notify_document_did_change(runner: ExtensionRunnerInfo, change_params:
 __all__ = [
     "ActionRunFailed",
     "ActionRunStopped",
+    "ActionRunCancelled",
     "ExtensionRunnerInfo",
     "RunnerStatus",
     "RunActionRawResult",

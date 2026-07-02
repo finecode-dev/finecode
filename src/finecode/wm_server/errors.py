@@ -14,6 +14,7 @@ WmError
 ├── ActionError
 │   ├── ActionNotFoundError
 │   ├── ActionRunFailed
+│   ├── ActionCancelledError
 │   └── ActionNotResolvableError
 ├── InternalError
 └── RunnerError
@@ -79,6 +80,24 @@ class ActionNotFoundError(ActionError):
 
 class ActionRunFailed(ActionError):
     """Action execution failed in the Extension Runner."""
+
+    def __init__(self, message: str) -> None:
+        super().__init__(message)
+        self.message = message
+
+
+class ActionCancelledError(ActionError):
+    """Action execution was cancelled rather than failing — either a
+    downstream dependency the handler relies on cancelled an in-flight
+    operation, or the handler itself decided to abort. This is an expected,
+    benign outcome during normal operation, not an error, and must not be
+    logged or surfaced as one.
+
+    Distinct from the IDE/WM-client cancelling its own outstanding request
+    via `$/cancelRequest` — that case never becomes a named exception; it
+    is handled via real `asyncio.CancelledError`/task cancellation inside
+    finecode_jsonrpc's transport layer.
+    """
 
     def __init__(self, message: str) -> None:
         super().__init__(message)

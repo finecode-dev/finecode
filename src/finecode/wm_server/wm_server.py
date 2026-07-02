@@ -20,11 +20,13 @@ import typing
 
 from loguru import logger
 
+import finecode_jsonrpc
 import finecode_jsonrpc.client as jsonrpc_client
 
 from finecode.wm_server import context, domain
 from finecode.wm_server.errors import ConfigurationError
 from finecode.wm_server.services.run_service.exceptions import (
+    ActionCancelledError,
     ActionRunFailed,
     StartingEnvironmentsFailed,
 )
@@ -225,6 +227,12 @@ async def _handle_request_task(
     except ConfigurationError as exc:
         logger.warning(f"FineCode API: configuration error in {method}: {exc.message}")
         _write_message(writer, _jsonrpc_error(req_id, -32603, exc.message))
+        await writer.drain()
+    except ActionCancelledError as exc:
+        logger.debug(f"FineCode API: action cancelled while handling {method} (client: {label}): {exc}")
+        _write_message(
+            writer, _jsonrpc_error(req_id, finecode_jsonrpc.REQUEST_CANCELLED, str(exc))
+        )
         await writer.drain()
     except (ActionRunFailed, StartingEnvironmentsFailed) as exc:
         logger.error(f"FineCode API: error handling {method} (client: {label}): {exc}")

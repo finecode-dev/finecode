@@ -1,4 +1,5 @@
 from .exceptions import (
+    ActionCancelledError,
     ActionRunFailed,
     StartingEnvironmentsFailed,
 )
@@ -26,6 +27,7 @@ from .workspace_executor import WorkspaceExecutor
 
 
 __all__ = [
+    "ActionCancelledError",
     "ActionRunFailed",
     "StartingEnvironmentsFailed",
     "run_action",

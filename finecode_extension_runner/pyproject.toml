@@ -34,16 +34,42 @@ presets = [{ source = "finecode_dev_common_preset" }]
 [tool.importlinter]
 root_package = "finecode_extension_runner"
 include_external_packages = true
+contract_types = ["domain_purity: fine_python_import_linter.contracts.DomainPurityContract"]
 
+# NOTE (KG conformance project, Part A — 2026-06-10): extended the original 3-layer
+# contract (er_server -> services -> domain) to include the `_services` and `di` tiers
+# that sit between `services` and `domain`. `_services` and `di` are grouped (non-
+# independent `:`) because they import each other by design (di.bootstrap wires
+# _services.run_action into the registry, which _services then resolves). `impls/` is
+# intentionally OUT of the layered stack: domain.py imports a default impl
+# (impls.process_executor), so impls cannot sit cleanly above domain — see
+# docs/part-a-rationale.md OPEN QUESTIONS. PENDING HUMAN SIGN-OFF.
 [[tool.importlinter.contracts]]
 id = "er-layered"
 name = "ER layered architecture"
 type = "layers"
+containers = ["finecode_extension_runner"]
 layers = [
-    "finecode_extension_runner.er_server",
-    "finecode_extension_runner.services",
-    "finecode_extension_runner.domain",
+    "er_server",
+    "services",
+    "_services : di",
+    "domain",
 ]
+
+# er_errors.py is the ER's shared exception vocabulary, used by both the top infra layer
+# (er_server.py, which legitimately talks JSON-RPC) and mid-layers (e.g.
+# impls/project_action_runner.py). It must depend only on itself and the standard
+# library — an exception here that imports a transport package to carry a wire-protocol
+# detail couples the shared vocabulary to one specific protocol. Scoped to er_errors.py
+# rather than the full `domain` layer because domain.py has a separate, pre-existing,
+# already-flagged exception (it imports impls.process_executor — see the er-layered
+# contract's note above); that is an unrelated question this contract does not attempt to
+# resolve.
+[[tool.importlinter.contracts]]
+id = "er-errors-purity"
+name = "ER shared exception vocabulary depends only on itself and the standard library"
+type = "domain_purity"
+domain_modules = ["finecode_extension_runner.er_errors"]
 
 [tool.setuptools_scm]
 version_file = "src/finecode_extension_runner/_version.py"

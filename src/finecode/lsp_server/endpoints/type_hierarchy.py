@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING, Any
 from loguru import logger
 
 from finecode.lsp_server import global_state, pygls_types_utils
+from finecode.lsp_server.endpoints import _cancellation
 
 if TYPE_CHECKING:
     from finecode.lsp_server.lsp_server import LspServer
@@ -83,6 +84,7 @@ async def prepare_type_hierarchy(
             options={"trigger": "user", "devEnv": "ide"},
         )
     except Exception as error:
+        _cancellation.reraise_if_cancelled(error, context=f"Error preparing type hierarchy for {uri}")
         logger.error(f"Error preparing type hierarchy for {uri}: {error}")
         return None
 
@@ -122,6 +124,7 @@ async def type_hierarchy_supertypes(
             options={"trigger": "user", "devEnv": "ide"},
         )
     except Exception as error:
+        _cancellation.reraise_if_cancelled(error, context=f"Error getting supertypes for {uri}")
         logger.error(f"Error getting supertypes for {uri}: {error}")
         return None
 
@@ -161,6 +164,7 @@ async def type_hierarchy_subtypes(
             options={"trigger": "user", "devEnv": "ide"},
         )
     except Exception as error:
+        _cancellation.reraise_if_cancelled(error, context=f"Error getting subtypes for {uri}")
         logger.error(f"Error getting subtypes for {uri}: {error}")
         return None
 

@@ -17,7 +17,7 @@ from finecode.wm_server.runner.runner_manager import RunnerFailedToStart
 from finecode.wm_server.services import runner_start_service
 from finecode.wm_server.runner.runner_client import RunResultFormat  # reexport
 
-from .exceptions import ActionRunFailed, StartingEnvironmentsFailed
+from .exceptions import ActionCancelledError, ActionRunFailed, StartingEnvironmentsFailed
 
 
 def _format_runner_failure_message(
@@ -1019,6 +1019,27 @@ async def _run_action_in_env_runner(
         )
         telemetry.add_span_event("run.completed", {"return_code": response.return_code})
     except runner_client.BaseRunnerRequestException as error:
+        if isinstance(error, runner_client.ActionRunCancelled):
+            wal.emit_run_event(
+                ws_context.wal_writer,
+                event_type=wal.WalEventType.RUN_FAILED,
+                wal_run_id=wal_run_id,
+                action_name=action_name,
+                project_path=project_def.dir_path,
+                run_trigger=run_trigger.value,
+                dev_env=dev_env.value,
+                payload=wal.RunFailedPayload(
+                    error=f"cancelled: {error.message}", env_name=env_name
+                ),
+            )
+            telemetry.add_span_event(
+                "run.cancelled", {"env_name": env_name, "error": error.message}
+            )
+            logger.debug(
+                f"Action {action_name} cancelled in {env_name}: {error.message}"
+            )
+            raise ActionCancelledError(error.message) from error
+
         error_message = _format_runner_failure_message(
             action_name=action_name,
             runner=runner,

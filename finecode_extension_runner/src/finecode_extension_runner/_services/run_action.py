@@ -13,7 +13,7 @@ from loguru import logger
 from finecode_extension_runner._converter import converter as _converter
 
 from finecode_extension_api import code_action, textstyler, service
-from finecode_extension_api.interfaces import iprojectactionrunner, iprojectinfoprovider
+from finecode_extension_api.interfaces import ilspclient, iprojectactionrunner, iprojectinfoprovider
 from finecode_extension_runner import (
     context,
     domain,
@@ -41,6 +41,41 @@ handler_config_merger = deepmerge.Merger(
 class ActionFailedException(Exception):
     def __init__(self, message: str) -> None:
         self.message = message
+
+
+class ActionCancelledException(Exception):
+    """Raised when a handler's own action-run — or a nested sub-action it
+    dispatched — was cancelled rather than failing outright. Distinguished
+    from ActionFailedException so callers can propagate a genuine
+    cancellation signal instead of logging a crash trace.
+    """
+
+    def __init__(self, message: str) -> None:
+        self.message = message
+
+
+def _is_cancellation(exc: BaseException) -> bool:
+    """True if *exc* signals a benign cancellation rather than a failure.
+
+    Recognizes:
+      - ilspclient.LspRequestCancelledError — a downstream LSP server
+        cancelled a request.
+      - code_action.ActionCancelledException — a handler cancelled
+        itself for its own reasons.
+      - ActionCancelledException (this module) — this module's own
+        translation of either of the above from a nested sub-action call.
+      - iprojectactionrunner.ActionRunCancelled — a cancellation that
+        crossed the multi-env WM back-channel.
+    """
+    return isinstance(
+        exc,
+        (
+            ilspclient.LspRequestCancelledError,
+            code_action.ActionCancelledException,
+            ActionCancelledException,
+            iprojectactionrunner.ActionRunCancelled,
+        ),
+    )
 
 
 class StopWithResponse(Exception):
@@ -1280,6 +1315,11 @@ async def execute_action_handler(
                     action_result = exception.result
                     response = action_result_to_run_action_response(action_result, ["string"])
                     raise StopWithResponse(response=response) from exception
+
+                is_cancelled = False
+                if _is_cancellation(exception):
+                    is_cancelled = True
+                    error_str = getattr(exception, "message", None) or str(exception)
                 elif isinstance(
                     exception, iprojectactionrunner.BaseRunActionException
                 ) or isinstance(exception, code_action.ActionFailedException) or isinstance(
@@ -1289,17 +1329,23 @@ async def execute_action_handler(
                 elif isinstance(exception, BaseExceptionGroup):
                     msgs = []
                     has_unknown = False
+                    all_cancelled = True
                     for sub in exception.exceptions:
-                        if isinstance(sub, (iprojectactionrunner.BaseRunActionException, code_action.ActionFailedException, iprojectinfoprovider.ProjectInfoUnavailableError)):
+                        if _is_cancellation(sub):
+                            msgs.append(getattr(sub, "message", None) or str(sub))
+                        elif isinstance(sub, (iprojectactionrunner.BaseRunActionException, code_action.ActionFailedException, iprojectinfoprovider.ProjectInfoUnavailableError)):
                             msgs.append(sub.message)
+                            all_cancelled = False
                         else:
                             has_unknown = True
+                            all_cancelled = False
                     if has_unknown:
                         logger.error("Unhandled exception in action handler:")
                         logger.exception(exception)
                         error_str = str(exception)
                     else:
                         error_str = "; ".join(msgs)
+                        is_cancelled = all_cancelled
                 else:
                     logger.error("Unhandled exception in action handler:")
                     error_str = str(exception)
@@ -1315,10 +1361,19 @@ async def execute_action_handler(
                         dev_env=dev_env,
                         payload={"run_id": run_id, "handler": handler.name, "error": error_str},
                     )
-                er_telemetry.add_span_event("handler.failed", {"run_id": run_id, "handler": handler.name, "error": error_str})
-                raise ActionFailedException(
-                    f"Running action handler '{handler.name}' failed(Run {run_id}): {error_str}"
-                ) from exception
+                if is_cancelled:
+                    logger.debug(
+                        f"R{run_id} | Action handler '{handler.name}' was cancelled: {error_str}"
+                    )
+                    er_telemetry.add_span_event("handler.cancelled", {"run_id": run_id, "handler": handler.name, "error": error_str})
+                    raise ActionCancelledException(
+                        f"Running action handler '{handler.name}' was cancelled(Run {run_id}): {error_str}"
+                    ) from exception
+                else:
+                    er_telemetry.add_span_event("handler.failed", {"run_id": run_id, "handler": handler.name, "error": error_str})
+                    raise ActionFailedException(
+                        f"Running action handler '{handler.name}' failed(Run {run_id}): {error_str}"
+                    ) from exception
 
     end_time = time.time_ns()
     duration = (end_time - start_time) / 1_000_000

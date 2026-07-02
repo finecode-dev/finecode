@@ -14,6 +14,16 @@ class WmCommunicationError(Exception):
         super().__init__(message)
 
 
+class WmCommunicationCancelled(Exception):
+    """Raised when a request to the Workspace Manager was cancelled rather
+    than failing — the WM signalled a genuine cancellation, not a
+    communication failure."""
+
+    def __init__(self, message: str) -> None:
+        self.message = message
+        super().__init__(message)
+
+
 class PackageNotInstalledError(Exception):
     """Raised when a Python module required during ``update_config`` is not installed in the env.
     """

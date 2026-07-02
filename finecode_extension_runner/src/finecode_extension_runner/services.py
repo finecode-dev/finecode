@@ -12,6 +12,7 @@ from finecode_extension_api import service
 
 from finecode_extension_runner import context, domain, global_state, schemas, run_utils, schema_utils
 from finecode_extension_runner._services.run_action import (
+    ActionCancelledException,
     ActionFailedException,
     StopWithResponse,
     run_action_raw,
