@@ -78,6 +78,58 @@ def _is_cancellation(exc: BaseException) -> bool:
     )
 
 
+def _is_known_failure(exc: BaseException) -> bool:
+    """True if *exc* is an already-classified action/handler failure with a
+    stable ``.message`` — i.e. something a deeper layer already logged and
+    summarized, so it must not be re-logged here as an unhandled crash.
+
+    Includes this module's own ``ActionFailedException`` because it crosses
+    module boundaries unwrapped: ``ProjectActionRunnerImpl.run_action_iter``
+    lets it propagate directly into handler code for actions whose handlers
+    all live in the current env (see run_action.py fast path), so a handler
+    that calls back into ``run_action`` (e.g. a dispatch handler) can see it
+    directly, not just ``code_action.ActionFailedException``.
+    """
+    return isinstance(
+        exc,
+        (
+            ActionFailedException,
+            code_action.ActionFailedException,
+            iprojectactionrunner.BaseRunActionException,
+            iprojectinfoprovider.ProjectInfoUnavailableError,
+        ),
+    )
+
+
+def _classify_exception_group(eg: BaseExceptionGroup) -> tuple[bool, str]:
+    """Classify every sub-exception of a TaskGroup's ExceptionGroup.
+
+    Returns ``(is_cancelled, message)``. ``is_cancelled`` is True only when
+    *every* sub-exception is a benign cancellation (see ``_is_cancellation``).
+    A sub-exception that is neither a cancellation nor an already-classified
+    failure (``_is_known_failure``) is genuinely unexpected — this is the
+    ER's one chance to log its full traceback, since callers only see the
+    summarized message from here on.
+    """
+    msgs: list[str] = []
+    has_unknown = False
+    all_cancelled = True
+    for sub in eg.exceptions:
+        if _is_cancellation(sub):
+            msgs.append(getattr(sub, "message", None) or str(sub))
+        elif _is_known_failure(sub):
+            msgs.append(sub.message)
+            all_cancelled = False
+        else:
+            has_unknown = True
+            all_cancelled = False
+    if has_unknown:
+        logger.error("Unhandled exception in action handler:")
+        logger.exception(eg)
+        return False, str(eg)
+    return all_cancelled, "; ".join(msgs)
+
+
 class StopWithResponse(Exception):
     def __init__(self, response: schemas.RunActionResponse) -> None:
         self.response = response
@@ -522,15 +574,14 @@ async def run_action(
                                 subresult_task = tg.create_task(coro)
                                 subresults_tasks.append(subresult_task)
                     except ExceptionGroup as eg:
-                        errors: list[str] = []
-                        for exc in eg.exceptions:
-                            if not isinstance(exc, ActionFailedException):
-                                logger.error("Unexpected exception:")
-                                logger.exception(exc)
-                            else:
-                                errors.append(exc.message)
+                        all_cancelled, message = _classify_exception_group(eg)
+                        if all_cancelled:
+                            raise ActionCancelledException(
+                                f"Running action handlers of '{action_def.name}' was cancelled"
+                                f"(Run {run_id}): {message}"
+                            ) from eg
                         raise ActionFailedException(
-                            f"Running action handlers of '{action_def.name}' failed(Run {run_id}): {errors}."
+                            f"Running action handlers of '{action_def.name}' failed(Run {run_id}): {message}."
                             " See ER logs for more details"
                         ) from eg
                     er_wal.emit_run_event(
@@ -589,11 +640,12 @@ async def run_action(
                                 )
                                 handlers_tasks.append(handler_task)
                     except ExceptionGroup as eg:
-                        for exc in eg.exceptions:
-                            if isinstance(exc, ActionFailedException):
-                                logger.error(str(exc))
-                            else:
-                                logger.exception(exc)
+                        all_cancelled, message = _classify_exception_group(eg)
+                        if all_cancelled:
+                            raise ActionCancelledException(
+                                f"Running action handlers of '{action_def.name}' was cancelled"
+                                f"(Run {run_id}): {message}"
+                            ) from eg
                         raise ActionFailedException(
                             f"Running action handlers of '{action_def.name}' failed"
                             f"(Run {run_id}). See ER logs for more details"
@@ -1320,32 +1372,10 @@ async def execute_action_handler(
                 if _is_cancellation(exception):
                     is_cancelled = True
                     error_str = getattr(exception, "message", None) or str(exception)
-                elif isinstance(
-                    exception, iprojectactionrunner.BaseRunActionException
-                ) or isinstance(exception, code_action.ActionFailedException) or isinstance(
-                    exception, iprojectinfoprovider.ProjectInfoUnavailableError
-                ):
+                elif _is_known_failure(exception):
                     error_str = exception.message
                 elif isinstance(exception, BaseExceptionGroup):
-                    msgs = []
-                    has_unknown = False
-                    all_cancelled = True
-                    for sub in exception.exceptions:
-                        if _is_cancellation(sub):
-                            msgs.append(getattr(sub, "message", None) or str(sub))
-                        elif isinstance(sub, (iprojectactionrunner.BaseRunActionException, code_action.ActionFailedException, iprojectinfoprovider.ProjectInfoUnavailableError)):
-                            msgs.append(sub.message)
-                            all_cancelled = False
-                        else:
-                            has_unknown = True
-                            all_cancelled = False
-                    if has_unknown:
-                        logger.error("Unhandled exception in action handler:")
-                        logger.exception(exception)
-                        error_str = str(exception)
-                    else:
-                        error_str = "; ".join(msgs)
-                        is_cancelled = all_cancelled
+                    is_cancelled, error_str = _classify_exception_group(exception)
                 else:
                     logger.error("Unhandled exception in action handler:")
                     error_str = str(exception)
@@ -1417,16 +1447,14 @@ async def run_subresult_coros_concurrently(
                 coro_task = tg.create_task(coro)
                 coros_tasks.append(coro_task)
     except ExceptionGroup as eg:
-        errors_str = ""
-        for exc in eg.exceptions:
-            if isinstance(exc, code_action.ActionFailedException):
-                errors_str += exc.message + "."
-            else:
-                logger.error("Unhandled exception:")
-                logger.exception(exc)
-                errors_str += str(exc) + "."
+        all_cancelled, message = _classify_exception_group(eg)
+        if all_cancelled:
+            raise ActionCancelledException(
+                f"Concurrent running action handlers of '{action_name}' was cancelled"
+                f"(Run {run_id}): {message}"
+            ) from eg
         raise ActionFailedException(
-            f"Concurrent running action handlers of '{action_name}' failed(Run {run_id}): {errors_str}"
+            f"Concurrent running action handlers of '{action_name}' failed(Run {run_id}): {message}"
         ) from eg
 
     action_subresult: code_action.RunActionResult | None = None
@@ -1495,10 +1523,17 @@ async def run_subresult_coros_sequentially(
         try:
             coro_result = await coro
         except Exception as e:
-            logger.error(
-                f"Unhandled exception in subresult coroutine({action_name}, run {run_id}):"
-            )
-            logger.exception(e)
+            if _is_cancellation(e):
+                error_str = getattr(e, "message", None) or str(e)
+                raise ActionCancelledException(
+                    f"Running action handlers of '{action_name}' was cancelled"
+                    f"(Run {run_id}): {error_str}"
+                ) from e
+            if not _is_known_failure(e):
+                logger.error(
+                    f"Unhandled exception in subresult coroutine({action_name}, run {run_id}):"
+                )
+                logger.exception(e)
             raise ActionFailedException(
                 f"Running action handlers of '{action_name}' failed(Run {run_id}): {e}"
             ) from e
