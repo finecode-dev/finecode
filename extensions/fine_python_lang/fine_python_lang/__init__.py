@@ -1,6 +1,7 @@
 from fine_python_lang.call_hierarchy_incoming_calls_python_action import (
     CallHierarchyIncomingCallsPythonAction,
 )
+from fine_python_lang.check_python_imports_action import CheckPythonImportsAction
 from fine_python_lang.call_hierarchy_outgoing_calls_python_action import (
     CallHierarchyOutgoingCallsPythonAction,
 )
@@ -56,6 +57,7 @@ from fine_python_lang.type_hierarchy_supertypes_python_action import (
 __all__ = [
     "CallHierarchyIncomingCallsPythonAction",
     "CallHierarchyOutgoingCallsPythonAction",
+    "CheckPythonImportsAction",
     "FormatPythonFileAction",
     "GetLintFixesPythonFilesAction",
     "GroupSrcArtifactFilesByLangPythonHandler",

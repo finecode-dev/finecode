@@ -1,0 +1,8 @@
+[tool.finecode.action.inspect_code]
+source = "fine_inspect_code.InspectCodeAction"
+
+[[tool.finecode.action.inspect_code.handlers]]
+name = "file_existence_validation"
+source = "fine_inspect_code.FileExistenceValidationHandler"
+env = "dev_workspace"
+dependencies = ["fine_inspect_code~=0.1.0a0"]

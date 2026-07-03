@@ -1,0 +1,26 @@
+[tool.finecode]
+presets = [{ source = "fine_inspect_code" }]
+
+[tool.finecode.action.type_check]
+source = "fine_type_check.TypeCheckAction"
+
+[[tool.finecode.action.type_check.handlers]]
+name = "type_check"
+source = "fine_type_check.TypeCheckHandler"
+env = "dev_workspace"
+dependencies = ["fine_type_check~=0.1.0a0"]
+
+[tool.finecode.action.type_check_files]
+source = "fine_type_check.TypeCheckFilesAction"
+
+[[tool.finecode.action.type_check_files.handlers]]
+name = "dispatch"
+source = "fine_type_check.TypeCheckFilesDispatchHandler"
+env = "dev_no_runtime"
+dependencies = ["fine_type_check~=0.1.0a0"]
+
+[[tool.finecode.action.inspect_code.handlers]]
+name = "type_check_bridge"
+source = "fine_type_check.TypeCheckInspectCodeBridgeHandler"
+env = "dev_workspace"
+dependencies = ["fine_type_check~=0.1.0a0"]

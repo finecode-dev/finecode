@@ -1,0 +1,13 @@
+[tool.finecode]
+presets = [{ source = "fine_check_imports" }]
+
+[tool.finecode.action.check_python_imports]
+source = "fine_python_lang.CheckPythonImportsAction"
+handlers = [
+    { name = "import_linter", source = "fine_python_import_linter.ImportLinterCheckPythonImportsHandler", env = "dev_no_runtime", dependencies = [
+        "fine_python_import_linter~=0.1.0",
+    ] },
+]
+
+[tool.finecode.extension.fine_python_import_linter]
+dependencies_override = ["import-linter==2.12.*"]

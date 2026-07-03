@@ -5,7 +5,7 @@ description = "FineCode preset that owns git hook action contracts"
 authors = [{ name = "Vladyslav Hnatiuk", email = "aders1234@gmail.com" }]
 readme = "README.md"
 requires-python = ">=3.11, < 3.15"
-dependencies = ["finecode_extension_api~=0.4.0a0", "fine_lint~=0.1.0a0", "fine_format~=0.1.0a0", "fine_type_check~=0.1.0a0", "fine_inspect_code~=0.1.0a0"]
+dependencies = ["finecode_extension_api~=0.4.0a0", "fine_lint~=0.1.0a0", "fine_format~=0.1.0a0", "fine_type_check~=0.1.0a0", "fine_inspect_code~=0.1.0a0", "fine_audit_code~=0.1.0a0"]
 
 [build-system]
 requires = ["setuptools>=64"]

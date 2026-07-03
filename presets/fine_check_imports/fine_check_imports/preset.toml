@@ -1,0 +1,17 @@
+[tool.finecode]
+presets = [{ source = "fine_inspect_code" }, { source = "fine_audit_code" }, { source = "fine_src_artifacts" }]
+
+[tool.finecode.action.check_imports]
+source = "fine_check_imports.CheckImportsAction"
+
+[[tool.finecode.action.check_imports.handlers]]
+name = "dispatch"
+source = "fine_check_imports.CheckImportsDispatchHandler"
+env = "dev_workspace"
+dependencies = ["fine_check_imports~=0.1.0a0"]
+
+[[tool.finecode.action.audit_code.handlers]]
+name = "check_imports_bridge"
+source = "fine_check_imports.CheckImportsAuditCodeBridgeHandler"
+env = "dev_workspace"
+dependencies = ["fine_check_imports~=0.1.0a0"]

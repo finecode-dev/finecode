@@ -13,6 +13,7 @@ dependencies = [
     "fine_src_artifacts~=0.1.0a0",
     "fine_lint~=0.1.0a0",
     "fine_type_check~=0.1.0a0",
+    "fine_check_imports~=0.1.0a0",
     "fine_semantic_tokens~=0.1.0a0",
 ]
 

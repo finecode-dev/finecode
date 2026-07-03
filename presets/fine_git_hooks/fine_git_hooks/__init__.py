@@ -8,6 +8,7 @@ from fine_git_hooks.type_check_precommit_bridge_handler import TypeCheckPrecommi
 from fine_git_hooks.install_git_hooks import InstallGitHooksHandler
 from fine_git_hooks.uninstall_git_hooks import UninstallGitHooksHandler
 from fine_git_hooks.inspect_code_precommit_bridge_handler import InspectCodePrecommitBridgeHandler
+from fine_git_hooks.audit_code_precommit_bridge_handler import AuditCodePrecommitBridgeHandler
 
 __all__ = [
     "PrecommitAction",
@@ -20,4 +21,5 @@ __all__ = [
     "InstallGitHooksHandler",
     "UninstallGitHooksHandler",
     "InspectCodePrecommitBridgeHandler",
+    "AuditCodePrecommitBridgeHandler",
 ]

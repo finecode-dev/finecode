@@ -1,20 +1,20 @@
 [tool.finecode]
-presets = [{ source = "fine_semantic_tokens" }]
+presets = [{ source = "fine_type_check" }]
 
-
-[tool.finecode.action.text_document_semantic_tokens_python]
-source = "fine_python_lang.TextDocumentSemanticTokensPythonAction"
-
-[[tool.finecode.action.text_document_semantic_tokens_python.handlers]]
-name = "pyrefly"
-source = "fine_python_pyrefly.PyreflySemanticTokensHandler"
-env = "dev_no_runtime"
-dependencies = ["fine_python_pyrefly[jsonrpc]~=0.2.0a0"]
-
+[tool.finecode.action.type_check_python_files]
+source = "fine_python_lang.TypeCheckPythonFilesAction"
+handlers = [
+    { name = "pyrefly", source = "fine_python_pyrefly.PyreflyTypeCheckFilesHandler", env = "dev_no_runtime", dependencies = [
+        "fine_python_pyrefly[jsonrpc]~=0.2.0a0",
+    ] },
+]
 
 [tool.finecode.extension.fine_python_pyrefly]
 dependencies_override = ["pyrefly==1.1.*"]
 
+[[tool.finecode.action_handler]]
+source = "fine_python_pip.PipInstallDepsInEnvHandler"
+config.editable_mode = 'compat'
 
 [[tool.finecode.service]]
 interface = "finecode_extension_api.interfaces.ijsonrpcclient.IJsonRpcClient"

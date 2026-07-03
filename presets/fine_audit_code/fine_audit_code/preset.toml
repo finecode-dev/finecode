@@ -1,0 +1,8 @@
+[tool.finecode.action.audit_code]
+source = "fine_audit_code.AuditCodeAction"
+
+[[tool.finecode.action.audit_code.handlers]]
+name = "file_existence_validation"
+source = "fine_audit_code.FileExistenceValidationHandler"
+env = "dev_workspace"
+dependencies = ["fine_audit_code~=0.1.0a0"]

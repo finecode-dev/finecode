@@ -63,7 +63,7 @@ dependencies = ["fine_python_pyrefly[jsonrpc]~=0.2.0a0"]
 
 
 [tool.finecode.extension.fine_python_pyrefly]
-dependencies_override = ["pyrefly==0.64.*"]
+dependencies_override = ["pyrefly==1.1.*"]
 
 
 [[tool.finecode.service]]
