@@ -311,9 +311,18 @@ async def _resolve_actions_by_project(
                 action = await find_action_by_source(
                     project.actions, source, project, ws_context
                 )
-                if action is not None:
-                    project_action_names.append(action.name)
-                    name_to_source[action.name] = source
+                if action is None:
+                    continue
+                if action.canonical_source is None:
+                    from finecode.wm_server.services import run_service
+                    await run_service.ensure_action_metadata(action, project, ws_context)
+                if action.scope == domain.ActionScope.WORKSPACE:
+                    raise ValueError(
+                        f"Action '{source}' is workspace-scoped; do not pass a project path. "
+                        "It always runs once, hosted on the workspace root project."
+                    )
+                project_action_names.append(action.name)
+                name_to_source[action.name] = source
             actions_by_project[project.dir_path] = project_action_names
     else:
         # Auto-discover: find projects that have at least one of the requested actions.

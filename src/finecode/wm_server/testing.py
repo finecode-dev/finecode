@@ -1,11 +1,10 @@
-"""Minimal WM-side test harness for cancellation-propagation tests.
+"""Minimal WM-side test harness for action-dispatch tests.
 
-Scoped specifically to testing the cancellation-propagation chain across
-``runner_client.py``, ``proxy_utils.py``, and ``wm_server.py`` — this is not
-a general-purpose WM testing framework. It provides just enough fake
+Not a general-purpose WM testing framework — it provides just enough fake
 infrastructure (a fake ER-facing JSON-RPC client, an already-RUNNING runner,
 a minimal single-action resolved project, and a wired-up ``WorkspaceContext``)
-to exercise WM-side action dispatch without starting a real ER subprocess.
+to exercise WM-side action dispatch and resolution without starting a real ER
+subprocess.
 """
 
 from __future__ import annotations
@@ -17,7 +16,7 @@ import finecode_jsonrpc
 from finecode_jsonrpc.client import ResponseError
 
 from finecode.wm_server import context, domain
-from finecode.wm_server.runner import runner_client
+from finecode.wm_server.runner import runner_client, _internal_client_types
 
 
 class FakeErClient:
@@ -77,6 +76,27 @@ def make_cancelled_error(message: str = "cancelled") -> finecode_jsonrpc.ErrorOn
 def make_error_on_request(code: int, message: str = "boom") -> finecode_jsonrpc.ErrorOnRequest:
     """Build a transport-level exception carrying an arbitrary (non-cancellation) code."""
     return finecode_jsonrpc.ErrorOnRequest(error=ResponseError(code=code, message=message))
+
+
+def make_run_action_response(
+    *,
+    return_code: int = 0,
+    result_by_format: dict | None = None,
+    status: str | None = None,
+    error: str | None = None,
+) -> _internal_client_types.ErRunActionResponse:
+    """Build an ER run-action response, hiding the wire-protocol id/jsonrpc
+    fields callers never need to vary."""
+    return _internal_client_types.ErRunActionResponse(
+        id=1,
+        jsonrpc="2.0",
+        result=_internal_client_types.ErRunActionResult(
+            return_code=return_code,
+            result_by_format=result_by_format,
+            status=status,
+            error=error,
+        ),
+    )
 
 
 def make_running_runner(

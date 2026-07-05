@@ -155,14 +155,6 @@ class WorkspaceContext:
     # from inside that same Phase 2.
     env_install_locks: dict[Path, asyncio.Lock] = field(default_factory=dict)
 
-    # In-progress auto-repair events keyed by (project_dir_path, env_name).
-    # Set synchronously (no await) before repair starts; cleared in finally.
-    # Prevents duplicate install+restart when many coroutines reach the repair
-    # path simultaneously and no runner object exists yet to carry the status.
-    pending_repair_events: dict[tuple[Path, str], asyncio.Event] = field(
-        default_factory=dict
-    )
-
 
 @dataclass
 class CachedAction:

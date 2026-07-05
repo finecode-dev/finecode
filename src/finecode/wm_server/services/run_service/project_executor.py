@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import collections.abc
 import contextlib
 import pathlib
@@ -31,22 +32,47 @@ class ProjectExecutor:
     def __init__(self, ws_context: context.WorkspaceContext) -> None:
         self._ws_context = ws_context
 
-    def _resolve_action_name(
+    def _find_action_name(
+        self, action_source: str, project: domain.CollectedProject
+    ) -> str | None:
+        return next(
+            (a.name for a in project.actions if a.canonical_source == action_source),
+            None,
+        )
+
+    async def _resolve_action_name(
         self, action_source: str, project: domain.CollectedProject
     ) -> str:
         # action_source is always canonical here: ER-initiated calls pass
-        # canonical_source directly (derived from cls.__module__.__qualname__),
-        # and canonical_source is always populated by update_runner_config before
-        # any action can be executed.
-        try:
-            return next(
-                a.name for a in project.actions
-                if a.canonical_source == action_source
-            )
-        except StopIteration:
+        # canonical_source directly (derived from cls.__module__.__qualname__).
+        action_name = self._find_action_name(action_source, project)
+        if action_name is None:
+            # A handler may dynamically invoke an action whose own env was never
+            # started by the top-level request (e.g. check_imports' dispatch
+            # handler calling get_src_artifact_language, which lives in
+            # "dev_no_runtime" while dispatch itself runs in "dev_workspace").
+            # canonical_source for such actions is only populated once their env
+            # has started and reported back via update_runner_config, so give
+            # every not-yet-resolved action in this project a chance to resolve
+            # before giving up. One action's metadata being unresolvable must not
+            # cancel another's resolution that is about to succeed, so gather
+            # (not TaskGroup) with return_exceptions=True.
+            unresolved = [a for a in project.actions if a.canonical_source is None]
+            if unresolved:
+                await asyncio.gather(
+                    *(
+                        proxy_utils.ensure_action_metadata(a, project, self._ws_context)
+                        for a in unresolved
+                    ),
+                    return_exceptions=True,
+                )
+                action_name = self._find_action_name(action_source, project)
+
+        if action_name is None:
             raise ActionRunFailed(
                 f"No action with canonical source '{action_source}' found in project {project.dir_path}"
             )
+        return action_name
 
     async def run_action(
         self,
@@ -75,7 +101,7 @@ class ProjectExecutor:
                 f"Project {project_path} has no valid config"
             )
 
-        action_name = self._resolve_action_name(action_source, project)
+        action_name = await self._resolve_action_name(action_source, project)
 
         return await proxy_utils.run_action(
             action_name=action_name,
@@ -119,7 +145,7 @@ class ProjectExecutor:
                 f"Project {project_path} has no valid config"
             )
 
-        action_name = self._resolve_action_name(action_source, project)
+        action_name = await self._resolve_action_name(action_source, project)
 
         async with proxy_utils.run_with_partial_results(
             action_name=action_name,

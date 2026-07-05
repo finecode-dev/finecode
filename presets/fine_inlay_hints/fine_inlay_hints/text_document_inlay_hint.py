@@ -27,7 +27,14 @@ class InlayHint:
 
 @dataclasses.dataclass
 class InlayHintResult(code_action.RunActionResult):
-    hints: list[InlayHint] | None
+    hints: list[InlayHint] = dataclasses.field(default_factory=list)
+    """Inlay hints for the requested range. Empty list means the handler
+    ran and found no hints."""
+
+    def update(self, other: code_action.RunActionResult) -> None:
+        if not isinstance(other, InlayHintResult):
+            return
+        self.hints.extend(other.hints)
 
 
 class TextDocumentInlayHintAction(code_action.Action):

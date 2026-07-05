@@ -12,6 +12,7 @@ from .references_handler import PyreflyReferencesHandler, PyreflyReferencesHandl
 from .type_definition_handler import PyreflyTypeDefinitionHandler, PyreflyTypeDefinitionHandlerConfig
 from .implementation_handler import PyreflyImplementationHandler, PyreflyImplementationHandlerConfig
 from .document_highlight_handler import PyreflyDocumentHighlightHandler, PyreflyDocumentHighlightHandlerConfig
+from .inlay_hint_handler import PyreflyInlayHintHandler, PyreflyInlayHintHandlerConfig
 from .type_check_files_handler import PyreflyTypeCheckFilesHandler, PyreflyTypeCheckFilesHandlerConfig
 from .prepare_call_hierarchy_handler import (
     PyreflyPrepareCallHierarchyHandler,
@@ -48,6 +49,8 @@ __all__ = [
     "PyreflyImplementationHandlerConfig",
     "PyreflyDocumentHighlightHandler",
     "PyreflyDocumentHighlightHandlerConfig",
+    "PyreflyInlayHintHandler",
+    "PyreflyInlayHintHandlerConfig",
     "PyreflyCallHierarchyIncomingCallsHandler",
     "PyreflyCallHierarchyIncomingCallsHandlerConfig",
     "PyreflyCallHierarchyOutgoingCallsHandler",

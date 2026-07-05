@@ -261,6 +261,21 @@ class LspService(service.DisposableService):
             self._uri_locks[uri] = lock
         return lock
 
+    async def _close_if_not_editor_open(self, file_path: Path, uri: str) -> None:
+        """Send didClose if no file editor session has the file open.
+
+        Feature methods open documents on demand via _sync_document. Once the
+        request completes, the LSP server shouldn't keep the document open
+        unless an editor session is still actively tracking it.
+        """
+        assert self._session is not None, "LspService not started"
+        if file_path not in self._file_editor.get_opened_files():
+            await self._session.send_notification(
+                "textDocument/didClose",
+                {"textDocument": {"uri": uri}},
+            )
+            self._open_documents.discard(uri)
+
     async def _send_cancellable_request(
         self,
         method: str,
@@ -327,12 +342,7 @@ class LspService(service.DisposableService):
 
         self._diagnostics.pop(uri, None)
 
-        if file_path not in self._file_editor.get_opened_files():
-            await self._session.send_notification(
-                "textDocument/didClose",
-                {"textDocument": {"uri": uri}},
-            )
-            self._open_documents.discard(uri)
+        await self._close_if_not_editor_open(file_path, uri)
 
         return self._diagnostics_data.get(uri, [])
 
@@ -365,12 +375,7 @@ class LspService(service.DisposableService):
             timeout=timeout,
         )
 
-        if file_path not in self._file_editor.get_opened_files():
-            await self._session.send_notification(
-                "textDocument/didClose",
-                {"textDocument": {"uri": uri}},
-            )
-            self._open_documents.discard(uri)
+        await self._close_if_not_editor_open(file_path, uri)
 
         return result or []
 
@@ -401,12 +406,30 @@ class LspService(service.DisposableService):
 
         result = await self._send_cancellable_request(method, params, timeout=timeout)
 
-        if file_path not in self._file_editor.get_opened_files():
-            await self._session.send_notification(
-                "textDocument/didClose",
-                {"textDocument": {"uri": uri}},
-            )
-            self._open_documents.discard(uri)
+        await self._close_if_not_editor_open(file_path, uri)
+
+        return result
+
+    async def get_inlay_hints(
+        self,
+        file_path: Path,
+        content: str,
+        range_dict: dict[str, Any],
+        timeout: float = 30.0,
+    ) -> list[dict[str, Any]] | None:
+        """Request inlay hints for a range and return the raw LSP result."""
+        assert self._session is not None, "LspService not started"
+
+        uri = file_path.as_uri()
+        await self._sync_document(uri, content)
+
+        result = await self._send_cancellable_request(
+            "textDocument/inlayHint",
+            {"textDocument": {"uri": uri}, "range": range_dict},
+            timeout=timeout,
+        )
+
+        await self._close_if_not_editor_open(file_path, uri)
 
         return result
 
@@ -429,12 +452,7 @@ class LspService(service.DisposableService):
             timeout=timeout,
         )
 
-        if file_path not in self._file_editor.get_opened_files():
-            await self._session.send_notification(
-                "textDocument/didClose",
-                {"textDocument": {"uri": uri}},
-            )
-            self._open_documents.discard(uri)
+        await self._close_if_not_editor_open(file_path, uri)
 
         return result
 
@@ -457,12 +475,7 @@ class LspService(service.DisposableService):
             timeout=timeout,
         )
 
-        if file_path not in self._file_editor.get_opened_files():
-            await self._session.send_notification(
-                "textDocument/didClose",
-                {"textDocument": {"uri": uri}},
-            )
-            self._open_documents.discard(uri)
+        await self._close_if_not_editor_open(file_path, uri)
 
         return result
 
@@ -490,12 +503,7 @@ class LspService(service.DisposableService):
             timeout=timeout,
         )
 
-        if file_path not in self._file_editor.get_opened_files():
-            await self._session.send_notification(
-                "textDocument/didClose",
-                {"textDocument": {"uri": uri}},
-            )
-            self._open_documents.discard(uri)
+        await self._close_if_not_editor_open(file_path, uri)
 
         return result
 
@@ -518,12 +526,7 @@ class LspService(service.DisposableService):
             timeout=timeout,
         )
 
-        if file_path not in self._file_editor.get_opened_files():
-            await self._session.send_notification(
-                "textDocument/didClose",
-                {"textDocument": {"uri": uri}},
-            )
-            self._open_documents.discard(uri)
+        await self._close_if_not_editor_open(file_path, uri)
 
         return result
 
@@ -546,12 +549,7 @@ class LspService(service.DisposableService):
             timeout=timeout,
         )
 
-        if file_path not in self._file_editor.get_opened_files():
-            await self._session.send_notification(
-                "textDocument/didClose",
-                {"textDocument": {"uri": uri}},
-            )
-            self._open_documents.discard(uri)
+        await self._close_if_not_editor_open(file_path, uri)
 
         return result
 
@@ -574,12 +572,7 @@ class LspService(service.DisposableService):
             timeout=timeout,
         )
 
-        if file_path not in self._file_editor.get_opened_files():
-            await self._session.send_notification(
-                "textDocument/didClose",
-                {"textDocument": {"uri": uri}},
-            )
-            self._open_documents.discard(uri)
+        await self._close_if_not_editor_open(file_path, uri)
 
         return result
 
@@ -602,12 +595,7 @@ class LspService(service.DisposableService):
             timeout=timeout,
         )
 
-        if file_path not in self._file_editor.get_opened_files():
-            await self._session.send_notification(
-                "textDocument/didClose",
-                {"textDocument": {"uri": uri}},
-            )
-            self._open_documents.discard(uri)
+        await self._close_if_not_editor_open(file_path, uri)
 
         return result
 
@@ -630,12 +618,7 @@ class LspService(service.DisposableService):
             timeout=timeout,
         )
 
-        if file_path not in self._file_editor.get_opened_files():
-            await self._session.send_notification(
-                "textDocument/didClose",
-                {"textDocument": {"uri": uri}},
-            )
-            self._open_documents.discard(uri)
+        await self._close_if_not_editor_open(file_path, uri)
 
         return result
 
@@ -658,12 +641,7 @@ class LspService(service.DisposableService):
             timeout=timeout,
         )
 
-        if file_path not in self._file_editor.get_opened_files():
-            await self._session.send_notification(
-                "textDocument/didClose",
-                {"textDocument": {"uri": uri}},
-            )
-            self._open_documents.discard(uri)
+        await self._close_if_not_editor_open(file_path, uri)
 
         return result
 
@@ -686,12 +664,7 @@ class LspService(service.DisposableService):
             timeout=timeout,
         )
 
-        if file_path not in self._file_editor.get_opened_files():
-            await self._session.send_notification(
-                "textDocument/didClose",
-                {"textDocument": {"uri": uri}},
-            )
-            self._open_documents.discard(uri)
+        await self._close_if_not_editor_open(file_path, uri)
 
         return result
 
@@ -714,12 +687,7 @@ class LspService(service.DisposableService):
             timeout=timeout,
         )
 
-        if file_path not in self._file_editor.get_opened_files():
-            await self._session.send_notification(
-                "textDocument/didClose",
-                {"textDocument": {"uri": uri}},
-            )
-            self._open_documents.discard(uri)
+        await self._close_if_not_editor_open(file_path, uri)
 
         return result
 
@@ -742,12 +710,7 @@ class LspService(service.DisposableService):
             timeout=timeout,
         )
 
-        if file_path not in self._file_editor.get_opened_files():
-            await self._session.send_notification(
-                "textDocument/didClose",
-                {"textDocument": {"uri": uri}},
-            )
-            self._open_documents.discard(uri)
+        await self._close_if_not_editor_open(file_path, uri)
 
         return result
 
@@ -930,5 +893,3 @@ def apply_text_edits(content: str, edits: list[dict[str, Any]]) -> str:
         result = result[:start] + edit["newText"] + result[end:]
 
     return result
-
-

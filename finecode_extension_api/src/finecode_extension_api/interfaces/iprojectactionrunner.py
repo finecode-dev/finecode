@@ -46,6 +46,20 @@ class ActionRef:
        type is contractually compatible with (a subtype of) the parent's result type.
        The runner structures the raw result into that type transparently — no manual
        cast is needed at call sites.
+
+       The same asymmetry exists on the *payload* side, handled the same way: the
+       caller passes a payload built against the parent's payload type — it has no
+       way to import the concrete subaction class to build its own ``PAYLOAD_TYPE``
+       when ``action_type`` is ``None``. ``run_action`` / ``run_action_iter``
+       reconstruct the payload as the concrete ``PAYLOAD_TYPE`` themselves whenever
+       ``action_type`` is available locally and declares a different payload type;
+       when it isn't (the class lives in another env), the payload is sent as-is —
+       the WM round-trip serializes it either way, and the receiving env structures
+       it into its own ``PAYLOAD_TYPE``, defaulting any fields the parent payload
+       doesn't have. Subaction payload extensions must therefore give every extra
+       field a default meaningful for dispatch-based invocation (see ADR-0008).
+       Call sites never need to branch on whether ``action_type`` is set to decide
+       how to build the payload.
     """
 
     source: str

@@ -467,6 +467,42 @@ async def ensure_action_metadata(
         )
 
 
+async def find_subactions_for_parent(
+    parent_action_source: str,
+    project: domain.CollectedProject,
+    ws_context: context.WorkspaceContext,
+) -> list[domain.Action]:
+    """Return every action in *project* that specializes *parent_action_source*.
+
+    Per ADR-0045, this is the WM-owned answer to "what subactions exist for
+    this parent", regardless of which env each one's handler runs in — an ER
+    only ever knows its own env's actions, so it cannot answer this on its
+    own. An action's specialization relationship (``parent_action_source`` /
+    ``language``) is only known once its class has been imported by some ER,
+    so unresolved actions are resolved on demand via
+    :func:`ensure_action_metadata` (best-effort — an action that cannot be
+    resolved at all is simply not a candidate, rather than failing the whole
+    query).
+    """
+    result: list[domain.Action] = []
+    for action in project.actions:
+        if action.canonical_source is None:
+            try:
+                await ensure_action_metadata(action, project, ws_context)
+            except Exception as exc:
+                logger.debug(
+                    f"Could not resolve metadata for '{action.source}' while"
+                    f" looking for subactions of '{parent_action_source}': {exc}"
+                )
+                continue
+        if (
+            action.parent_action_source == parent_action_source
+            and action.language is not None
+        ):
+            result.append(action)
+    return result
+
+
 async def start_required_environments(
     actions_by_projects: dict[pathlib.Path, list[str]],
     ws_context: context.WorkspaceContext,

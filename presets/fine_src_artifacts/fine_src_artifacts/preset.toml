@@ -16,21 +16,11 @@ source = "fine_src_artifacts.GetSrcArtifactVersionAction"
 
 [tool.finecode.action.list_src_artifact_files_by_lang]
 source = "fine_src_artifacts.ListSrcArtifactFilesByLangAction"
-
-[[tool.finecode.action.list_src_artifact_files_by_lang.handlers]]
-name = "list_src_artifact_files_by_lang_python"
-source = "fine_python_lang.ListSrcArtifactFilesByLangPythonHandler"
-env = "dev_no_runtime"
-dependencies = ["fine_python_lang~=0.1.0a0"]
+# no default handlers — registered by language extensions
 
 [tool.finecode.action.group_src_artifact_files_by_lang]
 source = "fine_src_artifacts.GroupSrcArtifactFilesByLangAction"
-
-[[tool.finecode.action.group_src_artifact_files_by_lang.handlers]]
-name = "group_src_artifact_files_by_lang_python"
-source = "fine_python_lang.GroupSrcArtifactFilesByLangPythonHandler"
-env = "dev_no_runtime"
-dependencies = ["fine_python_lang~=0.1.0a0"]
+# no default handlers — registered by language extensions
 
 [tool.finecode.action.lock_dependencies]
 source = "fine_src_artifacts.LockDependenciesAction"

@@ -103,86 +103,82 @@ class ProjectActionRunnerImpl(iprojectactionrunner.IProjectActionRunner):
         return cls
 
     async def get_actions_for_parent(self, parent_action_type: type) -> dict[str, iprojectactionrunner.ActionRef]:
+        """Discover the subactions registered for *parent_action_type*.
+
+        Per ADR-0045, this ER's own action list only ever reflects what its
+        own env executes, so it can only answer for the subset of subactions
+        that happen to live there; the full cross-env picture is always asked
+        of the WM, which owns that topology.
+
+        Subactions found locally still get an ``ActionRef`` carrying the
+        resolved class (``action_type`` set): that lets a later ``run_action``
+        call on the *same* ref execute in-process, skipping its own WM
+        round-trip. This local resolution doesn't reduce the query below to a
+        single call — the WM is always asked, since only it can say whether
+        subactions exist in envs other than this one — it only saves the
+        separate round-trip a subsequent run would otherwise need.
+        """
         parent_canonical = f"{parent_action_type.__module__}.{parent_action_type.__qualname__}"
         result: dict[str, iprojectactionrunner.ActionRef] = {}
+
+        # Resolve subactions that happen to live in this same env directly, so
+        # the ActionRef carries a real action_type for run_action's own,
+        # separate fast path (see docstring above).
         for action_def in self._actions_getter().values():
             cls = self._resolve_type(action_def.source)
-            if cls is not None:
-                # Local import succeeded — use type identity check
-                if getattr(cls, "PARENT_ACTION", None) is parent_action_type:
-                    lang = getattr(cls, "LANGUAGE", None)
-                    if lang is not None:
-                        if lang in result:
-                            logger.error(
-                                "Multiple subactions registered for language {!r} under parent"
-                                " {!r}: {!r} and {!r}. Only one subaction per language is"
-                                " allowed; {!r} will be ignored.",
-                                lang,
-                                parent_action_type,
-                                result[lang],
-                                cls,
-                                result[lang],
-                            )
-                        result[lang] = iprojectactionrunner.ActionRef(
-                            source=action_def.source,
-                            result_type=cls.RESULT_TYPE,
-                            action_type=cls,
-                        )
-            else:
-                # Local import failed — check metadata cache or ask WM
-                if action_def.metadata is None:
-                    try:
-                        raw = await self._send(
-                            "finecode/getActionMetadata",
-                            {"actionSource": action_def.source},
-                        )
-                        action_def.metadata = domain.ActionMetadata(
-                            parent_action_source=raw.get("parentActionSource"),
-                            language=raw.get("language"),
-                        )
-                    except Exception as exc:
-                        logger.debug(
-                            f"WM metadata fallback failed for {action_def.source!r}: {exc}"
-                        )
-                        # Cache a null sentinel so this source is not retried on
-                        # subsequent get_actions_for_parent calls.
-                        action_def.metadata = domain.ActionMetadata(
-                            parent_action_source=None, language=None
-                        )
-                        # Emit OTel span event only when both local import and WM fail
-                        try:
-                            from opentelemetry import trace
-                            span = trace.get_current_span()
-                            if span.is_recording():
-                                span.add_event(
-                                    "subaction.import_failed",
-                                    {"action.source": action_def.source},
-                                )
-                        except Exception:
-                            pass
-                        continue
+            if cls is None or getattr(cls, "PARENT_ACTION", None) is not parent_action_type:
+                continue
+            lang = getattr(cls, "LANGUAGE", None)
+            if lang is None:
+                continue
+            if lang in result:
+                logger.error(
+                    "Multiple subactions registered for language {!r} under parent"
+                    " {!r}: {!r} and {!r}. Only one subaction per language is"
+                    " allowed; {!r} will be ignored.",
+                    lang,
+                    parent_canonical,
+                    result[lang],
+                    cls,
+                    result[lang],
+                )
+                continue
+            result[lang] = iprojectactionrunner.ActionRef(
+                source=action_def.source,
+                result_type=cls.RESULT_TYPE,
+                action_type=cls,
+            )
 
-                meta = action_def.metadata
-                if (
-                    meta.parent_action_source == parent_canonical
-                    and meta.language is not None
-                ):
-                    lang = meta.language
-                    if lang in result:
-                        logger.error(
-                            "Multiple subactions registered for language {!r} under parent"
-                            " {!r}: {!r} and {!r}. Only one subaction per language is"
-                            " allowed; {!r} will be ignored.",
-                            lang,
-                            parent_canonical,
-                            result[lang],
-                            action_def.source,
-                            result[lang],
-                        )
-                    result[lang] = iprojectactionrunner.ActionRef(
-                        source=action_def.source,
-                        result_type=parent_action_type.RESULT_TYPE,
-                    )
+        # Everything not resolved locally may live in another env. A WM
+        # communication failure here must not be swallowed into "no more
+        # subactions" — that would silently misreport missing subactions as
+        # nonexistent ones, the exact failure mode this discovery path exists
+        # to avoid. Surface it as a typed error instead.
+        try:
+            raw = await self._send(
+                "finecode/getActionsForParent",
+                {"parentActionSource": parent_canonical},
+            )
+        except er_errors.WmCommunicationCancelled as exc:
+            raise iprojectactionrunner.ActionRunCancelled(exc.message) from exc
+        except er_errors.WmCommunicationError as exc:
+            raise iprojectactionrunner.ActionRunFailed(exc.message) from exc
+
+        for sub in raw.get("subactions", []):
+            lang = sub.get("language")
+            canonical_source = sub.get("canonicalSource")
+            if lang is None or lang in result or canonical_source is None:
+                # Already resolved locally, unusable without a language tag, or
+                # (shouldn't happen: find_subactions_for_parent only returns
+                # actions it already resolved) missing a canonical source.
+                continue
+            result[lang] = iprojectactionrunner.ActionRef(
+                # finecode/runActionInProject requires the canonical source, not
+                # the config alias — the alias may be a re-exported path that
+                # only resolves in the env owning the class (docs/wm-er-protocol.md).
+                source=canonical_source,
+                result_type=parent_action_type.RESULT_TYPE,
+            )
 
         return result
 
@@ -196,6 +192,26 @@ class ProjectActionRunnerImpl(iprojectactionrunner.IProjectActionRunner):
             _converter.structure(raw_result, action_type.result_type),
         )
 
+    def _coerce_payload(
+        self, action_type: iprojectactionrunner.ActionRef, payload: PayloadT
+    ) -> PayloadT:
+        """Build the payload instance *action_type*'s own class expects.
+
+        Implements the payload-side half of the ``ActionRef`` contract
+        documented on the class itself: callers build payloads against
+        whatever type they know (often a parent action's payload type when
+        ``action_type`` came from ``get_actions_for_parent``), and this
+        reconstructs the concrete ``PAYLOAD_TYPE`` when it's locally known and
+        different, so call sites never branch on it themselves.
+        """
+        concrete = action_type.action_type
+        if concrete is None or payload is None:
+            return payload
+        payload_type = getattr(concrete, "PAYLOAD_TYPE", None)
+        if payload_type is None or isinstance(payload, payload_type):
+            return payload
+        return typing.cast(PayloadT, payload_type(**dataclasses.asdict(payload)))
+
     async def run_action(
         self,
         action_type: iprojectactionrunner.ActionRef,
@@ -203,6 +219,7 @@ class ProjectActionRunnerImpl(iprojectactionrunner.IProjectActionRunner):
         meta: code_action.RunActionMeta,
         caller_kwargs: code_action.CallerRunContextKwargs | None = None,
     ) -> ResultT:
+        payload = self._coerce_payload(action_type, payload)
         action_source = action_type.source
         if action_type.action_type is not None:
             action_def = self._find_local_action(action_type.action_type)
@@ -226,12 +243,11 @@ class ProjectActionRunnerImpl(iprojectactionrunner.IProjectActionRunner):
             outside = [(h.name, h.env) for h in action_def.handlers if h.env != env]
             logger.debug(
                 "Dispatching '{}' via WM: handlers not in current env '{}': {}",
-                action_type.__qualname__,
+                action_type.source,
                 env,
                 outside,
             )
 
-        action_source = f"{action_type.__module__}.{action_type.__qualname__}"
         serialized_kwargs = _serialize_caller_kwargs(caller_kwargs) if caller_kwargs is not None else None
         traceparent = er_telemetry.get_current_traceparent()
         wm_params: dict = {
@@ -271,6 +287,7 @@ class ProjectActionRunnerImpl(iprojectactionrunner.IProjectActionRunner):
     ) -> collections.abc.AsyncIterator[ResultT]:
         global _last_wm_token
 
+        payload = self._coerce_payload(action_type, payload)
         action_source = action_type.source
         if action_type.action_type is not None:
             action_def = self._find_local_action(action_type.action_type)
@@ -300,7 +317,7 @@ class ProjectActionRunnerImpl(iprojectactionrunner.IProjectActionRunner):
             outside = [(h.name, h.env) for h in action_def.handlers if h.env != env]
             logger.debug(
                 "Dispatching '{}' via WM: handlers not in current env '{}': {}",
-                action_type.__qualname__,
+                action_type.source,
                 env,
                 outside,
             )
@@ -311,7 +328,6 @@ class ProjectActionRunnerImpl(iprojectactionrunner.IProjectActionRunner):
         wm_queue: asyncio.Queue[WmQueueItem] = asyncio.Queue()
         _wm_partial_result_queues[token] = wm_queue
 
-        action_source = f"{action_type.__module__}.{action_type.__qualname__}"
         serialized_kwargs = _serialize_caller_kwargs(caller_kwargs) if caller_kwargs is not None else None
         traceparent = er_telemetry.get_current_traceparent()
 

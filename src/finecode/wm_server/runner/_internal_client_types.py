@@ -39,7 +39,7 @@ WORKSPACE_EDITABLE_PACKAGES_GET = "workspace/getWorkspaceEditablePackages"
 WORKSPACE_PROJECT_PATHS_GET = "workspace/getProjectPaths"
 RUN_ACTION_IN_PROJECT = "finecode/runActionInProject"
 RUN_ACTION_IN_WORKSPACE = "finecode/runActionInWorkspace"
-GET_ACTION_METADATA = "finecode/getActionMetadata"
+GET_ACTIONS_FOR_PARENT = "finecode/getActionsForParent"
 
 
 @dataclasses.dataclass
@@ -1829,30 +1829,36 @@ class ExitNotification(BaseNotification):
 
 
 # ---------------------------------------------------------------------------
-# finecode/getActionMetadata  (ER → WM)
+# finecode/getActionsForParent  (ER → WM)
 # ---------------------------------------------------------------------------
 
 
 @dataclasses.dataclass
-class GetActionMetadataParams:
-    action_source: str
+class GetActionsForParentParams:
+    parent_action_source: str
 
 
 @dataclasses.dataclass
-class GetActionMetadataRequest(BaseRequest):
-    params: GetActionMetadataParams
-    method = GET_ACTION_METADATA
+class GetActionsForParentRequest(BaseRequest):
+    params: GetActionsForParentParams
+    method = GET_ACTIONS_FOR_PARENT
 
 
 @dataclasses.dataclass
-class GetActionMetadataResult(BaseResult):
-    parent_action_source: str | None = None
-    language: str | None = None
+class SubactionInfo:
+    source: str
+    canonical_source: str | None
+    language: str
 
 
 @dataclasses.dataclass
-class GetActionMetadataResponse(BaseResponse):
-    result: GetActionMetadataResult
+class GetActionsForParentResult(BaseResult):
+    subactions: list[SubactionInfo] = dataclasses.field(default_factory=list)
+
+
+@dataclasses.dataclass
+class GetActionsForParentResponse(BaseResponse):
+    result: GetActionsForParentResult
 
 
 METHOD_TO_TYPES: dict[
@@ -1923,7 +1929,7 @@ METHOD_TO_TYPES: dict[
         RunActionInWorkspaceResult,
     ),
     ER_RESOLVE_ACTION_META: (None, None, ErResolveActionMetaResponse, None),
-    GET_ACTION_METADATA: (GetActionMetadataRequest, GetActionMetadataParams, GetActionMetadataResponse, GetActionMetadataResult),
+    GET_ACTIONS_FOR_PARENT: (GetActionsForParentRequest, GetActionsForParentParams, GetActionsForParentResponse, GetActionsForParentResult),
     WORKSPACE_EDITABLE_PACKAGES_GET: (
         GetWorkspaceEditablePackagesRequest,
         None,

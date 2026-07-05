@@ -21,7 +21,6 @@ _PYREFLY_CLIENT_CAPABILITIES: dict[str, Any] = {
             "dynamicRegistration": False,
             "didSave": True,
         },
-        "completion": {"dynamicRegistration": False},
         "hover": {"dynamicRegistration": False, "contentFormat": ["markdown", "plaintext"]},
         "publishDiagnostics": {"relatedInformation": True},
         "semanticTokens": {
@@ -33,6 +32,7 @@ _PYREFLY_CLIENT_CAPABILITIES: dict[str, Any] = {
             "multilineTokenSupport": False,
             "overlappingTokenSupport": False,
         },
+        "inlayHint": {"dynamicRegistration": False},
         "definition": {"dynamicRegistration": False, "linkSupport": False},
         "references": {"dynamicRegistration": False},
         "typeDefinition": {"dynamicRegistration": False, "linkSupport": False},
@@ -176,6 +176,17 @@ class PyreflyLspService(service.DisposableService):
     ) -> dict[str, Any] | None:
         return await self._lsp_service.get_semantic_tokens(
             file_path, content, range_dict=range_dict, timeout=timeout
+        )
+
+    async def get_inlay_hints(
+        self,
+        file_path: Path,
+        content: str,
+        range_dict: dict[str, Any],
+        timeout: float = 30.0,
+    ) -> list[dict[str, Any]] | None:
+        return await self._lsp_service.get_inlay_hints(
+            file_path, content, range_dict, timeout=timeout
         )
 
     async def get_call_hierarchy_prepare(

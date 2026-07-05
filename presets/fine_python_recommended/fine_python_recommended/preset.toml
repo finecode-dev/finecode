@@ -1,9 +1,12 @@
 [tool.finecode]
 presets = [
+    { source = "fine_python_src_artifacts" },
     { source = "fine_python_code_hierarchy" },
     { source = "fine_python_format" },
     { source = "fine_python_lint" },
     { source = "fine_python_type_check" },
+    { source = "fine_python_check_imports" },
+    { source = "fine_python_inlay_hints" },
     { source = "fine_python_semantic_tokens" },
     { source = "fine_python_symbol_info" },
     { source = "fine_python_test" },

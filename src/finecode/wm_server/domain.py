@@ -357,14 +357,6 @@ class CollectedProject(Project):
         self.action_handler_configs: dict[str, dict[str, typing.Any]] = (
             action_handler_configs
         )
-        # Action sources for which WM metadata resolution has permanently failed
-        # (all handler envs tried, including auto-repair).  Persists across ER
-        # reconnections so repeated requests return null without re-running auto-repair.
-        self.unresolvable_metadata_sources: set[str] = set()
-        # Envs for which auto-repair (install + runner restart) already ran and failed.
-        # Prevents re-triggering the same expensive install+restart for every subsequent
-        # action that lives in the same broken env.
-        self.failed_repair_envs: set[str] = set()
 
     @property
     def envs(self) -> list[str]:

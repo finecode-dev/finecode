@@ -478,158 +478,44 @@ async def _start_extension_runner_process(
         handle_run_action_in_workspace,
     )
 
-    async def handle_get_action_metadata(
-        params: _internal_client_types.GetActionMetadataParams,
-    ) -> _internal_client_types.GetActionMetadataResult:
-        """Serve ``finecode/getActionMetadata`` from the WM metadata cache.
+    async def handle_get_actions_for_parent(
+        params: _internal_client_types.GetActionsForParentParams,
+    ) -> _internal_client_types.GetActionsForParentResult:
+        """Serve ``finecode/getActionsForParent`` (ADR-0045).
 
-        Metadata is populated at runner startup via ``resolveActionMeta``.  When
-        the action was not importable at startup (cache miss), auto-repair is
-        triggered for the handler env: packages are reinstalled, the runner is
-        restarted (which re-runs ``update_runner_config`` → ``resolveActionMeta``
-        and repopulates the cache), and the result is read from cache again.
-
-        Behavior contract (each numbered case is a distinct test scenario):
-
-        1. Project not yet collected (not a CollectedProject):
-           → ConfigurationError
-
-        2. Action source not found in project config:
-           → ActionNotFoundError
-
-        3. Action found but has no declared handlers (allowed config state):
-           → Returns null-fields result.
-
-        4. Cache hit — metadata was resolved at startup:
-           → Returns cached ``parent_action_source`` and ``language``.
-
-        5. Cache miss — action not importable at startup:
-           → Auto-repair (prepare-envs + runner restart) for the first handler
-              env, then re-read cache.  If resolved after repair → return.
-              If still missing → ActionNotResolvableError.
-
-        6. Already marked unresolvable (fast-path for reconnected ERs):
-           → Returns null-fields result immediately.
+        Lists every action in this project that specializes the given parent
+        action, regardless of which env owns its handler — an ER only ever
+        knows the actions its own env executes, so this cross-env picture can
+        only come from the WM. Resolution (including on-demand env startup
+        for actions not yet importable by any runner) is delegated to
+        ``find_subactions_for_parent``/``ensure_action_metadata``, the same
+        machinery used elsewhere to resolve action metadata.
         """
-        action_source: str = params.action_source
-
-        # Case 6 fast-path: already determined unresolvable in this session —
-        # return null immediately so reconnected ERs don't retrigger auto-repair.
-        project_check = ws_context.ws_projects.get(runner.working_dir_path)
-        if (
-            isinstance(project_check, domain.CollectedProject)
-            and action_source in project_check.unresolvable_metadata_sources
-        ):
-            return _internal_client_types.GetActionMetadataResult()
-
-        # Case 1
         project = ws_context.ws_projects.get(runner.working_dir_path)
         if not isinstance(project, domain.CollectedProject):
             raise errors.ConfigurationError(
                 f"Project '{runner.working_dir_path}' has no valid config"
             )
 
-        # Case 2
-        action = next(
-            (
-                a for a in project.actions
-                if a.source == action_source or a.canonical_source == action_source
-            ),
-            None,
+        from finecode.wm_server.services import run_service
+
+        subactions = await run_service.find_subactions_for_parent(
+            params.parent_action_source, project, ws_context
         )
-        if action is None:
-            raise errors.ActionNotFoundError(
-                f"Action '{action_source}' not found in project '{runner.working_dir_path}'"
-            )
-
-        # Case 3: no handlers — cannot determine which env has the package
-        if not action.handlers:
-            return _internal_client_types.GetActionMetadataResult()
-
-        # Case 4: cache hit — metadata already populated at startup
-        if action.parent_action_source is not None or action.language is not None:
-            return _internal_client_types.GetActionMetadataResult(
-                parent_action_source=action.parent_action_source,
-                language=action.language,
-            )
-
-        # Case 5: cache miss — action was not importable at startup.
-        # Trigger auto-repair for the first handler env.  The restart re-runs
-        # update_runner_config → resolveActionMeta, which repopulates the cache.
-        # Guard against concurrent repairs using ws_context.pending_repair_events
-        # (a dict keyed by (project_dir, env_name)) which is updated synchronously
-        # — no await between the check and the insertion — so every concurrent
-        # coroutine that reaches this point will see the event and wait.
-        env_name = action.handlers[0].env
-        if env_name in project.failed_repair_envs:
-            project.unresolvable_metadata_sources.add(action_source)
-            raise errors.ActionNotResolvableError(
-                f"No runner for project '{runner.working_dir_path}' could resolve"
-                f" action metadata for source '{action_source}'"
-            )
-        repair_key = (project.dir_path, env_name)
-        if repair_key in ws_context.pending_repair_events:
-            logger.debug(
-                f"Repair already in progress for env {env_name!r}, waiting"
-            )
-            await ws_context.pending_repair_events[repair_key].wait()
-        else:
-            repair_event = asyncio.Event()
-            # Store the event BEFORE any await so concurrent coroutines see it.
-            ws_context.pending_repair_events[repair_key] = repair_event
-            existing_runner = (
-                ws_context.ws_projects_extension_runners
-                .get(project.dir_path, {})
-                .get(env_name)
-            )
-            if existing_runner is not None:
-                existing_runner.status = runner_client.RunnerStatus.REPAIRING
-                existing_runner.repair_complete_event = repair_event
-            logger.info(
-                f"Action '{action_source}' not importable in env {env_name!r}"
-                f" — running auto-repair (prepare-envs + runner restart)"
-            )
-            try:
-                from finecode.wm_server.services.prepare_envs_service import (
-                    install_env_for_project,
+        return _internal_client_types.GetActionsForParentResult(
+            subactions=[
+                _internal_client_types.SubactionInfo(
+                    source=a.source,
+                    canonical_source=a.canonical_source,
+                    language=a.language,
                 )
-                await install_env_for_project(project, env_name, ws_context)
-                logger.debug(
-                    f"Auto-repair: env {env_name!r} installed, restarting runner"
-                )
-                await restart_extension_runner(
-                    runner_working_dir_path=project.dir_path,
-                    env_name=env_name,
-                    ws_context=ws_context,
-                )
-            except Exception as exc:
-                project.failed_repair_envs.add(env_name)
-                logger.warning(f"Auto-repair failed for env {env_name!r}: {exc}")
-            finally:
-                ws_context.pending_repair_events.pop(repair_key, None)
-                repair_event.set()
-
-        # Re-read cache after repair (or after waiting for another coroutine's repair).
-        if action.parent_action_source is not None or action.language is not None:
-            logger.info(
-                f"Auto-repair succeeded: resolved metadata for '{action_source}'"
-                f" in env {env_name!r}"
-            )
-            return _internal_client_types.GetActionMetadataResult(
-                parent_action_source=action.parent_action_source,
-                language=action.language,
-            )
-
-        project.unresolvable_metadata_sources.add(action_source)
-        raise errors.ActionNotResolvableError(
-            f"No runner for project '{runner.working_dir_path}' could resolve"
-            f" action metadata for source '{action_source}'"
-            f" (tried env: {env_name!r})"
+                for a in subactions
+            ]
         )
 
     runner.client.feature(
-        _internal_client_types.GET_ACTION_METADATA,
-        handle_get_action_metadata,
+        _internal_client_types.GET_ACTIONS_FOR_PARENT,
+        handle_get_actions_for_parent,
     )
 
 
@@ -1255,19 +1141,6 @@ async def restart_extension_runner(
     await stop_extension_runner(runner)
 
     project_def = ws_context.ws_projects[runner.working_dir_path]
-
-    # Invalidate the unresolvable-metadata cache for actions whose handlers run
-    # in this env — the restart may follow a repair that fixed the package.
-    if isinstance(project_def, domain.CollectedProject):
-        stale = {
-            src
-            for a in project_def.actions
-            if any(h.env == env_name for h in a.handlers)
-            for src in (a.source, a.canonical_source)
-            if src is not None
-        }
-        project_def.unresolvable_metadata_sources -= stale
-        project_def.failed_repair_envs.discard(env_name)
 
     await start_runner(
         project_def=project_def,
