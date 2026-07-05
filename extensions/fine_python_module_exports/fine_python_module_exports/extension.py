@@ -47,7 +47,7 @@ async def get_document_inlay_hints(
         hints=[
             text_document_inlay_hint.InlayHint(
                 position=common_types.Position(
-                    line=stmt.lineno, character=stmt.col_offset
+                    line=stmt.lineno - 1, character=stmt.col_offset
                 ),
                 label=(
                     "private"

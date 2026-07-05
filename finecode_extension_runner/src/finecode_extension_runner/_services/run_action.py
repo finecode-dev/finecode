@@ -940,7 +940,9 @@ async def run_handlers_raw(
     initial_result: code_action.RunActionResult | None = None
     if request.previous_result is not None and action_exec_info.result_type is not None:
         try:
-            initial_result = action_exec_info.result_type(**request.previous_result)
+            initial_result = _converter.structure(
+                request.previous_result, action_exec_info.result_type
+            )
         except Exception as exc:
             logger.warning(
                 f"R{run_id} | Could not reconstruct previous_result for "

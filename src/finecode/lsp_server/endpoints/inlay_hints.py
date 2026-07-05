@@ -16,11 +16,11 @@ def inlay_hint_params_to_dict(params: types.InlayHintParams) -> dict[str, Any]:
         "uri": params.text_document.uri,
         "range": {
             "start": {
-                "line": params.range.start.line + 1,
+                "line": params.range.start.line,
                 "character": params.range.start.character,
             },
             "end": {
-                "line": params.range.end.line + 1,
+                "line": params.range.end.line,
                 "character": params.range.end.character,
             },
         },
@@ -30,7 +30,7 @@ def inlay_hint_params_to_dict(params: types.InlayHintParams) -> dict[str, Any]:
 def dict_to_inlay_hint(raw: dict[str, Any]) -> types.InlayHint:
     return types.InlayHint(
         position=types.Position(
-            line=raw["position"]["line"] - 1, character=raw["position"]["character"]
+            line=raw["position"]["line"], character=raw["position"]["character"]
         ),
         label=raw["label"],
         kind=types.InlayHintKind(raw["kind"]),
