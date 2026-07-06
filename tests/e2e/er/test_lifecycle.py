@@ -88,7 +88,7 @@ def test_extension_runners_cleaned_up_on_wm_shutdown(workspace_dir_with_er, tmp_
             _send_request(
                 sock,
                 "workspace/addDir",
-                {"dir_path": str(workspace_dir_with_er)},
+                {"dirPath": str(workspace_dir_with_er)},
                 req_id=1,
             )
             _read_response(sock, timeout=30.0)

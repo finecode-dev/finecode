@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import importlib.util
 import subprocess
 import sys
 from pathlib import Path
 
 import pytest
+
+_REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
 # ---------------------------------------------------------------------------
@@ -30,6 +33,27 @@ def _python_in_venv(venv_dir: Path) -> Path:
     return venv_dir / "bin" / "python"
 
 
+def _resolve_finecode_closure() -> dict[str, Path]:
+    """Local monorepo packages `finecode` transitively depends on, by name.
+
+    `bootstrap` (unlike `prepare-envs`) never rewrites dependencies to local
+    editable paths — that only happens later, once `ws_editable_packages` is
+    populated. A bare `"finecode"` entry therefore resolves against whatever
+    `finecode` release is currently published on PyPI, which drifts out of
+    sync with local source (e.g. it still pinned the now-removed `pygls`
+    dependency long after that was dropped here). Pointing every first-party
+    package at its local source via `file://` keeps this test independent of
+    PyPI's publish state, reusing the same dependency-graph walk
+    scripts/list_dev_workspace_editables.py already relies on for the
+    monorepo's own dev_workspace venv setup.
+    """
+    script_path = _REPO_ROOT / "scripts" / "list_dev_workspace_editables.py"
+    spec = importlib.util.spec_from_file_location("list_dev_workspace_editables", script_path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.resolve_workspace_packages(_REPO_ROOT, roots=["finecode"])
+
+
 # ---------------------------------------------------------------------------
 # Fixture
 # ---------------------------------------------------------------------------
@@ -44,6 +68,10 @@ def bootstrap_workspace(tmp_path: Path) -> Path:
     it the project is marked ``NO_FINECODE``, no runner is started, and
     ``create_envs`` / ``install_envs`` are never collected.
     """
+    packages = _resolve_finecode_closure()
+    dev_workspace_entries = "".join(
+        f'    "{name} @ file://{path.as_posix()}",\n' for name, path in sorted(packages.items())
+    )
     (tmp_path / "pyproject.toml").write_text(
         '[project]\n'
         'name = "test-project"\n'
@@ -53,7 +81,9 @@ def bootstrap_workspace(tmp_path: Path) -> Path:
         '[tool.finecode]\n'
         '\n'
         '[dependency-groups]\n'
-        'dev_workspace = ["finecode"]\n',
+        'dev_workspace = [\n'
+        f'{dev_workspace_entries}'
+        ']\n',
         encoding="utf-8",
     )
     return tmp_path
@@ -80,13 +110,15 @@ def test_bootstrap_creates_dev_workspace_venv(bootstrap_workspace: Path) -> None
     python = _python_in_venv(venv_dir)
     assert python.exists(), f"Python binary not found at {python}"
 
-    # Venv is functional: pip is importable
+    # Venv is functional: finecode itself was installed into it
     check = subprocess.run(
-        [str(python), "-c", "import pip"],
+        [str(python), "-c", "import finecode"],
         capture_output=True,
         timeout=10,
     )
-    assert check.returncode == 0, "pip is not importable in the new venv"
+    assert check.returncode == 0, (
+        f"finecode is not importable in the new venv:\n{check.stderr.decode()}"
+    )
 
 
 def test_bootstrap_idempotent(bootstrap_workspace: Path) -> None:

@@ -82,7 +82,7 @@ class ListTestsRunPayload(code_action.RunActionPayload):
     """Payload for listing tests.
     """
     file_paths: list[ResourceUri] = dataclasses.field(default_factory=list)
-    """Files or directories to search for tests. Empty list means the handler uses its own configured defaults (e.g. testpaths in pytest.ini)."""
+    """Files or directories to search for tests. Empty list means the handler falls back to its own handler-config default (e.g. `default_test_dirs` on the pytest handler) if such exists."""
 
 
 @dataclasses.dataclass

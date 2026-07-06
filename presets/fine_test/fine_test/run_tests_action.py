@@ -86,7 +86,7 @@ class RunTestsRunPayload(code_action.RunActionPayload):
     """Payload for running tests.
     """
     file_paths: list[ResourceUri] = dataclasses.field(default_factory=list)
-    """Test files or directories to run. Empty list means the handler uses its own configured defaults (e.g. testpaths in pytest.ini)."""
+    """Test files or directories to run. Empty list means the handler falls back to its own handler-config default (e.g. `default_test_dirs` on the pytest handler) if such exists."""
     test_ids: list[TestId] = dataclasses.field(default_factory=list)
     """Unified test identifiers to restrict execution to. Obtained from ListTestsRunResult or constructed directly. Handlers convert to their native format internally."""
     markers: list[str] = dataclasses.field(default_factory=list)

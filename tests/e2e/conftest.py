@@ -149,6 +149,28 @@ def workspace_dir(tmp_path: Path) -> Path:
     return tmp_path
 
 
+def _repair_copied_venv_path(venv_dir: Path, old_venv_dir: Path) -> None:
+    """Rewrite the recorded self-path in a copied venv's activate script.
+
+    `shutil.copytree` preserves the source venv's absolute path baked into
+    `bin/activate` (or `Scripts/activate.bat` on Windows) at creation time.
+    ``finecode.wm_server.runner.finecode_cmd`` reads that recorded path to
+    detect venvs that were moved/renamed on disk; on a mismatch it wipes and
+    reinstalls the env from the project's raw ``dependency-groups`` (see
+    ``VenvRelocatedError``), which would strip the pre-seeded
+    ``finecode_extension_runner`` install this fixture relies on. The ER is
+    started via ``<venv>/bin/python -m finecode_extension_runner...`` — never
+    through a console script — so only this recorded path, not any script's
+    shebang, needs to match the copy's new location.
+    """
+    if sys.platform == "win32":
+        activate_path = venv_dir / "Scripts" / "activate.bat"
+    else:
+        activate_path = venv_dir / "bin" / "activate"
+    content = activate_path.read_text()
+    activate_path.write_text(content.replace(str(old_venv_dir), str(venv_dir)))
+
+
 @pytest.fixture
 def workspace_dir_with_er(tmp_path: Path) -> Path:
     """Workspace with a dev_workspace env copied from the current Python venv.
@@ -163,6 +185,9 @@ def workspace_dir_with_er(tmp_path: Path) -> Path:
         'name = "test-project"\n'
         'version = "0.1.0"\n'
         '\n'
+        '[dependency-groups]\n'
+        'dev_workspace = ["finecode"]\n'
+        '\n'
         "[tool.finecode]\n\n"
         "[[tool.finecode.actions]]\n"
         'name = "test_action"\n\n'
@@ -173,5 +198,7 @@ def workspace_dir_with_er(tmp_path: Path) -> Path:
     venvs_dir = tmp_path / ".venvs"
     venvs_dir.mkdir()
     current_venv = Path(sys.executable).parent.parent
-    shutil.copytree(current_venv, venvs_dir / "dev_workspace", symlinks=True)
+    new_venv_dir = venvs_dir / "dev_workspace"
+    shutil.copytree(current_venv, new_venv_dir, symlinks=True)
+    _repair_copied_venv_path(new_venv_dir, current_venv)
     return tmp_path

@@ -29,6 +29,8 @@ from finecode_extension_api.resource_uri import (
 class PytestListTestsHandlerConfig(code_action.ActionHandlerConfig):
     # Extra pytest CLI arguments forwarded verbatim to --collect-only
     addopts: list[str] = dataclasses.field(default_factory=list)
+    # Paths passed to pytest when the payload gives none (relative to project_dir)
+    default_test_dirs: list[str] = dataclasses.field(default_factory=lambda: ["tests"])
 
 
 class PytestListTestsHandler(
@@ -63,6 +65,10 @@ class PytestListTestsHandler(
         if payload.file_paths:
             cmd_parts.extend(
                 str(resource_uri_to_path(uri)) for uri in payload.file_paths
+            )
+        elif self.config.default_test_dirs:
+            cmd_parts.extend(
+                d for d in self.config.default_test_dirs if (project_dir / d).exists()
             )
 
         cmd_parts.extend(self.config.addopts)
