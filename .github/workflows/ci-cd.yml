@@ -1,4 +1,3 @@
-# TODO: check formatting
 # TODO: lock files on all platforms
 # TODO: test with all supported python versions
 name: CI
@@ -15,6 +14,14 @@ on:
         type: boolean
         default: false
 
+# Cancel superseded runs only for PR pushes (rapid commits to the same branch).
+# Never cancel push/tag/merge_group runs — a tag push drives the PyPI publish
+# steps below and a merge_group run backs a required check in the merge queue;
+# either could be silently aborted by an unrelated event sharing the ref.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 defaults:
   run:
     shell: bash
@@ -27,18 +34,21 @@ env:
 jobs:
   build:
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
     strategy:
       fail-fast: false
-      max-parallel: 1
       matrix:
         os: [ubuntu-24.04, macos-15, windows-2022]
         include:
           - os: ubuntu-24.04
             name: Linux
+            venv_bin: bin
           - os: macos-15
             name: macOS
+            venv_bin: bin
           - os: windows-2022
             name: Windows
+            venv_bin: Scripts
 
     steps:
       - uses: actions/checkout@v5
@@ -53,32 +63,62 @@ jobs:
         with:
           python-version: ${{ env.DEV_WORKSPACE_PYTHON_VERSION }}
 
+      # Every package in the monorepo has its own .venvs/ (root dev_workspace plus one
+      # per project for envs created by `prepare-envs`, e.g. dev_no_runtime, runtime).
+      # Exact-match only (no restore-keys): setup-dev-workspace.sh and prepare-envs
+      # skip reinstalling whenever a restored venv already looks valid, so a stale
+      # partial-match restore could mask a dependency that was added since the cache
+      # was written.
+      - name: Cache all venvs
+        uses: actions/cache@v4
+        with:
+          path: |
+            .venvs
+            **/.venvs
+          key: ${{ runner.os }}-venvs-${{ hashFiles('**/pyproject.toml', '**/preset.toml') }}
+
       - name: Install dependencies
         run: |
-          pipx run finecode bootstrap
-          source .venvs/dev_workspace/bin/activate
-
-          python -m finecode prepare-envs
+          # CI must exercise this branch's local source, so finecode and its sibling
+          # packages need an editable install, not a released version from PyPI — see
+          # docs/guides/developing-finecode.md#continuous-integration.
+          sh scripts/setup-dev-workspace.sh
+          source .venvs/dev_workspace/${{ matrix.venv_bin }}/activate
         shell: bash
 
-      - name: Lint
+      - name: Inspect code
+        if: ${{ !cancelled() }}
         run: |
-          source .venvs/dev_workspace/bin/activate
-          python -m finecode run lint
+          source .venvs/dev_workspace/${{ matrix.venv_bin }}/activate
+          python -m finecode run inspect_code
+        shell: bash
+
+      - name: Audit code
+        if: ${{ !cancelled() }}
+        run: |
+          source .venvs/dev_workspace/${{ matrix.venv_bin }}/activate
+          python -m finecode run audit_code
+        shell: bash
+
+      - name: Check formatting
+        if: ${{ !cancelled() }}
+        run: |
+          source .venvs/dev_workspace/${{ matrix.venv_bin }}/activate
+          python -m finecode run check_formatting
         shell: bash
 
       - name: Build artifacts
         id: build
-        if: runner.os == 'Linux'
+        if: runner.os == 'Linux' && !cancelled()
         run: |
-          source .venvs/dev_workspace/bin/activate
+          source .venvs/dev_workspace/${{ matrix.venv_bin }}/activate
           python -m finecode run build_artifact
         shell: bash
 
       - name: Run unit tests
         if: ${{ !cancelled() }}
         run: |
-          source .venvs/dev_workspace/bin/activate
+          source .venvs/dev_workspace/${{ matrix.venv_bin }}/activate
           # TODO: test with all supported python versions
           python -m finecode run run_tests
         shell: bash
@@ -89,7 +129,7 @@ jobs:
           FINECODE_CONFIG_PUBLISH_AND_VERIFY_ARTIFACT__INIT_REPOSITORY_PROVIDER__REPOSITORIES: '[{"name": "testpypi", "url": "https://test.pypi.org/"}]'
           FINECODE_CONFIG_PUBLISH_AND_VERIFY_ARTIFACT__INIT_REPOSITORY_PROVIDER__CREDENTIALS_BY_REPOSITORY: '{"testpypi": {"username": "${{ secrets.TESTPYPI_USERNAME }}", "password": "${{ secrets.TESTPYPI_PASSWORD }}"}}'
         run: |
-          source .venvs/dev_workspace/bin/activate
+          source .venvs/dev_workspace/${{ matrix.venv_bin }}/activate
           python -m finecode run \
             --map-payload-fields="src-artifact-def-path,dist-artifact-paths" \
             publish_and_verify_artifact \
@@ -104,7 +144,7 @@ jobs:
           FINECODE_CONFIG_PUBLISH_AND_VERIFY_ARTIFACT__INIT_REPOSITORY_PROVIDER__CREDENTIALS_BY_REPOSITORY: '{"pypi": {"username": "${{ secrets.PYPI_USERNAME }}", "password": "${{ secrets.PYPI_PASSWORD }}"}}'
         run: |
           # TODO: make sure git tag exists (for manual trigger)
-          source .venvs/dev_workspace/bin/activate
+          source .venvs/dev_workspace/${{ matrix.venv_bin }}/activate
           python -m finecode run \
             --map-payload-fields="src-artifact-def-path,dist-artifact-paths" \
             publish_and_verify_artifact \
@@ -115,7 +155,7 @@ jobs:
 
       # TODO: try to replace by finecode action
       - name: Store the distribution packages
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         if: runner.os == 'Linux'
         with:
           name: python-package-distributions
