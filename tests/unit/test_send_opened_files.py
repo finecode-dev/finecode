@@ -2,12 +2,8 @@ from __future__ import annotations
 
 import pathlib
 
-import pytest
-
 from finecode.wm_server import domain
 from finecode.wm_server.runner import runner_client, runner_manager
-
-pytestmark = pytest.mark.anyio
 
 
 class _FakeClient:

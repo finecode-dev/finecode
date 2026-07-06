@@ -851,6 +851,12 @@ def _merge_projects_configs(
                         if "debug" in env_config2_runner:
                             env_config1_runner["debug"] = env_config2_runner["debug"]
 
+                    # ADR-0046: install_project is a per-env scalar; config2 always
+                    # wins on conflict so a project's own pyproject.toml (or its
+                    # finecode-user.toml) can override a preset's opt-in.
+                    if "install_project" in env_config2:
+                        env_config1["install_project"] = env_config2["install_project"]
+
                 for updated_dep_name, updated_dep_config in env_config2.get(
                     "dependencies", {}
                 ).items():

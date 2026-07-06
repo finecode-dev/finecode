@@ -6,8 +6,6 @@ import pytest
 from finecode.wm_server import wm_server
 from finecode.wm_server.errors import ActionCancelledError
 
-pytestmark = pytest.mark.anyio
-
 
 class _FakeWriter:
     """Stand-in for asyncio.StreamWriter — only .drain() is awaited by

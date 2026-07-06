@@ -9,6 +9,7 @@ subprocess.
 
 from __future__ import annotations
 
+import threading
 import typing
 from pathlib import Path
 
@@ -29,11 +30,17 @@ class FakeErClient:
     returning ``None``.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, readable_id: str = "fake-er") -> None:
+        self.readable_id = readable_id
         self._response: typing.Any = None
         self._exception: BaseException | None = None
         self._configured = False
         self.sent_requests: list[tuple[str, typing.Any]] = []
+        # Mirrors ``JsonRpcClient.server_process_stopped``: set once the real
+        # ER subprocess has actually exited. Left unset by default so tests
+        # exercising stop/exit flows must set it explicitly to simulate the
+        # process terminating.
+        self.server_process_stopped = threading.Event()
 
     def configure_response(self, response: typing.Any) -> None:
         self._response = response

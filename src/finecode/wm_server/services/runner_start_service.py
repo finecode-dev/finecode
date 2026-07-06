@@ -203,6 +203,40 @@ async def start_runners_with_auto_prepare(
         )
 
 
+async def repair_no_venv_env(
+    project: domain.Project,
+    env_name: str,
+    ws_context: context.WorkspaceContext,
+) -> None:
+    """Install *env_name* for *project* from scratch and restart its runner.
+
+    Shared by every runner-start call site that needs to react to a
+    ``NO_VENV`` runner (venv missing or just wiped because it was found stale
+    — see ``finecode_cmd.VenvRelocatedError``) by auto-running
+    ``create_envs`` + ``install_envs`` and restarting, instead of surfacing a
+    raw "runner failed to start" error to the caller.
+
+    Raises ``prepare_envs_service.PrepareEnvsFailed`` if installation fails;
+    propagates whatever the subsequent restart raises otherwise.
+    """
+    from finecode.wm_server.services.prepare_envs_service import install_env_for_project
+
+    logger.info(
+        f"Environment '{env_name}' not prepared for {project.name}. "
+        f"Running prepare-envs automatically."
+    )
+    await install_env_for_project(project, env_name, ws_context)
+    await runner_manager.restart_extension_runner(
+        runner_working_dir_path=project.dir_path,
+        env_name=env_name,
+        ws_context=ws_context,
+    )
+    logger.info(
+        f"Auto prepare-envs and runner restart succeeded for env '{env_name}' "
+        f"in {project.name}."
+    )
+
+
 async def get_or_start_runner_with_auto_prepare(
     project_def: domain.Project,
     env_name: str,
@@ -238,16 +272,10 @@ async def get_or_start_runner_with_auto_prepare(
         if runner is None or runner.status != rc.RunnerStatus.NO_VENV:
             raise
 
-        logger.info(
-            f"Environment '{env_name}' not prepared for {project_def.name}. "
-            f"Running prepare-envs automatically."
-        )
-        from finecode.wm_server.services.prepare_envs_service import (
-            install_env_for_project,
-            PrepareEnvsFailed,
-        )
+        from finecode.wm_server.services.prepare_envs_service import PrepareEnvsFailed
+
         try:
-            await install_env_for_project(project_def, env_name, ws_context)
+            await repair_no_venv_env(project_def, env_name, ws_context)
         except PrepareEnvsFailed as prep_exc:
             logger.error(
                 f"Auto prepare failed for env '{env_name}' in {project_def.name}: "
@@ -255,15 +283,6 @@ async def get_or_start_runner_with_auto_prepare(
             )
             raise exc from prep_exc
 
-        await runner_manager.restart_extension_runner(
-            runner_working_dir_path=project_def.dir_path,
-            env_name=env_name,
-            ws_context=ws_context,
-        )
-        logger.info(
-            f"Auto prepare-envs and runner restart succeeded for env '{env_name}' "
-            f"in {project_def.name}."
-        )
         return await runner_manager.get_or_start_runner(
             project_def=project_def,
             env_name=env_name,

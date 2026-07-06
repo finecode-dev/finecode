@@ -1,6 +1,8 @@
 import pathlib
 import tomllib
 
+from packaging.utils import canonicalize_name
+
 
 def get_dependency_name(dependency_str: str) -> str:
     for idx, ch in enumerate(dependency_str):
@@ -90,8 +92,37 @@ def collect_transitive_editable_deps(
     return result
 
 
+def resolve_install_project(
+    dependencies: list[dict],
+    project_name: str,
+    project_dir_path: pathlib.Path,
+) -> list[dict]:
+    """Return `dependencies` with an editable entry for the project under test.
+
+    Per ADR-0046, an env with install_project = true gets the project being
+    configured installed editable from its own directory. Any existing entry
+    for the same distribution — e.g. a rule-3 named reference in the
+    dependency group (ADR-0018) — is removed first: the editable install
+    always wins, so the project is installed exactly once.
+    """
+    canonical_project_name = canonicalize_name(project_name)
+    result = [
+        dep for dep in dependencies
+        if canonicalize_name(dep["name"]) != canonical_project_name
+    ]
+    result.append(
+        {
+            "name": project_name,
+            "version_or_source": f" @ file://{project_dir_path.as_posix()}",
+            "editable": True,
+        }
+    )
+    return result
+
+
 __all__ = [
     "collect_transitive_editable_deps",
     "get_dependency_name",
     "process_raw_deps",
+    "resolve_install_project",
 ]

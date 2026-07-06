@@ -7,8 +7,6 @@ import pytest
 from finecode.wm_server import testing as wm_testing
 from finecode.wm_server.runner import runner_client
 
-pytestmark = pytest.mark.anyio
-
 
 async def test_run_action_raises_action_run_cancelled_on_er_cancellation(
     tmp_path: pathlib.Path,

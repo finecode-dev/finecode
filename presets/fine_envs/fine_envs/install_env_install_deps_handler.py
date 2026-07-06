@@ -16,6 +16,7 @@ from fine_envs.dependency_config_utils import (
     collect_transitive_editable_deps,
     get_dependency_name,
     process_raw_deps,
+    resolve_install_project,
 )
 
 
@@ -70,6 +71,28 @@ class InstallEnvInstallDepsHandler(
                     path = ws_editable_packages[dep["name"]]
                     dep["version_or_source"] = f" @ file://{path.as_posix()}"
                     dep["editable"] = True
+
+            # ADR-0046: an env may opt in to installing the project under test,
+            # editable, from its own directory. Resolved before the transitive
+            # editable-deps walk below (not after) so that the project's own
+            # workspace-editable dependencies are discovered in the same pass —
+            # otherwise a project whose only edge into the dependency graph is
+            # this injected entry would have its own transitive deps missed.
+            env_raw_config = (
+                project_def.get("tool", {}).get("finecode", {})
+                .get("env", {}).get(env.name, {})
+            )
+            if env_raw_config.get("install_project", False):
+                project_name = project_def.get("project", {}).get("name")
+                if project_name is None:
+                    raise code_action.ActionFailedException(
+                        f"install_project is set for env '{env.name}' but "
+                        "project.name is not declared in the project's pyproject.toml"
+                    )
+                dependencies = resolve_install_project(
+                    dependencies, project_name, project_def_path.parent
+                )
+
             dependencies.extend(collect_transitive_editable_deps(dependencies, ws_editable_packages))
 
             overrides = payload.env.dependencies_override

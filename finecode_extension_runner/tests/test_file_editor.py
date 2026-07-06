@@ -2,14 +2,11 @@ from __future__ import annotations
 
 import pathlib
 
-import pytest
 from loguru import logger
 
 from finecode_extension_api.interfaces import ifileeditor
 from finecode_extension_runner.impls.file_editor import FileEditor
 from finecode_extension_runner.impls.file_manager import FileManager
-
-pytestmark = pytest.mark.anyio
 
 
 async def test_open_file_seeds_content_for_a_file_deleted_from_disk(

@@ -8,8 +8,6 @@ import pytest
 from finecode_extension_runner import context, domain, er_server, services
 from finecode_extension_runner.di.registry import Registry
 
-pytestmark = pytest.mark.anyio
-
 
 def _fake_server(tmp_path: pathlib.Path) -> object:
     """Minimal stand-in for ErServer exposing only what run_action reads:

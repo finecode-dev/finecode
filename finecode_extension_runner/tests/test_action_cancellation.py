@@ -11,8 +11,6 @@ from finecode_extension_api.interfaces import ilspclient, iprojectactionrunner
 from finecode_extension_runner._services import run_action as run_action_service
 from finecode_extension_runner.testing import handler_test_session
 
-pytestmark = pytest.mark.anyio
-
 
 class _CancellationTestAction(code_action.Action):
     """Uses the base Action's default PAYLOAD_TYPE/RUN_CONTEXT_TYPE/RESULT_TYPE —

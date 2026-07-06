@@ -18,8 +18,6 @@ from fine_python_import_linter.check_python_imports_handler import (
     ImportLinterCheckPythonImportsHandler,
 )
 
-pytestmark = pytest.mark.anyio
-
 
 def _write_files(base: pathlib.Path, files: dict[str, str]) -> None:
     for rel_path, content in files.items():

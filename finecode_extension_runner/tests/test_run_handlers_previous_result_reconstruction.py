@@ -3,12 +3,8 @@ from __future__ import annotations
 import dataclasses
 from pathlib import Path
 
-import pytest
-
 from finecode_extension_api import code_action
 from finecode_extension_runner.testing import handler_test_session
-
-pytestmark = pytest.mark.anyio
 
 
 @dataclasses.dataclass

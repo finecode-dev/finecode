@@ -3,13 +3,9 @@ from __future__ import annotations
 import pathlib
 from unittest import mock
 
-import pytest
-
 from finecode.wm_server import domain, testing as wm_testing
 from finecode.wm_server.runner import runner_manager
 from finecode.wm_server.services.run_service import proxy_utils
-
-pytestmark = pytest.mark.anyio
 
 _PARENT_SOURCE = "fine_check_imports.check_imports_action.CheckImportsAction"
 

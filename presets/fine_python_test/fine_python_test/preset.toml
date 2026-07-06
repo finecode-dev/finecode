@@ -16,3 +16,20 @@ handlers = [
 
 [tool.finecode.extension.fine_python_pytest]
 dependencies_override = ["pytest==9.0.*"]
+
+# Run every collected async test via pytest-asyncio without requiring each
+# consumer project to declare `@pytest.mark.asyncio` or an ini/CLI option.
+[[tool.finecode.action_handler]]
+source = "fine_python_pytest.PytestRunTestsHandler"
+config.addopts = ["--asyncio-mode=auto"]
+
+[[tool.finecode.action_handler]]
+source = "fine_python_pytest.PytestListTestsHandler"
+config.addopts = ["--asyncio-mode=auto"]
+
+# ADR-0046: the pytest handlers above import the project under test, so this
+# preset opts the "dev" env into installing it (editable, from its own
+# directory). Consumers who install it some other way can override with
+# install_project = false in their own pyproject.toml.
+[tool.finecode.env.dev]
+install_project = true

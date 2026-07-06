@@ -42,7 +42,7 @@ dev_workspace = [
     "opentelemetry-exporter-otlp-proto-grpc==1.41.*",
     "opentelemetry-instrumentation==0.62.*"
 ]
-dev = ["finecode", "psutil==7.2.*", "debugpy==1.8.*"]
+dev = ["psutil==7.2.*", "debugpy==1.8.*"]
 dep_graph = ["fine_dep_graph~=0.1.0a0", "fine_dep_graph_falkordb~=0.1.0a0"]
 
 [build-system]
@@ -51,13 +51,6 @@ build-backend = "setuptools.build_meta"
 
 [tool.finecode]
 presets = [{ source = "finecode_dev_common_preset" }, { source = "fine_docs_markdown" }, { source = "fine_system_setup" }]
-
-# [tool.finecode.action.lint]
-# handlers = [
-#     { name = "import_linter", source = "fine_python_import_linter.ImportLinterHandler", env = "dev_no_runtime", dependencies = [
-#         "fine_python_import_linter~=0.1.0",
-#     ] },
-# ]
 
 [tool.finecode.action.setup_system]
 handlers = [

@@ -179,6 +179,16 @@ async def run_actions(
                 raise RunFailed(f"Unknown action(s): {unknown_actions}")
             action_sources = [name_to_source[a] for a in actions]
 
+            # Workspace-scoped actions run once on the root project and stream all
+            # their sub-project output tagged with that single root path.  Repeating
+            # the root header for every partial adds no information, so suppress it
+            # when every requested action is workspace-scoped.
+            scope_by_source = {a["source"]: a.get("scope") for a in all_actions}
+            show_project_header = not (
+                action_sources
+                and all(scope_by_source.get(src) == "workspace" for src in action_sources)
+            )
+
             params_by_project: dict[str, dict[str, typing.Any]] = {}
             if map_payload_fields:
                 params_by_project = _resolve_mapped_payload_fields(
@@ -201,21 +211,26 @@ async def run_actions(
                 "resultFormats": result_formats,
                 "trigger": "user",
                 "devEnv": dev_env,
+                # Ask the WM to type-safely merge streamed partials per project/action
+                # and return the merged result, so the returned/saved data is complete
+                # even when one project streams many partials.
+                "mergeResults": True,
             }
 
             partial_result_token = str(uuid.uuid4())
-            streaming_results: dict[str, dict] = {}
-
-            partial_result_count = 0
 
             async def _on_partial_result(params: dict) -> None:
-                nonlocal partial_result_count
-                partial_result_count += 1
                 value = params.get("value", {}) if params else {}
                 project_str = value.get("project", "")
                 results = value.get("results", {})
-                streaming_results[project_str] = results
-                block = _format_project_block(project_str, results, source_to_name)
+                block = _format_project_block(
+                    project_str, results, source_to_name, show_project_header
+                )
+                # A partial with no rendered content (e.g. a project with nothing to
+                # report) would otherwise print just the project header with an empty
+                # body; skip it. The merged result still lands in the final response.
+                if block is None:
+                    return
 
                 # split blocks with newline
                 block = "\n" + block
@@ -237,8 +252,10 @@ async def run_actions(
             except ApiError as exc:
                 raise RunFailed(str(exc)) from exc
 
+            # Use the WM's type-safely merged per-project results (requested via
+            # mergeResults) for the saved/returned data.
             return _build_streaming_result(
-                streaming_results, batch_result.get("returnCode", 0)
+                batch_result.get("results", {}), batch_result.get("returnCode", 0)
             )
         finally:
             await client.close()
@@ -251,11 +268,14 @@ def _format_project_block(
     project_path_str: str,
     actions_results: dict,
     source_to_name: dict[str, str] | None = None,
-) -> str:
+    show_project_header: bool = True,
+) -> str | None:
     """Format one project's action results as a printable block.
 
-    Always includes the project path header (streaming callers are multi-project
-    by definition).
+    Prepends the project path header unless *show_project_header* is False — the
+    caller suppresses it for workspace-scoped runs, where every partial carries
+    the same root path and the header would just repeat.  Returns ``None`` when
+    there is nothing to render, so the caller can skip printing an empty body.
     """
     run_many_actions = len(actions_results) > 1
     project_output_parts: list[str] = []
@@ -274,8 +294,14 @@ def _format_project_block(
         action_output += utils.run_result_to_str(response.text(), display_name)
         project_output_parts.append(action_output)
 
-    block = "".join(project_output_parts)
-    block = f"{click.style(project_path_str, bold=True, underline=True)}\n" + block
+    content = "".join(project_output_parts)
+    if not content.strip():
+        return None
+
+    if show_project_header:
+        block = f"{click.style(project_path_str, bold=True, underline=True)}\n" + content
+    else:
+        block = content
 
     if not block.endswith("\n"):
         block += "\n"

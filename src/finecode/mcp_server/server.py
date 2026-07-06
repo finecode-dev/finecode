@@ -104,16 +104,15 @@ async def _run_with_progress(
     _partial_result_queues[token] = queue
     _progress_queues[progress_token] = progress_queue
 
-    results_by_project: dict[str, dict] = {}
+    # Opt-in: have the WM type-safely merge streamed partials per project/action and
+    # return the merged result, so the data returned below is complete even when a
+    # project streams several partials.
+    options = {**(options or {}), "mergeResults": True}
 
     async def _forward_partials() -> None:
         try:
             while True:
                 value = await queue.get()
-                project_key = value.get("project", "")
-                result_by_format = value.get("resultByFormat", {})
-                if result_by_format:
-                    results_by_project[project_key] = result_by_format
                 await _send_log_message("info", value)
         except asyncio.CancelledError:
             pass
@@ -150,18 +149,21 @@ async def _run_with_progress(
         forward_task.cancel()
         progress_forward_task.cancel()
         await asyncio.gather(forward_task, progress_forward_task, return_exceptions=True)
-        # Drain items that arrived after forward_task was cancelled.
-        while not queue.empty():
-            value = queue.get_nowait()
-            project_key = value.get("project", "")
-            result_by_format = value.get("resultByFormat", {})
-            if result_by_format:
-                results_by_project[project_key] = result_by_format
         _partial_result_queues.pop(token, None)
         _progress_queues.pop(progress_token, None)
 
-    if results_by_project:
-        result = {**result, "resultsByProject": results_by_project}
+    # Expose the WM's type-safely merged results, flattening
+    # {project: {actionSource: {resultByFormat, returnCode}}} to the
+    # {project: resultByFormat} shape MCP reports.
+    server_results = result.pop("results", None) if isinstance(result, dict) else None
+    if server_results:
+        results_by_project = {
+            project_key: action_results.get(action_source, {}).get("resultByFormat", {})
+            for project_key, action_results in server_results.items()
+        }
+        results_by_project = {k: v for k, v in results_by_project.items() if v}
+        if results_by_project:
+            result = {**result, "resultsByProject": results_by_project}
     return result
 
 

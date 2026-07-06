@@ -80,15 +80,10 @@ class PyreflyTypeCheckFilesHandler(
             # workspace/configuration requests with section="python",
             # expecting responses like [{"pyrefly": {"displayTypeErrors": ...}}].
             # The same format is used for initializationOptions.
-            venv_dir = self.extension_runner_info_provider.get_venv_dir_path_of_env("runtime")
-            interpreter_path = self.extension_runner_info_provider.get_venv_python_interpreter(venv_dir)
-            site_packages = self.extension_runner_info_provider.get_venv_site_packages(venv_dir)
+            # pythonPath/extraPaths are already set up by PyreflyLspService itself;
+            # only add the type-check-specific setting here.
             self.lsp_service.update_settings({
-                "pythonPath": str(interpreter_path),
-                "pyrefly": {
-                    "displayTypeErrors": "force-on",
-                    "extraPaths": [str(p) for p in site_packages],
-                },
+                "pyrefly": {"displayTypeErrors": "force-on"},
             })
 
     async def run_on_single_file(

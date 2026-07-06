@@ -10,7 +10,12 @@ from fine_semantic_tokens.text_document_semantic_tokens_action import (
     SEMANTIC_TOKEN_TYPES,
     SEMANTIC_TOKEN_MODIFIERS,
 )
-from finecode_extension_api.interfaces import ifileeditor, ilspclient, ilogger
+from finecode_extension_api.interfaces import (
+    ifileeditor,
+    ilspclient,
+    ilogger,
+    iextensionrunnerinfoprovider,
+)
 from finecode_extension_api.contrib.lsp_service import LspService
 from fine_inspect_code.diagnostic_types import map_lsp_diagnostics
 
@@ -60,6 +65,7 @@ class PyreflyLspService(service.DisposableService):
         lsp_client: ilspclient.ILspClient,
         file_editor: ifileeditor.IFileEditor,
         logger: ilogger.ILogger,
+        extension_runner_info_provider: iextensionrunnerinfoprovider.IExtensionRunnerInfoProvider,
     ) -> None:
         pyrefly_bin = Path(sys.executable).parent / "pyrefly"
         self._lsp_service = LspService(
@@ -71,6 +77,22 @@ class PyreflyLspService(service.DisposableService):
             readable_id="pyrefly-lsp",
             client_capabilities=_PYREFLY_CLIENT_CAPABILITIES,
         )
+        # pyrefly's own environment/interpreter auto-detection does not know about
+        # FineCode's per-project "runtime" env, so without this it resolves imports
+        # against the wrong (or no) site-packages. Applied here so every feature
+        # (hover, definition, inlay hints, ...) gets it, not just type checking.
+        self._pyrefly_settings: dict[str, Any] = {}
+        venv_dir = extension_runner_info_provider.get_venv_dir_path_of_env("runtime")
+        interpreter_path = extension_runner_info_provider.get_venv_python_interpreter(
+            venv_dir
+        )
+        site_packages = extension_runner_info_provider.get_venv_site_packages(venv_dir)
+        self.update_settings(
+            {
+                "pythonPath": str(interpreter_path),
+                "pyrefly": {"extraPaths": [str(p) for p in site_packages]},
+            }
+        )
 
     @override
     async def init(self) -> None:
@@ -80,7 +102,18 @@ class PyreflyLspService(service.DisposableService):
     def dispose(self) -> None:
         self._lsp_service.dispose()
 
-    def update_settings(self, settings: dict[str, object]) -> None:
+    def update_settings(self, settings: dict[str, Any]) -> None:
+        """Update pyrefly LSP settings.
+
+        The underlying LspService.update_settings merges the top-level dict
+        shallowly, which would let a later call overwrite the whole "pyrefly"
+        section (e.g. dropping extraPaths when a handler adds displayTypeErrors).
+        Deep-merge that one section here instead.
+        """
+        pyrefly_settings = settings.get("pyrefly")
+        if pyrefly_settings is not None:
+            self._pyrefly_settings = {**self._pyrefly_settings, **pyrefly_settings}
+            settings = {**settings, "pyrefly": self._pyrefly_settings}
         self._lsp_service.update_settings(settings)
 
     async def ensure_started(self, root_uri: str) -> None:

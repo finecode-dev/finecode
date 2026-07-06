@@ -3,15 +3,12 @@ from __future__ import annotations
 import pathlib
 import types
 
-import pytest
 from loguru import logger
 
 from finecode_extension_api.interfaces import ifileeditor
 from finecode_extension_runner import er_server
 from finecode_extension_runner.impls.file_editor import FileEditor
 from finecode_extension_runner.impls.file_manager import FileManager
-
-pytestmark = pytest.mark.anyio
 
 
 async def test_did_open_notification_seeds_content_for_a_deleted_file(

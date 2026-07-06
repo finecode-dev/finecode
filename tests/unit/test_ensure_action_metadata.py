@@ -10,8 +10,6 @@ from finecode.wm_server.errors import ActionNotResolvableError
 from finecode.wm_server.runner import runner_manager
 from finecode.wm_server.services.run_service import proxy_utils
 
-pytestmark = pytest.mark.anyio
-
 
 def _build_project_and_context(tmp_path: pathlib.Path, *, handler_env: str = "dev_no_runtime"):
     project = wm_testing.make_single_action_project(

@@ -1,3 +1,10 @@
+from fine_format.check_formatting_action import (
+    CheckFormattingAction,
+    CheckFormattingRunContext,
+    CheckFormattingRunPayload,
+    CheckFormattingRunResult,
+)
+from fine_format.check_formatting_handler import CheckFormattingHandler
 from fine_format.format_action import (
     FormatAction,
     FormatRunContext,
@@ -27,6 +34,11 @@ from fine_format.format_file_dispatch_handler import FormatFileDispatchHandler
 from fine_format.format_file_save_handler import SaveFormatFileHandler
 
 __all__ = [
+    "CheckFormattingAction",
+    "CheckFormattingHandler",
+    "CheckFormattingRunContext",
+    "CheckFormattingRunPayload",
+    "CheckFormattingRunResult",
     "FILE_OPERATION_AUTHOR",
     "FileInfo",
     "FormatAction",

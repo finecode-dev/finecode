@@ -7,8 +7,6 @@ import pytest
 from finecode.wm_server import domain, testing as wm_testing
 from finecode.wm_server._api_handlers._helpers import _resolve_actions_by_project
 
-pytestmark = pytest.mark.anyio
-
 
 def _build_ws_context_with_action(
     tmp_path: pathlib.Path, *, scope: domain.ActionScope | None

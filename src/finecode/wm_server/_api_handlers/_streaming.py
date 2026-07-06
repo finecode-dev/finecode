@@ -12,6 +12,7 @@ from finecode.wm_server import context, domain
 from finecode.wm_server.services.run_service.exceptions import ActionNotFoundError, ActionRunFailed, StartingEnvironmentsFailed
 from finecode.wm_server._api_handlers._helpers import (
     _build_batch_result,
+    _merge_partial_results_for_action,
     _notify_client,
     _parse_and_validate_run_action_params,
     _parse_run_batch_params,
@@ -74,10 +75,21 @@ async def _handle_run_action_with_partial_results(
             progress_token=progress_token,
         )
 
+        # Opt-in (collect-style callers like MCP): accumulate the `json` format of
+        # each partial per project so it can be type-safely merged into the response.
+        merge_results_enabled = options.get("mergeResults", False)
+        json_by_project: dict[str, list[dict]] = {}
+
         async def _forward_partials() -> int:
             count = 0
             async for value in stream:
                 count += 1
+                if merge_results_enabled and isinstance(value, dict):
+                    project_str = value.get("project", "")
+                    result_by_format = value.get("resultByFormat") or {}
+                    json_by_project.setdefault(project_str, []).append(
+                        result_by_format.get("json")
+                    )
                 logger.trace(f"run+partialResults: sending partial #{count} for token={token}, keys={list(value.keys()) if isinstance(value, dict) else type(value)}")
                 _notify_client(
                     writer,
@@ -106,6 +118,27 @@ async def _handle_run_action_with_partial_results(
         partial_count = partials_task.result()
 
         final = await stream.final_result()
+
+        if merge_results_enabled and json_by_project:
+            return_code = final.get("returnCode", 0) if isinstance(final, dict) else 0
+            results: dict[str, dict] = {}
+            for project_str, payloads in json_by_project.items():
+                merged_json = await _merge_partial_results_for_action(
+                    project_path=pathlib.Path(project_str),
+                    action_name=action_name,
+                    json_payloads=payloads,
+                    ws_context=ws_context,
+                )
+                if merged_json is not None:
+                    results[project_str] = {
+                        action_source: {
+                            "resultByFormat": {"json": merged_json},
+                            "returnCode": return_code,
+                        }
+                    }
+            if results:
+                final = {**final, "results": results}
+
         logger.trace(f"run+partialResults: done, sent {partial_count} partials, final keys={list(final.keys()) if isinstance(final, dict) else type(final)}")
         return final
 
@@ -211,6 +244,12 @@ async def _handle_run_batch_with_partial_results(
         # Lock to prevent concurrent writes to the shared writer from project tasks.
         writer_lock = asyncio.Lock()
 
+        # When mergeResults is requested, collect the type-safely merged result per
+        # project/action so the final response carries complete data for collect-style
+        # callers (CLI --save-results).  Keyed by project path str -> action source ->
+        # {resultByFormat, returnCode}, matching the runBatch response `results` shape.
+        merged_results: dict[str, dict[str, dict]] = {}
+
         async def _stream_action(
             project_path: pathlib.Path,
             action_name: str,
@@ -229,6 +268,9 @@ async def _handle_run_batch_with_partial_results(
             er_token = str(uuid.uuid4())
             action_return_code = 0
             partial_count = 0
+            # Accumulate the `json` format of every streamed partial so it can be
+            # type-safely merged at the end when mergeResults is requested.
+            json_payloads: list[dict] = []
             async with proxy_utils.run_with_partial_results(
                 action_name=action_name,
                 params=project_payload,
@@ -242,6 +284,8 @@ async def _handle_run_batch_with_partial_results(
             ) as ctx:
                 async for value in ctx:
                     partial_count += 1
+                    if parsed.merge_results and isinstance(value, dict):
+                        json_payloads.append(value.get("json"))
                     async with writer_lock:
                         _notify_client(
                             writer,
@@ -276,6 +320,8 @@ async def _handle_run_batch_with_partial_results(
                         )
                     final_result_by_format.update(resp.result_by_format)
                 if final_result_by_format:
+                    if parsed.merge_results:
+                        json_payloads.append(final_result_by_format.get("json"))
                     async with writer_lock:
                         _notify_client(
                             writer,
@@ -295,6 +341,22 @@ async def _handle_run_batch_with_partial_results(
                             },
                         )
                         await writer.drain()
+
+            # Merge every partial streamed for this (project, action) into one result
+            # for the response, so a caller that replaces-by-key keeps complete data
+            # rather than only the last partial.
+            if parsed.merge_results:
+                merged_json = await _merge_partial_results_for_action(
+                    project_path=project_path,
+                    action_name=action_name,
+                    json_payloads=json_payloads,
+                    ws_context=ws_context,
+                )
+                if merged_json is not None:
+                    merged_results.setdefault(str(project_path), {})[action_source] = {
+                        "resultByFormat": {"json": merged_json},
+                        "returnCode": action_return_code,
+                    }
             return action_return_code
 
         async def _stream_project(
@@ -342,7 +404,10 @@ async def _handle_run_batch_with_partial_results(
             f"runBatch+partialResults: done, projects_count={len(actions_by_project)}"
             f" returnCode={overall_return_code}"
         )
-        return {"returnCode": overall_return_code}
+        response: dict = {"returnCode": overall_return_code}
+        if parsed.merge_results:
+            response["results"] = merged_results
+        return response
 
 
 async def _handle_run_batch_with_partial_results_task(

@@ -9,8 +9,6 @@ from finecode_extension_api.interfaces import iprojectactionrunner
 from finecode_extension_runner import domain, er_errors
 from finecode_extension_runner.impls import project_action_runner
 
-pytestmark = pytest.mark.anyio
-
 
 @dataclasses.dataclass
 class _ParentPayload(code_action.RunActionPayload):

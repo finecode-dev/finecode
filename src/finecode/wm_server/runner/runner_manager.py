@@ -86,6 +86,14 @@ async def _start_extension_runner_process(
                 runner.working_dir_path, runner.env_name
             )
     except ValueError as exception:
+        if isinstance(exception, finecode_cmd.VenvRelocatedError):
+            # The venv exists but was created at a different (now stale) path — its
+            # console scripts have broken shebangs. Reinstalling in place wouldn't
+            # fix them (pip/uv skip already-satisfied packages), so wipe it and let
+            # the NO_VENV auto-repair path below do a genuine from-scratch create.
+            logger.warning(str(exception))
+            remove_runner_env(runner.working_dir_path, runner.env_name)
+
         try:
             runner.status = runner_client.RunnerStatus.NO_VENV
             await notify_project_changed(
@@ -519,6 +527,9 @@ async def _start_extension_runner_process(
     )
 
 
+_STOP_TIMEOUT_SEC: typing.Final = 10
+
+
 async def stop_extension_runner(runner: runner_client.ExtensionRunnerInfo) -> None:
     logger.trace(f"Trying to stop extension runner {runner.readable_id}")
     if runner.status in (
@@ -532,6 +543,23 @@ async def stop_extension_runner(runner: runner_client.ExtensionRunnerInfo) -> No
             logger.exception(e)
 
         await _internal_client_api.exit(client=runner.client)
+
+        # `exit` only sends a notification; the OS process (and anything it is
+        # still flushing, e.g. WAL files) may keep running briefly after this.
+        # Wait for it to actually terminate so callers can safely remove its
+        # venv/state directories right after this returns. The timeout is
+        # passed into the thread itself (rather than wrapping an unbounded
+        # `.wait()` in `asyncio.wait_for`) so a slow-to-stop runner doesn't
+        # leak a blocked thread from the default executor.
+        stopped = await asyncio.to_thread(
+            runner.client.server_process_stopped.wait, _STOP_TIMEOUT_SEC
+        )
+        if not stopped:
+            logger.warning(
+                f"Extension runner {runner.readable_id} did not stop within"
+                f" {_STOP_TIMEOUT_SEC}s of exit"
+            )
+
         logger.trace(f"Stopped extension runner {runner.readable_id}")
     else:
         logger.trace("Extension runner was not running")
@@ -550,6 +578,13 @@ def stop_extension_runner_sync(runner: runner_client.ExtensionRunnerInfo) -> Non
             logger.exception(e)
 
         _internal_client_api.exit_sync(runner.client)
+
+        if not runner.client.server_process_stopped.wait(timeout=_STOP_TIMEOUT_SEC):
+            logger.warning(
+                f"Extension runner {runner.readable_id} did not stop within"
+                f" {_STOP_TIMEOUT_SEC}s of exit"
+            )
+
         logger.trace(f"Stopped extension runner {runner.readable_id}")
     else:
         logger.trace("Extension runner was not running")

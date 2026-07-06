@@ -8,8 +8,6 @@ from finecode.wm_server import testing as wm_testing
 from finecode.wm_server.runner import _internal_client_types
 from finecode.wm_server.services.run_service import exceptions, proxy_utils
 
-pytestmark = pytest.mark.anyio
-
 
 def _build_session(tmp_path: pathlib.Path):
     client = wm_testing.FakeErClient()

@@ -605,9 +605,36 @@ async def _start_runner_or_update_config(
                 project_def=project, env_name=env_name, handlers_to_initialize=handlers_to_initialize, ws_context=ws_context
             )
         except runner_manager.RunnerFailedToStart as exception:
-            raise StartingEnvironmentsFailed(
-                f"Failed to start runner for env '{env_name}' in project '{project.name}': {exception.message}"
-            ) from exception
+            failed_runner = ws_context.ws_projects_extension_runners.get(
+                project.dir_path, {}
+            ).get(env_name)
+            if (
+                failed_runner is None
+                or failed_runner.status != runner_client.RunnerStatus.NO_VENV
+            ):
+                raise StartingEnvironmentsFailed(
+                    f"Failed to start runner for env '{env_name}' in project '{project.name}': {exception.message}"
+                ) from exception
+
+            # Venv is missing — either it never existed, or get_python_cmd just wiped
+            # it after detecting a stale (relocated) venv. Either way, auto-repair the
+            # same way get_or_start_runner_with_auto_prepare does, instead of surfacing
+            # a bare startup failure that requires a manual `prepare-envs` run.
+            from finecode.wm_server.services.prepare_envs_service import (
+                PrepareEnvsFailed,
+            )
+
+            try:
+                await runner_start_service.repair_no_venv_env(project, env_name, ws_context)
+            except PrepareEnvsFailed as prep_exc:
+                raise StartingEnvironmentsFailed(
+                    f"Failed to start runner for env '{env_name}' in project '{project.name}': {prep_exc.message}"
+                ) from prep_exc
+            except runner_manager.RunnerFailedToStart as restart_exc:
+                raise StartingEnvironmentsFailed(
+                    f"Auto prepare-envs succeeded but runner restart failed for env "
+                    f"'{env_name}' in project '{project.name}': {restart_exc.message}"
+                ) from restart_exc
 
 
 async def run_actions_in_running_project(

@@ -79,3 +79,14 @@ name = "install_deps_with_uv"
 source = "fine_python_uv.UvInstallDepsInEnvHandler"
 env = "dev_workspace"
 dependencies = ["fine_python_uv~=0.1.0a0"]
+
+# use compat editable mode because some static analysis tools like pyrefly support
+# only .pth files with paths, not with executable code lines:
+# https://pyrefly.org/en/docs/import-resolution/#editable-installs
+# fine_envs is the mandatory base preset every project loads, so setting this here
+# once covers every current and future consumer instead of relying on each preset
+# that happens to use such a tool to repeat the override (see the analogous
+# fine_python_pip.PipInstallDepsInEnvHandler config for pip-based projects).
+[[tool.finecode.action_handler]]
+source = "fine_python_uv.UvInstallDepsInEnvHandler"
+config.editable_mode = 'compat'
