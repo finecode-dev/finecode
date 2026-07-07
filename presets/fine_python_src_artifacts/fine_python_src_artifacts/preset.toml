@@ -1,0 +1,20 @@
+[tool.finecode]
+presets = [{ source = "fine_src_artifacts" }]
+
+[[tool.finecode.action.get_src_artifact_language.handlers]]
+name = "get_src_artifact_language_python"
+source = "fine_python_lang.GetSrcArtifactLanguagePythonHandler"
+env = "dev_no_runtime"
+dependencies = ["fine_python_lang~=0.1.0a0"]
+
+[[tool.finecode.action.list_src_artifact_files_by_lang.handlers]]
+name = "list_src_artifact_files_by_lang_python"
+source = "fine_python_lang.ListSrcArtifactFilesByLangPythonHandler"
+env = "dev_no_runtime"
+dependencies = ["fine_python_lang~=0.1.0a0"]
+
+[[tool.finecode.action.group_src_artifact_files_by_lang.handlers]]
+name = "group_src_artifact_files_by_lang_python"
+source = "fine_python_lang.GroupSrcArtifactFilesByLangPythonHandler"
+env = "dev_no_runtime"
+dependencies = ["fine_python_lang~=0.1.0a0"]
