@@ -216,6 +216,12 @@ class ErServer:
             }
         )
 
+    def send_log_records_notification(self, records: list[dict]) -> None:
+        """Send ``er/logRecords`` notification (thread-safe, fire-and-forget)."""
+        self._session._transport.send(  # type: ignore[union-attr]
+            {"jsonrpc": "2.0", "method": "er/logRecords", "params": {"records": records}}
+        )
+
     async def workspace_apply_edit_async(self, params: ApplyWorkspaceEditParams) -> dict:
         """Send ``workspace/applyEdit`` request to the WM and return result."""
         return await self._session.send_request(
@@ -618,6 +624,18 @@ async def update_config(server: ErServer, params: dict | None) -> dict:
         raise
 
 
+async def update_logging(server: ErServer, params: dict | None) -> dict:
+    """Handler for ``finecodeRunner/updateLogging``. Toggles ER->WM log forwarding.
+
+    Process-level only -- does NOT rebuild RunnerContext (contrast update_config).
+    """
+    p = params or {}
+    logs.set_log_forwarding(
+        enabled=bool(p.get("forward", False)), level=p.get("forwardLevel", "INFO")
+    )
+    return {}
+
+
 async def run_action(server: ErServer, params: dict | None) -> dict:
     """Handler for ``actions/run``."""
     assert params is not None
@@ -943,6 +961,8 @@ def create_er_server(wal_writer: er_wal.ErWalWriter | None = None) -> ErServer:
     server._wal_writer = wal_writer
     session = server._session
 
+    logs.set_forward_sender(lambda records: server.send_log_records_notification(records))
+
     def _wrap(handler):
         """Wrap a handler that takes (server, params) for use with the session."""
         async def _wrapped(params: dict | None) -> typing.Any:
@@ -983,6 +1003,7 @@ def create_er_server(wal_writer: er_wal.ErWalWriter | None = None) -> ErServer:
 
     # ER-specific commands (direct JSON-RPC methods, previously workspace/executeCommand)
     session.on_request("finecodeRunner/updateConfig", _wrap(update_config))
+    session.on_request("finecodeRunner/updateLogging", _wrap(update_logging))
     session.on_request("finecodeRunner/resolveActionMeta", _wrap(resolve_action_meta))
     session.on_request("actions/run", _wrap(run_action))
     session.on_request("actions/runHandlers", _wrap(run_handlers))

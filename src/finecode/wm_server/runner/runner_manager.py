@@ -5,6 +5,7 @@ API to manage ERs: start, stop, restart.
 import asyncio
 import collections.abc
 import concurrent.futures
+import dataclasses
 import json
 import os
 import shutil
@@ -40,6 +41,28 @@ ServerConfigurationError = config_models.ConfigurationError
 async def notify_project_changed(project: domain.Project) -> None:
     if project_changed_callback is not None:
         await project_changed_callback(project)
+
+
+def handle_er_log_records(
+    runner: runner_client.ExtensionRunnerInfo, params: dict
+) -> None:
+    """Redact, tag source, and feed ER records into the Phase-1 delivery pipeline.
+
+    Runs on the loop thread (feature callback), so ``_deliver_record`` is safe.
+    """
+    from finecode.wm_server import wm_server as _wm
+    from finecode.wm_server.services import log_delivery
+
+    source = f"runner:{runner.env_name}@{runner.working_dir_path.name}"
+    for r in (params or {}).get("records", []):
+        record = log_delivery.ClientLogRecord(
+            timestamp=r.get("timestamp", 0.0),
+            level=r.get("level", "INFO"),
+            source=source,
+            group=r.get("group", ""),
+            message=log_delivery.redact(r.get("message", "")),  # redaction at WM boundary
+        )
+        _wm._deliver_record(record)
 
 
 async def _apply_workspace_edit(
@@ -234,14 +257,33 @@ async def _start_extension_runner_process(
 
     runner.client.feature(_internal_client_types.PROGRESS, on_progress)
 
-    async def on_er_user_message(params: dict) -> None:
+    async def on_er_user_message(params) -> None:
+        # params arrives as a structured ErUserMessageParams from the real client
+        # (see METHOD_TO_TYPES); normalize so a raw dict from tests works too.
+        if params is None:
+            params_dict: dict = {}
+        elif isinstance(params, dict):
+            params_dict = params
+        else:
+            params_dict = dataclasses.asdict(params)
         from finecode.wm_server import wm_server as _wm
         _wm._notify_all_clients(
             "server/userMessage",
-            {"message": params.get("message", ""), "type": params.get("type", "WARNING")},
+            {"message": params_dict.get("message", ""), "type": params_dict.get("type", "WARNING")},
         )
 
     runner.client.feature(_internal_client_types.ER_USER_MESSAGE, on_er_user_message)
+
+    async def on_er_log_records(params) -> None:
+        if params is None:
+            params_dict: dict = {}
+        elif isinstance(params, dict):
+            params_dict = params
+        else:
+            params_dict = dataclasses.asdict(params)
+        handle_er_log_records(runner, params_dict)
+
+    runner.client.feature(_internal_client_types.ER_LOG_RECORDS, on_er_log_records)
 
     async def get_project_raw_config(
         params: _internal_client_types.GetProjectRawConfigParams,
@@ -837,6 +879,11 @@ async def _start_runner(
     telemetry.er_active_inc(runner.env_name)
     await notify_project_changed(project_def)
     runner.initialized_event.set()
+
+    # A runner that starts while a client is subscribed to logs must begin
+    # forwarding immediately (ADR-0049 Phase 2); no-op when nobody is watching.
+    from finecode.wm_server import wm_server as _wm
+    await _wm.push_er_forwarding_to_runner(runner)
 
     return runner
 

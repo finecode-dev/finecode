@@ -224,6 +224,7 @@ def run(ctx) -> None:
     shared_server: bool = False
     dev_env: str = detect_dev_env()
     wal_enabled: bool | None = None
+    verbose: bool = False
 
     # finecode run parameters
     for arg in args:
@@ -257,6 +258,8 @@ def run(ctx) -> None:
             shared_server = True
         elif arg == "--wal":
             wal_enabled = True
+        elif arg in ("--verbose", "-v"):
+            verbose = True
         elif arg.startswith("--dev-env"):
             dev_env = arg.removeprefix("--dev-env=")
             if dev_env not in _VALID_DEV_ENVS:
@@ -268,6 +271,9 @@ def run(ctx) -> None:
         elif not arg.startswith("--"):
             break
         processed_args_count += 1
+
+    # Auto-enable verbose logging in CI, unless the user already requested it.
+    verbose = verbose or dev_env == "ci"
 
     from finecode.wm_server.config import read_configs
     wm_telemetry = read_configs.read_wm_telemetry_config(workdir_path)
@@ -360,6 +366,7 @@ def run(ctx) -> None:
                 log_level=log_level,
                 dev_env=dev_env,
                 wal_enabled=wal_enabled,
+                verbose=verbose,
             )
         )
 
@@ -404,11 +411,15 @@ def run(ctx) -> None:
 @click.option("--dev-env", "dev_env", default=None, type=click.Choice(sorted(_VALID_DEV_ENVS)), help="Override detected dev environment")
 @click.option("--env", "env_names", multiple=True, metavar="ENV_NAME", help="Limit to specific environment(s). Can be specified multiple times.")
 @click.option("--project", "project_names", multiple=True, metavar="PROJECT_NAME", help="Limit to specific project(s). Can be specified multiple times.")
-def prepare_envs(log_level: str, debug: bool, recreate: bool, shared_server: bool, dev_env: str | None, env_names: tuple[str, ...], project_names: tuple[str, ...]) -> None:
+@click.option("--verbose", "-v", "verbose", is_flag=True, default=False, help="Stream WM/ER diagnostic logs to stderr over the protocol. Auto-enabled in CI.")
+def prepare_envs(log_level: str, debug: bool, recreate: bool, shared_server: bool, dev_env: str | None, env_names: tuple[str, ...], project_names: tuple[str, ...], verbose: bool) -> None:
     """
     `prepare-envs` should be called from workspace/project root directory.
     """
     from finecode.cli_app.commands import prepare_envs_cmd
+
+    # Auto-enable verbose logging in CI, unless the user already requested it.
+    verbose = verbose or (dev_env or detect_dev_env()) == "ci"
 
     if debug is True:
         import debugpy
@@ -438,6 +449,7 @@ def prepare_envs(log_level: str, debug: bool, recreate: bool, shared_server: boo
                 log_level=log_level,
                 env_names=list(env_names) if env_names else None,
                 project_names=list(project_names) if project_names else None,
+                verbose=verbose,
             )
         )
     except prepare_envs_cmd.PrepareEnvsFailed as exception:

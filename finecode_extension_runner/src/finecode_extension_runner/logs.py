@@ -3,6 +3,7 @@ import io
 import sys
 import inspect
 import logging
+import typing
 from pathlib import Path
 
 from loguru import logger
@@ -20,6 +21,11 @@ class LogLevel(enum.IntEnum):
 
 log_level_by_group: dict[str, LogLevel | None] = {}
 _default_log_level: LogLevel = LogLevel.INFO
+
+# --- ER -> WM log forwarding (ADR-0049 decision 6) ---------------
+_forward_enabled: bool = False
+_forward_level: LogLevel = LogLevel.INFO
+_forward_sender: typing.Callable[[list[dict]], None] | None = None  # set by ErServer once it exists
 
 
 def filter_logs(record):
@@ -129,6 +135,44 @@ def reset_log_level_for_group(group: str):
         del log_level_by_group[group]
 
 
+def set_forward_sender(sender: typing.Callable[[list[dict]], None] | None) -> None:
+    global _forward_sender
+    _forward_sender = sender
+
+
+def set_log_forwarding(enabled: bool, level: str = "INFO") -> None:
+    """Applied from finecodeRunner/updateLogging. Process-level; no RunnerContext."""
+    global _forward_enabled, _forward_level
+    _forward_enabled = enabled
+    try:
+        _forward_level = LogLevel[level.upper()]
+    except KeyError:
+        _forward_level = LogLevel.INFO
+
+
+def should_forward(level_no: int) -> bool:
+    return _forward_enabled and _forward_sender is not None and level_no >= _forward_level.value
+
+
+def _forward_sink(message) -> None:
+    """loguru sink: forward one record to the WM when forwarding is enabled.
+
+    MUST stay log-free (no logger.* here) to avoid feedback into itself.
+    """
+    record = message.record
+    if not should_forward(record["level"].no):
+        return
+    sender = _forward_sender
+    if sender is None:
+        return
+    sender([{
+        "timestamp": record["time"].timestamp(),
+        "level": record["level"].name,
+        "group": record["name"] or "",
+        "message": record["message"],  # raw; WM redacts at its boundary
+    }])
+
+
 def apply_logging_config(config: dict) -> None:
     """Apply logging config delivered via the WM→ER update_config protocol."""
     if default_level_str := config.get("defaultLevel"):
@@ -182,7 +226,22 @@ def setup_logging(
 
     logging.basicConfig(handlers=[InterceptHandler()], level=0, force=True)
 
+    # Forwarding sink is added once and is inert while `_forward_enabled` is False
+    # (fast bool check first in `should_forward`). Enabling never touches the
+    # file/stdout sinks above, so ER file-log verbosity is unchanged.
+    logger.add(_forward_sink, level="TRACE")
+
     return actual_log_file_path
 
 
-__all__ = ["save_logs_to_file", "set_default_log_level", "set_log_level_for_group", "reset_log_level_for_group", "apply_logging_config", "setup_logging"]
+__all__ = [
+    "save_logs_to_file",
+    "set_default_log_level",
+    "set_log_level_for_group",
+    "reset_log_level_for_group",
+    "apply_logging_config",
+    "setup_logging",
+    "set_forward_sender",
+    "set_log_forwarding",
+    "should_forward",
+]

@@ -29,10 +29,12 @@ ER_GET_PAYLOAD_SCHEMAS = "actions/getPayloadSchemas"
 ER_RESOLVE_SOURCE = "actions/resolveSource"
 ER_RESOLVE_PACKAGE_PATH = "packages/resolvePath"
 ER_UPDATE_CONFIG = "finecodeRunner/updateConfig"
+ER_UPDATE_LOGGING = "finecodeRunner/updateLogging"
 ER_RESOLVE_ACTION_META = "finecodeRunner/resolveActionMeta"
 ER_GET_INFO = "finecodeRunner/getInfo"
 WORKSPACE_APPLY_EDIT = "workspace/applyEdit"
 ER_USER_MESSAGE = "er/userMessage"
+ER_LOG_RECORDS = "er/logRecords"
 
 PROJECT_RAW_CONFIG_GET = "projects/getRawConfig"
 WORKSPACE_EDITABLE_PACKAGES_GET = "workspace/getWorkspaceEditablePackages"
@@ -1802,6 +1804,49 @@ class ErUpdateConfigResponse(BaseResponse):
 
 
 @dataclasses.dataclass
+class ErUpdateLoggingParams:
+    forward: bool
+    forward_level: str
+
+
+@dataclasses.dataclass
+class ErUpdateLoggingRequest(BaseRequest):
+    params: ErUpdateLoggingParams
+
+
+@dataclasses.dataclass
+class ErUpdateLoggingResult(BaseResult): ...
+
+
+@dataclasses.dataclass
+class ErUpdateLoggingResponse(BaseResponse):
+    result: ErUpdateLoggingResult
+
+
+@dataclasses.dataclass
+class ErLogRecordsParams:
+    records: list[dict]
+
+
+@dataclasses.dataclass
+class ErLogRecordsNotification(BaseNotification):
+    params: ErLogRecordsParams
+    method = ER_LOG_RECORDS
+
+
+@dataclasses.dataclass
+class ErUserMessageParams:
+    message: str = ""
+    type: str = "WARNING"
+
+
+@dataclasses.dataclass
+class ErUserMessageNotification(BaseNotification):
+    params: ErUserMessageParams
+    method = ER_USER_MESSAGE
+
+
+@dataclasses.dataclass
 class ErGetInfoResult(BaseResult):
     log_file_path: str | None = None
 
@@ -1861,6 +1906,14 @@ class GetActionsForParentResponse(BaseResponse):
     result: GetActionsForParentResult
 
 
+# IMPORTANT: every method registered as a client `feature()` handler (requests AND
+# notifications) MUST also have an entry here. The JSON-RPC client
+# (`finecode_jsonrpc.client`) gates and deserializes incoming messages against this
+# table: an incoming notification whose method is absent here is dropped with only a
+# warning and never reaches its `feature()` handler, even though the handler is
+# registered. A missing entry is therefore a silent "handler never fires" bug (see the
+# `er/userMessage` regression). When you add a `runner.client.feature(METHOD, ...)`
+# registration, add the matching `METHOD: (...)` tuple here too.
 METHOD_TO_TYPES: dict[
     str,
     tuple[type[BaseRequest], type | None, type[BaseResponse], type[BaseResult] | None]
@@ -1885,6 +1938,9 @@ METHOD_TO_TYPES: dict[
     ER_RESOLVE_SOURCE: (ErResolveSourceRequest, ErResolveSourceParams, ErResolveSourceResponse, None),
     ER_RESOLVE_PACKAGE_PATH: (ErResolvePackagePathRequest, ErResolvePackagePathParams, ErResolvePackagePathResponse, None),
     ER_UPDATE_CONFIG: (ErUpdateConfigRequest, ErUpdateConfigParams, ErUpdateConfigResponse, None),
+    ER_UPDATE_LOGGING: (ErUpdateLoggingRequest, ErUpdateLoggingParams, ErUpdateLoggingResponse, None),
+    ER_LOG_RECORDS: (ErLogRecordsNotification, ErLogRecordsParams, None, None),
+    ER_USER_MESSAGE: (ErUserMessageNotification, ErUserMessageParams, None, None),
     ER_GET_INFO: (None, None, ErGetInfoResponse, None),
     WORKSPACE_APPLY_EDIT: (
         ApplyWorkspaceEditRequest,

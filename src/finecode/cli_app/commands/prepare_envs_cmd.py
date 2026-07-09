@@ -1,8 +1,11 @@
 # docs: docs/cli.md
 import pathlib
 
+import click
+
 from finecode.wm_client import ApiClient, ApiError
 from finecode.wm_server import wm_lifecycle
+from finecode.cli_app.log_render import render_log_records
 from loguru import logger
 
 
@@ -18,6 +21,7 @@ async def prepare_envs(
     log_level: str = "INFO",
     env_names: list[str] | None = None,
     project_names: list[str] | None = None,
+    verbose: bool = False,
 ) -> None:
     """Prepare all virtual environments for a workspace.
 
@@ -55,6 +59,15 @@ async def prepare_envs(
         # Silence "unhandled notification" trace log — treeChanged is irrelevant in CLI mode.
         async def _noop(_: object) -> None: pass
         client.on_notification("actions/treeChanged", _noop)
+
+        if verbose:
+            async def _on_log_records(params: dict) -> None:
+                for line in render_log_records(params):
+                    click.echo(line, err=True)
+
+            client.on_notification("server/logRecords", _on_log_records)
+            # Stream WM+ER logs at the single general level (--log-level).
+            await client.subscribe_logs(log_level)
         try:
             await _run(
                 client, workdir_path, recreate, env_names, project_names

@@ -25,6 +25,7 @@ import finecode_jsonrpc.client as jsonrpc_client
 
 from finecode.wm_server import context, domain
 from finecode.wm_server.errors import ConfigurationError
+from finecode.wm_server.services import log_delivery
 from finecode.wm_server.services.run_service.exceptions import (
     ActionCancelledError,
     ActionRunFailed,
@@ -184,6 +185,163 @@ _client_labels: dict[asyncio.StreamWriter, str] = {}
 _disconnect_timeout: int = DISCONNECT_TIMEOUT_SECONDS
 
 
+# ---------------------------------------------------------------------------
+# Client log streaming (ADR-0049) — subscription registry, batching, sink
+# ---------------------------------------------------------------------------
+
+_log_registry: log_delivery.SubscriptionRegistry
+_log_batcher: log_delivery.LogBatcher
+_log_flush_task: asyncio.Task | None = None
+_log_loop: asyncio.AbstractEventLoop | None = None
+_log_sink_id: int | None = None
+_log_interval_ms: int = 200  # timer cadence; the LogBatcher hides its interval, so track it here
+
+
+def _emit_log_records(conn, records: list[dict], dropped: int) -> None:
+    """LogBatcher flush_callback. Runs on the loop thread. Writes one
+    server/logRecords notification to `conn` (a StreamWriter)."""
+    msg = {
+        "jsonrpc": "2.0",
+        "method": log_delivery.LOG_RECORDS_METHOD,
+        "params": log_delivery.build_log_notification(records, dropped),
+    }
+    try:
+        _write_message(conn, msg)
+    except Exception:
+        pass  # slow/broken client; do not crash the WM (mirrors _notify_client)
+
+
+def reset_log_delivery(
+    *, interval_ms: int = 200, max_batch: int = 100, buffer_limit: int = 1000
+) -> None:
+    """(Re)initialise the delivery pipeline. Called at import, at start(), and by tests."""
+    global _log_registry, _log_batcher, _log_interval_ms
+    _log_interval_ms = interval_ms
+    _log_registry = log_delivery.SubscriptionRegistry()
+    _log_batcher = log_delivery.LogBatcher(
+        _emit_log_records, interval_ms=interval_ms,
+        max_batch=max_batch, buffer_limit=buffer_limit,
+    )
+
+
+reset_log_delivery()  # module-import default so the sink never sees an unset batcher
+
+
+def _deliver_record(record: log_delivery.ClientLogRecord) -> None:
+    """Loop-thread: fan out one record to subscribers and enqueue it."""
+    for conn in _log_registry.subscribers_for(record.level):
+        _log_batcher.enqueue(conn, record)
+
+
+def _client_log_sink(message) -> None:
+    """loguru sink. May run off the loop thread — marshal accordingly (see
+    ADR-0049 §1 threading model)."""
+    if not _log_registry.has_subscribers():
+        return
+    rec = message.record
+    level = rec["level"].name
+    mlv = _log_registry.min_level_value()
+    if mlv is None or log_delivery.level_value(level) < mlv:
+        return
+    client_record = log_delivery.ClientLogRecord(
+        timestamp=rec["time"].timestamp(),
+        level=level,
+        source="wm",
+        group=rec["name"] or "",
+        message=log_delivery.redact(rec["message"]),
+    )
+    try:
+        on_loop = asyncio.get_running_loop() is _log_loop
+    except RuntimeError:
+        on_loop = False
+    if on_loop:
+        _deliver_record(client_record)
+    elif _log_loop is not None:
+        _log_loop.call_soon_threadsafe(_deliver_record, client_record)
+
+
+def install_client_log_sink() -> int:
+    """Register the loguru sink and capture the running loop. Returns the loguru
+    handler id (for logger.remove in teardown). Call from within the running loop."""
+    global _log_loop, _log_sink_id
+    _log_loop = asyncio.get_running_loop()
+    _log_sink_id = logger.add(_client_log_sink, level="TRACE")
+    return _log_sink_id
+
+
+def _start_log_flush_loop() -> asyncio.Task:
+    global _log_flush_task
+
+    async def _loop() -> None:
+        while True:
+            await asyncio.sleep(_log_interval_ms / 1000)
+            _log_batcher.tick()
+
+    _log_flush_task = asyncio.create_task(_loop())
+    return _log_flush_task
+
+
+def _handle_subscribe_logs(writer: asyncio.StreamWriter, params: dict | None) -> dict:
+    _log_registry.register(writer, (params or {}).get("minLevel", "INFO"))
+    return {}
+
+
+def _handle_unsubscribe_logs(writer: asyncio.StreamWriter, params: dict | None) -> dict:
+    _log_batcher.flush(writer)  # deliver the tail before dropping the subscription
+    _log_registry.unregister(writer)
+    return {}
+
+
+# ---------------------------------------------------------------------------
+# ER -> WM log forwarding control (ADR-0049)
+# ---------------------------------------------------------------------------
+
+
+def _min_forward_level_name() -> str:
+    mlv = _log_registry.min_level_value()  # int | None
+    if mlv is None:
+        return "INFO"
+    for name, val in log_delivery.LOG_LEVEL_VALUES.items():
+        if val == mlv:
+            return name
+    return "INFO"
+
+
+def _desired_forwarding() -> tuple[bool, str]:
+    return (_log_registry.has_subscribers(), _min_forward_level_name())
+
+
+async def push_er_forwarding_to_runner(runner) -> None:
+    """Send updateLogging to one runner iff its desired state changed. Best-effort."""
+    if runner.client is None or not runner.initialized_event.is_set():
+        return
+    enabled, level = _desired_forwarding()
+    normalized = (True, level) if enabled else (False, "")  # level irrelevant when disabled
+    if runner.log_forwarding == normalized:
+        return
+    try:
+        from finecode.wm_server.runner import runner_client
+
+        await runner_client.update_logging(runner, normalized[0], level)
+        runner.log_forwarding = normalized
+    except Exception:
+        logger.trace(f"updateLogging to {runner.readable_id} failed; will retry on next change")
+
+
+def _sync_er_forwarding(ws_context: context.WorkspaceContext) -> None:
+    """Schedule updateLogging to every running runner to match current subscription state.
+
+    Called (on the loop thread) after any subscribe/unsubscribe/disconnect change.
+    """
+
+    async def _run() -> None:
+        for per_project in ws_context.ws_projects_extension_runners.values():
+            for runner in per_project.values():
+                await push_er_forwarding_to_runner(runner)
+
+    asyncio.ensure_future(_run())
+
+
 async def _schedule_auto_stop() -> None:
     """Wait after the last client disconnects, then stop the server."""
     await asyncio.sleep(_disconnect_timeout)
@@ -215,6 +373,7 @@ async def _handle_request_task(
     requests from the same client can be handled concurrently."""
     try:
         result = await handler(params, ws_context)
+        _log_batcher.flush(writer)  # ADR-0049: force-flush the tail before the final response
         _write_message(writer, _jsonrpc_response(req_id, result))
         await writer.drain()
     except _NotImplementedError as exc:
@@ -323,6 +482,22 @@ async def _handle_client(
                 await writer.drain()
                 continue
 
+            if method == log_delivery.SUBSCRIBE_METHOD:
+                _write_message(
+                    writer, _jsonrpc_response(req_id, _handle_subscribe_logs(writer, params))
+                )
+                _sync_er_forwarding(ws_context)
+                await writer.drain()
+                continue
+
+            if method == log_delivery.UNSUBSCRIBE_METHOD:
+                _write_message(
+                    writer, _jsonrpc_response(req_id, _handle_unsubscribe_logs(writer, params))
+                )
+                _sync_er_forwarding(ws_context)
+                await writer.drain()
+                continue
+
             if method == "actions/run" and (params or {}).get("partialResultToken") is not None:
                 # partialResultToken takes priority: the handler also forwards
                 # progressToken notifications if present.
@@ -401,6 +576,12 @@ async def _handle_client(
         pass
     finally:
         logger.info(f"FineCode API: client disconnected ({label})")
+        try:
+            _log_batcher.flush(writer)  # deliver any buffered tail
+        except Exception:
+            pass
+        _log_registry.unregister(writer)
+        _sync_er_forwarding(ws_context)
         _connected_clients.discard(writer)
         _client_labels.pop(writer, None)
 
@@ -464,6 +645,10 @@ async def start(
     logger.info(f"FineCode WM server listening on 127.0.0.1:{port}")
     logger.info(f"Discovery file: {_discovery_file}")
 
+    reset_log_delivery()  # production defaults (interval 200ms)
+    install_client_log_sink()
+    _start_log_flush_loop()
+
     # Shut down if no client connects within the timeout.
     _no_client_timeout_task = asyncio.create_task(_no_client_timeout())
 
@@ -481,7 +666,22 @@ async def start(
 
 def stop() -> None:
     """Stop the WM server and remove the discovery file."""
-    global _server, _discovery_file
+    global _server, _discovery_file, _log_flush_task, _log_sink_id
+
+    # flush any buffered tails to all subscribers before tearing down
+    try:
+        _log_batcher.flush_all()
+    except Exception:
+        pass
+    if _log_flush_task is not None:
+        _log_flush_task.cancel()
+        _log_flush_task = None
+    if _log_sink_id is not None:
+        try:
+            logger.remove(_log_sink_id)
+        except ValueError:
+            pass
+        _log_sink_id = None
 
     if _server is not None:
         _server.close()

@@ -12,6 +12,7 @@ from finecode.wm_client import ApiClient, ApiError
 from finecode.wm_server import wm_lifecycle
 from finecode.wm_server.runner import runner_client
 from finecode.cli_app import utils
+from finecode.cli_app.log_render import render_log_records
 
 
 class RunFailed(Exception):
@@ -90,6 +91,7 @@ async def run_actions(
     log_level: str = "INFO",
     dev_env: str = "cli",
     wal_enabled: bool = False,
+    verbose: bool = False,
 ) -> utils.RunActionsResult:
     port_file = None
     try:
@@ -134,6 +136,15 @@ async def run_actions(
                 click.echo(value.get("message", ""), err=True)
 
             client.on_notification("server/userMessage", _on_user_message)
+
+            async def _on_log_records(params: dict) -> None:
+                for line in render_log_records(params):
+                    click.echo(line, err=True)
+
+            if verbose:
+                client.on_notification("server/logRecords", _on_log_records)
+                # Stream WM+ER logs at the single general level (--log-level).
+                await client.subscribe_logs(log_level)
 
             # When a project filter is given and we own the server, discover
             # projects first (no runners), resolve names to paths, then start

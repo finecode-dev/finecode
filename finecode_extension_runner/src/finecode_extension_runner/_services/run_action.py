@@ -648,7 +648,7 @@ async def run_action(
                             ) from eg
                         raise ActionFailedException(
                             f"Running action handlers of '{action_def.name}' failed"
-                            f"(Run {run_id}). See ER logs for more details"
+                            f"(Run {run_id}): {message}. See ER logs for more details"
                         ) from eg
 
                     for handler, handler_task in zip(action_def.handlers, handlers_tasks):

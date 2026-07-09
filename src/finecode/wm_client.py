@@ -137,6 +137,14 @@ class ApiClient:
         """Return static info about the WM Server (e.g. log file path)."""
         return await self.request("server/getInfo")
 
+    async def subscribe_logs(self, min_level: str = "INFO") -> None:
+        """Subscribe this connection to WM diagnostic logs (``server/logRecords``)."""
+        await self.request("server/subscribeLogs", {"minLevel": min_level})
+
+    async def unsubscribe_logs(self) -> None:
+        """Unsubscribe this connection from WM diagnostic logs."""
+        await self.request("server/unsubscribeLogs", {})
+
     # -- Workspace methods --------------------------------------------------
 
     async def list_projects(self) -> list[dict]:

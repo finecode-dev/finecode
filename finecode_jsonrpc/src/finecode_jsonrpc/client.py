@@ -176,6 +176,10 @@ class JsonRpcClient:
         self._sync_request_futures: dict[str, concurrent.futures.Future] = {}
         self._async_request_futures: dict[str, asyncio.Future] = {}
         self._stderr_buffer: list[str] = []
+        # The server writes its own diagnostics to stdout; before the RPC channel
+        # exists (startup), er/logRecords forwarding cannot run, so we retain the
+        # startup-window stdout here to surface it in a ServerFailedToStart diagnostic.
+        self._stdout_buffer: list[str] = []
         self._expected_result_type_by_msg_id: dict[str, typing.Any] = {}
 
         self._tracing = tracing
@@ -188,6 +192,12 @@ class JsonRpcClient:
         self._tcp_port_future: asyncio.Future[int] | None = None
 
     def feature(self, name: str, impl: collections.abc.Callable) -> None:
+        # NOTE: registering a feature here is necessary but NOT sufficient. Incoming
+        # requests and notifications are also gated and deserialized against the
+        # client's `message_types` table: `_handle_incoming_*` drops any method missing
+        # from `message_types` with only a warning (see the notification path below),
+        # so the impl never fires. Every `feature(method, ...)` must have a matching
+        # entry in the `message_types` map passed to this client.
         self.feature_impls[name] = impl
 
     async def start(
@@ -210,6 +220,7 @@ class JsonRpcClient:
                 io_thread=io_thread,
                 debug_port_future=debug_port_future,
                 stderr_buffer=self._stderr_buffer,
+                stdout_buffer=self._stdout_buffer,
             )
             if connect:
                 await self.connect_to_server(io_thread=io_thread)
@@ -225,6 +236,7 @@ class JsonRpcClient:
         io_thread: _io_thread.AsyncIOThread,
         debug_port_future: concurrent.futures.Future[int] | None,
         stderr_buffer: list[str] | None = None,
+        stdout_buffer: list[str] | None = None,
     ) -> None:
         server_future = io_thread.run_coroutine(
             start_server(
@@ -237,6 +249,7 @@ class JsonRpcClient:
                 async_tasks=self._async_tasks_in_io_thread,
                 debug_port_future=debug_port_future,
                 stderr_buffer=stderr_buffer,
+                stdout_buffer=stdout_buffer,
             )
         )
 
@@ -822,6 +835,7 @@ class JsonRpcClient:
 
                 raise ServerFailedToStart(
                     f"Server exited before publishing TCP port (exit code: {exception.return_code})"
+                    f"{self._stdout_tail()}"
                     f"{self._stderr_tail()}"
                 ) from exception
             except TimeoutError as exception:
@@ -829,7 +843,7 @@ class JsonRpcClient:
                     task.cancel()
 
                 raise ServerFailedToStart(
-                    f"Didn't get port in {timeout} seconds{self._stderr_tail()}"
+                    f"Didn't get port in {timeout} seconds{self._stdout_tail()}{self._stderr_tail()}"
                 ) from exception
 
             port = self._tcp_port_future.result()
@@ -889,6 +903,13 @@ class JsonRpcClient:
         recent = "\n".join(self._stderr_buffer[-max_lines:])
         return f"\nServer stderr output:\n{recent}"
 
+    def _stdout_tail(self, max_lines: int = 30) -> str:
+        if not self._stdout_buffer:
+            return ""
+
+        recent = "\n".join(self._stdout_buffer[-max_lines:])
+        return f"\nServer stdout output:\n{recent}"
+
 
 async def start_server(
     cmd: str,
@@ -900,6 +921,7 @@ async def start_server(
     async_tasks: list[asyncio.Task[typing.Any]],
     debug_port_future: concurrent.futures.Future[int] | None,
     stderr_buffer: list[str] | None = None,
+    stdout_buffer: list[str] | None = None,
 ) -> tuple[
     asyncio.StreamReader | None, asyncio.StreamWriter | None, asyncio.Future[int] | None
 ]:
@@ -968,6 +990,7 @@ async def start_server(
                 tcp_port_future,
                 server.pid,
                 debug_port_future,
+                stdout_buffer,
             )
         )
         task.add_done_callback(
@@ -1064,12 +1087,18 @@ async def log_stderr(
     logger.debug("End reading logs from stderr")
 
 
+# Max startup-window stdout lines retained per ER for a start-failure diagnostic
+# (see read_stdout). Bounded so a chatty ER cannot grow WM memory before its port.
+_STDOUT_STARTUP_BUFFER_MAX = 200
+
+
 async def read_stdout(
     stdout: asyncio.StreamReader,
     stop_event: threading.Event,
     port_future: asyncio.Future[int],
     server_pid: int,
     debug_port_future: concurrent.futures.Future[int] | None,
+    stdout_buffer: list[str] | None = None,
 ) -> None:
     logger.debug(f"Start reading logs from stdout | {server_pid}")
     try:
@@ -1094,9 +1123,16 @@ async def read_stdout(
                     port = int(match.group(1))
                     if debug_port_future is not None and not debug_port_future.done():
                         debug_port_future.set_result(port)
-            # logger.debug(
-            #     f"Server {server_pid} stdout: {line.decode('utf-8', errors='replace').rstrip()}"
-            # )
+            elif stdout_buffer is not None and not port_future.done():
+                # REQUIREMENT (ADR-0049 edge case): before the RPC channel exists the
+                # ER writes its own loguru diagnostics to stdout, and er/logRecords
+                # forwarding cannot run yet. Retain this startup window (bounded) so a
+                # ServerFailedToStart diagnostic can surface *why* the server never came up
+                # — otherwise the actionable output is silently discarded. Capture stops
+                # once the port arrives (channel is up; forwarding takes over).
+                stdout_buffer.append(line.decode("utf-8", errors="replace").rstrip())
+                if len(stdout_buffer) > _STDOUT_STARTUP_BUFFER_MAX:
+                    del stdout_buffer[0]
     except asyncio.CancelledError:
         pass
     # except Exception as exception:

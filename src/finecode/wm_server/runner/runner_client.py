@@ -56,6 +56,9 @@ class ExtensionRunnerInfo(domain.ExtensionRunner):
         default_factory=IterableSubscribe
     )
     cmd_override: str | None = None
+    # Last (enabled, level) sent via finecodeRunner/updateLogging, to avoid
+    # redundant RPCs (ADR-0049).
+    log_forwarding: tuple[bool, str] | None = dataclasses.field(default=None)
 
 
 # Alias for backward compatibility — status enum now lives in domain
@@ -422,6 +425,18 @@ async def update_config(
     )
 
 
+async def update_logging(runner: ExtensionRunnerInfo, forward: bool, forward_level: str) -> None:
+    """Toggle ER->WM log forwarding via the dedicated ``finecodeRunner/updateLogging``
+    request. Process-level only on the ER side -- does NOT rebuild RunnerContext
+    (contrast ``update_config``)."""
+    await runner.client.send_request(
+        method=_internal_client_types.ER_UPDATE_LOGGING,
+        params=_internal_client_types.ErUpdateLoggingParams(
+            forward=forward, forward_level=forward_level
+        ),
+    )
+
+
 async def notify_document_did_open(
     runner: ExtensionRunnerInfo, document_info: domain.TextDocumentInfo
 ) -> None:
@@ -472,6 +487,7 @@ __all__ = [
     "resolve_package_path",
     "RunnerConfig",
     "update_config",
+    "update_logging",
     "notify_document_did_open",
     "notify_document_did_close",
 ]
