@@ -185,9 +185,6 @@ version_file = "src/finecode/_version.py"
 [tool.setuptools.packages.find]
 where = ["src"]
 
-[tool.finecode.action.init_falkordb.handlers.init_falkordb]
-config.falkordb_host = "falkordb"
-
 [tool.finecode.action.get_src_artifact_version]
 source = "fine_src_artifacts.GetSrcArtifactVersionAction"
 handlers_mode = "replace"
