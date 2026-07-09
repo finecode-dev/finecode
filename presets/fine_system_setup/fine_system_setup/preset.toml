@@ -1,0 +1,3 @@
+[tool.finecode.action.setup_system]
+source = "fine_system_setup.SetupSystemAction"
+handlers = []
