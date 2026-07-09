@@ -90,6 +90,7 @@ jobs:
           key: ${{ runner.os }}-venvs-${{ hashFiles('**/pyproject.toml', '**/preset.toml') }}
 
       - name: Install dependencies
+        id: install
         run: |
           # CI must exercise this branch's local source, so finecode and its sibling
           # packages need an editable install, not a released version from PyPI — see
@@ -99,21 +100,21 @@ jobs:
         shell: bash
 
       - name: Inspect code
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         run: |
           source .venvs/dev_workspace/${{ matrix.venv_bin }}/activate
           python -m finecode run --log-level="$FINECODE_LOG_LEVEL" inspect_code
         shell: bash
 
       - name: Audit code
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         run: |
           source .venvs/dev_workspace/${{ matrix.venv_bin }}/activate
           python -m finecode run --log-level="$FINECODE_LOG_LEVEL" audit_code
         shell: bash
 
       - name: Check formatting
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         run: |
           source .venvs/dev_workspace/${{ matrix.venv_bin }}/activate
           python -m finecode run --log-level="$FINECODE_LOG_LEVEL" check_formatting
@@ -121,14 +122,14 @@ jobs:
 
       - name: Build artifacts
         id: build
-        if: runner.os == 'Linux' && !cancelled()
+        if: runner.os == 'Linux' && !cancelled() && steps.install.outcome == 'success'
         run: |
           source .venvs/dev_workspace/${{ matrix.venv_bin }}/activate
           python -m finecode run --log-level="$FINECODE_LOG_LEVEL" build_artifact
         shell: bash
 
       - name: Run unit tests
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         run: |
           source .venvs/dev_workspace/${{ matrix.venv_bin }}/activate
           # TODO: test with all supported python versions
