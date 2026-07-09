@@ -72,6 +72,39 @@ Any dependency whose package name matches a workspace editable package is automa
 
 The resolved editable-packages set is the union of every discovered project (when `all_workspace_packages_editable` is `true`) and every explicit `editable_packages` entry.
 
+### Installing the project under test
+
+Some tools must import and exercise the project itself — a test runner is the
+canonical example. An env opts into this with a scalar sibling to the
+`dependencies` supplement:
+
+```toml
+[tool.finecode.env.dev]
+install_project = true
+```
+
+This installs the project being configured — editable, from its own
+directory — into that env in addition to its dependency-group packages. The
+setting defaults to `false`; most FineCode envs are isolated tool envs
+(`dev_no_runtime`, formatter/linter envs) that must not have the project on
+their import path.
+
+A preset that ships a project-importing tool (e.g. a test runner) sets
+`install_project = true` for the env its handler runs in — the preset cannot
+know the consuming project's package name, so this is the only way for it to
+avoid a first-run `ModuleNotFoundError`. A user who does not want the project
+installed into that env overrides it in their own `pyproject.toml`:
+
+```toml
+[tool.finecode.env.dev]
+install_project = false
+```
+
+If the env's dependency group also names the project directly (the
+[runtime dependencies](#runtime-dependencies) pattern above), the two are
+idempotent: the editable install from `install_project` takes precedence over
+the plain named requirement, and the project is installed once.
+
 ### Composing environments
 
 To reuse a group inside another group, use the standard PEP 735 `include-group`:
@@ -160,6 +193,32 @@ For subprojects in the workspace, `prepare-envs` creates their `dev_workspace` e
 **Requirement:** the workspace root's `create_envs` and `install_envs` configuration must produce a valid `dev_workspace` for every subproject. In practice this is rarely a constraint: `dev_workspace` envs exist only to run FineCode and preset packages, so their setup is uniform across projects. If a subproject genuinely requires different handler configuration for either action, its `dev_workspace` must be bootstrapped manually the same way as the workspace root's.
 
 Only after all `dev_workspace` envs exist are runners started, and only then can the remaining steps run across all envs.
+
+---
+
+## Automatic env repair
+
+When an Extension Runner fails to apply a config update because a required package is missing from its env, the WM automatically reinstalls the env and restarts the ER — without requiring a manual `prepare-envs` run.
+
+### Trigger
+
+The ER signals the problem by returning error code `-32001` (`ENV_REINSTALL_NEEDED`) from `finecodeRunner/updateConfig`. This code is returned in two cases:
+
+- A handler package is installed but its `finecode.activator` entry points are stale (editable install not re-registered after `pyproject.toml` change).
+- A required Python module is not installed in the env at all.
+
+The WM catches this, runs `CreateEnvsAction` + `InstallEnvsAction` for the affected env, then restarts the ER.
+
+### Runner routing
+
+The runner that executes `CreateEnvsAction` / `InstallEnvsAction` during auto-repair depends on which env is being fixed:
+
+| Env being repaired | Executor runner |
+|---|---|
+| `dev_workspace` | Workspace **root's** dev_workspace runner |
+| Any other env (e.g. `dev_no_runtime`) | The **subproject's own** dev_workspace runner |
+
+**Why the split?** When `dev_workspace` needs repairing, the subproject's own runner does not exist yet — the root runner is the only available executor. For all other envs, the subproject's `dev_workspace` is already running and carries the correct project-local configuration (env specs, package lists), so it is the right executor.
 
 ---
 

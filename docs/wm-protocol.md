@@ -834,6 +834,56 @@ auto-shutdown.
 
 ---
 
+#### `server/subscribeLogs`
+
+Subscribe this connection to WM diagnostic logs, streamed back as
+`server/logRecords` notifications. Log delivery is batched (default ~200ms
+cadence) except `ERROR`/`CRITICAL` records, which flush immediately; any
+buffered tail is also flushed before this connection's next request response
+and on disconnect, so no records are lost mid-request.
+
+- **Type:** request
+- **Clients:** CLI
+- **Status:** implemented
+
+**Params:**
+
+```json
+{"minLevel": "INFO"}
+```
+
+`minLevel` is optional (default: `"INFO"`). One of `"TRACE"`, `"DEBUG"`,
+`"INFO"`, `"SUCCESS"`, `"WARNING"`, `"ERROR"`, `"CRITICAL"`. Only records at or
+above this level are delivered to this connection.
+
+**Result:** `{}`
+
+**Behaviour:**
+
+- Sensitive-looking values (tokens, secrets, passwords, credentials, etc.) are
+  redacted from log messages before delivery (`***REDACTED***`).
+- When no client is subscribed, log streaming is a no-op (zero cost) — the WM
+  does not batch or send anything.
+- Calling this again for the same connection replaces the previous `minLevel`.
+
+---
+
+#### `server/unsubscribeLogs`
+
+Unsubscribe this connection from WM diagnostic logs. Any buffered tail is
+flushed to the client (as a final `server/logRecords` notification) before the
+subscription is dropped.
+
+- **Type:** request
+- **Clients:** CLI
+- **Status:** implemented
+
+**Params:** `{}`
+
+**Result:** `{}`
+
+---
+
 ### Server -> Client Notifications
 
 These are sent by the WM Server to connected clients. Clients must implement
@@ -976,3 +1026,51 @@ Broadcast user-facing messages (errors, warnings, info) to connected clients.
 ```
 
 `type` values: `"INFO"`, `"WARNING"`, `"ERROR"`
+
+---
+
+#### `server/logRecords`
+
+Delivers a batch of WM diagnostic log records to a connection that called
+`server/subscribeLogs`. Only sent to the subscribed connection — never
+broadcast.
+
+- **Type:** notification (server -> client)
+- **Clients:** CLI
+- **Status:** implemented
+
+**Params:**
+
+```json
+{
+  "records": [
+    {
+      "timestamp": 1730000000.123,
+      "level": "INFO",
+      "source": "wm",
+      "group": "finecode.wm_server.wm_server",
+      "message": "FineCode API: client connected from ('127.0.0.1', 54321)"
+    }
+  ],
+  "droppedCount": 3
+}
+```
+
+`records[].level` is one of `"TRACE"`, `"DEBUG"`, `"INFO"`, `"SUCCESS"`,
+`"WARNING"`, `"ERROR"`, `"CRITICAL"`. `records[].source` is `"wm"` for records
+emitted by the Workspace Manager itself, or `"runner:<env>@<project>"`
+(ADR-0049 Phase 2) for records forwarded from an Extension Runner — e.g.
+`"runner:runtime@my_project"`. ER-forwarded records are only produced while a
+client is subscribed (the WM enables ER forwarding on subscribe and disables
+it once the last subscriber disconnects) and are redacted at the WM boundary
+before delivery, same as WM's own records. `records[].group` is the
+originating loguru logger name (roughly the emitting module).
+
+`droppedCount` is present (and > 0) only when the per-connection buffer
+overflowed and older records were discarded before this batch was sent —
+clients should surface this so operators know log delivery was lossy.
+
+Delivery is batched (~200ms cadence by default) except records at `ERROR` or
+above, which are flushed immediately. Any buffered tail is force-flushed
+before the response to the request that triggered the logging and again on
+disconnect, so log ordering relative to the triggering request is preserved.

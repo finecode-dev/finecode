@@ -12,12 +12,27 @@ method names.
 ## Transport
 
 - JSON-RPC 2.0
-- LSP-style framing over stdio: `Content-Length: N\r\nContent-Type: application/vscode-jsonrpc; charset=utf-8\r\n\r\n{json}`
+- LSP-style framing (`Content-Length: N\r\nContent-Type: application/vscode-jsonrpc; charset=utf-8\r\n\r\n{json}`) over a **loopback TCP socket**. On startup the ER binds a free port on `127.0.0.1` and announces it on stdout as `Serving on ('127.0.0.1', <port>)`; the WM reads that line from the spawned process's stdout and connects to the advertised port. (A stdio transport also exists in the ER but is not the default path.)
 - WM spawns ER processes with:
   - `python -m finecode_extension_runner.cli start --project-path=... --env-name=... --log-level=INFO`
   - `--log-level` sets the global default log level for the ER process (default: `INFO`); fine-grained per-group overrides are delivered later via `finecodeRunner/updateConfig`
-  - `--debug` enables a debugpy attach flow before WM connects
+  - `--debug` enables a debugpy attach flow before WM connects (the debug port is announced on stdout as `Debug session: 127.0.0.1:<port>`)
 - All parameter object keys use camelCase.
+
+### Startup-failure diagnostics (requirement / edge case)
+
+Until the ER publishes its port, there is **no RPC channel**, so `er/logRecords`
+forwarding (see ER→WM notifications) cannot run — a runner that fails to start or exits
+before announcing its port can forward nothing. Because the ER writes its own loguru
+diagnostics to **stdout**, the WM-side client retains the **startup-window stdout**
+(bounded) in addition to the subprocess **stderr**, and surfaces both — as a
+`Server stdout output:` / `Server stderr output:` tail — in the `ServerFailedToStart`
+error. That error is logged by the WM (reaching subscribed clients as `server/logRecords`
+with `source: "wm"`, per ADR-0049) and returned in the triggering operation's error
+response. Capture stops once the port is published; after that the live channel and
+`er/logRecords` take over. This keeps a "runner failed to start" failure legible over the
+protocol even though the runner never became reachable. (Regression-tested in
+`finecode_jsonrpc/tests/test_startup_output_capture.py`.)
 
 ## Lifecycle
 
@@ -70,6 +85,24 @@ method names.
       - `defaultLevel` (string): global log level, e.g. `"INFO"`, `"DEBUG"`, `"TRACE"`. Overrides the `--log-level` startup value when present.
       - `logGroups` (object): map of logger-name prefix → level string. Prefix matching applies — a key of `"fine_python_ruff"` covers `fine_python_ruff`, `fine_python_ruff.linter`, etc. The longest matching prefix wins. Example: `{ "fine_python_ruff": "TRACE", "finecode_extension_runner": "WARNING" }`
   - Result: `{}` (empty object)
+
+- `finecodeRunner/updateLogging` (ADR-0049)
+  - Params: `{ "forward": boolean, "forwardLevel": string }`
+  - Result: `{}` (empty object)
+  - Toggles ER -> WM log forwarding (see `er/logRecords` below). This is a
+    **dedicated, process-level** control message — unlike
+    `finecodeRunner/updateConfig`, applying it never rebuilds the ER's
+    `RunnerContext` (no handler/service re-initialization).
+  - The WM sends this only while at least one client is subscribed to WM logs
+    (`server/subscribeLogs`); it disables forwarding again (`forward: false`)
+    once the last subscriber unsubscribes or disconnects. A newly started ER
+    is brought up to date immediately if a client is already subscribed.
+    Forwarding is therefore zero-cost on the ER when nobody is observing.
+  - `forwardLevel` sets the minimum level forwarded to the WM
+    (`"TRACE"|"DEBUG"|"INFO"|"SUCCESS"|"WARNING"|"ERROR"|"CRITICAL"`) and is
+    **independent** of the ER's own file/stdout log level configured via
+    `finecodeRunner/updateConfig`'s `logging` block — enabling forwarding
+    never changes what the ER writes to its own log file.
 
 - `finecodeRunner/getInfo`
   - Params: `{}`
@@ -217,9 +250,10 @@ method names.
     metadata on its `Action` domain objects before the runner is considered ready.  The
     WM uses `canonical_source` as the primary identifier in all subsequent action
     lookups.  `parentActionSource` and `language` are used to serve
-    `finecode/getActionMetadata` requests from cache (see ER→WM section).  Fields absent
+    `finecode/getActionsForParent` requests (see ER→WM section).  Fields absent
     from the response (import failure) remain `None` until another runner for the same
-    project resolves them; if still unresolved when requested, auto-repair is triggered.
+    project resolves them; if still unresolved when requested, resolution is retried
+    on demand (see `finecode/getActionsForParent` below).
 
 - `actions/resolveSource`
   - Params: `{ "source": string }` — an arbitrary import-path alias to resolve.
@@ -291,19 +325,20 @@ method names.
   - Result: `{ "result": <json result object>, "returnCode": 0|1 }`
   - Runs the action at project scope (all env-runners of the ER's own project). WM enforces `OrchestrationPolicy.max_recursion_depth` before dispatching.
 
-- `finecode/getActionMetadata`
-  - Params: `{ "actionSource": string }` — fully qualified import path of an action class.
-  - Result: `{ "parentActionSource": string | null, "language": string | null }`
-    — the `PARENT_ACTION` canonical source and `LANGUAGE` of the action class.
-  - Raises a JSON-RPC error when the action cannot be resolved even after auto-repair.
-  - Used by an ER when `get_actions_for_parent` cannot import an action class locally
-    (because the class belongs to another env). The WM serves this from its metadata
-    cache, which is populated at runner startup via `finecodeRunner/resolveActionMeta`.
-    If the cache has no entry for the action (it was not importable at startup), the WM
-    triggers auto-repair for the handler env (prepare-envs + runner restart), which
-    re-runs `resolveActionMeta` and repopulates the cache, then returns the result.
-    The ER caches the response in `ActionDeclaration.metadata` to avoid repeated
-    round-trips.
+- `finecode/getActionsForParent` (ADR-0045)
+  - Params: `{ "parentActionSource": string }` — fully qualified import path of a
+    parent action class.
+  - Result: `{ "subactions": [{ "source": string, "canonicalSource": string | null,
+    "language": string }, ...] }` — every action in this project whose resolved
+    `PARENT_ACTION` matches `parentActionSource`, regardless of which env owns its
+    handler.
+  - Used by an ER's `get_actions_for_parent` to discover subactions that live in a
+    different env than the caller — an ER only ever knows the actions its own env
+    executes, so cross-env subaction discovery is delegated to the WM, which has
+    the full project-wide action topology. Actions not yet resolved by any runner
+    are resolved on demand (starting the handler's env if needed) before being
+    checked against `parentActionSource`; an action that still cannot be resolved
+    is simply excluded rather than failing the whole request.
 
 - `finecode/runActionInWorkspace`
   - Params:
@@ -326,6 +361,16 @@ method names.
   - When `$/progress` is used to deliver results, the final `actions/run` or
     `actions/runHandlers` response must have `status: "streamed"` and empty
     `result_by_format`. See result (streamed) entries above.
+
+- `er/logRecords` (ADR-0049)
+  - Params: `{ "records": [{ "timestamp": number, "level": string, "group": string, "message": string }, ...] }`
+  - Sent by the ER only while forwarding is enabled (see
+    `finecodeRunner/updateLogging` above); otherwise the ER never sends this
+    notification. Records are raw/unredacted — **redaction happens at the WM
+    boundary**, not in the ER — and are unbatched (one send per emitted
+    record); the WM re-batches before relaying to subscribed clients as
+    `server/logRecords` (see `docs/wm-protocol.md`), tagging each record's
+    `source` as `"runner:<env>@<project>"`.
 
 ### WM obligation: bridging both delivery modes to callers
 

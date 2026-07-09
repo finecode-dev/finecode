@@ -3,7 +3,7 @@
 FineCode merges configuration from multiple sources in order of increasing priority:
 
 ```
-preset.toml  →  pyproject.toml / finecode.toml  →  environment variables  →  CLI flags
+preset.toml  →  pyproject.toml / finecode.toml  →  finecode-user.toml  →  environment variables  →  CLI flags
 ```
 
 Higher-priority sources override lower-priority ones.
@@ -15,6 +15,8 @@ Higher-priority sources override lower-priority ones.
 | Workspace | `finecode-workspace.toml` at the workspace root | Only valid location for workspace-scoped settings |
 | Project | `[tool.finecode.*]` in `pyproject.toml` | Default; recommended |
 | Project | `finecode.toml` at the project root | Alternative to `pyproject.toml`; cannot be combined with it |
+| User (project) | `finecode-user.toml` at the project root | Personal preferences; gitignored; optional |
+| User (preset) | `finecode-user.toml` next to `preset.toml` | Editable presets only; gitignored; optional |
 
 `finecode.toml` and `[tool.finecode.*]` in `pyproject.toml` are **mutually exclusive** within a project — pick one. `finecode.toml` uses a `[finecode]` top-level table; the structure is otherwise identical. A lone `finecode.toml` without an adjacent `pyproject.toml` is ignored.
 
@@ -71,7 +73,7 @@ handlers = [
 
 ### Configuring a handler
 
-Use `[[tool.finecode.action_handler]]` to configure a handler by its source path:
+**By source path** — use `[[tool.finecode.action_handler]]`:
 
 ```toml
 [[tool.finecode.action_handler]]
@@ -84,6 +86,19 @@ source = "fine_python_flake8.Flake8LintFilesHandler"
 config.max_line_length = 88
 config.extend_ignore = ["E203", "E501"]
 ```
+
+**By action and handler name** — use a table keyed by handler name under the action:
+
+```toml
+[tool.finecode.action.lint.handlers.ruff]
+config.line_length = 100
+
+[tool.finecode.action.lint.handlers.flake8]
+config.max_line_length = 88
+enabled = false
+```
+
+Any handler field can be overridden this way: `config`, `enabled`, `env`, `dependencies`, etc. The entry is merged into the handler already declared by the action (typically from a preset) — it does not replace it. This syntax is useful when you want to reference a handler by its logical name rather than its source class, for example to supply deployment-specific config for a handler that a preset declares.
 
 ### Pinning extension tool versions
 
@@ -176,6 +191,152 @@ dependencies = ["finecode_httpclient~=0.1.0a1"]
 
 The `[workspace]` table is not allowed in `finecode.toml`; workspace-scoped settings always go in `finecode-workspace.toml`.
 
+## finecode-user.toml
+
+`finecode-user.toml` is a personal, gitignored configuration layer for developer-specific preferences that must not affect the shared workspace configuration. A motivating example is installing a personal AI assistant inside a devcontainer: different developers may want Copilot, Codeium, or nothing at all, and none of these choices belong in a committed config file.
+
+### File locations
+
+There are two optional locations, following a **uniform sibling rule**: every project-level config file and every `preset.toml` gets an optional sibling `finecode-user.toml` in the same directory.
+
+| Location | Scope |
+| --- | --- |
+| `{project-root}/finecode-user.toml` | Personal project-level preferences; merged into that project's resolved config above project config |
+| `{preset-dir}/finecode-user.toml` | Merged into that preset's config at read time; sits at preset priority |
+
+`finecode-workspace.toml` does not get a sibling — workspace-scoped settings are shared by definition.
+
+### Schema
+
+`finecode-user.toml` uses the same fields as `finecode.toml` but with **no `[finecode]` wrapper** — tables are written at the top level:
+
+```toml
+presets = [{ source = "my_personal_preset" }]
+
+[action.setup_dev_tools]
+handlers = [
+    { name = "copilot", source = "fine_vscode_ext.InstallExtHandler", config.ext_id = "GitHub.copilot" },
+]
+
+[action.lint.handlers.ruff]
+config.line_length = 90
+
+[[service]]
+interface = "myext.IMyService"
+source = "myext.MyServiceImpl"
+env = "dev_no_runtime"
+dependencies = []
+
+[dependency-groups]
+dev_workspace = ["my_personal_preset>=1.0"]
+```
+
+`[workspace]` is not allowed in any user file — workspace settings always go in `finecode-workspace.toml`.
+
+### What it can do
+
+Everything `finecode.toml` can do: declare presets, add handlers to actions, configure existing handlers (`config`, `enabled`, `env`, `dependencies`), replace handler lists (`handlers_mode = "replace"`), declare services, configure the Extension Runner (`[er]`).
+
+One capability beyond `finecode.toml`: user files may declare a `[dependency-groups]` section to add packages to any dependency group (see below).
+
+### Adding dependency groups
+
+```toml
+[dependency-groups]
+dev_workspace = ["my_personal_preset>=1.0"]
+```
+
+User-declared groups are merged **additively** into the project's groups — existing packages are not removed. This is the primary mechanism for installing a personal preset package into `dev_workspace` so `prepare-envs` picks it up automatically.
+
+Handler `dependencies` fields still work as normal; `[dependency-groups]` is only needed when installing an entire personal preset package that is not part of the shared config.
+
+### Declaring personal presets
+
+```toml
+presets = [{ source = "my_personal_preset" }]
+
+[dependency-groups]
+dev_workspace = ["my_personal_preset>=1.0"]
+```
+
+User-declared presets are resolved in the same pass as shared presets and sit at preset priority — project config, workspace config, and the project-level user file can all override them.
+
+The preset package must be importable from `dev_workspace`. If it is not part of the shared config, declare it under `[dependency-groups]` in the same user file and `prepare-envs` will install it.
+
+**First-run two-step.** On the first `prepare-envs` after adding a personal preset this way, the package is installed in `dev_workspace` but the preset's own handler dependencies cannot yet be resolved (the package was unavailable during that run). Run `prepare-envs` a second time to install those. This is the same behavior as adding any new preset to shared config.
+
+### Merge priority
+
+```
+(preset + preset-user, merged at read time)
+  → project (pyproject.toml / finecode.toml)
+  → workspace (finecode-workspace.toml)
+  → project-user  ({project-root}/finecode-user.toml)
+  → env vars
+  → CLI flags
+```
+
+Project-level user config wins over all file-based shared config. Preset-level user config sits at preset priority and can be overridden by project config, workspace config, and the project-level user file.
+
+### Preset-level user config — limitations
+
+**Editable presets only.** The preset-level user file is only practical for presets that are editable installs with a stable on-disk directory (e.g. local monorepo presets). For presets installed as non-editable packages, the preset directory lives inside the virtualenv and is overwritten by `prepare-envs`. Use the project-level user file for non-editable presets.
+
+**No `[dependency-groups]` at preset level.** Dependency group declarations in a preset-level user file are not supported and generate a warning. Declare personal packages in the project-root `finecode-user.toml` instead.
+
+### gitignore convention
+
+Add `finecode-user.toml` to your `.gitignore`:
+
+```
+finecode-user.toml
+```
+
+The file is gitignored by convention; FineCode does not enforce this. If the file is absent, all behavior is a safe no-op.
+
+### Example
+
+**Shared project config (`pyproject.toml`) — committed to git:**
+
+```toml
+[tool.finecode.action.setup_dev_tools]
+source = "finecode_extension_api.actions.setup_dev_tools.SetupDevToolsAction"
+handlers = []
+```
+
+**Developer A's project-root `finecode-user.toml` — gitignored:**
+
+```toml
+presets = [{ source = "my_personal_preset" }]
+
+[action.setup_dev_tools]
+handlers = [
+    { name = "copilot", source = "fine_vscode_ext.InstallExtHandler", config.ext_id = "GitHub.copilot" },
+]
+
+[dependency-groups]
+dev_workspace = ["my_personal_preset>=1.0"]
+```
+
+**Developer B's project-root `finecode-user.toml`:**
+
+```toml
+[action.setup_dev_tools]
+handlers = [
+    { name = "codeium", source = "fine_vscode_ext.InstallExtHandler", config.ext_id = "Codeium.codeium" },
+]
+```
+
+**`.devcontainer/devcontainer.json` — shared, identical for everyone:**
+
+```json
+{
+  "postCreateCommand": "finecode run setup_dev_tools"
+}
+```
+
+For developers without a `finecode-user.toml`, the action runs with no handlers and is a no-op. For developers who have added handlers, their tools are installed automatically on devcontainer rebuild.
+
 ## finecode-workspace.toml
 
 Workspace-level configuration lives in `finecode-workspace.toml` at the workspace root, under the `[workspace]` table.
@@ -229,6 +390,8 @@ FINECODE_WM_LOG_GROUP_FINECODE_JSONRPC_CLIENT=TRACE
 ```
 
 (`<GROUP>` is uppercased with `.` → `_`.)
+
+To surface WM and ER logs in a CI job log (rather than only in files), pair `--log-level` with `--verbose` — see [Diagnostic logs in CI](cli.md#diagnostic-logs-in-ci) for the recommended INFO-by-default, DEBUG-on-demand recipe.
 
 ## Environment variables
 

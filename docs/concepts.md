@@ -25,6 +25,8 @@ Each handler:
 - declares its own **dependencies** (installed automatically by `prepare-envs`)
 - receives the action payload and returns a result
 
+> **Note:** Actions with no handlers configured are currently ignored by the Extension Runner — their metadata (scope, parent action, language) will not be resolved and they cannot be invoked. A warning is logged at startup for each such action.
+
 ### Sequential vs. concurrent execution
 
 Handlers for an action run either **sequentially** (default) or **concurrently**.
@@ -81,7 +83,7 @@ Service bindings are declared by interface and implementation:
 
 Services are singletons per Extension Runner. `init()` runs on first use, and `DisposableService` instances are disposed when the last handler using them shuts down.
 
-Service declarations merge by `interface`, so a project can rebind a preset's service by declaring the same `interface` in `pyproject.toml`.
+Service declarations merge by `interface`, so a project can rebind a preset's service by declaring the same `interface` in `pyproject.toml`. A binding can also come from an extension's `finecode.activator`; a `[[tool.finecode.service]]` declaration is applied last and overrides an activator-registered default. See [Registration and resolution](reference/services.md#how-services-are-registered-and-resolved) for the full precedence rules.
 
 ```toml
 [[tool.finecode.service]]

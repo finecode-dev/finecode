@@ -61,6 +61,8 @@ The important property: merge strategies are **associative**. Merging result A w
 
 In practical terms: when an action's merge is associative and handlers don't depend on each other's output (like independent linters), FineCode can run them **in parallel or sequentially — same result either way**. The framework makes this decision transparently. Handlers don't need to know.
 
+This safety does not come from analysing handler code. A result type defines its own merge by implementing `update()`, and the framework cannot verify that an arbitrary `update()` is associative — so it does not try. Instead, these three strategies are the **recommended, well-understood patterns** an `update()` should follow: accumulation and replacement are associative, so the engine is free to reorder handlers and schedule them concurrently; pipeline is order-dependent and runs sequentially. Choosing an associative merge is the action designer's responsibility, and the payoff is direct — it is exactly what lets the engine treat the handlers as parallelizable.
+
 ## Three levels of specificity: why swapping tools is painless
 
 This is the design decision that has the most direct impact on day-to-day configuration.
@@ -141,6 +143,41 @@ The same handler code works whether results are streamed to an IDE in real time 
 
 This is only possible because the merge strategy is defined on the result type, not in the handler. The runner knows how to combine partial results because the action's contract specifies it.
 
+## Caching is the handler's responsibility
+
+Incremental results (above) are about *delivering* work as it completes. **Caching** is about *skipping* work that does not need to be redone — relinting a file only when its contents changed, for example.
+
+Typed build systems make incrementality a framework-level service: every value flows through one uniform model, so the engine can content-address inputs and outputs and decide centrally what to rebuild. FineCode deliberately does **not** do this. An action's `Result` is arbitrarily typed and semantically general — a list of diagnostics, a formatted file, a lock file, a dependency graph — so there is no universal content-addressing the framework could apply across all of them.
+
+Instead, FineCode makes incremental execution the responsibility of individual handlers. Each handler decides whether a cached result lets it skip recomputation. This is a deliberate trade-off: FineCode gives up framework-level global incrementality in exchange for the semantic generality that makes multi-handler actions and declared merges possible in the first place.
+
+To support this, the framework provides a caching *service* (`ICache`) rather than a caching *mechanism*. `ICache` is a convenience, not the only path — because caching is just a handler concern served through dependency injection, a handler may bind a different `ICache` implementation (for example a persistent, on-disk cache that survives restarts — a planned FineCode direction), introduce an entirely different caching service of its own design, or lean on the underlying tool's native cache. Nothing in the framework privileges one approach.
+
+The built-in `ICache` is file-versioned: a cached value is stored against the file version it was computed from and is silently treated as a miss once the file changes. A handler caches its own results under its own key and reads them back on the next run:
+
+```python
+class Flake8LintFilesHandler(...):
+    CACHE_KEY = "flake8"
+
+    async def run_on_single_file(self, file_uri):
+        file_path = resource_uri_to_path(file_uri)
+        try:
+            # Cache hit — skip linting this file entirely.
+            cached = await self.cache.get_file_cache(file_path, self.CACHE_KEY)
+            return DiagnosticFilesRunResult(messages={file_uri: cached})
+        except icache.CacheMissException:
+            pass
+
+        # Cache miss — do the real work, then cache it against the file version.
+        messages = await self._lint(file_path)
+        await self.cache.save_file_cache(
+            file_path, file_version, self.CACHE_KEY, messages
+        )
+        return DiagnosticFilesRunResult(messages={file_uri: messages})
+```
+
+Because the cache key and the decision to consult it live in the handler, two handlers on the same action cache independently, a handler with no meaningful notion of reuse simply does not call the cache, and a handler is free to use a smarter or coarser invalidation rule than file version when its work warrants it. See [Caching with `ICache`](../reference/services.md#caching-with-icache) for the practical pattern.
+
 ## What this means in practice
 
 The Action Model is not theoretical overhead — it's the reason FineCode can make these concrete guarantees:
@@ -149,6 +186,7 @@ The Action Model is not theoretical overhead — it's the reason FineCode can ma
 - **Add a language without modifying dispatch logic.** Register a subaction with the right metadata. The dispatch handler discovers it automatically.
 - **Run handlers in parallel when safe, sequentially when not.** The framework decides based on the action's merge properties and handler configuration. Handlers don't coordinate with each other.
 - **Stream partial results to IDEs automatically.** Actions with decomposable payloads get incremental delivery for free. Orchestrator actions can also stream by delegating to a subaction and yielding mapped results — the framework handles delivery in both cases.
+- **Skip redundant work per handler, not per framework.** Caching is a handler-level decision served by `ICache`, not a global rebuilder. Handlers that benefit from reuse opt in; the framework imposes no universal content-addressing.
 - **No implicit merge behavior.** Every action that supports multiple handlers must define how results combine. Silent data loss from undefined merges is impossible.
 
 For practical guidance on designing new actions, see [Designing Actions](../guides/designing-actions.md).

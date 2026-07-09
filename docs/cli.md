@@ -57,6 +57,7 @@ python -m finecode run [options] <action> [<action> ...] [payload] [--config.<ke
 | `--shared-server` | Connect to the shared persistent WM Server instead of starting a dedicated one |
 | `--wal` | Enable WM write-ahead log (WAL) for the dedicated WM server started by this run command |
 | `--log-level=<level>` | Set log level: `TRACE`, `DEBUG`, `INFO`, `WARNING`, `ERROR` (default: `INFO`) |
+| `--verbose` / `-v` | Stream WM and ER diagnostic logs to stderr live over the protocol (`server/logRecords`). Auto-enabled in CI. |
 | `--no-env-config` | Ignore `FINECODE_CONFIG_*` environment variables |
 | `--no-save-results` | Do not write action results to the cache directory |
 | `--dev-env=<env>` | Override the detected dev environment. One of: `ai`, `ci`, `cli`, `ide`, `precommit` (default: auto-detected — see [Dev environment detection](#dev-environment-detection)) |
@@ -120,7 +121,7 @@ Create and populate virtual environments for all handler dependencies.
 
 ```
 python -m finecode prepare-envs [--recreate] [--env=<name>]...
-                                 [--project=<name>]... [--log-level=<level>] [--debug]
+                                 [--project=<name>]... [--log-level=<level>] [--verbose] [--debug]
 ```
 
 Must be run from the workspace or project root. Creates venvs under `.venvs/<env_name>/` and installs each handler's declared dependencies.
@@ -133,6 +134,7 @@ See [Preparing Environments](guides/preparing-environments.md) for a full explan
 | `--env=<name>` | Restrict handler dependency installation to the named env(s). Repeatable. See note below. |
 | `--project=<name>` | Restrict preparation to the named project(s) (matched by `[project].name` from `pyproject.toml`). Repeatable. |
 | `--log-level=<level>` | Set log level: `TRACE`, `DEBUG`, `INFO`, `WARNING`, `ERROR` (default: `INFO`) |
+| `--verbose` / `-v` | Stream WM and ER diagnostic logs to stderr live over the protocol (`server/logRecords`). Auto-enabled in CI. |
 | `--debug` | Wait for a debugpy client on port 5680 before starting |
 | `--dev-env=<env>` | Override the detected dev environment. One of: `ai`, `ci`, `cli`, `ide`, `precommit` (default: auto-detected) |
 
@@ -184,6 +186,39 @@ python -m finecode run --dev-env=precommit lint
 ```
 
 Valid values: `ai`, `ci`, `cli`, `ide`, `precommit`.
+
+---
+
+## Diagnostic logs in CI
+
+FineCode runs actions in Extension Runner (ER) subprocesses. Their logs, and the WM's own, are normally written to files — invisible in a CI job log where they matter most, since a failed CI run usually can't be reproduced interactively.
+
+Two independent flags control this:
+
+- **`--verbose` / `-v`** decides *whether* WM and ER logs are streamed back to the CLI's stderr (over `server/logRecords`). It is **auto-enabled when `dev_env` is `ci`**, so their diagnostics land in the CI job log without any extra configuration.
+- **`--log-level`** decides *at what level* — it is a single knob that applies uniformly to the CLI, the WM, and every ER (their logs share one stream). It defaults to `INFO`.
+
+So in CI you get full subprocess visibility at `INFO` by default. `DEBUG` is noisy, so rather than forcing it on every run, **compute the level in your CI configuration and pass it as `--log-level`** — INFO normally, DEBUG only when you ask for it. This keeps the debug-vs-info decision in your pipeline; FineCode simply honors the flag.
+
+The recommended trigger on GitHub Actions is its built-in **"Re-run with debug logging"** button, which sets `RUNNER_DEBUG=1`:
+
+```yaml
+# Compute once, expose to later steps via $GITHUB_ENV
+- name: Determine FineCode log level
+  run: |
+    if [ "${RUNNER_DEBUG:-0}" = "1" ]; then
+      echo "FINECODE_LOG_LEVEL=DEBUG" >> "$GITHUB_ENV"
+    else
+      echo "FINECODE_LOG_LEVEL=INFO" >> "$GITHUB_ENV"
+    fi
+
+# Pass it to every finecode invocation
+- run: python -m finecode run --log-level="$FINECODE_LOG_LEVEL" lint
+```
+
+The equivalent on other systems is any variable your CI can toggle per run (a pipeline parameter, a `workflow_dispatch` input, a branch/commit convention) mapped to `INFO`/`DEBUG` and passed through `--log-level`.
+
+> **Note:** on-demand DEBUG only helps for *reproducible* failures. A flaky, non-deterministic failure may not recur on a debug re-run, so its DEBUG detail is lost. If that class of failure is common in your pipeline, default the computed level to `DEBUG` instead.
 
 ---
 

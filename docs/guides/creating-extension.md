@@ -153,22 +153,25 @@ Or via CLI/env vars at runtime (see [Configuration](../configuration.md)).
 
 ## Handler lifecycle
 
-For handlers that need to start a background process (e.g. a language server), use the lifecycle hooks:
+For handlers that need to start a background process (e.g. a language server), inject `lifecycle: code_action.ActionHandlerLifecycle` and register callbacks in `__init__`:
 
 ```python
 class MyLspHandler(code_action.ActionHandler[...]):
-    action = LintFilesAction
+    def __init__(self, config: MyConfig, lifecycle: code_action.ActionHandlerLifecycle) -> None:
+        self.config = config
+        lifecycle.on_initialize(self._start)
+        lifecycle.on_shutdown(self._shutdown)
 
-    async def run(self, payload, context):
-        ...
-
-    def on_start(self) -> None:
+    def _start(self) -> None:
         # called once when the handler is first loaded
         self._process = start_my_server()
 
-    def on_shutdown(self) -> None:
+    def _shutdown(self) -> None:
         # called when the Extension Runner shuts down
         self._process.terminate()
+
+    async def run(self, payload, context):
+        ...
 ```
 
 ## Logging in handlers

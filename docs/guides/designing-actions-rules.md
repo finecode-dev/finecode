@@ -184,6 +184,48 @@ The class docstring is reserved for developer-facing documentation: contracts, i
 
 Payload fields with non-obvious semantics, defaults, or valid combinations SHOULD have attribute docstrings so their schema descriptions reach MCP consumers.
 
+## R-307: Partial result coverage must be complete
+
+When a handler uses `partial_result_sender`, it MUST ensure that every item declared in the payload is covered by at least one partial result before returning.
+
+Items silently absent from partial results leave callers in a stale state they cannot distinguish from "not yet processed" — for example, the IDE will not clear diagnostics for a file that was requested but never appeared in any partial result.
+
+Dispatch handlers are responsible for this guarantee across the whole payload: if a subaction does not handle some items (e.g. files of an unsupported language), the dispatch handler MUST send an explicit empty-or-no-op partial result for those items before returning. This mirrors the pattern for non-streaming handlers, where returning a result implicitly covers all inputs.
+
+## R-308: Handlers callable via `run_action_in_projects` must always send a result
+
+A handler for action A that can be invoked by other handlers via
+`workspace_action_runner.run_action_in_projects(A, ...)` MUST always send at least one
+result through `partial_result_sender` before returning — even when the result is empty
+(e.g. `messages={}`).
+
+Sending nothing produces a `null` JSON result that the caller cannot deserialize into the
+expected type. The error surfaces as a cryptic structural failure ("required field
+missing") rather than a clear contract violation. An explicit empty result is the correct
+way to communicate "I ran and found nothing".
+
+This rule applies to *leaf handlers* — those that compute a result (linting files,
+type-checking, running tests). It does NOT apply to *bridge/orchestrator handlers* that
+contribute partial results to a parent action: a bridge handler that determines it has
+nothing to orchestrate may return without sending, because contributing zero to the parent
+action's accumulated result is semantically correct.
+
+## R-309: Bridge handlers must skip fan-out when inputs are empty
+
+A handler that fans out to sub-actions (per-project, per-file, or otherwise) MUST return
+early — without creating any tasks — when it can determine from its own inputs that there
+is nothing to process (e.g. `target=FILES` with an empty `file_paths` list).
+
+The empty-input check MUST happen at the bridge handler level, before any tasks are
+created. It MUST NOT be delegated to each downstream leaf handler.
+
+Delegating the check downstream causes N unnecessary network round-trips to project ERs
+and propagates the empty input into leaf handlers, where it triggers R-308 violations.
+
+Note: empty `file_paths` with `target=FILES` means "no files were requested", which is
+distinct from "I processed files and found no issues". The correct response is to do
+nothing (early return), not to send an empty result.
+
 ## Handler Observability
 
 Reserved range: `R-500` to `R-599`.
@@ -201,6 +243,25 @@ A handler that spawns an external process SHOULD log the exit code, stdout, and 
 ## R-503: Unexpectedly empty results must trigger a WARNING
 
 When a handler's primary job is to produce results (test results, lint diagnostics, build outputs) but returns nothing, it MUST emit a `WARNING` that includes enough context to diagnose the cause: the command run, the exit code, and any summary the tool produced.
+
+## R-505: Dispatch handlers must warn when no targets match the input
+
+When a workspace or bridge handler fans out over a set of targets (projects,
+files, or other items) derived from the payload, it MUST emit a `WARNING` if
+the fan-out produces zero targets while the payload requested specific items.
+
+Zero targets with specific input is always a diagnosable condition: either the
+items do not belong to any known project, the input identifiers are in an
+unexpected form, or the project list is stale. A silent no-op leaves the caller
+unable to distinguish "processed and found nothing" from "never ran". The
+warning MUST include the problematic input values.
+
+Emit the warning through the injected
+`iuser_messenger.IUserMessenger` (`self.user_messenger.warning(...)`) so the
+message reaches the CLI and IDE, not only the ER logs. See
+`finecode_extension_api/interfaces/iuser_messenger.py`
+for the interface and `fine_lint/lint_inspect_code_bridge_handler.py`
+for a handler that injects and uses it.
 
 ## R-504: Do not repeat payload logging in handlers
 
@@ -222,3 +283,7 @@ Before merging a new action, verify:
 8. `DESCRIPTION` is set and clear to a caller who only sees the flat action surface. Docstrings carry contracts and other developer-facing notes.
 9. Handlers that spawn external processes log exit code, stdout/stderr, and result summary at DEBUG; warn on unexpectedly empty results (R-501 to R-503).
 10. If the action is workspace-scoped: per-project data collection is delegated to a project-scoped action via `IWorkspaceActionRunner`, not performed directly in the workspace handler (R-109).
+11. If the handler uses `partial_result_sender`: every payload item is covered by at least one partial result, including items skipped by subactions (R-307).
+12. If the handler fans out over projects or files: emit a WARNING when specific inputs match no targets (R-505).
+13. If the handler is a leaf callable via `run_action_in_projects`: it sends at least one result in all code paths, including the "nothing to process" path (R-308).
+14. If the handler is a bridge that fans out: it returns early without creating tasks when inputs are empty, rather than propagating empty inputs downstream (R-309).
