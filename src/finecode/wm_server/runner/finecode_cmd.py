@@ -8,9 +8,14 @@ _VIRTUAL_ENV_POSIX_RE = re.compile(r"^VIRTUAL_ENV=(['\"]?)(?P<path>.*?)\1\s*$", 
 
 # activate.bat records the same path, but some generators (e.g. uv) route it through
 # a `for %%i in ("...") do @set "VIRTUAL_ENV=%%~fi"` indirection instead of a plain
-# `set`, so the literal path lives inside the `for ... in (...)` clause.
+# `set "VIRTUAL_ENV=..."`, so the literal path lives inside the `for ... in (...)`
+# clause rather than after `VIRTUAL_ENV=`. The two forms need separate capture groups:
+# a plain `set "VIRTUAL_ENV=<path>"` line quotes the *whole* assignment, not just the
+# path, so a single shared capture group would swallow the `VIRTUAL_ENV=` literal too.
 _VIRTUAL_ENV_WIN_RE = re.compile(
-    r'^\s*(?:@?for\s+%%\w+\s+in\s+\(|@?set\s+)"(?P<path>[^"]+)"', re.MULTILINE | re.IGNORECASE
+    r'^\s*@?for\s+%%\w+\s+in\s+\("(?P<for_path>[^"]+)"\)\s+do\s+@?set\s+"VIRTUAL_ENV=%%~fi"'
+    r'|^\s*@?set\s+"VIRTUAL_ENV=(?P<set_path>[^"]+)"',
+    re.MULTILINE | re.IGNORECASE,
 )
 
 
@@ -54,7 +59,12 @@ def _recorded_venv_path(venv_dir_path: Path) -> Path | None:
     if match is None:
         return None
 
-    return Path(match.group("path"))
+    if sys.platform == "win32":
+        path_str = match.group("for_path") or match.group("set_path")
+    else:
+        path_str = match.group("path")
+
+    return Path(path_str)
 
 
 def get_python_cmd(project_path: Path, env_name: str) -> str:

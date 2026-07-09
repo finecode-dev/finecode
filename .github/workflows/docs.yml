@@ -12,26 +12,44 @@ jobs:
 
     steps:
       - uses: actions/checkout@v5
+        with:
+          # setuptools-scm uses tags to get the current version, fetch history and tags
+          # to get correct version
+          fetch-depth: 0
+          fetch-tags: 'true'
+
+      - name: Determine FineCode log level
+        run: |
+          if [ "${RUNNER_DEBUG:-0}" = "1" ]; then
+            echo "FINECODE_LOG_LEVEL=DEBUG" >> "$GITHUB_ENV"
+          else
+            echo "FINECODE_LOG_LEVEL=INFO" >> "$GITHUB_ENV"
+          fi
 
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.13'
+          python-version: '3.14'
 
-      - name: Install docs dependencies
-        run: |
-          python -m pip install --upgrade pip
-          # TODO: prepare_env docs
-          python -m venv .venvs/docs
-          source .venvs/docs/bin/activate
-          python -m pip install --group="docs"
+      # Same cache key pattern as ci-cd.yml so a preceding CI run on the same commit
+      # can seed this cache and skip most of the install work.
+      - name: Cache all venvs
+        uses: actions/cache@v4
+        with:
+          path: |
+            .venvs
+            **/.venvs
+          key: ${{ runner.os }}-venvs-${{ hashFiles('**/pyproject.toml', '**/preset.toml') }}
+
+      - name: Install dependencies
+        run: sh scripts/setup-dev-workspace.sh
 
       - name: Build docs
         env:
           MKDOCS_SITE_URL: https://finecode-dev.github.io
         run: |
-          source .venvs/docs/bin/activate
-          mkdocs build
+          source .venvs/dev_workspace/bin/activate
+          python -m finecode run --log-level="$FINECODE_LOG_LEVEL" build_docs
 
       - name: Deploy to finecode.github.io
         uses: peaceiris/actions-gh-pages@v4

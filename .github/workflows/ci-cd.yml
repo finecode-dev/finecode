@@ -28,7 +28,7 @@ defaults:
 
 env:
   # python version for dev workspace
-  DEV_WORKSPACE_PYTHON_VERSION: '3.13'
+  DEV_WORKSPACE_PYTHON_VERSION: '3.14'
 
 
 jobs:

@@ -43,7 +43,6 @@ dev_workspace = [
     "opentelemetry-instrumentation==0.62.*"
 ]
 dev = ["psutil==7.2.*", "debugpy==1.8.*"]
-dep_graph = ["fine_dep_graph~=0.1.0a0", "fine_dep_graph_falkordb~=0.1.0a0"]
 
 [build-system]
 requires = ["setuptools>=64", "setuptools-scm>=8"]

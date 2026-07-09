@@ -46,7 +46,9 @@ recreate_venv() {
     EDITABLE_ARGS=$(python scripts/list_dev_workspace_editables.py)
     uv pip install --python "$VENV_PYTHON" --group dev_workspace $EDITABLE_ARGS -e .
 
-    "$VENV_PYTHON" -m finecode prepare-envs
+    # FINECODE_LOG_LEVEL is set by CI (INFO normally, DEBUG on a debug re-run); it is
+    # unset in the devcontainer, where it falls back to INFO.
+    "$VENV_PYTHON" -m finecode prepare-envs --log-level="${FINECODE_LOG_LEVEL:-INFO}"
 }
 
 if [ -d "$VENV_DIR" ] && is_valid_venv; then
