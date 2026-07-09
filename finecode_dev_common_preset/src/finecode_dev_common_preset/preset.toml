@@ -2,8 +2,7 @@
 presets = [
     { source = "fine_python_recommended" },
     { source = "fine_git_hooks" },
-    { source = "fine_logs" },
-    { source = "fine_python_aksem" },
+    { source = "fine_logs" }
 ]
 
 # currently, all packages in finecode repository are pure python packages, reuse
@@ -11,12 +10,6 @@ presets = [
 [build-system]
 requires = ["setuptools>=64", "setuptools-scm>=8"]
 build-backend = "setuptools.build_meta"
-
-[[tool.finecode.service]]
-interface = "finecode_extension_api.interfaces.ihttpclient.IHttpClient"
-source = "finecode_httpclient.HttpClient"
-env = "dev_no_runtime"
-dependencies = ["finecode_httpclient~=0.1.0a1"]
 
 # TODO: recognize minimal python version automatically
 [[tool.finecode.action_handler]]
@@ -94,14 +87,14 @@ handlers = [
 [tool.finecode.action.ingest_wal_to_store]
 source = "fine_wal_events.IngestWalToStoreAction"
 handlers = [
-    { name = "discover_sources", source = "fine_wal_explorer.IngestWalSourceDiscoveryHandler", env = "wal_explorer" },
-    { name = "ingest_wal_to_store", source = "fine_wal_explorer.IngestWalToStoreHandler", env = "wal_explorer" },
+    { name = "discover_sources", source = "fine_wal_explorer.IngestWalSourceDiscoveryHandler", env = "wal_explorer", dependencies = ["fine_wal_explorer~=0.1.0a0"] },
+    { name = "ingest_wal_to_store", source = "fine_wal_explorer.IngestWalToStoreHandler", env = "wal_explorer", dependencies = ["fine_wal_explorer~=0.1.0a0"] },
 ]
 
 [tool.finecode.action.discover_wal_sources]
 source = "fine_wal_events.DiscoverWalSourcesAction"
 handlers = [
-    { name = "discover_wal_sources", source = "fine_wal_explorer.DiscoverWalSourcesHandler", env = "wal_explorer" },
+    { name = "discover_wal_sources", source = "fine_wal_explorer.DiscoverWalSourcesHandler", env = "wal_explorer", dependencies = ["fine_wal_explorer~=0.1.0a0"] },
 ]
 
 [tool.finecode.action.verify_artifact_published_to_registry]

@@ -58,6 +58,18 @@ jobs:
           fetch-depth: 0
           fetch-tags: 'true'
 
+      - name: Determine FineCode log level
+        run: |
+          # WM/ER diagnostic logs are streamed to the job log (verbose is auto-enabled
+          # in CI). Keep them at INFO normally; raise to DEBUG only when the job is
+          # re-run with "Enable debug logging" (GitHub sets RUNNER_DEBUG=1). This keeps
+          # the debug-vs-info decision in CI config — FineCode just honors --log-level.
+          if [ "${RUNNER_DEBUG:-0}" = "1" ]; then
+            echo "FINECODE_LOG_LEVEL=DEBUG" >> "$GITHUB_ENV"
+          else
+            echo "FINECODE_LOG_LEVEL=INFO" >> "$GITHUB_ENV"
+          fi
+
       - name: Set up Python ${{ env.DEV_WORKSPACE_PYTHON_VERSION }}
         uses: actions/setup-python@v5
         with:
@@ -90,21 +102,21 @@ jobs:
         if: ${{ !cancelled() }}
         run: |
           source .venvs/dev_workspace/${{ matrix.venv_bin }}/activate
-          python -m finecode run inspect_code
+          python -m finecode run --log-level="$FINECODE_LOG_LEVEL" inspect_code
         shell: bash
 
       - name: Audit code
         if: ${{ !cancelled() }}
         run: |
           source .venvs/dev_workspace/${{ matrix.venv_bin }}/activate
-          python -m finecode run audit_code
+          python -m finecode run --log-level="$FINECODE_LOG_LEVEL" audit_code
         shell: bash
 
       - name: Check formatting
         if: ${{ !cancelled() }}
         run: |
           source .venvs/dev_workspace/${{ matrix.venv_bin }}/activate
-          python -m finecode run check_formatting
+          python -m finecode run --log-level="$FINECODE_LOG_LEVEL" check_formatting
         shell: bash
 
       - name: Build artifacts
@@ -112,7 +124,7 @@ jobs:
         if: runner.os == 'Linux' && !cancelled()
         run: |
           source .venvs/dev_workspace/${{ matrix.venv_bin }}/activate
-          python -m finecode run build_artifact
+          python -m finecode run --log-level="$FINECODE_LOG_LEVEL" build_artifact
         shell: bash
 
       - name: Run unit tests
@@ -120,7 +132,7 @@ jobs:
         run: |
           source .venvs/dev_workspace/${{ matrix.venv_bin }}/activate
           # TODO: test with all supported python versions
-          python -m finecode run run_tests
+          python -m finecode run --log-level="$FINECODE_LOG_LEVEL" run_tests
         shell: bash
 
       - name: Publish to TestPyPI and verify
@@ -131,6 +143,7 @@ jobs:
         run: |
           source .venvs/dev_workspace/${{ matrix.venv_bin }}/activate
           python -m finecode run \
+            --log-level="$FINECODE_LOG_LEVEL" \
             --map-payload-fields="src-artifact-def-path,dist-artifact-paths" \
             publish_and_verify_artifact \
             --src-artifact-def-path="build_artifact.src_artifact_def_path" \
@@ -146,6 +159,7 @@ jobs:
           # TODO: make sure git tag exists (for manual trigger)
           source .venvs/dev_workspace/${{ matrix.venv_bin }}/activate
           python -m finecode run \
+            --log-level="$FINECODE_LOG_LEVEL" \
             --map-payload-fields="src-artifact-def-path,dist-artifact-paths" \
             publish_and_verify_artifact \
             --src-artifact-def-path="build_artifact.src_artifact_def_path" \
