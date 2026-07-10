@@ -37,7 +37,7 @@ class LockDependenciesDispatchHandler(
         run_context: lock_dependencies_action.LockDependenciesRunContext,
     ) -> lock_dependencies_action.LockDependenciesRunResult:
         language_result = await self.action_runner.run_action(
-            action_type=get_src_artifact_language_action.GetSrcArtifactLanguageAction,
+            action_type=iprojectactionrunner.ActionRef.from_type(get_src_artifact_language_action.GetSrcArtifactLanguageAction),
             payload=get_src_artifact_language_action.GetSrcArtifactLanguageRunPayload(
                 src_artifact_def_path=payload.src_artifact_def_path,
             ),
@@ -46,7 +46,7 @@ class LockDependenciesDispatchHandler(
         language = language_result.language
         self.logger.debug(f"Detected language '{language}' for {payload.src_artifact_def_path}")
 
-        subactions_by_lang = self.action_runner.get_actions_for_parent(
+        subactions_by_lang = await self.action_runner.get_actions_for_parent(
             lock_dependencies_action.LockDependenciesAction
         )
         if language not in subactions_by_lang:
@@ -54,9 +54,8 @@ class LockDependenciesDispatchHandler(
                 f"No lock action registered for language '{language}'"
             )
         subaction = subactions_by_lang[language]
-        subpayload = subaction.PAYLOAD_TYPE(**dataclasses.asdict(payload))
         return await self.action_runner.run_action(
             action_type=subaction,
-            payload=subpayload,
+            payload=payload,
             meta=run_context.meta,
         )
