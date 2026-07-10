@@ -87,20 +87,14 @@ class SemanticTokensResult(code_action.RunActionResult):
 
     Tokens are stored at absolute positions. The LSP endpoint is responsible
     for sorting by (line, char) and delta-encoding before sending the wire
-    response.
-
-    result_id, when set, enables the delta protocol: subsequent requests may
-    use TextDocumentSemanticTokensDeltaAction instead of a full re-request.
-    Handlers that do not support incremental computation must leave result_id
-    as None.
+    response, and for caching/diffing responses to serve the LSP delta
+    protocol (semanticTokens/full/delta) — that lives entirely in the endpoint
+    layer since only it sees the merged, document-wide token array.
     """
 
     tokens: list[SemanticToken] = dataclasses.field(default_factory=list)
     """Semantic tokens at absolute positions. Empty list means the handler
     ran and found no tokens."""
-    result_id: str | None = None
-    """Opaque identifier for this result snapshot, used by the delta protocol.
-    None = this handler does not participate in incremental updates."""
 
     def update(self, other: code_action.RunActionResult) -> None:
         if not isinstance(other, SemanticTokensResult):
@@ -108,8 +102,6 @@ class SemanticTokensResult(code_action.RunActionResult):
         # Safe to extend regardless of order: absolute positions are independent,
         # sorting happens once at the endpoint before wire encoding.
         self.tokens.extend(other.tokens)
-        if other.result_id is not None:
-            self.result_id = other.result_id
 
 
 def decode_lsp_semantic_tokens(

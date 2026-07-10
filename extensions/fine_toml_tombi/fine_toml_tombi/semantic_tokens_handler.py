@@ -78,7 +78,6 @@ class TombiSemanticTokensHandler(
             return SemanticTokensResult(tokens=[])
 
         data: list[int] = raw_result.get("data") or []
-        result_id: str | None = raw_result.get("resultId")
 
         caps = self.lsp_service.server_capabilities
         legend = caps.get("semanticTokensProvider", {}).get("legend", {})
@@ -86,4 +85,4 @@ class TombiSemanticTokensHandler(
         tombi_modifiers: list[str] = legend.get("tokenModifiers", [])
 
         tokens = decode_lsp_semantic_tokens(data, tombi_types, tombi_modifiers)
-        return SemanticTokensResult(tokens=tokens, result_id=result_id)
+        return SemanticTokensResult(tokens=tokens)

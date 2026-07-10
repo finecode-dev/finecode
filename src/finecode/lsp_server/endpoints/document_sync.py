@@ -6,6 +6,7 @@ from loguru import logger
 from lsprotocol import types
 
 from finecode.lsp_server import global_state
+from finecode.lsp_server.endpoints import semantic_tokens
 
 if TYPE_CHECKING:
     from finecode.lsp_server.lsp_server import LspServer
@@ -39,6 +40,7 @@ async def document_did_close(
     await global_state.wm_client.notify_document_closed(
         uri=params.text_document.uri
     )
+    semantic_tokens.clear_cache_for_uri(params.text_document.uri)
 
 
 async def document_did_save(

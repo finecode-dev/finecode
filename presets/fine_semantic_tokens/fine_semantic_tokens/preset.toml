@@ -6,7 +6,3 @@ name = "dispatch"
 source = "fine_semantic_tokens.SemanticTokensDispatchHandler"
 env = "dev_workspace"
 dependencies = ["fine_semantic_tokens~=0.1.0a0"]
-
-[tool.finecode.action.text_document_semantic_tokens_delta]
-source = "fine_semantic_tokens.TextDocumentSemanticTokensDeltaAction"
-# no default handlers — registered by language extensions
