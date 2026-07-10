@@ -135,48 +135,48 @@ class StopWithResponse(Exception):
         self.response = response
 
 
-class _TrackingPartialResultSender:
-    """Wraps partial_result_sender.schedule_sending with state tracking."""
+class _PartialResultAccumulator:
+    """Collects every result passed to ``send()``, and -- when a
+    ``partial_result_token`` is present -- also forwards it to the client via
+    ``partial_result_sender.schedule_sending``.
+
+    Used as the handler-facing ``partial_result_sender`` for both streaming
+    (tokened) and non-streaming callers. Handlers that call
+    ``partial_result_sender.send()`` directly (instead of using
+    ``partial_result_scheduler``) return ``None`` from ``run()``; ``accumulated``
+    is how ``run_action`` reconstructs a final action_result -- and thus a
+    correct ``return_code`` -- for those handlers, whether or not the caller
+    streams.
+
+    ``has_sent`` is a plain attribute rather than a property derived from
+    ``accumulated`` because a few call sites (the async-generator handler path)
+    set it directly, without going through ``send()``.
+    """
 
     def __init__(
         self,
-        token: int | str,
+        token: int | str | None = None,
         send_func: collections.abc.Callable[
             [int | str, code_action.RunActionResult, list[str] | None],
             collections.abc.Awaitable[None],
-        ],
+        ]
+        | None = None,
         result_formats: list[str] | None = None,
     ) -> None:
         self._token = token
         self._send_func = send_func
         self.result_formats = result_formats
         self.has_sent = False
-
-    async def send(self, result: code_action.RunActionResult) -> None:
-        self.has_sent = True
-        await self._send_func(self._token, result, self.result_formats)
-
-
-class _AccumulatingPartialResultSender:
-    """Collects every sent result so non-streaming callers get a final accumulated result.
-
-    Used in place of ``_NOOP_SENDER`` when there is no ``partial_result_token``.
-    Handlers that call ``partial_result_sender.send()`` directly (instead of using
-    ``partial_result_scheduler``) produce a correct final result for non-streaming callers.
-    """
-
-    def __init__(self) -> None:
         self.accumulated: code_action.RunActionResult | None = None
 
     async def send(self, result: code_action.RunActionResult) -> None:
+        self.has_sent = True
         if self.accumulated is None:
             self.accumulated = result
         else:
             self.accumulated.update(result)
-
-    @property
-    def has_sent(self) -> bool:
-        return self.accumulated is not None
+        if self._send_func is not None:
+            await self._send_func(self._token, result, self.result_formats)
 
 
 class _ContextOut:
@@ -364,19 +364,16 @@ async def run_action(
 
     run_context: code_action.RunActionContext | AsyncPlaceholderContext
     run_context_info = code_action.RunContextInfoProvider(is_concurrent_execution=execute_handlers_concurrently)
-    accumulating_sender: _AccumulatingPartialResultSender | None
-    if partial_result_token is not None:
-        tracking_sender = _TrackingPartialResultSender(
-            token=partial_result_token,
-            send_func=partial_result_sender.schedule_sending,
-            result_formats=result_formats,
-        )
-        context_sender: code_action.PartialResultSender = tracking_sender
-        accumulating_sender = None
-    else:
-        tracking_sender = None
-        accumulating_sender = _AccumulatingPartialResultSender()
-        context_sender = accumulating_sender
+    tracking_sender = _PartialResultAccumulator(
+        token=partial_result_token,
+        send_func=(
+            partial_result_sender.schedule_sending
+            if partial_result_token is not None
+            else None
+        ),
+        result_formats=result_formats,
+    )
+    context_sender: code_action.PartialResultSender = tracking_sender
 
     if progress_token is not None and progress_sender_func is not None:
         er_progress_sender: code_action.ProgressSender = _ERProgressSender(
@@ -470,10 +467,7 @@ async def run_action(
                     handler_results.append(handler_result)
 
                 explicit_results = [r for r in handler_results if r is not None]
-                handler_used_direct_sends = (
-                    (tracking_sender is not None and tracking_sender.has_sent) or
-                    (accumulating_sender is not None and accumulating_sender.has_sent)
-                )
+                handler_used_direct_sends = tracking_sender.has_sent
 
                 if explicit_results:
                     # Handler returned a final result — use it directly.
@@ -486,14 +480,13 @@ async def run_action(
                         await partial_result_sender.send_all_immediately()
                 elif handler_used_direct_sends:
                     # Handler sent results directly via partial_result_sender.send().
-                    # Flush any buffered streaming sends; for non-streaming, surface
-                    # the accumulated result.
+                    # Flush any buffered streaming sends, and surface the
+                    # accumulated result either way so return_code reflects it.
                     logger.trace(f"R{run_id} | Handler used direct sends, skipping scheduler")
                     if send_partial_results:
                         logger.trace(f"R{run_id} | all subresults are ready, send them")
                         await partial_result_sender.send_all_immediately()
-                    elif accumulating_sender is not None:
-                        action_result = accumulating_sender.accumulated
+                    action_result = tracking_sender.accumulated
                 else:
                     # Classic scheduler path.
                     if not isinstance(
@@ -699,21 +692,21 @@ async def run_action(
                         # Flush partial results sent by this handler immediately so
                         # sequential handlers stream results one-by-one rather than
                         # buffering all of them until the 300 ms debounce fires.
-                        if send_partial_results and tracking_sender is not None and tracking_sender.has_sent:
+                        if send_partial_results and tracking_sender.has_sent:
                             await partial_result_sender.send_all_immediately()
 
                 # Surface results sent via run_context.partial_result_sender.send()
-                # (accumulated in accumulating_sender) — these are not captured by
-                # handler return values but must contribute to the final result.
-                if accumulating_sender is not None and accumulating_sender.has_sent:
+                # -- these are not captured by handler return values but must
+                # contribute to the final result, whether the caller streams or not.
+                if tracking_sender.has_sent and tracking_sender.accumulated is not None:
                     if action_result is None:
-                        action_result = accumulating_sender.accumulated
-                    elif accumulating_sender.accumulated is not None:
-                        action_result.update(accumulating_sender.accumulated)
+                        action_result = tracking_sender.accumulated
+                    else:
+                        action_result.update(tracking_sender.accumulated)
                 # Flush partial results sent via partial_result_sender.send() in
                 # streaming mode. Without this flush, scheduled sends are delayed
                 # 300 ms and arrive after the WM has already ended the stream.
-                if tracking_sender is not None and tracking_sender.has_sent:
+                if send_partial_results and tracking_sender.has_sent:
                     await partial_result_sender.send_all_immediately()
     finally:
         if context_out is not None and isinstance(run_context_instance, code_action.RunActionContext):
@@ -733,7 +726,7 @@ async def run_action(
         f"R{run_id} | Run action end '{action_def.name}', duration: {duration}ms"
     )
 
-    if tracking_sender is not None and tracking_sender.has_sent:
+    if partial_result_token is not None and tracking_sender.has_sent:
         er_wal.emit_run_event(
             runner_context.wal_writer,
             event_type=er_wal.ErWalEventType.PARTIAL_RESULT_FINAL_SENT,
@@ -1222,7 +1215,7 @@ async def execute_action_handler(
     traceparent: str | None = None,
     trigger: str = "unknown",
     dev_env: str = "unknown",
-    tracking_sender: _TrackingPartialResultSender | None = None,
+    tracking_sender: _PartialResultAccumulator | None = None,
     partial_result_queue: asyncio.Queue | None = None,
 ) -> code_action.RunActionResult | None:
     logger.opt(lazy=True).trace(
@@ -1309,11 +1302,7 @@ async def execute_action_handler(
                         # action handler that called run_action_iter().  These could be unified
                         # into a single PartialResultForwarder abstraction in the future.
                         if partial_result_token is not None:
-                            if (
-                                tracking_sender is not None
-                                and wal_run_id is not None
-                                and not tracking_sender.has_sent
-                            ):
+                            if wal_run_id is not None and not tracking_sender.has_sent:
                                 er_wal.emit_run_event(
                                     runner_context.wal_writer,
                                     event_type=er_wal.ErWalEventType.PARTIAL_RESULT_FIRST_SENT,
@@ -1329,7 +1318,7 @@ async def execute_action_handler(
                             await partial_result_sender.schedule_sending(
                                 partial_result_token,
                                 partial_result,
-                                tracking_sender.result_formats if tracking_sender is not None else None,
+                                tracking_sender.result_formats,
                             )
                         if partial_result_queue is not None:
                             await partial_result_queue.put(partial_result)
@@ -1345,14 +1334,14 @@ async def execute_action_handler(
                             stream_result.update(partial_result)
                     if partial_result_token is not None:
                         await partial_result_sender.send_all_immediately()
-                        execution_result = None  # partials already sent
+                        execution_result = stream_result
                     elif partial_result_queue is not None:
                         execution_result = None  # each partial already forwarded to queue
                     else:
                         execution_result = stream_result
                 elif inspect.isawaitable(call_result):
                     handler_result = await call_result
-                    if tracking_sender is not None and tracking_sender.has_sent:
+                    if tracking_sender.has_sent:
                         # Do not flush here: let the caller flush at the right time.
                         # For concurrent handlers, flushing per-handler causes duplicate
                         # partial-result notifications (each handler's task flushes before
@@ -1437,7 +1426,7 @@ async def run_subresult_coros_concurrently(
     run_id: int,
     runner_context: context.RunnerContext,
     partial_result_queue: asyncio.Queue | None = None,
-    tracking_sender: _TrackingPartialResultSender | None = None,
+    tracking_sender: _PartialResultAccumulator | None = None,
     wal_run_id: str | None = None,
     trigger: str = "unknown",
     dev_env: str = "unknown",
@@ -1515,7 +1504,7 @@ async def run_subresult_coros_sequentially(
     run_id: int,
     runner_context: context.RunnerContext,
     partial_result_queue: asyncio.Queue | None = None,
-    tracking_sender: _TrackingPartialResultSender | None = None,
+    tracking_sender: _PartialResultAccumulator | None = None,
     wal_run_id: str | None = None,
     trigger: str = "unknown",
     dev_env: str = "unknown",
