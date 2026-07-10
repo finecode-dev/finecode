@@ -31,6 +31,7 @@ from finecode_extension_api.interfaces import (
     iprojectactionrunner,
     iworkspaceactionrunner,
 )
+from finecode_extension_api.interfaces.iprojectactionrunner import ActionRef
 from finecode_extension_api.resource_uri import (
     ResourceUri,
     path_to_resource_uri,
@@ -473,7 +474,7 @@ class ServeWalExplorerFromStoreHandler(
                 for attempt in range(1, local_fallback_attempts + 1):
                     try:
                         ingest_result = await self.action_runner.run_action(
-                            action_type=IngestWalToStoreAction,
+                            action_type=ActionRef.from_type(IngestWalToStoreAction),
                             payload=ingest_payload,
                             meta=meta,
                         )
