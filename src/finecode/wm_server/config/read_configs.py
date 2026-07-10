@@ -1,4 +1,5 @@
 # docs: docs/configuration.md
+import copy
 import os
 from importlib import metadata
 from pathlib import Path
@@ -9,7 +10,7 @@ import cattrs
 from finecode import user_messages
 from finecode._converter import converter as _converter
 from finecode.wm_server import context, domain
-from finecode.wm_server.config import config_models
+from finecode.wm_server.config import config_models, interpreter_matrix
 from finecode.wm_server.runner import runner_client
 from loguru import logger
 from tomlkit import loads as toml_loads
@@ -441,6 +442,10 @@ async def read_project_config(
         merge_handlers_dependencies_into_groups(actions, deps_groups)
         merge_services_dependencies_into_groups(services, deps_groups)
         _deduplicate_deps_groups(deps_groups)
+        # ADR-0047: expand any interpreter-matrix matrix environment into concrete
+        # per-interpreter envs before the extension runner dependency is injected,
+        # so every concrete env's own dependency group receives it too.
+        resolve_interpreter_matrices(project_config)
         # add extension runner after merging handlers dependencies into groups
         # because env may be missing in dependency-groups and be used in handlers
         add_extension_runner_to_dependencies(project_config)
@@ -563,22 +568,29 @@ def read_preset_config(
                 f"[dependency-groups] in {preset_user_config_path} is not supported "
                 "at preset level; declare it in your project-root finecode-user.toml instead."
             )
-        finecode_section = {k: v for k, v in preset_user_raw.items() if k != "dependency-groups"}
+        # 'presets' is excluded here and appended to preset_config.extends below instead
+        # of going through the generic merge: _merge_projects_configs overwrites
+        # list-valued keys wholesale (they aren't one of its special-cased keys), which
+        # would silently drop the preset's own `presets` entries.
+        finecode_section = {
+            k: v for k, v in preset_user_raw.items()
+            if k not in ("dependency-groups", "presets")
+        }
         wrapped_user: dict[str, Any] = {"tool": {"finecode": finecode_section}}
         # config2 (user) overwrites config1 (preset) for conflicting items — user wins
         _merge_projects_configs(preset_toml, config_path, wrapped_user, preset_user_config_path)
-        # Re-derive preset_config so user-declared sub-presets are queued for resolution
-        try:
-            presets_raw = preset_toml.get("tool", {}).get("finecode", {}).get("presets", [])
-            preset_config = config_models.PresetDefinition(
-                extends=[
+        if "presets" in preset_user_raw:
+            try:
+                user_extends = [
                     _converter.structure(p, config_models.FinecodePresetDefinition)
-                    for p in presets_raw
+                    for p in preset_user_raw["presets"]
                 ]
-            )
-        except cattrs.ClassValidationError as exception:
-            raise config_models.ConfigurationError(
-                f"Invalid preset extension declared in {preset_user_config_path}: {exception}"
+            except cattrs.ClassValidationError as exception:
+                raise config_models.ConfigurationError(
+                    f"Invalid preset extension declared in {preset_user_config_path}: {exception}"
+                )
+            preset_config = config_models.PresetDefinition(
+                extends=preset_config.extends + user_extends
             )
 
     logger.trace(f"Reading preset config finished: {preset_id}")
@@ -857,6 +869,14 @@ def _merge_projects_configs(
                     if "install_project" in env_config2:
                         env_config1["install_project"] = env_config2["install_project"]
 
+                    # ADR-0047: interpreters is a per-env scalar (a list of interpreter
+                    # strings); config2 replaces config1's list wholesale on conflict — same
+                    # override-wins rule as install_project, and consistent with TOML's
+                    # "arrays are replaced, not merged" convention used elsewhere in this
+                    # function.
+                    if "interpreters" in env_config2:
+                        env_config1["interpreters"] = env_config2["interpreters"]
+
                 for updated_dep_name, updated_dep_config in env_config2.get(
                     "dependencies", {}
                 ).items():
@@ -1059,6 +1079,161 @@ def _deduplicate_deps_groups(deps_groups: dict[str, list[Any]]) -> None:
             if dep not in unique_deps:
                 unique_deps.append(dep)
         deps_groups[group_name] = unique_deps
+
+
+def resolve_interpreter_matrices(project_config: dict[str, Any]) -> None:
+    """Expand interpreter-matrix matrix environments into concrete per-interpreter envs.
+
+    Per ADR-0047, an env declaring `interpreters` on
+    `[tool.finecode.env.<name>]` is a *matrix environment*. This expands each matrix environment
+    in place into one concrete env per interpreter
+    (`<name>@<impl>-<version>`), rewrites every handler `env` reference
+    from the matrix environment to its concrete children, replicates every service
+    bound to the matrix environment into one service per concrete child, and gives
+    each concrete child a copy of the matrix environment's dependency-groups entry
+    and env-table settings (minus `interpreters`, plus a singular
+    `interpreter` identity). A project with no `interpreters` axis
+    anywhere is left unchanged (PRD-0003 R7).
+
+    Raises:
+        ConfigurationError: An interpreter string is malformed, an
+            action mixes matrix environment and single-interpreter handlers, or a
+            matrixed action's matrix environments declare unequal interpreter
+            sets. [wraps InvalidInterpreterError / MixedMatrixError /
+            MatrixSetMismatchError from interpreter_matrix]
+    """
+    finecode_section = project_config.get("tool", {}).get("finecode", {})
+    env_table: dict[str, Any] = finecode_section.get("env", {})
+    actions_raw: dict[str, Any] = finecode_section.get("action", {})
+
+    if not any(
+        isinstance(env_raw, dict) and "interpreters" in env_raw
+        for env_raw in env_table.values()
+    ):
+        return
+
+    actions = _structure_actions(actions_raw)
+    handler_refs = [
+        interpreter_matrix.HandlerRef(
+            action=action_name, name=handler.name, env=handler.env
+        )
+        for action_name, action in actions.items()
+        for handler in action.handlers
+        if handler.env
+    ]
+
+    # Deterministic order: env table order first, then any env named
+    # only by a handler (not declared in the env table at all).
+    env_names: list[str] = list(env_table.keys())
+    for ref in handler_refs:
+        if ref.env not in env_names:
+            env_names.append(ref.env)
+
+    try:
+        env_specs = [
+            interpreter_matrix.EnvSpec(
+                name=env_name,
+                interpreters=(
+                    [
+                        interpreter_matrix.parse_interpreter(value)
+                        for value in env_table[env_name]["interpreters"]
+                    ]
+                    if env_name in env_table
+                    and "interpreters" in env_table[env_name]
+                    else None
+                ),
+            )
+            for env_name in env_names
+        ]
+        interpreter_matrix.validate(env_specs, handler_refs)
+        expansion = interpreter_matrix.expand(env_specs, handler_refs)
+    except (
+        interpreter_matrix.InvalidInterpreterError,
+        interpreter_matrix.MixedMatrixError,
+        interpreter_matrix.MatrixSetMismatchError,
+    ) as exception:
+        raise config_models.ConfigurationError(
+            f"Invalid interpreter matrix configuration: {exception}"
+        ) from exception
+
+    deps_groups: dict[str, list[Any]] = project_config.setdefault(
+        "dependency-groups", {}
+    )
+
+    # Materialize each concrete child's env-table entry and dependency
+    # group from its matrix environment, before the matrix environment entries are dropped.
+    for concrete_env in expansion.concrete_envs:
+        if concrete_env.interpreter is None:
+            continue
+        matrix_env_name = concrete_env.name.split("@", 1)[0]
+        child_raw = copy.deepcopy(env_table[matrix_env_name])
+        child_raw.pop("interpreters", None)
+        child_raw["interpreter"] = concrete_env.interpreter.canonical
+        env_table[concrete_env.name] = child_raw
+        deps_groups[concrete_env.name] = copy.deepcopy(
+            deps_groups.get(matrix_env_name, [])
+        )
+
+    # The matrix environment is gone after expansion — env discovery,
+    # prepare-envs, and handler dispatch downstream must see only
+    # concrete envs (ADR-0047).
+    for matrix_env_name in expansion.matrix_environments:
+        env_table.pop(matrix_env_name, None)
+        deps_groups.pop(matrix_env_name, None)
+
+    # Rewrite handler env references using the expansion's rewritten
+    # refs. Grouping by (action, handler name) relies on handler names
+    # being unique within one action's handler list (existing
+    # convention; see domain.ActionHandler docstring). By this point in
+    # read_project_config every action's "handlers" is already a plain
+    # list of dicts — _merge_projects_configs normalizes the dict-keyed
+    # [tool.finecode.action.X.handlers.<name>] authoring shorthand into
+    # list form for every action it merges (including the project's own
+    # pyproject.toml, which always passes through it), so no dict-keyed
+    # form can reach this point.
+    target_envs_by_handler: dict[tuple[str, str], list[str]] = {}
+    for ref in expansion.handlers:
+        target_envs_by_handler.setdefault(
+            (ref.action, ref.name), []
+        ).append(ref.env)
+
+    for action_name, action_raw in actions_raw.items():
+        if "handlers" not in action_raw:
+            continue
+        new_handlers_raw: list[dict[str, Any]] = []
+        for handler_raw in action_raw["handlers"]:
+            target_envs = target_envs_by_handler.get(
+                (action_name, handler_raw.get("name")),
+                [handler_raw.get("env", "")],
+            )
+            for target_env in target_envs:
+                child_handler_raw = copy.deepcopy(handler_raw)
+                child_handler_raw["env"] = target_env
+                new_handlers_raw.append(child_handler_raw)
+        action_raw["handlers"] = new_handlers_raw
+
+    # Services are per-ER singletons that matrixed handlers in the same
+    # env inject; a service bound to a matrix environment must exist in every
+    # concrete child (ADR-0047 does not define a service-level
+    # no-mixing/set-equality rule — that pair of validations is scoped
+    # to actions — but expansion itself is a property of the env, so it
+    # applies here the same as for handlers). [[tool.finecode.service]]
+    # is always a plain list of dicts (see _merge_projects_configs's
+    # "service" branch, which merges by "interface" but never accepts a
+    # dict-keyed shorthand), so no normalization concern applies here.
+    if "service" in finecode_section:
+        new_services_raw: list[dict[str, Any]] = []
+        for service_raw in finecode_section["service"]:
+            matrix_env_name = service_raw.get("env")
+            if matrix_env_name in expansion.matrix_environments:
+                for interpreter in expansion.matrix_environments[matrix_env_name]:
+                    concrete_name = f"{matrix_env_name}@{interpreter.env_suffix}"
+                    child_service_raw = copy.deepcopy(service_raw)
+                    child_service_raw["env"] = concrete_name
+                    new_services_raw.append(child_service_raw)
+            else:
+                new_services_raw.append(service_raw)
+        finecode_section["service"] = new_services_raw
 
 
 def resolve_workspace_editable_packages(
