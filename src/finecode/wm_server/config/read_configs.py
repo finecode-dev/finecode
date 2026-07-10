@@ -40,7 +40,8 @@ def read_project_user_config(project_dir: Path) -> dict | None:
     Returns the parsed mapping, or None if the file does not exist.
 
     Raises:
-        ConfigurationError: File is malformed or contains a [workspace] table.
+        ConfigurationError: File is malformed or contains a [workspace] or
+            [tool] table.
     """
     user_config_path = project_dir / "finecode-user.toml"
     if not user_config_path.exists():
@@ -57,6 +58,13 @@ def read_project_user_config(project_dir: Path) -> dict | None:
             f"The [workspace] table is not allowed in "
             f"{user_config_path}. "
             f"Workspace configuration must live in finecode-workspace.toml."
+        )
+    if "tool" in raw:
+        raise config_models.ConfigurationError(
+            f"The [tool] table is not allowed in {user_config_path}. "
+            f"finecode-user.toml uses the same fields as finecode.toml but "
+            f"without the [tool.finecode] wrapper — write tables directly, "
+            f"e.g. [action.x] instead of [tool.finecode.action.x]."
         )
     return raw
 
@@ -562,6 +570,13 @@ def read_preset_config(
         if "workspace" in preset_user_raw:
             raise config_models.ConfigurationError(
                 f"The [workspace] table is not allowed in {preset_user_config_path}."
+            )
+        if "tool" in preset_user_raw:
+            raise config_models.ConfigurationError(
+                f"The [tool] table is not allowed in {preset_user_config_path}. "
+                f"finecode-user.toml uses the same fields as preset.toml but "
+                f"without the [tool.finecode] wrapper — write tables directly, "
+                f"e.g. [action.x] instead of [tool.finecode.action.x]."
             )
         if "dependency-groups" in preset_user_raw:
             logger.warning(

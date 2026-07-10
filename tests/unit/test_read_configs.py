@@ -44,6 +44,23 @@ def test_project_user_config_workspace_table_raises(tmp_path: pathlib.Path) -> N
         read_project_user_config(tmp_path)
 
 
+def test_project_user_config_tool_table_raises(tmp_path: pathlib.Path) -> None:
+    """A [tool] table in finecode-user.toml is rejected with a clear error.
+
+    finecode-user.toml is unwrapped (no [tool.finecode] prefix); writing
+    [tool.finecode.action.x] instead of [action.x] used to reach
+    `_merge_projects_configs` and crash there with a bare `KeyError('tool')`
+    surfaced to the client as `API error (-32603): 'tool'`. Reject it eagerly
+    with an actionable message instead.
+    """
+    _write_toml(
+        tmp_path / "finecode-user.toml",
+        "[tool.finecode.action.lint]\nhandlers = []\n",
+    )
+    with pytest.raises(config_models.ConfigurationError, match=r"\[tool\]"):
+        read_project_user_config(tmp_path)
+
+
 def test_project_user_config_malformed_raises(tmp_path: pathlib.Path) -> None:
     """A parse error in finecode-user.toml is a hard failure.
 
@@ -845,4 +862,21 @@ def test_preset_user_config_workspace_table_raises(tmp_path: pathlib.Path) -> No
     _write_minimal_preset(tmp_path)
     _write_toml(tmp_path / "finecode-user.toml", "[workspace]\nfoo = 1\n")
     with pytest.raises(config_models.ConfigurationError, match="workspace"):
+        read_preset_config(tmp_path / "preset.toml", "mypkg")
+
+
+def test_preset_user_config_tool_table_raises(tmp_path: pathlib.Path) -> None:
+    """A [tool] table in a preset-level finecode-user.toml is rejected.
+
+    Same double-wrapping bug as at the project level — a preset's
+    finecode-user.toml is unwrapped, so [tool.finecode.action.x] used to
+    reach `_merge_projects_configs` and crash with a bare `KeyError('tool')`
+    instead of an actionable error.
+    """
+    _write_minimal_preset(tmp_path)
+    _write_toml(
+        tmp_path / "finecode-user.toml",
+        "[tool.finecode.action.lint]\nhandlers = []\n",
+    )
+    with pytest.raises(config_models.ConfigurationError, match=r"\[tool\]"):
         read_preset_config(tmp_path / "preset.toml", "mypkg")
