@@ -242,18 +242,21 @@ protocol even though the runner never became reachable. (Regression-tested in
 
 - `finecodeRunner/resolveActionMeta`
   - Params: `{}` (no params)
-  - Result: complete map of `{ "<configSource>": { "canonical_source": string, "runs_concurrently": bool, "scope": string, "parentActionSource": string | null, "language": string | null }, ... }` for every
-    action whose class can be imported in this env.  Actions that fail to import are
-    omitted entirely.
-    Example: `{ "myext.LintAction": { "canonical_source": "myext.actions.lint.LintAction", "runs_concurrently": true, "scope": "project", "parentActionSource": null, "language": null } }`
+  - Result: `{ "actions": { "<configSource>": { "canonical_source": string, "runs_concurrently": bool, "scope": string, "parentActionSource": string | null, "language": string | null, "fileLoc": string | null }, ... }, "handlerLocations": { "<handlerSource>": string | null, ... } }`.
+    `actions` covers every action whose class can be imported in this env; actions
+    that fail to import are omitted entirely. `handlerLocations` covers every handler
+    registered in this env. `fileLoc` is `"<path>:<lineno>"` of the class's source
+    (relative to the project dir when inside it, else absolute), or `null` when it
+    could not be resolved (e.g. a dynamically built class).
+    Example: `{ "actions": { "myext.LintAction": { "canonical_source": "myext.actions.lint.LintAction", "runs_concurrently": true, "scope": "project", "parentActionSource": null, "language": null, "fileLoc": "myext/actions/lint.py:10" } }, "handlerLocations": { "myext.LintHandler": "myext/lint_handler.py:20" } }`
   - Called by the WM after `finecodeRunner/updateConfig` completes to store all action
-    metadata on its `Action` domain objects before the runner is considered ready.  The
-    WM uses `canonical_source` as the primary identifier in all subsequent action
-    lookups.  `parentActionSource` and `language` are used to serve
-    `finecode/getActionsForParent` requests (see ER→WM section).  Fields absent
-    from the response (import failure) remain `None` until another runner for the same
-    project resolves them; if still unresolved when requested, resolution is retried
-    on demand (see `finecode/getActionsForParent` below).
+    and handler metadata on its `Action`/`ActionHandler` domain objects before the
+    runner is considered ready.  The WM uses `canonical_source` as the primary
+    identifier in all subsequent action lookups.  `parentActionSource` and `language`
+    are used to serve `finecode/getActionsForParent` requests (see ER→WM section).
+    Fields absent from the response (import failure) remain `None` until another
+    runner for the same project resolves them; if still unresolved when requested,
+    resolution is retried on demand (see `finecode/getActionsForParent` below).
 
 - `actions/resolveSource`
   - Params: `{ "source": string }` — an arbitrary import-path alias to resolve.

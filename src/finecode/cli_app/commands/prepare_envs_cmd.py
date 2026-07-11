@@ -20,7 +20,9 @@ async def prepare_envs(
     own_server: bool = True,
     log_level: str = "INFO",
     env_names: list[str] | None = None,
+    interpreter_names: list[str] | None = None,
     project_names: list[str] | None = None,
+    dev_env: str = "cli",
     verbose: bool = False,
 ) -> None:
     """Prepare all virtual environments for a workspace.
@@ -35,8 +37,14 @@ async def prepare_envs(
     5. Run ``create_envs`` to create all virtualenvs.
     6. Run ``install_envs`` to install all dependencies.
 
-    When ``env_names`` is given only those named environments are prepared in
-    step 6 (step 5 still runs for all envs).
+    ``env_names`` and ``interpreter_names`` (together with each matrix env's
+    config-declared ``default_interpreters`` policy) select a subset of a
+    matrix env's interpreter axis (PRD-0003 AC8): unselected matrix children
+    are skipped in both step 5 and step 6. Non-matrix envs are always created
+    in step 5; they are only installed in step 6 if selected (or if selection
+    is inactive, in which case both steps cover every env). ``dev_env`` is
+    used to resolve each matrix env's config-declared default interpreter
+    subset when ``interpreter_names`` is not given.
     When ``project_names`` is given only those projects are prepared in steps 3, 5, and 6.
     """
     port_file = None
@@ -70,7 +78,13 @@ async def prepare_envs(
             await client.subscribe_logs(log_level)
         try:
             await _run(
-                client, workdir_path, recreate, env_names, project_names
+                client,
+                workdir_path,
+                recreate,
+                env_names,
+                interpreter_names,
+                project_names,
+                dev_env,
             )
         finally:
             await client.close()
@@ -84,14 +98,18 @@ async def _run(
     workdir_path: pathlib.Path,
     recreate: bool,
     env_names: list[str] | None = None,
+    interpreter_names: list[str] | None = None,
     project_names: list[str] | None = None,
+    dev_env: str = "cli",
 ) -> None:
     try:
         await client.prepare_envs(
             workdir_path=workdir_path,
             recreate=recreate,
             env_names=env_names,
+            interpreter_names=interpreter_names,
             project_names=project_names,
+            dev_env=dev_env,
         )
     except ApiError as exc:
         raise PrepareEnvsFailed(str(exc)) from exc

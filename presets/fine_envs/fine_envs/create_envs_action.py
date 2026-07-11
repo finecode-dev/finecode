@@ -16,6 +16,9 @@ class EnvInfo:
     venv_dir_path: ResourceUri
     project_def_path: ResourceUri
     dependencies_override: list[str] = dataclasses.field(default_factory=list)
+    interpreter: str | None = None
+    """Canonical "<impl>@<version>" interpreter request (e.g. "cpython@3.11").
+    None means the default interpreter — an ordinary single-interpreter env."""
 
 
 @dataclasses.dataclass
@@ -24,6 +27,8 @@ class CreateEnvsRunPayload(code_action.RunActionPayload):
     """Explicit list of environments to create. ``None`` means handlers discover envs, empty list means explicit no-op."""
     recreate: bool = False
     """Remove and recreate existing environments from scratch even if they are already valid."""
+    env_names: list[str] | None = None
+    """Filter: when set, only environments whose name is in this list will be created. Applied during discovery only."""
 
 
 class CreateEnvsRunContext(code_action.RunActionContext[CreateEnvsRunPayload]):

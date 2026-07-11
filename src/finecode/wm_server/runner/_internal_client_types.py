@@ -42,6 +42,7 @@ WORKSPACE_PROJECT_PATHS_GET = "workspace/getProjectPaths"
 RUN_ACTION_IN_PROJECT = "finecode/runActionInProject"
 RUN_ACTION_IN_WORKSPACE = "finecode/runActionInWorkspace"
 GET_ACTIONS_FOR_PARENT = "finecode/getActionsForParent"
+LIST_WORKSPACE_ACTIONS = "finecode/listWorkspaceActions"
 
 
 @dataclasses.dataclass
@@ -1906,6 +1907,27 @@ class GetActionsForParentResponse(BaseResponse):
     result: GetActionsForParentResult
 
 
+# ---------------------------------------------------------------------------
+# finecode/listWorkspaceActions  (ER → WM)
+# ---------------------------------------------------------------------------
+
+
+@dataclasses.dataclass
+class ListWorkspaceActionsRequest(BaseRequest):
+    params: dict | None = None
+    method = LIST_WORKSPACE_ACTIONS
+
+
+@dataclasses.dataclass
+class ListWorkspaceActionsResult(BaseResult):
+    actions: list[dict] = dataclasses.field(default_factory=list)
+
+
+@dataclasses.dataclass
+class ListWorkspaceActionsResponse(BaseResponse):
+    result: ListWorkspaceActionsResult
+
+
 # IMPORTANT: every method registered as a client `feature()` handler (requests AND
 # notifications) MUST also have an entry here. The JSON-RPC client
 # (`finecode_jsonrpc.client`) gates and deserializes incoming messages against this
@@ -1986,6 +2008,7 @@ METHOD_TO_TYPES: dict[
     ),
     ER_RESOLVE_ACTION_META: (None, None, ErResolveActionMetaResponse, None),
     GET_ACTIONS_FOR_PARENT: (GetActionsForParentRequest, GetActionsForParentParams, GetActionsForParentResponse, GetActionsForParentResult),
+    LIST_WORKSPACE_ACTIONS: (ListWorkspaceActionsRequest, None, ListWorkspaceActionsResponse, ListWorkspaceActionsResult),
     WORKSPACE_EDITABLE_PACKAGES_GET: (
         GetWorkspaceEditablePackagesRequest,
         None,

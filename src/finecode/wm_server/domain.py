@@ -61,8 +61,15 @@ class ActionScope(StrEnum):
             it.  This is the default and the right choice for most actions.
         WORKSPACE: The WM dispatches the action exactly once, routing it to
             the workspace-root project.  The handler is responsible for any
-            per-project fan-out.  Use this when an action must reason about
-            all projects together.
+            per-project fan-out.  Use this when the action needs a
+            workspace-level view of its inputs or outputs: (a) aggregating or
+            de-duplicating results across projects, (b) routing a
+            workspace-level input (e.g. a flat file list spanning projects) to
+            the owning projects, or (c) fanning one invocation out to different
+            child actions per project.  Running in multiple projects is not by
+            itself a reason -- the WM already fans a PROJECT action out per
+            declaring project.  See R-108 in
+            docs/guides/designing-actions-rules.md.
     """
 
     PROJECT = "project"
@@ -112,6 +119,10 @@ class ActionHandler:
             per unique name.
         dependencies: Dependencies to install into ``env``
             (e.g. ``["fine_python_ruff~=0.2.0"]``).
+        interpreter: Canonical interpreter identity (``"<impl>@<version>"``)
+            when ``env`` is a concrete child env produced by interpreter-matrix
+            expansion (ADR-0047), or ``None`` when ``env`` is not
+            interpreter-bound.
     """
 
     def __init__(
@@ -121,12 +132,16 @@ class ActionHandler:
         config: dict[str, typing.Any],
         env: str,
         dependencies: list[str],
+        interpreter: str | None = None,
     ):
         self.name: str = name
         self.source: str = source
         self.config: dict[str, typing.Any] = config
         self.env: str = env
         self.dependencies: list[str] = dependencies
+        self.interpreter: str | None = interpreter
+        # None until the ER that hosts this handler resolves it.
+        self.file_loc: str | None = None
 
     def __str__(self) -> str:
         return f'ActionHandler(name="{self.name}", source="{self.source}", env="{self.env}")'
@@ -200,7 +215,7 @@ class Action:
 
     Post-construction fields
     ------------------------
-    Five fields are intentionally left unset at construction time and are
+    Six fields are intentionally left unset at construction time and are
     populated later during config collection and ER startup:
 
     * ``canonical_source`` — set by the ER when it resolves the action class.
@@ -217,6 +232,9 @@ class Action:
     * ``language`` — set by the ER's ``resolveActionMeta`` response.
       Language tag this action is specific to (e.g. ``"python"``), or ``None``
       for language-agnostic actions.  Remains ``None`` until the ER resolves it.
+    * ``file_loc`` — set by the ER's ``resolveActionMeta`` response.
+      ``"<path>:<lineno>"`` of the action class's source, or ``None`` when it
+      could not be resolved.
 
     Attributes:
         name: Config alias (e.g. ``"lint"``).
@@ -251,6 +269,8 @@ class Action:
         self.runs_concurrently: bool = False
         self.parent_action_source: str | None = None
         self.language: str | None = None
+        # None until the ER that hosts the action class resolves it.
+        self.file_loc: str | None = None
         self.handlers: list[ActionHandler] = handlers
         self.config = config
 

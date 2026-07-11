@@ -92,6 +92,8 @@ async def run_actions(
     dev_env: str = "cli",
     wal_enabled: bool = False,
     verbose: bool = False,
+    env_selectors: list[str] | None = None,
+    interpreter_selectors: list[str] | None = None,
 ) -> utils.RunActionsResult:
     port_file = None
     try:
@@ -226,6 +228,11 @@ async def run_actions(
                 # and return the merged result, so the returned/saved data is complete
                 # even when one project streams many partials.
                 "mergeResults": True,
+                # PRD-0003 AC8: WM-only selectors restricting a matrixed
+                # action's fan-out to a subset of its declared interpreter axis.
+                # Never forwarded to an ER.
+                "envSelectors": env_selectors or [],
+                "interpreterSelectors": interpreter_selectors or [],
             }
 
             partial_result_token = str(uuid.uuid4())
@@ -234,8 +241,9 @@ async def run_actions(
                 value = params.get("value", {}) if params else {}
                 project_str = value.get("project", "")
                 results = value.get("results", {})
+                interpreter = value.get("interpreter")
                 block = _format_project_block(
-                    project_str, results, source_to_name, show_project_header
+                    project_str, results, source_to_name, show_project_header, interpreter
                 )
                 # A partial with no rendered content (e.g. a project with nothing to
                 # report) would otherwise print just the project header with an empty
@@ -280,6 +288,7 @@ def _format_project_block(
     actions_results: dict,
     source_to_name: dict[str, str] | None = None,
     show_project_header: bool = True,
+    interpreter: str | None = None,
 ) -> str | None:
     """Format one project's action results as a printable block.
 
@@ -287,6 +296,11 @@ def _format_project_block(
     caller suppresses it for workspace-scoped runs, where every partial carries
     the same root path and the header would just repeat.  Returns ``None`` when
     there is nothing to render, so the caller can skip printing an empty body.
+
+    *interpreter* is the canonical interpreter string (``"<impl>@<version>"``)
+    carried by partials of a matrixed action; when given, a sub-heading is
+    rendered under the project header, before the action block, so live output
+    from concurrently running interpreter variants is distinguishable.
     """
     run_many_actions = len(actions_results) > 1
     project_output_parts: list[str] = []
@@ -308,6 +322,9 @@ def _format_project_block(
     content = "".join(project_output_parts)
     if not content.strip():
         return None
+
+    if interpreter:
+        content = f"{click.style(interpreter, dim=True)}\n" + content
 
     if show_project_header:
         block = f"{click.style(project_path_str, bold=True, underline=True)}\n" + content

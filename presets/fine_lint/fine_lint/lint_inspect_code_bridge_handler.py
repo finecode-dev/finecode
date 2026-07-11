@@ -82,10 +82,17 @@ class LintInspectCodeBridgeHandler(
                 for project_path, files in project_to_files.items()
             ]
             if not tasks:
-                self.user_messenger.warning(
+                message = (
                     f"LintInspectCodeBridgeHandler: none of the requested files matched a known "
                     f"project — no lint will run. file_paths={payload.file_paths}"
                 )
+                if run_context.meta.trigger == code_action.RunActionTrigger.USER:
+                    self.user_messenger.warning(message)
+                else:
+                    # System-triggered calls (e.g. IDE requesting diagnostics for every
+                    # open buffer) routinely include files outside any known project —
+                    # that's expected, not diagnosable, so keep it out of the user's face.
+                    self.logger.debug(message)
         else:
             tasks = [(project_path, payload) for project_path in project_paths]
         async with asyncio.TaskGroup() as tg:

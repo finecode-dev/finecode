@@ -27,6 +27,7 @@ from finecode.wm_server.services.run_service import (
     DevEnv,
     RunResultFormat,
 )
+from finecode.wm_server.services.run_service import matrix_runner, matrix_streaming
 
 _DONE_SENTINEL: typing.Final = object()
 
@@ -154,6 +155,7 @@ async def run_action_with_partial_results(
     ws_context: context.WorkspaceContext,
     result_formats: list[str] | None = None,
     progress_token: str | int | None = None,
+    selected_interpreters: set[str] | None = None,
 ) -> PartialResultsStream:
     """Run an action and return a stream of partial values.
 
@@ -164,6 +166,11 @@ async def run_action_with_partial_results(
     ``domain.PartialResultRawValue`` objects.  Once execution completes the
     caller should call :meth:`PartialResultsStream.final_result` to obtain the
     final completion payload (currently ``{"returnCode": int}``).
+
+    ``selected_interpreters`` (PRD-0003 AC8) restricts a matrixed action's
+    fan-out to the given interpreter canonicals, forwarded to every project's
+    ``matrix_streaming.run_matrix_with_partial_results`` call; ``None`` (the
+    default) runs the full declared axis.
     """
 
     # determine target project(s) — only CollectedProject instances have actions
@@ -226,12 +233,43 @@ async def run_action_with_partial_results(
         aggregator = ProgressAggregator(len(projects), progress_stream)
 
     async def run_one(project: domain.CollectedProject) -> None:
-        partial_count = 0
         # Each project gets a unique internal progress token to avoid interleaving
         project_progress_token: str | None = None
         if progress_token is not None:
             project_progress_token = f"progress-{uuid.uuid4()}"
 
+        action_def = next((a for a in project.actions if a.name == action_name), None)
+        if action_def is not None and matrix_runner.is_matrixed(action_def):
+            logger.trace(
+                f"partial_results: run_one (matrixed) start project={project.name}"
+                f" action={action_name} token={partial_result_token}"
+            )
+
+            async def _on_partial(interpreter_canonical: str, result_by_format: dict) -> None:
+                stream.put({
+                    "project": str(project.dir_path),
+                    "interpreter": interpreter_canonical,
+                    "resultByFormat": result_by_format,
+                })
+
+            _combined_rbf, matrix_return_code = await matrix_streaming.run_matrix_with_partial_results(
+                project=project,
+                action=action_def,
+                action_name=action_name,
+                params=params,
+                result_formats=runner_formats,
+                partial_result_token=partial_result_token,
+                run_trigger=run_trigger,
+                dev_env=dev_env,
+                ws_context=ws_context,
+                merge_results=False,
+                on_partial=_on_partial,
+                selected_interpreters=selected_interpreters,
+            )
+            return_codes.append(matrix_return_code)
+            return
+
+        partial_count = 0
         logger.trace(f"partial_results: run_one start project={project.name} action={action_name} token={partial_result_token}")
         async with run_with_partial_results(
             action_name=action_name,

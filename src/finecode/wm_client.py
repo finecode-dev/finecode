@@ -382,7 +382,9 @@ class ApiClient:
         workdir_path: pathlib.Path,
         recreate: bool = False,
         env_names: list[str] | None = None,
+        interpreter_names: list[str] | None = None,
         project_names: list[str] | None = None,
+        dev_env: str | None = None,
     ) -> None:
         """Prepare all environments for the workspace.
 
@@ -395,8 +397,12 @@ class ApiClient:
         }
         if env_names is not None:
             params["envNames"] = env_names
+        if interpreter_names is not None:
+            params["interpreters"] = interpreter_names
         if project_names is not None:
             params["projectNames"] = project_names
+        if dev_env is not None:
+            params["devEnv"] = dev_env
         await self.request("workspace/prepareEnvs", params)
 
     async def list_runners(self) -> list[dict]:

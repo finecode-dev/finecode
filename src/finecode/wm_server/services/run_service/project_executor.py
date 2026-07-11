@@ -88,6 +88,7 @@ class ProjectExecutor:
         initialize_all_handlers: bool = False,
         caller_kwargs: dict | None = None,
         allow_no_handlers: bool = False,
+        selected_interpreters: set[str] | None = None,
     ) -> RunActionResponse:
         if orchestration_depth >= policy.max_recursion_depth:
             raise ActionRunFailed(
@@ -116,6 +117,7 @@ class ProjectExecutor:
             orchestration_depth=orchestration_depth + 1,
             caller_kwargs=caller_kwargs,
             allow_no_handlers=allow_no_handlers,
+            selected_interpreters=selected_interpreters,
         )
 
     @contextlib.asynccontextmanager

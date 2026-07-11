@@ -108,6 +108,9 @@ def _collect_actions_in_config(
     presets_resolved: bool = True,
 ) -> list[domain.Action]:
     actions: list[domain.Action] = []
+    env_table: dict[str, Any] = config.get("tool", {}).get("finecode", {}).get(
+        "env", {}
+    )
     for action_name, action_def_raw in (
         config["tool"]["finecode"].get("action", {}).items()
     ):
@@ -137,6 +140,7 @@ def _collect_actions_in_config(
                     config=handler.config or {},
                     env=handler.env,
                     dependencies=handler.dependencies,
+                    interpreter=env_table.get(handler.env, {}).get("interpreter"),
                 )
                 for handler in action_def.handlers
                 if handler.enabled

@@ -568,6 +568,50 @@ async def _start_extension_runner_process(
         handle_get_actions_for_parent,
     )
 
+    async def handle_list_workspace_actions(_params: dict | None = None) -> dict:
+        """Serve ``finecode/listWorkspaceActions`` (ER → WM).
+
+        Returns the aggregated action/handler registry across every project and
+        env in the workspace. An ER only ever sees the actions its own env
+        executes, so this cross-env picture can only come from the WM. Values
+        come straight from the resolved ``domain.Action`` objects, including the
+        ``file_loc`` each owning ER resolves via ``resolveActionMeta``; fields
+        not yet resolved (before all ERs have started) are serialized as
+        ``null``. Keys are camelCase for the JSON-RPC boundary.
+        """
+        actions: list[dict] = []
+        for project in ws_context.ws_projects.values():
+            if not isinstance(project, domain.CollectedProject):
+                continue
+            for action in project.actions:
+                actions.append(
+                    {
+                        "name": action.name,
+                        "source": action.source,
+                        "canonicalSource": action.canonical_source,
+                        "scope": action.scope.value if action.scope is not None else None,
+                        "project": str(project.dir_path),
+                        "language": action.language,
+                        "parentActionSource": action.parent_action_source,
+                        "fileLoc": action.file_loc,
+                        "handlers": [
+                            {
+                                "name": h.name,
+                                "source": h.source,
+                                "env": h.env,
+                                "fileLoc": h.file_loc,
+                            }
+                            for h in action.handlers
+                        ],
+                    }
+                )
+        return {"actions": actions}
+
+    runner.client.feature(
+        _internal_client_types.LIST_WORKSPACE_ACTIONS,
+        handle_list_workspace_actions,
+    )
+
 
 _STOP_TIMEOUT_SEC: typing.Final = 10
 
@@ -1025,6 +1069,8 @@ def _propagate_action_meta(
                 action.parent_action_source = resolved.parent_action_source
             if action.language is None:
                 action.language = resolved.language
+            if action.file_loc is None:
+                action.file_loc = resolved.file_loc
 
 
 async def update_runner_config(
@@ -1060,35 +1106,48 @@ async def update_runner_config(
         ) from exception
 
     try:
-        action_meta = await runner_client.resolve_action_meta(runner)
+        action_meta_response = await runner_client.resolve_action_meta(runner)
     except Exception as exc:
         logger.warning(f"Failed to resolve action meta for runner {runner.readable_id}: {exc}")
-        action_meta = {}
+        action_meta_response = {}
+
+    action_meta: dict[str, dict] = action_meta_response.get("actions", {})
+    handler_locations: dict[str, str | None] = action_meta_response.get(
+        "handlerLocations", {}
+    )
 
     actions_without_meta: list[str] = []
     for action in project.actions:
         meta = action_meta.get(action.source)
         if meta is None:
             actions_without_meta.append(action.source)
-            continue
-        # Use the first runner that can successfully import an action to set its
-        # canonical_source.  Multiple runners for the same project should agree on
-        # canonical paths, so "first wins" is safe.
-        if action.canonical_source is None:
-            action.canonical_source = meta["canonical_source"]
+        else:
+            # Use the first runner that can successfully import an action to set its
+            # canonical_source.  Multiple runners for the same project should agree on
+            # canonical paths, so "first wins" is safe.
+            if action.canonical_source is None:
+                action.canonical_source = meta["canonical_source"]
 
-        action.runs_concurrently = meta["runs_concurrently"]
-        action.scope = domain.ActionScope(meta["scope"])
-        if action.parent_action_source is None:
-            action.parent_action_source = meta.get("parentActionSource")
-        if action.language is None:
-            action.language = meta.get("language")
+            action.runs_concurrently = meta["runs_concurrently"]
+            action.scope = domain.ActionScope(meta["scope"])
+            if action.parent_action_source is None:
+                action.parent_action_source = meta.get("parentActionSource")
+            if action.language is None:
+                action.language = meta.get("language")
+            if action.file_loc is None:
+                action.file_loc = meta.get("fileLoc")
 
-        # Scope and other class-level attributes are identical across every
-        # project that registers the same action class.  Propagate immediately
-        # so the dispatch layer sees the correct scope even before each
-        # project's own ER has started.
-        _propagate_action_meta(action, project, ws_context)
+            # Scope and other class-level attributes are identical across every
+            # project that registers the same action class.  Propagate immediately
+            # so the dispatch layer sees the correct scope even before each
+            # project's own ER has started.
+            _propagate_action_meta(action, project, ws_context)
+
+        for handler in action.handlers:
+            if handler.env != runner.env_name:
+                continue
+            if handler.file_loc is None and handler.source in handler_locations:
+                handler.file_loc = handler_locations[handler.source]
 
     ws_context.ws_action_schemas.pop(project.dir_path, None)
     logger.debug(f"Updated config of runner {runner.readable_id}")

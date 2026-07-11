@@ -360,8 +360,12 @@ async def _handle_prepare_envs(
     Params:
       dirPath: str - absolute path to the workspace root directory
       recreate: bool - delete and recreate dev_workspace venvs (default false)
-      envNames: list[str] | null - limit install_envs to these env names
+      envNames: list[str] | null - limit to these env names (and, for matrix
+        envs, their config-declared default_interpreters subset)
+      interpreters: list[str] | null - limit matrix envs to these interpreters
       projectNames: list[str] | null - limit to these projects
+      devEnv: str - active dev-env, used to resolve each matrix env's
+        config-declared default interpreter subset (default "cli")
     Result: {}
     """
     from finecode.wm_server.services.prepare_envs_service import (
@@ -375,7 +379,9 @@ async def _handle_prepare_envs(
         raise ValueError("dirPath parameter is required")
     recreate: bool = params.get("recreate", False)
     env_names: list[str] | None = params.get("envNames")
+    interpreter_names: list[str] | None = params.get("interpreters")
     project_names: list[str] | None = params.get("projectNames")
+    dev_env: str = params.get("devEnv", "cli")
 
     try:
         await prepare_envs(
@@ -383,7 +389,9 @@ async def _handle_prepare_envs(
             workdir_path=pathlib.Path(dir_path_str),
             recreate=recreate,
             env_names=env_names,
+            interpreter_names=interpreter_names,
             project_names=project_names,
+            dev_env=dev_env,
         )
     except PrepareEnvsFailed as exc:
         raise ValueError(exc.message) from exc

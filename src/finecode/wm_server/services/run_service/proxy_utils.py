@@ -17,6 +17,9 @@ from finecode.wm_server.runner.runner_manager import RunnerFailedToStart
 from finecode.wm_server.services import runner_start_service
 from finecode.wm_server.runner.runner_client import RunResultFormat  # reexport
 
+from finecode.wm_server.config import interpreter_matrix
+
+from . import matrix_runner
 from .exceptions import ActionCancelledError, ActionRunFailed, StartingEnvironmentsFailed
 
 
@@ -109,6 +112,10 @@ async def run_action_in_runner(
             runner=runner, action_name=action_name, params=params, options=options
         )
     except runner_client.BaseRunnerRequestException as exception:
+        if isinstance(exception, runner_client.ActionRunCancelled):
+            logger.debug(f"Action {action_name} cancelled in {runner.readable_id}: {exception.message}")
+            raise ActionCancelledError(exception.message) from exception
+
         logger.error(f"Error on running action {action_name}: {exception.message}")
         raise ActionRunFailed(
             _format_runner_failure_message(
@@ -268,6 +275,7 @@ async def run_with_partial_results(
     result_formats: list[runner_client.RunResultFormat] | None = None,
     progress_token: int | str | None = None,
     caller_kwargs: dict | None = None,
+    interpreter: interpreter_matrix.Interpreter | None = None,
 ) -> collections.abc.AsyncIterator[RunWithPartialResultsContext]:
     logger.trace(f"Run {action_name} in project {project_dir_path}")
     wal_run_id = wal.new_wal_run_id()
@@ -285,8 +293,22 @@ async def run_with_partial_results(
                 action = next(
                     action for action in project.actions if action.name == action_name
                 )
+                # Variant scoping for matrixed actions on the streaming path is
+                # handled by `matrix_streaming`, one layer above: it calls this
+                # function once per interpreter, passing `interpreter=` to restrict
+                # dispatch to that variant's handlers. `interpreter=None` (the
+                # default) reproduces the pre-existing, non-matrixed behaviour
+                # exactly — all of the action's handlers, dispatched to every env
+                # they declare.
+                handlers = action.handlers
+                if interpreter is not None:
+                    handlers = [
+                        handler
+                        for handler in action.handlers
+                        if handler.interpreter == interpreter.canonical
+                    ]
                 action_envs = ordered_set.OrderedSet(
-                    [handler.env for handler in action.handlers]
+                    [handler.env for handler in handlers]
                 )
                 if not action_envs:
                     await user_messages.warning(
@@ -831,6 +853,7 @@ async def run_action(
     orchestration_depth: int = 0,
     caller_kwargs: dict | None = None,
     allow_no_handlers: bool = False,
+    selected_interpreters: set[str] | None = None,
 ) -> RunActionResponse:
     """Run a single action in the project's extension runner(s).
 
@@ -840,6 +863,10 @@ async def run_action(
     :exc:`ActionRunFailed` exception.  Callers that retrieve a project from
     ``ws_context.ws_projects`` may receive any subtype — validation happens here
     so call sites do not need to duplicate the check.
+
+    ``selected_interpreters`` (PRD-0003 AC8) restricts a matrixed action's
+    fan-out to the given interpreter canonicals; ``None`` (the default) runs
+    the full declared axis. Ignored for non-matrixed actions.
     """
     wal_run_id = wal.new_wal_run_id()
     formatted_params = str(params)
@@ -917,32 +944,12 @@ async def run_action(
             raise ActionRunFailed(
                 f"Action '{action_name}' not found in project '{project_def.dir_path}'"
             )
-        all_handlers_envs = ordered_set.OrderedSet(
-            [handler.env for handler in action.handlers]
-        )
-        all_handlers_are_in_one_env = len(all_handlers_envs) == 1
 
-        if not all_handlers_envs:
-            if allow_no_handlers:
-                logger.info(
-                    f"Action '{action_name}' has no handlers (expected by caller)"
-                )
-            else:
-                logger.warning(
-                    f"Action '{action_name}' has no handlers — check your configuration"
-                )
-            return RunActionResponse(
-                result_by_format={},
-                return_code=0,
-                status="no_handlers",
-            )
-
-        if all_handlers_are_in_one_env:
-            env_name = all_handlers_envs[0]
-            response = await _run_action_in_env_runner(
+        if matrix_runner.is_matrixed(action):
+            response = await matrix_runner.run_matrix_action(
+                action=action,
                 action_name=action_name,
                 payload=payload,
-                env_name=env_name,
                 project_def=project_def,
                 ws_context=ws_context,
                 run_trigger=run_trigger,
@@ -954,46 +961,128 @@ async def run_action(
                 traceparent=traceparent,
                 orchestration_depth=orchestration_depth,
                 caller_kwargs=caller_kwargs,
+                run_variant=_execute_action,
+                selected_interpreters=selected_interpreters,
             )
         else:
-            run_concurrently = action.runs_concurrently
-
-            if run_concurrently:
-                response = await _run_multi_env_concurrent(
-                    action_name=action_name,
-                    action=action,
-                    payload=payload,
-                    project_def=project_def,
-                    ws_context=ws_context,
-                    run_trigger=run_trigger,
-                    dev_env=dev_env,
-                    result_formats=_result_formats,
-                    initialize_all_handlers=initialize_all_handlers,
-                    progress_token=progress_token,
-                    wal_run_id=wal_run_id,
-                    traceparent=traceparent,
-                    orchestration_depth=orchestration_depth,
-                    caller_kwargs=caller_kwargs,
-                )
-            else:
-                response = await _run_multi_env_sequential(
-                    action_name=action_name,
-                    action=action,
-                    payload=payload,
-                    project_def=project_def,
-                    ws_context=ws_context,
-                    run_trigger=run_trigger,
-                    dev_env=dev_env,
-                    result_formats=_result_formats,
-                    initialize_all_handlers=initialize_all_handlers,
-                    progress_token=progress_token,
-                    wal_run_id=wal_run_id,
-                    traceparent=traceparent,
-                    orchestration_depth=orchestration_depth,
-                    caller_kwargs=caller_kwargs,
-                )
+            response = await _execute_action(
+                action=action,
+                action_name=action_name,
+                payload=payload,
+                project_def=project_def,
+                ws_context=ws_context,
+                run_trigger=run_trigger,
+                dev_env=dev_env,
+                result_formats=_result_formats,
+                initialize_all_handlers=initialize_all_handlers,
+                progress_token=progress_token,
+                wal_run_id=wal_run_id,
+                traceparent=traceparent,
+                orchestration_depth=orchestration_depth,
+                caller_kwargs=caller_kwargs,
+                allow_no_handlers=allow_no_handlers,
+            )
 
         return response
+
+
+async def _execute_action(
+    *,
+    action: domain.Action,
+    action_name: str,
+    payload: dict[str, typing.Any],
+    project_def: domain.Project,
+    ws_context: context.WorkspaceContext,
+    run_trigger: runner_client.RunActionTrigger,
+    dev_env: runner_client.DevEnv,
+    result_formats: list[runner_client.RunResultFormat],
+    initialize_all_handlers: bool,
+    progress_token: int | str | None,
+    wal_run_id: str,
+    traceparent: str | None,
+    orchestration_depth: int,
+    caller_kwargs: dict | None,
+    allow_no_handlers: bool,
+) -> RunActionResponse:
+    """Run *action*'s handlers (all in one env, or fanned out across envs).
+    """
+    all_handlers_envs = ordered_set.OrderedSet(
+        [handler.env for handler in action.handlers]
+    )
+    all_handlers_are_in_one_env = len(all_handlers_envs) == 1
+
+    if not all_handlers_envs:
+        if allow_no_handlers:
+            logger.info(
+                f"Action '{action_name}' has no handlers (expected by caller)"
+            )
+        else:
+            logger.warning(
+                f"Action '{action_name}' has no handlers — check your configuration"
+            )
+        return RunActionResponse(
+            result_by_format={},
+            return_code=0,
+            status="no_handlers",
+        )
+
+    if all_handlers_are_in_one_env:
+        env_name = all_handlers_envs[0]
+        response = await _run_action_in_env_runner(
+            action_name=action_name,
+            payload=payload,
+            env_name=env_name,
+            project_def=project_def,
+            ws_context=ws_context,
+            run_trigger=run_trigger,
+            dev_env=dev_env,
+            result_formats=result_formats,
+            initialize_all_handlers=initialize_all_handlers,
+            progress_token=progress_token,
+            wal_run_id=wal_run_id,
+            traceparent=traceparent,
+            orchestration_depth=orchestration_depth,
+            caller_kwargs=caller_kwargs,
+        )
+    else:
+        run_concurrently = action.runs_concurrently
+
+        if run_concurrently:
+            response = await _run_multi_env_concurrent(
+                action_name=action_name,
+                action=action,
+                payload=payload,
+                project_def=project_def,
+                ws_context=ws_context,
+                run_trigger=run_trigger,
+                dev_env=dev_env,
+                result_formats=result_formats,
+                initialize_all_handlers=initialize_all_handlers,
+                progress_token=progress_token,
+                wal_run_id=wal_run_id,
+                traceparent=traceparent,
+                orchestration_depth=orchestration_depth,
+                caller_kwargs=caller_kwargs,
+            )
+        else:
+            response = await _run_multi_env_sequential(
+                action_name=action_name,
+                action=action,
+                payload=payload,
+                project_def=project_def,
+                ws_context=ws_context,
+                run_trigger=run_trigger,
+                dev_env=dev_env,
+                result_formats=result_formats,
+                initialize_all_handlers=initialize_all_handlers,
+                progress_token=progress_token,
+                wal_run_id=wal_run_id,
+                traceparent=traceparent,
+                orchestration_depth=orchestration_depth,
+                caller_kwargs=caller_kwargs,
+            )
+
+    return response
 
 
 async def _run_action_in_env_runner(
@@ -1244,6 +1333,27 @@ async def _run_handlers_in_env_runner(
             options=options,
         )
     except runner_client.BaseRunnerRequestException as error:
+        if isinstance(error, runner_client.ActionRunCancelled):
+            wal.emit_run_event(
+                ws_context.wal_writer,
+                event_type=wal.WalEventType.RUN_FAILED,
+                wal_run_id=wal_run_id,
+                action_name=action_name,
+                project_path=project_def.dir_path,
+                run_trigger=run_trigger.value,
+                dev_env=dev_env.value,
+                payload=wal.RunFailedPayload(
+                    error=f"cancelled: {error.message}", env_name=env_name
+                ),
+            )
+            telemetry.add_span_event(
+                "run.cancelled", {"env_name": env_name, "error": error.message}
+            )
+            logger.debug(
+                f"Action {action_name} cancelled in {env_name}: {error.message}"
+            )
+            raise ActionCancelledError(error.message) from error
+
         error_message = _format_runner_failure_message(
             action_name=action_name,
             runner=runner,
@@ -1387,6 +1497,11 @@ async def _run_multi_env_concurrent(
                 )
                 group_tasks.append(task)
     except ExceptionGroup as eg:
+        if all(isinstance(exc, ActionCancelledError) for exc in eg.exceptions):
+            message = "; ".join(exc.message for exc in eg.exceptions)
+            logger.debug(f"Concurrent multi-env run of {action_name} cancelled in {list(groups)}: {message}")
+            raise ActionCancelledError(message) from eg
+
         errors = [
             exc.message if isinstance(exc, ActionRunFailed) else str(exc)
             for exc in eg.exceptions

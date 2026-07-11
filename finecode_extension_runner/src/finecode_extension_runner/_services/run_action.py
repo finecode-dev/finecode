@@ -240,6 +240,29 @@ def _restore_caller_kwargs(
     return _converter.structure(data, kwargs_type)
 
 
+def _structure_payload(
+    action_name: str, params: dict, payload_type: type
+) -> code_action.RunActionPayload:
+    """Structure raw JSON-RPC params into the action's payload dataclass.
+
+    Turns cattrs validation errors (e.g. a missing required field) into a
+    per-field, human-readable ActionFailedException instead of letting the
+    raw ClassValidationError/IterableValidationError propagate — those repr
+    as an opaque "1 sub-exception" with the actual field errors nested
+    inside, which is unreadable once flattened into a JSON-RPC error string.
+    """
+    try:
+        return typing.cast(
+            code_action.RunActionPayload,
+            _converter.structure(params, payload_type),
+        )
+    except cattrs.errors.BaseValidationError as exception:
+        details = "; ".join(cattrs.transform_error(exception))
+        raise ActionFailedException(
+            f"Invalid payload for action {action_name}: {details}"
+        ) from exception
+
+
 def set_partial_result_sender(send_func: typing.Callable) -> None:
     global partial_result_sender
     partial_result_sender = partial_result_sender_module.PartialResultSender(
@@ -793,12 +816,10 @@ async def run_action_raw(
         action_exec_info = create_action_exec_info(action)
         action_cache.exec_info = action_exec_info
 
-    # TODO: catch validation errors
     payload: code_action.RunActionPayload | None = None
     if action_exec_info.payload_type is not None:
-        payload = typing.cast(
-            code_action.RunActionPayload,
-            _converter.structure(request.params, action_exec_info.payload_type),
+        payload = _structure_payload(
+            action_name, request.params, action_exec_info.payload_type
         )
 
     wal_run_id = getattr(options, "wal_run_id", None)
@@ -945,9 +966,8 @@ async def run_handlers_raw(
     # Build payload from params.
     payload: code_action.RunActionPayload | None = None
     if action_exec_info.payload_type is not None and request.params:
-        payload = typing.cast(
-            code_action.RunActionPayload,
-            _converter.structure(request.params, action_exec_info.payload_type),
+        payload = _structure_payload(
+            request.action_name, request.params, action_exec_info.payload_type
         )
 
     wal_run_id = getattr(options, "wal_run_id", None)

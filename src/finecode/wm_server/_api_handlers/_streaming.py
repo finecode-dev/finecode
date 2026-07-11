@@ -43,14 +43,20 @@ async def _handle_run_action_with_partial_results(
     if params is None:
         raise ValueError("params required")
     with telemetry.attach_incoming_traceparent(params):
+        from finecode.wm_server.config import env_selection
         from finecode.wm_server.services import partial_results_service, run_service
+        from finecode.wm_server.services.run_service import run_selection
+        from finecode.wm_server.services.run_service.exceptions import ActionRunFailed
 
         action_source = params.get("actionSource")
         token = params.get("partialResultToken")
         project_path = params.get("project")
         if not action_source or token is None or project_path is None:
             raise ValueError("actionSource, partialResultToken and project are required")
-        options = params.get("options", {})
+        # `.get("options", {})` only applies its default when the key is absent
+        # — a caller sending the key with an explicit `None` would pass that
+        # through as-is.
+        options = params.get("options") or {}
 
         trigger = run_service.RunActionTrigger(options.get("trigger", "system"))
         dev_env = run_service.DevEnv(options.get("devEnv", "ide"))
@@ -63,6 +69,33 @@ async def _handle_run_action_with_partial_results(
 
         progress_token = params.get("progressToken")
 
+        # PRD-0003 AC8: only resolvable against a single, concrete
+        # project — `project_path == ""` means "run in every project that
+        # declares the action" (see `_resolve_source_to_name`), which has no
+        # single env universe to resolve selectors against, so the full axis
+        # runs unrestricted in that case.
+        selected_interpreters: set[str] | None = None
+        if project_path:
+            run_selection.validate_run_selectors(
+                options.get("envSelectors", []),
+                options.get("interpreterSelectors", []),
+                [pathlib.Path(project_path)],
+                ws_context,
+            )
+            try:
+                selected_interpreters = run_selection.selected_interpreters_for_project(
+                    pathlib.Path(project_path),
+                    options.get("envSelectors", []),
+                    options.get("interpreterSelectors", []),
+                    dev_env.value,
+                    ws_context,
+                )
+            except env_selection.EnvSelectionError as exc:
+                raise ActionRunFailed(str(exc)) from exc
+        # else: project_path == "" ("all projects") has no single env universe to
+        # validate selectors against, so validation is skipped and the full axis
+        # runs unrestricted (mirrors the selected_interpreters skip above).
+
         stream = await partial_results_service.run_action_with_partial_results(
             action_name=action_name,
             project_path=project_path,
@@ -73,6 +106,7 @@ async def _handle_run_action_with_partial_results(
             ws_context=ws_context,
             result_formats=result_formats,
             progress_token=progress_token,
+            selected_interpreters=selected_interpreters,
         )
 
         # Opt-in (collect-style callers like MCP): accumulate the `json` format of
@@ -211,8 +245,14 @@ async def _handle_run_batch_with_partial_results(
     The final response contains only overall ``returnCode`` once every project
     has completed.
     """
+    from finecode.wm_server.config import env_selection
     from finecode.wm_server.services import run_service
-    from finecode.wm_server.services.run_service import proxy_utils
+    from finecode.wm_server.services.run_service import (
+        matrix_runner,
+        matrix_streaming,
+        proxy_utils,
+        run_selection,
+    )
     from finecode.wm_server.services.run_service.exceptions import ActionRunFailed
     from finecode.wm_server.services.run_service.execution_scopes import DEFAULT_ORCHESTRATION_POLICY
 
@@ -228,6 +268,13 @@ async def _handle_run_batch_with_partial_results(
 
         actions_by_project, name_to_source = await _resolve_actions_by_project(
             parsed.project_names, parsed.action_sources, ws_context
+        )
+
+        run_selection.validate_run_selectors(
+            parsed.env_selectors,
+            parsed.interpreter_selectors,
+            list(actions_by_project.keys()),
+            ws_context,
         )
 
         if len(actions_by_project) > DEFAULT_ORCHESTRATION_POLICY.max_project_fanout:
@@ -266,6 +313,68 @@ async def _handle_run_batch_with_partial_results(
             Both modes must produce an actions/partialResult notification to the CLI.
             """
             er_token = str(uuid.uuid4())
+
+            project_def = ws_context.ws_projects.get(project_path)
+            action_def = (
+                next((a for a in project_def.actions if a.name == action_name), None)
+                if isinstance(project_def, domain.CollectedProject)
+                else None
+            )
+            if action_def is not None and matrix_runner.is_matrixed(action_def):
+                try:
+                    selected_interpreters = run_selection.selected_interpreters_for_project(
+                        project_path,
+                        parsed.env_selectors,
+                        parsed.interpreter_selectors,
+                        parsed.dev_env.value,
+                        ws_context,
+                    )
+                except env_selection.EnvSelectionError as exc:
+                    raise ActionRunFailed(str(exc)) from exc
+
+                async def _on_partial(interpreter_canonical: str, result_by_format: dict) -> None:
+                    async with writer_lock:
+                        _notify_client(
+                            writer,
+                            "actions/partialResult",
+                            {
+                                "token": token,
+                                "value": {
+                                    "project": str(project_path),
+                                    "interpreter": interpreter_canonical,
+                                    "results": {
+                                        action_source: {
+                                            "resultByFormat": result_by_format,
+                                            "returnCode": 0,
+                                        }
+                                    },
+                                    "returnCode": 0,
+                                },
+                            },
+                        )
+                        await writer.drain()
+
+                combined_rbf, matrix_return_code = await matrix_streaming.run_matrix_with_partial_results(
+                    project=project_def,
+                    action=action_def,
+                    action_name=action_name,
+                    params=project_payload,
+                    result_formats=parsed.result_formats,
+                    partial_result_token=er_token,
+                    run_trigger=parsed.trigger,
+                    dev_env=parsed.dev_env,
+                    ws_context=ws_context,
+                    merge_results=parsed.merge_results,
+                    on_partial=_on_partial,
+                    selected_interpreters=selected_interpreters,
+                )
+                if parsed.merge_results:
+                    merged_results.setdefault(str(project_path), {})[action_source] = {
+                        "resultByFormat": combined_rbf,
+                        "returnCode": matrix_return_code,
+                    }
+                return matrix_return_code
+
             action_return_code = 0
             partial_count = 0
             # Accumulate the `json` format of every streamed partial so it can be

@@ -38,6 +38,12 @@ class UvCreateEnvHandler(
     async def _is_valid_virtualenv(self, venv_dir_path: Path) -> bool:
         # A valid venv must contain pyvenv.cfg and a runnable interpreter that
         # reports a virtualenv prefix relationship.
+        #
+        # NOTE: this probe does not check that the
+        # existing venv's interpreter actually matches `env_info.interpreter`. It could
+        # be extended to probe the venv python's `platform.python_implementation()` +
+        # version and treat a mismatch as invalid, so that changing an env's
+        # interpreter rebuilds a now-stale venv instead of silently keeping the old one.
         pyvenv_cfg = venv_dir_path / "pyvenv.cfg"
         if not pyvenv_cfg.exists():
             return False
@@ -93,7 +99,10 @@ class UvCreateEnvHandler(
 
             uv_executable = get_uv_executable()
             # venv can exist but be invalid, use '--clear' to recreate it
-            cmd = f'"{uv_executable}" venv --clear "{venv_dir_path}"'
+            python_flag = (
+                f' --python "{env_info.interpreter}"' if env_info.interpreter else ""
+            )
+            cmd = f'"{uv_executable}" venv --clear{python_flag} "{venv_dir_path}"'
             self.logger.debug(f"Running uv: {cmd}")
             process = await self.command_runner.run(cmd, cwd=dump_dir)
             await process.wait_for_end()

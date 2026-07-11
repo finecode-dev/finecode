@@ -61,6 +61,10 @@ python -m finecode run [options] <action> [<action> ...] [payload] [--config.<ke
 | `--no-env-config` | Ignore `FINECODE_CONFIG_*` environment variables |
 | `--no-save-results` | Do not write action results to the cache directory |
 | `--dev-env=<env>` | Override the detected dev environment. One of: `ai`, `ci`, `cli`, `ide`, `precommit` (default: auto-detected — see [Dev environment detection](#dev-environment-detection)) |
+| `--env=<name>` | For a matrixed action (ADR-0047), restrict execution to the named interpreter environment(s) — a matrix base selects all of its children, a concrete child selects only itself. Repeatable. Non-matrix envs are unaffected. See [Preparing Environments — filtering by environment name](guides/preparing-environments.md#filtering-by-environment-name). |
+| `--interpreter=<impl>@<version>` | For a matrixed action, restrict execution to the named interpreter(s) across every matrix env the action touches. Repeatable; a bare version means `cpython`. See [Preparing Environments — filtering by interpreter](guides/preparing-environments.md#filtering-by-interpreter). |
+
+`--env` and `--interpreter` on `run` use the same selector semantics as `prepare-envs` (ADR-0050): they compose by intersection, and a matrix env's config-declared `default_interpreters` policy (see [Preparing Environments — default interpreter subset](guides/preparing-environments.md#default-interpreter-subset)) applies as the default when neither is given — so a plain `run` can execute only a local subset of a matrix (e.g. the newest interpreter) while CI still runs the full axis, mirroring `prepare-envs`.
 
 WAL environment variable and storage settings are shared with `start-wm-server` — see [`start-wm-server`](#start-wm-server) for details.
 
@@ -111,6 +115,12 @@ python -m finecode --workdir=./finecode_extension_api run lint
 
 # Override ruff line length
 python -m finecode run lint --config.ruff.line_length=120
+
+# Run a matrixed action's "testing" env only for its cpython@3.11 child
+python -m finecode run run_tests --env=testing@cpython-3.11
+
+# Run every matrix env's 3.12 interpreter
+python -m finecode run run_tests --interpreter=3.12
 ```
 
 ---

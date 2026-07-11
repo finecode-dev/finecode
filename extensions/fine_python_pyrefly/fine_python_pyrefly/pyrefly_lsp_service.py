@@ -78,11 +78,32 @@ class PyreflyLspService(service.DisposableService):
             client_capabilities=_PYREFLY_CLIENT_CAPABILITIES,
         )
         # pyrefly's own environment/interpreter auto-detection does not know about
-        # FineCode's per-project "runtime" env, so without this it resolves imports
-        # against the wrong (or no) site-packages. Applied here so every feature
-        # (hover, definition, inlay hints, ...) gets it, not just type checking.
+        # FineCode's per-project envs, so without this it resolves imports against the
+        # wrong (or no) site-packages. Applied here so every feature (hover, definition,
+        # inlay hints, ...) gets it, not just type checking.
+        #
+        # A single LSP server can only be configured with one resolution env at startup
+        # (it cannot switch per file), so the broadest env is used: "dev" is a superset
+        # of "runtime" (project deps + dev-only deps such as pytest), which lets test
+        # files resolve their imports too. Falling back to "runtime" when "dev" does not
+        # exist only loses symbols, never adds false ones.
+        #
+        # Trade-off: dev-only deps become resolvable from source files too, so pyrefly no
+        # longer flags a dev dependency imported from source. That boundary is enforced
+        # separately by a dependency-hygiene tool (e.g. deptry). "dev"/"runtime" are
+        # naming conventions (env labels are arbitrary); this could be made configurable
+        # in the future, per handler or at the action level.
         self._pyrefly_settings: dict[str, Any] = {}
-        venv_dir = extension_runner_info_provider.get_venv_dir_path_of_env("runtime")
+        resolution_env = "dev"
+        venv_dir = extension_runner_info_provider.get_venv_dir_path_of_env(
+            resolution_env
+        )
+        if not venv_dir.exists():
+            resolution_env = "runtime"
+            venv_dir = extension_runner_info_provider.get_venv_dir_path_of_env(
+                resolution_env
+            )
+        logger.debug(f"pyrefly resolves imports against the '{resolution_env}' env")
         interpreter_path = extension_runner_info_provider.get_venv_python_interpreter(
             venv_dir
         )

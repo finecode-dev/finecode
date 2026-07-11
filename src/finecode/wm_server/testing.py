@@ -170,15 +170,68 @@ def make_single_action_project(
     return domain.ResolvedProject.from_collected(collected)
 
 
+def make_multi_env_action_project(
+    *,
+    dir_path: Path,
+    action_name: str,
+    handler_envs: list[str],
+    action_source: str = "test.actions.TestAction",
+    handler_source: str = "test.handlers.TestHandler",
+) -> domain.ResolvedProject:
+    """Build a minimal resolved project with one action whose handlers are
+    spread across *handler_envs* (one handler per env, named ``handler_<env>``)
+    — just enough for the multi-env concurrent dispatch path in
+    ``proxy_utils._run_multi_env_concurrent``.
+    """
+    handlers = [
+        domain.ActionHandler(
+            name=f"handler_{env_name}",
+            source=handler_source,
+            config={},
+            env=env_name,
+            dependencies=[],
+        )
+        for env_name in handler_envs
+    ]
+    action = domain.Action(
+        name=action_name,
+        source=action_source,
+        handlers=handlers,
+        config={},
+    )
+    collected = domain.CollectedProject(
+        name="test_project",
+        dir_path=dir_path,
+        def_path=dir_path / "pyproject.toml",
+        status=domain.ProjectStatus.CONFIG_VALID,
+        env_configs={
+            env_name: domain.EnvConfig(runner_config=domain.RunnerConfig(debug=False))
+            for env_name in handler_envs
+        },
+        actions=[action],
+        services=[],
+        action_handler_configs={},
+    )
+    return domain.ResolvedProject.from_collected(collected)
+
+
 def make_workspace_context(
     *,
     project: domain.Project,
     runner: runner_client.ExtensionRunnerInfo,
     env_name: str = "test_env",
+    extra_runners: dict[str, runner_client.ExtensionRunnerInfo] | None = None,
 ) -> context.WorkspaceContext:
     """Build a ``WorkspaceContext`` with *project* and *runner* pre-registered
-    so ``runner_manager.get_or_start_runner`` finds the runner immediately."""
+    so ``runner_manager.get_or_start_runner`` finds the runner immediately.
+
+    *extra_runners* registers additional env -> runner entries for the same
+    project, for tests that exercise multi-env dispatch.
+    """
     ws_context = context.WorkspaceContext(ws_dirs_paths=[project.dir_path])
     ws_context.ws_projects[project.dir_path] = project
-    ws_context.ws_projects_extension_runners[project.dir_path] = {env_name: runner}
+    runners_by_env = {env_name: runner}
+    if extra_runners is not None:
+        runners_by_env.update(extra_runners)
+    ws_context.ws_projects_extension_runners[project.dir_path] = runners_by_env
     return ws_context

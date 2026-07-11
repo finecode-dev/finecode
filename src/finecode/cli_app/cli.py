@@ -225,6 +225,8 @@ def run(ctx) -> None:
     dev_env: str = detect_dev_env()
     wal_enabled: bool | None = None
     verbose: bool = False
+    env_selectors: list[str] = []
+    interpreter_selectors: list[str] = []
 
     # finecode run parameters
     for arg in args:
@@ -268,6 +270,10 @@ def run(ctx) -> None:
                     err=True,
                 )
                 sys.exit(1)
+        elif arg.startswith("--env="):
+            env_selectors.append(arg.removeprefix("--env="))
+        elif arg.startswith("--interpreter="):
+            interpreter_selectors.append(arg.removeprefix("--interpreter="))
         elif not arg.startswith("--"):
             break
         processed_args_count += 1
@@ -367,6 +373,8 @@ def run(ctx) -> None:
                 dev_env=dev_env,
                 wal_enabled=wal_enabled,
                 verbose=verbose,
+                env_selectors=env_selectors,
+                interpreter_selectors=interpreter_selectors,
             )
         )
 
@@ -410,9 +418,10 @@ def run(ctx) -> None:
 @click.option("--shared-server", "shared_server", is_flag=True, default=False)
 @click.option("--dev-env", "dev_env", default=None, type=click.Choice(sorted(_VALID_DEV_ENVS)), help="Override detected dev environment")
 @click.option("--env", "env_names", multiple=True, metavar="ENV_NAME", help="Limit to specific environment(s). Can be specified multiple times.")
+@click.option("--interpreter", "interpreter_names", multiple=True, metavar="IMPL@VERSION", help="Limit to specific interpreter(s) of matrix environments. Repeatable; version-only form means cpython.")
 @click.option("--project", "project_names", multiple=True, metavar="PROJECT_NAME", help="Limit to specific project(s). Can be specified multiple times.")
 @click.option("--verbose", "-v", "verbose", is_flag=True, default=False, help="Stream WM/ER diagnostic logs to stderr over the protocol. Auto-enabled in CI.")
-def prepare_envs(log_level: str, debug: bool, recreate: bool, shared_server: bool, dev_env: str | None, env_names: tuple[str, ...], project_names: tuple[str, ...], verbose: bool) -> None:
+def prepare_envs(log_level: str, debug: bool, recreate: bool, shared_server: bool, dev_env: str | None, env_names: tuple[str, ...], interpreter_names: tuple[str, ...], project_names: tuple[str, ...], verbose: bool) -> None:
     """
     `prepare-envs` should be called from workspace/project root directory.
     """
@@ -448,7 +457,9 @@ def prepare_envs(log_level: str, debug: bool, recreate: bool, shared_server: boo
                 own_server=not shared_server,
                 log_level=log_level,
                 env_names=list(env_names) if env_names else None,
+                interpreter_names=list(interpreter_names) if interpreter_names else None,
                 project_names=list(project_names) if project_names else None,
+                dev_env=dev_env or detect_dev_env(),
                 verbose=verbose,
             )
         )

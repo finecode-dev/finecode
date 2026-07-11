@@ -10,9 +10,9 @@ from loguru import logger
 from finecode.wm_server import context, domain
 from finecode.wm_server._jsonrpc import _write_message
 from finecode.wm_server.context import pick_workspace_root_dir as _pick_workspace_root_dir
-from finecode.wm_server.services.run_service.exceptions import (
-    ActionNotFoundError,
-    ActionRunFailed,
+from finecode.wm_server.services.run_service.exceptions import ActionNotFoundError
+from finecode.wm_server.services.run_service.merge_helpers import (
+    merge_partial_results_for_action as _merge_partial_results_for_action,
 )
 
 
@@ -167,6 +167,8 @@ class _RunBatchParams(typing.NamedTuple):
     trigger: typing.Any  # run_service.RunActionTrigger
     dev_env: typing.Any  # run_service.DevEnv
     merge_results: bool
+    env_selectors: list[str]
+    interpreter_selectors: list[str]
 
 
 async def _parse_and_validate_run_action_params(
@@ -179,7 +181,10 @@ async def _parse_and_validate_run_action_params(
     action_source = params.get("actionSource")
     project_name = params.get("project", "")
     action_params = params.get("params", {})
-    options = params.get("options", {})
+    # `.get("options", {})` only applies its default when the key is absent —
+    # ApiClient.run_action's documented `options: dict | None = None` sends
+    # the key with an explicit `None`, which `.get` would pass through as-is.
+    options = params.get("options") or {}
 
     if not action_source:
         raise ValueError("actionSource parameter is required")
@@ -252,7 +257,10 @@ def _parse_run_batch_params(params: dict) -> _RunBatchParams:
     project_names: list[str] | None = params.get("projects")
     action_params: dict = params.get("params", {})
     params_by_project: dict[str, dict] = params.get("paramsByProject", {})
-    options: dict = params.get("options", {})
+    # `.get("options", {})` only applies its default when the key is absent —
+    # ApiClient.run_batch's documented `options: dict | None = None` sends
+    # the key with an explicit `None`, which `.get` would pass through as-is.
+    options: dict = params.get("options") or {}
 
     concurrently: bool = options.get("concurrently", False)
     result_format_strs: list[str] = options.get("resultFormats", ["string"])
@@ -269,6 +277,12 @@ def _parse_run_batch_params(params: dict) -> _RunBatchParams:
     # when one project streams many partials.  Default off so the LSP hot path
     # (which discards the response and consumes deltas directly) pays nothing.
     merge_results: bool = options.get("mergeResults", False)
+    # PRD-0003 AC8: WM-only selectors for restricting a matrixed
+    # action's fan-out to a subset of its declared interpreter axis. Never
+    # forwarded to an ER — consumed only by `run_selection` at the run
+    # entry points below.
+    env_selectors: list[str] = options.get("envSelectors", [])
+    interpreter_selectors: list[str] = options.get("interpreterSelectors", [])
 
     return _RunBatchParams(
         action_sources=action_sources,
@@ -281,6 +295,8 @@ def _parse_run_batch_params(params: dict) -> _RunBatchParams:
         trigger=trigger,
         dev_env=dev_env,
         merge_results=merge_results,
+        env_selectors=env_selectors,
+        interpreter_selectors=interpreter_selectors,
     )
 
 
@@ -423,80 +439,6 @@ def _build_batch_result(
             }
         results[str(project_path)] = project_results
     return results, overall_return_code
-
-
-async def _merge_partial_results_for_action(
-    project_path: pathlib.Path,
-    action_name: str,
-    json_payloads: list[dict],
-    ws_context: context.WorkspaceContext,
-) -> dict | None:
-    """Type-safely merge streamed partial-result ``json`` payloads into one.
-
-    Each entry in *json_payloads* is a ``dataclasses.asdict()`` of the action's
-    ``RESULT_TYPE`` (the ``"json"`` format of a streamed partial).  Merging is
-    delegated to the ER's ``actions/mergeResults`` command, which reconstructs
-    the typed result and calls ``RunActionResult.update()`` — the same primitive
-    the runner uses to combine handler results.  This is the only place the typed
-    object is reconstructable, so merging must happen ER-side even though the WM
-    only ever sees serialized dicts.
-
-    Returns the merged ``json`` dict, or ``None`` when nothing was streamed for
-    this slot.  Raises :class:`ActionRunFailed` when a merge is required but
-    cannot be performed (no running runner, or the merge RPC fails): the caller
-    opted into ``mergeResults`` precisely to obtain the complete result, so a
-    silent fallback to a single partial would re-introduce the data loss this
-    path exists to prevent.  Mirrors the merge-failure convention in
-    ``proxy_utils`` multi-env merging.
-    """
-    from finecode.wm_server.runner import runner_client
-
-    non_empty = [payload for payload in json_payloads if payload]
-    if not non_empty:
-        return None
-    # A single payload needs no merge — return it directly (no runner required).
-    if len(non_empty) == 1:
-        return non_empty[0]
-
-    project_def = ws_context.ws_projects.get(project_path)
-    if not isinstance(project_def, domain.CollectedProject):
-        raise ActionRunFailed(
-            f"Cannot merge {len(non_empty)} partial results for action "
-            f"'{action_name}': project '{project_path}' has no collected actions"
-        )
-    action_def = next((a for a in project_def.actions if a.name == action_name), None)
-    if action_def is None:
-        raise ActionRunFailed(
-            f"Cannot merge partial results for action '{action_name}': "
-            f"action not found in project '{project_path}'"
-        )
-
-    runners_by_env = ws_context.ws_projects_extension_runners.get(project_path, {})
-    merge_runner: runner_client.ExtensionRunnerInfo | None = None
-    for handler in action_def.handlers:
-        candidate = runners_by_env.get(handler.env)
-        if candidate is not None and candidate.status == runner_client.RunnerStatus.RUNNING:
-            merge_runner = candidate
-            break
-
-    if merge_runner is None:
-        raise ActionRunFailed(
-            f"Cannot merge {len(non_empty)} partial results for action "
-            f"'{action_name}' in project '{project_path}': no running runner among "
-            f"handler envs {[h.env for h in action_def.handlers]}"
-        )
-
-    try:
-        return await runner_client.merge_results(
-            runner=merge_runner,
-            action_name=action_name,
-            results=non_empty,
-        )
-    except runner_client.BaseRunnerRequestException as exc:
-        raise ActionRunFailed(
-            f"merge_results failed for {action_name} in project '{project_path}': "
-            f"{exc.message}"
-        ) from exc
 
 
 def _apply_config_overrides_to_projects(

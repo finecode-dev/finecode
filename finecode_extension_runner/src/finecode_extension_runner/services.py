@@ -2,6 +2,7 @@ import json
 import collections.abc
 import hashlib
 import importlib
+import inspect
 import sys
 import types
 import typing
@@ -144,25 +145,56 @@ async def update_config(
     return schemas.UpdateConfigResponse(), runner_context
 
 
+def _file_loc(cls: type, project_dir: Path | None) -> str | None:
+    """Resolve a ``<path>:<lineno>`` location for a class's source definition.
+
+    Returns ``None`` when the class has no retrievable source (e.g. it was
+    built dynamically via ``type()``).
+    """
+    try:
+        source_file = inspect.getfile(cls)
+        _, lineno = inspect.getsourcelines(cls)
+    except (OSError, TypeError) as exception:
+        logger.debug(f"Could not resolve file location for {cls}: {exception}")
+        return None
+
+    path = Path(source_file)
+    if project_dir is not None:
+        try:
+            path = path.relative_to(project_dir)
+        except ValueError:
+            pass
+    return f"{path}:{lineno}"
+
+
 async def resolve_action_meta(runner_context: context.RunnerContext) -> dict[str, dict]:
-    """Resolve meta info for all known actions.
+    """Resolve meta info for all known actions and handlers.
 
-    Returns a mapping of config source → action meta dict containing:
-    - ``canonical_source``: fully-qualified import path (may differ from the
-      config source when the source is a re-exported alias).
-    - ``runs_concurrently``: True when the action declares CONCURRENT handler
-      execution (``HANDLER_EXECUTION = HandlerExecution.CONCURRENT``).
-    - ``scope``: ``"project"`` or ``"workspace"`` (from ``Action.SCOPE``).
-    - ``parentActionSource``: canonical source of the parent action class, or
-      ``None`` for top-level actions (from ``Action.PARENT_ACTION``).
-    - ``language``: language tag this action is specific to, or ``None`` for
-      language-agnostic actions (from ``Action.LANGUAGE``).
+    Returns a dict with two entries:
+    - ``actions``: mapping of config source → action meta dict containing:
+        - ``canonical_source``: fully-qualified import path (may differ from
+          the config source when the source is a re-exported alias).
+        - ``runs_concurrently``: True when the action declares CONCURRENT
+          handler execution (``HANDLER_EXECUTION = HandlerExecution.CONCURRENT``).
+        - ``scope``: ``"project"`` or ``"workspace"`` (from ``Action.SCOPE``).
+        - ``parentActionSource``: canonical source of the parent action
+          class, or ``None`` for top-level actions (from
+          ``Action.PARENT_ACTION``).
+        - ``language``: language tag this action is specific to, or ``None``
+          for language-agnostic actions (from ``Action.LANGUAGE``).
+        - ``fileLoc``: ``"<path>:<lineno>"`` of the action class's source, or
+          ``None`` when it could not be resolved.
+    - ``handlerLocations``: mapping of handler source → ``fileLoc`` for every
+      handler registered in this env (``None`` when it could not be
+      resolved).
 
-    Actions that fail to import are omitted.
+    Actions that fail to import are omitted from ``actions``.
     """
     from finecode_extension_api.code_action import Action, HandlerExecution
 
-    actions = runner_context.project.actions
+    project = runner_context.project
+    project_dir = project.dir_path
+    actions = project.actions
     resolved: dict[str, dict] = {}
     for action in actions.values():
         if action.source is None:
@@ -182,10 +214,23 @@ async def resolve_action_meta(runner_context: context.RunnerContext) -> dict[str
                     else None
                 ),
                 "language": getattr(cls, "LANGUAGE", None),
+                "fileLoc": _file_loc(cls, project_dir),
             }
         except Exception as exception:
             logger.warning(f'Failed to import action {action.source}: {exception}')
-    return resolved
+
+    handler_locations: dict[str, str | None] = {}
+    for action in actions.values():
+        for handler in action.handlers:
+            if handler.source in handler_locations:
+                continue
+            try:
+                handler_cls = run_utils.import_module_member_by_source_str(handler.source)
+                handler_locations[handler.source] = _file_loc(handler_cls, project_dir)
+            except Exception as exception:
+                logger.warning(f'Failed to import handler {handler.source}: {exception}')
+
+    return {"actions": resolved, "handlerLocations": handler_locations}
 
 
 async def initialize_handlers(

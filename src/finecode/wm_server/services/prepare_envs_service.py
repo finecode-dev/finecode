@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import pathlib
+from typing import Any
 
 from loguru import logger
 
@@ -66,7 +67,9 @@ async def prepare_envs(
     workdir_path: pathlib.Path,
     recreate: bool = False,
     env_names: list[str] | None = None,
+    interpreter_names: list[str] | None = None,
     project_names: list[str] | None = None,
+    dev_env: str = "cli",
 ) -> None:
     """Prepare all virtual environments for a workspace.
 
@@ -76,23 +79,44 @@ async def prepare_envs(
     2.5. Start workspace root dev_workspace runner.
     3. create_envs + install_envs for subproject dev_workspace envs.
     4. Start all dev_workspace runners.
-    5. create_envs across all projects.
-    6. install_envs across all projects (optionally filtered by env_names).
+    5. create_envs across all projects (skips unselected matrix children).
+    6. install_envs across all projects (installs only the selected envs).
 
     Args:
         ws_context: Workspace context.
         workdir_path: Absolute path to the workspace root directory.
         recreate: When True, delete and recreate all dev_workspace venvs.
-        env_names: Limit install_envs (step 6) to these env names. create_envs
-            (step 5) still runs for all envs.
+        env_names: Limit to these env names. For a matrix env, naming its
+            base selects all of its children; naming a concrete child selects
+            only that child.
+        interpreter_names: Limit matrix envs to these interpreters (canonical
+            or version-only shorthand), across every matrix base.
         project_names: Limit steps 3, 5, and 6 to these projects.
+        dev_env: Active dev-env, used to resolve each matrix env's
+            config-declared ``default_interpreters`` subset when
+            `interpreter_names` is not given.
+
+    Per project, `env_names` / `interpreter_names` / each matrix env's
+    `default_interpreters` policy are resolved (via
+    `finecode.wm_server.config.env_selection`) into a selection. When that
+    selection is active (a proper subset of the project's envs): step 5
+    skips unselected matrix children (non-matrix envs are still created —
+    PRD-0003 AC8), and step 6 installs only the selected envs. When inactive
+    (no selectors and no narrowing config default anywhere), both steps cover
+    every env — today's behaviour (R7).
 
     Raises:
-        PrepareEnvsFailed: if any step fails.
+        PrepareEnvsFailed: if any step fails, or if an `--env` /
+            `--interpreter` selector matches no env in any in-scope project,
+            or if a config default / selector names an interpreter not in its
+            matrix env's declared axis.
     """
-    from finecode.wm_server.config import read_configs
+    from finecode.wm_server.config import env_selection, read_configs
     from finecode.wm_server.runner import runner_manager
     from finecode.wm_server.services import runner_start_service
+    from finecode.wm_server.services.run_service.run_selection import (
+        project_env_universe_from_raw,
+    )
 
     # Step 1 — Discover projects.
     logger.info("Discovering projects...")
@@ -263,19 +287,67 @@ async def prepare_envs(
         and (project_paths_filter is None or str(p.dir_path) in project_paths_filter)
     ]
 
+    def _project_env_universe(p: domain.CollectedProject) -> dict[str, Any]:
+        """The project's full env-name -> `tool.finecode.env` entry map.
+
+        Delegates to the shared `run_selection.project_env_universe_from_raw`
+        helper (also used by run entry points' `--env`/`--interpreter`
+        selection, PRD-0003 AC8) so the merge logic is defined once.
+        """
+        raw_config = ws_context.ws_projects_raw_configs.get(p.dir_path, {})
+        return project_env_universe_from_raw(raw_config)
+
+    selections_by_project: dict[pathlib.Path, env_selection.EnvSelection] = {}
+    env_universe_by_project: dict[pathlib.Path, dict[str, Any]] = {}
+    try:
+        for p in step_projects:
+            env_universe = _project_env_universe(p)
+            env_universe_by_project[p.dir_path] = env_universe
+            selections_by_project[p.dir_path] = env_selection.resolve_env_selection(
+                env_universe, env_names or [], interpreter_names or [], dev_env
+            )
+    except env_selection.EnvSelectionError as exc:
+        raise PrepareEnvsFailed(str(exc)) from exc
+
+    # Cross-project validation: an explicit --env/--interpreter selector must
+    # match at least one env in *some* in-scope project (the pure resolver
+    # tolerates an unmatched selector per-project — it can't know about
+    # sibling projects).
+    if env_names:
+        for selector in env_names:
+            if not any(
+                env_selection.env_selector_known_in(selector, universe)
+                for universe in env_universe_by_project.values()
+            ):
+                raise PrepareEnvsFailed(f"Unknown environment: '{selector}'")
+    if interpreter_names:
+        for selector in interpreter_names:
+            if not any(
+                env_selection.interpreter_selector_known_in(selector, universe)
+                for universe in env_universe_by_project.values()
+            ):
+                raise PrepareEnvsFailed(f"Unknown interpreter: '{selector}'")
+
     create_errors: list[str] = []
 
     async def _create_one(p: domain.CollectedProject) -> None:
-        err = await _run_env_action("fine_envs.CreateEnvsAction", {}, p, ws_context)
+        sel = selections_by_project[p.dir_path]
+        if not sel.active:
+            params: dict = {}
+        else:
+            create_set = env_selection.compute_create_set(
+                sel, set(env_universe_by_project[p.dir_path].keys())
+            )
+            params = {"env_names": sorted(create_set)}
+        err = await _run_env_action("fine_envs.CreateEnvsAction", params, p, ws_context)
         if err:
             create_errors.append(err)
 
     install_errors: list[str] = []
 
     async def _install_one(p: domain.CollectedProject) -> None:
-        params: dict = {}
-        if env_names is not None:
-            params["env_names"] = env_names
+        sel = selections_by_project[p.dir_path]
+        params = {} if not sel.active else {"env_names": sorted(sel.selected_env_names)}
         err = await _run_env_action("fine_envs.InstallEnvsAction", params, p, ws_context)
         if err:
             install_errors.append(err)

@@ -24,7 +24,7 @@ class CreateEnvsDiscoverEnvsHandler(
     If payload.envs is provided (explicit caller), those envs are
     used as-is — the caller is responsible for any filtering.
     Otherwise all envs defined in ``dependency-groups`` are discovered.
-    """
+    payload.env_names filters the discovered list."""
 
     def __init__(
         self,
@@ -49,6 +49,9 @@ class CreateEnvsDiscoverEnvsHandler(
                 await self.project_info_provider.get_current_project_raw_config()
             )
             deps_groups = project_raw_config.get("dependency-groups", {})
+            env_table = (
+                project_raw_config.get("tool", {}).get("finecode", {}).get("env", {})
+            )
 
             envs = [
                 create_envs_action.EnvInfo(
@@ -57,9 +60,13 @@ class CreateEnvsDiscoverEnvsHandler(
                         self.runner_info_provider.get_venv_dir_path_of_env(env_name)
                     ),
                     project_def_path=path_to_resource_uri(project_def_path),
+                    interpreter=env_table.get(env_name, {}).get("interpreter"),
                 )
                 for env_name in deps_groups
             ]
+
+            if payload.env_names is not None:
+                envs = [e for e in envs if e.name in payload.env_names]
 
         self.logger.debug(f"Discovered envs for creation: {[e.name for e in envs]}")
         run_context.envs = envs

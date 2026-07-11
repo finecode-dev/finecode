@@ -25,7 +25,9 @@ async def _handle_run_action(
     params: dict | None, ws_context: context.WorkspaceContext
 ) -> dict:
     """Run an action on a project."""
+    from finecode.wm_server.config import env_selection
     from finecode.wm_server.services import run_service
+    from finecode.wm_server.services.run_service import run_selection
 
     raw_params = params or {}
     with telemetry.attach_incoming_traceparent(raw_params):
@@ -41,6 +43,23 @@ async def _handle_run_action(
                 ws_context,
                 initialize_all_handlers=True,
             )
+            # PRD-0003 AC8: resolve `--env`/`--interpreter` selectors
+            # (+ config default) for this project, to restrict a matrixed
+            # action's fan-out. `None` (no selectors, no narrowing default)
+            # runs the full declared axis, unchanged.
+            run_selection.validate_run_selectors(
+                parsed.options.get("envSelectors", []),
+                parsed.options.get("interpreterSelectors", []),
+                [parsed.project.dir_path],
+                ws_context,
+            )
+            selected_interpreters = run_selection.selected_interpreters_for_project(
+                parsed.project.dir_path,
+                parsed.options.get("envSelectors", []),
+                parsed.options.get("interpreterSelectors", []),
+                parsed.dev_env.value,
+                ws_context,
+            )
             executor = run_service.ProjectExecutor(ws_context)
             result = await executor.run_action(
                 action_source=parsed.action.canonical_source,
@@ -50,11 +69,14 @@ async def _handle_run_action(
                 dev_env=parsed.dev_env,
                 result_formats=parsed.result_formats,
                 initialize_all_handlers=True,
+                selected_interpreters=selected_interpreters,
             )
             return {
                 "resultByFormat": result.result_by_format,
                 "returnCode": result.return_code,
             }
+        except env_selection.EnvSelectionError as exc:
+            raise run_service.ActionRunFailed(str(exc)) from exc
         except run_service.ActionRunFailed:
             raise
 
