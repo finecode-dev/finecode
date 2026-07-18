@@ -1,0 +1,58 @@
+apiVersion: 1
+
+# Overrides otel-lgtm's own built-in datasource provisioning (mounted at the
+# same path). Its Tempo/Prometheus/Loki UIDs already match ours (tempo,
+# prometheus, loki), so this is a like-for-like replacement — only the
+# hostnames change, from per-service container names to 127.0.0.1, since
+# Tempo/Prometheus/Loki/Grafana now all run inside the single otel-lgtm
+# container.
+datasources:
+  - name: Tempo
+    type: tempo
+    uid: tempo
+    url: http://127.0.0.1:3200
+    access: proxy
+    isDefault: false
+    jsonData:
+      tracesToLogsV2:
+        datasourceUid: loki
+        spanStartTimeShift: -1m
+        spanEndTimeShift: 1m
+        filterByTraceID: true
+        filterBySpanID: false
+      tracesToMetrics:
+        datasourceUid: prometheus
+      serviceMap:
+        datasourceUid: prometheus
+      nodeGraph:
+        enabled: true
+      lokiSearch:
+        datasourceUid: loki
+
+  - name: Prometheus
+    type: prometheus
+    uid: prometheus
+    url: http://127.0.0.1:9090
+    access: proxy
+    isDefault: true
+
+  - name: Loki
+    type: loki
+    uid: loki
+    url: http://127.0.0.1:3100
+    access: proxy
+    isDefault: false
+    jsonData:
+      derivedFields:
+        - name: TraceID
+          matcherType: label
+          label: "trace_id"
+          matcherRegex: "([a-f0-9]{32})"
+          url: "$${__value.raw}"
+          datasourceUid: tempo
+        - name: WalRunTrace
+          matcherType: label
+          label: "finecode_trace_id"
+          matcherRegex: "([a-f0-9]{32})"
+          url: "$${__value.raw}"
+          datasourceUid: tempo

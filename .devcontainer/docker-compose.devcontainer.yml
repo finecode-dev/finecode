@@ -1,0 +1,40 @@
+services:
+  workspace:
+    image: mcr.microsoft.com/devcontainers/python:3.14
+    init: true
+    user: vscode
+    working_dir: /workspaces/finecode
+    command: sleep infinity
+    environment:
+      # OTLP endpoint for the WM and Extension Runners. Empty by default, so
+      # telemetry stays off with no export attempts. Enable observability by setting
+      # both COMPOSE_PROFILES=otel and FINECODE_OTLP_ENDPOINT in .env — the ready
+      # collector URL is provided there, so developers never compose it themselves.
+      - FINECODE_OTLP_ENDPOINT=${FINECODE_OTLP_ENDPOINT:-}
+    volumes:
+      - .:/workspaces/finecode:cached
+      - ./.claude:/home/vscode/.claude:cached
+      - type: bind
+        source: ${DEVCONTAINER_INTERNAL_DOCS_PATH:-./.devcontainer/empty-internal-docs}
+        target: /workspaces/finecode_internal_docs
+    networks:
+      - finecode-net
+    depends_on:
+      - falkordb
+
+  falkordb:
+    image: falkordb/falkordb:v4.18.4-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - falkordb-data:/data
+    networks:
+      - finecode-net
+    restart: unless-stopped
+
+networks:
+  finecode-net:
+    name: finecode-net
+
+volumes:
+  falkordb-data:

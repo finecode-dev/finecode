@@ -1,0 +1,19 @@
+{
+    "name": "FineCode Python DevContainer",
+    "dockerComposeFile": [
+        "../docker-compose.otel.yml",
+        "docker-compose.devcontainer.yml"
+    ],
+    "service": "workspace",
+    "shutdownAction": "stopCompose",
+    "postCreateCommand": "sh .devcontainer/post-create-dev-workspace.sh && sh .devcontainer/setup-shell.sh",
+    "customizations": {
+        "vscode": {
+            "extensions": [
+                "ms-python.python",
+                "VladyslavHnatiuk.finecode-vscode"
+            ]
+        }
+    },
+    "workspaceFolder": "/workspaces/finecode"
+}

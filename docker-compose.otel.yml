@@ -1,0 +1,69 @@
+# Local observability stack for FineCode OpenTelemetry development.
+#
+# All services are gated behind the "otel" Compose profile, so they stay DOWN
+# by default — including when the devcontainer auto-starts. Opt in either way:
+#   - Persistent:  set COMPOSE_PROFILES=otel in .env, then (re)open the devcontainer.
+#   - On demand:   scripts/observability.sh up   (see that script for down/status).
+# Standalone (outside the devcontainer):
+#   docker compose --profile otel -f docker-compose.otel.yml up -d
+#
+# Set the WM telemetry endpoint (workspace config otlp_endpoint, default
+# http://otel-lgtm:4317) to also stream live signals to the collector; WAL
+# events are captured regardless and can be ingested retroactively.
+
+services:
+  # Bundles the OTel Collector, Tempo, Prometheus, Loki, and Grafana in one
+  # container (grafana/otel-lgtm). We run our own collector config inside it
+  # (mounted over its default) so the WAL->Loki pipeline (ADR-0039) and the
+  # Tempo<->Loki correlation wiring are preserved; everything else (storage
+  # engines, Grafana, dashboards) is otel-lgtm's own bundled build.
+  #
+  # otel-lgtm's Tempo/Prometheus/Loki are only reachable from *inside* this
+  # container (127.0.0.1:4418/9090/3100) — see configs/otel/collector.yaml
+  # and the datasource provisioning for those internal endpoints. The image
+  # tag is pinned because those internal endpoints are not a stable public
+  # contract.
+  otel-lgtm:
+    image: grafana/otel-lgtm:0.28.0
+    profiles: ["otel"]
+    environment:
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Admin
+      - GF_AUTH_DISABLE_LOGIN_FORM=true
+      - ENABLE_LOGS_OTELCOL=true
+      - ENABLE_LOGS_LOKI=true
+    volumes:
+      - ./configs/otel/collector.yaml:/otel-lgtm/otelcol-config.yaml:ro
+      - ./configs/otel/grafana/provisioning/datasources/datasources.yaml:/otel-lgtm/grafana/conf/provisioning/datasources/grafana-datasources.yaml:ro
+      - .:/workspace:ro                                # filelog/wal reads WAL JSONL files
+      - otelcol-storage:/var/lib/otelcol/file_storage  # persists filelog read offsets across restarts
+      - otel-lgtm-data:/data                            # Tempo/Loki/Prometheus/Grafana storage
+    ports:
+      - "3000:3000"   # Grafana UI
+      - "4317:4317"   # OTLP gRPC
+      - "4318:4318"   # OTLP HTTP
+      - "9090:9090"   # Prometheus API
+      - "3200:3200"   # Tempo HTTP API
+      - "3100:3100"   # Loki HTTP API
+    depends_on:
+      - jaeger
+    networks:
+      - finecode-net
+    restart: unless-stopped
+
+  jaeger:
+    image: cr.jaegertracing.io/jaegertracing/jaeger:2.18.0
+    profiles: ["otel"]
+    ports:
+      - "16686:16686"   # Jaeger UI
+    networks:
+      - finecode-net
+    restart: unless-stopped
+
+networks:
+  finecode-net:
+    name: finecode-net
+
+volumes:
+  otel-lgtm-data:
+  otelcol-storage:

@@ -1,0 +1,119 @@
+extensions:
+  file_storage:
+    directory: /var/lib/otelcol/file_storage
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+  filelog/wal:
+    include:
+      - /workspace/**/.venvs/*/state/finecode/wal/**/*.jsonl
+    poll_interval: 1s
+    start_at: beginning
+    storage: file_storage
+    operators:
+      - type: json_parser
+        timestamp:
+          parse_from: attributes.ts
+          layout_type: gotime
+          layout: "2006-01-02T15:04:05.999999Z07:00"
+      - type: move
+        from: attributes.event_type
+        to: attributes["finecode.event_type"]
+      # Run-scoped fields — only present on run.* and runner.selected events
+      - type: move
+        from: attributes.wal_run_id
+        to: attributes["finecode.run_id"]
+        if: 'attributes["wal_run_id"] != nil'
+      - type: move
+        from: attributes.action_name
+        to: attributes["finecode.action_name"]
+        if: 'attributes["action_name"] != nil'
+      - type: move
+        from: attributes.trigger
+        to: attributes["finecode.trigger"]
+        if: 'attributes["trigger"] != nil'
+      - type: move
+        from: attributes.dev_env
+        to: attributes["finecode.dev_env"]
+        if: 'attributes["dev_env"] != nil'
+      # Runner lifecycle field — only present on runner.started/failed/stopped
+      - type: move
+        from: attributes.env_name
+        to: attributes["finecode.env_name"]
+        if: 'attributes["env_name"] != nil'
+      - type: add
+        field: resource["service.name"]
+        value: finecode-wal
+
+processors:
+  batch:
+    timeout: 1s
+    send_batch_size: 1024
+  memory_limiter:
+    # Shares the otel-lgtm container's memory with Loki/Tempo/Prometheus/Grafana/
+    # Pyroscope (unlike the old standalone-collector setup, where this limit only
+    # had to account for the collector itself) — 256 was too tight and caused
+    # frequent "Refusing data"/forced-GC cycles that silently dropped batches.
+    check_interval: 1s
+    limit_mib: 768
+    spike_limit_mib: 256
+
+  # Derives a dash-free trace ID from finecode.run_id (UUID) so Grafana can
+  # link WAL log entries directly to their corresponding Tempo trace.
+  transform/wal:
+    error_mode: propagate
+    log_statements:
+      - context: log
+        conditions:
+          - IsString(attributes["finecode.run_id"])
+        statements:
+          - set(attributes["finecode.trace_id"], attributes["finecode.run_id"])
+          - replace_pattern(attributes["finecode.trace_id"], "-", "")
+          - set(trace_id, TraceID(attributes["finecode.trace_id"]))
+
+exporters:
+  # otel-lgtm's bundled Tempo, Prometheus, and Loki are reached via their
+  # container-local (127.0.0.1) ingest endpoints — this config runs *inside*
+  # the otel-lgtm container as its collector, not as a separate peer.
+  otlphttp/tempo:
+    endpoint: http://127.0.0.1:4418
+
+  otlp/jaeger:
+    endpoint: jaeger:4317
+    tls:
+      insecure: true
+
+  otlphttp/metrics:
+    endpoint: http://127.0.0.1:9090/api/v1/otlp
+
+  otlphttp/loki:
+    endpoint: http://127.0.0.1:3100/otlp
+
+service:
+  extensions: [file_storage]
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [otlphttp/tempo, otlp/jaeger]
+
+    metrics:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [otlphttp/metrics]
+
+    logs/otlp:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [otlphttp/loki]
+
+    logs/wal:
+      receivers: [filelog/wal]
+      processors: [memory_limiter, transform/wal, batch]
+      exporters: [otlphttp/loki]
