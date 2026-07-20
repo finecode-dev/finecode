@@ -4,6 +4,14 @@ from fine_envs.install_env_action import InstallEnvAction
 from fine_envs.install_envs_action import InstallEnvsAction
 from fine_envs.install_deps_in_env_action import InstallDepsInEnvAction
 from fine_envs.dump_config_action import DumpConfigAction
+from fine_envs.sync_toolchains_action import SyncToolchainsAction
+from fine_envs.check_toolchains_action import CheckToolchainsAction
+from fine_envs.list_obtainable_toolchains_action import ListObtainableToolchainsAction
+from fine_envs.list_obtainable_toolchains_dispatch_handler import (
+    ListObtainableToolchainsDispatchHandler,
+)
+from fine_envs.sync_toolchains_dispatch_handler import SyncToolchainsDispatchHandler
+from fine_envs.check_toolchains_handler import CheckToolchainsHandler
 from fine_envs.create_envs_discover_envs_handler import CreateEnvsDiscoverEnvsHandler
 from fine_envs.create_envs_dispatch_handler import CreateEnvsDispatchHandler
 from fine_envs.install_envs_discover_envs_handler import InstallEnvsDiscoverEnvsHandler
@@ -21,6 +29,12 @@ __all__ = [
     "InstallEnvsAction",
     "InstallDepsInEnvAction",
     "DumpConfigAction",
+    "SyncToolchainsAction",
+    "CheckToolchainsAction",
+    "ListObtainableToolchainsAction",
+    "ListObtainableToolchainsDispatchHandler",
+    "SyncToolchainsDispatchHandler",
+    "CheckToolchainsHandler",
     "CreateEnvsDiscoverEnvsHandler",
     "CreateEnvsDispatchHandler",
     "InstallEnvsDiscoverEnvsHandler",

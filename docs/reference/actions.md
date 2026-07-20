@@ -265,6 +265,129 @@ Install dependencies into a specific environment.
 
 ---
 
+## `sync_toolchains`
+
+Derive each environment's toolchain axis from the project's declared support range and write it into the project definition file.
+
+- **Source:** `fine_envs.SyncToolchainsAction`
+
+**Payload fields:**
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `project_def_path` | `Path \| None` | `None` | Project definition file declaring the envs. `None` means the current project. |
+| `save` | `bool` | `True` | Write the derived axis to the file. `False` derives and reports without writing. |
+
+**Result fields:**
+
+| Field | Type | Description |
+|---|---|---|
+| `axes` | `list[EnvToolchainAxis]` | Per env: `declared`, `derived`, and whether it `changed` |
+| `saved` | `bool` | Whether a derived axis was written |
+
+A **toolchain** is the implementation-and-version a project is executed against; in Python it is an [interpreter](../glossary.md#interpreter). Every ecosystem declares its support range somewhere (`requires-python`, `engines`, `required_ruby_version`), and a language handler expands that range into toolchain identities. The action dispatches on project language to the matching subaction.
+
+The axis is *materialized* — written to the file rather than recomputed on each run — so that config resolution stays a pure read of already-declared data. See [ADR-0053](../adr/0053-derived-interpreter-axis-is-materialized-into-config.md) for why, and note the consequence: the axis is wholly generated, so extra toolchains are configured as *inputs to the source* (`extra_interpreters`) rather than hand-added to its output.
+
+---
+
+## `check_toolchains`
+
+Check whether each environment's materialized toolchain axis still matches what the source derives. Fails with a non-zero return code on drift.
+
+- **Source:** `fine_envs.CheckToolchainsAction`
+
+**Payload fields:**
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `project_def_path` | `Path \| None` | `None` | Project definition file declaring the envs. `None` means the current project. |
+
+**Result fields:**
+
+| Field | Type | Description |
+|---|---|---|
+| `stale_axes` | `list[EnvToolchainAxis]` | Envs whose declared axis differs from the derived one |
+
+A generated, committed axis can go stale — the support range changes, or the source learns about a newer toolchain. That is the same staleness a lock file has, and it is caught the same way: re-derive and compare. Wire this into `precommit` and CI. Runs `sync_toolchains` with `save = False` and reports what would change.
+
+---
+
+## `sync_python_interpreters`
+
+Derive an environment's Python interpreter axis from `requires-python`. Language-specific subaction of `sync_toolchains`.
+
+- **Source:** `fine_python_lang.SyncPythonInterpretersAction`
+- **Handler:** `fine_python_package_info.SyncPythonInterpretersPyHandler`
+- **Preset:** `fine_python_envs`
+
+**Payload fields:** same as `sync_toolchains`. **Result fields:** same as `sync_toolchains`.
+
+**Handler config:**
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `envs` | `list[str]` | `[]` | Envs whose interpreter axis is derived. Empty means none — the action is a no-op. An env either derives its axis or has one pinned, never both. |
+| `max_supported_python` | `str \| None` | `None` | Cap the newest CPython to derive. `None` means no cap beyond what is obtainable. |
+| `extra_interpreters` | `list[str]` | `[]` | Interpreters beyond the derived CPython rows, e.g. `["pypy@3.11"]`. |
+
+`requires-python` is a *specifier*, not an enumeration, so it is expanded against the set of **obtainable** interpreters (see `list_obtainable_toolchains` below). An open upper bound (`>=3.11`) — the correct form for a published package — is bounded by that set rather than rejected. The result therefore depends on something outside the specifier, which is exactly why it is persisted.
+
+`requires-python` constrains version only and carries no implementation, so the derived axis is CPython-only. PyPy and friends are configured via `extra_interpreters`.
+
+Matrices stay opt-in: with no `envs` configured, nothing is derived and every action keeps running in a single environment with an unchanged result shape.
+
+The derived axis is written into the **project's own** definition file, and project config beats preset config. So if a preset pins `interpreters` for an env that is also listed in `envs`, the derived axis is materialized over it and the run warns once, since the pin stops having any effect. To keep the preset's axis instead, drop that env from `envs` in your own config. Deriving into your own file is also the only way to override a pinned axis at all, because config layering can replace a key but never unset one.
+
+Materializing once per project rather than sharing one axis from a preset is deliberate: the axis derives from `requires-python`, which is per-project, and a project that states its own axis cannot have its matrix changed by a preset bump without a diff. See [ADR-0053](../adr/0053-derived-interpreter-axis-is-materialized-into-config.md) and `SyncPythonInterpretersPyHandler`'s docstring.
+
+---
+
+## `list_obtainable_toolchains`
+
+List the toolchains the environment provisioner is able to obtain.
+
+- **Source:** `fine_envs.ListObtainableToolchainsAction`
+
+**Payload fields:**
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `include_prereleases` | `bool` | `False` | Include prerelease toolchains (e.g. a Python beta). |
+
+**Result fields:**
+
+| Field | Type | Description |
+|---|---|---|
+| `toolchains` | `list[str]` | Canonical identities, e.g. `cpython@3.13` — no patch level, variant, or platform tag |
+
+**"Obtainable" is deliberately not "installed".** This reports what the *provisioner* can get — a property of a locked dependency — not what happens to be present on this machine. Only the former may feed a derived matrix axis: an axis sourced from local installs would differ between developers on the same commit. Whether a toolchain is available *here* is a separate question, and would be a separate action.
+
+The provisioner is the authority because deriving a version it cannot obtain yields an axis whose environments cannot be created. This is what `sync_toolchains` expands `requires-python` against.
+
+---
+
+## `list_obtainable_python_interpreters`
+
+Language-specific subaction of `list_obtainable_toolchains`. Backed by uv.
+
+- **Source:** `fine_python_lang.ListObtainablePythonInterpretersAction`
+- **Handler:** `fine_python_uv.UvListObtainablePythonInterpretersHandler`
+- **Preset:** `fine_python_envs`
+
+**Payload and result fields:** same as `list_obtainable_toolchains`.
+
+**Handler config:**
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `variant` | `str` | `"default"` | Build variant to report. `freethreaded` builds are a separate variant the `(implementation, version)` identity cannot express. |
+
+Runs `uv python list --only-downloads`, which reports uv's own manifest rather than the machine's installed Pythons. uv's listing is far finer-grained than a matrix axis — patch levels, prereleases, freethreaded variants, platform tags — and all of that is collapsed to one identity per implementation and minor version. Prereleases are excluded by default, so a released beta (`cpython-3.15.0b1`) never enters an axis.
+
+---
+
+
 ## `dump_config`
 
 Dump the resolved configuration for a source artifact that includes FineCode configuration.

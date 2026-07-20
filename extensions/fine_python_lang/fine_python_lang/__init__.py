@@ -23,6 +23,16 @@ from fine_python_lang.lock_python_dependencies_action import (
     LockPythonDependenciesRunContext,
     LockPythonDependenciesRunPayload,
 )
+from fine_python_lang.list_obtainable_python_interpreters_action import (
+    ListObtainablePythonInterpretersAction,
+    ListObtainablePythonInterpretersRunContext,
+    ListObtainablePythonInterpretersRunPayload,
+)
+from fine_python_lang.sync_python_interpreters_action import (
+    SyncPythonInterpretersAction,
+    SyncPythonInterpretersRunContext,
+    SyncPythonInterpretersRunPayload,
+)
 from fine_python_lang.text_document_prepare_call_hierarchy_python_action import (
     TextDocumentPrepareCallHierarchyPythonAction,
 )
@@ -74,6 +84,12 @@ __all__ = [
     "LockPythonDependenciesAction",
     "LockPythonDependenciesRunContext",
     "LockPythonDependenciesRunPayload",
+    "ListObtainablePythonInterpretersAction",
+    "ListObtainablePythonInterpretersRunContext",
+    "ListObtainablePythonInterpretersRunPayload",
+    "SyncPythonInterpretersAction",
+    "SyncPythonInterpretersRunContext",
+    "SyncPythonInterpretersRunPayload",
     "TextDocumentHoverPythonAction",
     "TextDocumentDefinitionPythonAction",
     "TextDocumentReferencesPythonAction",

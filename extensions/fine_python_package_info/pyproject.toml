@@ -8,7 +8,9 @@ requires-python = ">=3.11"
 dependencies = [
     "finecode_extension_api~=0.4.0a0",
     "fine_python_lang~=0.1.0a0",
+    "fine_envs~=0.1.0a0",
     "tomlkit==0.11.*",
+    "packaging>=23.0",
     "twine==6.2.*",
     "build==1.4.*",
     "fine_src_artifacts~=0.1.0a0",

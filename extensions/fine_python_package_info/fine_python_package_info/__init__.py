@@ -9,9 +9,11 @@ from .is_artifact_published_to_registry_py_handler import \
 from .publish_artifact_to_registry_py_handler import \
     PublishArtifactToRegistryPyHandler
 from .py_package_layout_info_provider import PyPackageLayoutInfoProvider
+from .sync_python_interpreters_handler import SyncPythonInterpretersHandler
 
 __all__ = [
     "BuildArtifactPyHandler",
+    "SyncPythonInterpretersHandler",
     "GetDistArtifactVersionPyHandler",
     "PyPackageLayoutInfoProvider",
     "GetSrcArtifactVersionPyHandler",

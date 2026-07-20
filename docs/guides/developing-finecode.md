@@ -352,6 +352,16 @@ python -m finecode prepare-envs
 
 To update lock files, run `lock_dependencies` locally or in a scheduled CI job and commit the result. For multi-platform projects, use a CI matrix to generate lock files on each target platform.
 
+## `requires-python`: no upper bound
+
+FineCode's own packages declare a **lower bound only** on `requires-python` (e.g. `>=3.11`), never an upper bound (`< 3.15`, `<= 3.14`).
+
+An upper bound is a packaging anti-pattern for published packages: a resolver that cannot satisfy the cap **backtracks to an older release** of the package rather than failing cleanly, so a consumer on a newer Python silently gets a stale version instead of a clear "not supported yet" error. See [ADR-0053](../../../finecode_internal_docs/adr/0053-derived-interpreter-axis-is-materialized-into-config.md) for the full rationale.
+
+The cap also has no remaining job now that the interpreter matrix exists. The set of Python versions an action is tested against is **derived from `requires-python` and bounded by what the provisioning toolchain (uv) can actually obtain** (ADR-0053, part 5), not by a hand-written ceiling. So removing the upper bound does not widen the test matrix to unreleased versions — the obtainable-versions ceiling does that job, on the developer's clock and in a reviewable diff.
+
+If a genuinely newer Python breaks a package, fix it when that version exists — do not pre-emptively cap. New packages must follow this: declare `requires-python = ">=<min>"` with no upper component.
+
 ## JSON-RPC key naming convention
 
 All JSON-RPC channels in FineCode use **camelCase** for message keys:

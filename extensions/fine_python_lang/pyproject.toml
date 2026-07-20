@@ -16,6 +16,7 @@ dependencies = [
     "fine_check_imports~=0.1.0a0",
     "fine_semantic_tokens~=0.1.0a0",
     "fine_inlay_hints~=0.1.0a0",
+    "fine_envs~=0.1.0a0",
 ]
 
 [dependency-groups]

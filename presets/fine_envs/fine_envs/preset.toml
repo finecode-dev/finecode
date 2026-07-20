@@ -71,6 +71,36 @@ env = "dev_workspace"
 dependencies = ["fine_envs~=0.1.0a0"]
 
 
+[tool.finecode.action.sync_toolchains]
+source = "fine_envs.SyncToolchainsAction"
+
+[[tool.finecode.action.sync_toolchains.handlers]]
+name = "sync_toolchains_dispatch"
+source = "fine_envs.SyncToolchainsDispatchHandler"
+env = "dev_workspace"
+dependencies = ["fine_envs~=0.1.0a0"]
+
+
+[tool.finecode.action.check_toolchains]
+source = "fine_envs.CheckToolchainsAction"
+
+[[tool.finecode.action.check_toolchains.handlers]]
+name = "check_toolchains"
+source = "fine_envs.CheckToolchainsHandler"
+env = "dev_workspace"
+dependencies = ["fine_envs~=0.1.0a0"]
+
+
+[tool.finecode.action.list_obtainable_toolchains]
+source = "fine_envs.ListObtainableToolchainsAction"
+
+[[tool.finecode.action.list_obtainable_toolchains.handlers]]
+name = "list_obtainable_toolchains_dispatch"
+source = "fine_envs.ListObtainableToolchainsDispatchHandler"
+env = "dev_workspace"
+dependencies = ["fine_envs~=0.1.0a0"]
+
+
 [tool.finecode.action.install_deps_in_env]
 source = "fine_envs.InstallDepsInEnvAction"
 
