@@ -11,6 +11,13 @@ services:
       # both COMPOSE_PROFILES=otel and FINECODE_OTLP_ENDPOINT in .env — the ready
       # collector URL is provided there, so developers never compose it themselves.
       - FINECODE_OTLP_ENDPOINT=${FINECODE_OTLP_ENDPOINT:-}
+      # uv's default cache (~/.cache/uv) lives on the container's overlay
+      # filesystem, a different device than this bind-mounted workspace. uv
+      # dedupes installs by hardlinking from its cache into each venv, but
+      # hardlinks can't cross filesystems — so every package in every venv
+      # would silently falling back to a full copy. Putting the
+      # cache on the same device restores hardlinking.
+      - UV_CACHE_DIR=/workspaces/finecode/.uv-cache
     volumes:
       - .:/workspaces/finecode:cached
       - ./.claude:/home/vscode/.claude:cached
