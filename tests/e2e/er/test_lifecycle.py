@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import socket
 import subprocess
+import sys
 import time
 
 import pytest
@@ -132,3 +133,78 @@ def test_extension_runners_cleaned_up_on_wm_shutdown(workspace_dir_with_er, tmp_
             f"Extension Runner PID {pid} is still alive after WM shutdown — "
             "on_shutdown() may not have sent exit to all runners"
         )
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="stuck-ER wrapper is a POSIX shell script")
+def test_stuck_er_process_is_killed_when_start_attempt_gives_up(workspace_dir_with_stuck_er, tmp_path):
+    """An ER that never reports its port does not outlive the WM giving up on it.
+
+    Before this was fixed, a start attempt that timed out waiting for the ER's
+    TCP port (e.g. under resource contention) abandoned the already-spawned OS
+    process instead of killing it — nothing ever revisited it, since the WM
+    only tracks the runner as FAILED. Under real load this produces exactly
+    the kind of unbounded orphaned-process accumulation that starves the
+    machine for every future run, not just a single stuck process.
+    """
+    port_file = tmp_path / "wm_port"
+
+    proc = start_server(
+        ["start-wm-server", "--port-file", str(port_file)],
+        cwd=workspace_dir_with_stuck_er,
+    )
+    er_pid: int | None = None
+    try:
+        assert wait_for_file(port_file), (
+            "WM server did not write port file within 15 s — server failed to start"
+        )
+
+        port = int(port_file.read_text().strip())
+        assert wait_for_port("127.0.0.1", port), (
+            f"WM server not accepting connections on port {port}"
+        )
+
+        with socket.create_connection(("127.0.0.1", port)) as sock:
+            _send_request(
+                sock,
+                "workspace/addDir",
+                {"dirPath": str(workspace_dir_with_stuck_er)},
+                req_id=1,
+            )
+
+            # The stuck ER is spawned almost immediately, well before the WM's
+            # own ~30 s port-wait gives up on it — poll for it so we have a
+            # PID to check once that timeout fires.
+            wm_process = psutil.Process(proc.pid)
+            deadline = time.monotonic() + 15.0
+            while time.monotonic() < deadline:
+                children = wm_process.children(recursive=True)
+                stuck_procs = [c for c in children if "3600" in c.cmdline()]
+                if stuck_procs:
+                    er_pid = stuck_procs[0].pid
+                    break
+                time.sleep(0.5)
+
+            assert er_pid is not None, (
+                "Stuck Extension Runner process did not appear within 15 s — "
+                "check that the bin/python wrapper in workspace_dir_with_stuck_er "
+                "is actually intercepting the ER start command"
+            )
+
+            # addDir must eventually resolve (error or not) once the WM gives
+            # up on the port handshake, rather than hanging forever.
+            _read_response(sock, timeout=45.0)
+
+        # By the time addDir's response was sent, the failed start attempt's
+        # except-block force_kill() should already have run — give the OS a
+        # brief grace window to finish reaping it either way.
+        deadline = time.monotonic() + 5.0
+        while time.monotonic() < deadline and psutil.pid_exists(er_pid):
+            time.sleep(0.2)
+
+        assert not psutil.pid_exists(er_pid), (
+            f"Stuck Extension Runner PID {er_pid} is still alive after the WM "
+            "gave up waiting for its port — the failed start attempt did not "
+            "kill the OS process it had already spawned"
+        )
+    finally:
+        kill_group(proc)

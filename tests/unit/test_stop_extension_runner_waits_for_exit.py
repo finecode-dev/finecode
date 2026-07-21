@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import pathlib
-import threading
 
 import pytest
 
@@ -43,25 +42,3 @@ async def test_stop_extension_runner_gives_up_after_timeout_instead_of_hanging(
     runner = wm_testing.make_running_runner(working_dir_path=tmp_path, client=client)
 
     await asyncio.wait_for(runner_manager.stop_extension_runner(runner), timeout=2)
-
-
-def test_stop_extension_runner_sync_waits_for_process_to_actually_exit(
-    tmp_path: pathlib.Path,
-) -> None:
-    """Same contract as the async variant: the sync stop path must not
-    return before the runner's process has actually exited.
-    """
-    client = wm_testing.FakeErClient()
-    client.configure_response(None)
-    runner = wm_testing.make_running_runner(working_dir_path=tmp_path, client=client)
-
-    stop_thread = threading.Thread(
-        target=runner_manager.stop_extension_runner_sync, args=(runner,)
-    )
-    stop_thread.start()
-    stop_thread.join(timeout=0.05)
-    assert stop_thread.is_alive()
-
-    client.server_process_stopped.set()
-    stop_thread.join(timeout=2)
-    assert not stop_thread.is_alive()

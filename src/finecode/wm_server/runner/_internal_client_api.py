@@ -69,18 +69,6 @@ async def shutdown(
     await client.send_request(method=_internal_client_types.SHUTDOWN)
 
 
-def shutdown_sync(
-    client: jsonrpc_client.JsonRpcClient,
-) -> None:
-    logger.debug(f"Send shutdown to server  {client.readable_id}")
-    client.send_request_sync(method=_internal_client_types.SHUTDOWN)
-
-
 async def exit(client: jsonrpc_client.JsonRpcClient) -> None:
-    logger.debug(f"Send exit to server {client.readable_id}")
-    client.notify(method=_internal_client_types.EXIT)
-
-
-def exit_sync(client: jsonrpc_client.JsonRpcClient) -> None:
     logger.debug(f"Send exit to server {client.readable_id}")
     client.notify(method=_internal_client_types.EXIT)

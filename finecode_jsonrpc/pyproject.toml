@@ -10,6 +10,7 @@ dependencies = [
     "culsans==0.11.*",
     "cattrs==26.1.*",
     "finecode_extension_api~=0.4.0a0",
+    "typing-extensions (>=4.12.2,<5.0.0)",
 ]
 
 [dependency-groups]

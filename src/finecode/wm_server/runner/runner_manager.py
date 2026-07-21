@@ -167,54 +167,69 @@ async def _start_extension_runner_process(
 
     process_args_str: str = " ".join(process_args)
     client = jsonrpc_client.JsonRpcClient(message_types=_internal_client_types.METHOD_TO_TYPES, readable_id=runner.readable_id, tracing=telemetry.JsonRpcTracingHooks())
-    
-    try:
-        await client.start(server_cmd=f"{python_cmd} -m finecode_extension_runner.cli start {process_args_str}", working_dir_path=runner.working_dir_path, io_thread=ws_context.runner_io_thread, debug_port_future=debug_port_future, connect=not start_with_debug)
-    except RunnerFailedToStart as exception:
-        logger.error(f"Runner {runner.readable_id} failed to start: {exception.message}")
-        runner.status = runner_client.RunnerStatus.FAILED
-        runner.initialized_event.set()
-        raise exception
-
+    # Attach before start() so a shutdown sweep racing with an in-flight start
+    # attempt (subprocess already spawned, port handshake not yet resolved)
+    # still has a handle to force-kill it — client.pid is only set once the
+    # process actually exists, so force_kill() is a safe no-op before that.
     runner.client = client
 
-    if start_with_debug:
-        assert debug_port_future is not None
-
-        # avoid blocking main thread?
-        debug_async_future = asyncio.wrap_future(future=debug_port_future)
+    # Held from spawn until the RPC channel is confirmed connected — bounds how
+    # many ERs are simultaneously mid-startup (CPU/memory-bursty: process spawn,
+    # interpreter init, imports), regardless of which caller triggered this
+    # start. Does NOT bound whatever the triggering action does afterward in
+    # this ER's own process — that's a separate, much more variable resource
+    # cost this cap deliberately leaves unconstrained. See ADR-0063.
+    async with ws_context.er_startup_semaphore:
         try:
-            await asyncio.wait_for(debug_async_future, timeout=30)
-        except TimeoutError as exception:
+            await client.start(server_cmd=f"{python_cmd} -m finecode_extension_runner.cli start {process_args_str}", working_dir_path=runner.working_dir_path, io_thread=ws_context.runner_io_thread, debug_port_future=debug_port_future, connect=not start_with_debug)
+        except RunnerFailedToStart as exception:
+            logger.error(f"Runner {runner.readable_id} failed to start: {exception.message}")
+            # client.start() may have already spawned the OS process (e.g. it timed
+            # out waiting for the port handshake) — kill it now rather than leaving
+            # it running unmanaged, since no status/attempt will ever revisit it.
+            client.force_kill()
             runner.status = runner_client.RunnerStatus.FAILED
             runner.initialized_event.set()
-            raise RunnerFailedToStart(f"Failed to get debugger port in 30 seconds: {runner.readable_id}") from exception
-        
-        debug_port = debug_async_future.result()
-        logger.info(f"debug port: {debug_port}")
+            raise exception
 
-        if start_debug_session is not None:
-            debug_params = {
-                "name": "Python: WM",
-                "type": "debugpy",
-                "request": "attach",
-                "connect": {
-                    "host": "localhost",
-                    "port": debug_port
-                },
-                "justMyCode": False,
-                # "logToFile": True,
-            }
-            await start_debug_session(debug_params)
+        if start_with_debug:
+            assert debug_port_future is not None
 
-        try:
-            await client.connect_to_server(io_thread=ws_context.runner_io_thread, timeout=None)
-        except Exception as exception: # TODO: analyze which can occur
-            # TODO: analyze whether server process will always stop if connection
-            logger.error(f"Runner {runner.readable_id} failed to connect to server: {exception}")
-            runner.status = runner_client.RunnerStatus.FAILED
-            runner.initialized_event.set()
-            raise RunnerFailedToStart(str(exception)) from exception
+            # avoid blocking main thread?
+            debug_async_future = asyncio.wrap_future(future=debug_port_future)
+            try:
+                await asyncio.wait_for(debug_async_future, timeout=30)
+            except TimeoutError as exception:
+                client.force_kill()
+                runner.status = runner_client.RunnerStatus.FAILED
+                runner.initialized_event.set()
+                raise RunnerFailedToStart(f"Failed to get debugger port in 30 seconds: {runner.readable_id}") from exception
+
+            debug_port = debug_async_future.result()
+            logger.info(f"debug port: {debug_port}")
+
+            if start_debug_session is not None:
+                debug_params = {
+                    "name": "Python: WM",
+                    "type": "debugpy",
+                    "request": "attach",
+                    "connect": {
+                        "host": "localhost",
+                        "port": debug_port
+                    },
+                    "justMyCode": False,
+                    # "logToFile": True,
+                }
+                await start_debug_session(debug_params)
+
+            try:
+                await client.connect_to_server(io_thread=ws_context.runner_io_thread, timeout=None)
+            except Exception as exception: # TODO: analyze which can occur
+                logger.error(f"Runner {runner.readable_id} failed to connect to server: {exception}")
+                client.force_kill()
+                runner.status = runner_client.RunnerStatus.FAILED
+                runner.initialized_event.set()
+                raise RunnerFailedToStart(str(exception)) from exception
 
     async def on_exit():
         logger.debug(f"Extension Runner {runner.readable_id} exited")
@@ -637,35 +652,18 @@ async def stop_extension_runner(runner: runner_client.ExtensionRunnerInfo) -> No
         # passed into the thread itself (rather than wrapping an unbounded
         # `.wait()` in `asyncio.wait_for`) so a slow-to-stop runner doesn't
         # leak a blocked thread from the default executor.
+        # Deliberately no force-kill fallback here: the ER already received
+        # `exit` and may legitimately still be tearing down its own spawned
+        # subprocesses (e.g. a package-manager invocation). Killing it mid
+        # cleanup risks orphaning exactly the children a slower-but-graceful
+        # exit would have reaped itself. `force_kill()` is only used where no
+        # exit RPC was ever sent (start-attempt failures, INITIALIZING runners
+        # swept on WM shutdown — see `_start_extension_runner_process` and
+        # `shutdown_service.on_shutdown`), never as a timeout fallback here.
         stopped = await asyncio.to_thread(
             runner.client.server_process_stopped.wait, _STOP_TIMEOUT_SEC
         )
         if not stopped:
-            logger.warning(
-                f"Extension runner {runner.readable_id} did not stop within"
-                f" {_STOP_TIMEOUT_SEC}s of exit"
-            )
-
-        logger.trace(f"Stopped extension runner {runner.readable_id}")
-    else:
-        logger.trace("Extension runner was not running")
-
-
-def stop_extension_runner_sync(runner: runner_client.ExtensionRunnerInfo) -> None:
-    logger.trace(f"Trying to stop extension runner {runner.readable_id}")
-    if runner.status in (
-        runner_client.RunnerStatus.RUNNING,
-        runner_client.RunnerStatus.REPAIRING,
-    ):
-        try:
-            _internal_client_api.shutdown_sync(client=runner.client)
-        except Exception as e:
-            logger.error(f"Failed to shutdown:")
-            logger.exception(e)
-
-        _internal_client_api.exit_sync(runner.client)
-
-        if not runner.client.server_process_stopped.wait(timeout=_STOP_TIMEOUT_SEC):
             logger.warning(
                 f"Extension runner {runner.readable_id} did not stop within"
                 f" {_STOP_TIMEOUT_SEC}s of exit"

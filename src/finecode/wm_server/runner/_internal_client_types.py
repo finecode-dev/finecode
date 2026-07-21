@@ -10,7 +10,13 @@ import dataclasses
 import collections.abc
 import enum
 import functools
+import sys
 import typing
+
+if sys.version_info >= (3, 12):
+    from typing import override
+else:
+    from typing_extensions import override
 
 EXIT = "exit"
 INITIALIZE = "initialize"
@@ -1202,13 +1208,13 @@ class Range:
     end: Position
     """The range's end position."""
 
-    @typing.override
+    @override
     def __eq__(self, o: object) -> bool:
         if not isinstance(o, Range):
             return NotImplemented
         return (self.start == o.start) and (self.end == o.end)
 
-    @typing.override
+    @override
     def __repr__(self) -> str:
         return f"{self.start!r}-{self.end!r}"
 
@@ -1255,7 +1261,7 @@ class Position:
     The meaning of this offset is determined by the negotiated
     `PositionEncodingKind`."""
 
-    @typing.override
+    @override
     def __eq__(self, o: object) -> bool:
         if not isinstance(o, Position):
             return NotImplemented
@@ -1266,7 +1272,7 @@ class Position:
             return NotImplemented
         return (self.line, self.character) > (o.line, o.character)
 
-    @typing.override
+    @override
     def __repr__(self) -> str:
         return f"{self.line}:{self.character}"
 

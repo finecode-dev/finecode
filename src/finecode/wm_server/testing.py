@@ -41,6 +41,9 @@ class FakeErClient:
         # exercising stop/exit flows must set it explicitly to simulate the
         # process terminating.
         self.server_process_stopped = threading.Event()
+        # Mirrors ``JsonRpcClient.force_kill()``: tests assert on this rather
+        # than a real process, since there is no OS process behind a fake.
+        self.force_kill_called = False
 
     def configure_response(self, response: typing.Any) -> None:
         self._response = response
@@ -70,6 +73,9 @@ class FakeErClient:
 
     def notify(self, method: str, params: typing.Any | None = None) -> None:
         self.sent_requests.append((method, params))
+
+    def force_kill(self) -> None:
+        self.force_kill_called = True
 
 
 def make_cancelled_error(message: str = "cancelled") -> finecode_jsonrpc.ErrorOnRequest:
@@ -125,6 +131,29 @@ def make_running_runner(
         client=client if client is not None else FakeErClient(),
     )
     runner.initialized_event.set()
+    return runner
+
+
+def make_initializing_runner(
+    *,
+    working_dir_path: Path,
+    env_name: str = "test_env",
+    client: typing.Any | None = None,
+) -> runner_client.ExtensionRunnerInfo:
+    """Build an ``ExtensionRunnerInfo`` still ``INITIALIZING``.
+
+    Mirrors :func:`make_running_runner`, but for tests exercising the window
+    where a start attempt is in flight (or has stalled): the runner is
+    registered and has a client attached — matching production, where
+    ``runner.client`` is set immediately after construction, before
+    ``client.start()`` is even called — but never reached ``RUNNING``.
+    """
+    runner = runner_client.ExtensionRunnerInfo(
+        working_dir_path=working_dir_path,
+        env_name=env_name,
+        status=domain.ExtensionRunnerStatus.INITIALIZING,
+        client=client if client is not None else FakeErClient(),
+    )
     return runner
 
 

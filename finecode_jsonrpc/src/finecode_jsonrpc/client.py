@@ -10,6 +10,7 @@ import functools
 import json
 import os
 import re
+import signal
 import subprocess
 import sys
 import threading
@@ -17,6 +18,11 @@ import traceback
 import typing
 import uuid
 from pathlib import Path
+
+if sys.version_info >= (3, 12):
+    from typing import override
+else:
+    from typing_extensions import override
 
 import cattrs
 import culsans
@@ -28,7 +34,7 @@ from loguru import logger
 
 class QueueEnd:
     # just object() would not support multiprocessing, use class and compare by it
-    @typing.override
+    @override
     def __eq__(self, other: object) -> bool:
         return self.__class__ == other.__class__
 
@@ -161,6 +167,9 @@ class JsonRpcClient:
         tracing: ITracingHooks | None = None,
     ) -> None:
         self.server_process_stopped: typing.Final = threading.Event()
+        # Set as soon as the OS process is spawned (before the port handshake),
+        # so a start attempt that later times out still has a handle to kill.
+        self.pid: int | None = None
         self.server_exit_callback: (
             collections.abc.Callable[[], collections.abc.Coroutine] | None
         ) = None
@@ -267,7 +276,7 @@ class JsonRpcClient:
             # the server
             raise server_start_exception
 
-        self._reader, self._writer, self._tcp_port_future = server_future.result()
+        self._reader, self._writer, self._tcp_port_future, self.pid = server_future.result()
 
         notify_exit = asyncio.create_task(self._server_process_stop_handler())
         notify_exit.add_done_callback(
@@ -338,6 +347,34 @@ class JsonRpcClient:
 
     def stop(self) -> None:
         self._stop_event.set()
+
+    def force_kill(self) -> None:
+        """Forcefully terminate the server process and everything it spawned.
+
+        Use this when there is no live RPC channel to ask the server to stop
+        cooperatively — the start attempt timed out before the port/handshake
+        completed, or the graceful ``stop()`` path did not result in exit
+        within its timeout. A no-op if the process was never spawned or has
+        already exited.
+
+        The process is started with ``start_new_session=True`` specifically so
+        it (and any subprocess it spawns, e.g. a package manager invocation)
+        can be reached as one process group here.
+        """
+        if self.pid is None:
+            return
+
+        if sys.platform == "win32":
+            # os.killpg has no Windows equivalent; taskkill /T walks the tree.
+            subprocess.run(
+                ["taskkill", "/F", "/T", "/PID", str(self.pid)],
+                capture_output=True,
+            )
+        else:
+            try:
+                os.killpg(self.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
 
     def _send_data(self, data: str):
         header = (
@@ -923,7 +960,7 @@ async def start_server(
     stderr_buffer: list[str] | None = None,
     stdout_buffer: list[str] | None = None,
 ) -> tuple[
-    asyncio.StreamReader | None, asyncio.StreamWriter | None, asyncio.Future[int] | None
+    asyncio.StreamReader | None, asyncio.StreamWriter | None, asyncio.Future[int] | None, int
 ]:
     logger.debug(f"Starting server process: {cmd}")
 
@@ -1022,7 +1059,7 @@ async def start_server(
         f"Server {server.pid} started with {communication_type.name} | {server_id}"
     )
 
-    return (reader, writer, tcp_port_future)
+    return (reader, writer, tcp_port_future, server.pid)
 
 
 async def wait_for_stop_event_and_clean(

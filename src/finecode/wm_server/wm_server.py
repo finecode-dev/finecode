@@ -659,7 +659,7 @@ async def start(
         stop()
         # Clean up workspace resources (runners, IO thread).
         from finecode.wm_server.services import shutdown_service
-        shutdown_service.on_shutdown(ws_context)
+        await shutdown_service.on_shutdown(ws_context)
         if ws_context.wal_writer is not None:
             ws_context.wal_writer.close()
 
