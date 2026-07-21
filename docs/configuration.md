@@ -382,6 +382,15 @@ otlp_endpoint = "http://localhost:4317"
 
 The `FINECODE_OTLP_ENDPOINT` environment variable overrides this value (higher priority).
 
+The endpoint must include an explicit host **and** port; a malformed value fails fast at
+startup. It does **not** need to be reachable when FineCode starts: exporters buffer and
+retry, so a backend brought up later is picked up without a restart. An unreachable
+endpoint produces a single startup heads-up rather than an error stream.
+
+Point this at any OTLP-compatible backend. For guidance on running one locally —
+including a ready-to-run single-container option — see the
+[Observability guide](guides/observability.md).
+
 ### WM logging
 
 The Workspace Manager process reads its per-group log level overrides from `[workspace.wm.logging]`. This section controls only the WM process — it has no effect on ERs.

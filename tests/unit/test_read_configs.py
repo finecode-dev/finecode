@@ -8,6 +8,7 @@ from finecode.wm_server.config import config_models
 from finecode.wm_server.config.read_configs import (
     _merge_projects_configs,
     read_project_user_config,
+    read_wm_telemetry_config,
     read_preset_config,
     resolve_interpreter_matrices,
 )
@@ -880,3 +881,118 @@ def test_preset_user_config_tool_table_raises(tmp_path: pathlib.Path) -> None:
     )
     with pytest.raises(config_models.ConfigurationError, match=r"\[tool\]"):
         read_preset_config(tmp_path / "preset.toml", "mypkg")
+
+
+# ---------------------------------------------------------------------------
+# read_wm_telemetry_config — otlp_endpoint precedence (PRD-0004-AC6)
+# ---------------------------------------------------------------------------
+
+
+def test_wm_telemetry_config_absent_file_and_env_is_none(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No finecode-workspace.toml and no env var leaves otlp_endpoint unset.
+
+    Observability must be off by default with no configuration anywhere —
+    this is the state that lets it be a true opt-in capability.
+    """
+    monkeypatch.delenv("FINECODE_OTLP_ENDPOINT", raising=False)
+    result = read_wm_telemetry_config(tmp_path)
+    assert result.otlp_endpoint is None
+
+
+def test_wm_telemetry_config_reads_toml_value(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """otlp_endpoint from [workspace.wm.telemetry] is used when no env var is set."""
+    monkeypatch.delenv("FINECODE_OTLP_ENDPOINT", raising=False)
+    _write_toml(
+        tmp_path / "finecode-workspace.toml",
+        '[workspace.wm.telemetry]\notlp_endpoint = "http://otel-lgtm:4317"\n',
+    )
+    result = read_wm_telemetry_config(tmp_path)
+    assert result.otlp_endpoint == "http://otel-lgtm:4317"
+
+
+def test_wm_telemetry_config_env_var_overrides_toml(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """FINECODE_OTLP_ENDPOINT wins over a configured file value.
+
+    Matches the documented precedence (docs/guides/observability.md): the env
+    var is the highest-priority source.
+    """
+    _write_toml(
+        tmp_path / "finecode-workspace.toml",
+        '[workspace.wm.telemetry]\notlp_endpoint = "http://otel-lgtm:4317"\n',
+    )
+    monkeypatch.setenv("FINECODE_OTLP_ENDPOINT", "http://otel-collector:4318")
+    result = read_wm_telemetry_config(tmp_path)
+    assert result.otlp_endpoint == "http://otel-collector:4318"
+
+
+def test_wm_telemetry_config_empty_env_var_falls_back_to_toml(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An empty-string FINECODE_OTLP_ENDPOINT falls back to the file value
+    rather than silently disabling observability.
+
+    A devcontainer/Compose `environment:` block that always sets the var (e.g.
+    `${FINECODE_OTLP_ENDPOINT:-}`) leaves it present-but-empty rather than
+    unset whenever the developer hasn't opted in via .env. Treating an empty
+    string as "explicitly disable" would silently defeat a TOML-configured
+    endpoint any time such a wrapper is in play.
+    """
+    _write_toml(
+        tmp_path / "finecode-workspace.toml",
+        '[workspace.wm.telemetry]\notlp_endpoint = "http://otel-lgtm:4317"\n',
+    )
+    monkeypatch.setenv("FINECODE_OTLP_ENDPOINT", "")
+    result = read_wm_telemetry_config(tmp_path)
+    assert result.otlp_endpoint == "http://otel-lgtm:4317"
+
+
+def test_wm_telemetry_config_empty_env_var_no_toml_is_none(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An empty-string env var with no TOML value anywhere resolves to None,
+    not to an empty-string endpoint that would fail validation downstream."""
+    monkeypatch.setenv("FINECODE_OTLP_ENDPOINT", "")
+    result = read_wm_telemetry_config(tmp_path)
+    assert result.otlp_endpoint is None
+
+
+def test_wm_telemetry_config_no_telemetry_section_is_none(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A finecode-workspace.toml with no [workspace.wm.telemetry] section at
+    all (e.g. only [workspace] and [workspace.wm.wal]) resolves to None.
+
+    Reproduces a real regression: a workspace config that once had telemetry
+    configured can lose the whole section (e.g. during an unrelated edit)
+    without any parse error, silently turning observability off.
+    """
+    monkeypatch.delenv("FINECODE_OTLP_ENDPOINT", raising=False)
+    _write_toml(
+        tmp_path / "finecode-workspace.toml",
+        "[workspace]\nall_workspace_packages_editable = true\n\n"
+        "[workspace.wm.wal]\nenabled = true\n",
+    )
+    result = read_wm_telemetry_config(tmp_path)
+    assert result.otlp_endpoint is None
+
+
+def test_wm_telemetry_config_malformed_toml_is_swallowed(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A malformed finecode-workspace.toml does not crash telemetry config
+    reading; it degrades to otlp_endpoint=None (env var can still apply).
+
+    Unlike finecode-user.toml (read_project_user_config), a parse error here
+    must not block WM startup — telemetry is best-effort configuration, not a
+    correctness-critical one.
+    """
+    monkeypatch.delenv("FINECODE_OTLP_ENDPOINT", raising=False)
+    (tmp_path / "finecode-workspace.toml").write_bytes(b"[bad toml\n")
+    result = read_wm_telemetry_config(tmp_path)
+    assert result.otlp_endpoint is None

@@ -1,6 +1,8 @@
 import contextlib
+import socket
 import time
 from pathlib import Path
+from urllib.parse import urlparse
 
 # Metric instruments — populated by init_meter_provider(); None when OTel is disabled.
 _action_duration_hist = None
@@ -8,10 +10,73 @@ _action_errors_counter = None
 _er_startup_hist = None
 _er_active_counter = None
 
+# Endpoints already probed for the one-time reachability heads-up, so the three
+# init_* functions log at most once per endpoint.
+_probed_endpoints: set[str] = set()
+
+
+def _validate_endpoint(endpoint: str) -> tuple[str, int]:
+    """Parse the OTLP endpoint into (host, port), raising on a malformed value.
+
+    ``otlp_endpoint`` is explicit configuration, so a value we cannot parse is a
+    developer error worth surfacing loudly rather than papering over with defaults.
+    """
+    parsed = urlparse(endpoint if "://" in endpoint else f"//{endpoint}")
+    if not parsed.hostname or not parsed.port:
+        raise ValueError(
+            f"Invalid otlp_endpoint {endpoint!r}: expected host and port, "
+            f"e.g. http://otel-lgtm:4317"
+        )
+    return parsed.hostname, parsed.port
+
+
+def _silence_otel_export_logs() -> None:
+    """Raise the OTel exporter logger threshold to ERROR.
+
+    A collector that is absent at startup — or that goes down mid-session —
+    otherwise produces a stream of gRPC export-retry warnings for the process
+    lifetime. The exporters buffer and retry regardless, so suppressing the retry
+    churn (while still surfacing genuine ERROR-level export failures) is safe.
+    """
+    import logging
+
+    logging.getLogger("opentelemetry.exporter").setLevel(logging.ERROR)
+
+
+def _probe_endpoint_once(endpoint: str, host: str, port: int) -> None:
+    """Log a one-time heads-up if the endpoint is not reachable at startup.
+
+    This does NOT gate exporter setup: the OTLP batch processors buffer and retry,
+    so a collector started after the WM (e.g. via ``scripts/observability.sh up`` or a
+    ``COMPOSE_PROFILES=otel`` stack that comes up alongside the container) is picked
+    up automatically. The probe only tells the developer whether signals are flowing
+    yet — useful when verifying an observability setup.
+    """
+    if endpoint in _probed_endpoints:
+        return
+    _probed_endpoints.add(endpoint)
+
+    try:
+        with socket.create_connection((host, port), timeout=1.0):
+            return
+    except OSError:
+        pass
+
+    from loguru import logger
+
+    logger.warning(
+        f"OTLP endpoint {endpoint} is not reachable yet; exporters will connect once "
+        f"it is up (e.g. scripts/observability.sh up). WAL events are recorded regardless."
+    )
+
 
 def init_otel_logging(service_name: str, workspace_path: Path | None = None, endpoint: str | None = None) -> None:
     if not endpoint:
         return
+
+    host, port = _validate_endpoint(endpoint)
+    _silence_otel_export_logs()
+    _probe_endpoint_once(endpoint, host, port)
 
     import importlib.metadata
 
@@ -85,6 +150,10 @@ def init_tracer_provider(service_name: str, workspace_path: Path | None = None, 
     if not endpoint:
         return
 
+    host, port = _validate_endpoint(endpoint)
+    _silence_otel_export_logs()
+    _probe_endpoint_once(endpoint, host, port)
+
     import importlib.metadata
 
     from opentelemetry import trace
@@ -118,6 +187,10 @@ def init_meter_provider(service_name: str, workspace_path: Path | None = None, e
 
     if not endpoint:
         return
+
+    host, port = _validate_endpoint(endpoint)
+    _silence_otel_export_logs()
+    _probe_endpoint_once(endpoint, host, port)
 
     import importlib.metadata
 
