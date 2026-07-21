@@ -10,6 +10,12 @@ dependencies = [
     "fine_semantic_tokens~=0.1.0a0",
 ]
 
+[dependency-groups]
+dev_workspace = ["finecode~=0.4.0a0", "finecode_dev_common_preset~=0.3.0a0"]
+
+[tool.finecode]
+presets = [{ source = "finecode_dev_common_preset" }]
+
 [build-system]
 requires = ["setuptools>=64"]
 build-backend = "setuptools.build_meta"

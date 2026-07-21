@@ -7,6 +7,12 @@ readme = "README.md"
 requires-python = ">=3.11"
 dependencies = ["finecode_extension_api~=0.4.0a0", "fine_lint~=0.1.0a0", "fine_format~=0.1.0a0", "fine_type_check~=0.1.0a0", "fine_inspect_code~=0.1.0a0", "fine_audit_code~=0.1.0a0", "fine_envs~=0.1.0a0"]
 
+[dependency-groups]
+dev_workspace = ["finecode~=0.4.0a0", "finecode_dev_common_preset~=0.3.0a0"]
+
+[tool.finecode]
+presets = [{ source = "finecode_dev_common_preset" }]
+
 [build-system]
 requires = ["setuptools>=64"]
 build-backend = "setuptools.build_meta"
