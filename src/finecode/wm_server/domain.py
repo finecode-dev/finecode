@@ -177,6 +177,10 @@ class ServiceDeclaration:
             (e.g. ``"finecode_httpclient.HttpClient"``).
         env: Execution environment name the service implementation runs in.
         dependencies: Dependencies to install into ``env`` for this service.
+        config: Service-specific configuration dict merged from the
+            definition file, injected into the implementation's constructor
+            the same way handler ``config`` params are. ``None`` if none was
+            provided.
     """
 
     def __init__(
@@ -185,11 +189,13 @@ class ServiceDeclaration:
         source: str,
         env: str,
         dependencies: list[str],
+        config: dict[str, typing.Any] | None = None,
     ):
         self.interface = interface
         self.source = source
         self.env = env
         self.dependencies = dependencies
+        self.config = config
 
     def __str__(self) -> str:
         return f'ServiceDeclaration(interface="{self.interface}", source="{self.source}", env="{self.env}")'
@@ -203,6 +209,7 @@ class ServiceDeclaration:
             "source": self.source,
             "env": self.env,
             "dependencies": self.dependencies,
+            "config": self.config,
         }
 
 

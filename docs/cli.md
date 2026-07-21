@@ -131,10 +131,13 @@ Create and populate virtual environments for all handler dependencies.
 
 ```
 python -m finecode prepare-envs [--recreate] [--env=<name>]...
-                                 [--project=<name>]... [--log-level=<level>] [--verbose] [--debug]
+                                 [--project=<name>]... [--max-concurrent-projects=<n>]
+                                 [--log-level=<level>] [--verbose] [--debug]
 ```
 
 Must be run from the workspace or project root. Creates venvs under `.venvs/<env_name>/` and installs each handler's declared dependencies.
+
+By default (no `--verbose` needed), the command prints a progress line to stderr for each orchestration step (project discovery, dev_workspace bootstrap, runner startup, `create_envs`, `install_envs`), plus a running `N/total` counter as each project finishes `create_envs`/`install_envs` — the two steps that run package-manager subprocesses and can otherwise appear to hang for a while on a large workspace. `--verbose` additionally streams full WM/ER diagnostic logs.
 
 See [Preparing Environments](guides/preparing-environments.md) for a full explanation of the three-step sequence and filtering options.
 
@@ -143,6 +146,7 @@ See [Preparing Environments](guides/preparing-environments.md) for a full explan
 | `--recreate` | Delete and recreate all venvs from scratch |
 | `--env=<name>` | Restrict handler dependency installation to the named env(s). Repeatable. See note below. |
 | `--project=<name>` | Restrict preparation to the named project(s) (matched by `[project].name` from `pyproject.toml`). Repeatable. |
+| `--max-concurrent-projects=<n>` | Cap on concurrent projects during `create_envs`/`install_envs`. Defaults to a machine-based value (same env var: `FINECODE_WM_PREPARE_ENVS_MAX_CONCURRENT_PROJECTS`). See [Preparing Environments — bounding concurrency](guides/preparing-environments.md#bounding-concurrency). |
 | `--log-level=<level>` | Set log level: `TRACE`, `DEBUG`, `INFO`, `WARNING`, `ERROR` (default: `INFO`) |
 | `--verbose` / `-v` | Stream WM and ER diagnostic logs to stderr live over the protocol (`server/logRecords`). Auto-enabled in CI. |
 | `--debug` | Wait for a debugpy client on port 5680 before starting |

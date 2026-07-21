@@ -31,6 +31,7 @@ class Action(BaseSchema):
 class ServiceDeclaration(BaseSchema):
     interface: str
     source: str
+    config: dict[str, Any] | None = None
 
 
 @dataclass

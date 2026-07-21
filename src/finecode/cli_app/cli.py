@@ -421,7 +421,8 @@ def run(ctx) -> None:
 @click.option("--interpreter", "interpreter_names", multiple=True, metavar="IMPL@VERSION", help="Limit to specific interpreter(s) of matrix environments. Repeatable; version-only form means cpython.")
 @click.option("--project", "project_names", multiple=True, metavar="PROJECT_NAME", help="Limit to specific project(s). Can be specified multiple times.")
 @click.option("--verbose", "-v", "verbose", is_flag=True, default=False, help="Stream WM/ER diagnostic logs to stderr over the protocol. Auto-enabled in CI.")
-def prepare_envs(log_level: str, debug: bool, recreate: bool, shared_server: bool, dev_env: str | None, env_names: tuple[str, ...], interpreter_names: tuple[str, ...], project_names: tuple[str, ...], verbose: bool) -> None:
+@click.option("--max-concurrent-projects", "max_concurrent_projects", default=None, type=int, help="Cap on concurrent projects during prepare-envs. Defaults to a machine-based value (see docs/guides/preparing-environments.md).")
+def prepare_envs(log_level: str, debug: bool, recreate: bool, shared_server: bool, dev_env: str | None, env_names: tuple[str, ...], interpreter_names: tuple[str, ...], project_names: tuple[str, ...], verbose: bool, max_concurrent_projects: int | None) -> None:
     """
     `prepare-envs` should be called from workspace/project root directory.
     """
@@ -461,6 +462,7 @@ def prepare_envs(log_level: str, debug: bool, recreate: bool, shared_server: boo
                 project_names=list(project_names) if project_names else None,
                 dev_env=dev_env or detect_dev_env(),
                 verbose=verbose,
+                max_concurrent_projects=max_concurrent_projects,
             )
         )
     except prepare_envs_cmd.PrepareEnvsFailed as exception:

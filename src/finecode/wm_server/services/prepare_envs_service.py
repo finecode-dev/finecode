@@ -12,18 +12,86 @@ Both functions raise :class:`PrepareEnvsFailed` on failure.
 from __future__ import annotations
 
 import asyncio
+import os
 import pathlib
-from typing import Any
+import uuid
+from typing import TYPE_CHECKING, Any
 
 from loguru import logger
 
+from finecode_extension_runner.concurrency import (
+    ConcurrencyDecision,
+    default_layered_concurrency,
+    machine_subprocess_budget,
+)
+
+from finecode import user_messages
 from finecode.wm_server import context, domain
+
+if TYPE_CHECKING:
+    from finecode.wm_server.config.env_selection import EnvSelection
 
 
 class PrepareEnvsFailed(Exception):
     def __init__(self, message: str) -> None:
         super().__init__(message)
         self.message = message
+
+
+def resolve_project_concurrency(cli_value: int | None) -> ConcurrencyDecision:
+    """Effective cap on concurrent projects for `prepare-envs`, with the
+    reason it was picked (for logging — see `ConcurrencyDecision`).
+
+    Priority: --max-concurrent-projects CLI flag (if passed) >
+    FINECODE_WM_PREPARE_ENVS_MAX_CONCURRENT_PROJECTS env var (if set) >
+    `default_layered_concurrency()`. Intentionally has no
+    finecode-workspace.toml equivalent: this value is bound to the
+    machine invoking prepare-envs, not to the project, so committing it
+    to shared config would be wrong on every teammate's machine.
+    """
+    if cli_value is not None:
+        return ConcurrencyDecision(max(cli_value, 1), "--max-concurrent-projects flag")
+    if (
+        env_value := os.environ.get(
+            "FINECODE_WM_PREPARE_ENVS_MAX_CONCURRENT_PROJECTS"
+        )
+    ) is not None:
+        return ConcurrencyDecision(
+            max(int(env_value), 1),
+            "FINECODE_WM_PREPARE_ENVS_MAX_CONCURRENT_PROJECTS env var",
+        )
+    return ConcurrencyDecision(
+        default_layered_concurrency(),
+        f"computed default (machine budget {machine_subprocess_budget()}, sqrt-split)",
+    )
+
+
+def build_create_envs_params(
+    sel: EnvSelection, env_universe: dict[str, Any], recreate: bool
+) -> dict[str, Any]:
+    """Build the `fine_envs.CreateEnvsAction` params for one project's step-5 call.
+
+    `recreate` must always be forwarded here — it's the only place a `--recreate`
+    CLI run reaches the per-project `create_envs` step (step 2 forwards it
+    separately, but only for the `dev_workspace` env).
+
+    `dev_workspace` is always excluded from this step's env set: it is already
+    created for every project by steps 2-3's dedicated bootstrap, which executes
+    on the *root* project's runner. By step 5 each project's own `dev_workspace`
+    runner is already started, so re-including it here would make that runner
+    recreate the very venv it is executing from.
+    """
+    from finecode.wm_server.config import env_selection
+
+    if sel.active:
+        create_set = env_selection.compute_create_set(sel, set(env_universe.keys()))
+        create_set.discard("dev_workspace")
+        return {"recreate": recreate, "env_names": sorted(create_set)}
+    elif "dev_workspace" in env_universe:
+        create_set = set(env_universe.keys())
+        create_set.discard("dev_workspace")
+        return {"recreate": recreate, "env_names": sorted(create_set)}
+    return {"recreate": recreate}
 
 
 async def _run_env_action(
@@ -34,14 +102,56 @@ async def _run_env_action(
 ) -> str | None:
     """Run a ``fine_envs`` action on *executor_project*'s dev_workspace runner.
 
+    Action reports per-env progress as it
+    works through a potentially large ``envs`` batch in one action call. This
+    subscribes to that progress stream and
+    forwards each ``report`` event as a user message, so a single slow batched
+    call still shows which env is currently being created/installed.
+
     Returns an error string on failure, ``None`` on success.
     """
     from finecode.wm_server.runner import runner_client as rc
     from finecode.wm_server.services import run_service
+    from finecode.wm_server.services.run_service import proxy_utils
 
     action = next((a for a in executor_project.actions if a.source == action_source), None)
     if action is None or action.canonical_source is None:
         return f"{action_source} not available in project '{executor_project.name}'"
+
+    progress_token = str(uuid.uuid4())
+    progress_list: proxy_utils.AsyncList[domain.ProgressRawValue] = proxy_utils.AsyncList()
+    progress_tasks: list[asyncio.Task] = []
+    runners_by_env = ws_context.ws_projects_extension_runners.get(executor_project.dir_path, {})
+    # action may declare multiple handlers in the
+    # same env; subscribing once per handler would register two
+    # listeners on the same runner+token and double-emit every progress event, so
+    # dedupe by env name (== by runner) first.
+    subscribed_envs: set[str] = set()
+    for handler in action.handlers:
+        if handler.env in subscribed_envs:
+            continue
+        subscribed_envs.add(handler.env)
+        runner = runners_by_env.get(handler.env)
+        if runner is not None:
+            progress_tasks.append(
+                asyncio.create_task(
+                    proxy_utils.get_progress(
+                        result_list=progress_list,
+                        progress_token=progress_token,
+                        runner=runner,
+                    )
+                )
+            )
+
+    async def _forward_progress() -> None:
+        async for value in progress_list:
+            if value.get("type") != "report":
+                continue
+            message = value.get("message")
+            if message:
+                await user_messages.info(message)
+
+    forward_task = asyncio.create_task(_forward_progress())
 
     try:
         result = await run_service.ProjectExecutor(ws_context).run_action(
@@ -52,9 +162,17 @@ async def _run_env_action(
             dev_env=rc.DevEnv.CLI,
             result_formats=[rc.RunResultFormat.STRING],
             initialize_all_handlers=True,
+            progress_token=progress_token,
         )
     except run_service.ActionRunFailed as action_exc:
         return action_exc.message
+    finally:
+        for t in progress_tasks:
+            t.cancel()
+        progress_list.end()
+        await asyncio.gather(*progress_tasks, return_exceptions=True)
+        forward_task.cancel()
+        await asyncio.gather(forward_task, return_exceptions=True)
 
     if result.return_code != 0:
         return (result.result_by_format or {}).get("string", "") or f"{action_source} failed"
@@ -70,6 +188,7 @@ async def prepare_envs(
     interpreter_names: list[str] | None = None,
     project_names: list[str] | None = None,
     dev_env: str = "cli",
+    max_concurrent_projects: int | None = None,
 ) -> None:
     """Prepare all virtual environments for a workspace.
 
@@ -95,6 +214,11 @@ async def prepare_envs(
         dev_env: Active dev-env, used to resolve each matrix env's
             config-declared ``default_interpreters`` subset when
             `interpreter_names` is not given.
+        max_concurrent_projects: Cap on concurrent projects for steps 5 and 6
+            (see `resolve_project_concurrency`). ``None`` resolves the
+            machine-based default; this is a machine-bound tuning value, not
+            a project setting, so it has no `finecode-workspace.toml`
+            equivalent.
 
     Per project, `env_names` / `interpreter_names` / each matrix env's
     `default_interpreters` policy are resolved (via
@@ -120,6 +244,7 @@ async def prepare_envs(
 
     # Step 1 — Discover projects.
     logger.info("Discovering projects...")
+    await user_messages.info("Discovering projects...")
     if workdir_path not in ws_context.ws_dirs_paths:
         ws_context.ws_dirs_paths.append(workdir_path)
         await read_configs.read_projects_in_dir(workdir_path, ws_context)
@@ -173,34 +298,48 @@ async def prepare_envs(
         ]
 
     logger.info(f"Found {len(projects)} project(s): {[p.name for p in projects]}")
+    await user_messages.info(f"Found {len(projects)} project(s)")
+
+    # Concurrency cap (ADR-0055): computed once and shared by every concurrent
+    # project fan-out in this function (steps 2, 5, 6). They run sequentially
+    # relative to each other, so reusing one semaphore is safe — by the time a
+    # later step's fan-out starts, the previous one has released every permit.
+    concurrency_decision = resolve_project_concurrency(max_concurrent_projects)
+    logger.info(
+        f"Capping concurrent projects to {concurrency_decision.value} "
+        f"({concurrency_decision.source})"
+    )
+    semaphore = asyncio.Semaphore(concurrency_decision.value)
 
     # Step 2 — Check / remove dev_workspace envs.
     logger.info("Checking dev workspace environments...")
+    await user_messages.info("Checking dev workspace environments...")
 
     async def _check_or_remove(project: domain.Project) -> None:
-        if recreate:
-            logger.trace(f"Recreating dev_workspace for '{project.name}'")
-            runners = ws_context.ws_projects_extension_runners.get(project.dir_path, {})
-            runner = runners.get("dev_workspace")
-            if runner is not None:
-                await runner_manager.stop_extension_runner(runner=runner)
-            runner_manager.remove_runner_env(project.dir_path, "dev_workspace")
-        else:
-            valid = await runner_manager.check_runner(
-                runner_dir=project.dir_path, env_name="dev_workspace"
-            )
-            if not valid:
-                logger.warning(
-                    f"Env 'dev_workspace' in project '{project.name}' is invalid,"
-                    " recreating it"
-                )
-                runners = ws_context.ws_projects_extension_runners.get(
-                    project.dir_path, {}
-                )
+        async with semaphore:
+            if recreate:
+                logger.trace(f"Recreating dev_workspace for '{project.name}'")
+                runners = ws_context.ws_projects_extension_runners.get(project.dir_path, {})
                 runner = runners.get("dev_workspace")
                 if runner is not None:
                     await runner_manager.stop_extension_runner(runner=runner)
                 runner_manager.remove_runner_env(project.dir_path, "dev_workspace")
+            else:
+                valid = await runner_manager.check_runner(
+                    runner_dir=project.dir_path, env_name="dev_workspace"
+                )
+                if not valid:
+                    logger.warning(
+                        f"Env 'dev_workspace' in project '{project.name}' is invalid,"
+                        " recreating it"
+                    )
+                    runners = ws_context.ws_projects_extension_runners.get(
+                        project.dir_path, {}
+                    )
+                    runner = runners.get("dev_workspace")
+                    if runner is not None:
+                        await runner_manager.stop_extension_runner(runner=runner)
+                    runner_manager.remove_runner_env(project.dir_path, "dev_workspace")
 
     try:
         async with asyncio.TaskGroup() as tg:
@@ -216,6 +355,7 @@ async def prepare_envs(
     # Step 2.5 — Start workspace root dev_workspace runner.
     if other_projects:
         logger.info("Starting workspace root dev_workspace runner...")
+        await user_messages.info("Starting workspace root dev_workspace runner...")
         try:
             await runner_start_service.start_runners_with_auto_prepare(
                 projects=[workdir_project],
@@ -229,6 +369,7 @@ async def prepare_envs(
 
     # Step 3 — create_envs + install_envs for subproject dev_workspace envs.
     logger.info("Creating/updating dev workspace environments...")
+    await user_messages.info("Creating/updating dev workspace environments...")
     root_project = ws_context.ws_projects.get(workdir_path)
     dw_envs = [
         {
@@ -255,6 +396,7 @@ async def prepare_envs(
 
     # Step 4 — Start all dev_workspace runners.
     logger.info("Starting dev_workspace runners...")
+    await user_messages.info("Starting dev_workspace runners...")
     projects_to_start: list[domain.Project]
     if project_paths_filter is not None:
         projects_to_start = [
@@ -328,29 +470,49 @@ async def prepare_envs(
             ):
                 raise PrepareEnvsFailed(f"Unknown interpreter: '{selector}'")
 
+    # `create_envs`/`install_envs` run exclusively on each project's own
+    # dev_workspace ER (never on other per-env ERs, which aren't even started
+    # during prepare-envs — see the module-level "Verified 'projects' is the
+    # right unit" note in the design). So for this operation "concurrent
+    # projects" and "concurrent ERs" are the same number, and bounding
+    # `step_projects` fan-out directly bounds concurrent ERs. Reuses the
+    # `semaphore` computed above (shared across steps 2, 5, 6).
+    total_projects = len(step_projects)
+    await user_messages.info(f"Creating envs for {total_projects} project(s)...")
+
     create_errors: list[str] = []
+    create_done = 0
 
     async def _create_one(p: domain.CollectedProject) -> None:
+        nonlocal create_done
         sel = selections_by_project[p.dir_path]
-        if not sel.active:
-            params: dict = {}
-        else:
-            create_set = env_selection.compute_create_set(
-                sel, set(env_universe_by_project[p.dir_path].keys())
-            )
-            params = {"env_names": sorted(create_set)}
-        err = await _run_env_action("fine_envs.CreateEnvsAction", params, p, ws_context)
+        params = build_create_envs_params(
+            sel, env_universe_by_project[p.dir_path], recreate
+        )
+        async with semaphore:
+            err = await _run_env_action("fine_envs.CreateEnvsAction", params, p, ws_context)
         if err:
             create_errors.append(err)
+        create_done += 1
+        await user_messages.info(
+            f"create_envs: {create_done}/{total_projects} project(s) done ({p.name})"
+        )
 
     install_errors: list[str] = []
+    install_done = 0
 
     async def _install_one(p: domain.CollectedProject) -> None:
+        nonlocal install_done
         sel = selections_by_project[p.dir_path]
         params = {} if not sel.active else {"env_names": sorted(sel.selected_env_names)}
-        err = await _run_env_action("fine_envs.InstallEnvsAction", params, p, ws_context)
+        async with semaphore:
+            err = await _run_env_action("fine_envs.InstallEnvsAction", params, p, ws_context)
         if err:
             install_errors.append(err)
+        install_done += 1
+        await user_messages.info(
+            f"install_envs: {install_done}/{total_projects} project(s) done ({p.name})"
+        )
 
     await asyncio.gather(*[_create_one(p) for p in step_projects])
     if create_errors:
@@ -358,6 +520,7 @@ async def prepare_envs(
 
     # Step 6 — install_envs across all projects.
     logger.info("Installing dependencies...")
+    await user_messages.info(f"Installing dependencies for {total_projects} project(s)...")
     await asyncio.gather(*[_install_one(p) for p in step_projects])
     if install_errors:
         raise PrepareEnvsFailed("'install_envs' failed:\n" + "\n".join(install_errors))
@@ -507,4 +670,9 @@ async def install_env_for_project(
         )
 
 
-__all__ = ["PrepareEnvsFailed", "prepare_envs", "install_env_for_project"]
+__all__ = [
+    "PrepareEnvsFailed",
+    "prepare_envs",
+    "install_env_for_project",
+    "build_create_envs_params",
+]

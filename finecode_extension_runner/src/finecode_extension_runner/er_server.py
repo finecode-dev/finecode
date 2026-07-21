@@ -544,6 +544,7 @@ async def update_config(server: ErServer, params: dict | None) -> dict:
                 schemas.ServiceDeclaration(
                     interface=svc["interface"],
                     source=svc["source"],
+                    config=svc.get("config"),
                 )
                 for svc in config.get("services", [])
             ],

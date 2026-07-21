@@ -366,6 +366,9 @@ async def _handle_prepare_envs(
       projectNames: list[str] | null - limit to these projects
       devEnv: str - active dev-env, used to resolve each matrix env's
         config-declared default interpreter subset (default "cli")
+      maxConcurrentProjects: int | null - cap on concurrent projects for
+        steps 5 and 6 (default: machine-based, see
+        `prepare_envs_service.resolve_project_concurrency`)
     Result: {}
     """
     from finecode.wm_server.services.prepare_envs_service import (
@@ -382,6 +385,7 @@ async def _handle_prepare_envs(
     interpreter_names: list[str] | None = params.get("interpreters")
     project_names: list[str] | None = params.get("projectNames")
     dev_env: str = params.get("devEnv", "cli")
+    max_concurrent_projects: int | None = params.get("maxConcurrentProjects")
 
     try:
         await prepare_envs(
@@ -392,6 +396,7 @@ async def _handle_prepare_envs(
             interpreter_names=interpreter_names,
             project_names=project_names,
             dev_env=dev_env,
+            max_concurrent_projects=max_concurrent_projects,
         )
     except PrepareEnvsFailed as exc:
         raise ValueError(exc.message) from exc

@@ -12,7 +12,7 @@ from finecode.wm_client import ApiClient, ApiError
 from finecode.wm_server import wm_lifecycle
 from finecode.wm_server.runner import runner_client
 from finecode.cli_app import utils
-from finecode.cli_app.log_render import render_log_records
+from finecode.cli_app.log_render import render_log_records, user_message_log_level
 
 
 class RunFailed(Exception):
@@ -135,7 +135,8 @@ async def run_actions(
 
             async def _on_user_message(params: dict) -> None:
                 value = params or {}
-                click.echo(value.get("message", ""), err=True)
+                level = user_message_log_level(value.get("type", "INFO"))
+                logger.log(level, value.get("message", ""))
 
             client.on_notification("server/userMessage", _on_user_message)
 

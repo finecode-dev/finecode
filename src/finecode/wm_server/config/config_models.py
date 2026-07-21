@@ -50,6 +50,7 @@ class ServiceDefinition:
     source: str
     env: str
     dependencies: list[str] = field(default_factory=list)
+    config: dict[str, Any] | None = None
 
 
 @dataclass

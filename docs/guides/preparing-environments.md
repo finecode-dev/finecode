@@ -262,11 +262,102 @@ Only prepares environments for the listed projects. Useful in a large workspaces
 python -m finecode prepare-envs --env=dev_no_runtime
 ```
 
-Restricts the `install_envs` step (step 5) to the named environments. The `create_envs` step still runs for **all** envs regardless of this flag.
+For an ordinary, non-matrix env, this restricts the `install_envs` step (step 5) to the named environments. The `create_envs` step still runs for **all** non-matrix envs regardless of this flag.
 
 **Why?** Virtualenvs must exist for every env — they are cheap to create and skip if already valid. Filtering at that step would leave envs in a broken state if they don't exist yet.
 
 Useful when you've added a new handler in one env and want to update only that env without reinstalling everything.
+
+## Bounding concurrency
+
+`prepare-envs` fans work out at two independent points, and each spawns real OS processes:
+
+1. **Across projects** — `create_envs`/`install_envs` run concurrently for every project in the workspace, each on its own Extension Runner (ER) process.
+2. **Across envs, within one ER** — `install_envs` installs every env of a project concurrently, each running a package-manager subprocess (e.g. `uv install`). Interpreter-matrix envs (ADR-0047) make this worse, since one matrix env can expand into many concurrent children.
+
+On a resource-constrained machine these two fan-outs compose multiplicatively — N projects × M envs concurrent subprocesses — and can starve the WM's own event loop. Both fan-outs are bounded to avoid this (ADR-0055).
+
+### Layer 1 — concurrent projects
+
+```bash
+python -m finecode prepare-envs --max-concurrent-projects=2
+```
+
+Or via environment variable:
+
+```bash
+export FINECODE_WM_PREPARE_ENVS_MAX_CONCURRENT_PROJECTS=2
+```
+
+Priority: `--max-concurrent-projects` > the env var > the default formula (below). This is a **machine-bound** setting — it has no `finecode-workspace.toml` equivalent, because that file is shared/committed and a number tuned for one developer's machine would be wrong on everyone else's.
+
+### Layer 2 — concurrent subprocesses per ER
+
+Every subprocess spawned inside an ER (via `CommandRunner`, e.g. `uv install`) goes through a shared cap, configured as service config on `ICommandRunner` (ADR-0056):
+
+```toml
+[[tool.finecode.service]]
+interface = "finecode_extension_api.interfaces.icommandrunner.ICommandRunner"
+source = "finecode_extension_runner.impls.command_runner.CommandRunner"
+env = "dev_no_runtime"
+config.max_concurrent_processes = 4
+```
+
+Since this is also a machine-bound tuning value rather than a project setting, put it in a gitignored `finecode-user.toml` instead of a committed `pyproject.toml` — see [`finecode-user.toml`](../configuration.md#finecode-usertoml).
+
+### The default formula
+
+When a layer's own cap is left unset, both layers default from the same formula:
+
+1. Start from the machine's usable CPU budget: `len(os.sched_getaffinity(0))` (respects container CPU quotas/pinning, unlike `os.cpu_count()`), minus one core of headroom so the WM keeps a guaranteed scheduling slot even under full subprocess load.
+2. Split that budget between the two layers via its square root, rather than handing each layer the full budget independently. The two layers compose multiplicatively in the worst case, so giving each the full budget would let their product overshoot the machine's real capacity by up to a squared factor (e.g. a 7-subprocess budget → 49 concurrent subprocesses if both layers used 7). The square-root split keeps the worst-case product close to the actual machine budget:
+
+   | Machine budget | Per-layer default | Worst-case product |
+   | --- | --- | --- |
+   | 1 | 1 | 1 |
+   | 3 | 2 | 4 |
+   | 7 | 3 | 9 |
+   | 15 | 4 | 16 |
+
+A configured value of `0` or less at either layer is treated as `1` — a zero-sized concurrency limit would deadlock the affected step forever, not disable it.
+
+### A third, separate cap: ER startup concurrency
+
+The two layers above bound `create_envs`/`install_envs` specifically. A related but independent cap
+bounds how many Extension Runner *processes* may be starting at once, regardless of which command
+triggered the starts — including `prepare-envs`' own "start runners in each `dev_workspace`" step,
+workspace init, and a matrixed `run`. It uses the same machine-budget formula but not the sqrt-split
+(a single flat axis, not two composing layers), and is configured separately via
+`FINECODE_WM_MAX_CONCURRENT_ER_STARTS`. See [ER startup concurrency](wm-server-internals.md#er-startup-concurrency)
+(ADR-0063) for the full picture.
+
+---
+
+## `uv` cache placement in containers
+
+The built-in `create_envs`/`install_envs` handlers (`fine_python_uv`) shell out to `uv`. `uv` avoids re-copying package files into every venv by hardlinking (or CoW-cloning) them out of its local cache directly into each venv's `site-packages` — this is what keeps N venvs from each consuming the full size of every shared dependency.
+
+Hardlinks and CoW clones only work within a single filesystem. If your devcontainer (or any container setup) puts `uv`'s cache (`~/.cache/uv` by default) on a different filesystem than the venvs it populates, `uv` silently falls back to full copies for every package in every venv — no warning, no error. This is easy to hit by accident: a `docker-compose.yml`/`devcontainer.json` that bind-mounts the project as one volume (e.g. `.:/workspaces/myproject`) leaves the container's home directory — where `uv`'s default cache lives — on the container's own root/overlay filesystem, a different device from the bind-mounted workspace.
+
+**Symptom:** every env (including matrix children like `testing@cpython-3.11`) grows by the full size of every sizeable dependency instead of sharing one cached copy. `uv` itself is a good example if `fine_python_uv` is present in an env — its own PyPI package bundles a ~60MB binary. Across a workspace with many projects × many envs, this adds up to tens of GB of pure duplication.
+
+**Fix:** point `UV_CACHE_DIR` at a path on the same filesystem as your venvs, and gitignore it:
+
+```yaml
+# docker-compose.yml
+environment:
+  - UV_CACHE_DIR=/workspaces/myproject/.uv-cache
+```
+
+```gitignore
+.uv-cache
+```
+
+**Verifying it worked:** check the link count on a file that should be shared, not its apparent size. `du -sh` on a single venv directory reports the file's full logical size regardless of hardlinking — it has no visibility into the fact that the same blocks are also claimed by the cache directory outside its traversal.
+
+```bash
+stat -c '%h' path/to/venv/bin/uv   # >1 means hardlinked; 1 means it was copied
+```
 
 ---
 

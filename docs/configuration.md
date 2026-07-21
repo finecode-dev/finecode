@@ -133,6 +133,16 @@ env = "dev_no_runtime"
 dependencies = ["my_company_http~=1.2.0"]
 ```
 
+Services can also declare `config`:
+
+```toml
+[[tool.finecode.service]]
+interface = "finecode_extension_api.interfaces.icommandrunner.ICommandRunner"
+source = "finecode_extension_runner.impls.command_runner.CommandRunner"
+env = "dev_no_runtime"
+config.max_concurrent_processes = 4
+```
+
 ### Configuring Extension Runner logging
 
 Each Extension Runner is a separate subprocess. Its log level and per-group overrides are configured under `[tool.finecode.er]`. The WM reads this at startup and delivers the resolved config to the ER — the ER never reads config files directly.

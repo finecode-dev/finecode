@@ -80,6 +80,11 @@ protocol even though the runner never became reachable. (Regression-tested in
     - `actions`: list of action objects (`name`, `handlers`, `source`, `config`)
     - `action_handler_configs`: map of handler source → config
     - `services`: list of service declarations (optional)
+      - `interface` (string): fully-qualified path of the service protocol/interface (e.g. `"finecode_extension_api.interfaces.icommandrunner.ICommandRunner"`)
+      - `source` (string): fully-qualified path of the implementation class
+      - `env` (string): execution environment name the service implementation runs in
+      - `dependencies` (array of strings): dependencies to install into `env` for this service
+      - `config` (object, optional): service-specific configuration, structured into a `config`-annotated constructor parameter on the implementation the same way action handler `config` is (ADR-0056). `null`/absent when the service takes no config.
     - `handlers_to_initialize`: map of action name → handler names (optional). When present, the ER eagerly initializes the listed handlers so they are ready before the first `actions/run` request. When absent or null, no eager initialization is performed and handlers are initialized on first use.
     - `logging`: logging configuration for this ER instance (optional)
       - `defaultLevel` (string): global log level, e.g. `"INFO"`, `"DEBUG"`, `"TRACE"`. Overrides the `--log-level` startup value when present.

@@ -80,6 +80,7 @@ def _collect_services_in_config(
                 source=service_def.source,
                 env=service_def.env,
                 dependencies=service_def.dependencies,
+                config=service_def.config,
             )
         )
     return services

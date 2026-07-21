@@ -15,7 +15,6 @@ from loguru import logger
 
 from finecode_extension_api.interfaces import (  # idevenvinfoprovider,
     icache,
-    icommandrunner,
     iextensionrunnerinfoprovider,
     ifileeditor,
     ifilemanager,
@@ -34,7 +33,6 @@ from finecode_extension_runner._services import run_action as run_action_service
 from finecode_extension_runner.di.registry import Registry
 from finecode_extension_runner.run_utils import import_module_member_by_source_str
 from finecode_extension_runner.impls import (  # dev_env_info_provider,
-    command_runner,
     extension_runner_info_provider,
     file_editor,
     file_manager,
@@ -49,6 +47,9 @@ from finecode_extension_runner.impls import (  # dev_env_info_provider,
     workspace_action_runner,
     workspace_info_provider,
 )
+
+_COMMAND_RUNNER_INTERFACE = "finecode_extension_api.interfaces.icommandrunner.ICommandRunner"
+_COMMAND_RUNNER_DEFAULT_SOURCE = "finecode_extension_runner.impls.command_runner.CommandRunner"
 
 
 class StaleEntryPointsError(Exception):
@@ -89,7 +90,6 @@ def bootstrap(
     # logger_instance = loguru_logger.LoguruLogger()
     logger_instance = loguru_logger.get_logger()
 
-    command_runner_instance = command_runner.CommandRunner(logger=logger_instance)
     # dev_env_info_provider_instance = dev_env_info_provider.DevEnvInfoProvider(logger=logger_instance)
     file_manager_instance = file_manager.FileManager(
         logger=logger_instance,
@@ -106,7 +106,6 @@ def bootstrap(
         iuser_messenger.IUserMessenger,
         user_messenger_module.UserMessenger(send_notification=_send_user_message),
     )
-    registry.register_instance(icommandrunner.ICommandRunner, command_runner_instance)
     registry.register_instance(ifilemanager.IFileManager, file_manager_instance)
     registry.register_instance(ifileeditor.IFileEditor, file_editor_instance)
     registry.register_instance(icache.ICache, cache_instance)
@@ -160,8 +159,12 @@ def bootstrap(
     )
 
     svc_registry = service_registry.ServiceRegistry(di_registry=registry)
+    _register_command_runner_service(service_declarations, svc_registry)
     all_eps, activated = _activate_extensions(handler_packages, svc_registry)
-    _apply_user_service_config(service_declarations, svc_registry)
+    _apply_user_service_config(
+        [svc for svc in service_declarations if svc.interface != _COMMAND_RUNNER_INTERFACE],
+        svc_registry,
+    )
 
     remaining = sorted(set(all_eps.keys()) - set(activated))
     if remaining:
@@ -284,10 +287,41 @@ def _apply_user_service_config(
         try:
             interface = import_module_member_by_source_str(svc.interface)
             impl_cls = import_module_member_by_source_str(svc.source)
-            svc_registry.register_impl(interface, impl_cls)
+            svc_registry.register_impl(interface, impl_cls, raw_config=svc.config)
             logger.trace(f"Configured service '{svc.source}' for '{svc.interface}'")
         except Exception as e:
             logger.error(f"Failed to configure service '{svc.source}': {e}")
+
+
+def _register_command_runner_service(
+    service_declarations: list[object],
+    svc_registry: service_registry.ServiceRegistry,
+) -> None:
+    """Register the default binding for ``ICommandRunner``, merged with any
+    project/user-declared override for the same interface.
+
+    ``ICommandRunner`` used to be wired as a hardcoded ``registry.register_instance``
+    call, bypassing the ``register_impl``/config-injection path entirely — see
+    ADR-0056. Routing it through ``register_impl`` instead lets a project or
+    personal ``finecode-user.toml`` declaration configure it (e.g.
+    ``config.max_concurrent_processes``, used to bound ``prepare-envs``
+    subprocess fan-out — ADR-0055) the same way any other service is rebound
+    by declaring the same ``interface``.
+    """
+    override = next(
+        (svc for svc in service_declarations if svc.interface == _COMMAND_RUNNER_INTERFACE),
+        None,
+    )
+    source = (override.source if override is not None else None) or _COMMAND_RUNNER_DEFAULT_SOURCE
+    raw_config = override.config if override is not None else None
+
+    try:
+        interface = import_module_member_by_source_str(_COMMAND_RUNNER_INTERFACE)
+        impl_cls = import_module_member_by_source_str(source)
+        svc_registry.register_impl(interface, impl_cls, raw_config=raw_config)
+        logger.trace(f"Configured service '{source}' for '{_COMMAND_RUNNER_INTERFACE}'")
+    except Exception as e:
+        logger.error(f"Failed to configure service '{source}': {e}")
 
 
 def _collect_activatable_packages(

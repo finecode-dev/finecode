@@ -5,7 +5,7 @@ import click
 
 from finecode.wm_client import ApiClient, ApiError
 from finecode.wm_server import wm_lifecycle
-from finecode.cli_app.log_render import render_log_records
+from finecode.cli_app.log_render import render_log_records, user_message_log_level
 from loguru import logger
 
 
@@ -24,6 +24,7 @@ async def prepare_envs(
     project_names: list[str] | None = None,
     dev_env: str = "cli",
     verbose: bool = False,
+    max_concurrent_projects: int | None = None,
 ) -> None:
     """Prepare all virtual environments for a workspace.
 
@@ -68,6 +69,13 @@ async def prepare_envs(
         async def _noop(_: object) -> None: pass
         client.on_notification("actions/treeChanged", _noop)
 
+        async def _on_user_message(params: dict) -> None:
+            value = params or {}
+            level = user_message_log_level(value.get("type", "INFO"))
+            logger.log(level, value.get("message", ""))
+
+        client.on_notification("server/userMessage", _on_user_message)
+
         if verbose:
             async def _on_log_records(params: dict) -> None:
                 for line in render_log_records(params):
@@ -85,6 +93,7 @@ async def prepare_envs(
                 interpreter_names,
                 project_names,
                 dev_env,
+                max_concurrent_projects,
             )
         finally:
             await client.close()
@@ -101,6 +110,7 @@ async def _run(
     interpreter_names: list[str] | None = None,
     project_names: list[str] | None = None,
     dev_env: str = "cli",
+    max_concurrent_projects: int | None = None,
 ) -> None:
     try:
         await client.prepare_envs(
@@ -110,6 +120,7 @@ async def _run(
             interpreter_names=interpreter_names,
             project_names=project_names,
             dev_env=dev_env,
+            max_concurrent_projects=max_concurrent_projects,
         )
     except ApiError as exc:
         raise PrepareEnvsFailed(str(exc)) from exc
