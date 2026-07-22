@@ -132,14 +132,13 @@ jobs:
         if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         run: |
           source .venvs/dev_workspace/${{ matrix.venv_bin }}/activate
-          # TODO: test with all supported python versions
           python -m finecode run --log-level="$FINECODE_LOG_LEVEL" run_tests
         shell: bash
 
       - name: Publish to TestPyPI and verify
         if: runner.os == 'Linux' && github.event_name == 'workflow_dispatch' && inputs.publish_testpypi
         env:
-          FINECODE_CONFIG_PUBLISH_AND_VERIFY_ARTIFACT__INIT_REPOSITORY_PROVIDER__REPOSITORIES: '[{"name": "testpypi", "url": "https://test.pypi.org/"}]'
+          FINECODE_CONFIG_PUBLISH_AND_VERIFY_ARTIFACT__INIT_REPOSITORY_PROVIDER__REPOSITORIES: '[{"name": "testpypi", "index_url": "https://test.pypi.org/simple/", "upload_url": "https://test.pypi.org/legacy/"}]'
           FINECODE_CONFIG_PUBLISH_AND_VERIFY_ARTIFACT__INIT_REPOSITORY_PROVIDER__CREDENTIALS_BY_REPOSITORY: '{"testpypi": {"username": "${{ secrets.TESTPYPI_USERNAME }}", "password": "${{ secrets.TESTPYPI_PASSWORD }}"}}'
         run: |
           source .venvs/dev_workspace/${{ matrix.venv_bin }}/activate
@@ -154,7 +153,7 @@ jobs:
       - name: Publish to PyPI and verify
         if: runner.os == 'Linux' && startsWith(github.ref, 'refs/tags/')
         env:
-          FINECODE_CONFIG_PUBLISH_AND_VERIFY_ARTIFACT__INIT_REPOSITORY_PROVIDER__REPOSITORIES: '[{"name": "pypi", "url": "https://pypi.org/"}]'
+          FINECODE_CONFIG_PUBLISH_AND_VERIFY_ARTIFACT__INIT_REPOSITORY_PROVIDER__REPOSITORIES: '[{"name": "pypi", "index_url": "https://pypi.org/simple/", "upload_url": "https://upload.pypi.org/legacy/"}]'
           FINECODE_CONFIG_PUBLISH_AND_VERIFY_ARTIFACT__INIT_REPOSITORY_PROVIDER__CREDENTIALS_BY_REPOSITORY: '{"pypi": {"username": "${{ secrets.PYPI_USERNAME }}", "password": "${{ secrets.PYPI_PASSWORD }}"}}'
         run: |
           # TODO: make sure git tag exists (for manual trigger)

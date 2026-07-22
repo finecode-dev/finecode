@@ -35,7 +35,12 @@ class GetSrcArtifactVersionSetuptoolsScmHandler(
         payload: get_src_artifact_version_action.GetSrcArtifactVersionRunPayload,
         run_context: get_src_artifact_version_action.GetSrcArtifactVersionRunContext,
     ) -> get_src_artifact_version_action.GetSrcArtifactVersionRunResult:
+        # Use current project if src_artifact_def_path is not provided
         src_artifact_def_path = payload.src_artifact_def_path
+        if src_artifact_def_path is None:
+            src_artifact_def_path = (
+                self.project_info_provider.get_current_project_def_path()
+            )
 
         src_artifact_raw_def = (
             await self.project_info_provider.get_project_raw_config(

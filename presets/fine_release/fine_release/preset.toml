@@ -1,0 +1,23 @@
+[tool.finecode]
+presets = [{ source = "fine_git" }]
+
+[tool.finecode.action.release_workspace_packages]
+source = "fine_release.ReleaseWorkspacePackagesAction"
+
+[[tool.finecode.action.release_workspace_packages.handlers]]
+name = "discover"
+source = "fine_release.DiscoverReleaseCandidatesHandler"
+env = "dev_workspace"
+dependencies = ["fine_release~=0.1.0a0"]
+
+[[tool.finecode.action.release_workspace_packages.handlers]]
+name = "order"
+source = "fine_release.ComputeReleaseOrderHandler"
+env = "dev_workspace"
+dependencies = ["fine_release~=0.1.0a0"]
+
+[[tool.finecode.action.release_workspace_packages.handlers]]
+name = "sweep"
+source = "fine_release.SweepReleasePackagesHandler"
+env = "dev_workspace"
+dependencies = ["fine_release~=0.1.0a0"]

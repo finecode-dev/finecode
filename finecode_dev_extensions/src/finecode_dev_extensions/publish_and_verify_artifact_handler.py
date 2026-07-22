@@ -58,6 +58,10 @@ class PublishAndVerifyArtifactHandler(
             meta=run_meta,
         )
         published_registries = publish_result.published_registries
+        publish_errors = {
+            registry_name: [error]
+            for registry_name, error in publish_result.failed_registries.items()
+        }
 
         # TODO: impl verify of each dist file. NOTE; they can have different versions
         # Get version from the dist artifact
@@ -89,4 +93,5 @@ class PublishAndVerifyArtifactHandler(
             version=version,
             published_registries=published_registries,
             verification_errors=verification_errors,
+            publish_errors=publish_errors,
         )

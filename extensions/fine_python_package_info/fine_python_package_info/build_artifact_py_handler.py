@@ -8,6 +8,7 @@ from finecode_extension_api.interfaces import (
     ilogger,
     iprojectinfoprovider,
 )
+from finecode_extension_api.resource_uri import path_to_resource_uri, resource_uri_to_path
 
 
 @dataclasses.dataclass
@@ -40,14 +41,13 @@ class BuildArtifactPyHandler(
         run_context: build_artifact_action.BuildArtifactRunContext,
     ) -> build_artifact_action.BuildArtifactRunResult:
         # Use current project if src_artifact_def_path is not provided
-        src_artifact_def_path = payload.src_artifact_def_path
-        if src_artifact_def_path is None:
-            src_artifact_def_path = (
-                self.project_info_provider.get_current_project_def_path()
-            )
+        if payload.src_artifact_def_path is None:
+            project_def_path = self.project_info_provider.get_current_project_def_path()
+        else:
+            project_def_path = resource_uri_to_path(payload.src_artifact_def_path)
 
         # Get the project directory (parent of pyproject.toml)
-        project_dir = src_artifact_def_path.parent
+        project_dir = project_def_path.parent
 
         self.logger.info(f"Building artifact in {project_dir}")
 
@@ -91,6 +91,6 @@ class BuildArtifactPyHandler(
         self.logger.info(f"Build completed. Output: {build_output_paths}")
 
         return build_artifact_action.BuildArtifactRunResult(
-            src_artifact_def_path=src_artifact_def_path,
-            build_output_paths=build_output_paths,
+            src_artifact_def_path=path_to_resource_uri(project_def_path),
+            build_output_paths=[path_to_resource_uri(path) for path in build_output_paths],
         )

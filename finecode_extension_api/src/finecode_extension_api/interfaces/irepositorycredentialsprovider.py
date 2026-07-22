@@ -10,8 +10,31 @@ class RepositoryCredentials:
 
 @dataclasses.dataclass
 class Repository:
+    """
+    A package registry, addressed by its two endpoints.
+
+    Reading the index and uploading are separate APIs. Most registries
+    (Artifactory, Nexus, devpi, GitLab) serve both from one host and differ only
+    by path, but PyPI splits them across hosts: the index lives on pypi.org and
+    uploads go to upload.pypi.org. Both endpoints are therefore given
+    explicitly, never derived from one another.
+
+    Both URLs are complete, but they are *not* used the same way:
+
+    - ``index_url`` is a prefix. Callers append what they are looking up, so a
+      package lookup against ``https://pypi.org/simple/`` requests
+      ``https://pypi.org/simple/<package>/``. A trailing slash is optional.
+    - ``upload_url`` is terminal. It is the endpoint itself and is used
+      verbatim, e.g. ``https://upload.pypi.org/legacy/``.
+
+    Both values match what the ecosystem's own tools already use --
+    ``index_url`` is pip's ``index-url``, ``upload_url`` is twine's
+    ``repository``.
+    """
+
     name: str
-    url: str
+    index_url: str
+    upload_url: str
 
 
 class IRepositoryCredentialsProvider(Protocol):
@@ -40,13 +63,16 @@ class IRepositoryCredentialsProvider(Protocol):
         """
         ...
 
-    def add_repository(self, name: str, url: str) -> None:
+    def add_repository(self, name: str, index_url: str, upload_url: str) -> None:
         """
         Add a repository.
 
         Args:
             name: The name of the repository (e.g., "testpypi", "pypi")
-            url: The URL of the repository
+            index_url: The index (read) endpoint, appended to when looking a
+                package up, e.g. "https://pypi.org/simple/"
+            upload_url: The upload (write) endpoint, used verbatim,
+                e.g. "https://upload.pypi.org/legacy/"
         """
         ...
 

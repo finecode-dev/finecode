@@ -35,8 +35,10 @@ class ConfigRepositoryCredentialsProvider(IRepositoryCredentialsProvider):
         )
 
     @override
-    def add_repository(self, name: str, url: str) -> None:
-        self._repositories[name] = Repository(name=name, url=url)
+    def add_repository(self, name: str, index_url: str, upload_url: str) -> None:
+        self._repositories[name] = Repository(
+            name=name, index_url=index_url, upload_url=upload_url
+        )
 
     @override
     def get_repository(self, name: str) -> Repository | None:

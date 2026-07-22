@@ -1,0 +1,18 @@
+[tool.finecode.action.create_git_tag]
+source = "fine_git.CreateGitTagAction"
+
+[[tool.finecode.action.create_git_tag.handlers]]
+name = "git_create_git_tag"
+source = "fine_git.GitCreateGitTagHandler"
+env = "dev_workspace"
+dependencies = ["fine_git~=0.1.0a0"]
+
+
+[tool.finecode.action.push_git_refs]
+source = "fine_git.PushGitRefsAction"
+
+[[tool.finecode.action.push_git_refs.handlers]]
+name = "git_push_git_refs"
+source = "fine_git.GitPushGitRefsHandler"
+env = "dev_workspace"
+dependencies = ["fine_git~=0.1.0a0"]

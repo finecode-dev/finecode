@@ -33,7 +33,9 @@ class InitRepositoryProviderHandler(
         # Add repositories
         for repository in payload.repositories:
             self.repository_credentials_provider.add_repository(
-                name=repository.name, url=repository.url
+                name=repository.name,
+                index_url=repository.index_url,
+                upload_url=repository.upload_url,
             )
             initialized_repositories.append(repository.name)
 

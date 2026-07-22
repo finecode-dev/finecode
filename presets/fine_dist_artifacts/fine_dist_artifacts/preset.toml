@@ -6,8 +6,8 @@ source = "fine_dist_artifacts.PublishArtifactAction"
 source = "fine_dist_artifacts.PublishArtifactToRegistryAction"
 # no default handlers — registered by tool extensions
 
-[tool.finecode.action.is_artifact_published_to_registry]
-source = "fine_dist_artifacts.IsArtifactPublishedToRegistryAction"
+[tool.finecode.action.list_published_artifacts]
+source = "fine_dist_artifacts.ListPublishedArtifactsAction"
 # no default handlers — registered by tool extensions
 
 [tool.finecode.action.verify_artifact_published_to_registry]
