@@ -19,6 +19,7 @@ def parse_workspace_actions(payload: dict[str, Any]) -> list[ActionInfo]:
             HandlerInfo(
                 name=raw_handler["name"],
                 source=raw_handler["source"],
+                canonical_source=raw_handler.get("canonicalSource"),
                 env=raw_handler["env"],
                 file_loc=raw_handler.get("fileLoc"),
             )

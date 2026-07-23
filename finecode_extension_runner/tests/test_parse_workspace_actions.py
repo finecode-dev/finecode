@@ -21,7 +21,8 @@ def test_parse_workspace_actions_maps_camel_case_wire_fields_to_snake_case_datac
                 "handlers": [
                     {
                         "name": "LintFilesHandler",
-                        "source": "fine_lint.lint_files_handler.LintFilesHandler",
+                        "source": "fine_lint.LintFilesHandler",
+                        "canonicalSource": "fine_lint.lint_files_handler.LintFilesHandler",
                         "env": "default",
                         "fileLoc": "fine_lint/lint_files_handler.py:20",
                     }
@@ -55,7 +56,8 @@ def test_parse_workspace_actions_maps_camel_case_wire_fields_to_snake_case_datac
             handlers=[
                 HandlerInfo(
                     name="LintFilesHandler",
-                    source="fine_lint.lint_files_handler.LintFilesHandler",
+                    source="fine_lint.LintFilesHandler",
+                    canonical_source="fine_lint.lint_files_handler.LintFilesHandler",
                     env="default",
                     file_loc="fine_lint/lint_files_handler.py:20",
                 )
@@ -74,6 +76,38 @@ def test_parse_workspace_actions_maps_camel_case_wire_fields_to_snake_case_datac
         ),
     ]
     assert result == expected
+
+
+def test_parse_workspace_actions_maps_absent_handler_canonical_source_to_none() -> None:
+    """A handler whose env-runner has not started yet (or whose class the runner
+    could not import) carries no canonicalSource on the wire. It must parse to
+    None rather than raising, so callers can fall back to the alias."""
+    payload = {
+        "actions": [
+            {
+                "name": "LintFilesAction",
+                "source": "fine_lint.LintFilesAction",
+                "canonicalSource": "fine_lint.lint_files_action.LintFilesAction",
+                "scope": "project",
+                "project": "my_project",
+                "language": None,
+                "parentActionSource": None,
+                "fileLoc": None,
+                "handlers": [
+                    {
+                        "name": "LintFilesHandler",
+                        "source": "fine_lint.LintFilesHandler",
+                        "env": "default",
+                        "fileLoc": None,
+                    }
+                ],
+            }
+        ]
+    }
+
+    result = parse_workspace_actions(payload)
+
+    assert result[0].handlers[0].canonical_source is None
 
 
 def test_parse_workspace_actions_defaults_explicit_empty_handlers_list_to_empty_list() -> None:

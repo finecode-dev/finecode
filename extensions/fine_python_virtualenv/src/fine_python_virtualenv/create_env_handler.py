@@ -37,7 +37,7 @@ class VirtualenvCreateEnvHandler(
         venv_dir_path = resource_uri_to_path(env_info.venv_dir_path)
         if payload.recreate and venv_dir_path.exists():
             self.logger.debug(f"Remove virtualenv dir {venv_dir_path}")
-            await self.file_manager.remove_dir(venv_dir_path)
+            await self.file_manager.remove_dir(venv_dir_path, tolerant=True)
 
         self.logger.info(f"Creating virtualenv {venv_dir_path}")
         # Check for pyvenv.cfg rather than the directory itself — the runner

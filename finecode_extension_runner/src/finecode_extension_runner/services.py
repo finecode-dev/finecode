@@ -184,11 +184,17 @@ async def resolve_action_meta(runner_context: context.RunnerContext) -> dict[str
           for language-agnostic actions (from ``Action.LANGUAGE``).
         - ``fileLoc``: ``"<path>:<lineno>"`` of the action class's source, or
           ``None`` when it could not be resolved.
-    - ``handlerLocations``: mapping of handler source → ``fileLoc`` for every
-      handler registered in this env (``None`` when it could not be
-      resolved).
+    - ``handlers``: mapping of config source → handler meta dict containing:
+        - ``canonicalSource``: fully-qualified import path of the handler class
+          (may differ from the config source when the source is a re-exported
+          alias, which is the common case — handlers are usually declared in
+          config via their package's ``__init__.py`` re-export).
+        - ``fileLoc``: ``"<path>:<lineno>"`` of the handler class's source, or
+          ``None`` when it could not be resolved.
 
-    Actions that fail to import are omitted from ``actions``.
+    Actions and handlers that fail to import are omitted from ``actions`` and
+    ``handlers`` respectively (import failure = cannot run = no canonical to
+    report; ADR-0021, extended to handlers by ADR-0054).
     """
     from finecode_extension_api.code_action import Action, HandlerExecution
 
@@ -219,18 +225,23 @@ async def resolve_action_meta(runner_context: context.RunnerContext) -> dict[str
         except Exception as exception:
             logger.warning(f'Failed to import action {action.source}: {exception}')
 
-    handler_locations: dict[str, str | None] = {}
+    handler_meta: dict[str, dict] = {}
     for action in actions.values():
         for handler in action.handlers:
-            if handler.source in handler_locations:
+            if handler.source in handler_meta:
                 continue
             try:
                 handler_cls = run_utils.import_module_member_by_source_str(handler.source)
-                handler_locations[handler.source] = _file_loc(handler_cls, project_dir)
+                handler_meta[handler.source] = {
+                    "canonicalSource": (
+                        f"{handler_cls.__module__}.{handler_cls.__qualname__}"
+                    ),
+                    "fileLoc": _file_loc(handler_cls, project_dir),
+                }
             except Exception as exception:
                 logger.warning(f'Failed to import handler {handler.source}: {exception}')
 
-    return {"actions": resolved, "handlerLocations": handler_locations}
+    return {"actions": resolved, "handlers": handler_meta}
 
 
 async def initialize_handlers(

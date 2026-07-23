@@ -2,43 +2,17 @@
 from __future__ import annotations
 
 import dataclasses
-import enum
 import pathlib
 
 from finecode_extension_api import code_action, textstyler
 from finecode_extension_api.resource_uri import ResourceUri
 
-
-class RegistryPublishOutcome(enum.StrEnum):
-    PUBLISHED = "published"
-    """Newly published to this registry this run."""
-    SKIPPED = "skipped"
-    """Already present in this registry."""
-    WOULD_PUBLISH = "would_publish"
-    """Dry-run only."""
-    FAILED = "failed"
-    """Publish or verify failed for this registry."""
-
-
-@dataclasses.dataclass
-class RegistryPublishResult:
-    registry: str
-    outcome: RegistryPublishOutcome
-    errors: list[str] = dataclasses.field(default_factory=list)
-    """Non-empty only when outcome is FAILED."""
-
-
-class PackageReleaseOutcome(enum.StrEnum):
-    PUBLISHED = "published"
-    """Newly published to every registry that needed it."""
-    SKIPPED = "skipped"
-    """Declared version already present in every registry."""
-    WOULD_PUBLISH = "would_publish"
-    """Dry-run only: absent from at least one registry."""
-    FAILED = "failed"
-    """At least one registry failed (some others may have PUBLISHED)."""
-    BLOCKED = "blocked"
-    """A transitive same-run dependency FAILED, so not attempted."""
+# Outcome vocabulary is owned by the per-package action, which is what observes
+# registry outcomes; only BLOCKED is produced here (ADR-0065).
+from fine_release.release_package_action import (
+    PackageReleaseOutcome,
+    RegistryPublishResult,
+)
 
 
 @dataclasses.dataclass
@@ -48,12 +22,12 @@ class PackageReleaseResult:
     version: str
     outcome: PackageReleaseOutcome
     registries: list[RegistryPublishResult] = dataclasses.field(default_factory=list)
-    """Empty when BLOCKED; when publish_and_verify_artifact raised before
-    per-registry dispatch; or when no registries were configured/resolved for
-    the package (FAILED, see error)."""
+    """Empty when BLOCKED, and whenever the package release ended before any
+    registry outcome was determined (FAILED, see error)."""
     error: str | None = None
-    """Non-registry failure only (build, version read, no registries
-    configured); registry errors live in registries[].errors."""
+    """Non-registry failure only (build, registry resolution, a publish that
+    raised before dispatch, or a package release that could not be run at all);
+    registry errors live in registries[].errors."""
 
 
 @dataclasses.dataclass
@@ -90,8 +64,12 @@ class ReleaseWorkspacePackagesRunResult(code_action.RunActionResult):
     dry_run: bool = False
     packages: list[PackageReleaseResult] = dataclasses.field(default_factory=list)
     """In the dependency order used."""
-    had_failures: bool = False
-    """True iff any package FAILED."""
+    error: str | None = None
+    """A run-level failure not attributable to a single package — a handler that
+    could not complete a repository-wide step (for example publishing the refs a
+    run produced). Fails the run (non-zero return code) without being tied to any
+    one package's outcome. Per-package failures are carried by each package's own
+    `outcome`, not here."""
 
     def update(self, other: code_action.RunActionResult) -> None:
         if not isinstance(other, ReleaseWorkspacePackagesRunResult):
@@ -99,17 +77,24 @@ class ReleaseWorkspacePackagesRunResult(code_action.RunActionResult):
 
         self.dry_run = other.dry_run
         self.packages = other.packages
-        self.had_failures = other.had_failures
+        self.error = other.error
 
     def to_text(self) -> str | textstyler.StyledText:
         lines = [f"{p.package_name} {p.version}: {p.outcome}" for p in self.packages]
+        if self.error is not None:
+            lines.append(self.error)
         return "\n".join(lines) if lines else "No release candidates"
 
     @property
     def return_code(self) -> code_action.RunReturnCode:
-        if self.had_failures:
-            return code_action.RunReturnCode.ERROR
-        return code_action.RunReturnCode.SUCCESS
+        run_failed = self.error is not None or any(
+            package.outcome == PackageReleaseOutcome.FAILED for package in self.packages
+        )
+        return (
+            code_action.RunReturnCode.ERROR
+            if run_failed
+            else code_action.RunReturnCode.SUCCESS
+        )
 
 
 class ReleaseWorkspacePackagesAction(
@@ -121,8 +106,13 @@ class ReleaseWorkspacePackagesAction(
 ):
     """Release every workspace package whose declared version is absent from
     its registry, in dependency order. A failed publish blocks only its
-    transitive dependents (ADR-0062); a successful publish gets a best-effort
-    git tag recording it (ADR-0060)."""
+    transitive dependents (ADR-0062).
+
+    This action owns only what is inherently cross-package: candidate
+    discovery, dependency ordering, dependent blocking, and publication of the
+    refs a run produced. Building, publishing and tagging one package belong to
+    that package's own `release_package` chain, which this action delegates to
+    once per candidate (ADR-0065)."""
 
     DESCRIPTION = (
         "Release every workspace package whose declared version is absent "

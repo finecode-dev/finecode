@@ -21,3 +21,24 @@ name = "sweep"
 source = "fine_release.SweepReleasePackagesHandler"
 env = "dev_workspace"
 dependencies = ["fine_release~=0.1.0a0"]
+
+[tool.finecode.action.release_package]
+source = "fine_release.ReleasePackageAction"
+
+[[tool.finecode.action.release_package.handlers]]
+name = "build"
+source = "fine_release.BuildReleaseArtifactHandler"
+env = "dev_no_runtime"
+dependencies = ["fine_release~=0.1.0a0"]
+
+[[tool.finecode.action.release_package.handlers]]
+name = "publish"
+source = "fine_release.PublishReleaseArtifactHandler"
+env = "dev_no_runtime"
+dependencies = ["fine_release~=0.1.0a0"]
+
+[[tool.finecode.action.release_package.handlers]]
+name = "record_tag"
+source = "fine_release.RecordReleaseTagHandler"
+env = "dev_no_runtime"
+dependencies = ["fine_release~=0.1.0a0"]

@@ -504,6 +504,18 @@ async def prepare_envs(
     async def _install_one(p: domain.CollectedProject) -> None:
         nonlocal install_done
         sel = selections_by_project[p.dir_path]
+        # `dev_workspace` must stay in this step's env set (unlike step 5's
+        # create_envs, which excludes it). Step 3 only installs each project's
+        # *raw* dev_workspace deps, before presets are resolved. The
+        # preset-resolved set — e.g. a handler's `dependencies = [...]`, which
+        # is how packages like fine_python_package_info reach dev_workspace —
+        # is only ever installed here, via the project's own now-running
+        # runner. There is no other pass that applies it: auto-repair only
+        # fires on a `StaleEntryPointsError` raised from `updateConfig`, not on
+        # an ordinary lazy handler-import failure at `run_action` time, so a
+        # handler whose import is never eagerly checked (as with a rarely
+        # invoked action) would otherwise never get its dev_workspace
+        # dependency installed at all.
         params = {} if not sel.active else {"env_names": sorted(sel.selected_env_names)}
         async with semaphore:
             err = await _run_env_action("fine_envs.InstallEnvsAction", params, p, ws_context)

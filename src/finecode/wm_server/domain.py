@@ -109,9 +109,17 @@ class ActionHandler:
     Attributes:
         name: Human-readable identifier, unique within an action's handler
             list (e.g. ``"ruff"``).
-        source: Source path identifying the handler implementation.
-            For Python handlers this is the fully-qualified class path
-            (e.g. ``"fine_python_ruff.RuffLintFilesHandler"``).
+        source: Source path identifying the handler implementation, as written
+            in the definition file.  This is a config-facing alias and is
+            usually a package-level re-export (e.g.
+            ``"fine_python_ruff.RuffLintFilesHandler"``), not the module the
+            class is actually defined in — see ``canonical_source``.
+        canonical_source: Fully-qualified class path of the handler
+            (``cls.__module__ + "." + cls.__qualname__``), resolved by the ER
+            that hosts this handler.  ``None`` until that ER has started, or
+            permanently if the class cannot be imported there.  This is
+            identity metadata, not a dispatch key: the WM still reaches a
+            handler by traversing its action's handler list (ADR-0054).
         config: Handler-specific configuration dict merged from the
             definition file.  Empty dict if none was provided.
         env: Execution environment name the handler runs in (e.g.
@@ -140,7 +148,8 @@ class ActionHandler:
         self.env: str = env
         self.dependencies: list[str] = dependencies
         self.interpreter: str | None = interpreter
-        # None until the ER that hosts this handler resolves it.
+        # Both None until the ER that hosts this handler resolves them.
+        self.canonical_source: str | None = None
         self.file_loc: str | None = None
 
     def __str__(self) -> str:

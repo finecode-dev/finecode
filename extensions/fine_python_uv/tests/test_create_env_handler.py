@@ -76,7 +76,7 @@ class _FakeFileManager:
     ) -> None:
         pass
 
-    async def remove_dir(self, dir_path: pathlib.Path) -> None:
+    async def remove_dir(self, dir_path: pathlib.Path, *, tolerant: bool = False) -> None:
         pass
 
 

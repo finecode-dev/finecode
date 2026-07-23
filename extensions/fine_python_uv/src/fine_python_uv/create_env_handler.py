@@ -83,7 +83,7 @@ class UvCreateEnvHandler(
 
         if payload.recreate and venv_dir_path.exists():
             self.logger.debug(f"Remove virtualenv dir {venv_dir_path}")
-            await self.file_manager.remove_dir(venv_dir_path)
+            await self.file_manager.remove_dir(venv_dir_path, tolerant=True)
 
         venv_valid = await self._is_valid_virtualenv(venv_dir_path)
         if not venv_valid:
@@ -111,7 +111,7 @@ class UvCreateEnvHandler(
                 return CreateEnvsRunResult(
                     errors=[f"Failed to create virtualenv {venv_dir_path}:\n{error_output}"]
                 )
-        else:
-            self.logger.info(f"Virtualenv in {env_info.name} exists already")
+            return CreateEnvsRunResult(errors=[], created=True)
 
-        return CreateEnvsRunResult(errors=[])
+        self.logger.info(f"Virtualenv in {env_info.name} exists already")
+        return CreateEnvsRunResult(errors=[], created=False)

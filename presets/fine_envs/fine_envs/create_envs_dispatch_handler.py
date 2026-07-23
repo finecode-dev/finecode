@@ -44,7 +44,9 @@ class CreateEnvsDispatchHandler(
                     ),
                     meta=run_context.meta,
                 )
-                await progress.advance(message=f"Created {env.name}")
+                label = create_envs_action.env_label(env)
+                verb = "Created" if result.created else "Already exists"
+                await progress.advance(message=f"{verb}: {label}")
                 return result
 
             try:

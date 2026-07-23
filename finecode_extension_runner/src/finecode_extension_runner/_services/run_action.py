@@ -346,6 +346,7 @@ async def run_action(
     context_out: _ContextOut | None = None,
     traceparent: str | None = None,
     result_formats: list[str] | None = None,
+    progress_sender: code_action.ProgressSender | None = None,
 ) -> code_action.RunActionResult | None:
     # design decisions:
     # - keep payload unchanged between all subaction runs.
@@ -398,8 +399,12 @@ async def run_action(
     )
     context_sender: code_action.PartialResultSender = tracking_sender
 
-    if progress_token is not None and progress_sender_func is not None:
-        er_progress_sender: code_action.ProgressSender = _ERProgressSender(
+    if progress_sender is not None:
+        # explicit injection bypasses the token/global-function forwarding below --
+        # used e.g. by the test session to observe progress calls directly.
+        er_progress_sender: code_action.ProgressSender = progress_sender
+    elif progress_token is not None and progress_sender_func is not None:
+        er_progress_sender = _ERProgressSender(
             token=progress_token,
             send_func=progress_sender_func,
         )
@@ -1115,6 +1120,17 @@ def _get_handler_raw_config(
     return handler_raw_config
 
 
+def _format_validation_error(exception: cattrs.BaseValidationError) -> str:
+    """Render a cattrs validation error as the list of concrete problems.
+
+    ``str()`` on these only reports the outer group ("... (1 sub-exception)"),
+    which names the type being structured but not what was actually wrong with
+    it. ``transform_error`` flattens the group into per-field messages such as
+    ``required field missing @ $[0].upload_url``.
+    """
+    return "; ".join(cattrs.transform_error(exception))
+
+
 async def ensure_handler_instantiated(
     handler: domain.ActionHandlerDeclaration,
     handler_cache: domain.ActionHandlerCache,
@@ -1150,8 +1166,15 @@ async def ensure_handler_instantiated(
     def get_handler_config(param_type):
         try:
             return _converter.structure(handler_raw_config, param_type)
-        except cattrs.ClassValidationError as exception:
-            raise ActionFailedException(str(exception)) from exception
+        # BaseValidationError, not ClassValidationError: a malformed entry in a
+        # list- or dict-typed config field raises IterableValidationError, which
+        # is a sibling of ClassValidationError rather than a subclass. Catching
+        # only the latter let those escape as an uncaught exception instead of a
+        # readable config error.
+        except cattrs.BaseValidationError as exception:
+            raise ActionFailedException(
+                _format_validation_error(exception)
+            ) from exception
 
     def get_process_executor(param_type):
         return action_exec_info.process_executor

@@ -4,12 +4,14 @@ from typing import Any
 
 import pytest
 
+from finecode.wm_server import context, domain
 from finecode.wm_server.config import config_models
 from finecode.wm_server.config.read_configs import (
     _merge_projects_configs,
+    read_project_config,
     read_project_user_config,
-    read_wm_telemetry_config,
     read_preset_config,
+    read_wm_telemetry_config,
     resolve_interpreter_matrices,
 )
 
@@ -430,6 +432,57 @@ def test_single_env_with_non_matrix_env_handler_is_untouched() -> None:
     assert set(env_table.keys()) == {"dev_no_runtime"}
     handler = project_config["tool"]["finecode"]["action"]["lint"]["handlers"][0]
     assert handler["env"] == "dev_no_runtime"
+
+
+async def test_config_served_to_extensions_has_matrices_already_expanded(
+    tmp_path: pathlib.Path,
+) -> None:
+    """The config stored for serving is expanded, not the file's own env table.
+
+    Extensions read the env table out of `IProjectInfoProvider.get_project_raw_config`,
+    which is served straight from `ws_projects_raw_configs`
+    (`runner_manager.get_project_raw_config`). They rely on a matrix env arriving as its
+    concrete `<base>@<impl>-<version>` children rather than as an `interpreters` list --
+    `fine_python_package_info`'s sync_python_interpreters handler uses exactly this to
+    tell "this env has an axis from somewhere" from "this env has no axis at all".
+
+    Every other matrix test calls `resolve_interpreter_matrices` directly, which pins
+    what expansion *produces* but not that the read path runs it *before* storing the
+    result. Move that call after the store and those tests all still pass while every
+    extension silently starts receiving an unexpanded env table.
+    """
+    _write_toml(
+        tmp_path / "pyproject.toml",
+        """
+[project]
+name = "sample"
+requires-python = ">=3.11"
+
+[dependency-groups]
+testing = ["pytest"]
+
+[tool.finecode.env.testing]
+interpreters = ["cpython@3.11", "cpython@3.12"]
+""",
+    )
+    project = domain.Project(
+        name="sample",
+        dir_path=tmp_path,
+        def_path=tmp_path / "pyproject.toml",
+        status=domain.ProjectStatus.CONFIG_VALID,
+    )
+    ws_context = context.WorkspaceContext(ws_dirs_paths=[tmp_path])
+
+    # no dev_workspace runner is registered, so preset collection is skipped and this
+    # exercises the project's own config through the real read path
+    await read_project_config(project, ws_context, resolve_presets=False)
+
+    served_config = ws_context.ws_projects_raw_configs[tmp_path]
+    env_table = served_config["tool"]["finecode"]["env"]
+    assert "testing" not in env_table
+    assert {"testing@cpython-3.11", "testing@cpython-3.12"} <= set(env_table)
+    assert env_table["testing@cpython-3.11"]["interpreter"] == "cpython@3.11"
+    assert "interpreters" not in env_table["testing@cpython-3.11"]
 
 
 def test_matrix_env_expands_to_one_concrete_env_per_interpreter() -> None:

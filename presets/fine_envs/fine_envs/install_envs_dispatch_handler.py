@@ -2,7 +2,7 @@ import asyncio
 import dataclasses
 
 from finecode_extension_api import code_action
-from fine_envs import install_env_action, install_envs_action
+from fine_envs import create_envs_action, install_env_action, install_envs_action
 from finecode_extension_api.interfaces import ilogger, iprojectactionrunner
 
 
@@ -43,7 +43,7 @@ class InstallEnvsDispatchHandler(
                     payload=install_env_action.InstallEnvRunPayload(env=env),
                     meta=run_context.meta,
                 )
-                await progress.advance(message=f"Installed {env.name}")
+                await progress.advance(message=f"Installed {create_envs_action.env_label(env)}")
                 return result
 
             try:
