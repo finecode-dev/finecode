@@ -23,6 +23,32 @@ source = "fine_envs.CreateEnvsDispatchHandler"
 env = "dev_workspace"
 dependencies = ["fine_envs~=0.1.0a0"]
 
+[tool.finecode.action.list_envs]
+source = "fine_envs.ListEnvsAction"
+
+[[tool.finecode.action.list_envs.handlers]]
+name = "list_envs_scan"
+source = "fine_envs.ListEnvsScanHandler"
+env = "dev_workspace"
+dependencies = ["fine_envs~=0.1.0a0"]
+
+
+[tool.finecode.action.remove_envs]
+source = "fine_envs.RemoveEnvsAction"
+
+[[tool.finecode.action.remove_envs.handlers]]
+name = "remove_envs_discover_envs"
+source = "fine_envs.RemoveEnvsDiscoverEnvsHandler"
+env = "dev_workspace"
+dependencies = ["fine_envs~=0.1.0a0"]
+
+[[tool.finecode.action.remove_envs.handlers]]
+name = "remove_envs_remove"
+source = "fine_envs.RemoveEnvsRemoveHandler"
+env = "dev_workspace"
+dependencies = ["fine_envs~=0.1.0a0"]
+
+
 [tool.finecode.action.install_env]
 source = "fine_envs.InstallEnvAction"
 

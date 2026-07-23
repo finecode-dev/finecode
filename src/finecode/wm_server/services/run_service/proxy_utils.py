@@ -19,7 +19,7 @@ from finecode.wm_server.runner.runner_client import RunResultFormat  # reexport
 
 from finecode.wm_server.config import interpreter_matrix
 
-from . import matrix_runner
+from . import matrix_runner, run_concurrency
 from .exceptions import ActionCancelledError, ActionRunFailed, StartingEnvironmentsFailed
 
 
@@ -669,7 +669,16 @@ async def run_actions_in_running_project(
     run_trigger: runner_client.RunActionTrigger,
     dev_env: runner_client.DevEnv,
     progress_token_by_action: dict[str, str] | None = None,
+    orchestration_depth: int = 0,
 ) -> dict[str, RunActionResponse]:
+    """Run one or more actions in a single already-running project.
+
+    ``orchestration_depth`` is the depth of the *caller* (e.g. the fan-out this
+    project is one member of); dispatching into this project's ER is itself a
+    cross-boundary hop, so each action is run at ``orchestration_depth + 1`` —
+    the same convention `ProjectExecutor.run_action` uses for its own
+    single-project ER dispatch.
+    """
     result_by_action: dict[str, RunActionResponse] = {}
 
     if concurrently:
@@ -687,6 +696,7 @@ async def run_actions_in_running_project(
                             dev_env=dev_env,
                             result_formats=result_formats,
                             progress_token=progress_token_by_action.get(action_name) if progress_token_by_action else None,
+                            orchestration_depth=orchestration_depth + 1,
                         )
                     )
                     run_tasks.append(run_task)
@@ -721,6 +731,7 @@ async def run_actions_in_running_project(
                     dev_env=dev_env,
                     result_formats=result_formats,
                     progress_token=progress_token_by_action.get(action_name) if progress_token_by_action else None,
+                    orchestration_depth=orchestration_depth + 1,
                 )
             except ActionRunFailed as exception:
                 # Keep original context to avoid repetitive nested wrappers.
@@ -737,6 +748,23 @@ async def run_actions_in_running_project(
     return result_by_action
 
 
+def make_project_semaphore(
+    project_count: int, *, log_prefix: str = ""
+) -> asyncio.Semaphore:
+    """Bound how many projects execute at once (ADR-0067).
+
+    Built per call, never shared: fan-out is re-entrant, and a shared
+    semaphore would let an outer fan-out hold every permit while waiting on
+    an inner one.
+    """
+    concurrency_decision = run_concurrency.resolve_run_project_concurrency()
+    logger.debug(
+        f"{log_prefix}capping concurrent projects to {concurrency_decision.value} "
+        f"({concurrency_decision.source}) for {project_count} project(s)"
+    )
+    return asyncio.Semaphore(concurrency_decision.value)
+
+
 async def run_actions_in_projects(
     actions_by_project: dict[pathlib.Path, list[str]],
     action_payload: dict[str, str],
@@ -747,6 +775,7 @@ async def run_actions_in_projects(
     dev_env: runner_client.DevEnv,
     payload_overrides_by_project: dict[str, dict[str, typing.Any]] | None = None,
     progress_token_by_project: dict[pathlib.Path, dict[str, str]] | None = None,
+    orchestration_depth: int = 0,
 ) -> dict[pathlib.Path, dict[str, RunActionResponse]]:
     _payload_overrides_by_project = payload_overrides_by_project or {}
 
@@ -771,6 +800,23 @@ async def run_actions_in_projects(
             initialize_all_handlers=True,
         )
 
+    semaphore = make_project_semaphore(len(actions_by_project))
+
+    async def _run_project_bounded(project, actions_to_run, project_payload, progress_tokens):
+        async with semaphore:
+            return await run_actions_in_running_project(
+                actions=actions_to_run,
+                action_payload=project_payload,
+                project=project,
+                ws_context=ws_context,
+                concurrently=concurrently,
+                result_formats=result_formats,
+                run_trigger=run_trigger,
+                dev_env=dev_env,
+                progress_token_by_action=progress_tokens,
+                orchestration_depth=orchestration_depth,
+            )
+
     project_handler_tasks: list[asyncio.Task] = []
     try:
         async with asyncio.TaskGroup() as tg:
@@ -781,16 +827,11 @@ async def run_actions_in_projects(
                     **_payload_overrides_by_project.get(str(project_dir_path), {}),
                 }
                 project_task = tg.create_task(
-                    run_actions_in_running_project(
-                        actions=actions_to_run,
-                        action_payload=project_payload,
-                        project=project,
-                        ws_context=ws_context,
-                        concurrently=concurrently,
-                        result_formats=result_formats,
-                        run_trigger=run_trigger,
-                        dev_env=dev_env,
-                        progress_token_by_action=progress_token_by_project.get(project_dir_path) if progress_token_by_project else None,
+                    _run_project_bounded(
+                        project,
+                        actions_to_run,
+                        project_payload,
+                        progress_token_by_project.get(project_dir_path) if progress_token_by_project else None,
                     )
                 )
                 project_handler_tasks.append(project_task)

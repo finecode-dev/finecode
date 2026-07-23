@@ -357,7 +357,7 @@ protocol even though the runner never became reachable. (Regression-tested in
     - `projectPaths` (list[string] | null): explicit POSIX project paths, or `null` for all projects that declare the action
     - `concurrently` (boolean, default `true`): run projects concurrently.
   - Result: `{ "resultsByProject": { "<posix path>": <json result>, ... } }`
-  - Fans out the action across the specified projects (or all projects that declare it). WM enforces `OrchestrationPolicy.max_project_fanout` before dispatching.
+  - Fans out the action across the specified projects (or all projects that declare it). Because this route is always nested orchestration (an ER handler asking the WM to fan out, so `orchestrationDepth > 0`), the WM enforces `OrchestrationPolicy.max_project_fanout` before dispatching — see [ADR-0067](../../finecode_internal_docs/adr/0067-fanout-width-is-throttled-at-depth-zero-refused-only-when-nested.md). Requests arriving from external clients at depth 0 are throttled instead; see [run fan-out concurrency](guides/wm-server-internals.md#run-fan-out-concurrency).
 
 **Notifications**
 

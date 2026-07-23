@@ -248,6 +248,59 @@ python -m finecode prepare-envs --recreate
 
 Deletes all existing virtualenvs and rebuilds them from scratch. Use this when a venv becomes corrupted or when you want a clean slate after dependency changes.
 
+`--recreate` rebuilds the envs *discovery found* — it does not remove envs that are no longer declared. See [Orphaned environments](#orphaned-environments) below.
+
+### Orphaned environments
+
+An environment is **orphaned** when its `.venvs/` directory still exists but the project's resolved configuration no longer declares it. Nothing references it: no handler names it, no Extension Runner will ever start in it, and neither `prepare-envs` nor `prepare-envs --recreate` touches it, because both only act on envs that discovery found. It simply stays on disk.
+
+This is not an edge case — it is the normal result of ordinary configuration changes:
+
+- **renaming an env**, or dropping one from `[dependency-groups]`;
+- **a preset change** that stops contributing an env;
+- **converting a single-interpreter env to a matrix** (ADR-0047). This one is easy to miss, because it does not look like a removal. After expansion the matrix base name is gone from the configuration a handler sees — only the concrete children remain:
+
+  ```toml
+  [tool.finecode.env.testing]
+  interpreters = ["3.11", "3.12", "3.13"]
+  ```
+
+  → declares `testing@cpython-3.11`, `testing@cpython-3.12`, `testing@cpython-3.13`. The `.venvs/testing` directory created before the matrix existed is now orphaned. A matrix env's children are each a full virtualenv, so the leftover base is easily hundreds of megabytes per project.
+
+Orphan-ness is resolved **per project**: the same env name can be orphaned in one project and legitimately declared in another that has no matrix.
+
+Check first with [`list_envs`](../reference/actions.md#list_envs):
+
+```bash
+python -m finecode run list_envs
+```
+
+```text
+/workspaces/myrepo
+  dev_workspace         declared  created
+  testing@cpython-3.11  declared  created
+  testing@cpython-3.14  declared  MISSING
+  testing               ORPHANED  created
+```
+
+`MISSING` is not an orphan — it is a declared env whose venv has not been created yet (for example a matrix child excluded by [`default_interpreters`](#default-interpreter-subset)). Only `ORPHANED` rows are safe to delete.
+
+Then remove them with [`remove_envs`](../reference/actions.md#remove_envs), which defaults to exactly the orphaned set:
+
+```bash
+python -m finecode run remove_envs
+```
+
+To remove a specific env instead, name it — a still-declared env requires `force`, and the env FineCode itself is running in is never removable:
+
+```bash
+python -m finecode run remove_envs --env-names='["stale_env"]'
+python -m finecode run remove_envs --env-names='["dev_no_runtime"]' --force=true
+python -m finecode prepare-envs   # recreate what you forced away
+```
+
+Removal is deliberately tolerant of damage — a half-created venv or one whose files lost write permission is exactly what you want gone — and a single undeletable env is reported without aborting the rest.
+
 ### Filtering by project
 
 ```bash

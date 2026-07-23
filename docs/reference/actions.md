@@ -261,7 +261,71 @@ The `python -m finecode prepare-envs` CLI command runs `create_envs` and `instal
 
 Install dependencies into a specific environment.
 
-- **Source:** `finecode_extension_api.actions.InstallDepsInEnvAction`
+- **Source:** `fine_envs.InstallDepsInEnvAction`
+
+---
+
+## `list_envs`
+
+List the project's environments, showing which are declared in configuration,
+which exist on disk, and which are **orphaned** — present in `.venvs/` while
+nothing declares them. See
+[Preparing Environments — Orphaned environments](../guides/preparing-environments.md#orphaned-environments).
+
+- **Source:** `fine_envs.ListEnvsAction`
+
+The payload is empty. Each entry of the `envs` result field carries:
+
+| Field | Type | Description |
+|---|---|---|
+| `name` | `str` | Environment name |
+| `venv_dir_path` | `ResourceUri` | `<project>/.venvs/<name>` |
+| `declared` | `bool` | Whether the resolved `[dependency-groups]` still names it. `false` means orphaned |
+| `state` | `created` \| `broken` \| `missing` | On-disk state |
+
+State is derived from the filesystem alone — no interpreter is executed, so
+listing stays cheap across a whole workspace. `created` therefore means "looks
+like a venv" (a `pyvenv.cfg` is present), not "verified runnable"; `broken`
+means something occupies the path but is not a usable venv.
+
+---
+
+## `remove_envs`
+
+Remove environments from disk. Nothing else does: `prepare-envs --recreate`
+rebuilds only the envs discovery found, so an env dropped from configuration
+keeps its venv forever.
+
+- **Source:** `fine_envs.RemoveEnvsAction`
+
+**Payload fields:**
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `env_names` | `list[str] \| None` | `None` | Environments to remove. `None` means discover — which resolves to the project's orphaned envs. An empty list is an explicit no-op |
+| `force` | `bool` | `False` | Allow removing an environment configuration still declares |
+
+**Result fields:**
+
+| Field | Type | Description |
+|---|---|---|
+| `removed` | `list[str]` | Environments whose directory was deleted |
+| `errors` | `list[str]` | Per-env failures. One undeletable env does not abort the rest; `return_code` is `ERROR` whenever this is non-empty |
+
+Two guards apply to the names asked for, before existence is checked — a
+rejection must not depend on whether a venv happens to be on disk right now:
+
+- A **declared** env is refused unless `force = true`. An Extension Runner may
+  be running in it, and deleting a venv from under a live process breaks it in
+  a way that is hard to diagnose. Orphans by definition have no runner, so the
+  default path is unguarded. After a forced removal, run `prepare-envs` to
+  recreate the env.
+- The **current** env (the `dev_workspace` the handler itself runs in) is never
+  removable, `force` or not.
+
+Removal tolerates broken state: a half-created venv, one whose files lost write
+permission, a dangling symlink, or a plain file at the venv path are all
+removed, and an already-absent path is treated as success.
 
 ---
 
