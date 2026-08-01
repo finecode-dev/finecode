@@ -30,11 +30,24 @@ class CheckToolchainsRunResult(code_action.RunActionResult):
     """Envs whose materialized toolchain axis no longer matches the derived one."""
 
     stale_axes: list[EnvToolchainAxis] = dataclasses.field(default_factory=list)
+    project_def_path: ResourceUri | None = None
+    """``file://`` URI of the project definition file the axes were checked against.
+
+    The drift is a property of that file — it holds both the declared axis and the
+    declared support range the derived one comes from — so consumers that report per
+    file (e.g. the ``audit_code`` bridge, which turns each stale axis into a
+    diagnostic) have something to anchor to. None when the handler could not
+    determine it."""
 
     @override
     def update(self, other: code_action.RunActionResult) -> None:
         if not isinstance(other, CheckToolchainsRunResult):
             return
+
+        # update() merges contributions within one project (R-302), so both sides
+        # describe the same definition file; the first one to state it wins.
+        if self.project_def_path is None:
+            self.project_def_path = other.project_def_path
 
         known_envs = {axis.env_name for axis in self.stale_axes}
         for axis in other.stale_axes:
