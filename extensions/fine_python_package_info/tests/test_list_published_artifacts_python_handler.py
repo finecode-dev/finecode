@@ -17,8 +17,10 @@ from finecode_extension_api.interfaces.iprojectinfoprovider import IProjectInfoP
 from finecode_extension_api.interfaces.irepositorycredentialsprovider import (
     IRepositoryCredentialsProvider,
 )
+from finecode_extension_api.interfaces.irepositorycredentialsprovider import Repository
 from finecode_extension_runner.impls.repository_credentials_provider import (
     ConfigRepositoryCredentialsProvider,
+    RepositoryCredentialsProviderConfig,
 )
 from finecode_extension_runner.testing import run_handler
 
@@ -28,9 +30,11 @@ def _repository_provider(
     index_url: str = "https://pypi.org/simple/",
     upload_url: str = "https://upload.pypi.org/legacy/",
 ) -> ConfigRepositoryCredentialsProvider:
-    provider = ConfigRepositoryCredentialsProvider()
-    provider.add_repository(name, index_url, upload_url)
-    return provider
+    return ConfigRepositoryCredentialsProvider(
+        RepositoryCredentialsProviderConfig(
+            repositories=[Repository(name=name, index_url=index_url, upload_url=upload_url)]
+        )
+    )
 
 
 class _StubProjectInfoProvider:

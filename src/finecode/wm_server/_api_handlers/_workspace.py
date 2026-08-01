@@ -246,19 +246,22 @@ async def _handle_add_dir(
 
         # If config overrides were set before this addDir call (e.g. standalone CLI mode),
         # apply them to the newly discovered projects and push to their running runners.
-        if ws_context.handler_config_overrides and projects_to_init:
+        if (
+            ws_context.handler_config_overrides or ws_context.service_config_overrides
+        ) and projects_to_init:
             # Re-fetch projects from ws_context: start_runners_with_presets upgrades
             # plain Project instances to CollectedProject/ResolvedProject in-place there.
             collected_projects = [
                 p for p in (ws_context.ws_projects.get(p.dir_path) for p in projects_to_init)
                 if isinstance(p, domain.CollectedProject)
             ]
-            action_names = list(ws_context.handler_config_overrides.keys())
-            _apply_config_overrides_to_projects(
-                cast(list[domain.Project], collected_projects),
-                action_names,
-                ws_context.handler_config_overrides,
-            )
+            if ws_context.handler_config_overrides:
+                action_names = list(ws_context.handler_config_overrides.keys())
+                _apply_config_overrides_to_projects(
+                    cast(list[domain.Project], collected_projects),
+                    action_names,
+                    ws_context.handler_config_overrides,
+                )
             try:
                 async with asyncio.TaskGroup() as tg:
                     for project in collected_projects:

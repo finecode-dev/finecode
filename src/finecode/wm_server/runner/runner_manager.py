@@ -9,22 +9,24 @@ import dataclasses
 import json
 import os
 import shutil
-from pathlib import Path
 import typing
+from pathlib import Path
 
 from loguru import logger
 
+import finecode_jsonrpc as jsonrpc_client
 from finecode import telemetry
 from finecode.wm_server import context, domain, domain_helpers, errors
 from finecode.wm_server.config import collect_actions, config_models, read_configs
 from finecode.wm_server.runner import (
-    runner_client,
     _internal_client_api,
     _internal_client_types,
-    finecode_cmd
+    finecode_cmd,
+    knowledge_bridge,
+    runner_client,
 )
-import finecode_jsonrpc as jsonrpc_client
 from finecode_jsonrpc import _io_thread
+
 project_changed_callback: (
     typing.Callable[[domain.Project], collections.abc.Coroutine[None, None, None]]
     | None
@@ -60,7 +62,9 @@ def handle_er_log_records(
             level=r.get("level", "INFO"),
             source=source,
             group=r.get("group", ""),
-            message=log_delivery.redact(r.get("message", "")),  # redaction at WM boundary
+            message=log_delivery.redact(
+                r.get("message", "")
+            ),  # redaction at WM boundary
         )
         _wm._deliver_record(record)
 
@@ -99,7 +103,9 @@ async def _apply_workspace_edit(
 
 
 async def _start_extension_runner_process(
-    runner: runner_client.ExtensionRunnerInfo, ws_context: context.WorkspaceContext, debug: bool = False
+    runner: runner_client.ExtensionRunnerInfo,
+    ws_context: context.WorkspaceContext,
+    debug: bool = False,
 ) -> None:
     try:
         if runner.cmd_override:
@@ -138,7 +144,9 @@ async def _start_extension_runner_process(
         ws_context.runner_io_thread.start()
 
     _project = ws_context.ws_projects[runner.working_dir_path]
-    _default_env_config = domain.EnvConfig(runner_config=domain.RunnerConfig(debug=False))
+    _default_env_config = domain.EnvConfig(
+        runner_config=domain.RunnerConfig(debug=False)
+    )
     # `dev_workspace` runner is started before the project config is fully collected, so
     # `env_configs` are unavailable here for it; `defaultLevel` is applied later via
     # `update_runner_config`
@@ -166,7 +174,11 @@ async def _start_extension_runner_process(
         debug_port_future = None
 
     process_args_str: str = " ".join(process_args)
-    client = jsonrpc_client.JsonRpcClient(message_types=_internal_client_types.METHOD_TO_TYPES, readable_id=runner.readable_id, tracing=telemetry.JsonRpcTracingHooks())
+    client = jsonrpc_client.JsonRpcClient(
+        message_types=_internal_client_types.METHOD_TO_TYPES,
+        readable_id=runner.readable_id,
+        tracing=telemetry.JsonRpcTracingHooks(),
+    )
     # Attach before start() so a shutdown sweep racing with an in-flight start
     # attempt (subprocess already spawned, port handshake not yet resolved)
     # still has a handle to force-kill it — client.pid is only set once the
@@ -181,9 +193,17 @@ async def _start_extension_runner_process(
     # cost this cap deliberately leaves unconstrained. See ADR-0063.
     async with ws_context.er_startup_semaphore:
         try:
-            await client.start(server_cmd=f"{python_cmd} -m finecode_extension_runner.cli start {process_args_str}", working_dir_path=runner.working_dir_path, io_thread=ws_context.runner_io_thread, debug_port_future=debug_port_future, connect=not start_with_debug)
+            await client.start(
+                server_cmd=f"{python_cmd} -m finecode_extension_runner.cli start {process_args_str}",
+                working_dir_path=runner.working_dir_path,
+                io_thread=ws_context.runner_io_thread,
+                debug_port_future=debug_port_future,
+                connect=not start_with_debug,
+            )
         except RunnerFailedToStart as exception:
-            logger.error(f"Runner {runner.readable_id} failed to start: {exception.message}")
+            logger.error(
+                f"Runner {runner.readable_id} failed to start: {exception.message}"
+            )
             # client.start() may have already spawned the OS process (e.g. it timed
             # out waiting for the port handshake) — kill it now rather than leaving
             # it running unmanaged, since no status/attempt will ever revisit it.
@@ -203,7 +223,9 @@ async def _start_extension_runner_process(
                 client.force_kill()
                 runner.status = runner_client.RunnerStatus.FAILED
                 runner.initialized_event.set()
-                raise RunnerFailedToStart(f"Failed to get debugger port in 30 seconds: {runner.readable_id}") from exception
+                raise RunnerFailedToStart(
+                    f"Failed to get debugger port in 30 seconds: {runner.readable_id}"
+                ) from exception
 
             debug_port = debug_async_future.result()
             logger.info(f"debug port: {debug_port}")
@@ -213,19 +235,20 @@ async def _start_extension_runner_process(
                     "name": "Python: WM",
                     "type": "debugpy",
                     "request": "attach",
-                    "connect": {
-                        "host": "localhost",
-                        "port": debug_port
-                    },
+                    "connect": {"host": "localhost", "port": debug_port},
                     "justMyCode": False,
                     # "logToFile": True,
                 }
                 await start_debug_session(debug_params)
 
             try:
-                await client.connect_to_server(io_thread=ws_context.runner_io_thread, timeout=None)
-            except Exception as exception: # TODO: analyze which can occur
-                logger.error(f"Runner {runner.readable_id} failed to connect to server: {exception}")
+                await client.connect_to_server(
+                    io_thread=ws_context.runner_io_thread, timeout=None
+                )
+            except Exception as exception:  # TODO: analyze which can occur
+                logger.error(
+                    f"Runner {runner.readable_id} failed to connect to server: {exception}"
+                )
                 client.force_kill()
                 runner.status = runner_client.RunnerStatus.FAILED
                 runner.initialized_event.set()
@@ -251,7 +274,9 @@ async def _start_extension_runner_process(
     )
 
     async def on_progress(params: _internal_client_types.ProgressParams) -> None:
-        logger.debug(f"Got progress from runner {runner.readable_id} for token: {params.token}")
+        logger.debug(
+            f"Got progress from runner {runner.readable_id} for token: {params.token}"
+        )
         try:
             result_value = json.loads(params.value)
         except json.JSONDecodeError as exception:
@@ -259,7 +284,11 @@ async def _start_extension_runner_process(
             return
 
         # Distinguish progress notifications (begin/report/end) from partial results
-        if isinstance(result_value, dict) and result_value.get("type") in ("begin", "report", "end"):
+        if isinstance(result_value, dict) and result_value.get("type") in (
+            "begin",
+            "report",
+            "end",
+        ):
             progress_notification = domain.ProgressNotification(
                 token=params.token, value=result_value
             )
@@ -282,9 +311,13 @@ async def _start_extension_runner_process(
         else:
             params_dict = dataclasses.asdict(params)
         from finecode.wm_server import wm_server as _wm
+
         _wm._notify_all_clients(
             "server/userMessage",
-            {"message": params_dict.get("message", ""), "type": params_dict.get("type", "WARNING")},
+            {
+                "message": params_dict.get("message", ""),
+                "type": params_dict.get("type", "WARNING"),
+            },
         )
 
     runner.client.feature(_internal_client_types.ER_USER_MESSAGE, on_er_user_message)
@@ -311,7 +344,9 @@ async def _start_extension_runner_process(
                 project_def_path.parent
             ]
         except KeyError as exception:
-            raise errors.InternalError(f"Config of project '{project_def_path_str}' not found") from exception
+            raise errors.InternalError(
+                f"Config of project '{project_def_path_str}' not found"
+            ) from exception
         return _internal_client_types.GetProjectRawConfigResult(
             config=project_raw_config
         )
@@ -356,12 +391,67 @@ async def _start_extension_runner_process(
         get_workspace_project_paths,
     )
 
+    def _knowledge_handlers() -> knowledge_bridge.KnowledgeHandlers:
+        """The installed knowledge service, or a method error naming why there is none.
+
+        The runner cannot import the service (it sits a layer above); it is handed
+        one. A WM built without it answers these two methods with an error, which
+        is what an ER asking a WM that cannot serve knowledge should hear -- rather
+        than a silent empty result that reads like "no facts".
+        """
+        installed = knowledge_bridge.handlers()
+        if installed is None:
+            raise errors.InternalError(
+                "This WM has no knowledge service installed, so it cannot answer "
+                "knowledge requests. Read facts through the in-process store instead."
+            )
+        return installed
+
+    async def register_knowledge_schema(
+        params: _internal_client_types.RegisterKnowledgeSchemaParams,
+    ) -> _internal_client_types.RegisterKnowledgeSchemaResult:
+        accepted = await _knowledge_handlers().register_schema(params.snapshot)
+        return _internal_client_types.RegisterKnowledgeSchemaResult(accepted=accepted)
+
+    runner.client.feature(
+        _internal_client_types.KNOWLEDGE_REGISTER_SCHEMA,
+        register_knowledge_schema,
+    )
+
+    async def run_knowledge_query(
+        params: _internal_client_types.KnowledgeQueryParams,
+    ) -> _internal_client_types.KnowledgeQueryResult:
+        answered = await _knowledge_handlers().run_query(
+            ws_context, params.query, mode=params.mode, limit=params.limit
+        )
+        return _internal_client_types.KnowledgeQueryResult(
+            rows=answered["rows"], freshness=answered["freshness"]
+        )
+
+    runner.client.feature(
+        _internal_client_types.KNOWLEDGE_QUERY,
+        run_knowledge_query,
+    )
+
+    async def fetch_knowledge_records(
+        params: _internal_client_types.KnowledgeRecordsParams,
+    ) -> _internal_client_types.KnowledgeRecordsResult:
+        found = await _knowledge_handlers().fetch_records(ws_context, params.refs)
+        return _internal_client_types.KnowledgeRecordsResult(
+            v=found["v"], records=found["records"]
+        )
+
+    runner.client.feature(
+        _internal_client_types.KNOWLEDGE_RECORDS,
+        fetch_knowledge_records,
+    )
+
     async def handle_run_action_in_project(
         params: _internal_client_types.RunActionInProjectParams,
     ) -> _internal_client_types.RunActionInProjectResult:
+        from finecode.wm_server.runner.runner_client import DevEnv, RunActionTrigger
         from finecode.wm_server.services.run_service import ProjectExecutor
         from finecode.wm_server.services.run_service.exceptions import ActionRunFailed
-        from finecode.wm_server.runner.runner_client import RunActionTrigger, DevEnv
 
         executor = ProjectExecutor(ws_context)
 
@@ -434,10 +524,12 @@ async def _start_extension_runner_process(
     async def handle_run_action_in_workspace(
         params: _internal_client_types.RunActionInWorkspaceParams,
     ) -> dict:
+        from finecode.wm_server.runner.runner_client import DevEnv, RunActionTrigger
         from finecode.wm_server.services.run_service import WorkspaceExecutor
         from finecode.wm_server.services.run_service.exceptions import ActionRunFailed
-        from finecode.wm_server.services.run_service.proxy_utils import find_all_projects_with_action
-        from finecode.wm_server.runner.runner_client import RunActionTrigger, DevEnv
+        from finecode.wm_server.services.run_service.proxy_utils import (
+            find_all_projects_with_action,
+        )
 
         run_trigger = RunActionTrigger(params.meta.trigger)
         dev_env = DevEnv(params.meta.dev_env)
@@ -446,12 +538,15 @@ async def _start_extension_runner_process(
         # Use canonical_source (resolved by ER)
         project = ws_context.ws_projects.get(runner.working_dir_path)
         if not isinstance(project, domain.CollectedProject):
-            raise errors.InternalError(f"Project {runner.working_dir_path} has no valid config")
+            raise errors.InternalError(
+                f"Project {runner.working_dir_path} has no valid config"
+            )
 
         def _find_action_name() -> str | None:
             return next(
                 (
-                    a.name for a in project.actions
+                    a.name
+                    for a in project.actions
                     if a.canonical_source == params.action_source
                 ),
                 None,
@@ -504,9 +599,7 @@ async def _start_extension_runner_process(
             )
 
         if params.project_paths:
-            actions_by_project = {
-                Path(p): [action_name] for p in params.project_paths
-            }
+            actions_by_project = {Path(p): [action_name] for p in params.project_paths}
         else:
             actions_by_project = {
                 p: [action_name]
@@ -604,7 +697,9 @@ async def _start_extension_runner_process(
                         "name": action.name,
                         "source": action.source,
                         "canonicalSource": action.canonical_source,
-                        "scope": action.scope.value if action.scope is not None else None,
+                        "scope": action.scope.value
+                        if action.scope is not None
+                        else None,
                         "project": str(project.dir_path),
                         "language": action.language,
                         "parentActionSource": action.parent_action_source,
@@ -674,7 +769,6 @@ async def stop_extension_runner(runner: runner_client.ExtensionRunnerInfo) -> No
         logger.trace("Extension runner was not running")
 
 
-
 async def start_runners_with_presets(
     projects: list[domain.Project],
     ws_context: context.WorkspaceContext,
@@ -686,7 +780,9 @@ async def start_runners_with_presets(
     # first start runner in 'dev_workspace' env to be able to resolve presets for
     # other envs (presets can be currently only in `dev_workspace` env)
     projects_to_start: list[domain.Project] = []
-    initializing_runner_projects: list[tuple[domain.Project, runner_client.ExtensionRunnerInfo]] = []
+    initializing_runner_projects: list[
+        tuple[domain.Project, runner_client.ExtensionRunnerInfo]
+    ] = []
     coros = []
 
     for project in projects:
@@ -696,9 +792,7 @@ async def start_runners_with_presets(
             project_runners = ws_context.ws_projects_extension_runners.get(
                 project.dir_path, {}
             )
-            project_dev_workspace_runner = project_runners.get(
-                "dev_workspace", None
-            )
+            project_dev_workspace_runner = project_runners.get("dev_workspace", None)
             start_new_runner = True
             if (
                 project_dev_workspace_runner is not None
@@ -714,16 +808,23 @@ async def start_runners_with_presets(
                 # or venv exist(=exclude `runner_client.RunnerStatus.NO_VENV`)
                 #    and runner is not initializing or running already
                 start_new_runner = False
-                if project_dev_workspace_runner.status == runner_client.RunnerStatus.INITIALIZING:
+                if (
+                    project_dev_workspace_runner.status
+                    == runner_client.RunnerStatus.INITIALIZING
+                ):
                     # Runner started by a concurrent call — must wait before the second
                     # pass (reading configs) so that runner.client is set.
-                    initializing_runner_projects.append((project, project_dev_workspace_runner))
+                    initializing_runner_projects.append(
+                        (project, project_dev_workspace_runner)
+                    )
 
             if start_new_runner:
                 cmd_override = (python_overrides or {}).get("dev_workspace")
                 coros.append(
                     _start_dev_workspace_runner(
-                        project_def=project, ws_context=ws_context, cmd_override=cmd_override
+                        project_def=project,
+                        ws_context=ws_context,
+                        cmd_override=cmd_override,
                     )
                 )
                 projects_to_start.append(project)
@@ -741,7 +842,10 @@ async def start_runners_with_presets(
 
         for project, result in zip(projects_to_start, results):
             if isinstance(result, BaseException):
-                if isinstance(result, (jsonrpc_client.BaseRunnerRequestException, RunnerFailedToStart)):
+                if isinstance(
+                    result,
+                    (jsonrpc_client.BaseRunnerRequestException, RunnerFailedToStart),
+                ):
                     msg = result.message
                 else:
                     msg = repr(result)
@@ -833,7 +937,9 @@ async def get_or_start_runners_with_presets(
     elif dev_workspace_runner.status == runner_client.RunnerStatus.REPAIRING:
         if dev_workspace_runner.repair_complete_event is not None:
             await dev_workspace_runner.repair_complete_event.wait()
-        dev_workspace_runner = ws_context.ws_projects_extension_runners[project_dir_path]["dev_workspace"]
+        dev_workspace_runner = ws_context.ws_projects_extension_runners[
+            project_dir_path
+        ]["dev_workspace"]
         return dev_workspace_runner
     else:
         raise RunnerFailedToStart(
@@ -842,14 +948,31 @@ async def get_or_start_runners_with_presets(
 
 
 async def start_runner(
-    project_def: domain.Project, env_name: str, handlers_to_initialize: dict[str, list[str]] | None, ws_context: context.WorkspaceContext, debug: bool = False, cmd_override: str | None = None
+    project_def: domain.Project,
+    env_name: str,
+    handlers_to_initialize: dict[str, list[str]] | None,
+    ws_context: context.WorkspaceContext,
+    debug: bool = False,
+    cmd_override: str | None = None,
 ) -> runner_client.ExtensionRunnerInfo:
     with telemetry.er_startup_metrics(env_name):
-        return await _start_runner(project_def=project_def, env_name=env_name, handlers_to_initialize=handlers_to_initialize, ws_context=ws_context, debug=debug, cmd_override=cmd_override)
+        return await _start_runner(
+            project_def=project_def,
+            env_name=env_name,
+            handlers_to_initialize=handlers_to_initialize,
+            ws_context=ws_context,
+            debug=debug,
+            cmd_override=cmd_override,
+        )
 
 
 async def _start_runner(
-    project_def: domain.Project, env_name: str, handlers_to_initialize: dict[str, list[str]] | None, ws_context: context.WorkspaceContext, debug: bool = False, cmd_override: str | None = None
+    project_def: domain.Project,
+    env_name: str,
+    handlers_to_initialize: dict[str, list[str]] | None,
+    ws_context: context.WorkspaceContext,
+    debug: bool = False,
+    cmd_override: str | None = None,
 ) -> runner_client.ExtensionRunnerInfo:
     # this function manages status of the runner and initialized event
     runner = runner_client.ExtensionRunnerInfo(
@@ -862,7 +985,9 @@ async def _start_runner(
     )
     save_runner_in_context(runner=runner, ws_context=ws_context)
     try:
-        await _start_extension_runner_process(runner=runner, ws_context=ws_context, debug=debug)
+        await _start_extension_runner_process(
+            runner=runner, ws_context=ws_context, debug=debug
+        )
     except asyncio.CancelledError:
         logger.warning(
             f"Startup of runner '{runner.readable_id}' was cancelled — marking as FAILED"
@@ -883,15 +1008,16 @@ async def _start_runner(
         runner_info = await _internal_client_api.get_runner_info(runner.client)
         if runner_info.log_file_path is not None:
             runner.log_file_path = Path(runner_info.log_file_path)
-            logger.debug(f"Runner {runner.readable_id} log file: {runner.log_file_path}")
+            logger.debug(
+                f"Runner {runner.readable_id} log file: {runner.log_file_path}"
+            )
         else:
             logger.debug(f"Runner {runner.readable_id} returned no log file path")
     except Exception as e:
         logger.warning(f"Failed to get runner info for {runner.readable_id}: {e}")
 
-    if (
-        project_def.dir_path not in ws_context.ws_projects_raw_configs
-        or not isinstance(project_def, domain.CollectedProject)
+    if project_def.dir_path not in ws_context.ws_projects_raw_configs or not isinstance(
+        project_def, domain.CollectedProject
     ):
         try:
             await read_configs.read_project_config(
@@ -913,8 +1039,13 @@ async def _start_runner(
     if isinstance(current_project_def, domain.CollectedProject):
         # update runner config if project actions are already known, otherwise it will
         # be done as separate step
-        await update_runner_config(runner=runner, project=current_project_def, handlers_to_initialize=handlers_to_initialize, ws_context=ws_context)
-    
+        await update_runner_config(
+            runner=runner,
+            project=current_project_def,
+            handlers_to_initialize=handlers_to_initialize,
+            ws_context=ws_context,
+        )
+
     await _finish_runner_init(runner=runner, project=project_def, ws_context=ws_context)
 
     runner.status = runner_client.RunnerStatus.RUNNING
@@ -925,6 +1056,7 @@ async def _start_runner(
     # A runner that starts while a client is subscribed to logs must begin
     # forwarding immediately (ADR-0049 Phase 2); no-op when nobody is watching.
     from finecode.wm_server import wm_server as _wm
+
     await _wm.push_er_forwarding_to_runner(runner)
 
     return runner
@@ -947,11 +1079,15 @@ async def _wait_for_runner_ready(
             case runner_client.RunnerStatus.RUNNING:
                 return runner
             case runner_client.RunnerStatus.INITIALIZING:
-                logger.trace(f"Runner {runner.readable_id} is initializing, wait for it")
+                logger.trace(
+                    f"Runner {runner.readable_id} is initializing, wait for it"
+                )
                 await runner.initialized_event.wait()
                 # status is now RUNNING or a terminal state — loop re-checks
             case runner_client.RunnerStatus.REPAIRING:
-                logger.trace(f"Runner {runner.readable_id} is being repaired, wait for it")
+                logger.trace(
+                    f"Runner {runner.readable_id} is being repaired, wait for it"
+                )
                 if runner.repair_complete_event is None:
                     raise RunnerFailedToStart(
                         f"Runner {env_name} in project {project_def.dir_path} is REPAIRING"
@@ -959,11 +1095,9 @@ async def _wait_for_runner_ready(
                     )
                 await runner.repair_complete_event.wait()
                 # Repair replaces the runner object in context — re-fetch and loop.
-                runner = (
-                    ws_context.ws_projects_extension_runners
-                    .get(project_def.dir_path, {})
-                    .get(env_name, runner)
-                )
+                runner = ws_context.ws_projects_extension_runners.get(
+                    project_def.dir_path, {}
+                ).get(env_name, runner)
             case _:
                 raise RunnerFailedToStart(
                     f"Runner {env_name} in project {project_def.dir_path} is not running."
@@ -988,15 +1122,23 @@ async def get_or_start_runner(
             f"Runner for env {env_name} in {project_def.dir_path} not found, start one"
         )
         if initialize_all_handlers:
-            handlers_to_initialize = domain_helpers.collect_all_handlers_to_initialize(project_def, env_name)
+            handlers_to_initialize = domain_helpers.collect_all_handlers_to_initialize(
+                project_def, env_name
+            )
         elif action_names_to_initialize is not None:
-            handlers_to_initialize = domain_helpers.collect_handlers_to_initialize_for_actions(
-                project_def, env_name, action_names_to_initialize
+            handlers_to_initialize = (
+                domain_helpers.collect_handlers_to_initialize_for_actions(
+                    project_def, env_name, action_names_to_initialize
+                )
             )
         else:
             handlers_to_initialize = None
         runner = await start_runner(
-            project_def=project_def, env_name=env_name, handlers_to_initialize=handlers_to_initialize, ws_context=ws_context, cmd_override=cmd_override
+            project_def=project_def,
+            env_name=env_name,
+            handlers_to_initialize=handlers_to_initialize,
+            ws_context=ws_context,
+            cmd_override=cmd_override,
         )
 
     return await _wait_for_runner_ready(
@@ -1005,10 +1147,15 @@ async def get_or_start_runner(
 
 
 async def _start_dev_workspace_runner(
-    project_def: domain.CollectedProject, ws_context: context.WorkspaceContext, cmd_override: str | None = None
+    project_def: domain.CollectedProject,
+    ws_context: context.WorkspaceContext,
+    cmd_override: str | None = None,
 ) -> runner_client.ExtensionRunnerInfo:
     return await get_or_start_runner(
-        project_def=project_def, env_name="dev_workspace", ws_context=ws_context, cmd_override=cmd_override
+        project_def=project_def,
+        env_name="dev_workspace",
+        ws_context=ws_context,
+        cmd_override=cmd_override,
     )
 
 
@@ -1021,7 +1168,7 @@ async def _init_lsp_client(
             client_process_id=os.getpid(),
             client_name="FineCode_WorkspaceManager",
             client_version="0.1.0",
-            client_workspace_dir=runner.working_dir_path
+            client_workspace_dir=runner.working_dir_path,
         )
     except jsonrpc_client.BaseRunnerRequestException as exception:
         raise RunnerFailedToStart(
@@ -1049,7 +1196,9 @@ def _propagate_action_meta(
     project that registers the same action class.
     """
     for project in ws_context.ws_projects.values():
-        if project is source_project or not isinstance(project, domain.CollectedProject):
+        if project is source_project or not isinstance(
+            project, domain.CollectedProject
+        ):
             continue
         for action in project.actions:
             if action is resolved:
@@ -1077,16 +1226,20 @@ async def update_runner_config(
     handlers_to_initialize: dict[str, list[str]] | None,
     ws_context: context.WorkspaceContext,
 ) -> None:
-    _default_env_config = domain.EnvConfig(runner_config=domain.RunnerConfig(debug=False))
+    _default_env_config = domain.EnvConfig(
+        runner_config=domain.RunnerConfig(debug=False)
+    )
     env_config = project.env_configs.get(runner.env_name, _default_env_config)
     actions_for_runner = [
-        action for action in project.actions
+        action
+        for action in project.actions
         if any(h.env == runner.env_name for h in action.handlers)
     ]
     config = runner_client.RunnerConfig(
         actions=actions_for_runner,
         action_handler_configs=project.action_handler_configs,
         services=project.services,
+        service_config_overrides=ws_context.service_config_overrides,
         handlers_to_initialize=handlers_to_initialize,
         logging=env_config.runner_config.logging,
         telemetry=runner_client.ErTelemetryConfig(
@@ -1106,7 +1259,9 @@ async def update_runner_config(
     try:
         action_meta_response = await runner_client.resolve_action_meta(runner)
     except Exception as exc:
-        logger.warning(f"Failed to resolve action meta for runner {runner.readable_id}: {exc}")
+        logger.warning(
+            f"Failed to resolve action meta for runner {runner.readable_id}: {exc}"
+        )
         action_meta_response = {}
 
     action_meta: dict[str, dict] = action_meta_response.get("actions", {})
@@ -1256,11 +1411,18 @@ async def restart_extension_runners(
 
     # TODO: parallel?
     for runner in runners_by_env.values():
-        await restart_extension_runner(runner_working_dir_path=runner.working_dir_path, env_name=runner.env_name, ws_context=ws_context)
+        await restart_extension_runner(
+            runner_working_dir_path=runner.working_dir_path,
+            env_name=runner.env_name,
+            ws_context=ws_context,
+        )
 
 
 async def restart_extension_runner(
-    runner_working_dir_path: Path, env_name: str, ws_context: context.WorkspaceContext, debug: bool = False
+    runner_working_dir_path: Path,
+    env_name: str,
+    ws_context: context.WorkspaceContext,
+    debug: bool = False,
 ) -> None:
     # TODO: reload config?
     try:
@@ -1274,7 +1436,9 @@ async def restart_extension_runner(
     try:
         runner = runners_by_env[env_name]
     except KeyError:
-        logger.error(f"Cannot find runner for env {env_name} in {runner_working_dir_path}")
+        logger.error(
+            f"Cannot find runner for env {env_name} in {runner_working_dir_path}"
+        )
         return
 
     await stop_extension_runner(runner)
@@ -1286,5 +1450,5 @@ async def restart_extension_runner(
         env_name=runner.env_name,
         handlers_to_initialize=None,
         ws_context=ws_context,
-        debug=debug
+        debug=debug,
     )

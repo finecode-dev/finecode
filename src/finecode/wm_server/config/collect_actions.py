@@ -67,6 +67,12 @@ def collect_project(
 def _collect_services_in_config(
     config: dict[str, Any],
 ) -> list[domain.ServiceDeclaration]:
+    """Collect service entries as declared, without resolving override aliases.
+
+    Alias derivation and override matching happen in the Extension Runner
+    (ADR-0070): activator-registered bindings exist only there, so the WM cannot
+    tell an unknown alias from one belonging to a binding it never sees.
+    """
     services: list[domain.ServiceDeclaration] = []
     for service_def_raw in config["tool"]["finecode"].get("service", []):
         try:

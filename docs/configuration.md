@@ -424,7 +424,12 @@ FINECODE_CONFIG_<ACTION>__<HANDLER>__<PARAM>=<json_value>
 ```
 
 - `<ACTION>`, `<HANDLER>`, `<PARAM>` are **uppercase**, separated by double underscores (`__`)
-- Values are parsed as **JSON** (use `"true"`, `123`, `"string"`, `["a","b"]`, etc.)
+- Values are parsed as **JSON** (`true`, `123`, `["a","b"]`, …). A value that is not
+  valid JSON is taken as a plain string, so string values need no explicit JSON
+  quoting — the same rule as `--config.*` CLI args and
+  `FINECODE_SERVICE_CONFIG_*`. The consequence is that a malformed JSON literal
+  (e.g. a dropped `]`) is not rejected here; it reaches the handler as a string
+  and fails there instead.
 
 **Examples:**
 
@@ -437,6 +442,9 @@ FINECODE_CONFIG_LINT__RUFF__LINE_LENGTH=120 python -m finecode run lint
 
 # Pass a JSON array
 FINECODE_CONFIG_LINT__RUFF__EXTEND_SELECT='["B","I"]' python -m finecode run lint
+
+# Plain strings need no quoting
+FINECODE_CONFIG_LINT__RUFF__TARGET_VERSION=py312 python -m finecode run lint
 ```
 
 To disable env var config entirely:
@@ -444,6 +452,109 @@ To disable env var config entirely:
 ```bash
 python -m finecode run --no-env-config lint
 ```
+
+## Service config environment variables
+
+Override service config (`[[tool.finecode.service]]` `config.*`) at runtime without
+modifying files — the same idea as handler config env vars above, but for services.
+This is the only non-VCS home for a service config value that must not be written to
+disk, such as a credential consumed by `IRepositoryCredentialsProvider`.
+
+**Format:**
+
+```
+FINECODE_SERVICE_CONFIG_<SERVICE_NAME>__<PARAM_PATH>=<value>
+```
+
+- `<SERVICE_NAME>` is the service's `name` — see "Service names" below.
+- `<PARAM_PATH>` may itself contain further `__`-separated segments; each segment
+  becomes one level of nesting in the resulting config. This is different from the
+  handler format, which cannot nest past one param name: handler env vars have an
+  *optional* handler segment in the middle (`ACTION__HANDLER__PARAM` vs.
+  `ACTION__PARAM`), so a second `__` is already claimed by that ambiguity. Services
+  have no such segment, so nesting the remainder is unambiguous.
+- `<SERVICE_NAME>` and each `<PARAM_PATH>` segment are lowercased; identifiers may
+  not themselves contain `__` — doing so is indistinguishable from an intended
+  nesting boundary and is always parsed as one.
+- Values are parsed as **JSON**, and a value that fails to parse as JSON falls back
+  to the **raw string** — same as handler config env vars and `--config.*` CLI args.
+  Without this fallback, setting a secret token would require quoting it as a JSON
+  string (`…__TOKEN='"ghp_…"'`) — a quoting trap on the field people set most.
+- The override is **deep-merged** into the service's `config`, not replaced: setting
+  one nested key leaves sibling keys untouched.
+
+**Example:**
+
+```bash
+FINECODE_SERVICE_CONFIG_REPOSITORY_CREDENTIALS_PROVIDER__CREDENTIALS_BY_REPOSITORY__TESTPYPI__PASSWORD=pypi-… \
+  python -m finecode run publish_artifact
+```
+
+This reaches only the `testpypi` entry's `password` — every other repository and
+every other field of `testpypi` (e.g. its `username`) is left as declared in
+`pyproject.toml`.
+
+Also disabled by `--no-env-config`.
+
+### Service names
+
+A service declaration's identity is its `interface` — the dotted class path, which
+is also what merges declarations across config layers. An interface path cannot be
+written readably in an environment variable (dots would collapse to underscores and
+collide with the `__` nesting separator), so overrides address a declaration by a
+short **name** instead.
+
+The name is always **derived** from the interface's final segment (the class name
+for Python interfaces): a leading `I` followed by an uppercase letter is stripped,
+and the result is snake-cased. There is no `name` field to declare — the derivation
+is the only source, so a declaration and an environment can never disagree about it.
+
+```
+IHttpClient                        -> http_client
+IRepositoryCredentialsProvider     -> repository_credentials_provider
+IForgeCredentialsProvider          -> forge_credentials_provider
+```
+
+Two interfaces deriving the same name (`pkg_a.IHttpClient` and `pkg_b.IHttpClient`)
+are fine on their own. It is an error only when an override actually addresses that
+name, reported against the variable and naming both candidate interfaces — at which
+point rename one of the interfaces.
+
+An override that matches no service is reported too, rather than silently doing
+nothing.
+
+### Configuring a service you did not declare
+
+Overrides address a service **binding**, not a declaration. A service bound by its
+implementation package's activator — the recommended way to ship a reusable
+service — is configurable exactly like a declared one, with nothing to declare
+first.
+
+The same holds in TOML: `source` and `env` are optional, so an entry carrying only
+`interface` and `config` attaches config to whatever binding already exists,
+without restating (and pinning) the implementation.
+
+```toml
+# Configure the activator-provided IHttpClient without rebinding it.
+[[tool.finecode.service]]
+interface = "finecode_extension_api.interfaces.ihttpclient.IHttpClient"
+config.timeout = 30
+```
+
+Supply `source` when you actually mean to *replace* the implementation; that is
+what a full declaration is for.
+
+Because activator bindings exist only inside an Extension Runner, overrides are
+matched there rather than in the Workspace Manager. A misspelled or ambiguous
+override name is therefore reported when a runner starts, not at config collection.
+
+### Where service config env vars are read
+
+The **CLI** reads them and sends them to the WM, the same way it does handler
+config env vars — so they apply to `finecode run` and are disabled by
+`--no-env-config`. LSP and MCP sessions do not read them today; nothing in the WM
+prevents it, and a client can supply the same overrides through
+`workspace/setConfigOverrides` whenever that is needed.
 
 ## CLI config flags
 

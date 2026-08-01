@@ -2,18 +2,23 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
-from typing import Any, override
+from typing import Any
 
-from finecode_extension_api import service
+if sys.version_info >= (3, 12):
+    from typing import override
+else:
+    from typing_extensions import override
+
+from fine_inspect_code.diagnostic_types import map_lsp_diagnostics
 from fine_lint.diagnostic_types import Diagnostic
 from fine_semantic_tokens.text_document_semantic_tokens_action import (
     SEMANTIC_TOKEN_MODIFIERS,
     SEMANTIC_TOKEN_TYPES,
 )
-from finecode_extension_api.interfaces import ifileeditor, ilspclient, ilogger
 from finecode_extension_api.contrib.lsp_service import LspService, apply_text_edits
-from fine_inspect_code.diagnostic_types import map_lsp_diagnostics
+from finecode_extension_api.interfaces import ifileeditor, ilogger, ilspclient
 
+from finecode_extension_api import service
 
 _TOMBI_CLIENT_CAPABILITIES: dict[str, Any] = {
     "textDocument": {

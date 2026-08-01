@@ -180,6 +180,7 @@ async def handler_test_session(
     handler_configs: dict[str, dict] | None = None,
     service_overrides: dict[type, Any] | None = None,
     service_declarations: list[schemas.ServiceDeclaration] | None = None,
+    service_config_overrides: dict[str, dict[str, Any]] | None = None,
     project_name: str = "test_project",
     wal: Literal["null", "memory"] = "null",
 ) -> AsyncIterator[Session]:
@@ -234,6 +235,7 @@ async def handler_test_session(
         current_env_name_getter=lambda: "test",
         handler_packages=handler_packages,
         service_declarations=service_declarations or [],
+        service_config_overrides=service_config_overrides or {},
         send_request_to_wm=None,
     )
 

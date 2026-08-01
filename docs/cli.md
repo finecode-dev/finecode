@@ -58,7 +58,7 @@ python -m finecode run [options] <action> [<action> ...] [payload] [--config.<ke
 | `--wal` | Enable WM write-ahead log (WAL) for the dedicated WM server started by this run command |
 | `--log-level=<level>` | Set log level: `TRACE`, `DEBUG`, `INFO`, `WARNING`, `ERROR` (default: `INFO`) |
 | `--verbose` / `-v` | Stream WM and ER diagnostic logs to stderr live over the protocol (`server/logRecords`). Auto-enabled in CI. |
-| `--no-env-config` | Ignore `FINECODE_CONFIG_*` environment variables |
+| `--no-env-config` | Ignore `FINECODE_CONFIG_*` and `FINECODE_SERVICE_CONFIG_*` environment variables |
 | `--no-save-results` | Do not write action results to the cache directory |
 | `--dev-env=<env>` | Override the detected dev environment. One of: `ai`, `ci`, `cli`, `ide`, `precommit` (default: auto-detected — see [Dev environment detection](#dev-environment-detection)) |
 | `--env=<name>` | For a matrixed action (ADR-0047), restrict execution to the named interpreter environment(s) — a matrix base selects all of its children, a concrete child selects only itself. Repeatable. Non-matrix envs are unaffected. See [Preparing Environments — filtering by environment name](guides/preparing-environments.md#filtering-by-environment-name). |

@@ -30,7 +30,9 @@ class Action(BaseSchema):
 @dataclass
 class ServiceDeclaration(BaseSchema):
     interface: str
-    source: str
+    # `None` for a config-only entry, which carries config for a binding an
+    # activator owns and registers nothing itself (ADR-0070).
+    source: str | None = None
     config: dict[str, Any] | None = None
 
 
@@ -42,6 +44,9 @@ class UpdateConfigRequest(BaseSchema):
     actions: dict[str, Action]
     action_handler_configs: dict[str, dict[str, Any]]
     services: list[ServiceDeclaration] = field(default_factory=list)
+    # Service config overrides keyed by derived alias, forwarded verbatim by the
+    # WM and matched against bindings here (ADR-0070).
+    service_config_overrides: dict[str, dict[str, Any]] = field(default_factory=dict)
     # If provided, eagerly instantiate these handlers after config update.
     # Keys are action names, values are lists of handler names within that action.
     # None means no eager initialization (lazy, on first use).

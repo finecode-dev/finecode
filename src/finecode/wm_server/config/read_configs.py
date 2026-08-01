@@ -1080,6 +1080,10 @@ def merge_services_dependencies_into_groups(
     deps_groups: dict[str, list[Any]],
 ) -> None:
     for service in services:
+        # A config-only entry declares neither an implementation nor an env, so
+        # there is nothing to install for it (ADR-0070).
+        if service.env is None:
+            continue
         if service.env not in deps_groups:
             deps_groups[service.env] = []
         deps_groups[service.env] += service.dependencies

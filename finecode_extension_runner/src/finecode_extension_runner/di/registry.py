@@ -1,6 +1,8 @@
 import inspect
 from typing import Any, Callable, Type, TypeVar
 
+from loguru import logger
+
 T = TypeVar("T")
 
 
@@ -28,6 +30,38 @@ class Registry:
 
     def register_factory(self, type_: type, factory: Callable) -> None:
         self._factories[type_] = factory
+
+    def evict_instance(self, instance: Any) -> None:
+        """Drop every cached binding pointing at ``instance``.
+
+        Called when a service is disposed: the factory stays registered, so the
+        next request rebuilds it. Without this the registry keeps handing out an
+        object whose ``dispose()`` has already run. One instance can be cached
+        under several types (an interface and its alias-bound concrete class), so
+        every key is checked rather than just the one the caller knows about.
+        """
+        for type_ in [t for t, cached in self._container.items() if cached is instance]:
+            del self._container[type_]
+
+    def dispose_all(self) -> None:
+        """Dispose and drop every resolved service.
+
+        Used when a whole registry is being retired -- an on-the-fly config
+        update builds a replacement, and without this the outgoing registry's
+        services (LSP server subprocesses among them) stay alive with nothing
+        referencing them.
+        """
+        from finecode_extension_api import service
+
+        for instance in list(self._container.values()):
+            if isinstance(instance, service.DisposableService):
+                try:
+                    instance.dispose()
+                except Exception:
+                    # Best-effort: one service failing to dispose must not strand
+                    # the rest, and the registry is being discarded regardless.
+                    logger.exception(f"Failed to dispose service: {instance}")
+        self._container.clear()
 
     async def get_instance(self, type_: Type[T]) -> T:
         if type_ in self._container:

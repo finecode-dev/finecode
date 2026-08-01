@@ -120,7 +120,9 @@ async def update_config(
         for action in actions.values()
         for handler in action.handlers
     } | {
-        svc.source.split(".")[0] for svc in request.services
+        svc.source.split(".")[0]
+        for svc in request.services
+        if svc.source is not None
     }
 
     di_bootstrap.bootstrap(
@@ -135,6 +137,7 @@ async def update_config(
         current_env_name_getter=current_env_name_getter,
         handler_packages=handler_packages,
         service_declarations=request.services,
+        service_config_overrides=request.service_config_overrides,
         send_request_to_wm=send_request_to_wm,
         send_user_message_notification=send_user_message_notification,
     )
@@ -413,6 +416,11 @@ def shutdown_action_handler(
                     except Exception as exception:
                         logger.error(f"Failed to dispose service: {used_service}")
                         logger.exception(exception)
+                    # Drop it from the DI cache too, or the next handler to ask
+                    # for this interface is handed the object just disposed.
+                    # The factory stays registered, so it is simply rebuilt.
+                    runner_context.di_registry.evict_instance(used_service)
+                del runner_context.running_services[used_service]
 
 
 def shutdown_all_action_handlers(runner_context: context.RunnerContext | None) -> None:

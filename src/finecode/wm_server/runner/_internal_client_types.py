@@ -6,8 +6,8 @@ LSP were reused where it was meaningful.
 
 from __future__ import annotations
 
-import dataclasses
 import collections.abc
+import dataclasses
 import enum
 import functools
 import sys
@@ -49,6 +49,9 @@ RUN_ACTION_IN_PROJECT = "finecode/runActionInProject"
 RUN_ACTION_IN_WORKSPACE = "finecode/runActionInWorkspace"
 GET_ACTIONS_FOR_PARENT = "finecode/getActionsForParent"
 LIST_WORKSPACE_ACTIONS = "finecode/listWorkspaceActions"
+KNOWLEDGE_REGISTER_SCHEMA = "knowledge/registerSchema"
+KNOWLEDGE_QUERY = "knowledge/query"
+KNOWLEDGE_RECORDS = "knowledge/records"
 
 
 @dataclasses.dataclass
@@ -190,8 +193,10 @@ class GeneralClientCapabilities:
     @since 3.16.0"""
 
     # Since: 3.16.0
-    
-    position_encodings: collections.abc.Sequence[PositionEncodingKind | str] | None = None
+
+    position_encodings: collections.abc.Sequence[PositionEncodingKind | str] | None = (
+        None
+    )
     """The position encodings supported by the client. Client and server
     have to agree on the same position encoding to ensure that offsets
     (e.g. character position in a line) are interpreted the same on both
@@ -1452,6 +1457,100 @@ class GetWorkspaceProjectPathsResponse(BaseResponse):
 
 
 @dataclasses.dataclass
+class RegisterKnowledgeSchemaParams:
+    """The ER's schema registry, as data.
+
+    ``snapshot`` is an opaque JSON document. It is not modelled
+    field-by-field here on purpose: its shape is the *engine's* contract and is
+    versioned inside the document (``v``), so restating it in the WM's transport
+    types would give one wire format two owners and let them drift.
+    """
+
+    snapshot: dict
+
+
+@dataclasses.dataclass
+class RegisterKnowledgeSchemaRequest(BaseRequest):
+    params: RegisterKnowledgeSchemaParams
+    method = KNOWLEDGE_REGISTER_SCHEMA
+
+
+@dataclasses.dataclass
+class RegisterKnowledgeSchemaResult(BaseResult):
+    accepted: bool
+
+
+@dataclasses.dataclass
+class RegisterKnowledgeSchemaResponse(BaseResponse):
+    result: RegisterKnowledgeSchemaResult
+
+
+@dataclasses.dataclass
+class KnowledgeQueryParams:
+    """One query out.
+
+    ``query`` is the engine's serialized ``Query`` and is opaque here for
+    the same reason the schema snapshot is. ``mode`` and ``limit`` are the
+    terminal's own arguments, which the ER cannot apply itself because it is not
+    the side that executes.
+    """
+
+    query: dict
+    mode: str = "verified"
+    limit: int | None = None
+
+
+@dataclasses.dataclass
+class KnowledgeQueryRequest(BaseRequest):
+    params: KnowledgeQueryParams
+    method = KNOWLEDGE_QUERY
+
+
+@dataclasses.dataclass
+class KnowledgeQueryResult(BaseResult):
+    """One result back: rows **and** the freshness verdict, always."""
+
+    rows: list[list[dict]]
+    freshness: dict
+
+
+@dataclasses.dataclass
+class KnowledgeQueryResponse(BaseResponse):
+    result: KnowledgeQueryResult
+
+
+@dataclasses.dataclass
+class KnowledgeRecordsParams:
+    """Whole entity records, for the one read a query cannot express.
+
+    A **list** of refs rather than one, so a projection over forty entities costs
+    one message rather than forty -- the same granularity argument ADR-0013 D1
+    makes for the query boundary, applied to the other read.
+    """
+
+    refs: list[dict]
+
+
+@dataclasses.dataclass
+class KnowledgeRecordsRequest(BaseRequest):
+    params: KnowledgeRecordsParams
+    method = KNOWLEDGE_RECORDS
+
+
+@dataclasses.dataclass
+class KnowledgeRecordsResult(BaseResult):
+    """One record per ref, **positionally**, plus the payload's own version."""
+
+    v: int
+    records: list[dict]
+
+
+@dataclasses.dataclass
+class KnowledgeRecordsResponse(BaseResponse):
+    result: KnowledgeRecordsResult
+
+
+@dataclasses.dataclass
 class RunActionInProjectMeta:
     trigger: str
     dev_env: str
@@ -1555,7 +1654,9 @@ class TextDocumentContentChangeWholeDocument:
     """The new text of the whole document."""
 
 
-TextDocumentContentChangeEvent = TextDocumentContentChangePartial | TextDocumentContentChangeWholeDocument
+TextDocumentContentChangeEvent = (
+    TextDocumentContentChangePartial | TextDocumentContentChangeWholeDocument
+)
 """An event describing a change to a text document. If only a text is provided
 it is considered to be the full content of the document."""
 
@@ -1581,7 +1682,6 @@ class DidChangeTextDocumentParams:
     - apply the 'textDocument/didChange' notifications in the order you receive them.
     - apply the `TextDocumentContentChangeEvent`s in a single notification in the order
       you receive them."""
-
 
 
 @dataclasses.dataclass
@@ -1959,14 +2059,49 @@ METHOD_TO_TYPES: dict[
     PROGRESS: (ProgressNotification, ProgressParams, None, None),
     EXIT: (ExitNotification, None, None, None),
     ER_RUN_ACTION: (ErRunActionRequest, ErRunActionParams, ErRunActionResponse, None),
-    ER_RUN_HANDLERS: (ErRunHandlersRequest, ErRunHandlersParams, ErRunHandlersResponse, None),
-    ER_RELOAD_ACTION: (ErReloadActionRequest, ErReloadActionParams, ErReloadActionResponse, None),
-    ER_MERGE_RESULTS: (ErMergeResultsRequest, ErMergeResultsParams, ErMergeResultsResponse, None),
+    ER_RUN_HANDLERS: (
+        ErRunHandlersRequest,
+        ErRunHandlersParams,
+        ErRunHandlersResponse,
+        None,
+    ),
+    ER_RELOAD_ACTION: (
+        ErReloadActionRequest,
+        ErReloadActionParams,
+        ErReloadActionResponse,
+        None,
+    ),
+    ER_MERGE_RESULTS: (
+        ErMergeResultsRequest,
+        ErMergeResultsParams,
+        ErMergeResultsResponse,
+        None,
+    ),
     ER_GET_PAYLOAD_SCHEMAS: (None, None, ErGetPayloadSchemasResponse, None),
-    ER_RESOLVE_SOURCE: (ErResolveSourceRequest, ErResolveSourceParams, ErResolveSourceResponse, None),
-    ER_RESOLVE_PACKAGE_PATH: (ErResolvePackagePathRequest, ErResolvePackagePathParams, ErResolvePackagePathResponse, None),
-    ER_UPDATE_CONFIG: (ErUpdateConfigRequest, ErUpdateConfigParams, ErUpdateConfigResponse, None),
-    ER_UPDATE_LOGGING: (ErUpdateLoggingRequest, ErUpdateLoggingParams, ErUpdateLoggingResponse, None),
+    ER_RESOLVE_SOURCE: (
+        ErResolveSourceRequest,
+        ErResolveSourceParams,
+        ErResolveSourceResponse,
+        None,
+    ),
+    ER_RESOLVE_PACKAGE_PATH: (
+        ErResolvePackagePathRequest,
+        ErResolvePackagePathParams,
+        ErResolvePackagePathResponse,
+        None,
+    ),
+    ER_UPDATE_CONFIG: (
+        ErUpdateConfigRequest,
+        ErUpdateConfigParams,
+        ErUpdateConfigResponse,
+        None,
+    ),
+    ER_UPDATE_LOGGING: (
+        ErUpdateLoggingRequest,
+        ErUpdateLoggingParams,
+        ErUpdateLoggingResponse,
+        None,
+    ),
     ER_LOG_RECORDS: (ErLogRecordsNotification, ErLogRecordsParams, None, None),
     ER_USER_MESSAGE: (ErUserMessageNotification, ErUserMessageParams, None, None),
     ER_GET_INFO: (None, None, ErGetInfoResponse, None),
@@ -2013,8 +2148,18 @@ METHOD_TO_TYPES: dict[
         RunActionInWorkspaceResult,
     ),
     ER_RESOLVE_ACTION_META: (None, None, ErResolveActionMetaResponse, None),
-    GET_ACTIONS_FOR_PARENT: (GetActionsForParentRequest, GetActionsForParentParams, GetActionsForParentResponse, GetActionsForParentResult),
-    LIST_WORKSPACE_ACTIONS: (ListWorkspaceActionsRequest, None, ListWorkspaceActionsResponse, ListWorkspaceActionsResult),
+    GET_ACTIONS_FOR_PARENT: (
+        GetActionsForParentRequest,
+        GetActionsForParentParams,
+        GetActionsForParentResponse,
+        GetActionsForParentResult,
+    ),
+    LIST_WORKSPACE_ACTIONS: (
+        ListWorkspaceActionsRequest,
+        None,
+        ListWorkspaceActionsResponse,
+        ListWorkspaceActionsResult,
+    ),
     WORKSPACE_EDITABLE_PACKAGES_GET: (
         GetWorkspaceEditablePackagesRequest,
         None,
@@ -2026,5 +2171,23 @@ METHOD_TO_TYPES: dict[
         None,
         GetWorkspaceProjectPathsResponse,
         GetWorkspaceProjectPathsResult,
+    ),
+    KNOWLEDGE_REGISTER_SCHEMA: (
+        RegisterKnowledgeSchemaRequest,
+        RegisterKnowledgeSchemaParams,
+        RegisterKnowledgeSchemaResponse,
+        RegisterKnowledgeSchemaResult,
+    ),
+    KNOWLEDGE_QUERY: (
+        KnowledgeQueryRequest,
+        KnowledgeQueryParams,
+        KnowledgeQueryResponse,
+        KnowledgeQueryResult,
+    ),
+    KNOWLEDGE_RECORDS: (
+        KnowledgeRecordsRequest,
+        KnowledgeRecordsParams,
+        KnowledgeRecordsResponse,
+        KnowledgeRecordsResult,
     ),
 }

@@ -38,6 +38,18 @@ class Repository:
 
 
 class IRepositoryCredentialsProvider(Protocol):
+    """
+    Read-only contract for supplying package-registry definitions and
+    credentials to the artifact-publishing handlers.
+
+    How an implementation is provisioned with data is its own concern, not
+    part of this interface (ADR-0068): the default implementation
+    (``ConfigRepositoryCredentialsProvider``) is provisioned via
+    ``[[tool.finecode.service]]`` config; a pull-based implementation (Vault,
+    keyring, a CI secret store) is free to fetch its data on demand instead,
+    with no push-seed API to fake.
+    """
+
     def get_credentials(self, repository_name: str) -> RepositoryCredentials | None:
         """
         Get credentials for a repository by name.
@@ -47,32 +59,6 @@ class IRepositoryCredentialsProvider(Protocol):
 
         Returns:
             RepositoryCredentials if found, None otherwise
-        """
-        ...
-
-    def set_credentials(
-        self, repository_name: str, username: str, password: str
-    ) -> None:
-        """
-        Store credentials for a repository.
-
-        Args:
-            repository_name: The name of the repository
-            username: The username for authentication
-            password: The password or token for authentication
-        """
-        ...
-
-    def add_repository(self, name: str, index_url: str, upload_url: str) -> None:
-        """
-        Add a repository.
-
-        Args:
-            name: The name of the repository (e.g., "testpypi", "pypi")
-            index_url: The index (read) endpoint, appended to when looking a
-                package up, e.g. "https://pypi.org/simple/"
-            upload_url: The upload (write) endpoint, used verbatim,
-                e.g. "https://upload.pypi.org/legacy/"
         """
         ...
 

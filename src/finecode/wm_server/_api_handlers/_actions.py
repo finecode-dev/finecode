@@ -189,6 +189,10 @@ async def _handle_set_config_overrides(
     they are applied to all subsequent action runs. These overrides survive across
     multiple requests and do not require runners to be stopped first.
 
+    ``serviceOverrides`` is the service-config counterpart (optional, keyed by
+    service name rather than action/handler name); it is stored and applied the
+    same way.
+
     If extension runners are already running they receive a config-update push
     immediately; their initialized handlers are dropped and will be re-initialized
     with the new config on the next run.
@@ -198,8 +202,10 @@ async def _handle_set_config_overrides(
 
     params = params or {}
     overrides: dict = params.get("overrides", {})
+    service_overrides: dict = params.get("serviceOverrides", {})
 
     ws_context.handler_config_overrides = overrides
+    ws_context.service_config_overrides = service_overrides
 
     # Apply to all existing project domain objects so that project.action_handler_configs
     # reflects the new overrides
@@ -207,6 +213,9 @@ async def _handle_set_config_overrides(
     action_names = list(overrides.keys())
     if all_projects and action_names:
         _apply_config_overrides_to_projects(all_projects, action_names, overrides)
+
+    # Service overrides need no application here: they are forwarded verbatim to
+    # each runner, which matches them against its own bindings (ADR-0070).
 
     # Push the updated config to any already-running runners so they drop their
     # initialized handlers and pick up the new config on the next invocation.

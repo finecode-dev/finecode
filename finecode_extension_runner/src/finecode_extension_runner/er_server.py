@@ -183,6 +183,12 @@ class ErServer:
         self._finecode_async_tasks: list[asyncio.Task] = []
         self._finecode_exit_stack = contextlib.AsyncExitStack()
         self._finecode_file_editor_session: ifileeditor.IFileEditorProviderSession
+        # Held explicitly rather than parked in `_finecode_exit_stack`: a config
+        # update replaces the session, and an exit stack cannot release one entry
+        # out of order.
+        self._finecode_file_editor_session_cm: (
+            contextlib.AbstractAsyncContextManager | None
+        ) = None
         self._finecode_file_operation_author = ifileeditor.FileOperationAuthor(
             id="FineCode_Extension_Runner_Server"
         )
@@ -387,6 +393,14 @@ async def _on_shutdown(server: ErServer, _params: dict | None) -> None:
             task.cancel()
     server._finecode_async_tasks = []
 
+    session_cm = server._finecode_file_editor_session_cm
+    if session_cm is not None:
+        server._finecode_file_editor_session_cm = None
+        try:
+            await session_cm.__aexit__(None, None, None)
+        except Exception as exception:
+            logger.error(f"Failed to close file editor session: {exception}")
+
     logger.info("Shutdown end")
     server.shutdown()
 
@@ -505,6 +519,34 @@ async def get_workspace_editable_packages(
     return {name: pathlib.Path(posix) for name, posix in result.get("packages", {}).items()}
 
 
+async def _retire_runner_context(
+    server: ErServer, previous_context: context.RunnerContext | None
+) -> None:
+    """Release everything the outgoing RunnerContext owned.
+
+    Order matters: the file-change forwarder task uses the editor session, and
+    the session comes from the registry being disposed.
+    """
+    for task in server._finecode_async_tasks:
+        if not task.done():
+            task.cancel()
+    server._finecode_async_tasks = []
+
+    session_cm = server._finecode_file_editor_session_cm
+    if session_cm is not None:
+        server._finecode_file_editor_session_cm = None
+        try:
+            await session_cm.__aexit__(None, None, None)
+        except Exception as exception:
+            logger.error(f"Failed to close previous file editor session: {exception}")
+
+    if previous_context is None:
+        return
+
+    services.shutdown_all_action_handlers(previous_context)
+    previous_context.di_registry.dispose_all()
+
+
 async def update_config(server: ErServer, params: dict | None) -> dict:
     """Handler for ``finecodeRunner/updateConfig``."""
     assert params is not None
@@ -543,11 +585,12 @@ async def update_config(server: ErServer, params: dict | None) -> dict:
             services=[
                 schemas.ServiceDeclaration(
                     interface=svc["interface"],
-                    source=svc["source"],
+                    source=svc.get("source"),
                     config=svc.get("config"),
                 )
                 for svc in config.get("services", [])
             ],
+            service_config_overrides=config.get("service_config_overrides") or {},
             handlers_to_initialize=config.get("handlers_to_initialize"),
         )
 
@@ -577,14 +620,22 @@ async def update_config(server: ErServer, params: dict | None) -> dict:
             send_user_message_notification=server.send_user_message_notification,
         )
         runner_context.wal_writer = server._wal_writer
+        previous_context = server._runner_context
         server._runner_context = runner_context
 
+        # `update_config` builds a whole new RunnerContext, DI registry included,
+        # so everything the outgoing one owns has to be retired here. It is not
+        # called only at startup any more -- a service-config override pushed to
+        # a running runner lands on this path (ADR-0070) -- and without this the
+        # previous registry's services (LSP server subprocesses among them) stay
+        # alive with nothing referencing them, and its file-change forwarder
+        # keeps running, duplicating every edit sent to the WM.
+        await _retire_runner_context(server, previous_context)
+
         file_editor = await runner_context.di_registry.get_instance(ifileeditor.IFileEditor)
-        server._finecode_file_editor_session = (
-            await server._finecode_exit_stack.enter_async_context(
-                file_editor.session(author=server._finecode_file_operation_author)
-            )
-        )
+        session_cm = file_editor.session(author=server._finecode_file_operation_author)
+        server._finecode_file_editor_session = await session_cm.__aenter__()
+        server._finecode_file_editor_session_cm = session_cm
 
         async def send_changed_files_to_wm() -> None:
             async with server._finecode_file_editor_session.subscribe_to_changes_of_opened_files() as file_change_events:

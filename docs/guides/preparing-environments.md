@@ -321,6 +321,62 @@ For an ordinary, non-matrix env, this restricts the `install_envs` step (step 5)
 
 Useful when you've added a new handler in one env and want to update only that env without reinstalling everything.
 
+#### Matrix environments
+
+For a matrix environment (ADR-0047 — one declaring an `interpreters` axis), the rule above changes: naming a concrete matrix child — or its base name, which expands to all of its children — restricts **both** `create_envs` and `install_envs` to the selected children (PRD-0003 AC8). Unselected children of that matrix are not created at all, since there is no point creating a venv for an interpreter nobody asked for in this run.
+
+```bash
+# Select every child of the "testing" matrix env.
+python -m finecode prepare-envs --env=testing
+
+# Select only the cpython@3.11 child.
+python -m finecode prepare-envs --env=testing@cpython-3.11
+```
+
+A matrix base named by `--env` is always expanded to *all* of its children, ignoring that base's own `default_interpreters` policy (see below) — `--env` is more specific than a config default. A sibling matrix base *not* named by `--env` is unaffected by this and keeps applying its own config default (or its full axis, if it has none).
+
+### Filtering by interpreter
+
+```bash
+python -m finecode prepare-envs --interpreter=3.11
+python -m finecode prepare-envs --interpreter=pypy@3.11
+```
+
+Restricts every matrix environment's interpreter axis to the named interpreter(s), the same way for both `create_envs` and `install_envs`. `--interpreter` is repeatable to select more than one interpreter. Values may be the canonical `<impl>@<version>` form or a bare version, which is shorthand for `cpython@<version>`.
+
+`--interpreter` can be combined with `--env`: the effective selection is the intersection of the two — e.g. `--env=testing --interpreter=3.12` selects only `testing`'s `cpython@3.12` child. An `--interpreter` value that doesn't exist in a given matrix env's axis simply contributes nothing for that env (it is not an error by itself — see below for when a selector *is* rejected).
+
+Non-matrix envs are unaffected by `--interpreter`; they are always created, and installed unless excluded by `--env`.
+
+### Default interpreter subset
+
+A matrix environment can declare a default interpreter subset per dev-env, so that a plain `prepare-envs` run (no `--env`/`--interpreter`) still narrows the axis automatically:
+
+```toml
+[tool.finecode.env.testing]
+interpreters = ["3.11", "3.12", "3.13"]
+
+[tool.finecode.env.testing.default_interpreters]
+local = "newest"
+ci    = "all"
+```
+
+Each key is either an exact dev-env (`ide`/`cli`/`ai`/`git_hook`/`ci`) or one of the two buckets `local`/`ci` (see lookup below — `local` is a bucket name, not a dev-env); each value is a policy:
+
+- `"all"` — the full interpreter axis (this is also the implicit default when `default_interpreters` is absent — R7).
+- `"newest"` / `"oldest"` — the interpreter(s) at the maximum/minimum declared version. If two implementations share that version (e.g. `cpython@3.13` and `pypy@3.13`), both are selected — a shared version is never arbitrarily dropped.
+- An explicit list of interpreter strings (canonical or version-only shorthand), e.g. `["cpython@3.11", "cpython@3.13"]`.
+
+Lookup for the active dev-env `D` (see [dev environment detection](../cli.md#dev-environment-detection) — `ide`/`cli`/`ai`/`git_hook`/`ci`) tries, in order: the exact key `D`, then the bucket key (`"ci"` if `D == "ci"`, otherwise `"local"`), then falls back to `"all"`. In the example above, `local = "newest"` covers `ide`/`cli`/`ai`/`git_hook`, while `ci = "all"` covers `ci` — a common pattern where local development only needs the newest interpreter, but CI verifies every interpreter in the matrix.
+
+An explicit `--interpreter` selector always overrides the config default outright, for every matrix base. A config default (or its explicit-list policy) that names an interpreter outside the env's declared axis is rejected at resolution time with a clear error.
+
+### `run` uses the same selection
+
+`python -m finecode run` accepts the same `--env`/`--interpreter` selectors, with identical semantics (ADR-0050), to restrict which interpreter variants of a matrixed action actually execute — see [CLI reference — `run`](../cli.md#run). The config-declared `default_interpreters` policy applies there too: a plain `run` (no selectors) executes only the dev-env's default subset of a matrix (e.g. just the newest interpreter locally), while `ci` runs the full axis by default, exactly mirroring `prepare-envs`. Selection is resolved once per project (via `env_selection.resolve_selected_interpreters`) and passed down to whichever fan-out site handles the request — `matrix_runner` (non-streaming) or `matrix_streaming` (CLI / IDE streaming) — so both paths filter identically.
+
+---
+
 ## Bounding concurrency
 
 `prepare-envs` fans work out at two independent points, and each spawns real OS processes:

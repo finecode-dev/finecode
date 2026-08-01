@@ -183,20 +183,28 @@ class ServiceDeclaration:
             ``"finecode_extension_api.interfaces.ihttpclient.IHttpClient"``).
         source: Source path of the implementation.
             For Python services this is the fully-qualified class path
-            (e.g. ``"finecode_httpclient.HttpClient"``).
+            (e.g. ``"finecode_httpclient.HttpClient"``).  ``None`` when the
+            entry only carries config and the binding comes from an
+            implementation package's activator (ADR-0070).
         env: Execution environment name the service implementation runs in.
+            ``None`` for a config-only entry, which installs nothing and so
+            belongs to no particular env.
         dependencies: Dependencies to install into ``env`` for this service.
         config: Service-specific configuration dict merged from the
             definition file, injected into the implementation's constructor
             the same way handler ``config`` params are. ``None`` if none was
             provided.
+
+    The config-override alias is deliberately absent: it is derived from
+    ``interface`` by the Extension Runner, which is the only layer that can see
+    activator-registered bindings as well as declared ones (ADR-0070).
     """
 
     def __init__(
         self,
         interface: str,
-        source: str,
-        env: str,
+        source: str | None,
+        env: str | None,
         dependencies: list[str],
         config: dict[str, typing.Any] | None = None,
     ):
@@ -400,7 +408,11 @@ class CollectedProject(Project):
         for action in self.actions:
             action_envs = [handler.env for handler in action.handlers]
             all_envs_set |= ordered_set.OrderedSet(action_envs)
-        all_envs_set |= ordered_set.OrderedSet([svc.env for svc in self.services])
+        # A config-only service entry has no env (ADR-0070): it installs nothing
+        # and binds nothing, so it must not conjure an environment.
+        all_envs_set |= ordered_set.OrderedSet(
+            [svc.env for svc in self.services if svc.env is not None]
+        )
         return list(all_envs_set)
 
 

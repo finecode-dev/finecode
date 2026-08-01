@@ -244,9 +244,9 @@ class ApiClient:
         return result
 
     async def set_config_overrides(
-        self, overrides: dict
+        self, overrides: dict, service_overrides: dict | None = None
     ) -> None:
-        """Set persistent handler config overrides on the server.
+        """Set persistent handler and service config overrides on the server.
 
         Overrides are stored for the lifetime of the server and applied to all
         subsequent action runs.  Call this before ``add_dir`` if possible so that runners
@@ -255,8 +255,14 @@ class ApiClient:
         overrides format: {action_name: {handler_name_or_"": {param: value}}}
         The empty-string key "" means the override applies to all handlers of
         that action.
+
+        service_overrides format: {service_name: {nested param path}}, keyed by
+        the service's addressing ``name`` (not its ``interface``).
         """
-        await self.request("workspace/setConfigOverrides", {"overrides": overrides})
+        params: dict = {"overrides": overrides}
+        if service_overrides:
+            params["serviceOverrides"] = service_overrides
+        await self.request("workspace/setConfigOverrides", params)
 
     async def run_batch(
         self,

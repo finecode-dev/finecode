@@ -1,9 +1,15 @@
 from __future__ import annotations
 
 import asyncio
+import sys
 import threading
 from pathlib import Path
-from typing import Any, override
+from typing import Any
+
+if sys.version_info >= (3, 12):
+    from typing import override
+else:
+    from typing_extensions import override
 
 from finecode_extension_api import service
 from finecode_extension_api.interfaces import ifileeditor, ilogger, ilspclient

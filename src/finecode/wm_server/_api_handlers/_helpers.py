@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import pathlib
 import typing
 
@@ -478,3 +479,5 @@ def _apply_config_overrides_to_projects(
                         **merged,
                     }
     return originals
+
+

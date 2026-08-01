@@ -1,15 +1,20 @@
 from __future__ import annotations
 
 import dataclasses
-from typing import override
+import sys
 
-from finecode_extension_api import code_action
+if sys.version_info >= (3, 12):
+    from typing import override
+else:
+    from typing_extensions import override
+
 from fine_format import format_file_action
 from fine_toml_lang.format_toml_file_action import FormatTomlFileAction
 from finecode_extension_api.interfaces import iprojectinfoprovider
 from finecode_extension_api.resource_uri import resource_uri_to_path
 
 from fine_toml_tombi.tombi_lsp_service import TombiLspService
+from finecode_extension_api import code_action
 
 
 @dataclasses.dataclass

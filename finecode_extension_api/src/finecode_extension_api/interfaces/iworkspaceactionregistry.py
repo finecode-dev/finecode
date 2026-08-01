@@ -10,8 +10,19 @@ __all__ = ["HandlerInfo", "ActionInfo", "IWorkspaceActionRegistry"]
 
 @dataclasses.dataclass(frozen=True)
 class HandlerInfo:
+    """A handler as the workspace registry knows it.
+
+    ``source`` is the config-facing alias (as written in the definition file,
+    usually a package-level re-export); ``canonical_source`` is the module the
+    class is actually defined in. Key handlers by ``canonical_source`` when it
+    is available — two different aliases may name the same real handler.
+    ``canonical_source`` is ``None`` until the env's runner has started, or
+    permanently if the class cannot be imported there.
+    """
+
     name: str
     source: str
+    canonical_source: str | None
     env: str
     file_loc: str | None
 

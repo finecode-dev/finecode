@@ -83,9 +83,9 @@ class WorkspaceContext:
     Fields are populated in stages as the server starts up and clients connect:
 
     1. **Construction** — ``ws_dirs_paths`` is set (may be empty ``[]`` initially).
-       ``otlp_endpoint``, ``handler_config_overrides`` are set from config and
-       are immutable thereafter.  All collection and cache fields start empty.
-       Both locks are created and ready.
+       ``otlp_endpoint``, ``handler_config_overrides``, ``service_config_overrides``
+       are set from config and are immutable thereafter.  All collection and
+       cache fields start empty.  Both locks are created and ready.
 
     2. **Runner IO thread** — ``runner_io_thread`` is set once during WM startup
        (before any runner is started).  It is ``None`` before that point and
@@ -179,6 +179,14 @@ class WorkspaceContext:
     # The empty-string key "" means the override applies to all handlers of the action.
     # Set from config at construction; immutable thereafter.
     handler_config_overrides: dict[str, dict[str, dict[str, str]]] = field(
+        default_factory=dict
+    )
+
+    # Service config overrides supplied via CLI-detected environment variables.
+    # Format: {service_name: {nested param path as a dict}}
+    # Keyed by ServiceDeclaration.name (the addressing alias), not interface.
+    # Set from config at construction; immutable thereafter.
+    service_config_overrides: dict[str, dict[str, Any]] = field(
         default_factory=dict
     )
 

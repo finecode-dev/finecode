@@ -18,30 +18,22 @@ import pathlib
 import socket
 import typing
 
+import finecode_jsonrpc.client as jsonrpc_client
 from loguru import logger
 
 import finecode_jsonrpc
-import finecode_jsonrpc.client as jsonrpc_client
-
-from finecode.wm_server import context, domain
-from finecode.wm_server.errors import ConfigurationError
-from finecode.wm_server.services import log_delivery
-from finecode.wm_server.services.run_service.exceptions import (
-    ActionCancelledError,
-    ActionRunFailed,
-    StartingEnvironmentsFailed,
-)
+from finecode.wm_server import context, domain, wal
 from finecode.wm_server._api_handlers import (
     _handle_actions_reload,
     _handle_add_dir,
     _handle_find_project_for_file,
     _handle_get_payload_schemas,
+    _handle_get_project_raw_config,
     _handle_get_tree,
+    _handle_get_workspace_editable_packages,
     _handle_list_actions,
     _handle_list_projects,
     _handle_prepare_envs,
-    _handle_get_project_raw_config,
-    _handle_get_workspace_editable_packages,
     _handle_remove_dir,
     _handle_run_action,
     _handle_run_action_with_partial_results_task,
@@ -64,14 +56,23 @@ from finecode.wm_server._jsonrpc import (
     NOT_IMPLEMENTED_CODE,
     MethodHandler,
     NotificationHandler,
-    _NotImplementedError,
     _jsonrpc_error,
     _jsonrpc_response,
+    _NotImplementedError,
     _read_message,
     _write_message,
 )
+from finecode.wm_server.errors import ConfigurationError
+from finecode.wm_server.services import (
+    knowledge_service as _knowledge_service,  # noqa: F401
+)
+from finecode.wm_server.services import log_delivery
+from finecode.wm_server.services.run_service.exceptions import (
+    ActionCancelledError,
+    ActionRunFailed,
+    StartingEnvironmentsFailed,
+)
 from finecode.wm_server.wm_lifecycle import discovery_file_path
-from finecode.wm_server import wal
 
 DISCONNECT_TIMEOUT_SECONDS = 30
 NO_CLIENT_TIMEOUT_SECONDS = 30

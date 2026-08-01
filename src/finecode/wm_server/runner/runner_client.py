@@ -387,6 +387,12 @@ class RunnerConfig:
     # config by handler source
     action_handler_configs: dict[str, dict[str, Any]]
     services: list[domain.ServiceDeclaration] = dataclasses.field(default_factory=list)
+    # Service config overrides keyed by derived alias. Forwarded verbatim: the ER
+    # matches them against its bindings, because activator-registered services
+    # are invisible from here (ADR-0070).
+    service_config_overrides: dict[str, dict[str, Any]] = dataclasses.field(
+        default_factory=dict
+    )
     # If provided, eagerly instantiate these handlers after config update.
     # Keys are action names, values are lists of handler names within that action.
     handlers_to_initialize: dict[str, list[str]] | None = None
@@ -398,6 +404,7 @@ class RunnerConfig:
             "actions": [action.to_dict() for action in self.actions],
             "action_handler_configs": self.action_handler_configs,
             "services": [svc.to_dict() for svc in self.services],
+            "service_config_overrides": self.service_config_overrides,
             "logging": {
                 "defaultLevel": self.logging.default_level,
                 "logGroups": self.logging.log_groups,

@@ -11,10 +11,11 @@ import click
 from loguru import logger
 
 from finecode import logger_utils, user_messages
-from finecode.wm_server.errors import ConfigurationError, WmError
+from finecode.wm_server.errors import WmError
 
 
 FINECODE_CONFIG_ENV_PREFIX = "FINECODE_CONFIG_"
+FINECODE_SERVICE_CONFIG_ENV_PREFIX = "FINECODE_SERVICE_CONFIG_"
 _VALID_DEV_ENVS = {"ide", "cli", "ai", "ci", "git_hook"}
 
 
@@ -41,6 +42,12 @@ def parse_handler_config_from_env() -> dict[str, dict[str, dict[str, str]]]:
       -> action-level config for all handlers of action
     - FINECODE_CONFIG_<ACTION>__<HANDLER>__<PARAM>=value
       -> handler-specific config
+
+    Values are parsed as JSON; a value that fails to parse as JSON falls back to
+    the raw string, so a bare string value needs no explicit JSON quoting
+    (``...__PROFILE=strict`` rather than ``...__PROFILE='"strict"'``). This
+    matches ``parse_handler_config_from_cli`` and
+    ``parse_service_config_from_env``.
 
     Returns nested dict: {action_name: {handler_name_or_empty: {param: value}}}
     Empty string key "" means action-level (applies to all handlers).
@@ -82,12 +89,74 @@ def parse_handler_config_from_env() -> dict[str, dict[str, dict[str, str]]]:
 
         try:
             parsed_value = json.loads(env_value)
-        except json.JSONDecodeError as e:
-            raise ConfigurationError(
-                f"Failed to parse JSON value for env var '{env_name}': {env_value!r}"
-            ) from e
+        except json.JSONDecodeError:
+            # fallback for literal string, all other types can be parsed by json.loads
+            parsed_value = env_value
 
         config_overrides[action_name][handler_name][param_name] = parsed_value
+
+    return config_overrides
+
+
+def parse_service_config_from_env() -> dict[str, dict[str, typing.Any]]:
+    """
+    Parse service config overrides from environment variables.
+
+    Format:
+    - FINECODE_SERVICE_CONFIG_<SERVICE_NAME>__<PARAM_PATH>=value
+      -> service config, where <PARAM_PATH> may itself contain further
+      "__"-separated segments; each segment becomes one level of nesting in
+      the resulting dict.
+
+    Unlike the handler format (see ``parse_handler_config_from_env``), there is
+    no optional handler segment in the middle: services have no such segment,
+    so nesting the remainder after the service name is unambiguous. (For
+    handlers, ``ACTION__A__B`` is ambiguous between ``(action, handler A, param
+    B)`` and ``(action, param path A.B)``; the handler parser resolves this by
+    treating segment 2 as the handler name and flattening the rest.) Identifiers
+    (service names and path segments) may not themselves contain "__" -- doing
+    so is indistinguishable from an intentional nesting boundary and will be
+    parsed as one.
+
+    Values are parsed as JSON; a value that fails to parse as JSON falls back to
+    the raw string, the same as ``parse_handler_config_from_env`` and
+    ``parse_handler_config_from_cli``. Without this fallback, setting a secret
+    token would require quoting it as a JSON string (``...__TOKEN='"ghp_..."'``),
+    a quoting trap on the field people set most.
+
+    Returns nested dict: {service_name: {nested param path as a dict}}.
+    """
+    config_overrides: dict[str, dict[str, typing.Any]] = {}
+
+    for env_name, env_value in os.environ.items():
+        if not env_name.startswith(FINECODE_SERVICE_CONFIG_ENV_PREFIX):
+            continue
+
+        # Remove prefix and split by double underscore
+        config_key = env_name[len(FINECODE_SERVICE_CONFIG_ENV_PREFIX) :]
+        parts = config_key.split("__")
+
+        if len(parts) < 2:
+            logger.warning(
+                f"Invalid service config env var format: {env_name}. "
+                f"Expected FINECODE_SERVICE_CONFIG_<SERVICE_NAME>__<PARAM_PATH>"
+            )
+            continue
+
+        service_name = parts[0].lower()
+        param_path = [part.lower() for part in parts[1:]]
+
+        try:
+            parsed_value = json.loads(env_value)
+        except json.JSONDecodeError:
+            # fallback for literal string, all other types can be parsed by json.loads
+            parsed_value = env_value
+
+        service_overrides = config_overrides.setdefault(service_name, {})
+        node = service_overrides
+        for segment in param_path[:-1]:
+            node = node.setdefault(segment, {})
+        node[param_path[-1]] = parsed_value
 
     return config_overrides
 
@@ -299,14 +368,12 @@ def run(ctx) -> None:
             err=True,
         )
 
-    # Parse handler config from env vars
+    # Parse handler and service config from env vars
     handler_config_overrides: dict[str, dict[str, dict[str, str]]] = {}
+    service_config_overrides: dict[str, dict[str, typing.Any]] = {}
     if not no_env_config:
-        try:
-            handler_config_overrides = parse_handler_config_from_env()
-        except ConfigurationError as exception:
-            click.echo(exception.message, err=True)
-            sys.exit(1)
+        handler_config_overrides = parse_handler_config_from_env()
+        service_config_overrides = parse_service_config_from_env()
 
     # actions
     for arg in args[processed_args_count:]:
@@ -365,9 +432,10 @@ def run(ctx) -> None:
                 actions_to_run,
                 deserialized_payload,
                 concurrently,
-                handler_config_overrides,
-                save_results,
-                map_payload_fields,
+                handler_config_overrides=handler_config_overrides,
+                service_config_overrides=service_config_overrides,
+                save_results=save_results,
+                map_payload_fields=map_payload_fields,
                 own_server=not shared_server,
                 log_level=log_level,
                 dev_env=dev_env,

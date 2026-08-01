@@ -85,6 +85,7 @@ async def run_actions(
     action_payload: dict[str, typing.Any],
     concurrently: bool,
     handler_config_overrides: dict[str, dict[str, dict[str, str]]] | None = None,
+    service_config_overrides: dict[str, dict[str, typing.Any]] | None = None,
     save_results: bool = True,
     map_payload_fields: set[str] | None = None,
     own_server: bool = False,
@@ -117,9 +118,11 @@ async def run_actions(
         client = ApiClient()
         await client.connect("127.0.0.1", port)
         try:
-            if handler_config_overrides:
+            if handler_config_overrides or service_config_overrides:
                 if own_server:
-                    await client.set_config_overrides(handler_config_overrides)
+                    await client.set_config_overrides(
+                        handler_config_overrides or {}, service_config_overrides
+                    )
                 else:
                     click.echo(
                         "Warning: --config overrides are ignored in --shared-server mode. ",

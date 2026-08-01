@@ -247,13 +247,14 @@ protocol even though the runner never became reachable. (Regression-tested in
 
 - `finecodeRunner/resolveActionMeta`
   - Params: `{}` (no params)
-  - Result: `{ "actions": { "<configSource>": { "canonical_source": string, "runs_concurrently": bool, "scope": string, "parentActionSource": string | null, "language": string | null, "fileLoc": string | null }, ... }, "handlerLocations": { "<handlerSource>": string | null, ... } }`.
-    `actions` covers every action whose class can be imported in this env; actions
-    that fail to import are omitted entirely. `handlerLocations` covers every handler
-    registered in this env. `fileLoc` is `"<path>:<lineno>"` of the class's source
-    (relative to the project dir when inside it, else absolute), or `null` when it
-    could not be resolved (e.g. a dynamically built class).
-    Example: `{ "actions": { "myext.LintAction": { "canonical_source": "myext.actions.lint.LintAction", "runs_concurrently": true, "scope": "project", "parentActionSource": null, "language": null, "fileLoc": "myext/actions/lint.py:10" } }, "handlerLocations": { "myext.LintHandler": "myext/lint_handler.py:20" } }`
+  - Result: `{ "actions": { "<configSource>": { "canonical_source": string, "runs_concurrently": bool, "scope": string, "parentActionSource": string | null, "language": string | null, "fileLoc": string | null }, ... }, "handlers": { "<configSource>": { "canonicalSource": string, "fileLoc": string | null }, ... } }`.
+    `actions` covers every action whose class can be imported in this env; `handlers`
+    covers every handler registered in this env.  Actions and handlers that fail to
+    import are omitted entirely from their respective maps.  `fileLoc` is
+    `"<path>:<lineno>"` of the class's source (relative to the project dir when inside
+    it, else absolute), or `null` when it could not be resolved (e.g. a dynamically
+    built class).
+    Example: `{ "actions": { "myext.LintAction": { "canonical_source": "myext.actions.lint.LintAction", "runs_concurrently": true, "scope": "project", "parentActionSource": null, "language": null, "fileLoc": "myext/actions/lint.py:10" } }, "handlers": { "myext.LintHandler": { "canonicalSource": "myext.lint_handler.LintHandler", "fileLoc": "myext/lint_handler.py:20" } } }`
   - Called by the WM after `finecodeRunner/updateConfig` completes to store all action
     and handler metadata on its `Action`/`ActionHandler` domain objects before the
     runner is considered ready.  The WM uses `canonical_source` as the primary
@@ -262,6 +263,15 @@ protocol even though the runner never became reachable. (Regression-tested in
     Fields absent from the response (import failure) remain `None` until another
     runner for the same project resolves them; if still unresolved when requested,
     resolution is retried on demand (see `finecode/getActionsForParent` below).
+  - The key of both maps is the **config source** — the string written in the
+    definition file, which for handlers is almost always a package-level re-export
+    (`myext.LintHandler`) rather than the module the class is defined in
+    (`myext.lint_handler.LintHandler`).  A handler's `canonicalSource` bridges the two
+    (ADR-0054).  Unlike an action's, it is **identity metadata, not a dispatch key**:
+    the WM still reaches a handler by traversing its action's handler list, so nothing
+    in dispatch matches on it.  Consumers that need to recognize the same handler
+    across projects — anything keying handlers, such as the knowledge extractor —
+    must key on `canonicalSource`, because two different aliases can name one handler.
 
 - `actions/resolveSource`
   - Params: `{ "source": string }` — an arbitrary import-path alias to resolve.
@@ -302,6 +312,14 @@ protocol even though the runner never became reachable. (Regression-tested in
   - Params: `{ "projectDefPath": "/abs/path/to/project/finecode.toml" }`
   - Result: `{ "config": "<stringified JSON config>" }`
   - Used by ER during `finecodeRunner/updateConfig` to resolve project config.
+  - The config is the WM's **resolved** config, served from its per-project cache —
+    not the definition file's contents. Presets and `finecode-user.toml` are merged
+    in, handler/service dependencies are merged into `[dependency-groups]`, and
+    interpreter matrices are already expanded (ADR-0047): an env declaring
+    `interpreters` no longer appears in `[tool.finecode.env]`, having been replaced
+    by one `<base>@<impl>-<version>` child per interpreter, each with a singular
+    `interpreter`. Extensions reading the env table can rely on this ordering; it is
+    pinned by `test_config_served_to_extensions_has_matrices_already_expanded`.
 
 - `workspace/getWorkspaceEditablePackages`
   - Params: `{}`
@@ -348,6 +366,28 @@ protocol even though the runner never became reachable. (Regression-tested in
     checked against `parentActionSource`; an action that still cannot be resolved
     is simply excluded rather than failing the whole request.
 
+- `finecode/listWorkspaceActions`
+  - Params: `{}` (no params)
+  - Result: `{ "actions": [{ "name": string, "source": string, "canonicalSource": string | null,
+    "scope": string | null, "project": string, "language": string | null,
+    "parentActionSource": string | null, "fileLoc": string | null,
+    "handlers": [{ "name": string, "source": string, "canonicalSource": string | null,
+    "env": string, "fileLoc": string | null }, ...] }, ...] }` — the aggregated
+    action/handler registry across **every** project and env in the workspace.
+  - Backs the `IWorkspaceActionRegistry` service (see
+    [Services](reference/services.md)). An ER only ever knows the actions its own env
+    executes, so this cross-env picture can only come from the WM.
+  - Values come straight from the WM's resolved domain objects, so a field is `null`
+    when the runner that would resolve it has not started yet (or could not import the
+    class). Callers must tolerate `null` on every optional field rather than assuming
+    a fully-populated registry — notably `canonicalSource`, which is populated per env
+    by that env's own runner.
+  - On both actions and handlers, `source` is the config-facing alias and
+    `canonicalSource` is the module the class is actually defined in. Key entities by
+    `canonicalSource`: the same action or handler is reachable under several aliases,
+    and the WM does not deduplicate the rows (a PROJECT-scope action appears once per
+    project that registers it).
+
 - `finecode/runActionInWorkspace`
   - Params:
     - `actionSource` (string): **fully qualified** import path of the action class —
@@ -358,6 +398,79 @@ protocol even though the runner never became reachable. (Regression-tested in
     - `concurrently` (boolean, default `true`): run projects concurrently.
   - Result: `{ "resultsByProject": { "<posix path>": <json result>, ... } }`
   - Fans out the action across the specified projects (or all projects that declare it). Because this route is always nested orchestration (an ER handler asking the WM to fan out, so `orchestrationDepth > 0`), the WM enforces `OrchestrationPolicy.max_project_fanout` before dispatching — see [ADR-0067](../../finecode_internal_docs/adr/0067-fanout-width-is-throttled-at-depth-zero-refused-only-when-nested.md). Requests arriving from external clients at depth 0 are throttled instead; see [run fan-out concurrency](guides/wm-server-internals.md#run-fan-out-concurrency).
+
+- `knowledge/registerSchema`
+  - Params: `{ "snapshot": <object> }`
+  - Result: `{ "accepted": boolean }` — `false` means the WM already held this
+    exact schema, which is the ordinary case for a second runner hosting the same
+    one.
+  - Hands the WM the knowledge schema its fact store should be read against. The
+    WM owns the store but must not import the package that declares the schema,
+    so the schema travels as **data**: entity types, fields, relationships,
+    per-provider `SUPPLIES` lists, and derived-predicate bodies. The document is
+    produced by `finecode_knowledge.query.snapshot.registry_to_json` and is
+    versioned inside itself (`v`); its shape belongs to the knowledge engine, and
+    the WM's transport types keep it opaque so one wire format does not acquire
+    two owners.
+  - No Python crosses. A provider rebuilt from a snapshot is a *declaration of
+    what it may supply*, never an extractor — asking one for its source inputs
+    raises. Extraction runs where the provider actually lives.
+  - Must be sent before the first `knowledge/query`; querying first fails with an
+    error naming this method.
+
+- `knowledge/query`
+  - Params:
+    - `query` (object): a serialized `Query`, produced by
+      `finecode_knowledge.query.serialize.query_to_json`. Derived predicates
+      appear **by registered name**, never inlined — the query is a reference
+      into the schema the WM already holds.
+    - `mode` (string, default `"verified"`): `"verified"` blocks until inputs
+      verify. `"cached"` returns whatever the WM has memoized for this query
+      immediately, carrying a `"cached"` reservation saying it was not
+      re-verified; with nothing memoized it blocks and computes, so a caller
+      always gets an answer rather than an empty one. The memo is per-WM-process,
+      so `"cached"` only pays off against a live WM — a one-shot CLI run starts
+      with an empty table.
+    - `limit` (int | null): stop the walk after this many rows. Applied by the
+      WM, because applying it in the ER would mean receiving every row first.
+  - Result: `{ "rows": [[<tagged value>, ...], ...], "freshness": { "revision": string, "reservations": [{ "kind": string, "subject": string, "detail": string }, ...] } }`
+  - A row cell is tagged because a row is genuinely a union: `{"k": "scalar", "v": ...}`,
+    `{"k": "ref", "v": {"type": ..., "key": [...]}}`, or `{"k": "prov", "v": {...}}`.
+  - **Rows and the verdict, always.** An empty `reservations` list means fully
+    verified; a non-empty one names which inputs were unconfirmed and why.
+  - **One query out, one result back.** The unit of access is a whole query, not
+    a read, so a rule joining four relations costs one message regardless of how
+    many facts answering it touched.
+  - The ER never connects to the storage backend: it has no driver, no
+    connection and no credentials, and swapping the WM's backend changes nothing
+    it sees. The **footprint** of each query — which fact slots were consulted —
+    is recorded in the WM and does not cross; its consumer is the memo table,
+    which lives on the same side as the store.
+  - Reached from an extension through the `IKnowledgeStore` service (see
+    [Services](reference/services.md)) rather than by building these params by
+    hand; `finecode_knowledge.query.remote.RemoteBackend` adapts that service into
+    an ordinary query backend, so a rule body does not know which side executed it.
+
+- `knowledge/records`
+  - Params:
+    - `refs` (array): entity references, each `{ "type": string, "key": [string, ...] }`.
+  - Result: `{ "v": 1, "records": [{ "fields": { "<qualified field>": { "v": ..., "prov": {...} } }, "conflicts": [...] }, ...] }`
+  - **The read a query cannot express.** A query names predicates, so it asks
+    about fields it knows the names of. A projection rendering *everything* known
+    about an entity cannot, because extensions may declare fields on entity types
+    they did not define — enumerating what the caller knew about would silently
+    drop exactly those.
+  - **The reply is positional and complete.** One record per ref, in order; an
+    entity with no facts yields an empty record rather than being omitted, so the
+    reply's length never depends on the store's contents.
+  - **Batched on purpose.** `refs` is a list so a projection over forty entities
+    costs one message rather than forty — the same granularity argument that makes
+    `knowledge/query` take a whole query.
+  - Like `knowledge/query`, the read is recorded in a footprint on the WM side.
+    That is the reason this method exists at all rather than an extension holding
+    its own copy of the store: a read the WM never sees contributes nothing to
+    what it knows an answer depended on, so nothing resting on it can be
+    invalidated when the world moves.
 
 **Notifications**
 

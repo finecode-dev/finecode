@@ -15,6 +15,7 @@ dependencies = [
     "cattrs==26.1.*",
     "opentelemetry-sdk==1.41.*",
     "opentelemetry-exporter-otlp-proto-grpc==1.41.*",
+    "typing-extensions (>=4.12.2,<5.0.0)",
 ]
 
 [dependency-groups]

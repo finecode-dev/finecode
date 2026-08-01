@@ -10,7 +10,6 @@ if sys.version_info < (3, 12):
 else:
     from typing import override
 
-from finecode_extension_api import code_action
 from fine_format import format_file_action
 from fine_python_lang.format_python_file_action import (
     FormatPythonFileAction,
@@ -20,7 +19,9 @@ from finecode_extension_api.interfaces import (
     iprojectinfoprovider,
 )
 from finecode_extension_api.resource_uri import resource_uri_to_path
+
 from fine_python_ruff.ruff_lsp_service import RuffLspService
+from finecode_extension_api import code_action
 
 
 @dataclasses.dataclass
@@ -81,5 +82,5 @@ class RuffFormatFileHandler(
         run_context.file_info = format_file_action.FileInfo(new_file_content, file_version)
 
         return format_file_action.FormatFileRunResult(
-            changed=file_changed, code=new_file_content
+            changed=file_changed, code=new_file_content if file_changed else ""
         )
