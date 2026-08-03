@@ -118,9 +118,18 @@ class OpenedFileInfo:
 
 
 @dataclasses.dataclass
-class BlockedFileInfo:
-    blocked_by: "FileEditorSession"
-    unblock_event: asyncio.Event
+class FileClaim:
+    """A held right to modify one file.
+
+    `claimed_by` exists for session-scoped cleanup — ending a session releases
+    the claims it still holds. It is deliberately *not* what exclusion is keyed
+    on: one session can span many independent concurrent operations, so session
+    identity would conflate operations that must serialize with operations that
+    must not. Exclusion is keyed by path, via `lock`.
+    """
+
+    claimed_by: "FileEditorSession"
+    lock: asyncio.Lock
 
 
 class BaseSubscription: ...
@@ -143,7 +152,8 @@ class FileEditorSession(ifileeditor.IFileEditorProviderSession):
         author: ifileeditor.FileOperationAuthor,
         file_manager: ifilemanager.IFileManager,
         opened_files: dict[pathlib.Path, OpenedFileInfo],
-        blocked_files: dict[pathlib.Path, BlockedFileInfo],
+        file_claims: dict[pathlib.Path, FileClaim],
+        file_locks: dict[pathlib.Path, asyncio.Lock],
         file_change_subscriptions: dict[
             pathlib.Path,
             dict[
@@ -160,7 +170,8 @@ class FileEditorSession(ifileeditor.IFileEditorProviderSession):
         self.author = author
         self._file_manager = file_manager
         self._opened_files = opened_files
-        self._blocked_files = blocked_files
+        self._file_claims = file_claims
+        self._file_locks = file_locks
         self._file_change_subscriptions = file_change_subscriptions
         self._all_events_subscriptions = all_events_subscriptions
 
@@ -207,19 +218,14 @@ class FileEditorSession(ifileeditor.IFileEditorProviderSession):
                 # File was already removed or session not in list
                 pass
 
-        # Unblock files blocked by this session
-        files_to_unblock: list[pathlib.Path] = []
-        for file_path, blocked_file_info in self._blocked_files.items():
-            if blocked_file_info.blocked_by == self:
-                files_to_unblock.append(file_path)
-
-        for file_path in files_to_unblock:
-            try:
-                blocked_file_info = self._blocked_files.pop(file_path)
-                blocked_file_info.unblock_event.set()
-            except KeyError:
-                # File was already unblocked
-                pass
+        # Release modification claims still held by this session
+        files_to_release = [
+            file_path
+            for file_path, claim in self._file_claims.items()
+            if claim.claimed_by is self
+        ]
+        for file_path in files_to_release:
+            self._release_claim(file_path)
 
     async def change_file(
         self, file_path: pathlib.Path, change: ifileeditor.FileChange
@@ -472,48 +478,60 @@ class FileEditorSession(ifileeditor.IFileEditorProviderSession):
             del self._all_events_subscriptions[self]
             await iterator._queue.put(None)
 
+    async def _current_file_info(
+        self, file_path: pathlib.Path
+    ) -> ifileeditor.FileInfo:
+        if file_path in self._opened_files:
+            opened_file_info = self._opened_files[file_path]
+            file_content = opened_file_info.content
+            file_version = opened_file_info.version
+        else:
+            file_content = await self._file_manager.get_content(file_path=file_path)
+            file_version = await self._file_manager.get_file_version(
+                file_path=file_path
+            )
+        return ifileeditor.FileInfo(content=file_content, version=file_version)
+
+    def _release_claim(self, file_path: pathlib.Path) -> None:
+        claim = self._file_claims.pop(file_path, None)
+        if claim is None:
+            return
+        if claim.lock.locked():
+            claim.lock.release()
+
     @contextlib.asynccontextmanager
     async def read_file(
-        self, file_path: pathlib.Path, block: bool = False
+        self, file_path: pathlib.Path
     ) -> collections.abc.AsyncIterator[ifileeditor.FileInfo]:
-        if file_path in self._blocked_files:
-            blocked_file_info = self._blocked_files[file_path]
-            if blocked_file_info.blocked_by == self:
-                raise ValueError(
-                    f"{file_path} is blocked by this session, cannot read it"
-                )
+        # Reads never consult `_file_claims`. A modification is published in one
+        # commit, so whatever is readable here is always a consistent snapshot,
+        # and a read nested inside an in-flight modification cannot deadlock on
+        # a claim only its own caller could release. See ADR-0071.
+        yield await self._current_file_info(file_path)
 
-            unblock_event = blocked_file_info.unblock_event
-            await unblock_event.wait()
+    @contextlib.asynccontextmanager
+    async def modify_file(
+        self, file_path: pathlib.Path
+    ) -> collections.abc.AsyncIterator[ifileeditor.FileInfo]:
+        lock = self._file_locks.get(file_path)
+        if lock is None:
+            lock = asyncio.Lock()
+            # Kept in the registry after release so that a later modifier of the
+            # same path queues on the same lock object.
+            self._file_locks[file_path] = lock
 
-        if block:
-            blocked_file_info = BlockedFileInfo(
-                blocked_by=self, unblock_event=asyncio.Event()
-            )
-            self._blocked_files[file_path] = blocked_file_info
+        await lock.acquire()
+        self._file_claims[file_path] = FileClaim(claimed_by=self, lock=lock)
+        self.logger.trace(f"Claimed {file_path} for modification")
         try:
-            if file_path in self._opened_files:
-                opened_file_info = self._opened_files[file_path]
-                file_content = opened_file_info.content
-                file_version = opened_file_info.version
-            else:
-                file_content = await self._file_manager.get_content(file_path=file_path)
-                file_version = await self._file_manager.get_file_version(
-                    file_path=file_path
-                )
-            file_info = ifileeditor.FileInfo(content=file_content, version=file_version)
-            yield file_info
+            yield await self._current_file_info(file_path)
         finally:
-            if block:
-                blocked_file_info = self._blocked_files.pop(file_path)
-                blocked_file_info.unblock_event.set()
+            self._release_claim(file_path)
 
     async def read_file_version(self, file_path: pathlib.Path) -> str:
-        if file_path in self._blocked_files:
-            blocked_file_info = self._blocked_files[file_path]
-            unblock_event = blocked_file_info.unblock_event
-            await unblock_event.wait()
-
+        # Non-blocking, for the same reason as `read_file` — this path is reached
+        # indirectly through file caches, so a wait here would reintroduce the
+        # deadlock that removing the read barrier eliminates.
         if file_path in self._opened_files:
             opened_file_info = self._opened_files[file_path]
             file_version = opened_file_info.version
@@ -523,8 +541,22 @@ class FileEditorSession(ifileeditor.IFileEditorProviderSession):
             )
         return file_version
 
-    async def save_file(self, file_path: pathlib.Path, file_content: str) -> None:
+    async def save_file(
+        self,
+        file_path: pathlib.Path,
+        file_content: str,
+        if_version: str | None = None,
+    ) -> None:
         self.logger.debug(f"Save file {file_path}")
+
+        if if_version is not None:
+            current_version = await self.read_file_version(file_path)
+            if current_version != if_version:
+                raise ifileeditor.FileVersionConflict(
+                    file_path=file_path,
+                    expected_version=if_version,
+                    actual_version=current_version,
+                )
 
         # Only opened files have cached content cheap enough to diff against; for
         # files that aren't open, treat the write as a real change (matches prior
@@ -563,7 +595,8 @@ class FileEditor(ifileeditor.IFileEditor):
         self.file_manager = file_manager
 
         self._opened_files: dict[pathlib.Path, OpenedFileInfo] = {}
-        self._blocked_files: dict[pathlib.Path, BlockedFileInfo] = {}
+        self._file_claims: dict[pathlib.Path, FileClaim] = {}
+        self._file_locks: dict[pathlib.Path, asyncio.Lock] = {}
         self._sessions: list[FileEditorSession] = []
         self._author_by_session: dict[
             ifileeditor.IFileEditorSession, ifileeditor.FileOperationAuthor
@@ -589,7 +622,8 @@ class FileEditor(ifileeditor.IFileEditor):
             author=author,
             file_manager=self.file_manager,
             opened_files=self._opened_files,
-            blocked_files=self._blocked_files,
+            file_claims=self._file_claims,
+            file_locks=self._file_locks,
             file_change_subscriptions=self._file_change_subscriptions,
             all_events_subscriptions=self._all_events_subscriptions,
         )

@@ -28,13 +28,14 @@ class FormatFileCallerRunContextKwargs(code_action.CallerRunContextKwargs):
 
     When ``format_file`` is called from ``format_files``, the parent passes a
     shared file editor session so that all files share one session and each file
-    is blocked only for the duration of its own formatting.
+    is claimed only for the duration of its own formatting. Sharing a session is
+    safe because modifier exclusion is keyed by file path, not by session.
 
     When ``format_file`` is called standalone, no kwargs are
     passed and the context creates its own session.
 
     When ``format_file`` dispatches to a language-specific subaction, the file
-    is already read and blocked by the parent ``format_file`` context. The
+    is already read and claimed by the parent ``format_file`` context. The
     dispatch handler passes both the session and the current ``file_info`` so
     the subaction can reuse that data and skip a redundant read.
 
@@ -100,14 +101,16 @@ class FormatFileRunContext(code_action.RunActionContext[FormatFileRunPayload]):
             )
 
         if parent_file_info is not None:
-            # file is already read and blocked by the caller (e.g. dispatch
-            # handler calling a language subaction)
+            # file is already read and claimed by the caller (e.g. dispatch
+            # handler calling a language subaction). Claiming it again here would
+            # deadlock against that claim, which is why the content is handed
+            # down rather than re-read.
             self.file_info = parent_file_info
         else:
-            # read and block the file for the duration of this context
+            # claim the file for modification for the duration of this context
             file_path = resource_uri_to_path(self.initial_payload.file_path)
             file_info = await self.exit_stack.enter_async_context(
-                self.file_editor_session.read_file(file_path, block=True)
+                self.file_editor_session.modify_file(file_path)
             )
             self.file_info = FileInfo(
                 file_content=file_info.content,

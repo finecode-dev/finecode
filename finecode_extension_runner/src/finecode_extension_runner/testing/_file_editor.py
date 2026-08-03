@@ -1,10 +1,17 @@
 from __future__ import annotations
 
+import asyncio
 import contextlib
+import hashlib
 import pathlib
 import typing
 
 from finecode_extension_api.interfaces import ifileeditor
+
+
+def _version_of(content: str) -> str:
+    """Content-derived version, so `if_version` checks mean something in tests."""
+    return hashlib.sha256(content.encode("utf-8")).hexdigest()
 
 
 class _EmptyAsyncIterator:
@@ -23,30 +30,59 @@ class _InMemoryFileEditorSession(ifileeditor.IFileEditorProviderSession):
         changes: list[ifileeditor.FileChangeEvent],
         author: ifileeditor.FileOperationAuthor,
         seed_from_disk: bool,
+        locks: dict[pathlib.Path, asyncio.Lock],
     ) -> None:
         self._storage = storage
         self._writes = writes
         self._changes = changes
         self._author = author
         self._seed_from_disk = seed_from_disk
+        self._locks = locks
 
-    @contextlib.asynccontextmanager
-    async def read_file(
-        self, file_path: pathlib.Path, block: bool = False
-    ) -> typing.AsyncIterator[ifileeditor.FileInfo]:
+    def _content(self, file_path: pathlib.Path) -> str:
         key = file_path.resolve()
         if key not in self._storage:
             if self._seed_from_disk and key.exists():
                 self._storage[key] = key.read_text(encoding="utf-8")
             else:
                 self._storage[key] = ""
-        yield ifileeditor.FileInfo(content=self._storage[key], version="1")
+        return self._storage[key]
+
+    @contextlib.asynccontextmanager
+    async def read_file(
+        self, file_path: pathlib.Path
+    ) -> typing.AsyncIterator[ifileeditor.FileInfo]:
+        content = self._content(file_path)
+        yield ifileeditor.FileInfo(content=content, version=_version_of(content))
+
+    @contextlib.asynccontextmanager
+    async def modify_file(
+        self, file_path: pathlib.Path
+    ) -> typing.AsyncIterator[ifileeditor.FileInfo]:
+        key = file_path.resolve()
+        lock = self._locks.setdefault(key, asyncio.Lock())
+        async with lock:
+            content = self._content(file_path)
+            yield ifileeditor.FileInfo(content=content, version=_version_of(content))
 
     async def read_file_version(self, file_path: pathlib.Path) -> str:
-        return "1"
+        return _version_of(self._content(file_path))
 
-    async def save_file(self, file_path: pathlib.Path, file_content: str) -> None:
+    async def save_file(
+        self,
+        file_path: pathlib.Path,
+        file_content: str,
+        if_version: str | None = None,
+    ) -> None:
         key = file_path.resolve()
+        if if_version is not None:
+            current_version = _version_of(self._content(file_path))
+            if current_version != if_version:
+                raise ifileeditor.FileVersionConflict(
+                    file_path=key,
+                    expected_version=if_version,
+                    actual_version=current_version,
+                )
         self._storage[key] = file_content
         self._writes.append((key, file_content))
 
@@ -117,6 +153,7 @@ class InMemoryFileEditor(ifileeditor.IFileEditor):
     def __init__(self, seed_from_disk: bool = False) -> None:
         self._storage: dict[pathlib.Path, str] = {}
         self._seed_from_disk = seed_from_disk
+        self._locks: dict[pathlib.Path, asyncio.Lock] = {}
         self.writes: list[tuple[pathlib.Path, str]] = []
         self.changes: list[ifileeditor.FileChangeEvent] = []
 
@@ -136,6 +173,7 @@ class InMemoryFileEditor(ifileeditor.IFileEditor):
             changes=self.changes,
             author=author,
             seed_from_disk=self._seed_from_disk,
+            locks=self._locks,
         )
 
     def get_opened_files(self) -> list[pathlib.Path]:
