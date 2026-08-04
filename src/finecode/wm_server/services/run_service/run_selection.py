@@ -8,6 +8,7 @@ default) into a concrete set of selected interpreter canonicals to pass to
 the matrix fan-out sites (`matrix_runner`, `matrix_streaming`) — mirroring
 `prepare_envs_service`'s use of the same pure resolver for `prepare-envs`.
 """
+
 from __future__ import annotations
 
 import pathlib
@@ -24,7 +25,9 @@ __all__ = [
 ]
 
 
-def project_env_universe_from_raw(raw_config: dict[str, typing.Any]) -> dict[str, typing.Any]:
+def project_env_universe_from_raw(
+    raw_config: dict[str, typing.Any],
+) -> dict[str, typing.Any]:
     """The project's full env-name -> `tool.finecode.env` entry map.
 
     Merges in `dependency-groups` names so envs that have no

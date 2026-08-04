@@ -1,15 +1,14 @@
 import dataclasses
 
-from finecode_extension_api import code_action
 from fine_dist_artifacts import list_published_artifacts_action
+from fine_python_package_info import registry_endpoints
+from finecode_extension_api import code_action
 from finecode_extension_api.interfaces import (
     ihttpclient,
     ilogger,
-    irepositorycredentialsprovider,
     iprojectinfoprovider,
+    irepositorycredentialsprovider,
 )
-
-from fine_python_package_info import registry_endpoints
 
 
 @dataclasses.dataclass
@@ -86,7 +85,9 @@ class ListPublishedArtifactsPythonHandler(
             ) from exception
 
         if response.status_code == 404:
-            return list_published_artifacts_action.ListPublishedArtifactsRunResult(filenames=[])
+            return list_published_artifacts_action.ListPublishedArtifactsRunResult(
+                filenames=[]
+            )
 
         response_json = response.json()
         versions = response_json.get("versions", None)
@@ -100,7 +101,9 @@ class ListPublishedArtifactsPythonHandler(
             )
 
         if payload.version not in versions:
-            return list_published_artifacts_action.ListPublishedArtifactsRunResult(filenames=[])
+            return list_published_artifacts_action.ListPublishedArtifactsRunResult(
+                filenames=[]
+            )
 
         try:
             files = response_json["files"]

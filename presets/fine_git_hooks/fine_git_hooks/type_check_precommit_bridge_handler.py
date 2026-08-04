@@ -1,11 +1,22 @@
 import asyncio
 import dataclasses
 
-from finecode_extension_api import code_action
-from fine_type_check.type_check_action import TypeCheckAction, TypeCheckRunPayload, TypeCheckTarget, TypeCheckRunResult
 from fine_git_hooks import precommit_action
-from finecode_extension_api.interfaces import iworkspaceactionrunner, iworkspaceinfoprovider, ilogger
-from finecode_extension_api.interfaces.iworkspaceinfoprovider import actionable_project_paths
+from fine_type_check.type_check_action import (
+    TypeCheckAction,
+    TypeCheckRunPayload,
+    TypeCheckRunResult,
+    TypeCheckTarget,
+)
+from finecode_extension_api import code_action
+from finecode_extension_api.interfaces import (
+    ilogger,
+    iworkspaceactionrunner,
+    iworkspaceinfoprovider,
+)
+from finecode_extension_api.interfaces.iworkspaceinfoprovider import (
+    actionable_project_paths,
+)
 from finecode_extension_api.resource_uri import path_to_resource_uri
 from finecode_extension_api.workspace_utils import group_files_by_project
 
@@ -44,8 +55,12 @@ class TypeCheckPrecommitBridgeHandler(
             self.logger.info("No staged files - skipping type check.")
             return precommit_action.PrecommitRunResult()
 
-        project_paths = actionable_project_paths(await self.workspace_info_provider.get_workspace_projects())
-        files_by_project = group_files_by_project(run_context.staged_files, project_paths)
+        project_paths = actionable_project_paths(
+            await self.workspace_info_provider.get_workspace_projects()
+        )
+        files_by_project = group_files_by_project(
+            run_context.staged_files, project_paths
+        )
 
         if not files_by_project:
             self.logger.warning(
@@ -61,7 +76,9 @@ class TypeCheckPrecommitBridgeHandler(
                             action_type=TypeCheckAction,
                             payload=TypeCheckRunPayload(
                                 target=TypeCheckTarget.FILES,
-                                file_paths=[path_to_resource_uri(p) for p in project_files],
+                                file_paths=[
+                                    path_to_resource_uri(p) for p in project_files
+                                ],
                             ),
                             meta=run_context.meta,
                             project_paths=[project_path],
@@ -80,4 +97,6 @@ class TypeCheckPrecommitBridgeHandler(
             for project_result in task.result().values():
                 merged_result.update(project_result)
 
-        return precommit_action.PrecommitRunResult(action_results={"type_check": merged_result})
+        return precommit_action.PrecommitRunResult(
+            action_results={"type_check": merged_result}
+        )

@@ -2,18 +2,16 @@ import asyncio
 import dataclasses
 
 import requests
-from twine import settings as twine_settings
-from twine.commands import upload as twine_upload
-
-from finecode_extension_api import code_action
 from fine_dist_artifacts import publish_artifact_to_registry_action
+from fine_python_package_info import registry_endpoints
+from finecode_extension_api import code_action
 from finecode_extension_api.interfaces import (
     icommandrunner,
     ilogger,
     irepositorycredentialsprovider,
 )
-
-from fine_python_package_info import registry_endpoints
+from twine import settings as twine_settings
+from twine.commands import upload as twine_upload
 
 
 @dataclasses.dataclass
@@ -47,16 +45,22 @@ class PublishArtifactToRegistryPyHandler(
         # Failures are reported in the result rather than raised, so that a caller
         # publishing to several registries can attribute this registry's failure
         # and still publish to (and report on) the others.
-        def failed(error: str) -> publish_artifact_to_registry_action.PublishArtifactToRegistryRunResult:
+        def failed(
+            error: str,
+        ) -> publish_artifact_to_registry_action.PublishArtifactToRegistryRunResult:
             self.logger.error(f"Failed to publish to {payload.registry_name}: {error}")
-            return publish_artifact_to_registry_action.PublishArtifactToRegistryRunResult(
-                registry_name=payload.registry_name,
-                published_paths=[],
-                error=error,
+            return (
+                publish_artifact_to_registry_action.PublishArtifactToRegistryRunResult(
+                    registry_name=payload.registry_name,
+                    published_paths=[],
+                    error=error,
+                )
             )
 
         # Get registry URL from repository provider
-        repository = self.repository_credentials_provider.get_repository(payload.registry_name)
+        repository = self.repository_credentials_provider.get_repository(
+            payload.registry_name
+        )
         if repository is None:
             return failed(
                 f"Registry '{payload.registry_name}' not found in repository provider"
@@ -71,7 +75,9 @@ class PublishArtifactToRegistryPyHandler(
         upload_url = repository.upload_url
 
         # Get credentials from provider
-        credentials = self.repository_credentials_provider.get_credentials(payload.registry_name)
+        credentials = self.repository_credentials_provider.get_credentials(
+            payload.registry_name
+        )
         username = credentials.username if credentials else None
         password = credentials.password if credentials else None
 
@@ -82,7 +88,7 @@ class PublishArtifactToRegistryPyHandler(
             non_interactive=True,
             verbose=self.config.verbose,
             username=username,
-            password=password
+            password=password,
         )
 
         # Run twine upload in executor to avoid blocking
@@ -92,7 +98,14 @@ class PublishArtifactToRegistryPyHandler(
         )
 
         try:
-            await asyncio.to_thread(twine_upload.upload, upload_settings, [dist_artifact_path.as_posix() for dist_artifact_path in dist_artifact_paths])
+            await asyncio.to_thread(
+                twine_upload.upload,
+                upload_settings,
+                [
+                    dist_artifact_path.as_posix()
+                    for dist_artifact_path in dist_artifact_paths
+                ],
+            )
         except requests.HTTPError as e:
             status_code = e.response.status_code if e.response is not None else None
             response_body = e.response.text if e.response is not None else None

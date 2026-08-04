@@ -4,7 +4,6 @@ import dataclasses
 import pathlib
 
 import pytest
-
 from fine_dist_artifacts.list_published_artifacts_action import (
     ListPublishedArtifactsAction,
     ListPublishedArtifactsRunPayload,
@@ -16,8 +15,8 @@ from finecode_extension_api.interfaces.ihttpclient import IHttpClient
 from finecode_extension_api.interfaces.iprojectinfoprovider import IProjectInfoProvider
 from finecode_extension_api.interfaces.irepositorycredentialsprovider import (
     IRepositoryCredentialsProvider,
+    Repository,
 )
-from finecode_extension_api.interfaces.irepositorycredentialsprovider import Repository
 from finecode_extension_runner.impls.repository_credentials_provider import (
     ConfigRepositoryCredentialsProvider,
     RepositoryCredentialsProviderConfig,
@@ -32,7 +31,9 @@ def _repository_provider(
 ) -> ConfigRepositoryCredentialsProvider:
     return ConfigRepositoryCredentialsProvider(
         RepositoryCredentialsProviderConfig(
-            repositories=[Repository(name=name, index_url=index_url, upload_url=upload_url)]
+            repositories=[
+                Repository(name=name, index_url=index_url, upload_url=upload_url)
+            ]
         )
     )
 
@@ -96,7 +97,9 @@ class FakeHttpSession:
     async def __aenter__(self) -> "FakeHttpSession":
         return self
 
-    async def __aexit__(self, exc_type: object, exc_val: object, exc_tb: object) -> None:
+    async def __aexit__(
+        self, exc_type: object, exc_val: object, exc_tb: object
+    ) -> None:
         return None
 
     async def get(self, url: str, **kwargs: object) -> FakeHttpResponse:
@@ -130,7 +133,9 @@ async def test_filenames_lists_registry_files_when_version_is_published() -> Non
         )
     )
     payload = ListPublishedArtifactsRunPayload(
-        src_artifact_def_path="pkg/pyproject.toml", version="1.0.0", registry_name="pypi"
+        src_artifact_def_path="pkg/pyproject.toml",
+        version="1.0.0",
+        registry_name="pypi",
     )
 
     result = await run_handler(
@@ -154,7 +159,9 @@ async def test_filenames_is_empty_when_version_is_absent_from_registry() -> None
         FakeHttpResponse(status_code=200, payload={"versions": ["2.0.0"], "files": []})
     )
     payload = ListPublishedArtifactsRunPayload(
-        src_artifact_def_path="pkg/pyproject.toml", version="1.0.0", registry_name="pypi"
+        src_artifact_def_path="pkg/pyproject.toml",
+        version="1.0.0",
+        registry_name="pypi",
     )
 
     result = await run_handler(
@@ -184,7 +191,9 @@ async def test_filenames_contains_only_the_registrys_actually_published_files() 
         )
     )
     payload = ListPublishedArtifactsRunPayload(
-        src_artifact_def_path="pkg/pyproject.toml", version="2.0.0", registry_name="pypi"
+        src_artifact_def_path="pkg/pyproject.toml",
+        version="2.0.0",
+        registry_name="pypi",
     )
 
     result = await run_handler(
@@ -208,7 +217,9 @@ async def test_lookup_appends_the_package_to_the_index_url() -> None:
         FakeHttpResponse(status_code=200, payload={"versions": [], "files": []})
     )
     payload = ListPublishedArtifactsRunPayload(
-        src_artifact_def_path="pkg/pyproject.toml", version="1.0.0", registry_name="pypi"
+        src_artifact_def_path="pkg/pyproject.toml",
+        version="1.0.0",
+        registry_name="pypi",
     )
 
     await run_handler(
@@ -232,7 +243,9 @@ async def test_index_url_pointing_at_the_upload_host_fails_loudly() -> None:
     """An index lookup against the upload-only host would 404, and 404 is this action's signal for "nothing published" — so the misroute must raise rather than silently report a published version as absent and invite a redundant upload."""
     http_client = FakeHttpClient(FakeHttpResponse(status_code=404, payload={}))
     payload = ListPublishedArtifactsRunPayload(
-        src_artifact_def_path="pkg/pyproject.toml", version="1.0.0", registry_name="pypi"
+        src_artifact_def_path="pkg/pyproject.toml",
+        version="1.0.0",
+        registry_name="pypi",
     )
 
     with pytest.raises(Exception) as exc_info:
@@ -261,7 +274,9 @@ async def test_missing_project_name_fails_loudly_instead_of_guessing() -> None:
     handler silently report someone else's files as already published."""
     http_client = FakeHttpClient(FakeHttpResponse(status_code=200, payload={}))
     payload = ListPublishedArtifactsRunPayload(
-        src_artifact_def_path="pkg/pyproject.toml", version="1.0.0", registry_name="pypi"
+        src_artifact_def_path="pkg/pyproject.toml",
+        version="1.0.0",
+        registry_name="pypi",
     )
 
     with pytest.raises(Exception, match="project.name"):

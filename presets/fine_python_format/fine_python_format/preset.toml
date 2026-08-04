@@ -1,17 +1,16 @@
 [tool.finecode]
 presets = [{ source = "fine_format" }]
 
-
 [tool.finecode.action.format_python_file]
 source = "fine_python_lang.FormatPythonFileAction"
 handlers = [
-    # ruff formatter doesn't handle imports, run isort to sort them first
-    { name = "isort", source = "fine_python_isort.IsortFormatFileHandler", env = "dev_no_runtime", dependencies = [
-        "fine_python_isort~=0.3.0a0",
-    ] },
-    { name = "ruff", source = "fine_python_ruff.RuffFormatFileHandler", env = "dev_no_runtime", dependencies = [
-        "fine_python_ruff~=0.2.0a0",
-    ] },
+  # ruff formatter doesn't handle imports, run isort to sort them first
+  { name = "isort", source = "fine_python_isort.IsortFormatFileHandler", env = "dev_no_runtime", dependencies = [
+    "fine_python_isort~=0.3.0a0",
+  ] },
+  { name = "ruff", source = "fine_python_ruff.RuffFormatFileHandler", env = "dev_no_runtime", dependencies = [
+    "fine_python_ruff~=0.2.0a0",
+  ] },
 ]
 
 [tool.finecode.extension.fine_python_ruff]

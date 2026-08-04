@@ -45,7 +45,8 @@ async def test_force_flush_precedes_response(wm_client, emit_log_method) -> None
     order_slice = wm_client.received_order[before:]
 
     notif_indices = [
-        i for i, (kind, value) in enumerate(order_slice)
+        i
+        for i, (kind, value) in enumerate(order_slice)
         if kind == "notif" and value == "server/logRecords"
     ]
     resp_indices = [i for i, (kind, _) in enumerate(order_slice) if kind == "resp"]

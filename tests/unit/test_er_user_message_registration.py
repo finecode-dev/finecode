@@ -9,13 +9,13 @@ never fired and ER-originated user messages never reached any client.
 These tests lock the fix and guard against the same class of omission for other
 notification types.
 """
+
 from __future__ import annotations
 
 import inspect
 
-from finecode_jsonrpc._converter import converter
-
 from finecode.wm_server.runner import _internal_client_types as t
+from finecode_jsonrpc._converter import converter
 
 
 def test_er_user_message_is_registered() -> None:
@@ -23,7 +23,9 @@ def test_er_user_message_is_registered() -> None:
         "er/userMessage missing from METHOD_TO_TYPES — the client drops it at its "
         "message_types gate and on_er_user_message never fires"
     )
-    notif_type, params_type, resp_type, result_type = t.METHOD_TO_TYPES[t.ER_USER_MESSAGE]
+    notif_type, params_type, resp_type, result_type = t.METHOD_TO_TYPES[
+        t.ER_USER_MESSAGE
+    ]
     assert notif_type is t.ErUserMessageNotification
     assert params_type is t.ErUserMessageParams
     assert resp_type is None and result_type is None  # it is a notification

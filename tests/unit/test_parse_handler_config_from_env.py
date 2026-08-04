@@ -5,7 +5,9 @@ import pytest
 from finecode.cli_app.cli import parse_handler_config_from_env
 
 
-def test_two_segments_produce_action_level_config(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_two_segments_produce_action_level_config(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     # Two segments name an action and a param, with no handler in between, so
     # the override applies to every handler of the action -- keyed by "".
     monkeypatch.setenv("FINECODE_CONFIG_LINT__LINE_LENGTH", "100")
@@ -34,7 +36,9 @@ def test_json_values_are_parsed(monkeypatch: pytest.MonkeyPatch) -> None:
     assert overrides == {"lint": {"ruff": {"extend_select": ["B", "I"], "fix": True}}}
 
 
-def test_non_json_value_falls_back_to_raw_string(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_non_json_value_falls_back_to_raw_string(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     # A bare string value is not valid JSON. Requiring the user to wrap it in
     # JSON quotes (TARGET_VERSION='"py312"') is a trap, and neither the CLI
     # parser nor the service env parser imposes it, so this one must not

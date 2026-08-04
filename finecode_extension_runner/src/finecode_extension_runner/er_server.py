@@ -25,19 +25,34 @@ import sys
 import threading
 import typing
 
+import finecode_jsonrpc as finecode_jsonrpc_module
 from cattrs import Converter
 from cattrs.gen import make_dict_structure_fn, make_dict_unstructure_fn, override
-from loguru import logger
-
-import finecode_jsonrpc as finecode_jsonrpc_module
-from finecode_extension_api import code_action, textstyler as _textstyler
-from finecode_extension_api.interfaces import ifileeditor, iprojectactionrunner, iprojectinfoprovider
-from finecode_extension_runner import context, er_errors, er_telemetry, er_wal, global_state, logs, schemas, services
-from finecode_extension_runner.di import bootstrap as di_bootstrap
+from finecode_extension_api import code_action
+from finecode_extension_api import textstyler as _textstyler
+from finecode_extension_api.interfaces import (
+    ifileeditor,
+    iprojectactionrunner,
+    iprojectinfoprovider,
+)
+from finecode_extension_runner import (
+    context,
+    er_errors,
+    er_telemetry,
+    er_wal,
+    global_state,
+    logs,
+    schemas,
+    services,
+)
 from finecode_extension_runner._converter import converter as _converter
 from finecode_extension_runner._services import merge_results as merge_results_service
 from finecode_extension_runner._services import run_action as run_action_service
-from finecode_extension_runner.impls import project_action_runner as project_action_runner_module
+from finecode_extension_runner.di import bootstrap as di_bootstrap
+from finecode_extension_runner.impls import (
+    project_action_runner as project_action_runner_module,
+)
+from loguru import logger
 
 # ---------------------------------------------------------------------------
 # Protocol types
@@ -114,7 +129,9 @@ class DidCloseTextDocumentParams:
 @dataclasses.dataclass
 class DidChangeTextDocumentParams:
     text_document: TextDocumentId
-    content_changes: list[TextDocumentContentChangePartial | TextDocumentContentChangeWhole]
+    content_changes: list[
+        TextDocumentContentChangePartial | TextDocumentContentChangeWhole
+    ]
 
 
 # JSON-RPC error code signalling that the WM should reinstall the env and restart the ER.
@@ -150,18 +167,24 @@ for _cls, _renames in [
 
 _protocol_converter.register_unstructure_hook(
     TextEdit,
-    make_dict_unstructure_fn(TextEdit, _protocol_converter, new_text=override(rename="newText")),
+    make_dict_unstructure_fn(
+        TextEdit, _protocol_converter, new_text=override(rename="newText")
+    ),
 )
 _protocol_converter.register_unstructure_hook(
     TextDocumentEdit,
     make_dict_unstructure_fn(
-        TextDocumentEdit, _protocol_converter, text_document=override(rename="textDocument")
+        TextDocumentEdit,
+        _protocol_converter,
+        text_document=override(rename="textDocument"),
     ),
 )
 _protocol_converter.register_unstructure_hook(
     WorkspaceEdit,
     make_dict_unstructure_fn(
-        WorkspaceEdit, _protocol_converter, document_changes=override(rename="documentChanges")
+        WorkspaceEdit,
+        _protocol_converter,
+        document_changes=override(rename="documentChanges"),
     ),
 )
 
@@ -179,7 +202,9 @@ class ErServer:
     """
 
     def __init__(self) -> None:
-        self._session = finecode_jsonrpc_module.JsonRpcServerSession(tracing=er_telemetry.JsonRpcTracingHooks())
+        self._session = finecode_jsonrpc_module.JsonRpcServerSession(
+            tracing=er_telemetry.JsonRpcTracingHooks()
+        )
         self._finecode_async_tasks: list[asyncio.Task] = []
         self._finecode_exit_stack = contextlib.AsyncExitStack()
         self._finecode_file_editor_session: ifileeditor.IFileEditorProviderSession
@@ -225,10 +250,16 @@ class ErServer:
     def send_log_records_notification(self, records: list[dict]) -> None:
         """Send ``er/logRecords`` notification (thread-safe, fire-and-forget)."""
         self._session._transport.send(  # type: ignore[union-attr]
-            {"jsonrpc": "2.0", "method": "er/logRecords", "params": {"records": records}}
+            {
+                "jsonrpc": "2.0",
+                "method": "er/logRecords",
+                "params": {"records": records},
+            }
         )
 
-    async def workspace_apply_edit_async(self, params: ApplyWorkspaceEditParams) -> dict:
+    async def workspace_apply_edit_async(
+        self, params: ApplyWorkspaceEditParams
+    ) -> dict:
         """Send ``workspace/applyEdit`` request to the WM and return result."""
         return await self._session.send_request(
             "workspace/applyEdit", _protocol_converter.unstructure(params)
@@ -291,7 +322,10 @@ class ErServer:
             self._session.attach(transport)
             await transport.start()
             # Wait until transport is done or exit was requested
-            while not transport._stop_event.is_set() and not self._async_exit_event.is_set():
+            while (
+                not transport._stop_event.is_set()
+                and not self._async_exit_event.is_set()
+            ):
                 await asyncio.sleep(0.05)
             self.shutdown()
             writer.close()
@@ -299,9 +333,7 @@ class ErServer:
                 self._tcp_server.close()
 
         self._tcp_server = await asyncio.start_server(_handle_connection, host, port)
-        addrs = ", ".join(
-            str(sock.getsockname()) for sock in self._tcp_server.sockets
-        )
+        addrs = ", ".join(str(sock.getsockname()) for sock in self._tcp_server.sockets)
         logger.info(f"Serving on {addrs}")
 
         try:
@@ -356,7 +388,6 @@ def convert_path_keys(
     elif isinstance(obj, list):
         return [convert_path_keys(item) for item in obj]
     return obj
-
 
 
 # ---------------------------------------------------------------------------
@@ -505,7 +536,9 @@ async def get_workspace_editable_packages(
     """
     try:
         result = await asyncio.wait_for(
-            server.send_request_to_wm("workspace/getWorkspaceEditablePackages", params={}),
+            server.send_request_to_wm(
+                "workspace/getWorkspaceEditablePackages", params={}
+            ),
             10,
         )
     except TimeoutError as exc:
@@ -516,7 +549,9 @@ async def get_workspace_editable_packages(
         raise er_errors.WmCommunicationError(
             f"WM returned error for getWorkspaceEditablePackages: {exc.rpc_message}"
         ) from exc
-    return {name: pathlib.Path(posix) for name, posix in result.get("packages", {}).items()}
+    return {
+        name: pathlib.Path(posix) for name, posix in result.get("packages", {}).items()
+    }
 
 
 async def _retire_runner_context(
@@ -572,7 +607,7 @@ async def update_config(server: ErServer, params: dict | None) -> dict:
                             name=handler["name"],
                             source=handler["source"],
                             config=handler["config"],
-                            env=handler["env"]
+                            env=handler["env"],
                         )
                         for handler in action["handlers"]
                     ],
@@ -615,7 +650,9 @@ async def update_config(server: ErServer, params: dict | None) -> dict:
         response, runner_context = await services.update_config(
             request=request,
             project_raw_config_getter=functools.partial(get_project_raw_config, server),
-            workspace_editable_packages_getter=functools.partial(get_workspace_editable_packages, server),
+            workspace_editable_packages_getter=functools.partial(
+                get_workspace_editable_packages, server
+            ),
             send_request_to_wm=_send_request_to_wm,
             send_user_message_notification=server.send_user_message_notification,
         )
@@ -632,13 +669,17 @@ async def update_config(server: ErServer, params: dict | None) -> dict:
         # keeps running, duplicating every edit sent to the WM.
         await _retire_runner_context(server, previous_context)
 
-        file_editor = await runner_context.di_registry.get_instance(ifileeditor.IFileEditor)
+        file_editor = await runner_context.di_registry.get_instance(
+            ifileeditor.IFileEditor
+        )
         session_cm = file_editor.session(author=server._finecode_file_operation_author)
         server._finecode_file_editor_session = await session_cm.__aenter__()
         server._finecode_file_editor_session_cm = session_cm
 
         async def send_changed_files_to_wm() -> None:
-            async with server._finecode_file_editor_session.subscribe_to_changes_of_opened_files() as file_change_events:
+            async with (
+                server._finecode_file_editor_session.subscribe_to_changes_of_opened_files() as file_change_events
+            ):
                 async for file_change_event in file_change_events:
                     if (
                         file_change_event.author
@@ -728,7 +769,9 @@ async def run_action(server: ErServer, params: dict | None) -> dict:
 
     try:
         response = await services.run_action_raw(
-            request=request, options=options_schema, runner_context=server._runner_context
+            request=request,
+            options=options_schema,
+            runner_context=server._runner_context,
         )
     except Exception as exception:
         if isinstance(exception, services.StopWithResponse):
@@ -812,7 +855,7 @@ async def run_handlers(server: ErServer, params: dict | None) -> dict:
     action_params: dict = params.get("params") or {}
     previous_result: dict | None = params.get("previousResult")
     previous_context: dict | None = params.get("previousContext")
-    caller_kwargs: dict | None = params.get("callerKwargs")   # NEW
+    caller_kwargs: dict | None = params.get("callerKwargs")  # NEW
     options: dict | None = params.get("options")
 
     logger.trace(
@@ -856,7 +899,9 @@ async def run_handlers(server: ErServer, params: dict | None) -> dict:
 
     try:
         response = await services.run_handlers_raw(
-            request=request, options=options_schema, runner_context=server._runner_context
+            request=request,
+            options=options_schema,
+            runner_context=server._runner_context,
         )
     except Exception as exception:
         if isinstance(exception, services.ActionCancelledException):
@@ -955,7 +1000,9 @@ async def merge_results_cmd(server: ErServer, params: dict | None) -> dict:
         return {"error": "Extension runner not initialized"}
     try:
         merged = await merge_results_service.merge_results(
-            action_name=action_name, results=results, runner_context=server._runner_context
+            action_name=action_name,
+            results=results,
+            runner_context=server._runner_context,
         )
         return {"merged": merged}
     except Exception as exception:
@@ -979,8 +1026,9 @@ async def resolve_source(_server: ErServer, params: dict | None) -> dict:
     if last_dot == -1:
         raise ValueError(f"Invalid source path (no module separator): {source!r}")
     import importlib
+
     module_path = source[:last_dot]
-    attr_name = source[last_dot + 1:]
+    attr_name = source[last_dot + 1 :]
     try:
         mod = importlib.import_module(module_path)
         cls = getattr(mod, attr_name)
@@ -1013,12 +1061,16 @@ def create_er_server(wal_writer: er_wal.ErWalWriter | None = None) -> ErServer:
     server._wal_writer = wal_writer
     session = server._session
 
-    logs.set_forward_sender(lambda records: server.send_log_records_notification(records))
+    logs.set_forward_sender(
+        lambda records: server.send_log_records_notification(records)
+    )
 
     def _wrap(handler):
         """Wrap a handler that takes (server, params) for use with the session."""
+
         async def _wrapped(params: dict | None) -> typing.Any:
             return await handler(server, params)
+
         return _wrapped
 
     # Lifecycle (requests)
@@ -1048,7 +1100,9 @@ def create_er_server(wal_writer: er_wal.ErWalWriter | None = None) -> ErServer:
         except (json.JSONDecodeError, TypeError) as exc:
             logger.warning(f"$/progress from WM: failed to decode value: {exc}")
             return
-        logger.trace(f"$/progress from WM: token={token}, preview={str(value_dict)[:200]}")
+        logger.trace(
+            f"$/progress from WM: token={token}, preview={str(value_dict)[:200]}"
+        )
         project_action_runner_module.dispatch_partial_result_from_wm(token, value_dict)
 
     session.on_notification("$/progress", _on_progress_from_wm)

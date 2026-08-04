@@ -4,7 +4,6 @@ import dataclasses
 from pathlib import Path
 
 import pytest
-
 from fine_release.build_release_artifact_handler import BuildReleaseArtifactHandler
 from fine_release.publish_release_artifact_handler import PublishReleaseArtifactHandler
 from fine_release.record_release_tag_handler import RecordReleaseTagHandler
@@ -168,7 +167,9 @@ class PackageSpec:
     version: str = "1.0.0"
     registries: list[str] = dataclasses.field(default_factory=lambda: ["pypi"])
     dry_run_published_registries: set[str] = dataclasses.field(default_factory=set)
-    dry_run_unreachable_registries: dict[str, str] = dataclasses.field(default_factory=dict)
+    dry_run_unreachable_registries: dict[str, str] = dataclasses.field(
+        default_factory=dict
+    )
     build_output_paths: list[str] = dataclasses.field(
         default_factory=lambda: ["dist/pkg-1.0.0.tar.gz"]
     )
@@ -200,7 +201,9 @@ def build_runner(spec: PackageSpec) -> FakeProjectActionRunner:
     runner = FakeProjectActionRunner()
     runner.set_result(
         GET_SRC_ARTIFACT_REGISTRIES_ACTION,
-        FakeRegistriesResult(registries=[FakeRegistry(name=r) for r in spec.registries]),
+        FakeRegistriesResult(
+            registries=[FakeRegistry(name=r) for r in spec.registries]
+        ),
     )
     runner.set_result(LIST_PUBLISHED_ARTIFACTS_ACTION, _make_list_published_fn(spec))
     if spec.build_raises:
@@ -229,7 +232,9 @@ def build_runner(spec: PackageSpec) -> FakeProjectActionRunner:
             ),
         )
     if spec.tag_raises:
-        runner.set_result(CREATE_GIT_TAG_ACTION, _Raises(RuntimeError("git unavailable")))
+        runner.set_result(
+            CREATE_GIT_TAG_ACTION, _Raises(RuntimeError("git unavailable"))
+        )
     else:
         runner.set_result(
             CREATE_GIT_TAG_ACTION,
@@ -251,7 +256,9 @@ def make_payload(spec: PackageSpec, dry_run: bool = False) -> ReleasePackageRunP
 
 
 _ACTION_NAME = ReleasePackageAction.__name__
-_ACTION_SOURCE = f"{ReleasePackageAction.__module__}.{ReleasePackageAction.__qualname__}"
+_ACTION_SOURCE = (
+    f"{ReleasePackageAction.__module__}.{ReleasePackageAction.__qualname__}"
+)
 _ACTIONS = {
     _ACTION_NAME: {
         "source": _ACTION_SOURCE,
@@ -293,7 +300,9 @@ async def run_release(
         actions=_ACTIONS,
         service_overrides={
             iprojectactionrunner.IProjectActionRunner: runner,
-            iprojectinfoprovider.IProjectInfoProvider: FakeProjectInfoProvider(project_dir),
+            iprojectinfoprovider.IProjectInfoProvider: FakeProjectInfoProvider(
+                project_dir
+            ),
             ilogger.ILogger: logger or RecordingLogger(),
         },
     ) as session:
@@ -318,7 +327,9 @@ async def test_unpublished_package_is_published_and_recorded(tmp_path: Path) -> 
 
 
 @pytest.mark.asyncio
-async def test_already_published_package_is_skipped_without_error(tmp_path: Path) -> None:
+async def test_already_published_package_is_skipped_without_error(
+    tmp_path: Path,
+) -> None:
     """Re-releasing an unchanged package reports SKIPPED with a successful return code, so a routine re-run never masquerades as a failure."""
     spec = PackageSpec(published_registries=[])
     result = await run_release(make_payload(spec), build_runner(spec), tmp_path)
@@ -329,7 +340,9 @@ async def test_already_published_package_is_skipped_without_error(tmp_path: Path
 
 
 @pytest.mark.asyncio
-async def test_registry_absent_from_every_map_is_reported_skipped(tmp_path: Path) -> None:
+async def test_registry_absent_from_every_map_is_reported_skipped(
+    tmp_path: Path,
+) -> None:
     """A configured registry the publish step didn't need to touch is reported SKIPPED rather than omitted, so the per-registry record accounts for every configured registry."""
     spec = PackageSpec(registries=["A", "B"], published_registries=["A"])
     result = await run_release(make_payload(spec), build_runner(spec), tmp_path)
@@ -362,7 +375,9 @@ async def test_partial_verification_failure_is_failed_but_still_recorded(
 
 
 @pytest.mark.asyncio
-async def test_partial_upload_failure_is_failed_but_still_recorded(tmp_path: Path) -> None:
+async def test_partial_upload_failure_is_failed_but_still_recorded(
+    tmp_path: Path,
+) -> None:
     """A package whose upload fails on one registry but succeeds on another is FAILED and still tagged for the registry that accepted it."""
     spec = PackageSpec(
         registries=["A", "B"],
@@ -379,7 +394,9 @@ async def test_partial_upload_failure_is_failed_but_still_recorded(tmp_path: Pat
 
 
 @pytest.mark.asyncio
-async def test_no_configured_registries_fails_with_an_explanation(tmp_path: Path) -> None:
+async def test_no_configured_registries_fails_with_an_explanation(
+    tmp_path: Path,
+) -> None:
     """A package with no resolvable registry is FAILED with an explanatory error rather than silently reported as nothing-to-do, since there is no destination to publish to."""
     spec = PackageSpec(registries=[])
     runner = build_runner(spec)
@@ -530,4 +547,7 @@ async def test_dry_run_unreachable_registry_fails_alone_without_aborting_preview
     unreachable_entry = _find_registry(result, "unreachable")
     assert unreachable_entry.outcome == RegistryPublishOutcome.FAILED
     assert unreachable_entry.errors
-    assert _find_registry(result, "reachable").outcome == RegistryPublishOutcome.WOULD_PUBLISH
+    assert (
+        _find_registry(result, "reachable").outcome
+        == RegistryPublishOutcome.WOULD_PUBLISH
+    )

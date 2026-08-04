@@ -3,13 +3,14 @@ from __future__ import annotations
 import dataclasses
 
 from finecode_extension_api import code_action
+from finecode_extension_api.resource_uri import ResourceUri
+
 from fine_lint.code_action_types import (
     CodeAction,
     CodeActionTriggerKind,
     DiagnosticRef,
 )
 from fine_lint.lint_fix import Range
-from finecode_extension_api.resource_uri import ResourceUri
 
 
 @dataclasses.dataclass
@@ -57,7 +58,9 @@ class GetCodeActionsAction(
 ):
     """Return code actions (quickfixes, refactorings, source actions) for a location."""
 
-    DESCRIPTION = "Return code actions (quickfixes, refactorings, source actions) for a location."
+    DESCRIPTION = (
+        "Return code actions (quickfixes, refactorings, source actions) for a location."
+    )
     PAYLOAD_TYPE = GetCodeActionsRunPayload
     RUN_CONTEXT_TYPE = GetCodeActionsRunContext
     RESULT_TYPE = GetCodeActionsRunResult

@@ -16,6 +16,11 @@ from fine_audit_code.audit_code_action import (
     AuditCodeRunResult,
     AuditCodeTarget,
 )
+from fine_envs.check_toolchains_action import CheckToolchainsRunResult
+from fine_envs.check_toolchains_audit_code_bridge_handler import (
+    CheckToolchainsAuditCodeBridgeHandler,
+)
+from fine_envs.sync_toolchains_action import EnvToolchainAxis
 from fine_inspect_code.diagnostic_types import DiagnosticSeverity
 from finecode_extension_api import code_action
 from finecode_extension_api.interfaces.iworkspaceinfoprovider import (
@@ -23,12 +28,6 @@ from finecode_extension_api.interfaces.iworkspaceinfoprovider import (
     WorkspaceProject,
 )
 from finecode_extension_api.resource_uri import ResourceUri, path_to_resource_uri
-
-from fine_envs.check_toolchains_action import CheckToolchainsRunResult
-from fine_envs.check_toolchains_audit_code_bridge_handler import (
-    CheckToolchainsAuditCodeBridgeHandler,
-)
-from fine_envs.sync_toolchains_action import EnvToolchainAxis
 
 
 class _FakeWorkspaceInfoProvider:
@@ -145,7 +144,8 @@ async def _run(
     handler = CheckToolchainsAuditCodeBridgeHandler(
         workspace_action_runner=action_runner,
         workspace_info_provider=_FakeWorkspaceInfoProvider(
-            known_project_paths if known_project_paths is not None
+            known_project_paths
+            if known_project_paths is not None
             else list(project_results)
         ),
         user_messenger=user_messenger,

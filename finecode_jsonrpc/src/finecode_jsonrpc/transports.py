@@ -4,8 +4,8 @@ import asyncio
 import collections.abc
 import json
 import re
-import sys
 import subprocess  # needed for windows
+import sys
 import typing
 from pathlib import Path
 

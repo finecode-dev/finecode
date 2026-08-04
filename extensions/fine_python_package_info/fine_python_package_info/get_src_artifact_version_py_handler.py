@@ -1,7 +1,7 @@
 import dataclasses
 
-from finecode_extension_api import code_action
 from fine_src_artifacts import get_src_artifact_version_action
+from finecode_extension_api import code_action
 from finecode_extension_api.interfaces import ilogger, iprojectinfoprovider
 
 
@@ -43,8 +43,8 @@ class GetSrcArtifactVersionPyHandler(
         version = src_artifact_raw_def.get("project", {}).get("version", None)
 
         if version is None:
-            dynamic_fields = src_artifact_raw_def.get('project', {}).get('dynamic', [])
-            if 'version' in dynamic_fields:
+            dynamic_fields = src_artifact_raw_def.get("project", {}).get("dynamic", [])
+            if "version" in dynamic_fields:
                 raise code_action.ActionFailedException(
                     f"Version is dynamic in {src_artifact_def_path}, use the right handler for that"
                 )

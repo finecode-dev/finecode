@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import dataclasses
 
-from finecode_extension_api import code_action
 from fine_src_artifacts import list_src_artifact_files_by_lang_action
+from finecode_extension_api import code_action
 from finecode_extension_api.interfaces import iprojectinfoprovider
 from finecode_extension_api.resource_uri import ResourceUri, path_to_resource_uri
 
@@ -36,8 +36,12 @@ class ListSrcArtifactFilesByLangTomlHandler(
         toml_uris: list[ResourceUri] = [
             path_to_resource_uri(p)
             for p in project_dir.rglob("*.toml")
-            if not any(part.startswith(".") for part in p.relative_to(project_dir).parts)
+            if not any(
+                part.startswith(".") for part in p.relative_to(project_dir).parts
+            )
         ]
-        return list_src_artifact_files_by_lang_action.ListSrcArtifactFilesByLangRunResult(
-            files_by_lang={"toml": toml_uris}
+        return (
+            list_src_artifact_files_by_lang_action.ListSrcArtifactFilesByLangRunResult(
+                files_by_lang={"toml": toml_uris}
+            )
         )

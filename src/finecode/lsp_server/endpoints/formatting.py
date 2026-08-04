@@ -2,12 +2,12 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, cast
 
+from fine_format import format_files_action
 from loguru import logger
 from lsprotocol import types
 
 from finecode._converter import converter as _converter
 from finecode.lsp_server import global_state, pygls_types_utils
-from fine_format import format_files_action
 from finecode_extension_api.resource_uri import ResourceUri
 
 if TYPE_CHECKING:
@@ -49,7 +49,9 @@ async def format_document(_ls: LspServer, params: types.DocumentFormattingParams
     if json_result is None:
         return []
 
-    format_result = _converter.structure(json_result, format_files_action.FormatFilesRunResult)
+    format_result = _converter.structure(
+        json_result, format_files_action.FormatFilesRunResult
+    )
 
     response_for_file = format_result.result_by_file_path.get(
         cast(ResourceUri, file_uri)
@@ -78,9 +80,7 @@ async def format_range(_ls: LspServer, params: types.DocumentRangeFormattingPara
     return []
 
 
-async def format_ranges(
-    _ls: LspServer, params: types.DocumentRangesFormattingParams
-):
+async def format_ranges(_ls: LspServer, params: types.DocumentRangesFormattingParams):
     logger.info(f"format ranges {params}")
     await global_state.server_initialized.wait()
     # TODO

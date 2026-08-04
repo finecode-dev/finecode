@@ -3,12 +3,12 @@ from __future__ import annotations
 import pathlib
 
 import pytest
-
-from fine_format import format_file_action
-from fine_format.format_file_save_handler import SaveFormatFileHandler
 from finecode_extension_api.interfaces import ifileeditor
 from finecode_extension_api.resource_uri import path_to_resource_uri
 from finecode_extension_runner.testing import InMemoryFileEditor, NoOpLogger
+
+from fine_format import format_file_action
+from fine_format.format_file_save_handler import SaveFormatFileHandler
 
 _AUTHOR = ifileeditor.FileOperationAuthor(id="test")
 

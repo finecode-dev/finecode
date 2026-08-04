@@ -168,7 +168,9 @@ class FormatFileAction(
       ``payload.save`` is ``True``.
     """
 
-    DESCRIPTION = "Format a single file. Item-level action for use by per-file handlers."
+    DESCRIPTION = (
+        "Format a single file. Item-level action for use by per-file handlers."
+    )
     PAYLOAD_TYPE = FormatFileRunPayload
     RUN_CONTEXT_TYPE = FormatFileRunContext
     RESULT_TYPE = FormatFileRunResult

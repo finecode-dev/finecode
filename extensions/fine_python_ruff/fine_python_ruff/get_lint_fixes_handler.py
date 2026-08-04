@@ -6,14 +6,10 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from finecode_extension_api import code_action
 from fine_lint.get_lint_fixes_action import (
     GetLintFixesRunContext,
     GetLintFixesRunPayload,
     GetLintFixesRunResult,
-)
-from fine_python_lang.get_lint_fixes_python_files_action import (
-    GetLintFixesPythonFilesAction,
 )
 from fine_lint.lint_fix import (
     FixApplicability,
@@ -22,9 +18,18 @@ from fine_lint.lint_fix import (
     Range,
     TextEdit,
 )
-from finecode_extension_api.interfaces import icommandrunner, ifileeditor, ilogger, iprojectinfoprovider
-from finecode_extension_api.resource_uri import ResourceUri, resource_uri_to_path
+from fine_python_lang.get_lint_fixes_python_files_action import (
+    GetLintFixesPythonFilesAction,
+)
 from fine_python_ruff.ruff_lsp_service import RuffLspService
+from finecode_extension_api import code_action
+from finecode_extension_api.interfaces import (
+    icommandrunner,
+    ifileeditor,
+    ilogger,
+    iprojectinfoprovider,
+)
+from finecode_extension_api.resource_uri import ResourceUri, resource_uri_to_path
 
 
 @dataclasses.dataclass
@@ -43,7 +48,9 @@ class RuffGetLintFixesHandler(
         GetLintFixesPythonFilesAction, RuffGetLintFixesHandlerConfig
     ]
 ):
-    FILE_OPERATION_AUTHOR = ifileeditor.FileOperationAuthor(id="RuffGetLintFixesHandler")
+    FILE_OPERATION_AUTHOR = ifileeditor.FileOperationAuthor(
+        id="RuffGetLintFixesHandler"
+    )
 
     def __init__(
         self,
@@ -159,11 +166,16 @@ class RuffGetLintFixesHandler(
             )
 
             # Filter by range when requested.
-            if payload.range is not None and not _ranges_overlap(target_range, payload.range):
+            if payload.range is not None and not _ranges_overlap(
+                target_range, payload.range
+            ):
                 continue
 
             # Filter by diagnostic codes when requested.
-            if payload.diagnostic_codes is not None and code not in payload.diagnostic_codes:
+            if (
+                payload.diagnostic_codes is not None
+                and code not in payload.diagnostic_codes
+            ):
                 continue
 
             applicability_str = raw_fix.get("applicability", "safe")
@@ -261,14 +273,13 @@ class RuffGetLintFixesHandler(
         if not raw_actions:
             return []
 
-        return _map_lsp_code_actions_to_lint_fixes(
-            raw_actions, file_uri, payload
-        )
+        return _map_lsp_code_actions_to_lint_fixes(raw_actions, file_uri, payload)
 
 
 # ------------------------------------------------------------------
 # Helpers
 # ------------------------------------------------------------------
+
 
 def _ranges_overlap(a: Range, b: Range) -> bool:
     """Return True if ranges *a* and *b* overlap (share at least one position)."""
@@ -344,7 +355,9 @@ def _map_lsp_code_actions_to_lint_fixes(
                 target_range=target_range,
                 target_codes=target_codes,
                 is_preferred=is_preferred,
-                applicability=FixApplicability.SAFE if is_preferred else FixApplicability.UNSAFE,
+                applicability=FixApplicability.SAFE
+                if is_preferred
+                else FixApplicability.UNSAFE,
             )
         )
 

@@ -1,7 +1,6 @@
 import typing
 
 import cattrs
-
 from finecode_extension_api.interfaces import iserviceregistry
 from finecode_extension_runner._converter import converter as _converter
 from finecode_extension_runner.di.registry import Registry
@@ -29,8 +28,7 @@ class ServiceRegistry(iserviceregistry.IServiceRegistry):
         impl: type[T],
         raw_config: dict | None = None,
     ) -> None:
-        """Bind ``interface`` to ``impl``.
-        """
+        """Bind ``interface`` to ``impl``."""
         # Resolve config here rather than inside the factory so that every
         # binding picks up declaration config and env overrides regardless of
         # who registered it -- an activator, a `[[tool.finecode.service]]`
@@ -64,6 +62,7 @@ class ServiceRegistry(iserviceregistry.IServiceRegistry):
             return
 
         if impl not in self._self_bound_types:
+
             async def through_factory(registry) -> T:
                 return await registry.get_instance(interface)
 

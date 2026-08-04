@@ -1,7 +1,8 @@
 import asyncio
+import collections.abc
 import threading
 import typing
-import collections.abc
+
 from loguru import logger
 
 

@@ -6,13 +6,11 @@ import dataclasses
 import typing
 from typing import Any, Awaitable, Callable
 
-from loguru import logger
-
 from finecode_extension_api import code_action
 from finecode_extension_api.interfaces import iprojectactionrunner
 from finecode_extension_runner import domain, er_errors, er_telemetry, run_utils
 from finecode_extension_runner._converter import converter as _converter
-
+from loguru import logger
 
 PayloadT = typing.TypeVar("PayloadT", bound=code_action.RunActionPayload)
 ResultT = typing.TypeVar("ResultT", bound=code_action.RunActionResult)
@@ -62,7 +60,9 @@ class ProjectActionRunnerImpl(iprojectactionrunner.IProjectActionRunner):
     def __init__(
         self,
         send_request_to_wm: Callable[[str, dict], Awaitable[Any]],
-        run_action_func: Callable[..., collections.abc.Awaitable[code_action.RunActionResult | None]],
+        run_action_func: Callable[
+            ..., collections.abc.Awaitable[code_action.RunActionResult | None]
+        ],
         actions_getter: Callable[[], dict[str, domain.ActionDeclaration]],
         current_env_name_getter: Callable[[], str],
     ) -> None:
@@ -72,9 +72,7 @@ class ProjectActionRunnerImpl(iprojectactionrunner.IProjectActionRunner):
         self._current_env_name_getter = current_env_name_getter
         self._source_cls_cache: dict[str, type] = {}
 
-    def _find_local_action(
-        self, action_type: type
-    ) -> domain.ActionDeclaration | None:
+    def _find_local_action(self, action_type: type) -> domain.ActionDeclaration | None:
         return next(
             (
                 a
@@ -84,7 +82,9 @@ class ProjectActionRunnerImpl(iprojectactionrunner.IProjectActionRunner):
             None,
         )
 
-    def _all_handlers_in_current_env(self, action_def: domain.ActionDeclaration) -> bool:
+    def _all_handlers_in_current_env(
+        self, action_def: domain.ActionDeclaration
+    ) -> bool:
         env = self._current_env_name_getter()
         return bool(action_def.handlers) and all(
             h.env == env for h in action_def.handlers
@@ -102,7 +102,9 @@ class ProjectActionRunnerImpl(iprojectactionrunner.IProjectActionRunner):
             self._source_cls_cache[source] = cls
         return cls
 
-    async def get_actions_for_parent(self, parent_action_type: type) -> dict[str, iprojectactionrunner.ActionRef]:
+    async def get_actions_for_parent(
+        self, parent_action_type: type
+    ) -> dict[str, iprojectactionrunner.ActionRef]:
         """Discover the subactions registered for *parent_action_type*.
 
         Per ADR-0045, this ER's own action list only ever reflects what its
@@ -118,7 +120,9 @@ class ProjectActionRunnerImpl(iprojectactionrunner.IProjectActionRunner):
         subactions exist in envs other than this one — it only saves the
         separate round-trip a subsequent run would otherwise need.
         """
-        parent_canonical = f"{parent_action_type.__module__}.{parent_action_type.__qualname__}"
+        parent_canonical = (
+            f"{parent_action_type.__module__}.{parent_action_type.__qualname__}"
+        )
         result: dict[str, iprojectactionrunner.ActionRef] = {}
 
         # Resolve subactions that happen to live in this same env directly, so
@@ -126,7 +130,10 @@ class ProjectActionRunnerImpl(iprojectactionrunner.IProjectActionRunner):
         # separate fast path (see docstring above).
         for action_def in self._actions_getter().values():
             cls = self._resolve_type(action_def.source)
-            if cls is None or getattr(cls, "PARENT_ACTION", None) is not parent_action_type:
+            if (
+                cls is None
+                or getattr(cls, "PARENT_ACTION", None) is not parent_action_type
+            ):
                 continue
             lang = getattr(cls, "LANGUAGE", None)
             if lang is None:
@@ -248,7 +255,11 @@ class ProjectActionRunnerImpl(iprojectactionrunner.IProjectActionRunner):
                 outside,
             )
 
-        serialized_kwargs = _serialize_caller_kwargs(caller_kwargs) if caller_kwargs is not None else None
+        serialized_kwargs = (
+            _serialize_caller_kwargs(caller_kwargs)
+            if caller_kwargs is not None
+            else None
+        )
         traceparent = er_telemetry.get_current_traceparent()
         wm_params: dict = {
             "actionSource": action_source,
@@ -298,7 +309,9 @@ class ProjectActionRunnerImpl(iprojectactionrunner.IProjectActionRunner):
             queue: asyncio.Queue[dict[str, Any] | object] = asyncio.Queue()
             task = asyncio.ensure_future(
                 self._run_action_func(
-                    action_def, payload, meta,
+                    action_def,
+                    payload,
+                    meta,
                     caller_kwargs=caller_kwargs,
                     partial_result_queue=queue,
                 )
@@ -328,7 +341,11 @@ class ProjectActionRunnerImpl(iprojectactionrunner.IProjectActionRunner):
         wm_queue: asyncio.Queue[WmQueueItem] = asyncio.Queue()
         _wm_partial_result_queues[token] = wm_queue
 
-        serialized_kwargs = _serialize_caller_kwargs(caller_kwargs) if caller_kwargs is not None else None
+        serialized_kwargs = (
+            _serialize_caller_kwargs(caller_kwargs)
+            if caller_kwargs is not None
+            else None
+        )
         traceparent = er_telemetry.get_current_traceparent()
 
         async def _call_wm() -> None:
@@ -353,9 +370,13 @@ class ProjectActionRunnerImpl(iprojectactionrunner.IProjectActionRunner):
                 # Terminal success item. Shape: ("final", {"result": {...}, "returnCode": ...}).
                 wm_queue.put_nowait(("final", raw_result))
             except er_errors.WmCommunicationCancelled as exc:
-                wm_queue.put_nowait(("error", iprojectactionrunner.ActionRunCancelled(exc.message)))
+                wm_queue.put_nowait(
+                    ("error", iprojectactionrunner.ActionRunCancelled(exc.message))
+                )
             except er_errors.WmCommunicationError as exc:
-                wm_queue.put_nowait(("error", iprojectactionrunner.ActionRunFailed(exc.message)))
+                wm_queue.put_nowait(
+                    ("error", iprojectactionrunner.ActionRunFailed(exc.message))
+                )
             except Exception as exc:
                 # Terminal error item. Shape: ("error", Exception(...)).
                 wm_queue.put_nowait(("error", exc))

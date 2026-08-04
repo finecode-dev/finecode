@@ -3,11 +3,12 @@ from __future__ import annotations
 import dataclasses
 
 from finecode_extension_api import code_action
+from finecode_extension_api.resource_uri import ResourceUri
+
 from fine_lint.lint_fix import (
     LintFix,
     Range,
 )
-from finecode_extension_api.resource_uri import ResourceUri
 
 
 @dataclasses.dataclass
@@ -50,9 +51,7 @@ class GetLintFixesRunResult(code_action.RunActionResult):
         return code_action.RunReturnCode.SUCCESS
 
 
-class GetLintFixesRunContext(
-    code_action.RunActionContext[GetLintFixesRunPayload]
-): ...
+class GetLintFixesRunContext(code_action.RunActionContext[GetLintFixesRunPayload]): ...
 
 
 class GetLintFixesAction(

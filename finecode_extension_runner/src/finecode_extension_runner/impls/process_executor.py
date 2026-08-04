@@ -7,9 +7,8 @@ import multiprocessing as mp
 import sys
 import typing
 
-from loguru import logger
-
 from finecode_extension_api.interfaces import iprocessexecutor
+from loguru import logger
 
 P = typing.ParamSpec("P")
 T = typing.TypeVar("T")

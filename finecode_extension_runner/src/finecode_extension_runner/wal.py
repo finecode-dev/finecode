@@ -26,6 +26,7 @@ Present for runner lifecycle events (``runner.*``)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ``env_name``        str   Execution environment name (e.g. ``"dev_no_runtime"``).
 """
+
 from __future__ import annotations
 
 import dataclasses
@@ -72,9 +73,7 @@ class WalWriter:
         self._dir_path = config.dir_path
         self.config = dataclasses.replace(config)
         self._lock = threading.Lock()
-        self._writer_id = (
-            f"{self.config.writer_id_prefix}-{os.getpid()}-{int(dt.datetime.now().timestamp())}"
-        )
+        self._writer_id = f"{self.config.writer_id_prefix}-{os.getpid()}-{int(dt.datetime.now().timestamp())}"
         self._segment_index = self._discover_last_segment_index()
         self._sequence = self._discover_last_sequence()
         self._active_path = self._segment_path(self._segment_index)

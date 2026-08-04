@@ -8,9 +8,9 @@ from finecode.wm_server import context, domain
 from finecode.wm_server.config import config_models
 from finecode.wm_server.config.read_configs import (
     _merge_projects_configs,
+    read_preset_config,
     read_project_config,
     read_project_user_config,
-    read_preset_config,
     read_wm_telemetry_config,
     resolve_interpreter_matrices,
 )
@@ -84,7 +84,7 @@ def test_project_user_config_returns_flat_dict(tmp_path: pathlib.Path) -> None:
     """
     _write_toml(
         tmp_path / "finecode-user.toml",
-        '[action.lint]\nhandlers = []\n',
+        "[action.lint]\nhandlers = []\n",
     )
     result = read_project_user_config(tmp_path)
     assert result is not None
@@ -165,7 +165,9 @@ def test_project_user_config_dep_groups_merged(tmp_path: pathlib.Path) -> None:
         "dependency-groups": {"dev_workspace": ["my_personal_preset>=1.0"]},
     }
 
-    dep_groups: dict[str, list[Any]] = project_config.setdefault("dependency-groups", {})
+    dep_groups: dict[str, list[Any]] = project_config.setdefault(
+        "dependency-groups", {}
+    )
     for group_name, packages in user_config_raw["dependency-groups"].items():
         if group_name not in dep_groups:
             dep_groups[group_name] = list(packages)
@@ -220,7 +222,9 @@ def test_project_user_config_new_action(tmp_path: pathlib.Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_preset_install_project_merges_into_existing_env_config(tmp_path: pathlib.Path) -> None:
+def test_preset_install_project_merges_into_existing_env_config(
+    tmp_path: pathlib.Path,
+) -> None:
     """A preset's install_project=true for an env survives merging into project config.
 
     Test-runner presets rely on this to make the project importable in the env
@@ -576,7 +580,9 @@ def test_matrix_env_disappears_from_dependency_groups() -> None:
     assert "testing" not in project_config["dependency-groups"]
 
 
-def test_matrix_env_with_no_explicit_deps_still_gets_discoverable_child_entries() -> None:
+def test_matrix_env_with_no_explicit_deps_still_gets_discoverable_child_entries() -> (
+    None
+):
     """A matrix environment with no matching `dependency-groups` entry and no
     handler dependencies still produces a `[]` entry per concrete child.
 
@@ -866,7 +872,7 @@ def test_preset_user_config_merges_handler(tmp_path: pathlib.Path) -> None:
     _write_minimal_preset(tmp_path)
     _write_toml(
         tmp_path / "finecode-user.toml",
-        '[action.lint.handlers.ruff]\nconfig.line_length = 120\n',
+        "[action.lint.handlers.ruff]\nconfig.line_length = 120\n",
     )
     preset_toml, _ = read_preset_config(tmp_path / "preset.toml", "mypkg")
 
@@ -882,7 +888,9 @@ def test_preset_user_config_merges_handler(tmp_path: pathlib.Path) -> None:
         assert ruff["config"]["line_length"] == 120
 
 
-def test_preset_user_config_presets_appends_not_replaces(tmp_path: pathlib.Path) -> None:
+def test_preset_user_config_presets_appends_not_replaces(
+    tmp_path: pathlib.Path,
+) -> None:
     """A preset-level finecode-user.toml's `presets` list extends the preset's own
     list rather than replacing it.
 
@@ -894,7 +902,7 @@ def test_preset_user_config_presets_appends_not_replaces(tmp_path: pathlib.Path)
     """
     _write_toml(
         tmp_path / "preset.toml",
-        '[tool.finecode]\n'
+        "[tool.finecode]\n"
         'presets = [{ source = "fine_dep_graph" }, { source = "fine_arch_facts" }]\n',
     )
     _write_toml(

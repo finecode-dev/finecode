@@ -7,12 +7,14 @@ import pathlib
 import typing
 
 from finecode.wm_server.runner.runner_client import (
-    RunActionTrigger,
     DevEnv,
-    RunResultFormat,
     RunActionResponse,
+    RunActionTrigger,
+    RunResultFormat,
 )
-from finecode.wm_server.services.run_service.proxy_utils import RunWithPartialResultsContext
+from finecode.wm_server.services.run_service.proxy_utils import (
+    RunWithPartialResultsContext,
+)
 
 
 @dataclasses.dataclass

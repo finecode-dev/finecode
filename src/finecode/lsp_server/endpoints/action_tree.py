@@ -2,8 +2,9 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from finecode.lsp_server import global_state
 from loguru import logger
+
+from finecode.lsp_server import global_state
 
 if TYPE_CHECKING:
     from finecode.lsp_server.lsp_server import LspServer
@@ -83,9 +84,7 @@ async def run_action_on_file(ls: LspServer, params=None):
     action_node_id = params_dict["projectPath"]
     project_path_str, action_source = _parse_node_id(action_node_id)
 
-    document_meta = await ls.send_request_to_client(
-        "editor/documentMeta", {}
-    )
+    document_meta = await ls.send_request_to_client("editor/documentMeta", {})
     if document_meta is None:
         return None
 

@@ -21,7 +21,9 @@ _IMPL_SOURCE = (
 )
 
 
-async def test_service_config_seeds_the_default_provider(tmp_path: pathlib.Path) -> None:
+async def test_service_config_seeds_the_default_provider(
+    tmp_path: pathlib.Path,
+) -> None:
     """A ``[[tool.finecode.service]]`` declaration for ``IRepositoryCredentialsProvider``
     is observable through the interface's read-only getters -- no init action
     required (ADR-0068)."""
@@ -84,7 +86,10 @@ async def test_readers_and_concrete_injected_seeding_handler_share_one_instance(
         via_concrete_type.add_repository(
             "pypi", "https://pypi.org/simple/", "https://upload.pypi.org/legacy/"
         )
-        assert via_interface.get_repository("pypi") is via_concrete_type.get_repository("pypi")
+        assert via_interface.get_repository("pypi") is via_concrete_type.get_repository(
+            "pypi"
+        )
+
 
 async def test_env_override_reaches_the_provider_without_touching_declared_siblings(
     tmp_path: pathlib.Path,

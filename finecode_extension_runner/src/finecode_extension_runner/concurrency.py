@@ -10,6 +10,7 @@ Only the shared primitives live here. Each cap's *resolver* — which decides
 how CLI flags, env vars and service config override the default — lives next
 to the code that owns that cap, since each has a different override chain.
 """
+
 from __future__ import annotations
 
 import dataclasses

@@ -18,10 +18,10 @@ import pathlib
 import socket
 import typing
 
-import finecode_jsonrpc.client as jsonrpc_client
 from loguru import logger
 
 import finecode_jsonrpc
+import finecode_jsonrpc.client as jsonrpc_client
 from finecode.wm_server import context, domain, wal
 from finecode.wm_server._api_handlers import (
     _handle_actions_reload,
@@ -63,10 +63,12 @@ from finecode.wm_server._jsonrpc import (
     _write_message,
 )
 from finecode.wm_server.errors import ConfigurationError
-from finecode.wm_server.services import (
-    knowledge_service as _knowledge_service,  # noqa: F401
+from finecode.wm_server.services import (  # noqa: F401
+    knowledge_service as _knowledge_service,
 )
-from finecode.wm_server.services import log_delivery
+from finecode.wm_server.services import (
+    log_delivery,
+)
 from finecode.wm_server.services.run_service.exceptions import (
     ActionCancelledError,
     ActionRunFailed,
@@ -195,7 +197,9 @@ _log_batcher: log_delivery.LogBatcher
 _log_flush_task: asyncio.Task | None = None
 _log_loop: asyncio.AbstractEventLoop | None = None
 _log_sink_id: int | None = None
-_log_interval_ms: int = 200  # timer cadence; the LogBatcher hides its interval, so track it here
+_log_interval_ms: int = (
+    200  # timer cadence; the LogBatcher hides its interval, so track it here
+)
 
 
 def _emit_log_records(conn, records: list[dict], dropped: int) -> None:
@@ -220,8 +224,10 @@ def reset_log_delivery(
     _log_interval_ms = interval_ms
     _log_registry = log_delivery.SubscriptionRegistry()
     _log_batcher = log_delivery.LogBatcher(
-        _emit_log_records, interval_ms=interval_ms,
-        max_batch=max_batch, buffer_limit=buffer_limit,
+        _emit_log_records,
+        interval_ms=interval_ms,
+        max_batch=max_batch,
+        buffer_limit=buffer_limit,
     )
 
 
@@ -317,7 +323,9 @@ async def push_er_forwarding_to_runner(runner) -> None:
     if runner.client is None or not runner.initialized_event.is_set():
         return
     enabled, level = _desired_forwarding()
-    normalized = (True, level) if enabled else (False, "")  # level irrelevant when disabled
+    normalized = (
+        (True, level) if enabled else (False, "")
+    )  # level irrelevant when disabled
     if runner.log_forwarding == normalized:
         return
     try:
@@ -326,7 +334,9 @@ async def push_er_forwarding_to_runner(runner) -> None:
         await runner_client.update_logging(runner, normalized[0], level)
         runner.log_forwarding = normalized
     except Exception:
-        logger.trace(f"updateLogging to {runner.readable_id} failed; will retry on next change")
+        logger.trace(
+            f"updateLogging to {runner.readable_id} failed; will retry on next change"
+        )
 
 
 def _sync_er_forwarding(ws_context: context.WorkspaceContext) -> None:
@@ -347,7 +357,9 @@ async def _schedule_auto_stop() -> None:
     """Wait after the last client disconnects, then stop the server."""
     await asyncio.sleep(_disconnect_timeout)
     if not _connected_clients:
-        logger.info(f"FineCode API: no clients connected for {_disconnect_timeout}s, shutting down")
+        logger.info(
+            f"FineCode API: no clients connected for {_disconnect_timeout}s, shutting down"
+        )
         stop()
 
 
@@ -374,7 +386,9 @@ async def _handle_request_task(
     requests from the same client can be handled concurrently."""
     try:
         result = await handler(params, ws_context)
-        _log_batcher.flush(writer)  # ADR-0049: force-flush the tail before the final response
+        _log_batcher.flush(
+            writer
+        )  # ADR-0049: force-flush the tail before the final response
         _write_message(writer, _jsonrpc_response(req_id, result))
         await writer.drain()
     except _NotImplementedError as exc:
@@ -389,7 +403,9 @@ async def _handle_request_task(
         _write_message(writer, _jsonrpc_error(req_id, -32603, exc.message))
         await writer.drain()
     except ActionCancelledError as exc:
-        logger.debug(f"FineCode API: action cancelled while handling {method} (client: {label}): {exc}")
+        logger.debug(
+            f"FineCode API: action cancelled while handling {method} (client: {label}): {exc}"
+        )
         _write_message(
             writer, _jsonrpc_error(req_id, finecode_jsonrpc.REQUEST_CANCELLED, str(exc))
         )
@@ -400,7 +416,9 @@ async def _handle_request_task(
         await writer.drain()
     except jsonrpc_client.ServerFailedToStart as exc:
         # Already logged with details in runner_manager; no traceback needed here.
-        logger.error(f"FineCode API: error handling {method} (client: {label}): {exc.message}")
+        logger.error(
+            f"FineCode API: error handling {method} (client: {label}): {exc.message}"
+        )
         _write_message(writer, _jsonrpc_error(req_id, -32603, exc.message))
         await writer.drain()
     except Exception as exc:
@@ -449,7 +467,8 @@ async def _handle_client(
             if method is None:
                 if not is_notification:
                     _write_message(
-                        writer, _jsonrpc_error(req_id, -32600, "Invalid request: no method")
+                        writer,
+                        _jsonrpc_error(req_id, -32600, "Invalid request: no method"),
                     )
                     await writer.drain()
                 continue
@@ -462,9 +481,13 @@ async def _handle_client(
                     try:
                         await notification_handler(params, ws_context)
                     except Exception as exc:
-                        logger.exception(f"FineCode API: error in notification {method} (client: {label})")
+                        logger.exception(
+                            f"FineCode API: error in notification {method} (client: {label})"
+                        )
                 else:
-                    logger.trace(f"[{label}] FineCode API: unknown notification {method}, ignoring")
+                    logger.trace(
+                        f"[{label}] FineCode API: unknown notification {method}, ignoring"
+                    )
                 continue
 
             # Requests (has id) — dispatch and respond.
@@ -474,18 +497,29 @@ async def _handle_client(
             if method == "client/initialize":
                 new_label = (params or {}).get("clientId")
                 if new_label:
-                    logger.info(f"FineCode API: client {label} identified as '{new_label}'")
+                    logger.info(
+                        f"FineCode API: client {label} identified as '{new_label}'"
+                    )
                     _client_labels[writer] = new_label
                     label = new_label
-                _write_message(writer, _jsonrpc_response(req_id, {
-                    "logFilePath": str(_log_file_path) if _log_file_path is not None else None,
-                }))
+                _write_message(
+                    writer,
+                    _jsonrpc_response(
+                        req_id,
+                        {
+                            "logFilePath": str(_log_file_path)
+                            if _log_file_path is not None
+                            else None,
+                        },
+                    ),
+                )
                 await writer.drain()
                 continue
 
             if method == log_delivery.SUBSCRIBE_METHOD:
                 _write_message(
-                    writer, _jsonrpc_response(req_id, _handle_subscribe_logs(writer, params))
+                    writer,
+                    _jsonrpc_response(req_id, _handle_subscribe_logs(writer, params)),
                 )
                 _sync_er_forwarding(ws_context)
                 await writer.drain()
@@ -493,13 +527,17 @@ async def _handle_client(
 
             if method == log_delivery.UNSUBSCRIBE_METHOD:
                 _write_message(
-                    writer, _jsonrpc_response(req_id, _handle_unsubscribe_logs(writer, params))
+                    writer,
+                    _jsonrpc_response(req_id, _handle_unsubscribe_logs(writer, params)),
                 )
                 _sync_er_forwarding(ws_context)
                 await writer.drain()
                 continue
 
-            if method == "actions/run" and (params or {}).get("partialResultToken") is not None:
+            if (
+                method == "actions/run"
+                and (params or {}).get("partialResultToken") is not None
+            ):
                 # partialResultToken takes priority: the handler also forwards
                 # progressToken notifications if present.
                 task = asyncio.create_task(
@@ -510,10 +548,19 @@ async def _handle_client(
                 if writer not in _running_partial_result_tasks:
                     _running_partial_result_tasks[writer] = set()
                 _running_partial_result_tasks[writer].add(task)
-                task.add_done_callback(lambda t: _running_partial_result_tasks[writer].discard(t) if writer in _running_partial_result_tasks else None)
+                task.add_done_callback(
+                    lambda t: (
+                        _running_partial_result_tasks[writer].discard(t)
+                        if writer in _running_partial_result_tasks
+                        else None
+                    )
+                )
                 continue
 
-            if method == "actions/run" and (params or {}).get("progressToken") is not None:
+            if (
+                method == "actions/run"
+                and (params or {}).get("progressToken") is not None
+            ):
                 # actions/run with only a progressToken needs writer access to
                 # forward progress notifications.
                 task = asyncio.create_task(
@@ -524,10 +571,19 @@ async def _handle_client(
                 if writer not in _running_partial_result_tasks:
                     _running_partial_result_tasks[writer] = set()
                 _running_partial_result_tasks[writer].add(task)
-                task.add_done_callback(lambda t: _running_partial_result_tasks[writer].discard(t) if writer in _running_partial_result_tasks else None)
+                task.add_done_callback(
+                    lambda t: (
+                        _running_partial_result_tasks[writer].discard(t)
+                        if writer in _running_partial_result_tasks
+                        else None
+                    )
+                )
                 continue
 
-            if method == "actions/runBatch" and (params or {}).get("partialResultToken") is not None:
+            if (
+                method == "actions/runBatch"
+                and (params or {}).get("partialResultToken") is not None
+            ):
                 task = asyncio.create_task(
                     _handle_run_batch_with_partial_results_task(
                         params, ws_context, writer, req_id
@@ -536,10 +592,19 @@ async def _handle_client(
                 if writer not in _running_partial_result_tasks:
                     _running_partial_result_tasks[writer] = set()
                 _running_partial_result_tasks[writer].add(task)
-                task.add_done_callback(lambda t: _running_partial_result_tasks[writer].discard(t) if writer in _running_partial_result_tasks else None)
+                task.add_done_callback(
+                    lambda t: (
+                        _running_partial_result_tasks[writer].discard(t)
+                        if writer in _running_partial_result_tasks
+                        else None
+                    )
+                )
                 continue
 
-            if method == "actions/runBatch" and (params or {}).get("progressToken") is not None:
+            if (
+                method == "actions/runBatch"
+                and (params or {}).get("progressToken") is not None
+            ):
                 task = asyncio.create_task(
                     _handle_run_batch_with_progress_task(
                         params, ws_context, writer, req_id
@@ -548,7 +613,13 @@ async def _handle_client(
                 if writer not in _running_partial_result_tasks:
                     _running_partial_result_tasks[writer] = set()
                 _running_partial_result_tasks[writer].add(task)
-                task.add_done_callback(lambda t: _running_partial_result_tasks[writer].discard(t) if writer in _running_partial_result_tasks else None)
+                task.add_done_callback(
+                    lambda t: (
+                        _running_partial_result_tasks[writer].discard(t)
+                        if writer in _running_partial_result_tasks
+                        else None
+                    )
+                )
                 continue
 
             handler = _METHODS.get(method)
@@ -564,14 +635,19 @@ async def _handle_client(
             # next request — this lets concurrent client requests (e.g. multiple
             # runners/checkEnv from a TaskGroup) run in parallel on the server.
             task = asyncio.create_task(
-                _handle_request_task(handler, params, ws_context, writer, req_id, label, method)
+                _handle_request_task(
+                    handler, params, ws_context, writer, req_id, label, method
+                )
             )
             if writer not in _running_partial_result_tasks:
                 _running_partial_result_tasks[writer] = set()
             _running_partial_result_tasks[writer].add(task)
             task.add_done_callback(
-                lambda t: _running_partial_result_tasks[writer].discard(t)
-                if writer in _running_partial_result_tasks else None
+                lambda t: (
+                    _running_partial_result_tasks[writer].discard(t)
+                    if writer in _running_partial_result_tasks
+                    else None
+                )
             )
     except (asyncio.IncompleteReadError, ConnectionResetError):
         pass
@@ -627,7 +703,12 @@ async def start(
         disconnect_timeout: Seconds to wait after the last client disconnects
             before shutting down. Defaults to DISCONNECT_TIMEOUT_SECONDS (30).
     """
-    global _server, _discovery_file, _no_client_timeout_task, _had_client, _disconnect_timeout
+    global \
+        _server, \
+        _discovery_file, \
+        _no_client_timeout_task, \
+        _had_client, \
+        _disconnect_timeout
     _had_client = False
     _disconnect_timeout = disconnect_timeout
     port = _find_free_port()
@@ -660,6 +741,7 @@ async def start(
         stop()
         # Clean up workspace resources (runners, IO thread).
         from finecode.wm_server.services import shutdown_service
+
         await shutdown_service.on_shutdown(ws_context)
         if ws_context.wal_writer is not None:
             ws_context.wal_writer.close()
@@ -715,21 +797,27 @@ def _register_callbacks() -> None:
     from finecode.wm_server.runner import runner_manager
 
     async def on_project_changed(project: domain.Project) -> None:
-        _notify_all_clients("actions/treeChanged", {
-            "node": {
-                "nodeId": str(project.dir_path),
-                "name": project.name,
-                "nodeType": 1,
-                "status": project.status.name,
-                "subnodes": [],
+        _notify_all_clients(
+            "actions/treeChanged",
+            {
+                "node": {
+                    "nodeId": str(project.dir_path),
+                    "name": project.name,
+                    "nodeType": 1,
+                    "status": project.status.name,
+                    "subnodes": [],
+                },
             },
-        })
+        )
 
     async def on_user_message(message: str, message_type: str) -> None:
-        _notify_all_clients("server/userMessage", {
-            "message": message,
-            "type": message_type.upper(),
-        })
+        _notify_all_clients(
+            "server/userMessage",
+            {
+                "message": message,
+                "type": message_type.upper(),
+            },
+        )
 
     runner_manager.project_changed_callback = on_project_changed
     user_messages._notification_sender = on_user_message

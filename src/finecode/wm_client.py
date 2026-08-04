@@ -48,7 +48,7 @@ async def _read_message(reader: asyncio.StreamReader) -> dict | None:
     if not header_str.startswith(CONTENT_LENGTH_HEADER):
         logger.warning(f"WmClient: unexpected header: {header_str!r}")
         return None
-    content_length = int(header_str[len(CONTENT_LENGTH_HEADER):])
+    content_length = int(header_str[len(CONTENT_LENGTH_HEADER) :])
 
     # Blank separator line
     await reader.readline()
@@ -164,7 +164,8 @@ class ApiClient:
         # server returns {"project": name | None}
         if not isinstance(result, dict):
             raise ApiResponseError(
-                "workspace/findProjectForFile", f"expected dict, got {type(result).__name__}"
+                "workspace/findProjectForFile",
+                f"expected dict, got {type(result).__name__}",
             )
         return result.get("project")
 
@@ -489,7 +490,6 @@ class ApiClient:
         self._writer.write(header + body)
         # Don't await drain for notifications, fire and forget
 
-
     # -- Low-level request --------------------------------------------------
 
     async def request(self, method: str, params: dict | None = None) -> dict:
@@ -506,6 +506,7 @@ class ApiClient:
         rid = self._request_id
 
         from finecode import telemetry
+
         effective_params = dict(params or {})
         tp = telemetry.get_current_traceparent()
         if tp is not None:
@@ -568,9 +569,7 @@ class ApiClient:
                     if handler is not None:
                         asyncio.create_task(handler(msg.get("params")))
                     else:
-                        logger.trace(
-                            f"WmClient: unhandled notification {method}"
-                        )
+                        logger.trace(f"WmClient: unhandled notification {method}")
         except asyncio.CancelledError:
             raise
         except (asyncio.IncompleteReadError, ConnectionResetError):

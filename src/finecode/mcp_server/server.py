@@ -13,12 +13,13 @@ import pathlib
 import sys
 import uuid
 
+from loguru import logger
+
 import finecode_jsonrpc
 from finecode import telemetry
 from finecode.wm_client import ApiClient
 from finecode.wm_server import wm_lifecycle
 from finecode_extension_api.resource_uri import path_to_resource_uri
-from loguru import logger
 
 _wm_client = ApiClient()
 
@@ -42,7 +43,9 @@ async def _ensure_wm_connected() -> None:
         return
 
     client_id = f"mcp-{_client_name}" if _client_name else "mcp"
-    logger.info(f"MCP: Connecting to WM server on 127.0.0.1:{_wm_port} as {client_id!r}")
+    logger.info(
+        f"MCP: Connecting to WM server on 127.0.0.1:{_wm_port} as {client_id!r}"
+    )
     await _wm_client.connect("127.0.0.1", _wm_port, client_id=client_id)
     logger.info("MCP: Connected to WM server")
     _setup_partial_result_forwarding()
@@ -81,7 +84,9 @@ def _setup_progress_forwarding() -> None:
     _wm_client.on_notification("actions/progress", _on_progress)
 
 
-async def _send_log_message(level: str, data: object, logger_name: str = "finecode") -> None:
+async def _send_log_message(
+    level: str, data: object, logger_name: str = "finecode"
+) -> None:
     if _session is None:
         return
     await _session.send_notification(
@@ -133,7 +138,10 @@ async def _run_with_progress(
 
     result_task = asyncio.create_task(
         _wm_client.run_action(
-            action_source, project, params, options,
+            action_source,
+            project,
+            params,
+            options,
             progress_token=progress_token,
             partial_result_token=token,
         )
@@ -148,7 +156,9 @@ async def _run_with_progress(
         await asyncio.sleep(0)
         forward_task.cancel()
         progress_forward_task.cancel()
-        await asyncio.gather(forward_task, progress_forward_task, return_exceptions=True)
+        await asyncio.gather(
+            forward_task, progress_forward_task, return_exceptions=True
+        )
         _partial_result_queues.pop(token, None)
         _progress_queues.pop(progress_token, None)
 
@@ -272,12 +282,17 @@ async def _handle_list_tools(_params: dict | None) -> dict:
     _tool_name_to_source.clear()
     for project_path, project_actions in unique_by_project.items():
         action_sources = [a["source"] for a in project_actions]
-        logger.debug(f"MCP: Fetching schemas for {len(action_sources)} actions in {project_path}")
+        logger.debug(
+            f"MCP: Fetching schemas for {len(action_sources)} actions in {project_path}"
+        )
         try:
             schemas = await _wm_client.get_payload_schemas(project_path, action_sources)
             logger.debug(f"MCP: Got {len(schemas)} schemas for {project_path}")
         except Exception as exc:
-            logger.error(f"MCP: Could not fetch payload schemas for {project_path}: {exc}", exc_info=True)
+            logger.error(
+                f"MCP: Could not fetch payload schemas for {project_path}: {exc}",
+                exc_info=True,
+            )
             schemas = {}
 
         for action in project_actions:
@@ -314,7 +329,10 @@ async def _handle_list_tools(_params: dict | None) -> dict:
 async def _handle_call_tool(params: dict | None) -> dict:
     """Dispatch an MCP tool call to the WM server."""
     if not params:
-        return {"content": [{"type": "text", "text": "Missing params"}], "isError": True}
+        return {
+            "content": [{"type": "text", "text": "Missing params"}],
+            "isError": True,
+        }
 
     name = params.get("name", "")
     with telemetry.mcp_tool_span(name):
@@ -324,21 +342,29 @@ async def _handle_call_tool(params: dict | None) -> dict:
 
         if name == "list_projects":
             result = await _wm_client.list_projects()
-            return {"content": [{"type": "text", "text": json.dumps({"projects": result})}]}
+            return {
+                "content": [{"type": "text", "text": json.dumps({"projects": result})}]
+            }
 
         if name == "list_runners":
             result = await _wm_client.list_runners()
-            return {"content": [{"type": "text", "text": json.dumps({"runners": result})}]}
+            return {
+                "content": [{"type": "text", "text": json.dumps({"runners": result})}]
+            }
 
         if name == "list_actions":
             project = arguments.get("project")
             result = await _wm_client.list_actions(project=project)
-            return {"content": [{"type": "text", "text": json.dumps({"actions": result})}]}
+            return {
+                "content": [{"type": "text", "text": json.dumps({"actions": result})}]
+            }
 
         if name == "get_project_raw_config":
             project = arguments["project"]
             result = await _wm_client.get_project_raw_config(project)
-            return {"content": [{"type": "text", "text": json.dumps({"rawConfig": result})}]}
+            return {
+                "content": [{"type": "text", "text": json.dumps({"rawConfig": result})}]
+            }
 
         if name == "dump_config":
             project = arguments["project"]
@@ -404,7 +430,9 @@ def start(workdir: pathlib.Path, port_file: pathlib.Path | None = None) -> None:
 
     async def _run() -> None:
         global _session
-        transport = finecode_jsonrpc.ServerStdioTransport(readable_id="mcp_server", framing="newline")
+        transport = finecode_jsonrpc.ServerStdioTransport(
+            readable_id="mcp_server", framing="newline"
+        )
         _session = finecode_jsonrpc.JsonRpcServerSession()
         _session.attach(transport)
         _session.on_request("initialize", _handle_initialize)

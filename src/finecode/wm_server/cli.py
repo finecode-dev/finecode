@@ -16,14 +16,22 @@ def _parse_env_bool(name: str, default: bool) -> bool:
 
 
 @click.command()
-@click.option("--log-level", "log_level", default="INFO", type=click.Choice(["TRACE", "DEBUG", "INFO", "WARNING", "ERROR"], case_sensitive=False), show_default=True)
+@click.option(
+    "--log-level",
+    "log_level",
+    default="INFO",
+    type=click.Choice(
+        ["TRACE", "DEBUG", "INFO", "WARNING", "ERROR"], case_sensitive=False
+    ),
+    show_default=True,
+)
 @click.option(
     "--port-file",
     "port_file",
     default=None,
     type=str,
     help="Write the listening port to this file instead of the shared discovery file. "
-         "Used by dedicated instances started without --shared-server.",
+    "Used by dedicated instances started without --shared-server.",
 )
 @click.option(
     "--disconnect-timeout",
@@ -54,7 +62,10 @@ def start_wm_server(
     wm_logging = read_configs.read_wm_logging_config(workspace_root)
     wm_telemetry = read_configs.read_wm_telemetry_config(workspace_root)
     log_file_path = logger_utils.init_logger(
-        log_name="wm_server", log_level=log_level, stdout=False, log_groups=wm_logging.log_groups,
+        log_name="wm_server",
+        log_level=log_level,
+        stdout=False,
+        log_groups=wm_logging.log_groups,
         workspace_path=workspace_root,
         otlp_endpoint=wm_telemetry.otlp_endpoint,
     )

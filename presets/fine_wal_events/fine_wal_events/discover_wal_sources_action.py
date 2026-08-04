@@ -1,6 +1,7 @@
 import dataclasses
 
 from finecode_extension_api import code_action, textstyler
+
 from fine_wal_events.ingest_wal_to_store_action import (
     WalSourceSpec,
 )

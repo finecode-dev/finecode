@@ -7,13 +7,9 @@ CacheKeyType: TypeAlias = str
 
 
 class InMemoryCache(icache.ICache):
-    FILE_OPERATION_AUTHOR = ifileeditor.FileOperationAuthor(
-        id="InMemoryCache"
-    )
+    FILE_OPERATION_AUTHOR = ifileeditor.FileOperationAuthor(id="InMemoryCache")
 
-    def __init__(
-        self, file_editor: ifileeditor.IFileEditor, logger: ilogger.ILogger
-    ):
+    def __init__(self, file_editor: ifileeditor.IFileEditor, logger: ilogger.ILogger):
         self.file_editor = file_editor
         self.logger = logger
 

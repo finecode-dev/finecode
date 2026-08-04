@@ -59,7 +59,9 @@ class ReleasePackageState:
     registries: list[str] = dataclasses.field(default_factory=list)
     """Resolved registry names, in configuration order."""
     build_output_paths: list[ResourceUri] = dataclasses.field(default_factory=list)
-    registry_results: list[RegistryPublishResult] = dataclasses.field(default_factory=list)
+    registry_results: list[RegistryPublishResult] = dataclasses.field(
+        default_factory=list
+    )
     created_refs: list[str] = dataclasses.field(default_factory=list)
     """Refs created for this package; the orchestrator publishes them."""
     error: str | None = None

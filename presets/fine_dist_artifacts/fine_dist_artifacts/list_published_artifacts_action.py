@@ -50,7 +50,9 @@ class ListPublishedArtifactsAction(
 ):
     """List the distribution filenames a registry holds for a given version."""
 
-    DESCRIPTION = "List the distribution filenames a registry holds for a given version."
+    DESCRIPTION = (
+        "List the distribution filenames a registry holds for a given version."
+    )
     PAYLOAD_TYPE = ListPublishedArtifactsRunPayload
     RUN_CONTEXT_TYPE = ListPublishedArtifactsRunContext
     RESULT_TYPE = ListPublishedArtifactsRunResult

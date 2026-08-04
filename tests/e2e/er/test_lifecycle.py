@@ -12,13 +12,17 @@ import pytest
 
 psutil = pytest.importorskip("psutil")
 
-from tests.e2e.conftest import kill_group, sigint_group, start_server, wait_for_file, wait_for_port
-
+from tests.e2e.conftest import (
+    kill_group,
+    sigint_group,
+    start_server,
+    wait_for_file,
+    wait_for_port,
+)
 
 # ---------------------------------------------------------------------------
 # Minimal WM JSON-RPC client helpers
 # ---------------------------------------------------------------------------
-
 
 
 def _send_request(sock: socket.socket, method: str, params: dict, req_id: int) -> None:
@@ -67,8 +71,10 @@ def test_extension_runners_cleaned_up_on_wm_shutdown(workspace_dir_with_er, tmp_
     proc = start_server(
         [
             "start-wm-server",
-            "--port-file", str(port_file),
-            "--disconnect-timeout", "10",
+            "--port-file",
+            str(port_file),
+            "--disconnect-timeout",
+            "10",
         ],
         cwd=workspace_dir_with_er,
     )
@@ -101,7 +107,8 @@ def test_extension_runners_cleaned_up_on_wm_shutdown(workspace_dir_with_er, tmp_
                 try:
                     children = wm_process.children(recursive=True)
                     er_procs = [
-                        c for c in children
+                        c
+                        for c in children
                         if "finecode_extension_runner" in " ".join(c.cmdline())
                     ]
                     if er_procs:
@@ -135,8 +142,12 @@ def test_extension_runners_cleaned_up_on_wm_shutdown(workspace_dir_with_er, tmp_
         )
 
 
-@pytest.mark.skipif(sys.platform == "win32", reason="stuck-ER wrapper is a POSIX shell script")
-def test_stuck_er_process_is_killed_when_start_attempt_gives_up(workspace_dir_with_stuck_er, tmp_path):
+@pytest.mark.skipif(
+    sys.platform == "win32", reason="stuck-ER wrapper is a POSIX shell script"
+)
+def test_stuck_er_process_is_killed_when_start_attempt_gives_up(
+    workspace_dir_with_stuck_er, tmp_path
+):
     """An ER that never reports its port does not outlive the WM giving up on it.
 
     Before this was fixed, a start attempt that timed out waiting for the ER's

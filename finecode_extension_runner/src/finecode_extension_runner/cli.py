@@ -4,10 +4,9 @@ from importlib import metadata
 from pathlib import Path
 
 import click
-from loguru import logger
-
 import finecode_extension_runner.start as runner_start
 from finecode_extension_runner import er_wal, global_state, logs
+from loguru import logger
 
 
 @click.group()
@@ -59,12 +58,9 @@ def start(
     global_state.env_name = env_name
     wal_writer = er_wal.ErWalWriter() if wal else None
 
-    log_file_path = (project_path
-        / ".venvs"
-        / env_name
-        / "logs"
-        / "runner"
-        / "runner.log")
+    log_file_path = (
+        project_path / ".venvs" / env_name / "logs" / "runner" / "runner.log"
+    )
 
     global_state.log_file_path = logs.setup_logging(
         log_level=log_level,

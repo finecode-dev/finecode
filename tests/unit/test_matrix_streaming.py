@@ -47,7 +47,9 @@ def _make_project() -> typing.Any:
 class _FakeCtx:
     """Stands in for ``proxy_utils.RunWithPartialResultsContext``."""
 
-    def __init__(self, partials: list[dict], responses: list[RunActionResponse]) -> None:
+    def __init__(
+        self, partials: list[dict], responses: list[RunActionResponse]
+    ) -> None:
         self._partials = partials
         self.responses = responses
 
@@ -84,7 +86,11 @@ def _make_fake_run_with_partial_results(
 
 
 async def _fake_merge(
-    *, project_path: pathlib.Path, action_name: str, json_payloads: list[dict], ws_context
+    *,
+    project_path: pathlib.Path,
+    action_name: str,
+    json_payloads: list[dict],
+    ws_context,
 ) -> dict | None:
     merged: dict = {}
     for payload in json_payloads:
@@ -98,7 +104,9 @@ async def test_two_interpreters_tag_partials_and_combine_by_interpreter(
 ) -> None:
     cpython_311 = Interpreter("cpython", "3.11")
     cpython_312 = Interpreter("cpython", "3.12")
-    action = _make_matrix_action(interpreters=[cpython_311.canonical, cpython_312.canonical])
+    action = _make_matrix_action(
+        interpreters=[cpython_311.canonical, cpython_312.canonical]
+    )
 
     scripted = {
         cpython_311.canonical: (
@@ -118,7 +126,9 @@ async def test_two_interpreters_tag_partials_and_combine_by_interpreter(
         "run_with_partial_results",
         _make_fake_run_with_partial_results(scripted),
     )
-    monkeypatch.setattr(matrix_streaming, "merge_partial_results_for_action", _fake_merge)
+    monkeypatch.setattr(
+        matrix_streaming, "merge_partial_results_for_action", _fake_merge
+    )
 
     received: list[tuple[str, dict]] = []
 
@@ -159,7 +169,9 @@ async def test_variant_failure_is_isolated_as_error_entry(
 ) -> None:
     cpython_311 = Interpreter("cpython", "3.11")
     cpython_312 = Interpreter("cpython", "3.12")
-    action = _make_matrix_action(interpreters=[cpython_311.canonical, cpython_312.canonical])
+    action = _make_matrix_action(
+        interpreters=[cpython_311.canonical, cpython_312.canonical]
+    )
 
     scripted = {
         cpython_311.canonical: (
@@ -194,7 +206,10 @@ async def test_variant_failure_is_isolated_as_error_entry(
     )
 
     # The healthy variant's partial still made it through.
-    assert (cpython_311.canonical, {"json": {"ok": True}, "string": "all good"}) in received
+    assert (
+        cpython_311.canonical,
+        {"json": {"ok": True}, "string": "all good"},
+    ) in received
     # The failing variant is present as an error entry, not silently dropped.
     assert "error" in combined_rbf["json"][cpython_312.canonical]
     assert combined_rbf["json"][cpython_311.canonical] == {"ok": True}
@@ -206,7 +221,9 @@ async def test_merge_results_false_still_keys_by_interpreter(
 ) -> None:
     cpython_311 = Interpreter("cpython", "3.11")
     cpython_312 = Interpreter("cpython", "3.12")
-    action = _make_matrix_action(interpreters=[cpython_311.canonical, cpython_312.canonical])
+    action = _make_matrix_action(
+        interpreters=[cpython_311.canonical, cpython_312.canonical]
+    )
 
     scripted = {
         cpython_311.canonical: (
@@ -253,7 +270,9 @@ async def test_selected_interpreters_restricts_fan_out_to_that_variant(
 ) -> None:
     cpython_311 = Interpreter("cpython", "3.11")
     cpython_312 = Interpreter("cpython", "3.12")
-    action = _make_matrix_action(interpreters=[cpython_311.canonical, cpython_312.canonical])
+    action = _make_matrix_action(
+        interpreters=[cpython_311.canonical, cpython_312.canonical]
+    )
 
     scripted = {
         cpython_311.canonical: (
@@ -299,7 +318,9 @@ async def test_unknown_selected_interpreter_raises(
 ) -> None:
     cpython_311 = Interpreter("cpython", "3.11")
     cpython_312 = Interpreter("cpython", "3.12")
-    action = _make_matrix_action(interpreters=[cpython_311.canonical, cpython_312.canonical])
+    action = _make_matrix_action(
+        interpreters=[cpython_311.canonical, cpython_312.canonical]
+    )
 
     async def on_partial(interpreter_canonical: str, result_by_format: dict) -> None:
         pass

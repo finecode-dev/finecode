@@ -26,7 +26,7 @@ def process_raw_deps(
             if name in _seen:
                 continue
             _seen.add(name)
-            version_or_source = raw_dep[len(name):]
+            version_or_source = raw_dep[len(name) :]
             dependencies.append(
                 {
                     "name": name,
@@ -37,8 +37,11 @@ def process_raw_deps(
         elif isinstance(raw_dep, dict) and "include-group" in raw_dep:
             included_group_deps = deps_groups.get(raw_dep["include-group"], [])
             process_raw_deps(
-                included_group_deps, dependencies, deps_groups,
-                project_def_path, _seen,
+                included_group_deps,
+                dependencies,
+                deps_groups,
+                project_def_path,
+                _seen,
             )
 
 
@@ -51,7 +54,8 @@ def collect_transitive_editable_deps(
     seen: set[str] = {dep["name"] for dep in dependencies}
     result: list[dict] = []
     queue = [
-        dep for dep in dependencies
+        dep
+        for dep in dependencies
         if dep.get("editable") and " @ file://" in dep.get("version_or_source", "")
     ]
 
@@ -107,7 +111,8 @@ def resolve_install_project(
     """
     canonical_project_name = canonicalize_name(project_name)
     result = [
-        dep for dep in dependencies
+        dep
+        for dep in dependencies
         if canonicalize_name(dep["name"]) != canonical_project_name
     ]
     result.append(

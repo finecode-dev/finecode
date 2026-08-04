@@ -3,15 +3,15 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 
-from finecode_extension_api import code_action
 from fine_src_artifacts import (
     group_src_artifact_files_by_lang_action,
 )
-from finecode_extension_api.interfaces import ilogger, iprojectactionrunner
 from fine_symbol_info.text_document_hover_action import (
     HoverPayload,
     TextDocumentHoverAction,
 )
+from finecode_extension_api import code_action
+from finecode_extension_api.interfaces import ilogger, iprojectactionrunner
 
 
 @dataclasses.dataclass
@@ -64,13 +64,13 @@ class HoverDispatchHandler(
         )
 
         if not subactions_by_lang:
-            self.logger.debug(
-                "HoverDispatchHandler: no language subactions registered"
-            )
+            self.logger.debug("HoverDispatchHandler: no language subactions registered")
             return
 
         files_by_lang_result = await self.action_runner.run_action(
-            action_type=iprojectactionrunner.ActionRef.from_type(group_src_artifact_files_by_lang_action.GroupSrcArtifactFilesByLangAction),
+            action_type=iprojectactionrunner.ActionRef.from_type(
+                group_src_artifact_files_by_lang_action.GroupSrcArtifactFilesByLangAction
+            ),
             payload=group_src_artifact_files_by_lang_action.GroupSrcArtifactFilesByLangRunPayload(
                 file_paths=[payload.uri],
                 langs=list(subactions_by_lang.keys()),

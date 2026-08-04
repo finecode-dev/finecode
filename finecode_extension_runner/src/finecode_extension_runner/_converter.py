@@ -1,9 +1,9 @@
 import types as _types
+import typing
 
 import cattrs
 from cattrs.gen import make_dict_structure_fn, override
 
-import typing
 try:
     from typing import Literal
 except ImportError:

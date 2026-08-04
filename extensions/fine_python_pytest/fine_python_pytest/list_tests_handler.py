@@ -5,7 +5,6 @@ import shlex
 import sys
 from pathlib import Path
 
-from finecode_extension_api import code_action
 from fine_test.list_tests_action import (
     ListTestsAction,
     ListTestsRunContext,
@@ -14,6 +13,7 @@ from fine_test.list_tests_action import (
     TestItem,
 )
 from fine_test.test_id import TestId
+from finecode_extension_api import code_action
 from finecode_extension_api.interfaces import (
     icommandrunner,
     ilogger,
@@ -139,7 +139,9 @@ def _build_tree(node_ids: list[str], project_dir: Path) -> list[TestItem]:
             test_name, variant = _split_variant(parts[1])
             file_node.children.append(
                 TestItem(
-                    test_id=TestId(file_path=file_uri, test_name=test_name, variant=variant),
+                    test_id=TestId(
+                        file_path=file_uri, test_name=test_name, variant=variant
+                    ),
                     display_name=parts[1],
                     file_path=file_uri,
                 )

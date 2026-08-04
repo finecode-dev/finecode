@@ -1,9 +1,9 @@
-from finecode_extension_api import code_action
 from fine_code_hierarchy.text_document_prepare_type_hierarchy_action import (
-    TextDocumentPrepareTypeHierarchyAction,
     PrepareTypeHierarchyPayload,
     PrepareTypeHierarchyResult,
+    TextDocumentPrepareTypeHierarchyAction,
 )
+from finecode_extension_api import code_action
 
 
 class TextDocumentPrepareTypeHierarchyPythonAction(code_action.Action):

@@ -1,11 +1,11 @@
 import dataclasses
 import typing
 
-from finecode_extension_api import code_action
 from fine_envs.create_envs_action import EnvInfo
 from fine_envs.install_envs_action import (
     InstallEnvsRunResult,
 )
+from finecode_extension_api import code_action
 
 
 @dataclasses.dataclass

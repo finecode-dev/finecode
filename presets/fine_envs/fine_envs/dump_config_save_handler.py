@@ -2,10 +2,9 @@
 import dataclasses
 
 import tomlkit
-
-from finecode_extension_api import code_action
 from fine_envs import dump_config_action
-from finecode_extension_api.interfaces import ifilemanager, ifileeditor
+from finecode_extension_api import code_action
+from finecode_extension_api.interfaces import ifileeditor, ifilemanager
 from finecode_extension_api.resource_uri import resource_uri_to_path
 
 
@@ -18,14 +17,12 @@ class DumpConfigSaveHandler(
         dump_config_action.DumpConfigAction, DumpConfigSaveHandlerConfig
     ]
 ):
-    FILE_OPERATION_AUTHOR = ifileeditor.FileOperationAuthor(
-        id="DumpConfigSaveHandler"
-    )
+    FILE_OPERATION_AUTHOR = ifileeditor.FileOperationAuthor(id="DumpConfigSaveHandler")
 
     def __init__(
         self,
         file_manager: ifilemanager.IFileManager,
-        file_editor: ifileeditor.IFileEditor
+        file_editor: ifileeditor.IFileEditor,
     ) -> None:
         self.file_manager = file_manager
         self.file_editor = file_editor

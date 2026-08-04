@@ -17,7 +17,9 @@ _REPO_ROOT = Path(__file__).resolve().parents[3]
 # ---------------------------------------------------------------------------
 
 
-def _run_bootstrap(cwd: Path, *extra_args: str, timeout: int = 120) -> subprocess.CompletedProcess:
+def _run_bootstrap(
+    cwd: Path, *extra_args: str, timeout: int = 120
+) -> subprocess.CompletedProcess:
     return subprocess.run(
         [sys.executable, "-m", "finecode", "bootstrap"] + list(extra_args),
         cwd=cwd,
@@ -48,7 +50,9 @@ def _resolve_finecode_closure() -> dict[str, Path]:
     monorepo's own dev_workspace venv setup.
     """
     script_path = _REPO_ROOT / "scripts" / "list_dev_workspace_editables.py"
-    spec = importlib.util.spec_from_file_location("list_dev_workspace_editables", script_path)
+    spec = importlib.util.spec_from_file_location(
+        "list_dev_workspace_editables", script_path
+    )
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module.resolve_workspace_packages(_REPO_ROOT, roots=["finecode"])
@@ -70,20 +74,21 @@ def bootstrap_workspace(tmp_path: Path) -> Path:
     """
     packages = _resolve_finecode_closure()
     dev_workspace_entries = "".join(
-        f'    "{name} @ file://{path.as_posix()}",\n' for name, path in sorted(packages.items())
+        f'    "{name} @ file://{path.as_posix()}",\n'
+        for name, path in sorted(packages.items())
     )
     (tmp_path / "pyproject.toml").write_text(
-        '[project]\n'
+        "[project]\n"
         'name = "test-project"\n'
         'version = "0.1.0"\n'
         'requires-python = ">=3.11"\n'
-        '\n'
-        '[tool.finecode]\n'
-        '\n'
-        '[dependency-groups]\n'
-        'dev_workspace = [\n'
-        f'{dev_workspace_entries}'
-        ']\n',
+        "\n"
+        "[tool.finecode]\n"
+        "\n"
+        "[dependency-groups]\n"
+        "dev_workspace = [\n"
+        f"{dev_workspace_entries}"
+        "]\n",
         encoding="utf-8",
     )
     return tmp_path
@@ -132,7 +137,9 @@ def test_bootstrap_idempotent(bootstrap_workspace: Path) -> None:
     r2 = _run_bootstrap(bootstrap_workspace, timeout=30)
     assert r2.returncode == 0, f"Second bootstrap failed:\n{r2.stderr}"
 
-    assert (bootstrap_workspace / ".venvs" / "dev_workspace").stat().st_mtime == venv_mtime, (
+    assert (
+        bootstrap_workspace / ".venvs" / "dev_workspace"
+    ).stat().st_mtime == venv_mtime, (
         "Venv was modified on the second run — bootstrap is not idempotent"
     )
 

@@ -1,23 +1,29 @@
 import dataclasses
 
-from packaging.utils import canonicalize_name
-
-from finecode_extension_api import code_action
 from fine_envs import (
     install_deps_in_env_action,
     install_env_action,
 )
-from fine_envs.install_envs_action import (
-    InstallEnvsRunResult,
-)
-from finecode_extension_api.interfaces import ilogger, iprojectactionrunner, iprojectinfoprovider
-from finecode_extension_api.resource_uri import path_to_resource_uri, resource_uri_to_path
 from fine_envs.dependency_config_utils import (
     collect_transitive_editable_deps,
     get_dependency_name,
     process_raw_deps,
     resolve_install_project,
 )
+from fine_envs.install_envs_action import (
+    InstallEnvsRunResult,
+)
+from finecode_extension_api import code_action
+from finecode_extension_api.interfaces import (
+    ilogger,
+    iprojectactionrunner,
+    iprojectinfoprovider,
+)
+from finecode_extension_api.resource_uri import (
+    path_to_resource_uri,
+    resource_uri_to_path,
+)
+from packaging.utils import canonicalize_name
 
 
 @dataclasses.dataclass
@@ -65,7 +71,9 @@ class InstallEnvInstallDepsHandler(
                 project_def_path=project_def_path,
             )
 
-            ws_editable_packages = await self.project_info_provider.get_workspace_editable_packages()
+            ws_editable_packages = (
+                await self.project_info_provider.get_workspace_editable_packages()
+            )
             for dep in dependencies:
                 if dep["name"] in ws_editable_packages:
                     path = ws_editable_packages[dep["name"]]
@@ -79,8 +87,10 @@ class InstallEnvInstallDepsHandler(
             # otherwise a project whose only edge into the dependency graph is
             # this injected entry would have its own transitive deps missed.
             env_raw_config = (
-                project_def.get("tool", {}).get("finecode", {})
-                .get("env", {}).get(env.name, {})
+                project_def.get("tool", {})
+                .get("finecode", {})
+                .get("env", {})
+                .get(env.name, {})
             )
             if env_raw_config.get("install_project", False):
                 project_name = project_def.get("project", {}).get("name")
@@ -93,15 +103,19 @@ class InstallEnvInstallDepsHandler(
                     dependencies, project_name, project_def_path.parent
                 )
 
-            dependencies.extend(collect_transitive_editable_deps(dependencies, ws_editable_packages))
+            dependencies.extend(
+                collect_transitive_editable_deps(dependencies, ws_editable_packages)
+            )
 
             overrides = payload.env.dependencies_override
             if overrides:
-                self.logger.debug(f"Applying {len(overrides)} dependencies_override(s) to env '{env.name}'")
+                self.logger.debug(
+                    f"Applying {len(overrides)} dependencies_override(s) to env '{env.name}'"
+                )
                 for override_spec in overrides:
                     raw_name = get_dependency_name(override_spec.strip())
                     canonical = canonicalize_name(raw_name)
-                    version_or_source = override_spec.strip()[len(raw_name):]
+                    version_or_source = override_spec.strip()[len(raw_name) :]
                     replaced = False
                     for dep in dependencies:
                         if canonicalize_name(dep["name"]) == canonical:
@@ -117,27 +131,33 @@ class InstallEnvInstallDepsHandler(
                         }
                         if raw_name in ws_editable_packages:
                             path = ws_editable_packages[raw_name]
-                            new_dep["version_or_source"] = f" @ file://{path.as_posix()}"
+                            new_dep["version_or_source"] = (
+                                f" @ file://{path.as_posix()}"
+                            )
                             new_dep["editable"] = True
                         dependencies.append(new_dep)
 
-            install_deps_payload = install_deps_in_env_action.InstallDepsInEnvRunPayload(
-                env_name=env.name,
-                venv_dir_path=env.venv_dir_path,
-                project_dir_path=path_to_resource_uri(project_def_path.parent),
-                dependencies=[
-                    install_deps_in_env_action.Dependency(
-                        name=dep["name"],
-                        version_or_source=dep["version_or_source"],
-                        editable=dep["editable"],
-                    )
-                    for dep in dependencies
-                ],
+            install_deps_payload = (
+                install_deps_in_env_action.InstallDepsInEnvRunPayload(
+                    env_name=env.name,
+                    venv_dir_path=env.venv_dir_path,
+                    project_dir_path=path_to_resource_uri(project_def_path.parent),
+                    dependencies=[
+                        install_deps_in_env_action.Dependency(
+                            name=dep["name"],
+                            version_or_source=dep["version_or_source"],
+                            editable=dep["editable"],
+                        )
+                        for dep in dependencies
+                    ],
+                )
             )
 
             await progress.report("Installing dependencies")
             result = await self.action_runner.run_action(
-                action_type=iprojectactionrunner.ActionRef.from_type(install_deps_in_env_action.InstallDepsInEnvAction),
+                action_type=iprojectactionrunner.ActionRef.from_type(
+                    install_deps_in_env_action.InstallDepsInEnvAction
+                ),
                 payload=install_deps_payload,
                 meta=run_context.meta,
             )

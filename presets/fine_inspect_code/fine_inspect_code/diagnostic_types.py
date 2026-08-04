@@ -75,10 +75,15 @@ class DiagnosticFilesRunPayloadIterator(collections.abc.AsyncIterator[ResourceUr
         return self
 
     async def __anext__(self) -> ResourceUri:
-        if len(self.diagnostic_files_run_payload.file_paths) <= self.current_file_path_index:
+        if (
+            len(self.diagnostic_files_run_payload.file_paths)
+            <= self.current_file_path_index
+        ):
             raise StopAsyncIteration()
         self.current_file_path_index += 1
-        return self.diagnostic_files_run_payload.file_paths[self.current_file_path_index - 1]
+        return self.diagnostic_files_run_payload.file_paths[
+            self.current_file_path_index - 1
+        ]
 
 
 @dataclasses.dataclass

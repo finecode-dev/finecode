@@ -3,8 +3,6 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 
-from finecode_extension_api import code_action
-from finecode_extension_api.interfaces import iworkspaceactionrunner
 from fine_dep_graph.detect_workspace_dependency_cycles_action import (
     DetectWorkspaceDependencyCyclesAction,
     DetectWorkspaceDependencyCyclesRunPayload,
@@ -17,7 +15,6 @@ from fine_dep_graph.seed_workspace_dependency_graph_action import (
     SeedWorkspaceDependencyGraphAction,
     SeedWorkspaceDependencyGraphRunPayload,
 )
-
 from fine_release.release_workspace_packages_action import (
     ReleaseWorkspacePackagesAction,
     ReleaseWorkspacePackagesRunContext,
@@ -25,6 +22,8 @@ from fine_release.release_workspace_packages_action import (
     ReleaseWorkspacePackagesRunResult,
     _Candidate,
 )
+from finecode_extension_api import code_action
+from finecode_extension_api.interfaces import iworkspaceactionrunner
 
 
 @dataclasses.dataclass
@@ -76,14 +75,18 @@ class ComputeReleaseOrderHandler(
         async def _get_transitive_deps(
             name: str, candidate: _Candidate
         ) -> tuple[str, set[str]]:
-            transitive_deps_result = await self.workspace_action_runner.run_action_in_projects(
-                action_type=GetPackageTransitiveDepsAction,
-                payload=GetPackageTransitiveDepsRunPayload(package_name=name),
-                meta=run_context.meta,
-                project_paths=[candidate.project_path],
-                concurrently=True,
+            transitive_deps_result = (
+                await self.workspace_action_runner.run_action_in_projects(
+                    action_type=GetPackageTransitiveDepsAction,
+                    payload=GetPackageTransitiveDepsRunPayload(package_name=name),
+                    meta=run_context.meta,
+                    project_paths=[candidate.project_path],
+                    concurrently=True,
+                )
             )
-            dependency_names = transitive_deps_result[candidate.project_path].dependency_names
+            dependency_names = transitive_deps_result[
+                candidate.project_path
+            ].dependency_names
             return name, candidate_names & set(dependency_names)
 
         dependencies_by_name: dict[str, set[str]] = dict(

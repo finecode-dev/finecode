@@ -24,8 +24,6 @@ from finecode_extension_api.interfaces import (  # idevenvinfoprovider,
     iworkspaceactionrunner,
     iworkspaceinfoprovider,
 )
-from loguru import logger
-
 from finecode_extension_runner import context, domain, service_config
 from finecode_extension_runner._services import run_action as run_action_service
 from finecode_extension_runner.di.registry import Registry
@@ -39,17 +37,22 @@ from finecode_extension_runner.impls import (  # dev_env_info_provider,
     project_action_runner,
     project_info_provider,
     service_registry,
+)
+from finecode_extension_runner.impls import user_messenger as user_messenger_module
+from finecode_extension_runner.impls import (  # dev_env_info_provider,
     workspace_action_registry,
     workspace_action_runner,
     workspace_info_provider,
 )
-from finecode_extension_runner.impls import (
-    user_messenger as user_messenger_module,
-)
 from finecode_extension_runner.run_utils import import_module_member_by_source_str
+from loguru import logger
 
-_COMMAND_RUNNER_INTERFACE = "finecode_extension_api.interfaces.icommandrunner.ICommandRunner"
-_COMMAND_RUNNER_DEFAULT_SOURCE = "finecode_extension_runner.impls.command_runner.CommandRunner"
+_COMMAND_RUNNER_INTERFACE = (
+    "finecode_extension_api.interfaces.icommandrunner.ICommandRunner"
+)
+_COMMAND_RUNNER_DEFAULT_SOURCE = (
+    "finecode_extension_runner.impls.command_runner.CommandRunner"
+)
 
 _REPOSITORY_CREDENTIALS_PROVIDER_INTERFACE = (
     "finecode_extension_api.interfaces.irepositorycredentialsprovider"
@@ -93,8 +96,10 @@ def bootstrap(
     service_config_overrides: dict[str, dict[str, Any]] | None = None,
     workspace_editable_packages_getter: Callable[
         [], collections.abc.Awaitable[dict[str, pathlib.Path]]
-    ] | None = None,
-    send_request_to_wm: Callable[[str, dict], collections.abc.Awaitable[Any]] | None = None,
+    ]
+    | None = None,
+    send_request_to_wm: Callable[[str, dict], collections.abc.Awaitable[Any]]
+    | None = None,
     send_user_message_notification: Callable[[str, str], None] | None = None,
 ):
     # logger_instance = loguru_logger.LoguruLogger()
@@ -174,14 +179,19 @@ def bootstrap(
         di_registry=registry, config_resolver=config_resolver
     )
     _register_command_runner_service(service_declarations, svc_registry)
-    _register_repository_credentials_provider_service(service_declarations, svc_registry)
+    _register_repository_credentials_provider_service(
+        service_declarations, svc_registry
+    )
     all_eps, activated = _activate_extensions(handler_packages, svc_registry)
     _apply_user_service_config(
         [
             svc
             for svc in service_declarations
             if svc.interface
-            not in (_COMMAND_RUNNER_INTERFACE, _REPOSITORY_CREDENTIALS_PROVIDER_INTERFACE)
+            not in (
+                _COMMAND_RUNNER_INTERFACE,
+                _REPOSITORY_CREDENTIALS_PROVIDER_INTERFACE,
+            )
         ],
         svc_registry,
     )
@@ -189,7 +199,10 @@ def bootstrap(
 
     remaining = sorted(set(all_eps.keys()) - set(activated))
     if remaining:
-        deferred = [_make_deferred_activator(pkg, all_eps[pkg], svc_registry) for pkg in remaining]
+        deferred = [
+            _make_deferred_activator(pkg, all_eps[pkg], svc_registry)
+            for pkg in remaining
+        ]
         registry.set_deferred_activators(deferred)
 
 
@@ -208,7 +221,9 @@ def _activate_extensions(
         raise StaleEntryPointsError(stale)
 
     packages_to_activate = _collect_activatable_packages(handler_packages, all_eps)
-    logger.debug(f"Handler packages: {handler_packages}; packages to activate: {list(packages_to_activate)}")
+    logger.debug(
+        f"Handler packages: {handler_packages}; packages to activate: {list(packages_to_activate)}"
+    )
 
     for pkg_name in packages_to_activate:
         try:
@@ -332,7 +347,9 @@ def _report_service_config_override_problems(
     config_resolver: service_config.ServiceConfigResolver,
 ) -> None:
     for name, interfaces in config_resolver.ambiguous_names().items():
-        names = ", ".join(sorted(f"{i.__module__}.{i.__qualname__}" for i in interfaces))
+        names = ", ".join(
+            sorted(f"{i.__module__}.{i.__qualname__}" for i in interfaces)
+        )
         logger.error(
             f"Service config override '{name}' is ambiguous: it matches {names}. "
             f"Rename one of the interfaces so the override addresses exactly one."
@@ -384,10 +401,16 @@ def _register_command_runner_service(
     by declaring the same ``interface``.
     """
     override = next(
-        (svc for svc in service_declarations if svc.interface == _COMMAND_RUNNER_INTERFACE),
+        (
+            svc
+            for svc in service_declarations
+            if svc.interface == _COMMAND_RUNNER_INTERFACE
+        ),
         None,
     )
-    source = (override.source if override is not None else None) or _COMMAND_RUNNER_DEFAULT_SOURCE
+    source = (
+        override.source if override is not None else None
+    ) or _COMMAND_RUNNER_DEFAULT_SOURCE
 
     try:
         interface = import_module_member_by_source_str(_COMMAND_RUNNER_INTERFACE)
@@ -422,9 +445,8 @@ def _register_repository_credentials_provider_service(
         None,
     )
     source = (
-        (override.source if override is not None else None)
-        or _REPOSITORY_CREDENTIALS_PROVIDER_DEFAULT_SOURCE
-    )
+        override.source if override is not None else None
+    ) or _REPOSITORY_CREDENTIALS_PROVIDER_DEFAULT_SOURCE
 
     try:
         interface = import_module_member_by_source_str(
@@ -491,7 +513,8 @@ def project_info_provider_factory(
     current_project_raw_config_version_getter: Callable[[], int],
     workspace_editable_packages_getter: Callable[
         [], collections.abc.Awaitable[dict[str, pathlib.Path]]
-    ] | None = None,
+    ]
+    | None = None,
 ):
     return project_info_provider.ProjectInfoProvider(
         project_def_path_getter=project_def_path_getter,

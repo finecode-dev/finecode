@@ -14,7 +14,6 @@ from pathlib import Path
 
 import pytest
 
-
 # ---------------------------------------------------------------------------
 # Process helpers
 # ---------------------------------------------------------------------------
@@ -106,6 +105,7 @@ def kill_group(proc: subprocess.Popen) -> None:
     if sys.platform == "win32":
         try:
             import psutil
+
             parent = psutil.Process(proc.pid)
             for child in parent.children(recursive=True):
                 try:
@@ -140,11 +140,7 @@ def wm_shared_port_file() -> Path:
 def workspace_dir(tmp_path: Path) -> Path:
     """Minimal FineCode workspace with an empty pyproject.toml."""
     (tmp_path / "pyproject.toml").write_text(
-        '[project]\n'
-        'name = "test-project"\n'
-        'version = "0.1.0"\n'
-        '\n'
-        '[tool.finecode]\n'
+        '[project]\nname = "test-project"\nversion = "0.1.0"\n\n[tool.finecode]\n'
     )
     return tmp_path
 
@@ -174,13 +170,13 @@ def _repair_copied_venv_path(venv_dir: Path, old_venv_dir: Path) -> None:
 def _build_workspace_with_er_venv(tmp_path: Path) -> Path:
     """Shared setup for ``workspace_dir_with_er`` and its stuck-ER variant."""
     (tmp_path / "pyproject.toml").write_text(
-        '[project]\n'
+        "[project]\n"
         'name = "test-project"\n'
         'version = "0.1.0"\n'
-        '\n'
-        '[dependency-groups]\n'
+        "\n"
+        "[dependency-groups]\n"
         'dev_workspace = ["finecode"]\n'
-        '\n'
+        "\n"
         "[tool.finecode]\n\n"
         "[[tool.finecode.actions]]\n"
         'name = "test_action"\n\n'

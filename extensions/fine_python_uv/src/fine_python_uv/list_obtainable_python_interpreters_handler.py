@@ -1,14 +1,13 @@
 import dataclasses
 import json
 
-from packaging.version import InvalidVersion, Version
-
-from finecode_extension_api import code_action
-from finecode_extension_api.interfaces import icommandrunner, ilogger
 from fine_envs.list_obtainable_toolchains_action import (
     ListObtainableToolchainsRunResult,
 )
 from fine_python_lang import list_obtainable_python_interpreters_action
+from finecode_extension_api import code_action
+from finecode_extension_api.interfaces import icommandrunner, ilogger
+from packaging.version import InvalidVersion, Version
 
 from ._uv_common import get_uv_executable
 

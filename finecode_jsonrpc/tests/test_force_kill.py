@@ -6,13 +6,13 @@ connection to send a graceful exit over. force_kill() is the only way to reclaim
 that process; these tests pin its platform-specific behavior and its safety when
 there is nothing to kill.
 """
+
 from __future__ import annotations
 
 import signal
 import sys
 
 import pytest
-
 from finecode_jsonrpc import client as jc
 
 
@@ -30,7 +30,9 @@ def test_force_kill_is_a_no_op_when_process_was_never_spawned() -> None:
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="POSIX-only kill path")
-def test_force_kill_kills_the_process_group_on_posix(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_force_kill_kills_the_process_group_on_posix(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """On POSIX, the whole process group must be signaled, not just the ER's own
     pid — it is started with start_new_session=True specifically so a package
     manager or other tool it spawns is reachable as one group here. Missing this
@@ -46,7 +48,9 @@ def test_force_kill_kills_the_process_group_on_posix(monkeypatch: pytest.MonkeyP
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="POSIX-only kill path")
-def test_force_kill_swallows_already_exited_process(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_force_kill_swallows_already_exited_process(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """A process that exited on its own between the caller deciding to force-kill
     it and the signal actually being sent is not an error — the goal (no process
     left running) is already satisfied."""

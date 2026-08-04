@@ -1,14 +1,13 @@
 import pathlib
 import re
 
-from loguru import logger
-
 from fine_type_check.diagnostic_types import (
     Diagnostic,
     DiagnosticSeverity,
     Position,
     Range,
 )
+from loguru import logger
 
 # reuse output parsing from vscode-mypy (as much as possible, it was adapted for this
 # use case)

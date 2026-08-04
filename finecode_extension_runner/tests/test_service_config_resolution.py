@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import pytest
-
 from finecode_extension_runner.service_config import ServiceConfigResolver
 from finecode_extension_runner.service_names import derive_service_name
 

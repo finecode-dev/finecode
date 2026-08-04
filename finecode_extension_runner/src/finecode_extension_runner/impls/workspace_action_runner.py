@@ -7,7 +7,10 @@ from typing import Any, Awaitable, Callable
 
 import cattrs.errors
 from finecode_extension_api import code_action
-from finecode_extension_api.interfaces import iprojectactionrunner, iworkspaceactionrunner
+from finecode_extension_api.interfaces import (
+    iprojectactionrunner,
+    iworkspaceactionrunner,
+)
 from finecode_extension_runner import er_telemetry
 from finecode_extension_runner._converter import converter as _converter
 
@@ -18,7 +21,9 @@ ResultT = typing.TypeVar("ResultT", bound=code_action.RunActionResult)
 class WorkspaceActionRunnerImpl(iworkspaceactionrunner.IWorkspaceActionRunner):
     """Calls the WM back-channel finecode/runActionInWorkspace."""
 
-    def __init__(self, send_request_to_wm: Callable[[str, dict], Awaitable[Any]]) -> None:
+    def __init__(
+        self, send_request_to_wm: Callable[[str, dict], Awaitable[Any]]
+    ) -> None:
         self._send = send_request_to_wm
 
     async def run_action_in_projects(

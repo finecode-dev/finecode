@@ -1,8 +1,8 @@
 import dataclasses
 import pathlib
 
-from finecode_extension_api import code_action
 from fine_envs import install_deps_in_env_action
+from finecode_extension_api import code_action
 from finecode_extension_api.interfaces import icommandrunner, ilogger
 from finecode_extension_api.resource_uri import resource_uri_to_path
 
@@ -110,7 +110,7 @@ class PipInstallDepsInEnvHandler(
             else:
                 logs = process_stderr
 
-            error = f'Installation of dependencies in env {env_name} from {project_dir_path} failed (cmd: {cmd}):\n{logs}'
+            error = f"Installation of dependencies in env {env_name} from {project_dir_path} failed (cmd: {cmd}):\n{logs}"
             self.logger.error(error)
             return error
 

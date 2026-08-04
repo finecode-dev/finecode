@@ -60,7 +60,9 @@ _ACTIONS = {
 }
 
 
-async def test_session_progress_collects_handler_progress_events(tmp_path: Path) -> None:
+async def test_session_progress_collects_handler_progress_events(
+    tmp_path: Path,
+) -> None:
     """`session.progress` must observe the begin/report/end sequence a handler
     emits via run_context.progress() -- otherwise assertions against it pass
     vacuously against an empty list."""

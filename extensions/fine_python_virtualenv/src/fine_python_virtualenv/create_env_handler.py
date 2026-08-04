@@ -1,10 +1,9 @@
 import dataclasses
 
 import virtualenv
-
-from finecode_extension_api import code_action
 from fine_envs import create_env_action
 from fine_envs.create_envs_action import CreateEnvsRunResult
+from finecode_extension_api import code_action
 from finecode_extension_api.interfaces import ifilemanager, ilogger
 from finecode_extension_api.resource_uri import resource_uri_to_path
 
@@ -55,9 +54,7 @@ class VirtualenvCreateEnvHandler(
                 )
             except Exception as exc:
                 return CreateEnvsRunResult(
-                    errors=[
-                        f"Failed to create virtualenv {venv_dir_path}: {exc}"
-                    ]
+                    errors=[f"Failed to create virtualenv {venv_dir_path}: {exc}"]
                 )
         else:
             self.logger.info(f"Virtualenv in {env_info} exists already")

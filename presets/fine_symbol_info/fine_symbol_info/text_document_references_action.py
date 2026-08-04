@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import dataclasses
 
+from fine_symbol_info.types import Location
 from finecode_extension_api import code_action, common_types
 from finecode_extension_api.resource_uri import ResourceUri
-from fine_symbol_info.types import Location
 
 
 @dataclasses.dataclass

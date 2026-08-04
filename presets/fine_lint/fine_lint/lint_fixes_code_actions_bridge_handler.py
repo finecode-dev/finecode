@@ -1,6 +1,8 @@
 import dataclasses
 
 from finecode_extension_api import code_action
+from finecode_extension_api.interfaces import iprojectactionrunner
+
 from fine_lint.code_action_types import (
     CodeAction,
     DiagnosticRef,
@@ -16,7 +18,6 @@ from fine_lint.get_lint_fixes_action import (
     GetLintFixesRunPayload,
 )
 from fine_lint.lint_fix import LintFix
-from finecode_extension_api.interfaces import iprojectactionrunner
 
 # LSP code-action kind prefixes that this bridge can satisfy.
 _LINT_FIX_KINDS = {"quickfix", "source.fixAll", "source.organizeImports"}
@@ -41,7 +42,9 @@ def _collect_codes(diagnostics: list[DiagnosticRef]) -> list[str] | None:
     return codes if codes else None
 
 
-def _refs_matching_fix(fix: LintFix, diagnostics: list[DiagnosticRef]) -> list[DiagnosticRef]:
+def _refs_matching_fix(
+    fix: LintFix, diagnostics: list[DiagnosticRef]
+) -> list[DiagnosticRef]:
     """Return diagnostic refs that this fix addresses, matched by code."""
     if not fix.target_codes:
         # Source action (fixAll, organizeImports) — not tied to a specific diagnostic.
@@ -65,7 +68,9 @@ class LintFixesCodeActionsBridgeHandler(
     when the caller's ``only`` filter cannot be satisfied by lint fixes.
     """
 
-    def __init__(self, action_runner: iprojectactionrunner.IProjectActionRunner) -> None:
+    def __init__(
+        self, action_runner: iprojectactionrunner.IProjectActionRunner
+    ) -> None:
         self.action_runner = action_runner
 
     async def run(

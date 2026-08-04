@@ -5,13 +5,13 @@ import dataclasses
 import sys
 from pathlib import Path
 
-from finecode_extension_api import code_action
 from fine_docs.serve_docs_action import (
     ServeDocsAction,
     ServeDocsRunContext,
     ServeDocsRunPayload,
     ServeDocsRunResult,
 )
+from finecode_extension_api import code_action
 from finecode_extension_api.interfaces import ilogger, iprojectinfoprovider
 
 _READY_MARKER = "Serving on "
@@ -126,7 +126,7 @@ def _parse_serving_line(
 ) -> tuple[str, str, int]:
     """Extract base_url, bound_host, bound_port from a 'Serving on ...' log line."""
     idx = line.index(_READY_MARKER)
-    url_part = line[idx + len(_READY_MARKER):].strip().rstrip("/")
+    url_part = line[idx + len(_READY_MARKER) :].strip().rstrip("/")
     base_url = url_part if url_part.startswith("http") else f"http://{url_part}"
 
     # Parse host and port from "http://host:port"

@@ -6,7 +6,11 @@ from unittest import mock
 import pytest
 
 from finecode.wm_server import testing as wm_testing
-from finecode.wm_server.services.run_service import ProjectExecutor, exceptions, proxy_utils
+from finecode.wm_server.services.run_service import (
+    ProjectExecutor,
+    exceptions,
+    proxy_utils,
+)
 
 
 def _build_session(tmp_path: pathlib.Path):

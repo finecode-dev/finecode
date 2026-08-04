@@ -3,7 +3,6 @@ from __future__ import annotations
 import dataclasses
 
 import pytest
-
 from finecode_extension_api import code_action
 from finecode_extension_api.interfaces import iprojectactionrunner
 from finecode_extension_runner import domain, er_errors
@@ -23,7 +22,9 @@ class _ParentResult(code_action.RunActionResult):
         self.messages.update(other.messages)
 
 
-class _ParentAction(code_action.Action[_ParentPayload, code_action.RunActionContext, _ParentResult]):
+class _ParentAction(
+    code_action.Action[_ParentPayload, code_action.RunActionContext, _ParentResult]
+):
     PAYLOAD_TYPE = _ParentPayload
     RESULT_TYPE = _ParentResult
 
@@ -83,7 +84,9 @@ async def test_get_actions_for_parent_resolves_locally_importable_subaction() ->
         assert method == "finecode/getActionsForParent"
         return {"subactions": []}
 
-    runner = _make_runner(actions={"check_python_imports": action_def}, send_request_to_wm=_send)
+    runner = _make_runner(
+        actions={"check_python_imports": action_def}, send_request_to_wm=_send
+    )
 
     result = await runner.get_actions_for_parent(_ParentAction)
 
@@ -158,7 +161,9 @@ async def test_get_actions_for_parent_prefers_local_resolution_over_wm_echo() ->
             ]
         }
 
-    runner = _make_runner(actions={"check_python_imports": action_def}, send_request_to_wm=_send)
+    runner = _make_runner(
+        actions={"check_python_imports": action_def}, send_request_to_wm=_send
+    )
 
     result = await runner.get_actions_for_parent(_ParentAction)
 
@@ -205,11 +210,17 @@ async def test_run_action_coerces_payload_to_locally_known_subaction_type() -> N
     action_def = domain.ActionDeclaration(
         name="check_python_imports",
         config={},
-        handlers=[domain.ActionHandlerDeclaration(name="h", source="x.H", config={}, env="dev_workspace")],
+        handlers=[
+            domain.ActionHandlerDeclaration(
+                name="h", source="x.H", config={}, env="dev_workspace"
+            )
+        ],
         source=_source_of(_PythonSubAction),
     )
     runner = project_action_runner.ProjectActionRunnerImpl(
-        send_request_to_wm=lambda *_a, **_kw: (_ for _ in ()).throw(AssertionError("no WM call expected")),
+        send_request_to_wm=lambda *_a, **_kw: (_ for _ in ()).throw(
+            AssertionError("no WM call expected")
+        ),
         run_action_func=_run_action_func,
         actions_getter=lambda: {"check_python_imports": action_def},
         current_env_name_getter=lambda: "dev_workspace",

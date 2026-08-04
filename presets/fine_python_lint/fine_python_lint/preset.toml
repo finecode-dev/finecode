@@ -4,20 +4,20 @@ presets = [{ source = "fine_lint" }]
 [tool.finecode.action.lint_python_files]
 source = "fine_python_lang.LintPythonFilesAction"
 handlers = [
-    { name = "ruff", source = "fine_python_ruff.RuffLintFilesHandler", env = "dev_no_runtime", dependencies = [
-        "fine_python_ruff[jsonrpc]~=0.2.0a0",
-    ] },
-    { name = "flake8", source = "fine_python_flake8.Flake8LintFilesHandler", env = "dev_no_runtime", dependencies = [
-        "fine_python_flake8~=0.3.0a0",
-    ] },
+  { name = "ruff", source = "fine_python_ruff.RuffLintFilesHandler", env = "dev_no_runtime", dependencies = [
+    "fine_python_ruff[jsonrpc]~=0.2.0a0",
+  ] },
+  { name = "flake8", source = "fine_python_flake8.Flake8LintFilesHandler", env = "dev_no_runtime", dependencies = [
+    "fine_python_flake8~=0.3.0a0",
+  ] },
 ]
 
 [tool.finecode.action.get_lint_fixes_python_files]
 source = "fine_python_lang.GetLintFixesPythonFilesAction"
 handlers = [
-    { name = "ruff", source = "fine_python_ruff.RuffGetLintFixesHandler", env = "dev_no_runtime", dependencies = [
-        "fine_python_ruff[jsonrpc]~=0.2.0a0",
-    ] },
+  { name = "ruff", source = "fine_python_ruff.RuffGetLintFixesHandler", env = "dev_no_runtime", dependencies = [
+    "fine_python_ruff[jsonrpc]~=0.2.0a0",
+  ] },
 ]
 
 [tool.finecode.extension.fine_python_ruff]
@@ -55,7 +55,7 @@ source = "fine_python_pip.PipInstallDepsInEnvHandler"
 # creates editable directory directly in the package and if the package is installed
 # as editable in multiple packages, there are concurrency problems and it would require
 # sequential installation of dependencies in all envs.
-config.editable_mode = 'compat'
+config.editable_mode = "compat"
 
 [[tool.finecode.service]]
 interface = "finecode_extension_api.interfaces.ijsonrpcclient.IJsonRpcClient"

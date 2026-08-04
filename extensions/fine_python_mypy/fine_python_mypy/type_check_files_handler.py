@@ -7,24 +7,26 @@ import sys
 from pathlib import Path
 
 import fine_python_mypy.output_parser as output_parser
-
-from finecode_extension_api import code_action
+from fine_python_lang.type_check_python_files_action import TypeCheckPythonFilesAction
 from fine_type_check.diagnostic_types import (
     Diagnostic,
-    DiagnosticFilesRunPayload,
     DiagnosticFilesRunContext,
+    DiagnosticFilesRunPayload,
     DiagnosticFilesRunResult,
 )
-from fine_python_lang.type_check_python_files_action import TypeCheckPythonFilesAction
+from finecode_extension_api import code_action
 from finecode_extension_api.interfaces import (
     icache,
     icommandrunner,
+    iextensionrunnerinfoprovider,
     ifileeditor,
     ilogger,
-    iextensionrunnerinfoprovider,
     iprojectinfoprovider,
 )
-from finecode_extension_api.resource_uri import path_to_resource_uri, resource_uri_to_path
+from finecode_extension_api.resource_uri import (
+    path_to_resource_uri,
+    resource_uri_to_path,
+)
 
 
 class DmypyFailedError(Exception): ...
@@ -35,10 +37,12 @@ class MypyTypeCheckFilesHandlerConfig(code_action.ActionHandlerConfig): ...
 
 
 class MypyTypeCheckFilesHandler(
-    code_action.ActionHandler[TypeCheckPythonFilesAction, MypyTypeCheckFilesHandlerConfig]
+    code_action.ActionHandler[
+        TypeCheckPythonFilesAction, MypyTypeCheckFilesHandlerConfig
+    ]
 ):
     CACHE_KEY = "mypy"
-    FILE_OPERATION_AUTHOR = ifileeditor.FileOperationAuthor('Mypy')
+    FILE_OPERATION_AUTHOR = ifileeditor.FileOperationAuthor("Mypy")
 
     DMYPY_ARGS = [
         "--no-color-output",
@@ -156,9 +160,7 @@ class MypyTypeCheckFilesHandler(
                         except KeyError:
                             # mypy can resolve dependencies which are not in `files_to_lint`
                             # and as result also not in `files_versions`
-                            file_version = await session.read_file_version(
-                                file_path
-                            )
+                            file_version = await session.read_file_version(file_path)
 
                         await self.cache.save_file_cache(
                             file_path, file_version, self.CACHE_KEY, lint_messages
@@ -189,9 +191,7 @@ class MypyTypeCheckFilesHandler(
             content=dmypy_run_output, severity={}
         )
         new_messages.update(project_lint_messages)
-        all_processed_files_with_messages: dict[
-            Path, list[Diagnostic]
-        ] = {
+        all_processed_files_with_messages: dict[Path, list[Diagnostic]] = {
             file_path: [] for file_path in all_project_files
         }
         all_processed_files_with_messages.update(
@@ -220,7 +220,9 @@ class MypyTypeCheckFilesHandler(
 
         for project_path, project_files in files_by_projects.items():
             for file_path in project_files:
-                file_uri = file_uri_by_path.get(file_path, path_to_resource_uri(file_path))
+                file_uri = file_uri_by_path.get(
+                    file_path, path_to_resource_uri(file_path)
+                )
                 run_context.partial_result_scheduler.schedule(
                     file_uri,
                     self.run_on_single_file(

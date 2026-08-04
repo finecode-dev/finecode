@@ -6,14 +6,17 @@ from .call_hierarchy_outgoing_calls_handler import (
     PyreflyCallHierarchyOutgoingCallsHandler,
     PyreflyCallHierarchyOutgoingCallsHandlerConfig,
 )
-from .hover_handler import PyreflyHoverHandler, PyreflyHoverHandlerConfig
 from .definition_handler import PyreflyDefinitionHandler, PyreflyDefinitionHandlerConfig
-from .references_handler import PyreflyReferencesHandler, PyreflyReferencesHandlerConfig
-from .type_definition_handler import PyreflyTypeDefinitionHandler, PyreflyTypeDefinitionHandlerConfig
-from .implementation_handler import PyreflyImplementationHandler, PyreflyImplementationHandlerConfig
-from .document_highlight_handler import PyreflyDocumentHighlightHandler, PyreflyDocumentHighlightHandlerConfig
+from .document_highlight_handler import (
+    PyreflyDocumentHighlightHandler,
+    PyreflyDocumentHighlightHandlerConfig,
+)
+from .hover_handler import PyreflyHoverHandler, PyreflyHoverHandlerConfig
+from .implementation_handler import (
+    PyreflyImplementationHandler,
+    PyreflyImplementationHandlerConfig,
+)
 from .inlay_hint_handler import PyreflyInlayHintHandler, PyreflyInlayHintHandlerConfig
-from .type_check_files_handler import PyreflyTypeCheckFilesHandler, PyreflyTypeCheckFilesHandlerConfig
 from .prepare_call_hierarchy_handler import (
     PyreflyPrepareCallHierarchyHandler,
     PyreflyPrepareCallHierarchyHandlerConfig,
@@ -23,9 +26,18 @@ from .prepare_type_hierarchy_handler import (
     PyreflyPrepareTypeHierarchyHandlerConfig,
 )
 from .pyrefly_lsp_service import PyreflyLspService
+from .references_handler import PyreflyReferencesHandler, PyreflyReferencesHandlerConfig
 from .semantic_tokens_handler import (
     PyreflySemanticTokensHandler,
     PyreflySemanticTokensHandlerConfig,
+)
+from .type_check_files_handler import (
+    PyreflyTypeCheckFilesHandler,
+    PyreflyTypeCheckFilesHandlerConfig,
+)
+from .type_definition_handler import (
+    PyreflyTypeDefinitionHandler,
+    PyreflyTypeDefinitionHandlerConfig,
 )
 from .type_hierarchy_subtypes_handler import (
     PyreflyTypeHierarchySubtypesHandler,

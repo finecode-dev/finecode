@@ -7,15 +7,21 @@ from finecode_extension_api.interfaces import iworkspaceinfoprovider
 
 
 class WorkspaceInfoProviderImpl(iworkspaceinfoprovider.IWorkspaceInfoProvider):
-    def __init__(self, send_request_to_wm: Callable[[str, dict], Awaitable[Any]]) -> None:
+    def __init__(
+        self, send_request_to_wm: Callable[[str, dict], Awaitable[Any]]
+    ) -> None:
         self._send = send_request_to_wm
 
-    async def get_workspace_projects(self) -> list[iworkspaceinfoprovider.WorkspaceProject]:
+    async def get_workspace_projects(
+        self,
+    ) -> list[iworkspaceinfoprovider.WorkspaceProject]:
         raw = await self._send("workspace/getProjectPaths", {})
         return [
             iworkspaceinfoprovider.WorkspaceProject(
                 path=pathlib.Path(p["path"]),
-                config_status=iworkspaceinfoprovider.ProjectConfigStatus(p["configStatus"]),
+                config_status=iworkspaceinfoprovider.ProjectConfigStatus(
+                    p["configStatus"]
+                ),
             )
             for p in raw["projects"]
         ]

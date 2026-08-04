@@ -5,7 +5,8 @@ import time
 
 import pytest
 
-from finecode.wm_server import context, testing as wm_testing
+from finecode.wm_server import context
+from finecode.wm_server import testing as wm_testing
 from finecode.wm_server.runner import runner_manager
 from finecode.wm_server.services import shutdown_service
 

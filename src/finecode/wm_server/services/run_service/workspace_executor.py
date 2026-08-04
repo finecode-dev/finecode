@@ -5,16 +5,16 @@ import typing
 
 from finecode.wm_server import context
 from finecode.wm_server.runner.runner_client import (
-    RunActionTrigger,
     DevEnv,
-    RunResultFormat,
     RunActionResponse,
+    RunActionTrigger,
+    RunResultFormat,
 )
 from finecode.wm_server.services.run_service import proxy_utils
 from finecode.wm_server.services.run_service.exceptions import ActionRunFailed
 from finecode.wm_server.services.run_service.execution_scopes import (
-    OrchestrationPolicy,
     DEFAULT_ORCHESTRATION_POLICY,
+    OrchestrationPolicy,
 )
 
 
@@ -51,14 +51,21 @@ class WorkspaceExecutor:
         # every workspace-wide action unusable past an arbitrary size. Width at
         # depth 0 is handled by throttling (the semaphore in
         # proxy_utils.run_actions_in_projects), not by refusal.
-        if orchestration_depth > 0 and len(actions_by_project) > policy.max_project_fanout:
+        if (
+            orchestration_depth > 0
+            and len(actions_by_project) > policy.max_project_fanout
+        ):
             raise ActionRunFailed(
                 f"Workspace fan-out {len(actions_by_project)} exceeds limit "
                 f"{policy.max_project_fanout} at orchestration depth "
                 f"{orchestration_depth}"
             )
 
-        _result_formats = result_formats if result_formats is not None else [proxy_utils.RunResultFormat.JSON]
+        _result_formats = (
+            result_formats
+            if result_formats is not None
+            else [proxy_utils.RunResultFormat.JSON]
+        )
 
         return await proxy_utils.run_actions_in_projects(
             actions_by_project=actions_by_project,

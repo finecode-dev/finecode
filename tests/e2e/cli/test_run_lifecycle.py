@@ -48,8 +48,7 @@ def test_wm_exits_after_cli_run_completes(workspace_dir_with_er):
             try:
                 children = parent.children(recursive=False)
                 wm_procs = [
-                    c for c in children
-                    if "start-wm-server" in " ".join(c.cmdline())
+                    c for c in children if "start-wm-server" in " ".join(c.cmdline())
                 ]
                 if wm_procs:
                     wm_pid = wm_procs[0].pid

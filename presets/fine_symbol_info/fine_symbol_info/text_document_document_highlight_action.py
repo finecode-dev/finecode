@@ -35,7 +35,9 @@ class DocumentHighlightResult(code_action.RunActionResult):
 
 
 class TextDocumentDocumentHighlightAction(code_action.Action):
-    DESCRIPTION = "Find all document highlight ranges for the symbol at a document position."
+    DESCRIPTION = (
+        "Find all document highlight ranges for the symbol at a document position."
+    )
     PAYLOAD_TYPE = DocumentHighlightPayload
     RESULT_TYPE = DocumentHighlightResult
     # SEQUENTIAL (default)

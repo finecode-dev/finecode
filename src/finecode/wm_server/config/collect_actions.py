@@ -76,7 +76,9 @@ def _collect_services_in_config(
     services: list[domain.ServiceDeclaration] = []
     for service_def_raw in config["tool"]["finecode"].get("service", []):
         try:
-            service_def = _converter.structure(service_def_raw, config_models.ServiceDefinition)
+            service_def = _converter.structure(
+                service_def_raw, config_models.ServiceDefinition
+            )
         except cattrs.ClassValidationError as exception:
             raise config_models.ConfigurationError(str(exception)) from exception
 
@@ -115,14 +117,16 @@ def _collect_actions_in_config(
     presets_resolved: bool = True,
 ) -> list[domain.Action]:
     actions: list[domain.Action] = []
-    env_table: dict[str, Any] = config.get("tool", {}).get("finecode", {}).get(
-        "env", {}
+    env_table: dict[str, Any] = (
+        config.get("tool", {}).get("finecode", {}).get("env", {})
     )
     for action_name, action_def_raw in (
         config["tool"]["finecode"].get("action", {}).items()
     ):
         try:
-            action_def = _converter.structure(action_def_raw, config_models.ActionDefinition)
+            action_def = _converter.structure(
+                action_def_raw, config_models.ActionDefinition
+            )
         except cattrs.ClassValidationError as exception:
             raise config_models.ConfigurationError(str(exception)) from exception
 

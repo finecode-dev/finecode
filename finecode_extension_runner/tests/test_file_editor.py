@@ -4,11 +4,10 @@ import asyncio
 import pathlib
 
 import pytest
-from loguru import logger
-
 from finecode_extension_api.interfaces import ifileeditor
 from finecode_extension_runner.impls.file_editor import FileEditor
 from finecode_extension_runner.impls.file_manager import FileManager
+from loguru import logger
 
 _AUTHOR = ifileeditor.FileOperationAuthor(id="test")
 
@@ -31,7 +30,9 @@ async def test_open_file_seeds_content_for_a_file_deleted_from_disk(
     deleted_file = tmp_path / "deleted.py"
     assert not deleted_file.exists()
 
-    async with editor.session(author=ifileeditor.FileOperationAuthor(id="test")) as session:
+    async with editor.session(
+        author=ifileeditor.FileOperationAuthor(id="test")
+    ) as session:
         await session.open_file(file_path=deleted_file, content="print(1)\n")
 
         async with session.read_file(deleted_file) as file_info:
@@ -55,7 +56,9 @@ async def test_change_file_with_unchanged_content_does_not_notify_subscribers(
     file_path = tmp_path / "subject.py"
     content = "x = 1\n"
 
-    async with editor.session(author=ifileeditor.FileOperationAuthor(id="test")) as session:
+    async with editor.session(
+        author=ifileeditor.FileOperationAuthor(id="test")
+    ) as session:
         await session.open_file(file_path=file_path, content=content)
 
         async with session.subscribe_to_all_events() as events:

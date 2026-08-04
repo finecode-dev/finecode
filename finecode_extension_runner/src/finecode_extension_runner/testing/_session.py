@@ -8,7 +8,8 @@ from typing import Any, AsyncIterator, Literal
 
 from finecode_extension_api import code_action
 from finecode_extension_api.interfaces import ifileeditor
-from finecode_extension_runner import context, domain, schemas, services as services_module
+from finecode_extension_runner import context, domain, schemas
+from finecode_extension_runner import services as services_module
 from finecode_extension_runner._services import run_action as run_action_service
 from finecode_extension_runner.di import bootstrap as di_bootstrap
 from finecode_extension_runner.di.registry import Registry
@@ -24,7 +25,9 @@ from finecode_extension_runner.testing._stubs import (
 )
 
 
-def _build_actions(actions_dict: dict[str, dict]) -> dict[str, domain.ActionDeclaration]:
+def _build_actions(
+    actions_dict: dict[str, dict],
+) -> dict[str, domain.ActionDeclaration]:
     result: dict[str, domain.ActionDeclaration] = {}
     for name, action_data in actions_dict.items():
         handlers = [
@@ -242,7 +245,9 @@ async def handler_test_session(
     for type_, instance in (service_overrides or {}).items():
         registry.register_instance(type_, instance, override=True)
 
-    session = Session(runner_context=runner_context, service_overrides=service_overrides)
+    session = Session(
+        runner_context=runner_context, service_overrides=service_overrides
+    )
     try:
         yield session
     finally:

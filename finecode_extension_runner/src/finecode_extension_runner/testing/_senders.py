@@ -53,7 +53,9 @@ class CollectingProgressSender(code_action.ProgressSender):
         message: str | None = None,
         percentage: int | None = None,
     ) -> None:
-        self.events.append({"type": "report", "message": message, "percentage": percentage})
+        self.events.append(
+            {"type": "report", "message": message, "percentage": percentage}
+        )
 
     async def end(self, message: str | None = None) -> None:
         self.events.append({"type": "end", "message": message})

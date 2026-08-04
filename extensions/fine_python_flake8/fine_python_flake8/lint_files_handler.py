@@ -6,24 +6,20 @@ import dataclasses
 import operator
 from pathlib import Path
 
-from fine_python_ast import iast_provider
-from flake8 import checker, processor, style_guide, violation
-from flake8.api import legacy as flake8
-from flake8.plugins import finder
-
-from finecode_extension_api import code_action
 from fine_lint.diagnostic_types import (
     Diagnostic,
-    DiagnosticFilesRunPayload,
     DiagnosticFilesRunContext,
+    DiagnosticFilesRunPayload,
     DiagnosticFilesRunResult,
     DiagnosticSeverity,
     Position,
     Range,
 )
+from fine_python_ast import iast_provider
 from fine_python_lang.lint_python_files_action import (
     LintPythonFilesAction,
 )
+from finecode_extension_api import code_action
 from finecode_extension_api.interfaces import (
     icache,
     ifileeditor,
@@ -31,6 +27,9 @@ from finecode_extension_api.interfaces import (
     iprocessexecutor,
 )
 from finecode_extension_api.resource_uri import ResourceUri, resource_uri_to_path
+from flake8 import checker, processor, style_guide, violation
+from flake8.api import legacy as flake8
+from flake8.plugins import finder
 
 
 def map_flake8_check_result_to_lint_message(result: tuple) -> Diagnostic:
@@ -70,7 +69,7 @@ def run_flake8_on_single_file(
         max_line_length=config.max_line_length,
         extend_select=config.extend_select,
         extend_ignore=config.extend_ignore,
-        select=config.select
+        select=config.select,
     )
     decider = style_guide.DecisionEngine(guide.options)
 
@@ -132,9 +131,7 @@ class Flake8LintFilesHandler(
     code_action.ActionHandler[LintPythonFilesAction, Flake8LintFilesHandlerConfig]
 ):
     CACHE_KEY = "flake8"
-    FILE_OPERATION_AUTHOR = ifileeditor.FileOperationAuthor(
-        id="Flake8LintFilesHandler"
-    )
+    FILE_OPERATION_AUTHOR = ifileeditor.FileOperationAuthor(id="Flake8LintFilesHandler")
 
     def __init__(
         self,

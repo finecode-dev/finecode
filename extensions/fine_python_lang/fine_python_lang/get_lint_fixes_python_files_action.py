@@ -1,10 +1,10 @@
-from finecode_extension_api import code_action
 from fine_lint.get_lint_fixes_action import (
     GetLintFixesAction,
     GetLintFixesRunContext,
     GetLintFixesRunPayload,
     GetLintFixesRunResult,
 )
+from finecode_extension_api import code_action
 
 
 class GetLintFixesPythonFilesAction(

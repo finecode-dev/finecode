@@ -12,9 +12,7 @@ if TYPE_CHECKING:
     from finecode.lsp_server.lsp_server import LspServer
 
 
-async def document_did_open(
-    _ls: LspServer, params: types.DidOpenTextDocumentParams
-):
+async def document_did_open(_ls: LspServer, params: types.DidOpenTextDocumentParams):
     logger.trace(f"Document did open: {params.text_document.uri}")
     await global_state.server_initialized.wait()
 
@@ -28,24 +26,18 @@ async def document_did_open(
     )
 
 
-async def document_did_close(
-    _ls: LspServer, params: types.DidCloseTextDocumentParams
-):
+async def document_did_close(_ls: LspServer, params: types.DidCloseTextDocumentParams):
     logger.trace(f"Document did close: {params.text_document.uri}")
     await global_state.server_initialized.wait()
 
     if global_state.wm_client is None:
         raise Exception("WM server not connected")
 
-    await global_state.wm_client.notify_document_closed(
-        uri=params.text_document.uri
-    )
+    await global_state.wm_client.notify_document_closed(uri=params.text_document.uri)
     semantic_tokens.clear_cache_for_uri(params.text_document.uri)
 
 
-async def document_did_save(
-    _ls: LspServer, params: types.DidSaveTextDocumentParams
-):
+async def document_did_save(_ls: LspServer, params: types.DidSaveTextDocumentParams):
     logger.trace(f"Document did save: {params}")
     await global_state.server_initialized.wait()
 

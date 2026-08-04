@@ -10,11 +10,10 @@ else:
 
 from fine_format import format_file_action
 from fine_toml_lang.format_toml_file_action import FormatTomlFileAction
-from finecode_extension_api.interfaces import iprojectinfoprovider
-from finecode_extension_api.resource_uri import resource_uri_to_path
-
 from fine_toml_tombi.tombi_lsp_service import TombiLspService
 from finecode_extension_api import code_action
+from finecode_extension_api.interfaces import iprojectinfoprovider
+from finecode_extension_api.resource_uri import resource_uri_to_path
 
 
 @dataclasses.dataclass
@@ -51,7 +50,9 @@ class TombiFormatTomlFileHandler(
         new_file_content = await self.lsp_service.format_file(file_path, file_content)
         file_changed = new_file_content != file_content
 
-        run_context.file_info = format_file_action.FileInfo(new_file_content, file_version)
+        run_context.file_info = format_file_action.FileInfo(
+            new_file_content, file_version
+        )
 
         return format_file_action.FormatFileRunResult(
             changed=file_changed, code=new_file_content

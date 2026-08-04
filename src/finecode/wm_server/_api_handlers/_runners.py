@@ -1,4 +1,5 @@
 """Extension runner management API handlers."""
+
 from __future__ import annotations
 
 import pathlib
@@ -15,14 +16,19 @@ async def _handle_runners_list(
     Result: ``{"runners": [{"projectPath", "envName", "status", "readableId"}]}``
     """
     runners = []
-    for project_path, runners_by_env in ws_context.ws_projects_extension_runners.items():
+    for (
+        project_path,
+        runners_by_env,
+    ) in ws_context.ws_projects_extension_runners.items():
         for env_name, runner in runners_by_env.items():
-            runners.append({
-                "projectPath": str(project_path),
-                "envName": env_name,
-                "status": runner.status.name,
-                "readableId": runner.readable_id,
-            })
+            runners.append(
+                {
+                    "projectPath": str(project_path),
+                    "envName": env_name,
+                    "status": runner.status.name,
+                    "readableId": runner.readable_id,
+                }
+            )
     return {"runners": runners}
 
 
@@ -96,6 +102,7 @@ async def _handle_start_runners(
 
     # Phase 2: slow — runner startup outside the global lock.
     from finecode.wm_server.services import runner_start_service
+
     try:
         await runner_start_service.start_runners_with_auto_prepare(
             projects=projects,

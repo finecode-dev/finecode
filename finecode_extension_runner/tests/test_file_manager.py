@@ -4,10 +4,9 @@ import pathlib
 import stat
 
 import pytest
-from loguru import logger
-
 from finecode_extension_api.interfaces import ifilemanager
 from finecode_extension_runner.impls.file_manager import FileManager
+from loguru import logger
 
 
 def _make_dir_tree(root: pathlib.Path) -> pathlib.Path:
@@ -94,8 +93,12 @@ async def test_remove_dir_tolerant_removes_plain_file(tmp_path: pathlib.Path) ->
     assert not stray.exists()
 
 
-async def test_remove_dir_tolerant_tolerates_absent_path(tmp_path: pathlib.Path) -> None:
-    await FileManager(logger=logger).remove_dir(tmp_path / "never_existed", tolerant=True)
+async def test_remove_dir_tolerant_tolerates_absent_path(
+    tmp_path: pathlib.Path,
+) -> None:
+    await FileManager(logger=logger).remove_dir(
+        tmp_path / "never_existed", tolerant=True
+    )
 
 
 async def test_remove_dir_tolerant_does_not_follow_symlink_out_of_tree(

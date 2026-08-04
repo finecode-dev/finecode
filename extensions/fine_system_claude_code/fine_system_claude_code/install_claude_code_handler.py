@@ -4,14 +4,14 @@ import shutil
 import sys
 import tempfile
 
-from finecode_extension_api import code_action
-from finecode_extension_api.interfaces import icommandrunner, ihttpclient, ilogger
 from fine_system_setup.setup_system_action import (
     SetupSystemAction,
     SetupSystemRunContext,
     SetupSystemRunPayload,
     SetupSystemRunResult,
 )
+from finecode_extension_api import code_action
+from finecode_extension_api.interfaces import icommandrunner, ihttpclient, ilogger
 
 _TOOL_NAME = "claude-code"
 _INSTALL_SH_URL = "https://claude.ai/install.sh"
@@ -64,14 +64,23 @@ class InstallClaudeCodeHandler(
                 response.raise_for_status()
                 script_content = response.text
 
-            with tempfile.NamedTemporaryFile(mode="w", suffix=suffix, delete_on_close=False) as f:
+            with tempfile.NamedTemporaryFile(
+                mode="w", suffix=suffix, delete_on_close=False
+            ) as f:
                 f.write(script_content)
                 script_path = f.name
                 f.close()  # flush and release the file before the subprocess opens it
 
                 if sys.platform == "win32":
                     cmd = shlex.join(
-                        ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", script_path]
+                        [
+                            "powershell.exe",
+                            "-NoProfile",
+                            "-ExecutionPolicy",
+                            "Bypass",
+                            "-File",
+                            script_path,
+                        ]
                     )
                 else:
                     cmd = shlex.join(["bash", script_path])

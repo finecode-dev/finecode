@@ -3,7 +3,6 @@ from __future__ import annotations
 import pathlib
 
 import pytest
-
 from fine_dist_artifacts.publish_artifact_to_registry_action import (
     PublishArtifactToRegistryAction,
     PublishArtifactToRegistryRunPayload,
@@ -13,8 +12,8 @@ from fine_python_package_info.publish_artifact_to_registry_py_handler import (
 )
 from finecode_extension_api.interfaces.irepositorycredentialsprovider import (
     IRepositoryCredentialsProvider,
+    Repository,
 )
-from finecode_extension_api.interfaces.irepositorycredentialsprovider import Repository
 from finecode_extension_runner.impls.repository_credentials_provider import (
     ConfigRepositoryCredentialsProvider,
     RepositoryCredentialsProviderConfig,
@@ -29,7 +28,9 @@ def _repository_provider(
 ) -> ConfigRepositoryCredentialsProvider:
     return ConfigRepositoryCredentialsProvider(
         RepositoryCredentialsProviderConfig(
-            repositories=[Repository(name=name, index_url=index_url, upload_url=upload_url)]
+            repositories=[
+                Repository(name=name, index_url=index_url, upload_url=upload_url)
+            ]
         )
     )
 

@@ -24,10 +24,9 @@ import collections.abc
 import contextlib
 from typing import Any
 
-from loguru import logger
-
 from finecode_jsonrpc.jsonrpc_client import JsonRpcError
 from finecode_jsonrpc.tracing import ITracingHooks
+from loguru import logger
 
 # JSON-RPC error codes
 _METHOD_NOT_FOUND = -32601
@@ -245,22 +244,28 @@ class JsonRpcServerSession:
 
         if handler is None:
             logger.warning(f"No handler for request '{method}'")
-            self._send_response(msg_id, None, _METHOD_NOT_FOUND, f"Method not found: {method}")
+            self._send_response(
+                msg_id, None, _METHOD_NOT_FOUND, f"Method not found: {method}"
+            )
             return
 
         task = asyncio.current_task()
         assert task is not None
         self._active_request_tasks[msg_id] = task
 
-        span_ctx = self._tracing.server_span(method, traceparent) if self._tracing else contextlib.nullcontext()
+        span_ctx = (
+            self._tracing.server_span(method, traceparent)
+            if self._tracing
+            else contextlib.nullcontext()
+        )
         with span_ctx:
             try:
                 result = await handler(message.get("params"))
-                self._transport.send(
-                    {"jsonrpc": "2.0", "id": msg_id, "result": result}
-                )
+                self._transport.send({"jsonrpc": "2.0", "id": msg_id, "result": result})
             except asyncio.CancelledError:
-                self._send_response(msg_id, None, REQUEST_CANCELLED, "Request cancelled")
+                self._send_response(
+                    msg_id, None, REQUEST_CANCELLED, "Request cancelled"
+                )
             except JsonRpcHandlerError as exc:
                 self._send_response(msg_id, None, exc.code, exc.message)
             except Exception as exc:

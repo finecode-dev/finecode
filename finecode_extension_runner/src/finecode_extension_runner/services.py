@@ -1,27 +1,33 @@
-import json
 import collections.abc
 import hashlib
 import importlib
 import inspect
+import json
 import sys
 import types
 import typing
 from pathlib import Path
 
-from loguru import logger
 from finecode_extension_api import service
-
-from finecode_extension_runner import context, domain, global_state, schemas, run_utils, schema_utils
+from finecode_extension_runner import (
+    context,
+    domain,
+    global_state,
+    run_utils,
+    schema_utils,
+    schemas,
+)
 from finecode_extension_runner._services.run_action import (
     ActionCancelledException,
     ActionFailedException,
     StopWithResponse,
-    run_action_raw,
-    run_handlers_raw,
     create_action_exec_info,
     ensure_handler_instantiated,
+    run_action_raw,
+    run_handlers_raw,
 )
 from finecode_extension_runner.di import bootstrap as di_bootstrap
+from loguru import logger
 
 
 def _compute_request_hash(request: schemas.UpdateConfigRequest) -> int:
@@ -45,8 +51,12 @@ async def update_config(
     ],
     workspace_editable_packages_getter: typing.Callable[
         [], collections.abc.Awaitable[dict[str, Path]]
-    ] | None = None,
-    send_request_to_wm: typing.Callable[[str, dict], collections.abc.Awaitable[typing.Any]] | None = None,
+    ]
+    | None = None,
+    send_request_to_wm: typing.Callable[
+        [str, dict], collections.abc.Awaitable[typing.Any]
+    ]
+    | None = None,
     send_user_message_notification: typing.Callable[[str, str], None] | None = None,
 ) -> tuple[schemas.UpdateConfigResponse, context.RunnerContext]:
     project_dir_path = Path(request.working_dir)
@@ -119,11 +129,7 @@ async def update_config(
         handler.source.split(".")[0]
         for action in actions.values()
         for handler in action.handlers
-    } | {
-        svc.source.split(".")[0]
-        for svc in request.services
-        if svc.source is not None
-    }
+    } | {svc.source.split(".")[0] for svc in request.services if svc.source is not None}
 
     di_bootstrap.bootstrap(
         registry=runner_context.di_registry,
@@ -215,7 +221,8 @@ async def resolve_action_meta(runner_context: context.RunnerContext) -> dict[str
             parent = getattr(cls, "PARENT_ACTION", None)
             resolved[action.source] = {
                 "canonical_source": f"{cls.__module__}.{cls.__qualname__}",
-                "runs_concurrently": cls.HANDLER_EXECUTION == HandlerExecution.CONCURRENT,
+                "runs_concurrently": cls.HANDLER_EXECUTION
+                == HandlerExecution.CONCURRENT,
                 "scope": cls.SCOPE.value,
                 "parentActionSource": (
                     f"{parent.__module__}.{parent.__qualname__}"
@@ -226,7 +233,7 @@ async def resolve_action_meta(runner_context: context.RunnerContext) -> dict[str
                 "fileLoc": _file_loc(cls, project_dir),
             }
         except Exception as exception:
-            logger.warning(f'Failed to import action {action.source}: {exception}')
+            logger.warning(f"Failed to import action {action.source}: {exception}")
 
     handler_meta: dict[str, dict] = {}
     for action in actions.values():
@@ -234,7 +241,9 @@ async def resolve_action_meta(runner_context: context.RunnerContext) -> dict[str
             if handler.source in handler_meta:
                 continue
             try:
-                handler_cls = run_utils.import_module_member_by_source_str(handler.source)
+                handler_cls = run_utils.import_module_member_by_source_str(
+                    handler.source
+                )
                 handler_meta[handler.source] = {
                     "canonicalSource": (
                         f"{handler_cls.__module__}.{handler_cls.__qualname__}"
@@ -242,7 +251,9 @@ async def resolve_action_meta(runner_context: context.RunnerContext) -> dict[str
                     "fileLoc": _file_loc(handler_cls, project_dir),
                 }
             except Exception as exception:
-                logger.warning(f'Failed to import handler {handler.source}: {exception}')
+                logger.warning(
+                    f"Failed to import handler {handler.source}: {exception}"
+                )
 
     return {"actions": resolved, "handlers": handler_meta}
 
@@ -280,9 +291,7 @@ async def initialize_handlers(
         if action_cache.exec_info is None:
             action_cache.exec_info = create_action_exec_info(action_def)
 
-        handlers_to_init = [
-            h for h in action_def.handlers if h.name in handler_names
-        ]
+        handlers_to_init = [h for h in action_def.handlers if h.name in handler_names]
         for handler in handlers_to_init:
             if handler.name in action_cache.handler_cache_by_name:
                 handler_cache = action_cache.handler_cache_by_name[handler.name]
@@ -471,7 +480,9 @@ def exit_all_action_handlers(runner_context: context.RunnerContext | None) -> No
             action_cache.handler_cache_by_name = {}
 
 
-def get_payload_schemas(runner_context: context.RunnerContext) -> dict[str, dict | None]:
+def get_payload_schemas(
+    runner_context: context.RunnerContext,
+) -> dict[str, dict | None]:
     """Return a payload schema for every action currently known to the runner.
 
     Called by the WM via the ``actions/getPayloadSchemas`` command to populate
@@ -494,7 +505,9 @@ def get_payload_schemas(runner_context: context.RunnerContext) -> dict[str, dict
                     schema["description"] = description
                 result[action_name] = schema
         except Exception as exception:
-            logger.debug(f"Could not extract payload schema for action '{action_name}': {exception}")
+            logger.debug(
+                f"Could not extract payload schema for action '{action_name}': {exception}"
+            )
             result[action_name] = None
 
     return result

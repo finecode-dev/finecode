@@ -17,11 +17,15 @@ from finecode.wm_server._jsonrpc import _read_message, _write_message
 
 
 class InProcClient:
-    def __init__(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+    def __init__(
+        self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
+    ) -> None:
         self._reader, self._writer = reader, writer
         self._pending: dict = {}
         self._notifs: asyncio.Queue = asyncio.Queue()
-        self.received_order: list[tuple[str, object]] = []  # ("resp", id) / ("notif", method)
+        self.received_order: list[
+            tuple[str, object]
+        ] = []  # ("resp", id) / ("notif", method)
         self._task = asyncio.create_task(self._read_loop())
 
     async def _read_loop(self) -> None:
@@ -38,7 +42,11 @@ class InProcClient:
                 elif msg.get("method"):
                     self.received_order.append(("notif", msg["method"]))
                     await self._notifs.put(msg)
-        except (asyncio.IncompleteReadError, ConnectionResetError, asyncio.CancelledError):
+        except (
+            asyncio.IncompleteReadError,
+            ConnectionResetError,
+            asyncio.CancelledError,
+        ):
             pass
 
     async def request(self, method: str, params: dict | None = None) -> object:
@@ -55,7 +63,9 @@ class InProcClient:
             raise RuntimeError(msg["error"])
         return msg.get("result")
 
-    async def next_notification(self, method: str | None = None, timeout: float = 1.0) -> dict:
+    async def next_notification(
+        self, method: str | None = None, timeout: float = 1.0
+    ) -> dict:
         async def _get() -> dict:
             while True:
                 msg = await self._notifs.get()

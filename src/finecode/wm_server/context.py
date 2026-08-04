@@ -16,8 +16,8 @@ from finecode_extension_runner.concurrency import (
 )
 
 if TYPE_CHECKING:
-    from finecode_jsonrpc._io_thread import AsyncIOThread
     from finecode.wm_server.wal import WalWriter
+    from finecode_jsonrpc._io_thread import AsyncIOThread
 
 
 def resolve_er_startup_concurrency(env_value: str | None = None) -> ConcurrencyDecision:
@@ -64,9 +64,7 @@ def resolve_er_startup_concurrency(env_value: str | None = None) -> ConcurrencyD
 
 def _make_er_startup_semaphore() -> asyncio.Semaphore:
     decision = resolve_er_startup_concurrency()
-    logger.info(
-        f"ER startup concurrency cap: {decision.value} ({decision.source})"
-    )
+    logger.info(f"ER startup concurrency cap: {decision.value} ({decision.source})")
     return asyncio.Semaphore(decision.value)
 
 
@@ -186,9 +184,7 @@ class WorkspaceContext:
     # Format: {service_name: {nested param path as a dict}}
     # Keyed by ServiceDeclaration.name (the addressing alias), not interface.
     # Set from config at construction; immutable thereafter.
-    service_config_overrides: dict[str, dict[str, Any]] = field(
-        default_factory=dict
-    )
+    service_config_overrides: dict[str, dict[str, Any]] = field(default_factory=dict)
 
     # --- Caches (lazily populated; must be invalidated on project changes) -------
 

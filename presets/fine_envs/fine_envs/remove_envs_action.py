@@ -7,9 +7,8 @@ if sys.version_info >= (3, 12):
 else:
     from typing_extensions import override
 
-from finecode_extension_api import code_action, textstyler
-
 from fine_envs.create_envs_action import EnvInfo
+from finecode_extension_api import code_action, textstyler
 
 
 @dataclasses.dataclass

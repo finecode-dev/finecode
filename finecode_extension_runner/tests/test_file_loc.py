@@ -1,7 +1,6 @@
 import pathlib
 
 import pytest
-
 from finecode_extension_runner.services import _file_loc
 
 

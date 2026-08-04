@@ -1,9 +1,8 @@
 from __future__ import annotations
 
 import pytest
-from loguru import logger
-
 from finecode_extension_runner import er_server, logs
+from loguru import logger
 
 
 @pytest.fixture(autouse=True)

@@ -29,8 +29,10 @@ def test_starts_and_exits_on_sigint(workspace_dir, tmp_path):
     proc = start_server(
         [
             "start-mcp",
-            "--workdir", str(workspace_dir),
-            "--wm-port-file", str(port_file),
+            "--workdir",
+            str(workspace_dir),
+            "--wm-port-file",
+            str(port_file),
         ],
         cwd=workspace_dir,
     )
@@ -53,9 +55,7 @@ def test_starts_and_exits_on_sigint(workspace_dir, tmp_path):
         # Kills MCP + WM child if they are still running (e.g. test failed before SIGINT)
         kill_group(proc)
 
-    assert proc.returncode == 0, (
-        f"Expected clean exit (0), got {proc.returncode}"
-    )
+    assert proc.returncode == 0, f"Expected clean exit (0), got {proc.returncode}"
 
 
 def test_child_wm_dies_on_mcp_sigkill(workspace_dir, tmp_path):
@@ -71,8 +71,10 @@ def test_child_wm_dies_on_mcp_sigkill(workspace_dir, tmp_path):
     proc = start_server(
         [
             "start-mcp",
-            "--workdir", str(workspace_dir),
-            "--wm-port-file", str(port_file),
+            "--workdir",
+            str(workspace_dir),
+            "--wm-port-file",
+            str(port_file),
         ],
         cwd=workspace_dir,
     )

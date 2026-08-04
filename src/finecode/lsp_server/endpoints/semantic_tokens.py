@@ -4,15 +4,15 @@ import difflib
 import uuid
 from typing import TYPE_CHECKING, Any
 
+from fine_semantic_tokens.text_document_semantic_tokens_action import (
+    SEMANTIC_TOKEN_MODIFIERS,
+    SEMANTIC_TOKEN_TYPES,
+    SemanticToken,
+)
 from loguru import logger
 
 from finecode.lsp_server import global_state, pygls_types_utils
 from finecode.lsp_server.endpoints import _cancellation
-from fine_semantic_tokens.text_document_semantic_tokens_action import (
-    SEMANTIC_TOKEN_TYPES,
-    SEMANTIC_TOKEN_MODIFIERS,
-    SemanticToken,
-)
 
 if TYPE_CHECKING:
     from finecode.lsp_server.lsp_server import LspServer
@@ -83,13 +83,15 @@ def encode_semantic_tokens(tokens: list[SemanticToken]) -> list[int]:
         # When on a new line, deltaStartChar is absolute from line start.
         # When on the same line, it is relative to the previous token.
         delta_char = token.char if delta_line > 0 else token.char - prev_char
-        result.extend([
-            delta_line,
-            delta_char,
-            token.length,
-            token.token_type_index,
-            token.token_modifiers_bitmask,
-        ])
+        result.extend(
+            [
+                delta_line,
+                delta_char,
+                token.length,
+                token.token_type_index,
+                token.token_modifiers_bitmask,
+            ]
+        )
         prev_line = token.line
         prev_char = token.char
 
@@ -128,7 +130,9 @@ async def _run_full_or_range(
             options={"trigger": "system", "devEnv": "ide"},
         )
     except Exception as error:
-        _cancellation.reraise_if_cancelled(error, context=f"Error getting semantic tokens for {uri}")
+        _cancellation.reraise_if_cancelled(
+            error, context=f"Error getting semantic tokens for {uri}"
+        )
         logger.error(f"Error getting semantic tokens for {uri}: {error}")
         return None
 

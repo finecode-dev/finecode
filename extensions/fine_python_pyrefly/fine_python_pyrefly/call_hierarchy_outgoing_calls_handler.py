@@ -2,13 +2,10 @@ from __future__ import annotations
 
 import dataclasses
 
-from finecode_extension_api import code_action
 from fine_code_hierarchy.call_hierarchy_outgoing_calls_action import (
     CallHierarchyOutgoingCallsPayload,
     CallHierarchyOutgoingCallsResult,
 )
-from finecode_extension_api.interfaces import ifileeditor, ilogger, iprojectinfoprovider
-from finecode_extension_api.resource_uri import resource_uri_to_path
 from fine_python_lang.call_hierarchy_outgoing_calls_python_action import (
     CallHierarchyOutgoingCallsPythonAction,
 )
@@ -17,6 +14,9 @@ from fine_python_pyrefly._lsp_hierarchy_utils import (
     outgoing_call_from_lsp,
 )
 from fine_python_pyrefly.pyrefly_lsp_service import PyreflyLspService
+from finecode_extension_api import code_action
+from finecode_extension_api.interfaces import ifileeditor, ilogger, iprojectinfoprovider
+from finecode_extension_api.resource_uri import resource_uri_to_path
 
 
 @dataclasses.dataclass
@@ -58,7 +58,9 @@ class PyreflyCallHierarchyOutgoingCallsHandler(
         root_uri = self.project_info_provider.get_current_project_dir_path().as_uri()
         await self.lsp_service.ensure_started(root_uri)
 
-        async with self.file_editor.session(author=self.FILE_OPERATION_AUTHOR) as session:
+        async with self.file_editor.session(
+            author=self.FILE_OPERATION_AUTHOR
+        ) as session:
             async with session.read_file(file_path) as file_info:
                 content = file_info.content
 

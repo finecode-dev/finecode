@@ -10,17 +10,19 @@ import ordered_set
 from loguru import logger
 
 from finecode import telemetry, user_messages
-from finecode.wm_server import find_project, context, domain, domain_helpers, wal
-from finecode.wm_server.runner import runner_manager
-from finecode.wm_server.runner import runner_client
+from finecode.wm_server import context, domain, domain_helpers, find_project, wal
+from finecode.wm_server.config import interpreter_matrix
+from finecode.wm_server.runner import runner_client, runner_manager
+from finecode.wm_server.runner.runner_client import RunResultFormat  # reexport
 from finecode.wm_server.runner.runner_manager import RunnerFailedToStart
 from finecode.wm_server.services import runner_start_service
-from finecode.wm_server.runner.runner_client import RunResultFormat  # reexport
-
-from finecode.wm_server.config import interpreter_matrix
 
 from . import matrix_runner, run_concurrency
-from .exceptions import ActionCancelledError, ActionRunFailed, StartingEnvironmentsFailed
+from .exceptions import (
+    ActionCancelledError,
+    ActionRunFailed,
+    StartingEnvironmentsFailed,
+)
 
 
 def _format_runner_failure_message(
@@ -113,7 +115,9 @@ async def run_action_in_runner(
         )
     except runner_client.BaseRunnerRequestException as exception:
         if isinstance(exception, runner_client.ActionRunCancelled):
-            logger.debug(f"Action {action_name} cancelled in {runner.readable_id}: {exception.message}")
+            logger.debug(
+                f"Action {action_name} cancelled in {runner.readable_id}: {exception.message}"
+            )
             raise ActionCancelledError(exception.message) from exception
 
         logger.error(f"Error on running action {action_name}: {exception.message}")
@@ -196,14 +200,18 @@ async def run_action_and_notify(
         options["resultFormats"] = result_formats
     if caller_kwargs is not None:
         options["callerKwargs"] = caller_kwargs
-    logger.trace(f"run_action_and_notify: sending to runner {runner.readable_id}, action={action_name}, token={partial_result_token}, options_keys={list(options.keys())}")
+    logger.trace(
+        f"run_action_and_notify: sending to runner {runner.readable_id}, action={action_name}, token={partial_result_token}, options_keys={list(options.keys())}"
+    )
     response = await run_action_in_runner(
         action_name=action_name,
         params=params,
         runner=runner,
         options=options,
     )
-    logger.trace(f"run_action_and_notify: got response from runner {runner.readable_id}, return_code={response.return_code}, result_formats={list(response.result_by_format.keys())}")
+    logger.trace(
+        f"run_action_and_notify: got response from runner {runner.readable_id}, return_code={response.return_code}, result_formats={list(response.result_by_format.keys())}"
+    )
     return response
 
 
@@ -213,16 +221,28 @@ async def get_partial_results(
     runner: runner_client.ExtensionRunnerInfo,
 ) -> None:
     try:
-        logger.trace(f"get_partial_results: listening on runner {runner.readable_id} for token={partial_result_token}")
+        logger.trace(
+            f"get_partial_results: listening on runner {runner.readable_id} for token={partial_result_token}"
+        )
         with runner.partial_results.iterator() as iterator:
             async for partial_result in iterator:
-                logger.trace(f"get_partial_results: received partial from {runner.readable_id}, result_token={partial_result.token}, our_token={partial_result_token}, match={partial_result.token == partial_result_token}")
+                logger.trace(
+                    f"get_partial_results: received partial from {runner.readable_id}, result_token={partial_result.token}, our_token={partial_result_token}, match={partial_result.token == partial_result_token}"
+                )
                 if partial_result.token == partial_result_token:
-                    value_preview = str(partial_result.value)[:200] if partial_result.value else "None"
-                    logger.trace(f"get_partial_results: matched! value preview: {value_preview}")
+                    value_preview = (
+                        str(partial_result.value)[:200]
+                        if partial_result.value
+                        else "None"
+                    )
+                    logger.trace(
+                        f"get_partial_results: matched! value preview: {value_preview}"
+                    )
                     result_list.append(partial_result.value)
     except asyncio.CancelledError:
-        logger.trace(f"get_partial_results: cancelled for runner {runner.readable_id} token={partial_result_token}")
+        logger.trace(
+            f"get_partial_results: cancelled for runner {runner.readable_id} token={partial_result_token}"
+        )
 
 
 async def get_progress(
@@ -231,14 +251,20 @@ async def get_progress(
     runner: runner_client.ExtensionRunnerInfo,
 ) -> None:
     try:
-        logger.trace(f"get_progress: listening on runner {runner.readable_id} for token={progress_token}")
+        logger.trace(
+            f"get_progress: listening on runner {runner.readable_id} for token={progress_token}"
+        )
         with runner.progress_notifications.iterator() as iterator:
             async for notification in iterator:
                 if notification.token == progress_token:
-                    logger.trace(f"get_progress: matched type={notification.value.get('type')} from {runner.readable_id}")
+                    logger.trace(
+                        f"get_progress: matched type={notification.value.get('type')} from {runner.readable_id}"
+                    )
                     result_list.append(notification.value)
     except asyncio.CancelledError:
-        logger.trace(f"get_progress: cancelled for runner {runner.readable_id} token={progress_token}")
+        logger.trace(
+            f"get_progress: cancelled for runner {runner.readable_id} token={progress_token}"
+        )
 
 
 class RunWithPartialResultsContext:
@@ -280,7 +306,9 @@ async def run_with_partial_results(
     logger.trace(f"Run {action_name} in project {project_dir_path}")
     wal_run_id = wal.new_wal_run_id()
 
-    with telemetry.action_run_span(action_name, project_dir_path, wal_run_id, dev_env=dev_env.value):
+    with telemetry.action_run_span(
+        action_name, project_dir_path, wal_run_id, dev_env=dev_env.value
+    ):
         result: AsyncList[domain.PartialResultRawValue] = AsyncList()
         progress_result: AsyncList[domain.ProgressRawValue] | None = None
         if progress_token is not None:
@@ -370,13 +398,16 @@ async def run_with_partial_results(
                         prog_task: asyncio.Task | None,
                     ) -> typing.Callable[[asyncio.Future], None]:
                         def _cleanup(_fut: asyncio.Future) -> None:
-                            logger.trace(f"run_action_and_notify: ending result_list, cancelling partial_results_task for token={partial_result_token}")
+                            logger.trace(
+                                f"run_action_and_notify: ending result_list, cancelling partial_results_task for token={partial_result_token}"
+                            )
                             result.end()
                             partial_task.cancel("Got final result")
                             if progress_result is not None:
                                 progress_result.end()
                             if prog_task is not None:
                                 prog_task.cancel("Got final result")
+
                         return _cleanup
 
                     action_task.add_done_callback(
@@ -456,13 +487,16 @@ async def ensure_action_metadata(
 
     if not action.handlers:
         from finecode.wm_server.errors import ActionNotResolvableError
+
         raise ActionNotResolvableError(
             f"Action '{action.source}' has no handlers configured — "
             f"its metadata cannot be resolved from any ER."
         )
 
     resolution_env = action.handlers[0].env
-    existing_runners = ws_context.ws_projects_extension_runners.get(project.dir_path, {})
+    existing_runners = ws_context.ws_projects_extension_runners.get(
+        project.dir_path, {}
+    )
     try:
         await _start_runner_or_update_config(
             env_name=resolution_env,
@@ -473,6 +507,7 @@ async def ensure_action_metadata(
         )
     except StartingEnvironmentsFailed as exc:
         from finecode.wm_server.errors import ActionNotResolvableError
+
         raise ActionNotResolvableError(
             f"Action '{action.source}' metadata could not be resolved: "
             f"failed to start env '{resolution_env}' in project '{project.name}'. "
@@ -482,6 +517,7 @@ async def ensure_action_metadata(
 
     if action.canonical_source is None:
         from finecode.wm_server.errors import ActionNotResolvableError
+
         raise ActionNotResolvableError(
             f"Action '{action.source}' metadata was not resolved after starting "
             f"env '{resolution_env}' in project '{project.name}'. "
@@ -616,15 +652,16 @@ async def _start_runner_or_update_config(
                 await runner.repair_complete_event.wait()
             runner = existing_runners.get(env_name, runner)
 
-        runner_is_running = (
-            runner.status == runner_client.RunnerStatus.RUNNING
-        )
+        runner_is_running = runner.status == runner_client.RunnerStatus.RUNNING
         start_runner = not runner_is_running
 
     if start_runner:
         try:
             await runner_manager.start_runner(
-                project_def=project, env_name=env_name, handlers_to_initialize=handlers_to_initialize, ws_context=ws_context
+                project_def=project,
+                env_name=env_name,
+                handlers_to_initialize=handlers_to_initialize,
+                ws_context=ws_context,
             )
         except runner_manager.RunnerFailedToStart as exception:
             failed_runner = ws_context.ws_projects_extension_runners.get(
@@ -647,7 +684,9 @@ async def _start_runner_or_update_config(
             )
 
             try:
-                await runner_start_service.repair_no_venv_env(project, env_name, ws_context)
+                await runner_start_service.repair_no_venv_env(
+                    project, env_name, ws_context
+                )
             except PrepareEnvsFailed as prep_exc:
                 raise StartingEnvironmentsFailed(
                     f"Failed to start runner for env '{env_name}' in project '{project.name}': {prep_exc.message}"
@@ -695,7 +734,9 @@ async def run_actions_in_running_project(
                             run_trigger=run_trigger,
                             dev_env=dev_env,
                             result_formats=result_formats,
-                            progress_token=progress_token_by_action.get(action_name) if progress_token_by_action else None,
+                            progress_token=progress_token_by_action.get(action_name)
+                            if progress_token_by_action
+                            else None,
                             orchestration_depth=orchestration_depth + 1,
                         )
                     )
@@ -730,7 +771,9 @@ async def run_actions_in_running_project(
                     run_trigger=run_trigger,
                     dev_env=dev_env,
                     result_formats=result_formats,
-                    progress_token=progress_token_by_action.get(action_name) if progress_token_by_action else None,
+                    progress_token=progress_token_by_action.get(action_name)
+                    if progress_token_by_action
+                    else None,
                     orchestration_depth=orchestration_depth + 1,
                 )
             except ActionRunFailed as exception:
@@ -790,6 +833,7 @@ async def run_actions_in_projects(
     ]
     if unresolved:
         from finecode.wm_server.services import runner_start_service
+
         unresolved_names = ", ".join(p.name for p in unresolved)
         logger.debug(
             f"Lazily starting runners for {len(unresolved)} unresolved project(s): {unresolved_names}"
@@ -802,7 +846,9 @@ async def run_actions_in_projects(
 
     semaphore = make_project_semaphore(len(actions_by_project))
 
-    async def _run_project_bounded(project, actions_to_run, project_payload, progress_tokens):
+    async def _run_project_bounded(
+        project, actions_to_run, project_payload, progress_tokens
+    ):
         async with semaphore:
             return await run_actions_in_running_project(
                 actions=actions_to_run,
@@ -831,7 +877,9 @@ async def run_actions_in_projects(
                         project,
                         actions_to_run,
                         project_payload,
-                        progress_token_by_project.get(project_dir_path) if progress_token_by_project else None,
+                        progress_token_by_project.get(project_dir_path)
+                        if progress_token_by_project
+                        else None,
                     )
                 )
                 project_handler_tasks.append(project_task)
@@ -920,7 +968,16 @@ async def run_action(
     else:
         _result_formats = result_formats
 
-    with telemetry.action_metrics(action_name, project_def.dir_path.name), telemetry.action_run_span(action_name, project_def.dir_path, wal_run_id, dev_env=dev_env.value, orchestration_depth=orchestration_depth):
+    with (
+        telemetry.action_metrics(action_name, project_def.dir_path.name),
+        telemetry.action_run_span(
+            action_name,
+            project_def.dir_path,
+            wal_run_id,
+            dev_env=dev_env.value,
+            orchestration_depth=orchestration_depth,
+        ),
+    ):
         if not isinstance(project_def, domain.ResolvedProject):
             wal.emit_run_event(
                 ws_context.wal_writer,
@@ -933,11 +990,9 @@ async def run_action(
                 payload=wal.RunRejectedPayload(reason="project_not_resolved"),
             )
             telemetry.add_span_event("run.rejected", {"reason": "project_not_resolved"})
-            runner = (
-                ws_context.ws_projects_extension_runners
-                .get(project_def.dir_path, {})
-                .get("dev_workspace")
-            )
+            runner = ws_context.ws_projects_extension_runners.get(
+                project_def.dir_path, {}
+            ).get("dev_workspace")
             if runner is not None:
                 runner_detail = f"runner status={runner.status.name}"
                 if runner.log_file_path is not None:
@@ -1045,8 +1100,7 @@ async def _execute_action(
     caller_kwargs: dict | None,
     allow_no_handlers: bool,
 ) -> RunActionResponse:
-    """Run *action*'s handlers (all in one env, or fanned out across envs).
-    """
+    """Run *action*'s handlers (all in one env, or fanned out across envs)."""
     all_handlers_envs = ordered_set.OrderedSet(
         [handler.env for handler in action.handlers]
     )
@@ -1054,9 +1108,7 @@ async def _execute_action(
 
     if not all_handlers_envs:
         if allow_no_handlers:
-            logger.info(
-                f"Action '{action_name}' has no handlers (expected by caller)"
-            )
+            logger.info(f"Action '{action_name}' has no handlers (expected by caller)")
         else:
             logger.warning(
                 f"Action '{action_name}' has no handlers — check your configuration"
@@ -1173,7 +1225,11 @@ async def _run_action_in_env_runner(
             "resultFormats": result_formats,
             "walRunId": wal_run_id,
             "traceparent": traceparent,
-            "meta": {"trigger": run_trigger.value, "devEnv": dev_env.value, "orchestrationDepth": orchestration_depth},
+            "meta": {
+                "trigger": run_trigger.value,
+                "devEnv": dev_env.value,
+                "orchestrationDepth": orchestration_depth,
+            },
         }
         if progress_token is not None:
             options["progressToken"] = progress_token
@@ -1192,7 +1248,9 @@ async def _run_action_in_env_runner(
                 env_name=env_name,
             ),
         )
-        telemetry.add_span_event("run.dispatched", {"env_name": env_name, "runner_id": runner.readable_id})
+        telemetry.add_span_event(
+            "run.dispatched", {"env_name": env_name, "runner_id": runner.readable_id}
+        )
         with telemetry.er_dispatch_span(env_name, runner.readable_id, action_name):
             response = await runner_client.run_action(
                 runner=runner,
@@ -1248,12 +1306,13 @@ async def _run_action_in_env_runner(
             dev_env=dev_env.value,
             payload=wal.RunFailedPayload(error=error_message, env_name=env_name),
         )
-        telemetry.add_span_event("run.failed", {"env_name": env_name, "error": error_message})
+        telemetry.add_span_event(
+            "run.failed", {"env_name": env_name, "error": error_message}
+        )
         await user_messages.error(error_message)
         raise ActionRunFailed(error_message) from error
 
     return response
-
 
 
 def _build_sequential_segments(
@@ -1360,7 +1419,9 @@ async def _run_handlers_in_env_runner(
             env_name=env_name,
         ),
     )
-    telemetry.add_span_event("run.dispatched", {"env_name": env_name, "runner_id": runner.readable_id})
+    telemetry.add_span_event(
+        "run.dispatched", {"env_name": env_name, "runner_id": runner.readable_id}
+    )
 
     try:
         response = await runner_client.run_handlers(
@@ -1410,7 +1471,9 @@ async def _run_handlers_in_env_runner(
             dev_env=dev_env.value,
             payload=wal.RunFailedPayload(error=error_message, env_name=env_name),
         )
-        telemetry.add_span_event("run.failed", {"env_name": env_name, "error": error_message})
+        telemetry.add_span_event(
+            "run.failed", {"env_name": env_name, "error": error_message}
+        )
         await user_messages.error(error_message)
         raise ActionRunFailed(error_message) from error
 
@@ -1540,7 +1603,9 @@ async def _run_multi_env_concurrent(
     except ExceptionGroup as eg:
         if all(isinstance(exc, ActionCancelledError) for exc in eg.exceptions):
             message = "; ".join(exc.message for exc in eg.exceptions)
-            logger.debug(f"Concurrent multi-env run of {action_name} cancelled in {list(groups)}: {message}")
+            logger.debug(
+                f"Concurrent multi-env run of {action_name} cancelled in {list(groups)}: {message}"
+            )
             raise ActionCancelledError(message) from eg
 
         errors = [
@@ -1557,11 +1622,16 @@ async def _run_multi_env_concurrent(
         merged_raw = raw_results[0]
     else:
         # Pick any running runner to call merge_results
-        runners_by_env = ws_context.ws_projects_extension_runners.get(project_def.dir_path, {})
+        runners_by_env = ws_context.ws_projects_extension_runners.get(
+            project_def.dir_path, {}
+        )
         merge_runner: runner_client.ExtensionRunnerInfo | None = None
         for env_name in groups:
             candidate = runners_by_env.get(env_name)
-            if candidate is not None and candidate.status == runner_client.RunnerStatus.RUNNING:
+            if (
+                candidate is not None
+                and candidate.status == runner_client.RunnerStatus.RUNNING
+            ):
                 merge_runner = candidate
                 break
 

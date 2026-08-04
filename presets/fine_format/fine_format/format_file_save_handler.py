@@ -2,10 +2,11 @@
 import dataclasses
 
 from finecode_extension_api import code_action
-from fine_format import format_file_action
-from fine_format.format_file_action import FormatFileAction
 from finecode_extension_api.interfaces import ifileeditor, ilogger
 from finecode_extension_api.resource_uri import resource_uri_to_path
+
+from fine_format import format_file_action
+from fine_format.format_file_action import FormatFileAction
 
 
 @dataclasses.dataclass

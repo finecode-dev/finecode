@@ -1,7 +1,6 @@
 [tool.finecode]
 presets = [{ source = "fine_code_hierarchy" }]
 
-
 [tool.finecode.action.text_document_prepare_call_hierarchy_python]
 source = "fine_python_lang.TextDocumentPrepareCallHierarchyPythonAction"
 
@@ -10,7 +9,6 @@ name = "pyrefly"
 source = "fine_python_pyrefly.PyreflyPrepareCallHierarchyHandler"
 env = "dev_no_runtime"
 dependencies = ["fine_python_pyrefly[jsonrpc]~=0.2.0a0"]
-
 
 [tool.finecode.action.call_hierarchy_incoming_calls_python]
 source = "fine_python_lang.CallHierarchyIncomingCallsPythonAction"
@@ -21,7 +19,6 @@ source = "fine_python_pyrefly.PyreflyCallHierarchyIncomingCallsHandler"
 env = "dev_no_runtime"
 dependencies = ["fine_python_pyrefly[jsonrpc]~=0.2.0a0"]
 
-
 [tool.finecode.action.call_hierarchy_outgoing_calls_python]
 source = "fine_python_lang.CallHierarchyOutgoingCallsPythonAction"
 
@@ -30,7 +27,6 @@ name = "pyrefly"
 source = "fine_python_pyrefly.PyreflyCallHierarchyOutgoingCallsHandler"
 env = "dev_no_runtime"
 dependencies = ["fine_python_pyrefly[jsonrpc]~=0.2.0a0"]
-
 
 [tool.finecode.action.text_document_prepare_type_hierarchy_python]
 source = "fine_python_lang.TextDocumentPrepareTypeHierarchyPythonAction"
@@ -41,7 +37,6 @@ source = "fine_python_pyrefly.PyreflyPrepareTypeHierarchyHandler"
 env = "dev_no_runtime"
 dependencies = ["fine_python_pyrefly[jsonrpc]~=0.2.0a0"]
 
-
 [tool.finecode.action.type_hierarchy_supertypes_python]
 source = "fine_python_lang.TypeHierarchySupertypesPythonAction"
 
@@ -50,7 +45,6 @@ name = "pyrefly"
 source = "fine_python_pyrefly.PyreflyTypeHierarchySupertypesHandler"
 env = "dev_no_runtime"
 dependencies = ["fine_python_pyrefly[jsonrpc]~=0.2.0a0"]
-
 
 [tool.finecode.action.type_hierarchy_subtypes_python]
 source = "fine_python_lang.TypeHierarchySubtypesPythonAction"
@@ -61,10 +55,8 @@ source = "fine_python_pyrefly.PyreflyTypeHierarchySubtypesHandler"
 env = "dev_no_runtime"
 dependencies = ["fine_python_pyrefly[jsonrpc]~=0.2.0a0"]
 
-
 [tool.finecode.extension.fine_python_pyrefly]
 dependencies_override = ["pyrefly==1.1.*"]
-
 
 [[tool.finecode.service]]
 interface = "finecode_extension_api.interfaces.ijsonrpcclient.IJsonRpcClient"

@@ -1,5 +1,5 @@
-"""Workspace Manager LSP server.
-"""
+"""Workspace Manager LSP server."""
+
 from __future__ import annotations
 
 import asyncio
@@ -11,22 +11,22 @@ from lsprotocol import converters as lsp_converters
 from lsprotocol import types
 
 import finecode_jsonrpc as finecode_jsonrpc_module
-from finecode._converter import converter as _converter
 from finecode import telemetry
-from finecode.wm_server import wm_lifecycle
-from finecode.wm_client import ApiClient
+from finecode._converter import converter as _converter
 from finecode.lsp_server import global_state
 from finecode.lsp_server.endpoints import action_tree as action_tree_endpoints
+from finecode.lsp_server.endpoints import call_hierarchy as call_hierarchy_endpoints
 from finecode.lsp_server.endpoints import code_actions as code_actions_endpoints
 from finecode.lsp_server.endpoints import code_lens as code_lens_endpoints
 from finecode.lsp_server.endpoints import diagnostics as diagnostics_endpoints
 from finecode.lsp_server.endpoints import document_sync as document_sync_endpoints
 from finecode.lsp_server.endpoints import formatting as formatting_endpoints
 from finecode.lsp_server.endpoints import inlay_hints as inlay_hints_endpoints
-from finecode.lsp_server.endpoints import semantic_tokens as semantic_tokens_endpoints
-from finecode.lsp_server.endpoints import call_hierarchy as call_hierarchy_endpoints
 from finecode.lsp_server.endpoints import navigation as navigation_endpoints
+from finecode.lsp_server.endpoints import semantic_tokens as semantic_tokens_endpoints
 from finecode.lsp_server.endpoints import type_hierarchy as type_hierarchy_endpoints
+from finecode.wm_client import ApiClient
+from finecode.wm_server import wm_lifecycle
 
 _lsp_converter = lsp_converters.get_converter()
 
@@ -71,9 +71,7 @@ class LspServer:
             {"jsonrpc": "2.0", "method": method, "params": params}
         )
 
-    async def send_request_to_client(
-        self, method: str, params: dict
-    ) -> typing.Any:
+    async def send_request_to_client(self, method: str, params: dict) -> typing.Any:
         """Send a request to the IDE client and return the result."""
         return await self._session.send_request(method, params)
 
@@ -138,9 +136,7 @@ class LspServer:
                 self._tcp_server.close()
 
         self._tcp_server = await asyncio.start_server(_handle_connection, host, port)
-        addrs = ", ".join(
-            str(sock.getsockname()) for sock in self._tcp_server.sockets
-        )
+        addrs = ", ".join(str(sock.getsockname()) for sock in self._tcp_server.sockets)
         logger.info(f"Serving on {addrs}")
         try:
             async with self._tcp_server:
@@ -161,9 +157,11 @@ def create_lsp_server() -> LspServer:
 
     def _wrap(method: str, handler):
         """Wrap a handler that takes (server, params) for use with the session."""
+
         async def _wrapped(params: dict | None) -> typing.Any:
             with telemetry.lsp_request_span(method):
                 return await handler(server, params)
+
         return _wrapped
 
     # LSP lifecycle
@@ -175,50 +173,100 @@ def create_lsp_server() -> LspServer:
     # Workspace
     session.on_notification(
         "workspace/didChangeWorkspaceFolders",
-        _wrap("workspace/didChangeWorkspaceFolders", _workspace_did_change_workspace_folders),
+        _wrap(
+            "workspace/didChangeWorkspaceFolders",
+            _workspace_did_change_workspace_folders,
+        ),
     )
-    session.on_request("workspace/executeCommand", _wrap("workspace/executeCommand", _on_execute_command))
-    session.on_request("server/shutdown", _wrap("server/shutdown", _lsp_server_shutdown))
+    session.on_request(
+        "workspace/executeCommand",
+        _wrap("workspace/executeCommand", _on_execute_command),
+    )
+    session.on_request(
+        "server/shutdown", _wrap("server/shutdown", _lsp_server_shutdown)
+    )
 
     # Text document sync
-    session.on_notification("textDocument/didOpen", _wrap("textDocument/didOpen", _document_did_open))
-    session.on_notification("textDocument/didClose", _wrap("textDocument/didClose", _document_did_close))
-    session.on_notification("textDocument/didSave", _wrap("textDocument/didSave", _document_did_save))
-    session.on_notification("textDocument/didChange", _wrap("textDocument/didChange", _document_did_change))
+    session.on_notification(
+        "textDocument/didOpen", _wrap("textDocument/didOpen", _document_did_open)
+    )
+    session.on_notification(
+        "textDocument/didClose", _wrap("textDocument/didClose", _document_did_close)
+    )
+    session.on_notification(
+        "textDocument/didSave", _wrap("textDocument/didSave", _document_did_save)
+    )
+    session.on_notification(
+        "textDocument/didChange", _wrap("textDocument/didChange", _document_did_change)
+    )
 
     # Formatting
-    session.on_request("textDocument/formatting", _wrap("textDocument/formatting", _on_formatting))
-    session.on_request("textDocument/rangeFormatting", _wrap("textDocument/rangeFormatting", _on_range_formatting))
-    session.on_request("textDocument/rangesFormatting", _wrap("textDocument/rangesFormatting", _on_ranges_formatting))
+    session.on_request(
+        "textDocument/formatting", _wrap("textDocument/formatting", _on_formatting)
+    )
+    session.on_request(
+        "textDocument/rangeFormatting",
+        _wrap("textDocument/rangeFormatting", _on_range_formatting),
+    )
+    session.on_request(
+        "textDocument/rangesFormatting",
+        _wrap("textDocument/rangesFormatting", _on_ranges_formatting),
+    )
 
     # Code actions
-    session.on_request("textDocument/codeAction", _wrap("textDocument/codeAction", _on_code_action))
-    session.on_request("codeAction/resolve", _wrap("codeAction/resolve", _on_code_action_resolve))
+    session.on_request(
+        "textDocument/codeAction", _wrap("textDocument/codeAction", _on_code_action)
+    )
+    session.on_request(
+        "codeAction/resolve", _wrap("codeAction/resolve", _on_code_action_resolve)
+    )
 
     # Code lens
-    session.on_request("textDocument/codeLens", _wrap("textDocument/codeLens", _on_code_lens))
-    session.on_request("codeLens/resolve", _wrap("codeLens/resolve", _on_code_lens_resolve))
+    session.on_request(
+        "textDocument/codeLens", _wrap("textDocument/codeLens", _on_code_lens)
+    )
+    session.on_request(
+        "codeLens/resolve", _wrap("codeLens/resolve", _on_code_lens_resolve)
+    )
 
     # Diagnostics
-    session.on_request("textDocument/diagnostic", _wrap("textDocument/diagnostic", _on_document_diagnostic))
-    session.on_request("workspace/diagnostic", _wrap("workspace/diagnostic", _on_workspace_diagnostic))
+    session.on_request(
+        "textDocument/diagnostic",
+        _wrap("textDocument/diagnostic", _on_document_diagnostic),
+    )
+    session.on_request(
+        "workspace/diagnostic", _wrap("workspace/diagnostic", _on_workspace_diagnostic)
+    )
 
     # Inlay hints
-    session.on_request("textDocument/inlayHint", _wrap("textDocument/inlayHint", _on_inlay_hint))
-    session.on_request("inlayHint/resolve", _wrap("inlayHint/resolve", _on_inlay_hint_resolve))
+    session.on_request(
+        "textDocument/inlayHint", _wrap("textDocument/inlayHint", _on_inlay_hint)
+    )
+    session.on_request(
+        "inlayHint/resolve", _wrap("inlayHint/resolve", _on_inlay_hint_resolve)
+    )
 
     # Semantic tokens
     session.on_request(
         "textDocument/semanticTokens/full",
-        _wrap("textDocument/semanticTokens/full", semantic_tokens_endpoints.document_semantic_tokens_full),
+        _wrap(
+            "textDocument/semanticTokens/full",
+            semantic_tokens_endpoints.document_semantic_tokens_full,
+        ),
     )
     session.on_request(
         "textDocument/semanticTokens/range",
-        _wrap("textDocument/semanticTokens/range", semantic_tokens_endpoints.document_semantic_tokens_range),
+        _wrap(
+            "textDocument/semanticTokens/range",
+            semantic_tokens_endpoints.document_semantic_tokens_range,
+        ),
     )
     session.on_request(
         "textDocument/semanticTokens/full/delta",
-        _wrap("textDocument/semanticTokens/full/delta", semantic_tokens_endpoints.document_semantic_tokens_full_delta),
+        _wrap(
+            "textDocument/semanticTokens/full/delta",
+            semantic_tokens_endpoints.document_semantic_tokens_full_delta,
+        ),
     )
 
     # Navigation (hover, definition, references, …)
@@ -226,38 +274,72 @@ def create_lsp_server() -> LspServer:
         "textDocument/hover",
         _wrap("textDocument/hover", navigation_endpoints.hover),
     )
-    session.on_request("textDocument/definition", _wrap("textDocument/definition", navigation_endpoints.definition))
-    session.on_request("textDocument/references", _wrap("textDocument/references", navigation_endpoints.references))
-    session.on_request("textDocument/typeDefinition", _wrap("textDocument/typeDefinition", navigation_endpoints.type_definition))
-    session.on_request("textDocument/implementation", _wrap("textDocument/implementation", navigation_endpoints.implementation))
-    session.on_request("textDocument/documentHighlight", _wrap("textDocument/documentHighlight", navigation_endpoints.document_highlight))
+    session.on_request(
+        "textDocument/definition",
+        _wrap("textDocument/definition", navigation_endpoints.definition),
+    )
+    session.on_request(
+        "textDocument/references",
+        _wrap("textDocument/references", navigation_endpoints.references),
+    )
+    session.on_request(
+        "textDocument/typeDefinition",
+        _wrap("textDocument/typeDefinition", navigation_endpoints.type_definition),
+    )
+    session.on_request(
+        "textDocument/implementation",
+        _wrap("textDocument/implementation", navigation_endpoints.implementation),
+    )
+    session.on_request(
+        "textDocument/documentHighlight",
+        _wrap(
+            "textDocument/documentHighlight", navigation_endpoints.document_highlight
+        ),
+    )
 
     # Call hierarchy
     session.on_request(
         "textDocument/prepareCallHierarchy",
-        _wrap("textDocument/prepareCallHierarchy", call_hierarchy_endpoints.prepare_call_hierarchy),
+        _wrap(
+            "textDocument/prepareCallHierarchy",
+            call_hierarchy_endpoints.prepare_call_hierarchy,
+        ),
     )
     session.on_request(
         "callHierarchy/incomingCalls",
-        _wrap("callHierarchy/incomingCalls", call_hierarchy_endpoints.call_hierarchy_incoming_calls),
+        _wrap(
+            "callHierarchy/incomingCalls",
+            call_hierarchy_endpoints.call_hierarchy_incoming_calls,
+        ),
     )
     session.on_request(
         "callHierarchy/outgoingCalls",
-        _wrap("callHierarchy/outgoingCalls", call_hierarchy_endpoints.call_hierarchy_outgoing_calls),
+        _wrap(
+            "callHierarchy/outgoingCalls",
+            call_hierarchy_endpoints.call_hierarchy_outgoing_calls,
+        ),
     )
 
     # Type hierarchy
     session.on_request(
         "textDocument/prepareTypeHierarchy",
-        _wrap("textDocument/prepareTypeHierarchy", type_hierarchy_endpoints.prepare_type_hierarchy),
+        _wrap(
+            "textDocument/prepareTypeHierarchy",
+            type_hierarchy_endpoints.prepare_type_hierarchy,
+        ),
     )
     session.on_request(
         "typeHierarchy/supertypes",
-        _wrap("typeHierarchy/supertypes", type_hierarchy_endpoints.type_hierarchy_supertypes),
+        _wrap(
+            "typeHierarchy/supertypes",
+            type_hierarchy_endpoints.type_hierarchy_supertypes,
+        ),
     )
     session.on_request(
         "typeHierarchy/subtypes",
-        _wrap("typeHierarchy/subtypes", type_hierarchy_endpoints.type_hierarchy_subtypes),
+        _wrap(
+            "typeHierarchy/subtypes", type_hierarchy_endpoints.type_hierarchy_subtypes
+        ),
     )
 
     return server
@@ -272,9 +354,7 @@ async def _on_initialize(server: LspServer, params: dict | None) -> dict:
     logger.info("initialize")
     if params:
         wf = params.get("workspaceFolders") or []
-        server._workspace_folders = [
-            {"uri": f["uri"], "name": f["name"]} for f in wf
-        ]
+        server._workspace_folders = [{"uri": f["uri"], "name": f["name"]} for f in wf]
     return {
         "capabilities": {
             "textDocumentSync": {
@@ -339,7 +419,9 @@ def _report_wm_start_failure(server: LspServer) -> None:
     else:
         if global_state.lsp_log_file_path is not None:
             expected_wm_log = (
-                global_state.lsp_log_file_path.parent.parent / "wm_server" / "wm_server.log"
+                global_state.lsp_log_file_path.parent.parent
+                / "wm_server"
+                / "wm_server.log"
             )
             server.log_message(
                 f"FineCode WM Server log: {expected_wm_log}",
@@ -356,9 +438,7 @@ async def _on_initialized(server: LspServer, _params: dict | None) -> None:
 
     workdir = Path.cwd()
     if server._workspace_folders:
-        workdir = Path(
-            server._workspace_folders[0]["uri"].replace("file://", "")
-        )
+        workdir = Path(server._workspace_folders[0]["uri"].replace("file://", ""))
 
     wm_lifecycle.ensure_running(workdir, log_level=global_state.wm_log_level)
     try:
@@ -410,6 +490,7 @@ async def _on_initialized(server: LspServer, _params: dict | None) -> None:
 
     # Forward progress notifications to the IDE progress reporter.
     from fine_inspect_code import inspect_code_action
+
     from finecode.lsp_server.endpoints.diagnostics import map_lint_message_to_diagnostic
 
     def _map_lint_to_document_diagnostic_partial(
@@ -461,7 +542,9 @@ async def _on_initialized(server: LspServer, _params: dict | None) -> None:
             if json_result is None:
                 logger.error(f"No json result in partial result for token {token}")
                 return
-            lint_result = _converter.structure(json_result, inspect_code_action.InspectCodeRunResult)
+            lint_result = _converter.structure(
+                json_result, inspect_code_action.InspectCodeRunResult
+            )
 
             if endpoint_type == "document_diagnostic":
                 partial_dict = _map_lint_to_document_diagnostic_partial(lint_result)
@@ -506,9 +589,7 @@ async def _on_initialized(server: LspServer, _params: dict | None) -> None:
 
         server.send_progress(token, _lsp_converter.unstructure(lsp_value))
 
-    global_state.wm_client.on_notification(
-        "actions/progress", on_progress_notification
-    )
+    global_state.wm_client.on_notification("actions/progress", on_progress_notification)
 
     # Add workspace directories via the WM server.
     # server_initialized is set only on success — handlers must not call WM before it fires.
@@ -520,7 +601,9 @@ async def _on_initialized(server: LspServer, _params: dict | None) -> None:
         global_state.server_initialized.set()
         logger.trace("Workspace directories added, end of initialized handler")
     except ExceptionGroup as error:
-        logger.error(f"Workspace initialization failed, FineCode features are disabled: {error}")
+        logger.error(
+            f"Workspace initialization failed, FineCode features are disabled: {error}"
+        )
 
 
 async def _on_shutdown(_server: LspServer, _params: dict | None) -> None:
@@ -682,9 +765,7 @@ async def _on_code_lens(server: LspServer, params: dict | None) -> list | None:
     return _lsp_converter.unstructure(result) if result else result
 
 
-async def _on_code_lens_resolve(
-    server: LspServer, params: dict | None
-) -> dict | None:
+async def _on_code_lens_resolve(server: LspServer, params: dict | None) -> dict | None:
     typed = _lsp_converter.structure(params, types.CodeLens)
     result = await code_lens_endpoints.code_lens_resolve(server, typed)
     return _lsp_converter.unstructure(result) if result else result
@@ -722,9 +803,7 @@ async def _on_inlay_hint(server: LspServer, params: dict | None) -> list | None:
     return _lsp_converter.unstructure(result) if result else result
 
 
-async def _on_inlay_hint_resolve(
-    server: LspServer, params: dict | None
-) -> dict | None:
+async def _on_inlay_hint_resolve(server: LspServer, params: dict | None) -> dict | None:
     typed = _lsp_converter.structure(params, types.InlayHint)
     result = await inlay_hints_endpoints.inlay_hint_resolve(server, typed)
     return _lsp_converter.unstructure(result) if result else result

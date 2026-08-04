@@ -1,6 +1,9 @@
 import dataclasses
 
 from finecode_extension_api import code_action
+from finecode_extension_api.interfaces import ilogger, iprojectactionrunner
+from finecode_extension_api.resource_uri import ResourceUri
+
 from fine_format import format_files_action
 from fine_format.format_file_action import (
     FormatFileAction,
@@ -8,8 +11,6 @@ from fine_format.format_file_action import (
     FormatFileRunPayload,
     FormatFileRunResult,
 )
-from finecode_extension_api.interfaces import ilogger, iprojectactionrunner
-from finecode_extension_api.resource_uri import ResourceUri
 
 
 @dataclasses.dataclass

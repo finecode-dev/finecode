@@ -2,13 +2,6 @@ from __future__ import annotations
 
 import dataclasses
 
-from finecode_extension_api import code_action
-from finecode_extension_api.interfaces import ilogger, iprojectactionrunner
-from fine_src_artifacts.build_artifact_action import (
-    BuildArtifactAction,
-    BuildArtifactRunPayload,
-)
-
 from fine_release.release_package_action import (
     ReleasePackageAction,
     ReleasePackageRunContext,
@@ -16,6 +9,12 @@ from fine_release.release_package_action import (
     ReleasePackageRunResult,
     result_from_state,
 )
+from fine_src_artifacts.build_artifact_action import (
+    BuildArtifactAction,
+    BuildArtifactRunPayload,
+)
+from finecode_extension_api import code_action
+from finecode_extension_api.interfaces import ilogger, iprojectactionrunner
 
 
 @dataclasses.dataclass
@@ -53,16 +52,16 @@ class BuildReleaseArtifactHandler(
 
         try:
             build_result = await self.action_runner.run_action(
-                action_type=iprojectactionrunner.ActionRef.from_type(BuildArtifactAction),
+                action_type=iprojectactionrunner.ActionRef.from_type(
+                    BuildArtifactAction
+                ),
                 payload=BuildArtifactRunPayload(
                     src_artifact_def_path=payload.src_artifact_def_path
                 ),
                 meta=run_context.meta,
             )
         except Exception as exception:
-            state.error = (
-                f"Build failed for {payload.package_name} {payload.version}: {exception}"
-            )
+            state.error = f"Build failed for {payload.package_name} {payload.version}: {exception}"
             self.logger.error(state.error)
             return result_from_state(payload, state)
 

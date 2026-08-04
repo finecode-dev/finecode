@@ -15,6 +15,7 @@ from fine_semantic_tokens.text_document_semantic_tokens_action import (
     SEMANTIC_TOKEN_MODIFIERS,
     SEMANTIC_TOKEN_TYPES,
 )
+from finecode_extension_api import service
 from finecode_extension_api.contrib.lsp_service import LspService
 from finecode_extension_api.interfaces import (
     iextensionrunnerinfoprovider,
@@ -23,15 +24,16 @@ from finecode_extension_api.interfaces import (
     ilspclient,
 )
 
-from finecode_extension_api import service
-
 _PYREFLY_CLIENT_CAPABILITIES: dict[str, Any] = {
     "textDocument": {
         "synchronization": {
             "dynamicRegistration": False,
             "didSave": True,
         },
-        "hover": {"dynamicRegistration": False, "contentFormat": ["markdown", "plaintext"]},
+        "hover": {
+            "dynamicRegistration": False,
+            "contentFormat": ["markdown", "plaintext"],
+        },
         "publishDiagnostics": {"relatedInformation": True},
         "semanticTokens": {
             "dynamicRegistration": False,
@@ -151,9 +153,7 @@ class PyreflyLspService(service.DisposableService):
         timeout: float = 30.0,
     ) -> list[Diagnostic]:
         raw_diagnostics = await self._lsp_service.check_file(file_path, timeout)
-        return map_lsp_diagnostics(
-            raw_diagnostics, default_source="pyrefly"
-        )
+        return map_lsp_diagnostics(raw_diagnostics, default_source="pyrefly")
 
     @property
     def server_capabilities(self) -> dict[str, Any]:
@@ -190,7 +190,11 @@ class PyreflyLspService(service.DisposableService):
         timeout: float = 30.0,
     ) -> list[dict[str, Any]] | None:
         return await self._lsp_service.get_references(
-            file_path, content, position, include_declaration=include_declaration, timeout=timeout
+            file_path,
+            content,
+            position,
+            include_declaration=include_declaration,
+            timeout=timeout,
         )
 
     async def get_type_definition(

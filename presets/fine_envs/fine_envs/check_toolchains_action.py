@@ -7,9 +7,9 @@ if sys.version_info >= (3, 12):
 else:
     from typing_extensions import override
 
+from fine_envs.sync_toolchains_action import EnvToolchainAxis
 from finecode_extension_api import code_action, textstyler
 from finecode_extension_api.resource_uri import ResourceUri
-from fine_envs.sync_toolchains_action import EnvToolchainAxis
 
 
 @dataclasses.dataclass
@@ -93,7 +93,9 @@ class CheckToolchainsAction(
     precommit and CI. Fails with a non-zero return code on drift.
     """
 
-    DESCRIPTION = "Check whether each env's toolchain axis matches what the source derives."
+    DESCRIPTION = (
+        "Check whether each env's toolchain axis matches what the source derives."
+    )
     PAYLOAD_TYPE = CheckToolchainsRunPayload
     RUN_CONTEXT_TYPE = CheckToolchainsRunContext
     RESULT_TYPE = CheckToolchainsRunResult

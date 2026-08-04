@@ -4,7 +4,6 @@ import pathlib
 
 import finecode_jsonrpc
 import pytest
-
 from finecode_extension_runner import context, domain, er_server, services
 from finecode_extension_runner.di.registry import Registry
 
@@ -50,6 +49,7 @@ async def test_action_cancelled_exception_is_raised_as_jsonrpc_handler_error(
     to the WM, instead of a generic {"error": ...} payload that would be
     logged and surfaced to the IDE user as a failure.
     """
+
     async def _raise_cancelled(*args, **kwargs):
         raise services.ActionCancelledException("cancelled by pyrefly")
 
@@ -72,6 +72,7 @@ async def test_action_failed_exception_still_returns_error_dict(
     the cancellation-specific handling added for ActionCancelledException
     must not change behavior for real failures.
     """
+
     async def _raise_failed(*args, **kwargs):
         raise services.ActionFailedException("boom")
 

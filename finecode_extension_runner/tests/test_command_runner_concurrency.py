@@ -7,6 +7,7 @@ actually exits (via a background task watching `proc.wait()`), not when
 scoped to `run()`'s body alone would release almost instantly and fail to
 bound concurrent-alive-subprocess count.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -92,9 +93,7 @@ async def test_config_without_explicit_limit_falls_back_to_machine_default(
 
 
 def test_resolve_prefers_configured_value(monkeypatch) -> None:
-    monkeypatch.setattr(
-        command_runner_module, "default_layered_concurrency", lambda: 3
-    )
+    monkeypatch.setattr(command_runner_module, "default_layered_concurrency", lambda: 3)
 
     decision = resolve_command_runner_concurrency(4)
     assert decision.value == 4
@@ -102,18 +101,14 @@ def test_resolve_prefers_configured_value(monkeypatch) -> None:
 
 
 def test_resolve_clamps_non_positive_value_to_one(monkeypatch) -> None:
-    monkeypatch.setattr(
-        command_runner_module, "default_layered_concurrency", lambda: 3
-    )
+    monkeypatch.setattr(command_runner_module, "default_layered_concurrency", lambda: 3)
 
     assert resolve_command_runner_concurrency(0).value == 1
     assert resolve_command_runner_concurrency(-2).value == 1
 
 
 def test_resolve_falls_back_to_default_when_unset(monkeypatch) -> None:
-    monkeypatch.setattr(
-        command_runner_module, "default_layered_concurrency", lambda: 3
-    )
+    monkeypatch.setattr(command_runner_module, "default_layered_concurrency", lambda: 3)
 
     decision = resolve_command_runner_concurrency(None)
     assert decision.value == 3

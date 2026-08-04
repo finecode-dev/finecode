@@ -472,7 +472,9 @@ class RunnerConfig:
 
     def __init__(self, debug: bool, logging: ErLoggingConfig | None = None) -> None:
         self.debug = debug
-        self.logging: ErLoggingConfig = logging if logging is not None else ErLoggingConfig()
+        self.logging: ErLoggingConfig = (
+            logging if logging is not None else ErLoggingConfig()
+        )
 
     def __str__(self) -> str:
         return f"RunnerConfig(debug={self.debug})"

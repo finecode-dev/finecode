@@ -47,8 +47,9 @@ from __future__ import annotations
 import dataclasses
 
 from finecode_extension_api import code_action, textstyler
-from fine_test.test_id import TestId
 from finecode_extension_api.resource_uri import ResourceUri
+
+from fine_test.test_id import TestId
 
 
 @dataclasses.dataclass
@@ -73,22 +74,22 @@ class TestItem:
     line: int | None = None
     """0-based line number."""
 
-    children: list['TestItem'] = dataclasses.field(default_factory=list)
+    children: list["TestItem"] = dataclasses.field(default_factory=list)
     """Child nodes (e.g. test functions inside a class, classes inside a file)."""
 
 
 @dataclasses.dataclass
 class ListTestsRunPayload(code_action.RunActionPayload):
-    """Payload for listing tests.
-    """
+    """Payload for listing tests."""
+
     file_paths: list[ResourceUri] = dataclasses.field(default_factory=list)
     """Files or directories to search for tests. Empty list means the handler falls back to its own handler-config default (e.g. `default_test_dirs` on the pytest handler) if such exists."""
 
 
 @dataclasses.dataclass
 class ListTestsRunResult(code_action.RunActionResult):
-    """Result of listing tests.
-    """
+    """Result of listing tests."""
+
     tests: list[TestItem]
 
     def update(self, other: code_action.RunActionResult) -> None:
@@ -152,7 +153,9 @@ class ListTestsAction(
 ):
     """Discover tests and return their hierarchical structure without running them."""
 
-    DESCRIPTION = "Discover tests and return their hierarchical structure without running them."
+    DESCRIPTION = (
+        "Discover tests and return their hierarchical structure without running them."
+    )
     PAYLOAD_TYPE = ListTestsRunPayload
     RUN_CONTEXT_TYPE = ListTestsRunContext
     RESULT_TYPE = ListTestsRunResult

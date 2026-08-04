@@ -4,7 +4,6 @@ import dataclasses
 from pathlib import Path
 
 import pytest
-
 from fine_git.create_git_tag_action import (
     CreateGitTagAction,
     CreateGitTagRunPayload,
@@ -69,7 +68,9 @@ async def test_existing_tag_is_a_no_op_and_never_invokes_git_tag() -> None:
 
     assert result.created is False
     assert result.error is None
-    assert all("tag" not in cmd or "rev-parse" in cmd for cmd in command_runner.commands)
+    assert all(
+        "tag" not in cmd or "rev-parse" in cmd for cmd in command_runner.commands
+    )
     assert not any(
         "-a" in cmd and "rev-parse" not in cmd for cmd in command_runner.commands
     )
@@ -84,7 +85,9 @@ async def test_git_tag_failure_is_reported_without_raising() -> None:
             FakeCommandResult(exit_code=128, stderr="unable to create tag object"),
         ]
     )
-    payload = CreateGitTagRunPayload(tag="pkg-a@1.0.0", message="Release pkg-a 1.0.0 (pypi)")
+    payload = CreateGitTagRunPayload(
+        tag="pkg-a@1.0.0", message="Release pkg-a 1.0.0 (pypi)"
+    )
 
     result = await run_handler(
         GitCreateGitTagHandler,

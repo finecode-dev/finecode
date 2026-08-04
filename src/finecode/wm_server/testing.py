@@ -14,10 +14,9 @@ import typing
 from pathlib import Path
 
 import finecode_jsonrpc
-from finecode_jsonrpc.client import ResponseError
-
 from finecode.wm_server import context, domain
-from finecode.wm_server.runner import runner_client, _internal_client_types
+from finecode.wm_server.runner import _internal_client_types, runner_client
+from finecode_jsonrpc.client import ResponseError
 
 
 class FakeErClient:
@@ -86,9 +85,13 @@ def make_cancelled_error(message: str = "cancelled") -> finecode_jsonrpc.ErrorOn
     )
 
 
-def make_error_on_request(code: int, message: str = "boom") -> finecode_jsonrpc.ErrorOnRequest:
+def make_error_on_request(
+    code: int, message: str = "boom"
+) -> finecode_jsonrpc.ErrorOnRequest:
     """Build a transport-level exception carrying an arbitrary (non-cancellation) code."""
-    return finecode_jsonrpc.ErrorOnRequest(error=ResponseError(code=code, message=message))
+    return finecode_jsonrpc.ErrorOnRequest(
+        error=ResponseError(code=code, message=message)
+    )
 
 
 def make_run_action_response(

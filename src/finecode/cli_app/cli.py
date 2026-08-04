@@ -13,7 +13,6 @@ from loguru import logger
 from finecode import logger_utils, user_messages
 from finecode.wm_server.errors import WmError
 
-
 FINECODE_CONFIG_ENV_PREFIX = "FINECODE_CONFIG_"
 FINECODE_SERVICE_CONFIG_ENV_PREFIX = "FINECODE_SERVICE_CONFIG_"
 _VALID_DEV_ENVS = {"ide", "cli", "ai", "ci", "git_hook"}
@@ -31,6 +30,7 @@ def detect_dev_env() -> str:
     if os.environ.get("CI"):
         return "ci"
     return "cli"
+
 
 # TODO: unify possibilities of CLI options and env vars
 def parse_handler_config_from_env() -> dict[str, dict[str, dict[str, str]]]:
@@ -275,7 +275,9 @@ def deserialize_action_payload(raw_payload: dict[str, str]) -> dict[str, typing.
     return deserialized_payload
 
 
-@click.command(context_settings=dict(ignore_unknown_options=True, allow_extra_args=True))
+@click.command(
+    context_settings=dict(ignore_unknown_options=True, allow_extra_args=True)
+)
 @click.pass_context
 def run(ctx) -> None:
     from finecode.cli_app.commands import run_cmd
@@ -351,9 +353,12 @@ def run(ctx) -> None:
     verbose = verbose or dev_env == "ci"
 
     from finecode.wm_server.config import read_configs
+
     wm_telemetry = read_configs.read_wm_telemetry_config(workdir_path)
     logger_utils.init_logger(
-        log_name="cli", log_level=log_level, stdout=True,
+        log_name="cli",
+        log_level=log_level,
+        stdout=True,
         workspace_path=workdir_path,
         otlp_endpoint=wm_telemetry.otlp_endpoint,
     )
@@ -414,7 +419,9 @@ def run(ctx) -> None:
 
     # Parse CLI config overrides and merge with env overrides
     if config_args:
-        cli_config_overrides = parse_handler_config_from_cli(config_args, actions_to_run)
+        cli_config_overrides = parse_handler_config_from_cli(
+            config_args, actions_to_run
+        )
         if cli_config_overrides:
             logger.trace(f"Handler config overrides from CLI: {cli_config_overrides}")
             handler_config_overrides = merge_config_overrides(
@@ -456,7 +463,12 @@ def run(ctx) -> None:
             logger.info(f"Done (exit code {result.return_code}).")
 
         if save_results:
-            results_dir = pathlib.Path(sys.executable).parent.parent / "cache" / "finecode" / "results"
+            results_dir = (
+                pathlib.Path(sys.executable).parent.parent
+                / "cache"
+                / "finecode"
+                / "results"
+            )
             results_dir.mkdir(parents=True, exist_ok=True)
             for project_path, result_by_action in result.result_by_project.items():
                 for action_name, action_result in result_by_action.items():
@@ -480,17 +492,73 @@ def run(ctx) -> None:
 
 
 @click.command()
-@click.option("--log-level", "log_level", default="INFO", type=click.Choice(["TRACE", "DEBUG", "INFO", "WARNING", "ERROR"], case_sensitive=False), show_default=True)
+@click.option(
+    "--log-level",
+    "log_level",
+    default="INFO",
+    type=click.Choice(
+        ["TRACE", "DEBUG", "INFO", "WARNING", "ERROR"], case_sensitive=False
+    ),
+    show_default=True,
+)
 @click.option("--debug", "debug", is_flag=True, default=False)
 @click.option("--recreate", "recreate", is_flag=True, default=False)
 @click.option("--shared-server", "shared_server", is_flag=True, default=False)
-@click.option("--dev-env", "dev_env", default=None, type=click.Choice(sorted(_VALID_DEV_ENVS)), help="Override detected dev environment")
-@click.option("--env", "env_names", multiple=True, metavar="ENV_NAME", help="Limit to specific environment(s). Can be specified multiple times.")
-@click.option("--interpreter", "interpreter_names", multiple=True, metavar="IMPL@VERSION", help="Limit to specific interpreter(s) of matrix environments. Repeatable; version-only form means cpython.")
-@click.option("--project", "project_names", multiple=True, metavar="PROJECT_NAME", help="Limit to specific project(s). Can be specified multiple times.")
-@click.option("--verbose", "-v", "verbose", is_flag=True, default=False, help="Stream WM/ER diagnostic logs to stderr over the protocol. Auto-enabled in CI.")
-@click.option("--max-concurrent-projects", "max_concurrent_projects", default=None, type=int, help="Cap on concurrent projects during prepare-envs. Defaults to a machine-based value (see docs/guides/preparing-environments.md).")
-def prepare_envs(log_level: str, debug: bool, recreate: bool, shared_server: bool, dev_env: str | None, env_names: tuple[str, ...], interpreter_names: tuple[str, ...], project_names: tuple[str, ...], verbose: bool, max_concurrent_projects: int | None) -> None:
+@click.option(
+    "--dev-env",
+    "dev_env",
+    default=None,
+    type=click.Choice(sorted(_VALID_DEV_ENVS)),
+    help="Override detected dev environment",
+)
+@click.option(
+    "--env",
+    "env_names",
+    multiple=True,
+    metavar="ENV_NAME",
+    help="Limit to specific environment(s). Can be specified multiple times.",
+)
+@click.option(
+    "--interpreter",
+    "interpreter_names",
+    multiple=True,
+    metavar="IMPL@VERSION",
+    help="Limit to specific interpreter(s) of matrix environments. Repeatable; version-only form means cpython.",
+)
+@click.option(
+    "--project",
+    "project_names",
+    multiple=True,
+    metavar="PROJECT_NAME",
+    help="Limit to specific project(s). Can be specified multiple times.",
+)
+@click.option(
+    "--verbose",
+    "-v",
+    "verbose",
+    is_flag=True,
+    default=False,
+    help="Stream WM/ER diagnostic logs to stderr over the protocol. Auto-enabled in CI.",
+)
+@click.option(
+    "--max-concurrent-projects",
+    "max_concurrent_projects",
+    default=None,
+    type=int,
+    help="Cap on concurrent projects during prepare-envs. Defaults to a machine-based value (see docs/guides/preparing-environments.md).",
+)
+def prepare_envs(
+    log_level: str,
+    debug: bool,
+    recreate: bool,
+    shared_server: bool,
+    dev_env: str | None,
+    env_names: tuple[str, ...],
+    interpreter_names: tuple[str, ...],
+    project_names: tuple[str, ...],
+    verbose: bool,
+    max_concurrent_projects: int | None,
+) -> None:
     """
     `prepare-envs` should be called from workspace/project root directory.
     """
@@ -509,10 +577,13 @@ def prepare_envs(log_level: str, debug: bool, recreate: bool, shared_server: boo
             logger.info(e)
 
     from finecode.wm_server.config import read_configs
+
     _cwd = pathlib.Path(os.getcwd())
     wm_telemetry = read_configs.read_wm_telemetry_config(_cwd)
     logger_utils.init_logger(
-        log_name="cli", log_level=log_level, stdout=True,
+        log_name="cli",
+        log_level=log_level,
+        stdout=True,
         workspace_path=_cwd,
         otlp_endpoint=wm_telemetry.otlp_endpoint,
     )
@@ -526,7 +597,9 @@ def prepare_envs(log_level: str, debug: bool, recreate: bool, shared_server: boo
                 own_server=not shared_server,
                 log_level=log_level,
                 env_names=list(env_names) if env_names else None,
-                interpreter_names=list(interpreter_names) if interpreter_names else None,
+                interpreter_names=list(interpreter_names)
+                if interpreter_names
+                else None,
                 project_names=list(project_names) if project_names else None,
                 dev_env=dev_env or detect_dev_env(),
                 verbose=verbose,
@@ -543,11 +616,21 @@ def prepare_envs(log_level: str, debug: bool, recreate: bool, shared_server: boo
 
 
 @click.command()
-@click.option("--recreate", is_flag=True, default=False,
-              help="Delete and recreate dev_workspace if it already exists.")
-@click.option("--log-level", "log_level", default="INFO",
-              type=click.Choice(["TRACE", "DEBUG", "INFO", "WARNING", "ERROR"],
-              case_sensitive=False), show_default=True)
+@click.option(
+    "--recreate",
+    is_flag=True,
+    default=False,
+    help="Delete and recreate dev_workspace if it already exists.",
+)
+@click.option(
+    "--log-level",
+    "log_level",
+    default="INFO",
+    type=click.Choice(
+        ["TRACE", "DEBUG", "INFO", "WARNING", "ERROR"], case_sensitive=False
+    ),
+    show_default=True,
+)
 def bootstrap(recreate: bool, log_level: str) -> None:
     """Create the dev_workspace environment for the workspace root.
 
@@ -558,12 +641,14 @@ def bootstrap(recreate: bool, log_level: str) -> None:
     import asyncio
 
     from finecode.cli_app.commands import bootstrap_cmd
-
     from finecode.wm_server.config import read_configs
+
     _cwd = pathlib.Path(os.getcwd())
     wm_telemetry = read_configs.read_wm_telemetry_config(_cwd)
     logger_utils.init_logger(
-        log_name="cli", log_level=log_level, stdout=True,
+        log_name="cli",
+        log_level=log_level,
+        stdout=True,
         workspace_path=_cwd,
         otlp_endpoint=wm_telemetry.otlp_endpoint,
     )
@@ -587,12 +672,32 @@ def bootstrap(recreate: bool, log_level: str) -> None:
 
 
 @click.command()
-@click.option("--log-level", "log_level", default="INFO", type=click.Choice(["TRACE", "DEBUG", "INFO", "WARNING", "ERROR"], case_sensitive=False), show_default=True)
+@click.option(
+    "--log-level",
+    "log_level",
+    default="INFO",
+    type=click.Choice(
+        ["TRACE", "DEBUG", "INFO", "WARNING", "ERROR"], case_sensitive=False
+    ),
+    show_default=True,
+)
 @click.option("--debug", "debug", is_flag=True, default=False)
 @click.option("--project", "project", type=str)
 @click.option("--shared-server", "shared_server", is_flag=True, default=False)
-@click.option("--dev-env", "dev_env", default=None, type=click.Choice(sorted(_VALID_DEV_ENVS)), help="Override detected dev environment")
-def dump_config(log_level: str, debug: bool, project: str | None, shared_server: bool, dev_env: str | None):
+@click.option(
+    "--dev-env",
+    "dev_env",
+    default=None,
+    type=click.Choice(sorted(_VALID_DEV_ENVS)),
+    help="Override detected dev environment",
+)
+def dump_config(
+    log_level: str,
+    debug: bool,
+    project: str | None,
+    shared_server: bool,
+    dev_env: str | None,
+):
     from finecode.cli_app.commands import dump_config_cmd
 
     if debug is True:
@@ -609,10 +714,13 @@ def dump_config(log_level: str, debug: bool, project: str | None, shared_server:
         return
 
     from finecode.wm_server.config import read_configs
+
     _cwd = pathlib.Path(os.getcwd())
     wm_telemetry = read_configs.read_wm_telemetry_config(_cwd)
     logger_utils.init_logger(
-        log_name="cli", log_level=log_level, stdout=True,
+        log_name="cli",
+        log_level=log_level,
+        stdout=True,
         workspace_path=_cwd,
         otlp_endpoint=wm_telemetry.otlp_endpoint,
     )

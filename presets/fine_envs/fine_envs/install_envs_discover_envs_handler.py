@@ -1,8 +1,8 @@
 import dataclasses
 
-from finecode_extension_api import code_action
 from fine_envs import install_envs_action
 from fine_envs.create_envs_action import EnvInfo
+from finecode_extension_api import code_action
 from finecode_extension_api.interfaces import (
     iextensionrunnerinfoprovider,
     ilogger,
@@ -93,7 +93,9 @@ class InstallEnvsDiscoverEnvsHandler(
                         self.runner_info_provider.get_venv_dir_path_of_env(env_name)
                     ),
                     project_def_path=path_to_resource_uri(project_def_path),
-                    dependencies_override=_compute_env_overrides(project_raw_config, env_name),
+                    dependencies_override=_compute_env_overrides(
+                        project_raw_config, env_name
+                    ),
                 )
                 for env_name in deps_groups
             ]

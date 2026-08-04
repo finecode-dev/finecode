@@ -3,8 +3,9 @@ from __future__ import annotations
 import dataclasses
 import enum
 
-from fine_lint.lint_fix import Range, TextEdit
 from finecode_extension_api.resource_uri import ResourceUri
+
+from fine_lint.lint_fix import Range, TextEdit
 
 
 class CodeActionTriggerKind(enum.IntEnum):

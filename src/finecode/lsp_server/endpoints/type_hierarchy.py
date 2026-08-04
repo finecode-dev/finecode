@@ -79,12 +79,17 @@ async def prepare_type_hierarchy(
             project=project_dir,
             params={
                 "uri": uri,
-                "position": {"line": position["line"], "character": position["character"]},
+                "position": {
+                    "line": position["line"],
+                    "character": position["character"],
+                },
             },
             options={"trigger": "user", "devEnv": "ide"},
         )
     except Exception as error:
-        _cancellation.reraise_if_cancelled(error, context=f"Error preparing type hierarchy for {uri}")
+        _cancellation.reraise_if_cancelled(
+            error, context=f"Error preparing type hierarchy for {uri}"
+        )
         logger.error(f"Error preparing type hierarchy for {uri}: {error}")
         return None
 
@@ -124,7 +129,9 @@ async def type_hierarchy_supertypes(
             options={"trigger": "user", "devEnv": "ide"},
         )
     except Exception as error:
-        _cancellation.reraise_if_cancelled(error, context=f"Error getting supertypes for {uri}")
+        _cancellation.reraise_if_cancelled(
+            error, context=f"Error getting supertypes for {uri}"
+        )
         logger.error(f"Error getting supertypes for {uri}: {error}")
         return None
 
@@ -164,7 +171,9 @@ async def type_hierarchy_subtypes(
             options={"trigger": "user", "devEnv": "ide"},
         )
     except Exception as error:
-        _cancellation.reraise_if_cancelled(error, context=f"Error getting subtypes for {uri}")
+        _cancellation.reraise_if_cancelled(
+            error, context=f"Error getting subtypes for {uri}"
+        )
         logger.error(f"Error getting subtypes for {uri}: {error}")
         return None
 

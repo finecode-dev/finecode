@@ -3,18 +3,10 @@ from __future__ import annotations
 import dataclasses
 import pathlib
 
-from finecode_extension_api import code_action
-from finecode_extension_api.interfaces import ilogger, iuser_messenger, iworkspaceactionrunner
-from finecode_extension_api.resource_uri import ResourceUri, path_to_resource_uri
 from fine_dep_graph.collect_project_dependency_info_action import (
     CollectProjectDependencyInfoAction,
     CollectProjectDependencyInfoRunPayload,
 )
-from fine_src_artifacts.get_src_artifact_version_action import (
-    GetSrcArtifactVersionAction,
-    GetSrcArtifactVersionRunPayload,
-)
-
 from fine_release.release_workspace_packages_action import (
     ReleaseWorkspacePackagesAction,
     ReleaseWorkspacePackagesRunContext,
@@ -22,6 +14,17 @@ from fine_release.release_workspace_packages_action import (
     ReleaseWorkspacePackagesRunResult,
     _Candidate,
 )
+from fine_src_artifacts.get_src_artifact_version_action import (
+    GetSrcArtifactVersionAction,
+    GetSrcArtifactVersionRunPayload,
+)
+from finecode_extension_api import code_action
+from finecode_extension_api.interfaces import (
+    ilogger,
+    iuser_messenger,
+    iworkspaceactionrunner,
+)
+from finecode_extension_api.resource_uri import ResourceUri, path_to_resource_uri
 
 
 @dataclasses.dataclass
@@ -72,12 +75,14 @@ class DiscoverReleaseCandidatesHandler(
         )
 
         candidate_paths = list(version_results.keys())
-        dependency_info_results = await self.workspace_action_runner.run_action_in_projects(
-            action_type=CollectProjectDependencyInfoAction,
-            payload=CollectProjectDependencyInfoRunPayload(),
-            meta=run_context.meta,
-            project_paths=candidate_paths,
-            concurrently=True,
+        dependency_info_results = (
+            await self.workspace_action_runner.run_action_in_projects(
+                action_type=CollectProjectDependencyInfoAction,
+                payload=CollectProjectDependencyInfoRunPayload(),
+                meta=run_context.meta,
+                project_paths=candidate_paths,
+                concurrently=True,
+            )
         )
 
         candidates_by_name: dict[str, _Candidate] = {}

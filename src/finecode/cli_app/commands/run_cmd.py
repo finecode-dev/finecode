@@ -8,11 +8,12 @@ import uuid
 
 import click
 from loguru import logger
+
+from finecode.cli_app import utils
+from finecode.cli_app.log_render import render_log_records, user_message_log_level
 from finecode.wm_client import ApiClient, ApiError
 from finecode.wm_server import wm_lifecycle
 from finecode.wm_server.runner import runner_client
-from finecode.cli_app import utils
-from finecode.cli_app.log_render import render_log_records, user_message_log_level
 
 
 class RunFailed(Exception):
@@ -128,6 +129,7 @@ async def run_actions(
                         "Warning: --config overrides are ignored in --shared-server mode. ",
                         err=True,
                     )
+
             # Tree-change notifications are irrelevant in CLI (run-and-exit) mode;
             # register a no-op before add_dir so notifications fired during project
             # loading don't hit the "unhandled notification" fallback.
@@ -172,7 +174,8 @@ async def run_actions(
             if projects_names is not None:
                 all_projects = await client.list_projects()
                 unknown = [
-                    n for n in projects_names
+                    n
+                    for n in projects_names
                     if not any(p["name"] == n for p in all_projects)
                 ]
                 if unknown:
@@ -189,8 +192,12 @@ async def run_actions(
 
             # Resolve action names to sources (ADR-0019).
             all_actions = await client.list_actions()
-            name_to_source: dict[str, str] = {a["name"]: a["source"] for a in all_actions}
-            source_to_name: dict[str, str] = {a["source"]: a["name"] for a in all_actions}
+            name_to_source: dict[str, str] = {
+                a["name"]: a["source"] for a in all_actions
+            }
+            source_to_name: dict[str, str] = {
+                a["source"]: a["name"] for a in all_actions
+            }
             unknown_actions = [a for a in actions if a not in name_to_source]
             if unknown_actions:
                 raise RunFailed(f"Unknown action(s): {unknown_actions}")
@@ -203,7 +210,9 @@ async def run_actions(
             scope_by_source = {a["source"]: a.get("scope") for a in all_actions}
             show_project_header = not (
                 action_sources
-                and all(scope_by_source.get(src) == "workspace" for src in action_sources)
+                and all(
+                    scope_by_source.get(src) == "workspace" for src in action_sources
+                )
             )
 
             params_by_project: dict[str, dict[str, typing.Any]] = {}
@@ -247,7 +256,11 @@ async def run_actions(
                 results = value.get("results", {})
                 interpreter = value.get("interpreter")
                 block = _format_project_block(
-                    project_str, results, source_to_name, show_project_header, interpreter
+                    project_str,
+                    results,
+                    source_to_name,
+                    show_project_header,
+                    interpreter,
                 )
                 # A partial with no rendered content (e.g. a project with nothing to
                 # report) would otherwise print just the project header with an empty
@@ -331,7 +344,9 @@ def _format_project_block(
         content = f"{click.style(interpreter, dim=True)}\n" + content
 
     if show_project_header:
-        block = f"{click.style(project_path_str, bold=True, underline=True)}\n" + content
+        block = (
+            f"{click.style(project_path_str, bold=True, underline=True)}\n" + content
+        )
     else:
         block = content
 
@@ -351,7 +366,9 @@ def _build_streaming_result(
     the notification arrived.  ``result_by_project`` is populated for callers
     that need the structured data (e.g. ``--save-results``).
     """
-    result_by_project: dict[pathlib.Path, dict[str, runner_client.RunActionResponse]] = {}
+    result_by_project: dict[
+        pathlib.Path, dict[str, runner_client.RunActionResponse]
+    ] = {}
     for project_path_str, actions_results in streaming_results.items():
         project_path = pathlib.Path(project_path_str)
         project_responses: dict[str, runner_client.RunActionResponse] = {}
@@ -378,7 +395,9 @@ def _resolve_mapped_payload_fields(
     Returns a dict keyed by project path string, where each value is a dict
     of field overrides for that project.
     """
-    results_dir = pathlib.Path(sys.executable).parent.parent / "cache" / "finecode" / "results"
+    results_dir = (
+        pathlib.Path(sys.executable).parent.parent / "cache" / "finecode" / "results"
+    )
     params_by_project: dict[str, dict[str, typing.Any]] = {}
 
     for field_name in map_payload_fields:

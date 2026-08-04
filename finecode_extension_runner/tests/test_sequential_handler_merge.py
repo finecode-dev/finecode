@@ -86,9 +86,7 @@ async def test_sequential_handlers_do_not_double_accumulated_values(
     already-accumulated value (e.g. a classified file listed twice, which
     downstream code silently dropped as "No coroutines scheduled").
     """
-    async with handler_test_session(
-        project_dir=tmp_path, actions=_ACTIONS
-    ) as session:
+    async with handler_test_session(project_dir=tmp_path, actions=_ACTIONS) as session:
         result = await session.run_action(_ACTION_NAME)
 
     assert isinstance(result, _MergeRunResult)

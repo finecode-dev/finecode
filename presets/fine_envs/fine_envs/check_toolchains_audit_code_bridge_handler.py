@@ -10,6 +10,11 @@ from fine_audit_code.audit_code_action import (
     AuditCodeRunResult,
     AuditCodeTarget,
 )
+from fine_envs.check_toolchains_action import (
+    CheckToolchainsAction,
+    CheckToolchainsRunPayload,
+    CheckToolchainsRunResult,
+)
 from fine_inspect_code.diagnostic_types import (
     Diagnostic,
     DiagnosticSeverity,
@@ -32,12 +37,6 @@ from finecode_extension_api.resource_uri import (
     resource_uri_to_path,
 )
 from finecode_extension_api.workspace_utils import group_files_by_project
-
-from fine_envs.check_toolchains_action import (
-    CheckToolchainsAction,
-    CheckToolchainsRunPayload,
-    CheckToolchainsRunResult,
-)
 
 _DIAGNOSTIC_SOURCE = "check_toolchains"
 _DIAGNOSTIC_CODE = "stale-toolchain-axis"

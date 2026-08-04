@@ -4,12 +4,11 @@ import asyncio
 from pathlib import Path
 
 import pytest
-from loguru import logger
-
 from finecode_extension_api import code_action
 from finecode_extension_api.interfaces import ilspclient, iprojectactionrunner
 from finecode_extension_runner._services import run_action as run_action_service
 from finecode_extension_runner.testing import handler_test_session
+from loguru import logger
 
 
 class _CancellationTestAction(code_action.Action):
@@ -70,7 +69,9 @@ class _WmBackChannelCancelledHandler(
 
 def _single_handler_action(action_name: str, handler_cls: type) -> dict[str, dict]:
     handler_source = f"{handler_cls.__module__}.{handler_cls.__qualname__}"
-    action_source = f"{_CancellationTestAction.__module__}.{_CancellationTestAction.__qualname__}"
+    action_source = (
+        f"{_CancellationTestAction.__module__}.{_CancellationTestAction.__qualname__}"
+    )
     return {
         action_name: {
             "source": action_source,
@@ -122,7 +123,9 @@ async def test_cancellation_raised_inside_a_task_group_is_still_recognized(
     than falling through to the generic failure path just because it is
     wrapped in a group.
     """
-    actions = _single_handler_action("task_group_cancel_action", _TaskGroupCancelledHandler)
+    actions = _single_handler_action(
+        "task_group_cancel_action", _TaskGroupCancelledHandler
+    )
     async with handler_test_session(project_dir=tmp_path, actions=actions) as session:
         with pytest.raises(run_action_service.ActionCancelledException):
             await session.run_action("task_group_cancel_action")
@@ -190,7 +193,9 @@ async def test_cancellation_of_a_single_handler_run_concurrently_is_recognized(
     )
     sink_id, error_logs = _collect_error_logs()
     try:
-        async with handler_test_session(project_dir=tmp_path, actions=actions) as session:
+        async with handler_test_session(
+            project_dir=tmp_path, actions=actions
+        ) as session:
             with pytest.raises(run_action_service.ActionCancelledException) as exc_info:
                 await session.run_action("concurrent_cancel_action")
     finally:
@@ -285,7 +290,9 @@ async def test_cancellation_propagates_through_a_dispatch_handlers_own_task_grou
 
     sink_id, error_logs = _collect_error_logs()
     try:
-        async with handler_test_session(project_dir=tmp_path, actions=actions) as session:
+        async with handler_test_session(
+            project_dir=tmp_path, actions=actions
+        ) as session:
             with pytest.raises(run_action_service.ActionCancelledException) as exc_info:
                 await session.run_action("dispatch_action")
     finally:

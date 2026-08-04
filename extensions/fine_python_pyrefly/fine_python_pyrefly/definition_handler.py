@@ -2,13 +2,18 @@ from __future__ import annotations
 
 import dataclasses
 
+from fine_python_lang.text_document_definition_python_action import (
+    TextDocumentDefinitionPythonAction,
+)
+from fine_python_pyrefly._lsp_location_utils import locations_from_lsp
+from fine_python_pyrefly.pyrefly_lsp_service import PyreflyLspService
+from fine_symbol_info.text_document_definition_action import (
+    DefinitionPayload,
+    DefinitionResult,
+)
 from finecode_extension_api import code_action
 from finecode_extension_api.interfaces import ifileeditor, ilogger, iprojectinfoprovider
 from finecode_extension_api.resource_uri import resource_uri_to_path
-from fine_symbol_info.text_document_definition_action import DefinitionPayload, DefinitionResult
-from fine_python_lang.text_document_definition_python_action import TextDocumentDefinitionPythonAction
-from fine_python_pyrefly.pyrefly_lsp_service import PyreflyLspService
-from fine_python_pyrefly._lsp_location_utils import locations_from_lsp
 
 
 @dataclasses.dataclass
@@ -22,7 +27,9 @@ class PyreflyDefinitionHandler(
         PyreflyDefinitionHandlerConfig,
     ]
 ):
-    FILE_OPERATION_AUTHOR = ifileeditor.FileOperationAuthor(id="PyreflyDefinitionHandler")
+    FILE_OPERATION_AUTHOR = ifileeditor.FileOperationAuthor(
+        id="PyreflyDefinitionHandler"
+    )
 
     def __init__(
         self,
@@ -48,7 +55,9 @@ class PyreflyDefinitionHandler(
         root_uri = self.project_info_provider.get_current_project_dir_path().as_uri()
         await self.lsp_service.ensure_started(root_uri)
 
-        async with self.file_editor.session(author=self.FILE_OPERATION_AUTHOR) as session:
+        async with self.file_editor.session(
+            author=self.FILE_OPERATION_AUTHOR
+        ) as session:
             async with session.read_file(file_path) as file_info:
                 content = file_info.content
 

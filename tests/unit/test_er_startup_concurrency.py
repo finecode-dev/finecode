@@ -4,7 +4,8 @@ import asyncio
 import pathlib
 from unittest import mock
 
-from finecode.wm_server import context, domain, testing as wm_testing
+from finecode.wm_server import context, domain
+from finecode.wm_server import testing as wm_testing
 from finecode.wm_server.runner import runner_manager
 
 
@@ -30,11 +31,9 @@ class _ConcurrencyTrackingClient:
         finally:
             type(self).current -= 1
 
-    def force_kill(self) -> None:
-        ...
+    def force_kill(self) -> None: ...
 
-    def feature(self, name, impl) -> None:
-        ...
+    def feature(self, name, impl) -> None: ...
 
 
 def _make_runner_and_project(

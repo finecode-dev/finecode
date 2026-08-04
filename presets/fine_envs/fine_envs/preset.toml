@@ -7,7 +7,6 @@ source = "fine_python_uv.UvCreateEnvHandler"
 env = "dev_workspace"
 dependencies = ["fine_python_uv~=0.1.0a0"]
 
-
 [tool.finecode.action.create_envs]
 source = "fine_envs.CreateEnvsAction"
 
@@ -32,7 +31,6 @@ source = "fine_envs.ListEnvsScanHandler"
 env = "dev_workspace"
 dependencies = ["fine_envs~=0.1.0a0"]
 
-
 [tool.finecode.action.remove_envs]
 source = "fine_envs.RemoveEnvsAction"
 
@@ -47,7 +45,6 @@ name = "remove_envs_remove"
 source = "fine_envs.RemoveEnvsRemoveHandler"
 env = "dev_workspace"
 dependencies = ["fine_envs~=0.1.0a0"]
-
 
 [tool.finecode.action.install_env]
 source = "fine_envs.InstallEnvAction"
@@ -64,7 +61,6 @@ source = "fine_envs.InstallEnvInstallDepsHandler"
 env = "dev_workspace"
 dependencies = ["fine_envs~=0.1.0a0"]
 
-
 [tool.finecode.action.install_envs]
 source = "fine_envs.InstallEnvsAction"
 
@@ -79,7 +75,6 @@ name = "install_envs_dispatch"
 source = "fine_envs.InstallEnvsDispatchHandler"
 env = "dev_workspace"
 dependencies = ["fine_envs~=0.1.0a0"]
-
 
 [tool.finecode.action.dump_config]
 source = "fine_envs.DumpConfigAction"
@@ -96,7 +91,6 @@ source = "fine_envs.DumpConfigSaveHandler"
 env = "dev_workspace"
 dependencies = ["fine_envs~=0.1.0a0"]
 
-
 [tool.finecode.action.sync_toolchains]
 source = "fine_envs.SyncToolchainsAction"
 
@@ -105,7 +99,6 @@ name = "sync_toolchains_dispatch"
 source = "fine_envs.SyncToolchainsDispatchHandler"
 env = "dev_workspace"
 dependencies = ["fine_envs~=0.1.0a0"]
-
 
 [tool.finecode.action.check_toolchains]
 source = "fine_envs.CheckToolchainsAction"
@@ -116,7 +109,6 @@ source = "fine_envs.CheckToolchainsHandler"
 env = "dev_workspace"
 dependencies = ["fine_envs~=0.1.0a0"]
 
-
 [tool.finecode.action.list_obtainable_toolchains]
 source = "fine_envs.ListObtainableToolchainsAction"
 
@@ -125,7 +117,6 @@ name = "list_obtainable_toolchains_dispatch"
 source = "fine_envs.ListObtainableToolchainsDispatchHandler"
 env = "dev_workspace"
 dependencies = ["fine_envs~=0.1.0a0"]
-
 
 [tool.finecode.action.install_deps_in_env]
 source = "fine_envs.InstallDepsInEnvAction"
@@ -145,4 +136,4 @@ dependencies = ["fine_python_uv~=0.1.0a0"]
 # fine_python_pip.PipInstallDepsInEnvHandler config for pip-based projects).
 [[tool.finecode.action_handler]]
 source = "fine_python_uv.UvInstallDepsInEnvHandler"
-config.editable_mode = 'compat'
+config.editable_mode = "compat"

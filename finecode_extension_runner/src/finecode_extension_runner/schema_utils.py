@@ -3,6 +3,7 @@
 Used by the ``actions/getPayloadSchemas`` ER command to report parameter schemas
 to the WM so that MCP clients can present real tool parameters.
 """
+
 from __future__ import annotations
 
 import ast
@@ -154,6 +155,10 @@ def _type_to_schema(t: type) -> dict:
     if t is pathlib.Path:
         return {"type": "string"}
     if t is ResourceUri:
-        return {"type": "string", "format": "uri", "description": "A URI identifying a resource. For local files, use a file:// URI, e.g. file:///home/user/foo.py"}
+        return {
+            "type": "string",
+            "format": "uri",
+            "description": "A URI identifying a resource. For local files, use a file:// URI, e.g. file:///home/user/foo.py",
+        }
 
     return {}

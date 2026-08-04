@@ -1,13 +1,12 @@
 import dataclasses
 
+from fine_envs import env_inventory, list_envs_action
 from finecode_extension_api import code_action
 from finecode_extension_api.interfaces import (
     iextensionrunnerinfoprovider,
     ilogger,
     iprojectinfoprovider,
 )
-
-from fine_envs import env_inventory, list_envs_action
 
 
 @dataclasses.dataclass

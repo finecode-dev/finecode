@@ -8,6 +8,8 @@ from fine_envs.check_toolchains_action import (
     CheckToolchainsRunPayload,
     CheckToolchainsRunResult,
 )
+from fine_git_hooks import precommit_action
+from finecode_extension_api import code_action
 from finecode_extension_api.interfaces import (
     ilogger,
     iworkspaceactionrunner,
@@ -17,9 +19,6 @@ from finecode_extension_api.interfaces.iworkspaceinfoprovider import (
     actionable_project_paths,
 )
 from finecode_extension_api.workspace_utils import group_files_by_project
-
-from fine_git_hooks import precommit_action
-from finecode_extension_api import code_action
 
 
 def _project_label(project_path: pathlib.Path) -> str:
@@ -79,8 +78,12 @@ class CheckToolchainsPrecommitBridgeHandler(
             self.logger.info("No staged files - skipping toolchain check.")
             return precommit_action.PrecommitRunResult()
 
-        project_paths = actionable_project_paths(await self.workspace_info_provider.get_workspace_projects())
-        files_by_project = group_files_by_project(run_context.staged_files, project_paths)
+        project_paths = actionable_project_paths(
+            await self.workspace_info_provider.get_workspace_projects()
+        )
+        files_by_project = group_files_by_project(
+            run_context.staged_files, project_paths
+        )
 
         if not files_by_project:
             self.logger.warning(

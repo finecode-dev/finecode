@@ -3,11 +3,6 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from loguru import logger
-from lsprotocol import types
-
-from finecode._converter import converter as _converter
-from finecode.lsp_server import global_state, pygls_types_utils
 from fine_lint.code_action_types import (
     CodeAction,
     DiagnosticRef,
@@ -20,6 +15,11 @@ from fine_lint.lint_fix import (
     Range,
     TextEdit,
 )
+from loguru import logger
+from lsprotocol import types
+
+from finecode._converter import converter as _converter
+from finecode.lsp_server import global_state, pygls_types_utils
 
 if TYPE_CHECKING:
     from finecode.lsp_server.lsp_server import LspServer
@@ -137,8 +137,14 @@ async def document_code_action(
         "diagnostics": [
             {
                 "range": {
-                    "start": {"line": d.range.start.line, "character": d.range.start.character},
-                    "end": {"line": d.range.end.line, "character": d.range.end.character},
+                    "start": {
+                        "line": d.range.start.line,
+                        "character": d.range.start.character,
+                    },
+                    "end": {
+                        "line": d.range.end.line,
+                        "character": d.range.end.character,
+                    },
                 },
                 "codes": d.codes,
             }
@@ -178,4 +184,3 @@ async def code_action_resolve(
 ) -> types.CodeAction:
     # v1: edits are always embedded; resolve returns unchanged action.
     return params
-

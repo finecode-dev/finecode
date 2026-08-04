@@ -8,24 +8,30 @@ import typing
 
 import cattrs
 import deepmerge
-from loguru import logger
-
-from finecode_extension_runner._converter import converter as _converter
-
-from finecode_extension_api import code_action, textstyler, service
-from finecode_extension_api.interfaces import ilspclient, iprojectactionrunner, iprojectinfoprovider
+from finecode_extension_api import code_action, service, textstyler
+from finecode_extension_api.interfaces import (
+    ilspclient,
+    iprojectactionrunner,
+    iprojectinfoprovider,
+)
 from finecode_extension_runner import (
     context,
     domain,
     er_errors,
     er_telemetry,
     er_wal,
+)
+from finecode_extension_runner import (
     partial_result_sender as partial_result_sender_module,
+)
+from finecode_extension_runner import (
     run_utils,
     schemas,
 )
+from finecode_extension_runner._converter import converter as _converter
 from finecode_extension_runner.di import resolver as di_resolver
 from finecode_extension_runner.di.registry import Registry, ServiceNotFoundError
+from loguru import logger
 
 last_run_id: int = 0
 partial_result_sender: partial_result_sender_module.PartialResultSender
@@ -190,7 +196,10 @@ def _serialize_context(run_context: code_action.RunActionContext) -> dict | None
     """Serialize run context state using cattrs, or the custom override if provided."""
     if run_context.STATE_TYPE is None:
         return None
-    if type(run_context).serialize_context is not code_action.RunActionContext.serialize_context:
+    if (
+        type(run_context).serialize_context
+        is not code_action.RunActionContext.serialize_context
+    ):
         return run_context.serialize_context()
     return _converter.unstructure(run_context.state)
 
@@ -199,7 +208,10 @@ def _restore_context(run_context: code_action.RunActionContext, data: dict) -> N
     """Restore run context state using cattrs, or the custom override if provided."""
     if run_context.STATE_TYPE is None:
         return
-    if type(run_context).restore_context is not code_action.RunActionContext.restore_context:
+    if (
+        type(run_context).restore_context
+        is not code_action.RunActionContext.restore_context
+    ):
         run_context.restore_context(data)
     else:
         run_context.state = _converter.structure(data, run_context.STATE_TYPE)
@@ -226,7 +238,9 @@ def _find_caller_kwargs_type(
         args = [a for a in typing.get_args(annotation) if a is not type(None)]
         if len(args) == 1 and issubclass(args[0], code_action.CallerRunContextKwargs):
             return args[0]
-    elif isinstance(annotation, type) and issubclass(annotation, code_action.CallerRunContextKwargs):
+    elif isinstance(annotation, type) and issubclass(
+        annotation, code_action.CallerRunContextKwargs
+    ):
         return annotation
     return None
 
@@ -297,31 +311,40 @@ class _ERProgressSender:
         cancellable: bool = False,
         total: int | None = None,
     ) -> None:
-        self._send_func(self._token, {
-            "type": "begin",
-            "title": title,
-            "message": message,
-            "percentage": percentage,
-            "cancellable": cancellable,
-            "total": total,
-        })
+        self._send_func(
+            self._token,
+            {
+                "type": "begin",
+                "title": title,
+                "message": message,
+                "percentage": percentage,
+                "cancellable": cancellable,
+                "total": total,
+            },
+        )
 
     async def report(
         self,
         message: str | None = None,
         percentage: int | None = None,
     ) -> None:
-        self._send_func(self._token, {
-            "type": "report",
-            "message": message,
-            "percentage": percentage,
-        })
+        self._send_func(
+            self._token,
+            {
+                "type": "report",
+                "message": message,
+                "percentage": percentage,
+            },
+        )
 
     async def end(self, message: str | None = None) -> None:
-        self._send_func(self._token, {
-            "type": "end",
-            "message": message,
-        })
+        self._send_func(
+            self._token,
+            {
+                "type": "end",
+                "message": message,
+            },
+        )
 
 
 class AsyncPlaceholderContext:
@@ -387,7 +410,9 @@ async def run_action(
     )
 
     run_context: code_action.RunActionContext | AsyncPlaceholderContext
-    run_context_info = code_action.RunContextInfoProvider(is_concurrent_execution=execute_handlers_concurrently)
+    run_context_info = code_action.RunContextInfoProvider(
+        is_concurrent_execution=execute_handlers_concurrently
+    )
     tracking_sender = _PartialResultAccumulator(
         token=partial_result_token,
         send_func=(
@@ -445,7 +470,9 @@ async def run_action(
         run_context_info.update(initial_result)
 
     # Restore context state from a prior ER segment (multi-env sequential runs).
-    if previous_context is not None and isinstance(run_context, code_action.RunActionContext):
+    if previous_context is not None and isinstance(
+        run_context, code_action.RunActionContext
+    ):
         _restore_context(run_context, previous_context)
 
     # to be able to catch source of exceptions in user-accessible code more precisely,
@@ -460,7 +487,9 @@ async def run_action(
 
     try:
         send_partial_results = partial_result_token is not None
-        logger.trace(f"R{run_id} | send_partial_results={send_partial_results}, partial_result_token={partial_result_token}, payload_type={type(payload).__name__}, is_iterable={isinstance(payload, collections.abc.AsyncIterable)}")
+        logger.trace(
+            f"R{run_id} | send_partial_results={send_partial_results}, partial_result_token={partial_result_token}, payload_type={type(payload).__name__}, is_iterable={isinstance(payload, collections.abc.AsyncIterable)}"
+        )
         with action_exec_info.process_executor.activate():
             # action payload can be iterable or not
             if isinstance(payload, collections.abc.AsyncIterable):
@@ -510,7 +539,9 @@ async def run_action(
                     # Handler sent results directly via partial_result_sender.send().
                     # Flush any buffered streaming sends, and surface the
                     # accumulated result either way so return_code reflects it.
-                    logger.trace(f"R{run_id} | Handler used direct sends, skipping scheduler")
+                    logger.trace(
+                        f"R{run_id} | Handler used direct sends, skipping scheduler"
+                    )
                     if send_partial_results:
                         logger.trace(f"R{run_id} | all subresults are ready, send them")
                         await partial_result_sender.send_all_immediately()
@@ -549,7 +580,10 @@ async def run_action(
                         dev_env=meta.dev_env,
                         payload={"run_id": run_id, "part_count": len(parts)},
                     )
-                    er_telemetry.add_span_event("handler.parts_started", {"run_id": run_id, "part_count": len(parts)})
+                    er_telemetry.add_span_event(
+                        "handler.parts_started",
+                        {"run_id": run_id, "part_count": len(parts)},
+                    )
                     parts_start_time = time.time_ns()
                     try:
                         async with asyncio.TaskGroup() as tg:
@@ -616,10 +650,19 @@ async def run_action(
                         payload={
                             "run_id": run_id,
                             "part_count": len(parts),
-                            "duration_ms": (time.time_ns() - parts_start_time) / 1_000_000,
+                            "duration_ms": (time.time_ns() - parts_start_time)
+                            / 1_000_000,
                         },
                     )
-                    er_telemetry.add_span_event("handler.parts_completed", {"run_id": run_id, "part_count": len(parts), "duration_ms": (time.time_ns() - parts_start_time) / 1_000_000})
+                    er_telemetry.add_span_event(
+                        "handler.parts_completed",
+                        {
+                            "run_id": run_id,
+                            "part_count": len(parts),
+                            "duration_ms": (time.time_ns() - parts_start_time)
+                            / 1_000_000,
+                        },
+                    )
 
                     if send_partial_results:
                         # all subresults are ready
@@ -672,7 +715,9 @@ async def run_action(
                             f"(Run {run_id}): {message}. See ER logs for more details"
                         ) from eg
 
-                    for handler, handler_task in zip(action_def.handlers, handlers_tasks):
+                    for handler, handler_task in zip(
+                        action_def.handlers, handlers_tasks
+                    ):
                         coro_result = handler_task.result()
                         if coro_result is not None:
                             if action_result is None:
@@ -737,7 +782,9 @@ async def run_action(
                 if send_partial_results and tracking_sender.has_sent:
                     await partial_result_sender.send_all_immediately()
     finally:
-        if context_out is not None and isinstance(run_context_instance, code_action.RunActionContext):
+        if context_out is not None and isinstance(
+            run_context_instance, code_action.RunActionContext
+        ):
             context_out.context = _serialize_context(run_context_instance)
         # exit run context
         try:
@@ -848,7 +895,10 @@ async def run_action_raw(
     er_telemetry.add_span_event("run.dispatched", {"run_id": run_id})
 
     caller_kwargs: code_action.CallerRunContextKwargs | None = None
-    if options.caller_kwargs is not None and action_exec_info.run_context_type is not None:
+    if (
+        options.caller_kwargs is not None
+        and action_exec_info.run_context_type is not None
+    ):
         kwargs_type = _find_caller_kwargs_type(action_exec_info.run_context_type)
         if kwargs_type is not None:
             caller_kwargs = _restore_caller_kwargs(options.caller_kwargs, kwargs_type)
@@ -1012,10 +1062,14 @@ async def run_handlers_raw(
     )
 
     # Raw serialized result for chaining to the next segment.
-    raw_result: dict = _converter.unstructure(action_result) if action_result is not None else {}
+    raw_result: dict = (
+        _converter.unstructure(action_result) if action_result is not None else {}
+    )
 
     # Formatted result — only populated when the caller requests formats.
-    formatted = action_result_to_run_action_response(action_result, options.result_formats)
+    formatted = action_result_to_run_action_response(
+        action_result, options.result_formats
+    )
     result_by_format: dict = formatted.result_by_format or {}
 
     return schemas.RunHandlersResponse(
@@ -1089,7 +1143,9 @@ async def resolve_func_args_with_di(
         else:
             param_type = func_annotations[param_name]
             try:
-                param_value = await di_resolver.get_service_instance(param_type, registry)
+                param_value = await di_resolver.get_service_instance(
+                    param_type, registry
+                )
             except ServiceNotFoundError as error:
                 raise ActionFailedException(
                     f"Service not registered: {param_type}. "
@@ -1150,9 +1206,7 @@ async def ensure_handler_instantiated(
 
     logger.trace(f"Load action handler {handler.name}")
     try:
-        action_handler = run_utils.import_module_member_by_source_str(
-            handler.source
-        )
+        action_handler = run_utils.import_module_member_by_source_str(handler.source)
     except ModuleNotFoundError as error:
         logger.error(
             f"Source of action handler {handler.name} '{handler.source}'"
@@ -1228,15 +1282,11 @@ async def ensure_handler_instantiated(
     ):
         logger.trace(f"Initialize {handler.name} action handler")
         try:
-            initialize_callable_result = (
-                exec_info.lifecycle.on_initialize_callable()
-            )
+            initialize_callable_result = exec_info.lifecycle.on_initialize_callable()
             if inspect.isawaitable(initialize_callable_result):
                 await initialize_callable_result
         except Exception as e:
-            logger.error(
-                f"Failed to initialize action handler {handler.name}: {e}"
-            )
+            logger.error(f"Failed to initialize action handler {handler.name}: {e}")
             raise ActionFailedException(
                 f"Initialisation of action handler '{handler.name}' failed: {e}"
             ) from e
@@ -1278,7 +1328,9 @@ async def execute_action_handler(
             dev_env=dev_env,
             payload={"run_id": run_id, "handler": handler.name},
         )
-    er_telemetry.add_span_event("handler.started", {"run_id": run_id, "handler": handler.name})
+    er_telemetry.add_span_event(
+        "handler.started", {"run_id": run_id, "handler": handler.name}
+    )
     if handler.name in action_cache.handler_cache_by_name:
         handler_cache = action_cache.handler_cache_by_name[handler.name]
     else:
@@ -1294,7 +1346,9 @@ async def execute_action_handler(
     def get_run_context(param_type):
         return run_context
 
-    with er_telemetry.handler_span(handler.name, action_name, traceparent, trigger=trigger, dev_env=dev_env):
+    with er_telemetry.handler_span(
+        handler.name, action_name, traceparent, trigger=trigger, dev_env=dev_env
+    ):
         if handler_cache.instance is not None:
             handler_instance = handler_cache.instance
             handler_run_func = handler_instance.run
@@ -1338,7 +1392,9 @@ async def execute_action_handler(
                 if inspect.isasyncgen(call_result):
                     stream_result: code_action.RunActionResult | None = None
                     async for partial_result in call_result:
-                        partial_result = typing.cast(code_action.RunActionResult, partial_result)
+                        partial_result = typing.cast(
+                            code_action.RunActionResult, partial_result
+                        )
                         # Both paths below forward the partial to a caller — they differ only
                         # in transport.  partial_result_token sends to an LSP/MCP client via
                         # the WM notification channel; partial_result_queue delivers to a parent
@@ -1356,7 +1412,10 @@ async def execute_action_handler(
                                     dev_env=dev_env,
                                     payload={"run_id": run_id, "handler": handler.name},
                                 )
-                                er_telemetry.add_span_event("partial_result.first_sent", {"run_id": run_id, "handler": handler.name})
+                                er_telemetry.add_span_event(
+                                    "partial_result.first_sent",
+                                    {"run_id": run_id, "handler": handler.name},
+                                )
                                 tracking_sender.has_sent = True
                             await partial_result_sender.schedule_sending(
                                 partial_result_token,
@@ -1379,7 +1438,9 @@ async def execute_action_handler(
                         await partial_result_sender.send_all_immediately()
                         execution_result = stream_result
                     elif partial_result_queue is not None:
-                        execution_result = None  # each partial already forwarded to queue
+                        execution_result = (
+                            None  # each partial already forwarded to queue
+                        )
                     else:
                         execution_result = stream_result
                 elif inspect.isawaitable(call_result):
@@ -1399,7 +1460,9 @@ async def execute_action_handler(
             except Exception as exception:
                 if isinstance(exception, code_action.StopActionRunWithResult):
                     action_result = exception.result
-                    response = action_result_to_run_action_response(action_result, ["string"])
+                    response = action_result_to_run_action_response(
+                        action_result, ["string"]
+                    )
                     raise StopWithResponse(response=response) from exception
 
                 is_cancelled = False
@@ -1423,18 +1486,28 @@ async def execute_action_handler(
                         project_path=runner_context.project.dir_path,
                         trigger=trigger,
                         dev_env=dev_env,
-                        payload={"run_id": run_id, "handler": handler.name, "error": error_str},
+                        payload={
+                            "run_id": run_id,
+                            "handler": handler.name,
+                            "error": error_str,
+                        },
                     )
                 if is_cancelled:
                     logger.debug(
                         f"R{run_id} | Action handler '{handler.name}' was cancelled: {error_str}"
                     )
-                    er_telemetry.add_span_event("handler.cancelled", {"run_id": run_id, "handler": handler.name, "error": error_str})
+                    er_telemetry.add_span_event(
+                        "handler.cancelled",
+                        {"run_id": run_id, "handler": handler.name, "error": error_str},
+                    )
                     raise ActionCancelledException(
                         f"Running action handler '{handler.name}' was cancelled(Run {run_id}): {error_str}"
                     ) from exception
                 else:
-                    er_telemetry.add_span_event("handler.failed", {"run_id": run_id, "handler": handler.name, "error": error_str})
+                    er_telemetry.add_span_event(
+                        "handler.failed",
+                        {"run_id": run_id, "handler": handler.name, "error": error_str},
+                    )
                     raise ActionFailedException(
                         f"Running action handler '{handler.name}' failed(Run {run_id}): {error_str}"
                     ) from exception
@@ -1454,9 +1527,16 @@ async def execute_action_handler(
             project_path=runner_context.project.dir_path,
             trigger=trigger,
             dev_env=dev_env,
-            payload={"run_id": run_id, "handler": handler.name, "duration_ms": duration},
+            payload={
+                "run_id": run_id,
+                "handler": handler.name,
+                "duration_ms": duration,
+            },
         )
-    er_telemetry.add_span_event("handler.completed", {"run_id": run_id, "handler": handler.name, "duration_ms": duration})
+    er_telemetry.add_span_event(
+        "handler.completed",
+        {"run_id": run_id, "handler": handler.name, "duration_ms": duration},
+    )
     return execution_result
 
 
@@ -1514,7 +1594,11 @@ async def run_subresult_coros_concurrently(
     elif send_partial_results:
         if action_subresult is None:
             return None
-        if tracking_sender is not None and wal_run_id is not None and not tracking_sender.has_sent:
+        if (
+            tracking_sender is not None
+            and wal_run_id is not None
+            and not tracking_sender.has_sent
+        ):
             er_wal.emit_run_event(
                 runner_context.wal_writer,
                 event_type=er_wal.ErWalEventType.PARTIAL_RESULT_FIRST_SENT,
@@ -1584,7 +1668,11 @@ async def run_subresult_coros_sequentially(
     elif send_partial_results:
         if action_subresult is None:
             return None
-        if tracking_sender is not None and wal_run_id is not None and not tracking_sender.has_sent:
+        if (
+            tracking_sender is not None
+            and wal_run_id is not None
+            and not tracking_sender.has_sent
+        ):
             er_wal.emit_run_event(
                 runner_context.wal_writer,
                 event_type=er_wal.ErWalEventType.PARTIAL_RESULT_FIRST_SENT,

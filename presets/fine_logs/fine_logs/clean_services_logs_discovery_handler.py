@@ -1,6 +1,8 @@
 import dataclasses
 
 from finecode_extension_api import code_action
+from finecode_extension_api.interfaces import ilogger, iprojectactionrunner
+
 from fine_logs.clean_services_logs_action import (
     CleanServicesLogsAction,
     CleanServicesLogsRunContext,
@@ -11,7 +13,6 @@ from fine_logs.list_observability_services_action import (
     ListObservabilityServicesAction,
     ListObservabilityServicesRunPayload,
 )
-from finecode_extension_api.interfaces import ilogger, iprojectactionrunner
 
 
 @dataclasses.dataclass
@@ -47,7 +48,9 @@ class CleanServicesLogsDiscoveryHandler(
             return CleanServicesLogsRunResult()
 
         result = await self.project_action_runner.run_action(
-            action_type=iprojectactionrunner.ActionRef.from_type(ListObservabilityServicesAction),
+            action_type=iprojectactionrunner.ActionRef.from_type(
+                ListObservabilityServicesAction
+            ),
             payload=ListObservabilityServicesRunPayload(),
             meta=run_context.meta,
         )

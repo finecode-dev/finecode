@@ -89,7 +89,13 @@ def ensure_running(workdir: pathlib.Path, log_level: str = "INFO") -> None:
         logger.info(f"Starting FineCode WM server subprocess in {workdir}")
         with open(stderr_path, "w") as stderr_file:
             subprocess.Popen(
-                [python_cmd, "-m", "finecode", "start-wm-server", f"--log-level={log_level}"],
+                [
+                    python_cmd,
+                    "-m",
+                    "finecode",
+                    "start-wm-server",
+                    f"--log-level={log_level}",
+                ],
                 cwd=str(workdir),
                 stdout=subprocess.DEVNULL,
                 stderr=stderr_file,
@@ -113,8 +119,7 @@ async def wait_until_ready(timeout: float = 30) -> int:
             return port
         await asyncio.sleep(0.5)
     raise TimeoutError(
-        f"FineCode WM server did not start within {timeout}s. "
-        f"Check logs for errors."
+        f"FineCode WM server did not start within {timeout}s. Check logs for errors."
     )
 
 

@@ -40,7 +40,9 @@ class PublishAndVerifyArtifactRunResult(code_action.RunActionResult):
     def to_text(self) -> str | textstyler.StyledText:
         lines = []
         if self.published_registries:
-            lines.append(f"Published version {self.version} to: {', '.join(self.published_registries)}")
+            lines.append(
+                f"Published version {self.version} to: {', '.join(self.published_registries)}"
+            )
         elif not self.publish_errors:
             lines.append(f"Version {self.version} was already published")
 
@@ -74,7 +76,9 @@ class PublishAndVerifyArtifactAction(
         PublishAndVerifyArtifactRunResult,
     ]
 ):
-    DESCRIPTION = "Publish a distribution artifact and verify it is available in registries."
+    DESCRIPTION = (
+        "Publish a distribution artifact and verify it is available in registries."
+    )
     PAYLOAD_TYPE = PublishAndVerifyArtifactRunPayload
     RUN_CONTEXT_TYPE = PublishAndVerifyArtifactRunContext
     RESULT_TYPE = PublishAndVerifyArtifactRunResult

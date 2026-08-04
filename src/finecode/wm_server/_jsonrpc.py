@@ -1,4 +1,5 @@
 """Low-level JSON-RPC framing, protocol types and stubs for the WM TCP server."""
+
 from __future__ import annotations
 
 import asyncio
@@ -22,9 +23,7 @@ def _jsonrpc_response(id: int | str, result: typing.Any) -> dict:
     return {"jsonrpc": "2.0", "id": id, "result": result}
 
 
-def _jsonrpc_error(
-    id: int | str | None, code: int, message: str
-) -> dict:
+def _jsonrpc_error(id: int | str | None, code: int, message: str) -> dict:
     return {"jsonrpc": "2.0", "id": id, "error": {"code": code, "message": message}}
 
 
@@ -42,7 +41,7 @@ async def _read_message(reader: asyncio.StreamReader) -> dict | None:
     if not header.startswith(CONTENT_LENGTH_HEADER):
         logger.warning(f"FineCode API: unexpected header: {header!r}")
         return None
-    content_length = int(header[len(CONTENT_LENGTH_HEADER):])
+    content_length = int(header[len(CONTENT_LENGTH_HEADER) :])
 
     # Read the blank separator line
     separator = await reader.readline()
@@ -83,9 +82,7 @@ NotificationHandler = typing.Callable[
 def _stub(method_name: str) -> MethodHandler:
     """Create a stub handler that raises _NotImplementedError."""
 
-    async def handler(
-        params: dict | None, ws_context: typing.Any
-    ) -> typing.Any:
+    async def handler(params: dict | None, ws_context: typing.Any) -> typing.Any:
         raise _NotImplementedError(f"{method_name}: {NOT_IMPLEMENTED_MSG}")
 
     handler.__doc__ = f"Stub for {method_name}. See docs/wm-protocol.md."
@@ -95,10 +92,10 @@ def _stub(method_name: str) -> MethodHandler:
 def _notification_stub(method_name: str) -> NotificationHandler:
     """Create a stub notification handler that logs and does nothing."""
 
-    async def handler(
-        params: dict | None, ws_context: typing.Any
-    ) -> None:
-        logger.trace(f"FineCode API: notification {method_name} received (stub, ignoring)")
+    async def handler(params: dict | None, ws_context: typing.Any) -> None:
+        logger.trace(
+            f"FineCode API: notification {method_name} received (stub, ignoring)"
+        )
 
     handler.__doc__ = f"Stub for {method_name}. See docs/wm-protocol.md."
     return handler

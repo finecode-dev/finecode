@@ -9,18 +9,24 @@ presets = [{ source = "fine_python_envs" }]
 [tool.finecode.action.run_tests]
 source = "fine_test.RunTestsAction"
 handlers = [
-    { name = "pytest", source = "fine_python_pytest.PytestRunTestsHandler", env = "testing", dependencies = [
-        "fine_python_pytest~=0.1.0a0",
-    ] },
+  { name = "pytest", source = "fine_python_pytest.PytestRunTestsHandler", env = "testing", dependencies = [
+    "fine_python_pytest~=0.1.0a0",
+  ] },
 ]
 
 [tool.finecode.action.list_tests]
 source = "fine_test.ListTestsAction"
 handlers = [
-    { name = "pytest", source = "fine_python_pytest.PytestListTestsHandler", env = "dev", dependencies = [
-        "fine_python_pytest~=0.1.0a0",
-    ] },
+  { name = "pytest", source = "fine_python_pytest.PytestListTestsHandler", env = "dev", dependencies = [
+    "fine_python_pytest~=0.1.0a0",
+  ] },
 ]
+
+# Derive `testing`'s axis. `envs` is a list, so additional
+# matrix envs (e.g. a future build matrix) subscribe to the same derived axis
+# here without restating any version list (ADR-0057).
+[tool.finecode.action.sync_python_interpreters.handlers.sync_python_interpreters]
+config.envs = ["testing"]
 
 [tool.finecode.extension.fine_python_pytest]
 dependencies_override = ["pytest==9.0.*"]
@@ -54,9 +60,3 @@ install_project = true
 
 [tool.finecode.env.testing.default_interpreters]
 local = "newest"
-
-# Derive `testing`'s axis. `envs` is a list, so additional
-# matrix envs (e.g. a future build matrix) subscribe to the same derived axis
-# here without restating any version list (ADR-0057).
-[tool.finecode.action.sync_python_interpreters.handlers.sync_python_interpreters]
-config.envs = ["testing"]

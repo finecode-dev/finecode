@@ -2,11 +2,11 @@
 import pathlib
 
 import click
+from loguru import logger
 
+from finecode.cli_app.log_render import render_log_records, user_message_log_level
 from finecode.wm_client import ApiClient, ApiError
 from finecode.wm_server import wm_lifecycle
-from finecode.cli_app.log_render import render_log_records, user_message_log_level
-from loguru import logger
 
 
 class PrepareEnvsFailed(Exception):
@@ -65,8 +65,11 @@ async def prepare_envs(
 
         client = ApiClient()
         await client.connect("127.0.0.1", port)
+
         # Silence "unhandled notification" trace log — treeChanged is irrelevant in CLI mode.
-        async def _noop(_: object) -> None: pass
+        async def _noop(_: object) -> None:
+            pass
+
         client.on_notification("actions/treeChanged", _noop)
 
         async def _on_user_message(params: dict) -> None:
@@ -77,6 +80,7 @@ async def prepare_envs(
         client.on_notification("server/userMessage", _on_user_message)
 
         if verbose:
+
             async def _on_log_records(params: dict) -> None:
                 for line in render_log_records(params):
                     click.echo(line, err=True)

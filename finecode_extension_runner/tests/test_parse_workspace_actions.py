@@ -5,7 +5,9 @@ from finecode_extension_runner.impls.workspace_action_registry import (
 )
 
 
-def test_parse_workspace_actions_maps_camel_case_wire_fields_to_snake_case_dataclasses() -> None:
+def test_parse_workspace_actions_maps_camel_case_wire_fields_to_snake_case_dataclasses() -> (
+    None
+):
     """Every camelCase field on the wire (including nested handler fields) must survive the parse into its snake_case counterpart, or which_handlers silently loses data for callers."""
     payload = {
         "actions": [
@@ -110,7 +112,9 @@ def test_parse_workspace_actions_maps_absent_handler_canonical_source_to_none() 
     assert result[0].handlers[0].canonical_source is None
 
 
-def test_parse_workspace_actions_defaults_explicit_empty_handlers_list_to_empty_list() -> None:
+def test_parse_workspace_actions_defaults_explicit_empty_handlers_list_to_empty_list() -> (
+    None
+):
     """An action with an explicit empty handlers array parses to handlers == [], not None or an error."""
     payload = {
         "actions": [

@@ -5,7 +5,6 @@ import uuid
 from pathlib import Path
 
 import pytest
-
 from finecode_extension_api import code_action
 from finecode_extension_runner import schemas, services
 from finecode_extension_runner._services import run_action as run_action_service
@@ -39,7 +38,9 @@ class _NoopHandler(
 
 
 _ACTION_NAME = _RequiredFieldTestAction.__name__
-_ACTION_SOURCE = f"{_RequiredFieldTestAction.__module__}.{_RequiredFieldTestAction.__qualname__}"
+_ACTION_SOURCE = (
+    f"{_RequiredFieldTestAction.__module__}.{_RequiredFieldTestAction.__qualname__}"
+)
 _HANDLER_SOURCE = f"{_NoopHandler.__module__}.{_NoopHandler.__qualname__}"
 
 _ACTIONS = {

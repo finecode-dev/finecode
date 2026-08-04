@@ -13,8 +13,6 @@ import urllib.parse
 from typing import Any, Callable, cast
 
 import duckdb
-from fine_wal_explorer import store_queries
-from finecode_extension_api import code_action
 from fine_wal_events.ingest_wal_to_store_action import (
     IngestWalToStoreAction,
     IngestWalToStoreRunPayload,
@@ -26,6 +24,8 @@ from fine_wal_events.serve_wal_explorer_from_store_action import (
     ServeWalExplorerFromStoreRunPayload,
     ServeWalExplorerFromStoreRunResult,
 )
+from fine_wal_explorer import store_queries
+from finecode_extension_api import code_action
 from finecode_extension_api.interfaces import (
     ilogger,
     iprojectactionrunner,

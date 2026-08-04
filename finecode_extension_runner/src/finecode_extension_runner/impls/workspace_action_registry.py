@@ -8,7 +8,12 @@ from finecode_extension_api.interfaces.iworkspaceactionregistry import (
     IWorkspaceActionRegistry,
 )
 
-__all__ = ["HandlerInfo", "ActionInfo", "IWorkspaceActionRegistry", "parse_workspace_actions"]
+__all__ = [
+    "HandlerInfo",
+    "ActionInfo",
+    "IWorkspaceActionRegistry",
+    "parse_workspace_actions",
+]
 
 
 def parse_workspace_actions(payload: dict[str, Any]) -> list[ActionInfo]:
@@ -44,7 +49,9 @@ def parse_workspace_actions(payload: dict[str, Any]) -> list[ActionInfo]:
 class WorkspaceActionRegistryImpl(IWorkspaceActionRegistry):
     """Calls the WM back-channel finecode/listWorkspaceActions."""
 
-    def __init__(self, send_request_to_wm: Callable[[str, dict], Awaitable[Any]]) -> None:
+    def __init__(
+        self, send_request_to_wm: Callable[[str, dict], Awaitable[Any]]
+    ) -> None:
         self._send = send_request_to_wm
 
     async def list_actions(self) -> list[ActionInfo]:

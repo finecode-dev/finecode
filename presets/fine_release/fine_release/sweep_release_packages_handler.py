@@ -2,14 +2,7 @@ from __future__ import annotations
 
 import dataclasses
 
-from finecode_extension_api import code_action
-from finecode_extension_api.interfaces import (
-    ilogger,
-    iprojectinfoprovider,
-    iworkspaceactionrunner,
-)
 from fine_git.push_git_refs_action import PushGitRefsAction, PushGitRefsRunPayload
-
 from fine_release.release_package_action import (
     PackageReleaseOutcome,
     ReleasePackageAction,
@@ -22,6 +15,12 @@ from fine_release.release_workspace_packages_action import (
     ReleaseWorkspacePackagesRunPayload,
     ReleaseWorkspacePackagesRunResult,
     _Candidate,
+)
+from finecode_extension_api import code_action
+from finecode_extension_api.interfaces import (
+    ilogger,
+    iprojectinfoprovider,
+    iworkspaceactionrunner,
 )
 
 

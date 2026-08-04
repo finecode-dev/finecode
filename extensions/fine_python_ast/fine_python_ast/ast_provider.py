@@ -2,7 +2,6 @@ import ast
 from pathlib import Path
 
 from fine_python_ast import iast_provider
-
 from finecode_extension_api.interfaces import icache, ifileeditor, ilogger
 
 

@@ -4,7 +4,8 @@ import pathlib
 
 import pytest
 
-from finecode.wm_server import domain, testing as wm_testing
+from finecode.wm_server import domain
+from finecode.wm_server import testing as wm_testing
 from finecode.wm_server._api_handlers._helpers import _resolve_actions_by_project
 
 

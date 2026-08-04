@@ -4,7 +4,10 @@ from fine_python_package_info import (
     py_src_artifact_file_classifier,
 )
 from finecode_extension_api import extension
-from finecode_extension_api.interfaces import iserviceregistry, isrcartifactfileclassifier
+from finecode_extension_api.interfaces import (
+    iserviceregistry,
+    isrcartifactfileclassifier,
+)
 
 
 class Activator(extension.ExtensionActivator):

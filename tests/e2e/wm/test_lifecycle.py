@@ -24,8 +24,10 @@ def test_starts_and_exits_on_sigint(workspace_dir):
     proc = start_server(
         [
             "start-wm-server",
-            "--port-file", str(port_file),
-            "--disconnect-timeout", "5",
+            "--port-file",
+            str(port_file),
+            "--disconnect-timeout",
+            "5",
         ],
         cwd=workspace_dir,
     )
@@ -62,8 +64,10 @@ def test_auto_shutdown_after_disconnect_timeout(workspace_dir, tmp_path):
     proc = start_server(
         [
             "start-wm-server",
-            "--port-file", str(port_file),
-            "--disconnect-timeout", "2",
+            "--port-file",
+            str(port_file),
+            "--disconnect-timeout",
+            "2",
         ],
         cwd=workspace_dir,
     )

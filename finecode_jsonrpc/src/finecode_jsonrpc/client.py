@@ -26,8 +26,8 @@ else:
 
 import cattrs
 import culsans
-from finecode_jsonrpc._converter import converter as _converter
 from finecode_jsonrpc import _io_thread
+from finecode_jsonrpc._converter import converter as _converter
 from finecode_jsonrpc.tracing import ITracingHooks
 from loguru import logger
 
@@ -151,6 +151,7 @@ class RequestCancelledError(asyncio.CancelledError):
 
 class ServerStoppedError(BaseRunnerRequestException):
     """Raised on pending requests when the server process exits."""
+
     pass
 
 
@@ -276,7 +277,9 @@ class JsonRpcClient:
             # the server
             raise server_start_exception
 
-        self._reader, self._writer, self._tcp_port_future, self.pid = server_future.result()
+        self._reader, self._writer, self._tcp_port_future, self.pid = (
+            server_future.result()
+        )
 
         notify_exit = asyncio.create_task(self._server_process_stop_handler())
         notify_exit.add_done_callback(
@@ -336,9 +339,7 @@ class JsonRpcClient:
                 fut.set_exception(
                     ServerStoppedError("Server was stopped before getting the response")
                 )
-                logger.debug(
-                    f"Cancelled pending request '{id_}': server was stopped"
-                )
+                logger.debug(f"Cancelled pending request '{id_}': server was stopped")
 
         if self.server_exit_callback is not None:
             await self.server_exit_callback()
@@ -386,7 +387,9 @@ class JsonRpcClient:
         try:
             self.writer.write(data.encode(self.CHARSET))
         except culsans.QueueShutDown:
-            logger.debug(f"Cannot send data to {self.readable_id}: client already disconnected")
+            logger.debug(
+                f"Cannot send data to {self.readable_id}: client already disconnected"
+            )
         except Exception as error:
             # the writer puts a message in the queue without size, so no exception
             # are expected. If one internal come such as shutdown exception because of
@@ -548,7 +551,11 @@ class JsonRpcClient:
             "jsonrpc": self.VERSION,
         }
 
-        span_ctx = self._tracing.client_span(method, self.readable_id) if self._tracing else contextlib.nullcontext()
+        span_ctx = (
+            self._tracing.client_span(method, self.readable_id)
+            if self._tracing
+            else contextlib.nullcontext()
+        )
         with span_ctx:
             if self._tracing is not None:
                 traceparent = self._tracing.get_traceparent()
@@ -558,13 +565,17 @@ class JsonRpcClient:
             try:
                 request_str = json.dumps(message_dict)
             except (TypeError, ValueError) as error:
-                raise InvalidResponse(f"Failed to serialize request: {error}") from error
+                raise InvalidResponse(
+                    f"Failed to serialize request: {error}"
+                ) from error
 
             future = asyncio.Future()
             self._async_request_futures[msg_id] = future
 
             try:
-                self._expected_result_type_by_msg_id[msg_id] = self.message_types[method][2]
+                self._expected_result_type_by_msg_id[msg_id] = self.message_types[
+                    method
+                ][2]
             except KeyError:
                 raise ValueError(f"Message type not found for {method}")
 
@@ -639,7 +650,9 @@ class JsonRpcClient:
                     return
 
                 try:
-                    response_error = _converter.structure(message["error"], ResponseError)
+                    response_error = _converter.structure(
+                        message["error"], ResponseError
+                    )
                 except cattrs.ClassValidationError as error:
                     exception = InvalidResponse(str(error))
 
@@ -960,7 +973,10 @@ async def start_server(
     stderr_buffer: list[str] | None = None,
     stdout_buffer: list[str] | None = None,
 ) -> tuple[
-    asyncio.StreamReader | None, asyncio.StreamWriter | None, asyncio.Future[int] | None, int
+    asyncio.StreamReader | None,
+    asyncio.StreamWriter | None,
+    asyncio.Future[int] | None,
+    int,
 ]:
     logger.debug(f"Starting server process: {cmd}")
 

@@ -21,7 +21,9 @@ class Registry:
         self._deferred_activators = activators
         self._next_deferred = 0
 
-    def register_instance(self, type_: type, instance: Any, *, override: bool = False) -> None:
+    def register_instance(
+        self, type_: type, instance: Any, *, override: bool = False
+    ) -> None:
         if type_ in self._container and not override:
             raise ValueError(
                 f"Instance for {type_} is already registered. Use override=True to replace it."
@@ -85,6 +87,7 @@ class Registry:
             instance = factory_result
 
         from finecode_extension_api import service
+
         if isinstance(instance, service.Service):
             await instance.init()
 

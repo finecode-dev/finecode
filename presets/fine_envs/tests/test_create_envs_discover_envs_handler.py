@@ -7,7 +7,9 @@ from finecode_extension_api import code_action
 
 
 class _FakeProjectInfoProvider:
-    def __init__(self, project_def_path: pathlib.Path, raw_config: dict[str, Any]) -> None:
+    def __init__(
+        self, project_def_path: pathlib.Path, raw_config: dict[str, Any]
+    ) -> None:
         self._project_def_path = project_def_path
         self._raw_config = raw_config
 

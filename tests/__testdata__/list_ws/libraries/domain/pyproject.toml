@@ -1,3 +1,7 @@
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
 [tool.poetry]
 name = "domain"
 version = "0.1.0"
@@ -9,7 +13,3 @@ python = "^3.10"
 
 [tool.poetry.group.dev.dependencies]
 finecode = { path = "../../../../../" }
-
-[build-system]
-requires = ["poetry-core"]
-build-backend = "poetry.core.masonry.api"

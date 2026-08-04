@@ -4,10 +4,14 @@ import shutil
 import sys
 import tomllib
 
-from finecode.wm_client import ApiClient, ApiError  # ApiError used for start_runners check
-from finecode.wm_server import wm_lifecycle
-from finecode.cli_app.commands._env_setup import create_and_install_envs, EnvSetupFailed
 from loguru import logger
+
+from finecode.cli_app.commands._env_setup import EnvSetupFailed, create_and_install_envs
+from finecode.wm_client import (  # ApiError used for start_runners check
+    ApiClient,
+    ApiError,
+)
+from finecode.wm_server import wm_lifecycle
 
 
 class BootstrapFailed(Exception):
@@ -61,8 +65,11 @@ async def bootstrap(
 
         client = ApiClient()
         await client.connect("127.0.0.1", port)
+
         # Silence "unhandled notification" trace log — treeChanged is irrelevant in CLI mode.
-        async def _noop(_: object) -> None: pass
+        async def _noop(_: object) -> None:
+            pass
+
         client.on_notification("actions/treeChanged", _noop)
         try:
             await _run(client, workdir_path, recreate)
@@ -101,9 +108,7 @@ async def _run(
 
     current_project = next((p for p in projects if p["path"] == workdir_str), None)
     if current_project is None:
-        raise BootstrapFailed(
-            "bootstrap must be run from the workspace/project root"
-        )
+        raise BootstrapFailed("bootstrap must be run from the workspace/project root")
     if current_project["status"] == "CONFIG_INVALID":
         raise BootstrapFailed(
             f"Project '{current_project['name']}' has invalid configuration"
@@ -142,7 +147,9 @@ async def _run(
             "Scripts/python.exe" if sys.platform == "win32" else "bin/python"
         )
         if not venv_python.exists():
-            logger.debug(f"Removing stub directory '{venv_dir}' left by runner log setup")
+            logger.debug(
+                f"Removing stub directory '{venv_dir}' left by runner log setup"
+            )
             shutil.rmtree(venv_dir)
 
     dw_env = {

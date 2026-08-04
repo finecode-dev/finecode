@@ -2,10 +2,7 @@ from __future__ import annotations
 
 import dataclasses
 
-from finecode_extension_api import code_action
-from finecode_extension_api.interfaces import ilogger, iprojectactionrunner
 from fine_git.create_git_tag_action import CreateGitTagAction, CreateGitTagRunPayload
-
 from fine_release.release_package_action import (
     RegistryPublishOutcome,
     ReleasePackageAction,
@@ -14,6 +11,8 @@ from fine_release.release_package_action import (
     ReleasePackageRunResult,
     result_from_state,
 )
+from finecode_extension_api import code_action
+from finecode_extension_api.interfaces import ilogger, iprojectactionrunner
 
 
 @dataclasses.dataclass
@@ -90,7 +89,9 @@ class RecordReleaseTagHandler(
 
         try:
             tag_result = await self.action_runner.run_action(
-                action_type=iprojectactionrunner.ActionRef.from_type(CreateGitTagAction),
+                action_type=iprojectactionrunner.ActionRef.from_type(
+                    CreateGitTagAction
+                ),
                 payload=CreateGitTagRunPayload(tag=tag, message=message),
                 meta=run_context.meta,
             )

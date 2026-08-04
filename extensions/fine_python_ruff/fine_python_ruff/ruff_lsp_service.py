@@ -11,10 +11,9 @@ else:
 
 from fine_inspect_code.diagnostic_types import map_lsp_diagnostics
 from fine_lint.diagnostic_types import Diagnostic
+from finecode_extension_api import service
 from finecode_extension_api.contrib.lsp_service import LspService, apply_text_edits
 from finecode_extension_api.interfaces import ifileeditor, ilogger, ilspclient
-
-from finecode_extension_api import service
 
 _RUFF_CLIENT_CAPABILITIES: dict[str, Any] = {
     "textDocument": {
@@ -82,9 +81,7 @@ class RuffLspService(service.DisposableService):
         timeout: float = 30.0,
     ) -> list[Diagnostic]:
         raw_diagnostics = await self._lsp_service.check_file(file_path, timeout)
-        return map_lsp_diagnostics(
-            raw_diagnostics, default_source="ruff"
-        )
+        return map_lsp_diagnostics(raw_diagnostics, default_source="ruff")
 
     async def format_file(
         self,
@@ -93,8 +90,9 @@ class RuffLspService(service.DisposableService):
         timeout: float = 30.0,
     ) -> str:
         """Format a file via LSP and return the formatted content."""
-        raw_edits = await self._lsp_service.format_file(file_path, file_content, timeout=timeout)
+        raw_edits = await self._lsp_service.format_file(
+            file_path, file_content, timeout=timeout
+        )
         if not raw_edits:
             return file_content
         return apply_text_edits(file_content, raw_edits)
-

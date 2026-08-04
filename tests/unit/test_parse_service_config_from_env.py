@@ -15,7 +15,9 @@ def test_flat_path_produces_single_level_param(monkeypatch: pytest.MonkeyPatch) 
     assert overrides == {"http_client": {"timeout": 30}}
 
 
-def test_nested_path_builds_dict_at_each_segment(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_nested_path_builds_dict_at_each_segment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     # Unlike the handler env-var format, service overrides must be able to
     # reach into arbitrarily nested config (e.g. a table keyed by repository
     # name) without flattening sibling keys away.
@@ -34,7 +36,9 @@ def test_nested_path_builds_dict_at_each_segment(monkeypatch: pytest.MonkeyPatch
     }
 
 
-def test_non_json_value_falls_back_to_raw_string(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_non_json_value_falls_back_to_raw_string(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     # A bare secret token (e.g. "ghp_xxx") is not valid JSON. The handler
     # parser hard-fails on this; the service parser must not, since the
     # secret field is the one people set most and quoting it as a JSON string
@@ -53,9 +57,7 @@ def test_non_json_value_falls_back_to_raw_string(monkeypatch: pytest.MonkeyPatch
 
 def test_json_value_is_parsed(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("FINECODE_SERVICE_CONFIG_HTTP_CLIENT__RETRIES", "3")
-    monkeypatch.setenv(
-        "FINECODE_SERVICE_CONFIG_HTTP_CLIENT__ENABLED", "true"
-    )
+    monkeypatch.setenv("FINECODE_SERVICE_CONFIG_HTTP_CLIENT__ENABLED", "true")
 
     overrides = parse_service_config_from_env()
 

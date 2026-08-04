@@ -7,25 +7,28 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import enum
-import typing
 import pathlib
+import typing
 from typing import Any
 
 from loguru import logger
 
 import finecode.wm_server.domain as domain
-from finecode.wm_server.config.config_models import ErLoggingConfig
-from finecode.wm_server.runner import _internal_client_types, _internal_client_api
-from finecode.wm_server.utils.iterable_subscribe import IterableSubscribe
 import finecode_jsonrpc as jsonrpc_client
-
+from finecode.wm_server.config.config_models import ErLoggingConfig
+from finecode.wm_server.runner import _internal_client_api, _internal_client_types
+from finecode.wm_server.utils.iterable_subscribe import IterableSubscribe
 
 # reexport
 BaseRunnerRequestException = jsonrpc_client.BaseRunnerRequestException
 DidChangeTextDocumentParams = _internal_client_types.DidChangeTextDocumentParams
 VersionedTextDocumentIdentifier = _internal_client_types.VersionedTextDocumentIdentifier
-TextDocumentContentChangeWholeDocument = _internal_client_types.TextDocumentContentChangeWholeDocument
-TextDocumentContentChangePartial = _internal_client_types.TextDocumentContentChangePartial
+TextDocumentContentChangeWholeDocument = (
+    _internal_client_types.TextDocumentContentChangeWholeDocument
+)
+TextDocumentContentChangePartial = (
+    _internal_client_types.TextDocumentContentChangePartial
+)
 Range = _internal_client_types.Range
 Position = _internal_client_types.Position
 
@@ -82,7 +85,9 @@ class RunActionResponse:
         return result
 
     def text(self) -> str:
-        result = self.result_by_format.get("styled_text_json") or self.result_by_format.get("string")
+        result = self.result_by_format.get(
+            "styled_text_json"
+        ) or self.result_by_format.get("string")
         if result is None:
             raise ActionRunFailed("Expected text result format but it was not returned")
         return result
@@ -98,6 +103,7 @@ class RunHandlersResponse:
     ``context`` is the serialized STATE_TYPE dict for context chaining
     (pass as ``previous_context`` to the next segment's run_handlers call).
     """
+
     raw_result: dict
     result_by_format: dict[str, RunActionRawResult]
     return_code: int
@@ -111,7 +117,9 @@ class RunHandlersResponse:
         return result
 
     def text(self) -> str:
-        result = self.result_by_format.get("styled_text_json") or self.result_by_format.get("string")
+        result = self.result_by_format.get(
+            "styled_text_json"
+        ) or self.result_by_format.get("string")
         if result is None:
             raise ActionRunFailed("Expected text result format but it was not returned")
         return result
@@ -123,17 +131,17 @@ class RunResultFormat(enum.Enum):
 
 
 class RunActionTrigger(enum.StrEnum):
-    USER = 'user'
-    SYSTEM = 'system'
-    UNKNOWN = 'unknown'
+    USER = "user"
+    SYSTEM = "system"
+    UNKNOWN = "unknown"
 
 
 class DevEnv(enum.StrEnum):
-    IDE = 'ide'
-    CLI = 'cli'
-    AI = 'ai'
-    GIT_HOOK = 'git_hook'
-    CI = 'ci'
+    IDE = "ide"
+    CLI = "cli"
+    AI = "ai"
+    GIT_HOOK = "git_hook"
+    CI = "ci"
 
 
 async def run_action(
@@ -165,8 +173,7 @@ async def run_action(
         )
     except jsonrpc_client.ServerStoppedError as exc:
         raise ActionRunFailed(
-            "Runner stopped during execution — it may have been restarted."
-            " Try again."
+            "Runner stopped during execution — it may have been restarted. Try again."
         ) from exc
     except jsonrpc_client.RequestCancelledError as error:
         logger.trace(
@@ -194,7 +201,9 @@ async def run_action(
     if status == "stopped":
         raise ActionRunStopped(message=result_by_format)
 
-    return RunActionResponse(result_by_format=result_by_format, return_code=return_code, status=status)
+    return RunActionResponse(
+        result_by_format=result_by_format, return_code=return_code, status=status
+    )
 
 
 async def run_handlers(
@@ -371,7 +380,9 @@ async def resolve_package_path(
     # checked here.
     response = await runner.client.send_request(
         method=_internal_client_types.ER_RESOLVE_PACKAGE_PATH,
-        params=_internal_client_types.ErResolvePackagePathParams(package_name=package_name),
+        params=_internal_client_types.ErResolvePackagePathParams(
+            package_name=package_name
+        ),
     )
     return {"packagePath": response.result.package_path}
 
@@ -432,7 +443,9 @@ async def update_config(
     )
 
 
-async def update_logging(runner: ExtensionRunnerInfo, forward: bool, forward_level: str) -> None:
+async def update_logging(
+    runner: ExtensionRunnerInfo, forward: bool, forward_level: str
+) -> None:
     """Toggle ER->WM log forwarding via the dedicated ``finecodeRunner/updateLogging``
     request. Process-level only on the ER side -- does NOT rebuild RunnerContext
     (contrast ``update_config``)."""
@@ -470,7 +483,11 @@ async def notify_document_did_close(
         ),
     )
 
-async def notify_document_did_change(runner: ExtensionRunnerInfo, change_params: _internal_client_types.DidChangeTextDocumentParams) -> None:
+
+async def notify_document_did_change(
+    runner: ExtensionRunnerInfo,
+    change_params: _internal_client_types.DidChangeTextDocumentParams,
+) -> None:
     runner.client.notify(
         method=_internal_client_types.TEXT_DOCUMENT_DID_CHANGE,
         params=change_params,

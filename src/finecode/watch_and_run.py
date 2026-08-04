@@ -1,8 +1,8 @@
 from loguru import logger
 
 import finecode.context as context
-import finecode.wm_server.find_project as find_project
 import finecode.watcher as watcher
+import finecode.wm_server.find_project as find_project
 
 
 async def watch_and_run(

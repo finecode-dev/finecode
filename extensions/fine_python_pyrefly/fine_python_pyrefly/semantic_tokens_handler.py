@@ -3,18 +3,18 @@ from __future__ import annotations
 import dataclasses
 from typing import Any
 
-from finecode_extension_api import code_action
-from fine_semantic_tokens.text_document_semantic_tokens_action import (
-    SemanticTokensPayload,
-    SemanticTokensResult,
-)
-from fine_semantic_tokens.text_document_semantic_tokens_action import decode_lsp_semantic_tokens
-from finecode_extension_api.interfaces import ifileeditor, ilogger, iprojectinfoprovider
-from finecode_extension_api.resource_uri import resource_uri_to_path
 from fine_python_lang.text_document_semantic_tokens_python_action import (
     TextDocumentSemanticTokensPythonAction,
 )
 from fine_python_pyrefly.pyrefly_lsp_service import PyreflyLspService
+from fine_semantic_tokens.text_document_semantic_tokens_action import (
+    SemanticTokensPayload,
+    SemanticTokensResult,
+    decode_lsp_semantic_tokens,
+)
+from finecode_extension_api import code_action
+from finecode_extension_api.interfaces import ifileeditor, ilogger, iprojectinfoprovider
+from finecode_extension_api.resource_uri import resource_uri_to_path
 
 
 @dataclasses.dataclass
@@ -28,7 +28,9 @@ class PyreflySemanticTokensHandler(
         PyreflySemanticTokensHandlerConfig,
     ]
 ):
-    FILE_OPERATION_AUTHOR = ifileeditor.FileOperationAuthor(id="PyreflySemanticTokensHandler")
+    FILE_OPERATION_AUTHOR = ifileeditor.FileOperationAuthor(
+        id="PyreflySemanticTokensHandler"
+    )
 
     def __init__(
         self,
@@ -54,7 +56,9 @@ class PyreflySemanticTokensHandler(
         root_uri = self.project_info_provider.get_current_project_dir_path().as_uri()
         await self.lsp_service.ensure_started(root_uri)
 
-        async with self.file_editor.session(author=self.FILE_OPERATION_AUTHOR) as session:
+        async with self.file_editor.session(
+            author=self.FILE_OPERATION_AUTHOR
+        ) as session:
             async with session.read_file(file_path) as file_info:
                 content = file_info.content
 

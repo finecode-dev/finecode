@@ -9,14 +9,13 @@ from fine_check_imports.check_imports_action import (
     CheckImportsRunResult,
 )
 from fine_inspect_code.diagnostic_types import DiagnosticSeverity, Position, Range
+from fine_python_import_linter.check_python_imports_handler import (
+    ImportLinterCheckPythonImportsHandler,
+)
 from fine_python_lang.check_python_imports_action import CheckPythonImportsAction
 from finecode_extension_api.resource_uri import path_to_resource_uri
 from finecode_extension_runner._services import run_action as run_action_service
 from finecode_extension_runner.testing import run_handler
-
-from fine_python_import_linter.check_python_imports_handler import (
-    ImportLinterCheckPythonImportsHandler,
-)
 
 
 def _write_files(base: pathlib.Path, files: dict[str, str]) -> None:

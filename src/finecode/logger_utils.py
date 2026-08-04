@@ -59,6 +59,7 @@ def init_logger(
     logging.basicConfig(handlers=[InterceptHandler()], level=0, force=True)
 
     from finecode import telemetry
+
     service_name = f"finecode-{log_name.replace('_', '-')}"
     telemetry.init_otel_logging(service_name, workspace_path, endpoint=otlp_endpoint)
     telemetry.init_tracer_provider(service_name, workspace_path, endpoint=otlp_endpoint)

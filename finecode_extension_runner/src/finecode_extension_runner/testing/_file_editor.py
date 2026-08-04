@@ -93,7 +93,9 @@ class _InMemoryFileEditorSession(ifileeditor.IFileEditorProviderSession):
         current = self._storage.get(key, "")
         self._storage[key] = _apply_change(current, change)
         self._changes.append(
-            ifileeditor.FileChangeEvent(file_path=key, author=self._author, change=change)
+            ifileeditor.FileChangeEvent(
+                file_path=key, author=self._author, change=change
+            )
         )
 
     async def save_opened_file(self, file_path: pathlib.Path) -> None:

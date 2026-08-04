@@ -8,16 +8,16 @@ import typing
 
 from finecode.wm_server import context, domain
 from finecode.wm_server.runner.runner_client import (
-    RunActionTrigger,
     DevEnv,
-    RunResultFormat,
     RunActionResponse,
+    RunActionTrigger,
+    RunResultFormat,
 )
 from finecode.wm_server.services.run_service import proxy_utils
 from finecode.wm_server.services.run_service.exceptions import ActionRunFailed
 from finecode.wm_server.services.run_service.execution_scopes import (
-    OrchestrationPolicy,
     DEFAULT_ORCHESTRATION_POLICY,
+    OrchestrationPolicy,
 )
 
 
@@ -98,9 +98,7 @@ class ProjectExecutor:
 
         project = self._ws_context.ws_projects.get(project_path)
         if not isinstance(project, domain.CollectedProject):
-            raise ActionRunFailed(
-                f"Project {project_path} has no valid config"
-            )
+            raise ActionRunFailed(f"Project {project_path} has no valid config")
 
         action_name = await self._resolve_action_name(action_source, project)
 
@@ -143,9 +141,7 @@ class ProjectExecutor:
 
         project = self._ws_context.ws_projects.get(project_path)
         if not isinstance(project, domain.CollectedProject):
-            raise ActionRunFailed(
-                f"Project {project_path} has no valid config"
-            )
+            raise ActionRunFailed(f"Project {project_path} has no valid config")
 
         action_name = await self._resolve_action_name(action_source, project)
 

@@ -186,9 +186,7 @@ class ServerStdioTransport:
             try:
                 await self._on_exit()
             except Exception as exc:
-                logger.exception(
-                    f"Error in exit handler | {self._readable_id}: {exc}"
-                )
+                logger.exception(f"Error in exit handler | {self._readable_id}: {exc}")
 
     async def _read_messages_newline(self, reader: asyncio.StreamReader) -> None:
         """Read newline-delimited JSON messages (MCP stdio transport)."""
@@ -281,9 +279,7 @@ class ServerStdioTransport:
                         continue
 
                     if not isinstance(message, dict):
-                        logger.error(
-                            f"Expected dict message | {self._readable_id}"
-                        )
+                        logger.error(f"Expected dict message | {self._readable_id}")
                         continue
 
                     if self._on_message is not None:
@@ -480,9 +476,7 @@ class TcpServerTransport:
                         continue
 
                     if not isinstance(message, dict):
-                        logger.error(
-                            f"Expected dict message | {self._readable_id}"
-                        )
+                        logger.error(f"Expected dict message | {self._readable_id}")
                         continue
 
                     if self._on_message is not None:
@@ -505,6 +499,4 @@ class TcpServerTransport:
             try:
                 await self._on_exit()
             except Exception as exc:
-                logger.exception(
-                    f"Error in exit handler | {self._readable_id}: {exc}"
-                )
+                logger.exception(f"Error in exit handler | {self._readable_id}: {exc}")

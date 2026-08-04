@@ -1,11 +1,17 @@
 import asyncio
 import dataclasses
 
-from finecode_extension_api import code_action
-from fine_git_hooks import precommit_action
 from fine_format import FormatTarget, check_formatting_action
-from finecode_extension_api.interfaces import iworkspaceactionrunner, iworkspaceinfoprovider, ilogger
-from finecode_extension_api.interfaces.iworkspaceinfoprovider import actionable_project_paths
+from fine_git_hooks import precommit_action
+from finecode_extension_api import code_action
+from finecode_extension_api.interfaces import (
+    ilogger,
+    iworkspaceactionrunner,
+    iworkspaceinfoprovider,
+)
+from finecode_extension_api.interfaces.iworkspaceinfoprovider import (
+    actionable_project_paths,
+)
 from finecode_extension_api.resource_uri import path_to_resource_uri
 from finecode_extension_api.workspace_utils import group_files_by_project
 
@@ -44,8 +50,12 @@ class FormatPrecommitBridgeHandler(
             self.logger.info("No staged files - skipping format check.")
             return precommit_action.PrecommitRunResult()
 
-        project_paths = actionable_project_paths(await self.workspace_info_provider.get_workspace_projects())
-        files_by_project = group_files_by_project(run_context.staged_files, project_paths)
+        project_paths = actionable_project_paths(
+            await self.workspace_info_provider.get_workspace_projects()
+        )
+        files_by_project = group_files_by_project(
+            run_context.staged_files, project_paths
+        )
 
         if not files_by_project:
             self.logger.warning(

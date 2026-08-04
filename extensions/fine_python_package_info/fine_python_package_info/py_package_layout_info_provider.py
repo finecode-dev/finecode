@@ -2,14 +2,13 @@ import pathlib
 
 import tomlkit
 import tomlkit.exceptions
-
-from finecode_extension_api.interfaces import (
-    ifileeditor,
-    icache,
-)
-from finecode_extension_api import service
-
 from fine_python_lang import ipypackagelayoutinfoprovider
+from finecode_extension_api import service
+from finecode_extension_api.interfaces import (
+    icache,
+    ifileeditor,
+)
+
 
 class ConfigParseError(Exception):
     def __init__(self, message: str) -> None:

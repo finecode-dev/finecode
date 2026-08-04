@@ -2,22 +2,22 @@
 import asyncio
 import dataclasses
 
-from finecode_extension_api import code_action
-from finecode_extension_api.resource_uri import ResourceUri, resource_uri_to_path
-from fine_src_artifacts import (
-    get_src_artifact_registries_action,
-    get_src_artifact_version_action,
-)
 from fine_dist_artifacts import (
     list_published_artifacts_action,
     publish_artifact_action,
     publish_artifact_to_registry_action,
 )
+from fine_src_artifacts import (
+    get_src_artifact_registries_action,
+    get_src_artifact_version_action,
+)
+from finecode_extension_api import code_action
 from finecode_extension_api.interfaces import (
     ilogger,
     iprojectactionrunner,
     iprojectinfoprovider,
 )
+from finecode_extension_api.resource_uri import ResourceUri, resource_uri_to_path
 
 
 @dataclasses.dataclass
@@ -57,7 +57,9 @@ class PublishArtifactHandler(
         async with run_context.progress("Publishing artifact") as progress:
             await progress.report("Getting artifact version")
             version_result = await self.action_runner.run_action(
-                action_type=iprojectactionrunner.ActionRef.from_type(get_src_artifact_version_action.GetSrcArtifactVersionAction),
+                action_type=iprojectactionrunner.ActionRef.from_type(
+                    get_src_artifact_version_action.GetSrcArtifactVersionAction
+                ),
                 payload=get_src_artifact_version_action.GetSrcArtifactVersionRunPayload(
                     src_artifact_def_path=src_artifact_def_path
                 ),
@@ -66,7 +68,9 @@ class PublishArtifactHandler(
             version = version_result.version
 
             registries_result = await self.action_runner.run_action(
-                action_type=iprojectactionrunner.ActionRef.from_type(get_src_artifact_registries_action.GetSrcArtifactRegistriesAction),
+                action_type=iprojectactionrunner.ActionRef.from_type(
+                    get_src_artifact_registries_action.GetSrcArtifactRegistriesAction
+                ),
                 payload=get_src_artifact_registries_action.GetSrcArtifactRegistriesRunPayload(
                     src_artifact_def_path=src_artifact_def_path
                 ),
@@ -87,7 +91,14 @@ class PublishArtifactHandler(
                 }
             else:
                 await progress.report("Checking publication status")
-                check_tasks: list[tuple[asyncio.Task[list_published_artifacts_action.ListPublishedArtifactsRunResult], get_src_artifact_registries_action.Registry]] = []
+                check_tasks: list[
+                    tuple[
+                        asyncio.Task[
+                            list_published_artifacts_action.ListPublishedArtifactsRunResult
+                        ],
+                        get_src_artifact_registries_action.Registry,
+                    ]
+                ] = []
                 try:
                     async with asyncio.TaskGroup() as tg:
                         for registry in registries_result.registries:
@@ -98,14 +109,18 @@ class PublishArtifactHandler(
                             )
                             task = tg.create_task(
                                 self.action_runner.run_action(
-                                    action_type=iprojectactionrunner.ActionRef.from_type(list_published_artifacts_action.ListPublishedArtifactsAction),
+                                    action_type=iprojectactionrunner.ActionRef.from_type(
+                                        list_published_artifacts_action.ListPublishedArtifactsAction
+                                    ),
                                     payload=check_payload,
                                     meta=run_meta,
                                 )
                             )
                             check_tasks.append((task, registry))
                 except ExceptionGroup as eg:
-                    error_str = ". ".join([str(exception) for exception in eg.exceptions])
+                    error_str = ". ".join(
+                        [str(exception) for exception in eg.exceptions]
+                    )
                     raise code_action.ActionFailedException(error_str) from eg
 
                 # Filter to only dist paths that are not published per registry
@@ -119,7 +134,9 @@ class PublishArtifactHandler(
                         if resource_uri_to_path(path).name not in published_filenames
                     ]
                     if not_published_paths:
-                        dist_paths_to_publish_by_registry[registry.name] = not_published_paths
+                        dist_paths_to_publish_by_registry[registry.name] = (
+                            not_published_paths
+                        )
 
             # Publish to registries with unpublished artifacts.
             #
@@ -135,7 +152,9 @@ class PublishArtifactHandler(
             publish_results = await asyncio.gather(
                 *[
                     self.action_runner.run_action(
-                        action_type=iprojectactionrunner.ActionRef.from_type(publish_artifact_to_registry_action.PublishArtifactToRegistryAction),
+                        action_type=iprojectactionrunner.ActionRef.from_type(
+                            publish_artifact_to_registry_action.PublishArtifactToRegistryAction
+                        ),
                         payload=publish_artifact_to_registry_action.PublishArtifactToRegistryRunPayload(
                             src_artifact_def_path=src_artifact_def_path,
                             dist_artifact_paths=paths_to_publish,

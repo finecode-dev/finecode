@@ -30,7 +30,10 @@ async def on_shutdown(ws_context: context.WorkspaceContext) -> None:
     # hung for many minutes. Concurrently, total time stays ~_STOP_TIMEOUT_SEC
     # regardless of how many runners there are.
     await asyncio.gather(
-        *(runner_manager.stop_extension_runner(runner=runner) for runner in running_runners)
+        *(
+            runner_manager.stop_extension_runner(runner=runner)
+            for runner in running_runners
+        )
     )
 
     # A runner still INITIALIZING has never been sent a shutdown/exit RPC (that

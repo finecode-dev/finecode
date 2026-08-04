@@ -4,7 +4,6 @@ import dataclasses
 from pathlib import Path
 
 import pytest
-
 from fine_release.compute_release_order_handler import ComputeReleaseOrderHandler
 from fine_release.discover_release_candidates_handler import (
     DiscoverReleaseCandidatesHandler,
@@ -74,7 +73,9 @@ class FakeReleasePackageResult:
     """Shaped like ``ReleasePackageRunResult`` in the fields the sweep reads."""
 
     outcome: PackageReleaseOutcome
-    registries: list[FakeRegistryPublishResult] = dataclasses.field(default_factory=list)
+    registries: list[FakeRegistryPublishResult] = dataclasses.field(
+        default_factory=list
+    )
     created_refs: list[str] = dataclasses.field(default_factory=list)
     error: str | None = None
 
@@ -291,7 +292,9 @@ def build_runner(
                 project_path=pkg.project_path,
             )
 
-    runner.set_result(SEED_DEPENDENCY_GRAPH_ACTION, object(), project_path=WORKSPACE_ROOT_PATH)
+    runner.set_result(
+        SEED_DEPENDENCY_GRAPH_ACTION, object(), project_path=WORKSPACE_ROOT_PATH
+    )
     runner.set_result(
         DETECT_DEPENDENCY_CYCLES_ACTION,
         FakeCyclesResult(cycles=cycles or []),
@@ -309,13 +312,13 @@ def build_runner(
 def make_payload(
     dry_run: bool = False, project_paths: list[str] | None = None
 ) -> ReleaseWorkspacePackagesRunPayload:
-    return ReleaseWorkspacePackagesRunPayload(dry_run=dry_run, project_paths=project_paths)
+    return ReleaseWorkspacePackagesRunPayload(
+        dry_run=dry_run, project_paths=project_paths
+    )
 
 
 _ACTION_NAME = ReleaseWorkspacePackagesAction.__name__
-_ACTION_SOURCE = (
-    f"{ReleaseWorkspacePackagesAction.__module__}.{ReleaseWorkspacePackagesAction.__qualname__}"
-)
+_ACTION_SOURCE = f"{ReleaseWorkspacePackagesAction.__module__}.{ReleaseWorkspacePackagesAction.__qualname__}"
 _ACTIONS = {
     _ACTION_NAME: {
         "source": _ACTION_SOURCE,
@@ -357,7 +360,9 @@ async def run_sweep(
         actions=_ACTIONS,
         service_overrides={
             iworkspaceactionrunner.IWorkspaceActionRunner: runner,
-            iprojectinfoprovider.IProjectInfoProvider: FakeProjectInfoProvider(project_dir),
+            iprojectinfoprovider.IProjectInfoProvider: FakeProjectInfoProvider(
+                project_dir
+            ),
             ilogger.ILogger: logger or RecordingLogger(),
         },
     ) as session:
@@ -365,7 +370,9 @@ async def run_sweep(
     return result
 
 
-def _find_package(result: ReleaseWorkspacePackagesRunResult, package_name: str) -> object:
+def _find_package(
+    result: ReleaseWorkspacePackagesRunResult, package_name: str
+) -> object:
     return next(p for p in result.packages if p.package_name == package_name)
 
 
@@ -386,7 +393,9 @@ def _diamond_packages(b_succeeds: bool) -> list[PackageSpec]:
             package_name="pkg-b",
             version="1.0.0",
             outcome=(
-                PackageReleaseOutcome.PUBLISHED if b_succeeds else PackageReleaseOutcome.FAILED
+                PackageReleaseOutcome.PUBLISHED
+                if b_succeeds
+                else PackageReleaseOutcome.FAILED
             ),
         ),
         PackageSpec(
@@ -415,7 +424,9 @@ async def test_unpublished_package_is_released_under_its_declared_version(
 
 
 @pytest.mark.asyncio
-async def test_already_published_package_is_skipped_without_error(tmp_path: Path) -> None:
+async def test_already_published_package_is_skipped_without_error(
+    tmp_path: Path,
+) -> None:
     """Re-running the sweep on an unchanged repo reports SKIPPED with a successful return code, so a no-op run never masquerades as a failure in CI."""
     pkg = PackageSpec(
         project_path="pkg_a",
@@ -468,7 +479,9 @@ async def test_every_candidate_gets_a_recognized_outcome(tmp_path: Path) -> None
 
 
 @pytest.mark.asyncio
-async def test_failure_blocks_only_its_transitive_dependent_on_rerun(tmp_path: Path) -> None:
+async def test_failure_blocks_only_its_transitive_dependent_on_rerun(
+    tmp_path: Path,
+) -> None:
     """When a dependency's release keeps failing, only packages that actually depend on it are withheld — an unrelated package still ships in the same run."""
     runner = build_runner(_diamond_packages(b_succeeds=False), workspace_root=tmp_path)
     result = await run_sweep(make_payload(), runner, tmp_path)
@@ -510,7 +523,10 @@ async def test_dependency_is_ordered_before_its_dependent(tmp_path: Path) -> Non
     names_in_order = [p.package_name for p in result.packages]
     assert names_in_order.index("pkg-dep") < names_in_order.index("pkg-dependent")
     assert _find_package(result, "pkg-dep").outcome == PackageReleaseOutcome.PUBLISHED
-    assert _find_package(result, "pkg-dependent").outcome == PackageReleaseOutcome.PUBLISHED
+    assert (
+        _find_package(result, "pkg-dependent").outcome
+        == PackageReleaseOutcome.PUBLISHED
+    )
 
 
 @pytest.mark.asyncio
@@ -563,7 +579,9 @@ async def test_failed_release_result_is_recorded_with_its_own_diagnosis(
 
 
 @pytest.mark.asyncio
-async def test_package_release_that_raises_fails_only_that_package(tmp_path: Path) -> None:
+async def test_package_release_that_raises_fails_only_that_package(
+    tmp_path: Path,
+) -> None:
     """When the package release cannot be run at all — a runner crash rather than a release failure — that package is FAILED with the error recorded and the sweep still attempts every independent candidate."""
     broken = PackageSpec(
         project_path="pkg_p", package_name="pkg-p", version="1.0.0", release_raises=True
@@ -580,7 +598,9 @@ async def test_package_release_that_raises_fails_only_that_package(tmp_path: Pat
 
 
 @pytest.mark.asyncio
-async def test_failure_of_an_independent_package_does_not_halt_the_sweep(tmp_path: Path) -> None:
+async def test_failure_of_an_independent_package_does_not_halt_the_sweep(
+    tmp_path: Path,
+) -> None:
     """A failure in one package never stops the sweep for packages that don't depend on it — the release run always attempts every independent candidate."""
     x = PackageSpec(
         project_path="pkg_x",
@@ -598,7 +618,9 @@ async def test_failure_of_an_independent_package_does_not_halt_the_sweep(tmp_pat
 
 
 @pytest.mark.asyncio
-async def test_dry_run_delegates_in_preview_mode_and_pushes_nothing(tmp_path: Path) -> None:
+async def test_dry_run_delegates_in_preview_mode_and_pushes_nothing(
+    tmp_path: Path,
+) -> None:
     """A dry run delegates to each package in preview mode and pushes nothing, so previewing a release set on a pull request can never accidentally publish or move a ref."""
     pkg = PackageSpec(
         project_path="pkg_a",
@@ -617,7 +639,9 @@ async def test_dry_run_delegates_in_preview_mode_and_pushes_nothing(tmp_path: Pa
 
 
 @pytest.mark.asyncio
-async def test_dry_run_of_fully_published_workspace_reports_no_failures(tmp_path: Path) -> None:
+async def test_dry_run_of_fully_published_workspace_reports_no_failures(
+    tmp_path: Path,
+) -> None:
     """Previewing a release set where every version is already published reports a clean SKIPPED-only preview, so the PR preview never shows failures for a workspace with nothing to release."""
     pkg = PackageSpec(
         project_path="pkg_a",
@@ -638,7 +662,9 @@ async def test_refs_from_every_released_package_are_published_in_one_push(
 ) -> None:
     """Every ref a run created reaches the remote in a single push, so a release of many packages costs one repository-wide operation rather than one per package."""
     packages = [
-        PackageSpec(project_path=f"pkg_{name}", package_name=f"pkg-{name}", version="1.0.0")
+        PackageSpec(
+            project_path=f"pkg_{name}", package_name=f"pkg-{name}", version="1.0.0"
+        )
         for name in ("a", "b", "c")
     ]
     runner = build_runner(packages, workspace_root=tmp_path)
@@ -652,7 +678,9 @@ async def test_refs_from_every_released_package_are_published_in_one_push(
 
 
 @pytest.mark.asyncio
-async def test_refs_are_published_even_when_some_packages_failed(tmp_path: Path) -> None:
+async def test_refs_are_published_even_when_some_packages_failed(
+    tmp_path: Path,
+) -> None:
     """A failed package never discards the records of packages that succeeded — the push still happens, carrying every ref the run did create."""
     failed = PackageSpec(
         project_path="pkg_x",
@@ -709,7 +737,9 @@ async def test_push_failure_fails_the_run_without_unpublishing(
 async def test_project_paths_narrows_the_candidate_set(tmp_path: Path) -> None:
     """Restricting the release run to an explicit set of project paths releases only those projects — an operator re-releasing a single package never touches the rest of the workspace."""
     packages = [
-        PackageSpec(project_path=f"pkg_{name}", package_name=f"pkg-{name}", version="1.0.0")
+        PackageSpec(
+            project_path=f"pkg_{name}", package_name=f"pkg-{name}", version="1.0.0"
+        )
         for name in ("a", "b", "c")
     ]
     runner = build_runner(packages, workspace_root=tmp_path)
@@ -721,13 +751,21 @@ async def test_project_paths_narrows_the_candidate_set(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_dependency_cycle_fails_before_any_package_is_touched(tmp_path: Path) -> None:
+async def test_dependency_cycle_fails_before_any_package_is_touched(
+    tmp_path: Path,
+) -> None:
     """A dependency cycle among candidates is detected and fails the whole action before any package is released, since the computed order can no longer be trusted for any candidate."""
     a = PackageSpec(
-        project_path="pkg_a", package_name="pkg-a", version="1.0.0", depends_on=["pkg-b"]
+        project_path="pkg_a",
+        package_name="pkg-a",
+        version="1.0.0",
+        depends_on=["pkg-b"],
     )
     b = PackageSpec(
-        project_path="pkg_b", package_name="pkg-b", version="1.0.0", depends_on=["pkg-a"]
+        project_path="pkg_b",
+        package_name="pkg-b",
+        version="1.0.0",
+        depends_on=["pkg-a"],
     )
     runner = build_runner([a, b], cycles=[["pkg-a", "pkg-b"]], workspace_root=tmp_path)
 
@@ -743,6 +781,7 @@ async def test_candidate_order_is_deterministic_regardless_of_discovery_order(
     tmp_path: Path,
 ) -> None:
     """The release order among unrelated candidates is always by package name, never by the concurrent fan-out's arrival order, so two runs against the same repo state always produce the same order."""
+
     def _specs(names: list[str]) -> list[PackageSpec]:
         return [
             PackageSpec(

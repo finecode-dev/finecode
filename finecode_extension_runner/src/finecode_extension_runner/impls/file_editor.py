@@ -1,22 +1,22 @@
 import asyncio
-import contextlib
 import collections.abc
+import contextlib
 import dataclasses
 import pathlib
 from typing import TypeVar
 
 from finecode_extension_api.interfaces import ifileeditor, ifilemanager, ilogger
 
-
 T = TypeVar("T")
+
 
 class QueueIterator:
     def __init__(self, queue: asyncio.Queue[T]):
         self._queue = queue
-    
+
     def __aiter__(self):
         return self
-    
+
     async def __anext__(self):
         item = await self._queue.get()
         if item is None:  # Sentinel
@@ -384,7 +384,7 @@ class FileEditorSession(ifileeditor.IFileEditorProviderSession):
         )
         for subscription in self._file_change_subscriptions.get(file_path, {}).values():
             subscription.event_queue.put_nowait(file_change_event)
-        
+
         for subscription in self._all_events_subscriptions.values():
             subscription.event_queue.put_nowait(file_change_event)
 
@@ -471,16 +471,14 @@ class FileEditorSession(ifileeditor.IFileEditorProviderSession):
         new_subscription = SubscriptionToAllEvents()
         self._all_events_subscriptions[self] = new_subscription
         iterator = QueueIterator(queue=new_subscription.event_queue)
-        
+
         try:
             yield iterator
         finally:
             del self._all_events_subscriptions[self]
             await iterator._queue.put(None)
 
-    async def _current_file_info(
-        self, file_path: pathlib.Path
-    ) -> ifileeditor.FileInfo:
+    async def _current_file_info(self, file_path: pathlib.Path) -> ifileeditor.FileInfo:
         if file_path in self._opened_files:
             opened_file_info = self._opened_files[file_path]
             file_content = opened_file_info.content

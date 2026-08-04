@@ -11,12 +11,11 @@ else:
 
 import black
 from black.mode import Mode, TargetVersion
-
-from finecode_extension_api import code_action
 from fine_format import format_file_action
 from fine_python_lang.format_python_file_action import (
     FormatPythonFileAction,
 )
+from finecode_extension_api import code_action
 from finecode_extension_api.interfaces import ilogger, iprocessexecutor
 
 
@@ -95,7 +94,9 @@ class BlackFormatFileHandler(
         self.logger.disable("fine_python_black")
         process_result = cast(
             tuple[str, bool],
-            await self.process_executor.submit(format_one, file_content, self.black_mode),
+            await self.process_executor.submit(
+                format_one, file_content, self.black_mode
+            ),
         )
         if process_result is None:
             raise code_action.ActionFailedException(
@@ -106,7 +107,9 @@ class BlackFormatFileHandler(
         self.logger.enable("fine_python_black")
 
         # Update for next handlers in the formatting pipeline.
-        run_context.file_info = format_file_action.FileInfo(new_file_content, file_version)
+        run_context.file_info = format_file_action.FileInfo(
+            new_file_content, file_version
+        )
 
         return format_file_action.FormatFileRunResult(
             changed=file_changed,

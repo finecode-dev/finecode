@@ -7,7 +7,6 @@ source = "fine_git.GitCreateGitTagHandler"
 env = "dev_workspace"
 dependencies = ["fine_git~=0.1.0a0"]
 
-
 [tool.finecode.action.push_git_refs]
 source = "fine_git.PushGitRefsAction"
 

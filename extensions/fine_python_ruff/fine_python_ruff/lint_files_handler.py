@@ -5,26 +5,26 @@ import json
 import sys
 from pathlib import Path
 
-from finecode_extension_api import code_action
-from fine_lint.lint_files_action import LintFilesAction
 from fine_lint.diagnostic_types import (
     Diagnostic,
-    DiagnosticFilesRunPayload,
     DiagnosticFilesRunContext,
+    DiagnosticFilesRunPayload,
     DiagnosticFilesRunResult,
     DiagnosticSeverity,
     Position,
     Range,
 )
+from fine_lint.lint_files_action import LintFilesAction
+from fine_python_ruff.ruff_lsp_service import RuffLspService
+from finecode_extension_api import code_action
 from finecode_extension_api.interfaces import (
     icache,
     icommandrunner,
-    ilogger,
     ifileeditor,
+    ilogger,
     iprojectinfoprovider,
 )
 from finecode_extension_api.resource_uri import ResourceUri, resource_uri_to_path
-from fine_python_ruff.ruff_lsp_service import RuffLspService
 
 
 @dataclasses.dataclass
@@ -39,9 +39,7 @@ class RuffLintFilesHandlerConfig(code_action.ActionHandlerConfig):
 
 
 class RuffLintFilesHandler(
-    code_action.ActionHandler[
-        LintFilesAction, RuffLintFilesHandlerConfig
-    ]
+    code_action.ActionHandler[LintFilesAction, RuffLintFilesHandlerConfig]
 ):
     CACHE_KEY = "RuffLinter"
     FILE_OPERATION_AUTHOR = ifileeditor.FileOperationAuthor(id="RuffLinterAstProvider")
@@ -61,7 +59,9 @@ class RuffLintFilesHandler(
         self.logger = logger
         self.file_editor = file_editor
         self.command_runner = command_runner
-        self.project_info_provider: iprojectinfoprovider.IProjectInfoProvider = project_info_provider
+        self.project_info_provider: iprojectinfoprovider.IProjectInfoProvider = (
+            project_info_provider
+        )
         self.lsp_service: RuffLspService = lsp_service
 
         self.ruff_bin_path = Path(sys.executable).parent / "ruff"
@@ -77,12 +77,14 @@ class RuffLintFilesHandler(
                 lint_settings["ignore"] = self.config.ignore
             if self.config.preview:
                 lint_settings["preview"] = True
-            self.lsp_service.update_settings({
-                "lint": lint_settings,
-                "showSyntaxErrors": True,
-                "lineLength": self.config.line_length,
-                "targetVersion": self.config.target_version,
-            })
+            self.lsp_service.update_settings(
+                {
+                    "lint": lint_settings,
+                    "showSyntaxErrors": True,
+                    "lineLength": self.config.line_length,
+                    "targetVersion": self.config.target_version,
+                }
+            )
 
     async def run_on_single_file(
         self, file_uri: ResourceUri
@@ -106,9 +108,13 @@ class RuffLintFilesHandler(
                 file_version: str = file_info.version
 
         if self.config.use_cli:
-            lint_messages = await self.run_ruff_lint_on_single_file(file_path, file_content)
+            lint_messages = await self.run_ruff_lint_on_single_file(
+                file_path, file_content
+            )
         else:
-            root_uri = self.project_info_provider.get_current_project_dir_path().as_uri()
+            root_uri = (
+                self.project_info_provider.get_current_project_dir_path().as_uri()
+            )
             await self.lsp_service.ensure_started(root_uri)
 
             lint_messages = await self.lsp_service.check_file(file_path)

@@ -1,16 +1,17 @@
 import asyncio
 import dataclasses
 
-from finecode_extension_api import code_action
-from fine_src_artifacts import group_src_artifact_files_by_lang_action
 from fine_inspect_code.diagnostic_types import (
+    DiagnosticFilesRunContext,
     DiagnosticFilesRunPayload,
     DiagnosticFilesRunResult,
-    DiagnosticFilesRunContext,
 )
-from fine_type_check.type_check_files_action import TypeCheckFilesAction
+from fine_src_artifacts import group_src_artifact_files_by_lang_action
+from finecode_extension_api import code_action
 from finecode_extension_api.interfaces import ilogger, iprojectactionrunner
 from finecode_extension_api.resource_uri import ResourceUri
+
+from fine_type_check.type_check_files_action import TypeCheckFilesAction
 
 
 @dataclasses.dataclass
@@ -65,15 +66,21 @@ class TypeCheckFilesDispatchHandler(
         )
 
         if not subactions_by_lang:
-            self.logger.debug("TypeCheckFilesDispatchHandler: no language subactions registered")
+            self.logger.debug(
+                "TypeCheckFilesDispatchHandler: no language subactions registered"
+            )
             if payload.file_paths:
                 await run_context.partial_result_sender.send(
-                    DiagnosticFilesRunResult(messages={uri: [] for uri in payload.file_paths})
+                    DiagnosticFilesRunResult(
+                        messages={uri: [] for uri in payload.file_paths}
+                    )
                 )
             return
 
         files_by_lang_result = await self.action_runner.run_action(
-            action_type=iprojectactionrunner.ActionRef.from_type(group_src_artifact_files_by_lang_action.GroupSrcArtifactFilesByLangAction),
+            action_type=iprojectactionrunner.ActionRef.from_type(
+                group_src_artifact_files_by_lang_action.GroupSrcArtifactFilesByLangAction
+            ),
             payload=group_src_artifact_files_by_lang_action.GroupSrcArtifactFilesByLangRunPayload(
                 file_paths=payload.file_paths,
                 langs=list(subactions_by_lang.keys()),

@@ -70,7 +70,9 @@ def _probe_endpoint_once(endpoint: str, host: str, port: int) -> None:
     )
 
 
-def init_otel_logging(service_name: str, workspace_path: Path | None = None, endpoint: str | None = None) -> None:
+def init_otel_logging(
+    service_name: str, workspace_path: Path | None = None, endpoint: str | None = None
+) -> None:
     if not endpoint:
         return
 
@@ -146,7 +148,9 @@ def init_otel_logging(service_name: str, workspace_path: Path | None = None, end
     logger.add(_otel_sink, level="TRACE", filter=filter_logs)
 
 
-def init_tracer_provider(service_name: str, workspace_path: Path | None = None, endpoint: str | None = None) -> None:
+def init_tracer_provider(
+    service_name: str, workspace_path: Path | None = None, endpoint: str | None = None
+) -> None:
     if not endpoint:
         return
 
@@ -182,8 +186,14 @@ def init_tracer_provider(service_name: str, workspace_path: Path | None = None, 
     trace.set_tracer_provider(provider)
 
 
-def init_meter_provider(service_name: str, workspace_path: Path | None = None, endpoint: str | None = None) -> None:
-    global _action_duration_hist, _action_errors_counter, _er_startup_hist, _er_active_counter
+def init_meter_provider(
+    service_name: str, workspace_path: Path | None = None, endpoint: str | None = None
+) -> None:
+    global \
+        _action_duration_hist, \
+        _action_errors_counter, \
+        _er_startup_hist, \
+        _er_active_counter
 
     if not endpoint:
         return
@@ -195,7 +205,9 @@ def init_meter_provider(service_name: str, workspace_path: Path | None = None, e
     import importlib.metadata
 
     from opentelemetry import metrics
-    from opentelemetry.exporter.otlp.proto.grpc.metric_exporter import OTLPMetricExporter
+    from opentelemetry.exporter.otlp.proto.grpc.metric_exporter import (
+        OTLPMetricExporter,
+    )
     from opentelemetry.sdk.metrics import MeterProvider
     from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
     from opentelemetry.sdk.resources import Resource
@@ -266,9 +278,7 @@ def er_startup_metrics(env_name: str):
         yield
     finally:
         if _er_startup_hist is not None:
-            _er_startup_hist.record(
-                time.perf_counter() - start, {"env.name": env_name}
-            )
+            _er_startup_hist.record(time.perf_counter() - start, {"env.name": env_name})
 
 
 def er_active_inc(env_name: str) -> None:
@@ -343,7 +353,11 @@ def er_dispatch_span(env_name: str, runner_id: str, action_name: str):
     tracer = trace.get_tracer("finecode.wm")
     with tracer.start_as_current_span(
         "action.er_dispatch",
-        attributes={"env.name": env_name, "runner.id": runner_id, "action.name": action_name},
+        attributes={
+            "env.name": env_name,
+            "runner.id": runner_id,
+            "action.name": action_name,
+        },
         record_exception=True,
         set_status_on_exception=True,
     ) as span:
@@ -369,7 +383,9 @@ def _jsonrpc_server_span(method: str, traceparent: str | None):
     from opentelemetry import propagate, trace
 
     tracer = trace.get_tracer("finecode.jsonrpc")
-    parent_ctx = propagate.extract({"traceparent": traceparent}) if traceparent else None
+    parent_ctx = (
+        propagate.extract({"traceparent": traceparent}) if traceparent else None
+    )
     with tracer.start_as_current_span(
         f"jsonrpc.server/{method}",
         context=parent_ctx,
@@ -399,12 +415,14 @@ class JsonRpcTracingHooks:
 
     def notification_sent(self, method: str) -> None:
         from opentelemetry import trace
+
         span = trace.get_current_span()
         if span.is_recording():
             span.add_event("jsonrpc.notification.sent", {"rpc.method": method})
 
     def notification_received(self, method: str, traceparent: str | None) -> None:
         from opentelemetry import trace
+
         span = trace.get_current_span()
         if span.is_recording():
             span.add_event("jsonrpc.notification.received", {"rpc.method": method})
@@ -412,6 +430,7 @@ class JsonRpcTracingHooks:
 
 def add_span_event(name: str, attributes: dict | None = None) -> None:
     from opentelemetry import trace
+
     span = trace.get_current_span()
     if span.is_recording():
         span.add_event(name, attributes or {})
@@ -457,7 +476,8 @@ def attach_incoming_traceparent(params: dict):
     if not incoming:
         yield
         return
-    from opentelemetry import context as otel_context, propagate
+    from opentelemetry import context as otel_context
+    from opentelemetry import propagate
 
     parent_ctx = propagate.extract({"traceparent": incoming})
     token = otel_context.attach(parent_ctx)

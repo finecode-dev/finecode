@@ -5,15 +5,15 @@ from importlib import metadata
 from pathlib import Path
 from typing import Any, NamedTuple
 
-
 import cattrs
+from loguru import logger
+from tomlkit import loads as toml_loads
+
 from finecode import user_messages
 from finecode._converter import converter as _converter
 from finecode.wm_server import context, domain
 from finecode.wm_server.config import config_models, interpreter_matrix
 from finecode.wm_server.runner import runner_client
-from loguru import logger
-from tomlkit import loads as toml_loads
 
 
 def read_project_finecode_config(project_dir: Path) -> dict | None:
@@ -79,13 +79,17 @@ async def read_projects_in_dir(
     # Skipping them avoids traversing thousands of files in virtualenvs,
     # caches, and third-party package trees.
     _SKIP_DIRS = {
-        ".venv", ".venvs",
+        ".venv",
+        ".venvs",
         ".git",
         "node_modules",
         "__pycache__",
         ".tox",
-        "dist", "build",
-        ".mypy_cache", ".ruff_cache", ".pytest_cache",
+        "dist",
+        "build",
+        ".mypy_cache",
+        ".ruff_cache",
+        ".pytest_cache",
     }
 
     logger.trace(f"Read directories in {dir_path}")
@@ -176,7 +180,9 @@ def _read_er_logging_config(raw: dict[str, Any]) -> config_models.ErLoggingConfi
     logging_raw = raw.get("logging", {})
     default_level = logging_raw.get("default_level", "INFO")
     log_groups = dict(logging_raw.get("log_groups", {}))
-    return config_models.ErLoggingConfig(default_level=default_level, log_groups=log_groups)
+    return config_models.ErLoggingConfig(
+        default_level=default_level, log_groups=log_groups
+    )
 
 
 def _resolve_er_logging_config(
@@ -193,8 +199,13 @@ def _resolve_er_logging_config(
 
     env_logging_raw = env_raw.get("logging", {})
     merged_level = env_logging_raw.get("default_level", fallback.default_level)
-    merged_groups = {**fallback.log_groups, **dict(env_logging_raw.get("log_groups", {}))}
-    merged = config_models.ErLoggingConfig(default_level=merged_level, log_groups=merged_groups)
+    merged_groups = {
+        **fallback.log_groups,
+        **dict(env_logging_raw.get("log_groups", {})),
+    }
+    merged = config_models.ErLoggingConfig(
+        default_level=merged_level, log_groups=merged_groups
+    )
     return _apply_er_env_var_overrides(merged, env_name)
 
 
@@ -218,12 +229,12 @@ def _apply_er_env_var_overrides(
     for var, value in os.environ.items():
         prefix = f"FINECODE_ER_ENV_{env_key}_LOG_GROUP_"
         if var.startswith(prefix):
-            group_key = var[len(prefix):].lower().replace("_", ".")
+            group_key = var[len(prefix) :].lower().replace("_", ".")
             groups[group_key] = value
     for var, value in os.environ.items():
         prefix = "FINECODE_ER_LOG_GROUP_"
         if var.startswith(prefix) and not var.startswith(f"FINECODE_ER_ENV_"):
-            group_key = var[len(prefix):].lower().replace("_", ".")
+            group_key = var[len(prefix) :].lower().replace("_", ".")
             groups.setdefault(group_key, value)
 
     return config_models.ErLoggingConfig(default_level=level, log_groups=groups)
@@ -244,14 +255,16 @@ def read_wm_logging_config(workspace_root: Path) -> config_models.ErLoggingConfi
         try:
             with open(ws_config_path, "rb") as f:
                 ws_config = toml_loads(f.read()).unwrap()
-            logging_raw = ws_config.get("workspace", {}).get("wm", {}).get("logging", {})
+            logging_raw = (
+                ws_config.get("workspace", {}).get("wm", {}).get("logging", {})
+            )
             log_groups = dict(logging_raw.get("log_groups", {}))
         except Exception:
             pass
 
     for var, value in os.environ.items():
         if var.startswith("FINECODE_WM_LOG_GROUP_"):
-            group_key = var[len("FINECODE_WM_LOG_GROUP_"):].lower().replace("_", ".")
+            group_key = var[len("FINECODE_WM_LOG_GROUP_") :].lower().replace("_", ".")
             log_groups[group_key] = value
 
     return config_models.ErLoggingConfig(log_groups=log_groups)
@@ -271,7 +284,9 @@ def read_wm_telemetry_config(workspace_root: Path) -> config_models.WmTelemetryC
         try:
             with open(ws_config_path, "rb") as f:
                 ws_config = toml_loads(f.read()).unwrap()
-            telemetry_raw = ws_config.get("workspace", {}).get("wm", {}).get("telemetry", {})
+            telemetry_raw = (
+                ws_config.get("workspace", {}).get("wm", {}).get("telemetry", {})
+            )
             otlp_endpoint = telemetry_raw.get("otlp_endpoint", None)
         except Exception:
             pass
@@ -282,8 +297,7 @@ def read_wm_telemetry_config(workspace_root: Path) -> config_models.WmTelemetryC
 
 
 def read_wm_wal_config(workspace_root: Path) -> config_models.WmWalConfig:
-    """Read WM WAL config from [workspace.wm.wal] in finecode-workspace.toml.
-    """
+    """Read WM WAL config from [workspace.wm.wal] in finecode-workspace.toml."""
     enabled = False
 
     ws_config_path = workspace_root / "finecode-workspace.toml"
@@ -360,7 +374,9 @@ async def read_project_config(
         if finecode_raw_config and resolve_presets:
             try:
                 user_presets = [
-                    _converter.structure(raw_preset, config_models.FinecodePresetDefinition)
+                    _converter.structure(
+                        raw_preset, config_models.FinecodePresetDefinition
+                    )
                     for raw_preset in finecode_raw_config.get("presets", [])
                 ]
             except cattrs.ClassValidationError as exception:
@@ -377,7 +393,7 @@ async def read_project_config(
                 raise config_models.ConfigurationError(str(exception))
             preset_sources += [p.source for p in user_file_preset_defs]
 
-        # TODO: can it be the case that there is no such runner? 
+        # TODO: can it be the case that there is no such runner?
         dev_workspace_runner = ws_context.ws_projects_extension_runners.get(
             project.dir_path, {}
         ).get("dev_workspace")
@@ -416,7 +432,8 @@ async def read_project_config(
             # the merged config — the else-branch in _merge_projects_configs assigns
             # unknown keys directly, which would lose the project's preset entries.
             user_finecode_section = {
-                k: v for k, v in user_config_raw.items()
+                k: v
+                for k, v in user_config_raw.items()
                 if k not in ("dependency-groups", "presets")
             }
             wrapped_user: dict[str, Any] = {"tool": {"finecode": user_finecode_section}}
@@ -429,7 +446,9 @@ async def read_project_config(
                 dep_groups: dict[str, list[Any]] = project_config.setdefault(
                     "dependency-groups", {}
                 )
-                for group_name, packages in user_config_raw["dependency-groups"].items():
+                for group_name, packages in user_config_raw[
+                    "dependency-groups"
+                ].items():
                     if group_name not in dep_groups:
                         dep_groups[group_name] = list(packages)
                     else:
@@ -588,12 +607,15 @@ def read_preset_config(
         # list-valued keys wholesale (they aren't one of its special-cased keys), which
         # would silently drop the preset's own `presets` entries.
         finecode_section = {
-            k: v for k, v in preset_user_raw.items()
+            k: v
+            for k, v in preset_user_raw.items()
             if k not in ("dependency-groups", "presets")
         }
         wrapped_user: dict[str, Any] = {"tool": {"finecode": finecode_section}}
         # config2 (user) overwrites config1 (preset) for conflicting items — user wins
-        _merge_projects_configs(preset_toml, config_path, wrapped_user, preset_user_config_path)
+        _merge_projects_configs(
+            preset_toml, config_path, wrapped_user, preset_user_config_path
+        )
         if "presets" in preset_user_raw:
             try:
                 user_extends = [
@@ -639,9 +661,13 @@ async def collect_config_from_py_presets(
             # use merge instead of just assigning config, because merge not only merges
             # configs, but also adapts relative pathes etc.
             config = {}
-            _merge_projects_configs(config, def_path, preset_toml, preset_toml_path, is_from_preset=True)
+            _merge_projects_configs(
+                config, def_path, preset_toml, preset_toml_path, is_from_preset=True
+            )
         else:
-            _merge_projects_configs(config, def_path, preset_toml, preset_toml_path, is_from_preset=True)
+            _merge_projects_configs(
+                config, def_path, preset_toml, preset_toml_path, is_from_preset=True
+            )
         new_presets_sources = (
             set([extend.source for extend in preset_config.extends]) - processed_presets
         )
@@ -767,8 +793,13 @@ def _merge_projects_configs(
                     # Presets are processed in non-deterministic order, so a preset
                     # that adds handlers to an action declared by another preset may
                     # be merged before the declaring preset supplies the source.
-                    if "source" in action_info and "source" not in tool_finecode_config1[key][action_name]:
-                        tool_finecode_config1[key][action_name]["source"] = action_info["source"]
+                    if (
+                        "source" in action_info
+                        and "source" not in tool_finecode_config1[key][action_name]
+                    ):
+                        tool_finecode_config1[key][action_name]["source"] = action_info[
+                            "source"
+                        ]
 
                     if "config" in action_info:
                         if "config" not in tool_finecode_config1[key][action_name]:
@@ -928,10 +959,12 @@ def _merge_projects_configs(
                 if ext_name not in ext_config1:
                     ext_config1[ext_name] = dict(ext_data)
                 else:
-                    existing_overrides = ext_config1[ext_name].get("dependencies_override", [])
+                    existing_overrides = ext_config1[ext_name].get(
+                        "dependencies_override", []
+                    )
                     new_overrides = ext_data.get("dependencies_override", [])
-                    ext_config1[ext_name]["dependencies_override"] = _merge_override_specs(
-                        existing_overrides, new_overrides
+                    ext_config1[ext_name]["dependencies_override"] = (
+                        _merge_override_specs(existing_overrides, new_overrides)
                     )
         elif key in config1:
             tool_finecode_config1[key].update(value)
@@ -1157,8 +1190,7 @@ def resolve_interpreter_matrices(project_config: dict[str, Any]) -> None:
                         interpreter_matrix.parse_interpreter(value)
                         for value in env_table[env_name]["interpreters"]
                     ]
-                    if env_name in env_table
-                    and "interpreters" in env_table[env_name]
+                    if env_name in env_table and "interpreters" in env_table[env_name]
                     else None
                 ),
             )
@@ -1212,9 +1244,7 @@ def resolve_interpreter_matrices(project_config: dict[str, Any]) -> None:
     # form can reach this point.
     target_envs_by_handler: dict[tuple[str, str], list[str]] = {}
     for ref in expansion.handlers:
-        target_envs_by_handler.setdefault(
-            (ref.action, ref.name), []
-        ).append(ref.env)
+        target_envs_by_handler.setdefault((ref.action, ref.name), []).append(ref.env)
 
     for action_name, action_raw in actions_raw.items():
         if "handlers" not in action_raw:

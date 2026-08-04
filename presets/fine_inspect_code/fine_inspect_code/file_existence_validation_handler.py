@@ -1,22 +1,22 @@
 import dataclasses
 import pathlib
 
-from finecode_extension_api import code_action
-from finecode_extension_api.interfaces import ilogger
-from finecode_extension_api.resource_uri import resource_uri_to_path
-from fine_inspect_code.inspect_code_action import (
-    InspectCodeAction,
-    InspectCodeRunPayload,
-    InspectCodeRunContext,
-    InspectCodeRunResult,
-    InspectCodeTarget,
-)
 from fine_inspect_code.diagnostic_types import (
     Diagnostic,
     DiagnosticSeverity,
     Position,
     Range,
 )
+from fine_inspect_code.inspect_code_action import (
+    InspectCodeAction,
+    InspectCodeRunContext,
+    InspectCodeRunPayload,
+    InspectCodeRunResult,
+    InspectCodeTarget,
+)
+from finecode_extension_api import code_action
+from finecode_extension_api.interfaces import ilogger
+from finecode_extension_api.resource_uri import resource_uri_to_path
 
 
 @dataclasses.dataclass

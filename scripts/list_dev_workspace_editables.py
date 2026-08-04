@@ -9,6 +9,7 @@ docs/guides/developing-finecode.md#continuous-integration.
 Must be run with the repo root as the working directory. Uses only the standard
 library (tomllib, Python 3.11+) since finecode is not installed yet at this point.
 """
+
 import pathlib
 import re
 import sys
@@ -67,10 +68,12 @@ def resolve_workspace_packages(
     if roots is None:
         with (repo_root / "pyproject.toml").open("rb") as f:
             root_pyproject = tomllib.load(f)
-        dev_workspace_group = (
-            root_pyproject.get("dependency-groups", {}).get("dev_workspace", [])
+        dev_workspace_group = root_pyproject.get("dependency-groups", {}).get(
+            "dev_workspace", []
         )
-        roots = [_bare_name(entry) for entry in dev_workspace_group if isinstance(entry, str)]
+        roots = [
+            _bare_name(entry) for entry in dev_workspace_group if isinstance(entry, str)
+        ]
 
     visited: set[str] = set()
     queue = list(roots)

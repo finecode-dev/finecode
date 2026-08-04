@@ -24,7 +24,13 @@ class ActionDeclaration:
 
 
 class ActionHandlerDeclaration:
-    def __init__(self, name: str, source: str, config: dict[str, typing.Any], env: str | None = None) -> None:
+    def __init__(
+        self,
+        name: str,
+        source: str,
+        config: dict[str, typing.Any],
+        env: str | None = None,
+    ) -> None:
         self.name = name
         self.source = source
         self.config = config

@@ -8,9 +8,7 @@ def _env(interpreter: str | None = None) -> dict:
 
 
 def _matrix_base(base: str, versions: list[str]) -> dict[str, dict]:
-    return {
-        f"{base}@cpython-{v}": _env(interpreter=f"cpython@{v}") for v in versions
-    }
+    return {f"{base}@cpython-{v}": _env(interpreter=f"cpython@{v}") for v in versions}
 
 
 class TestBuildCreateEnvsParams:
@@ -90,7 +88,9 @@ class TestBuildCreateEnvsParamsExcludesDevWorkspace:
         assert params["env_names"] == sorted({"dev_no_runtime", "docs"})
         assert "dev_workspace" not in params["env_names"]
 
-    def test_no_selection_and_no_dev_workspace_in_universe_omits_env_names(self) -> None:
+    def test_no_selection_and_no_dev_workspace_in_universe_omits_env_names(
+        self,
+    ) -> None:
         """Unaffected case: a project whose universe has no `dev_workspace` key
         keeps the original no-selection behavior of omitting `env_names`."""
         env_table = {"dev_no_runtime": _env(), "docs": _env()}

@@ -1,5 +1,5 @@
-import enum
 import dataclasses
+import enum
 
 from finecode_extension_api import code_action
 

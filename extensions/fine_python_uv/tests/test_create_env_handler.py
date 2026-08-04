@@ -4,6 +4,7 @@ import pathlib
 from typing import Any
 
 from fine_envs import create_env_action, create_envs_action
+from fine_python_uv.create_env_handler import UvCreateEnvHandler
 from finecode_extension_api.interfaces import (
     icommandrunner,
     ifilemanager,
@@ -13,8 +14,6 @@ from finecode_extension_api.interfaces import (
 )
 from finecode_extension_api.resource_uri import path_to_resource_uri
 from finecode_extension_runner.testing import NoOpLogger, run_handler
-
-from fine_python_uv.create_env_handler import UvCreateEnvHandler
 
 
 class _FakeProcess:
@@ -76,7 +75,9 @@ class _FakeFileManager:
     ) -> None:
         pass
 
-    async def remove_dir(self, dir_path: pathlib.Path, *, tolerant: bool = False) -> None:
+    async def remove_dir(
+        self, dir_path: pathlib.Path, *, tolerant: bool = False
+    ) -> None:
         pass
 
 
@@ -118,7 +119,9 @@ class _FakeProjectInfoProvider:
     async def get_current_project_package_name(self) -> str:
         raise NotImplementedError
 
-    async def get_project_raw_config(self, project_def_path: pathlib.Path) -> dict[str, Any]:
+    async def get_project_raw_config(
+        self, project_def_path: pathlib.Path
+    ) -> dict[str, Any]:
         return {}
 
     async def get_current_project_raw_config(self) -> dict[str, Any]:

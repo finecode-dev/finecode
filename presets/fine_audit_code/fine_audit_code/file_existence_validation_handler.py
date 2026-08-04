@@ -1,13 +1,10 @@
 import dataclasses
 import pathlib
 
-from finecode_extension_api import code_action
-from finecode_extension_api.interfaces import ilogger
-from finecode_extension_api.resource_uri import resource_uri_to_path
 from fine_audit_code.audit_code_action import (
     AuditCodeAction,
-    AuditCodeRunPayload,
     AuditCodeRunContext,
+    AuditCodeRunPayload,
     AuditCodeRunResult,
     AuditCodeTarget,
 )
@@ -17,6 +14,9 @@ from fine_inspect_code.diagnostic_types import (
     Position,
     Range,
 )
+from finecode_extension_api import code_action
+from finecode_extension_api.interfaces import ilogger
+from finecode_extension_api.resource_uri import resource_uri_to_path
 
 
 @dataclasses.dataclass

@@ -1,14 +1,17 @@
 import dataclasses
 
-from finecode_extension_api import code_action
 from fine_src_artifacts import build_artifact_action
+from finecode_extension_api import code_action
 from finecode_extension_api.interfaces import (
     icommandrunner,
     iextensionrunnerinfoprovider,
     ilogger,
     iprojectinfoprovider,
 )
-from finecode_extension_api.resource_uri import path_to_resource_uri, resource_uri_to_path
+from finecode_extension_api.resource_uri import (
+    path_to_resource_uri,
+    resource_uri_to_path,
+)
 
 
 @dataclasses.dataclass
@@ -92,5 +95,7 @@ class BuildArtifactPyHandler(
 
         return build_artifact_action.BuildArtifactRunResult(
             src_artifact_def_path=path_to_resource_uri(project_def_path),
-            build_output_paths=[path_to_resource_uri(path) for path in build_output_paths],
+            build_output_paths=[
+                path_to_resource_uri(path) for path in build_output_paths
+            ],
         )

@@ -2,7 +2,6 @@ import pathlib
 import stat
 
 import pytest
-
 from fine_envs import remove_envs_action
 from fine_envs.create_envs_action import EnvInfo
 from fine_envs.remove_envs_remove_handler import RemoveEnvsRemoveHandler
@@ -27,7 +26,9 @@ class _FailForNamesFileManager:
         self._real = FileManager(logger=_FakeLogger())
         self._failing_names = failing_names
 
-    async def remove_dir(self, dir_path: pathlib.Path, *, tolerant: bool = False) -> None:
+    async def remove_dir(
+        self, dir_path: pathlib.Path, *, tolerant: bool = False
+    ) -> None:
         if dir_path.name in self._failing_names:
             raise PermissionError("device or resource busy")
         await self._real.remove_dir(dir_path, tolerant=tolerant)

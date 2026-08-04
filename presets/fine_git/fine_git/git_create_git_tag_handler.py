@@ -2,14 +2,17 @@ import dataclasses
 import pathlib
 import shlex
 
-from finecode_extension_api import code_action
-from finecode_extension_api.interfaces import icommandrunner, ilogger, iprojectinfoprovider
-
 from fine_git.create_git_tag_action import (
     CreateGitTagAction,
     CreateGitTagRunContext,
     CreateGitTagRunPayload,
     CreateGitTagRunResult,
+)
+from finecode_extension_api import code_action
+from finecode_extension_api.interfaces import (
+    icommandrunner,
+    ilogger,
+    iprojectinfoprovider,
 )
 
 
@@ -86,4 +89,6 @@ class GitCreateGitTagHandler(
             )
         except Exception as exception:
             self.logger.debug(f"Creating tag {payload.tag} raised: {exception}")
-            return CreateGitTagRunResult(tag=payload.tag, created=False, error=str(exception))
+            return CreateGitTagRunResult(
+                tag=payload.tag, created=False, error=str(exception)
+            )

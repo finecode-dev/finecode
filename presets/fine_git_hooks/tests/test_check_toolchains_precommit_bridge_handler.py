@@ -13,15 +13,14 @@ import pathlib
 import pytest
 from fine_envs.check_toolchains_action import CheckToolchainsRunResult
 from fine_envs.sync_toolchains_action import EnvToolchainAxis
+from fine_git_hooks import precommit_action
+from fine_git_hooks.check_toolchains_precommit_bridge_handler import (
+    CheckToolchainsPrecommitBridgeHandler,
+)
 from finecode_extension_api import code_action
 from finecode_extension_api.interfaces.iworkspaceinfoprovider import (
     ProjectConfigStatus,
     WorkspaceProject,
-)
-
-from fine_git_hooks import precommit_action
-from fine_git_hooks.check_toolchains_precommit_bridge_handler import (
-    CheckToolchainsPrecommitBridgeHandler,
 )
 
 
@@ -39,9 +38,7 @@ class _FakeWorkspaceInfoProvider:
 class _FakeWorkspaceActionRunner:
     """Answers with a canned per-project result, as the real fan-out would."""
 
-    def __init__(
-        self, results: dict[pathlib.Path, CheckToolchainsRunResult]
-    ) -> None:
+    def __init__(self, results: dict[pathlib.Path, CheckToolchainsRunResult]) -> None:
         self._results = results
         self.requested_project_paths: list[pathlib.Path] = []
 
@@ -56,9 +53,7 @@ class _FakeWorkspaceActionRunner:
         assert project_paths is not None
         self.requested_project_paths.extend(project_paths)
         return {
-            path: self._results[path]
-            for path in project_paths
-            if path in self._results
+            path: self._results[path] for path in project_paths if path in self._results
         }
 
 
@@ -77,7 +72,9 @@ def _stale(declared: list[str], derived: list[str]) -> CheckToolchainsRunResult:
     )
 
 
-def _run_context(staged_files: list[pathlib.Path]) -> precommit_action.PrecommitRunContext:
+def _run_context(
+    staged_files: list[pathlib.Path],
+) -> precommit_action.PrecommitRunContext:
     run_context = precommit_action.PrecommitRunContext(
         run_id=1,
         initial_payload=precommit_action.PrecommitRunPayload(),

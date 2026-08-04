@@ -3,7 +3,6 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 import pytest
-
 from finecode_extension_runner import logs
 
 
@@ -43,7 +42,9 @@ def test_filter_logs_group_override_uses_its_own_threshold() -> None:
     logs.set_default_log_level(logs.LogLevel.INFO)
     logs.set_log_level_for_group("finecode.noisy", logs.LogLevel.ERROR)
 
-    assert logs.filter_logs(_record("finecode.noisy.sub", logs.LogLevel.WARNING)) is False
+    assert (
+        logs.filter_logs(_record("finecode.noisy.sub", logs.LogLevel.WARNING)) is False
+    )
     assert logs.filter_logs(_record("finecode.noisy.sub", logs.LogLevel.ERROR)) is True
     # An unrelated module keeps the default threshold, unaffected by the override.
     assert logs.filter_logs(_record("finecode.other", logs.LogLevel.WARNING)) is True
@@ -58,7 +59,9 @@ def test_filter_logs_group_override_with_none_level_blocks_everything() -> None:
     logs.set_default_log_level(logs.LogLevel.INFO)
     logs.set_log_level_for_group("finecode.silenced", None)
 
-    assert logs.filter_logs(_record("finecode.silenced", logs.LogLevel.CRITICAL)) is False
+    assert (
+        logs.filter_logs(_record("finecode.silenced", logs.LogLevel.CRITICAL)) is False
+    )
 
 
 def test_filter_logs_uses_longest_matching_group_prefix() -> None:

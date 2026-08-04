@@ -1,5 +1,7 @@
 import dataclasses
 
+from fine_envs import sync_toolchains_action
+from fine_src_artifacts import get_src_artifact_language_action
 from finecode_extension_api import code_action
 from finecode_extension_api.interfaces import (
     ilogger,
@@ -7,8 +9,6 @@ from finecode_extension_api.interfaces import (
     iprojectinfoprovider,
 )
 from finecode_extension_api.resource_uri import path_to_resource_uri
-from fine_envs import sync_toolchains_action
-from fine_src_artifacts import get_src_artifact_language_action
 
 
 @dataclasses.dataclass
@@ -61,9 +61,7 @@ class SyncToolchainsDispatchHandler(
             meta=run_context.meta,
         )
         language = language_result.language
-        self.logger.debug(
-            f"Detected language '{language}' for {project_def_path}"
-        )
+        self.logger.debug(f"Detected language '{language}' for {project_def_path}")
 
         subactions_by_lang = await self.action_runner.get_actions_for_parent(
             sync_toolchains_action.SyncToolchainsAction

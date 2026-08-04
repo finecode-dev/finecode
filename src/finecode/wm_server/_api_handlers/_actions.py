@@ -1,4 +1,5 @@
 """Action run and management API handlers."""
+
 from __future__ import annotations
 
 import asyncio
@@ -8,7 +9,6 @@ from loguru import logger
 
 from finecode import telemetry
 from finecode.wm_server import context, domain
-from finecode.wm_server.services.run_service.exceptions import ActionNotFoundError
 from finecode.wm_server._api_handlers._helpers import (
     _apply_config_overrides_to_projects,
     _build_batch_result,
@@ -18,7 +18,10 @@ from finecode.wm_server._api_handlers._helpers import (
     _resolve_actions_by_project,
     find_action_by_source,
 )
-from finecode.wm_server.services.action_tree import _handle_get_tree  # noqa: F401 (re-export)
+from finecode.wm_server.services.action_tree import (  # noqa: F401 (re-export)
+    _handle_get_tree,
+)
+from finecode.wm_server.services.run_service.exceptions import ActionNotFoundError
 
 
 async def _handle_run_action(
@@ -104,9 +107,13 @@ async def _handle_actions_reload(
     if not isinstance(project, domain.CollectedProject):
         raise ValueError(f"Project '{project_path}' not found or not initialized")
 
-    action = await find_action_by_source(project.actions, action_source, project, ws_context)
+    action = await find_action_by_source(
+        project.actions, action_source, project, ws_context
+    )
     if action is None:
-        raise ActionNotFoundError(f"Action with source '{action_source}' not found in project '{project_path}'")
+        raise ActionNotFoundError(
+            f"Action with source '{action_source}' not found in project '{project_path}'"
+        )
 
     runners_by_env = ws_context.ws_projects_extension_runners.get(project_path, {})
     for runner in runners_by_env.values():
@@ -143,15 +150,15 @@ async def _handle_run_batch(
         if not parsed.action_sources:
             raise ValueError("actionSources list is required and must be non-empty")
 
-        logger.debug(f"runBatch: actionSources={parsed.action_sources} projects={parsed.project_names} formats={parsed.result_format_strs}")
+        logger.debug(
+            f"runBatch: actionSources={parsed.action_sources} projects={parsed.project_names} formats={parsed.result_format_strs}"
+        )
 
         actions_by_project, name_to_source = await _resolve_actions_by_project(
             parsed.project_names, parsed.action_sources, ws_context
         )
 
-        await run_service.start_required_environments(
-            actions_by_project, ws_context
-        )
+        await run_service.start_required_environments(actions_by_project, ws_context)
 
         workspace_executor = run_service.WorkspaceExecutor(ws_context)
         result_by_project = await workspace_executor.run_actions_in_projects(
@@ -164,8 +171,12 @@ async def _handle_run_batch(
             payload_overrides_by_project=parsed.params_by_project,
         )
 
-        results, overall_return_code = _build_batch_result(result_by_project, name_to_source)
-        logger.debug(f"runBatch: done, projects_count={len(results)} returnCode={overall_return_code}")
+        results, overall_return_code = _build_batch_result(
+            result_by_project, name_to_source
+        )
+        logger.debug(
+            f"runBatch: done, projects_count={len(results)} returnCode={overall_return_code}"
+        )
         return {"results": results, "returnCode": overall_return_code}
 
 
@@ -221,7 +232,10 @@ async def _handle_set_config_overrides(
     # initialized handlers and pick up the new config on the next invocation.
     try:
         async with asyncio.TaskGroup() as tg:
-            for project_path, runners_by_env in ws_context.ws_projects_extension_runners.items():
+            for (
+                project_path,
+                runners_by_env,
+            ) in ws_context.ws_projects_extension_runners.items():
                 project = ws_context.ws_projects.get(project_path)
                 if project is None or not isinstance(project, domain.CollectedProject):
                     continue
@@ -275,7 +289,9 @@ async def _handle_get_payload_schemas(
     source_to_name: dict[str, str] = {}
     action_names: list[str] = []
     for source in action_sources:
-        action = await find_action_by_source(project.actions, source, project, ws_context)
+        action = await find_action_by_source(
+            project.actions, source, project, ws_context
+        )
         if action is not None:
             source_to_name[source] = action.name
             if action.name not in action_names:
@@ -285,16 +301,23 @@ async def _handle_get_payload_schemas(
     missing = [name for name in action_names if name not in cache]
 
     if missing:
-        runners_by_env = ws_context.ws_projects_extension_runners.get(project.dir_path, {})
+        runners_by_env = ws_context.ws_projects_extension_runners.get(
+            project.dir_path, {}
+        )
 
         # Phase 1: query dev_workspace runner (covers all finecode_extension_api actions)
         dev_runner = runners_by_env.get("dev_workspace")
-        if dev_runner is not None and dev_runner.status == runner_client.RunnerStatus.RUNNING:
+        if (
+            dev_runner is not None
+            and dev_runner.status == runner_client.RunnerStatus.RUNNING
+        ):
             try:
                 schemas = await runner_client.get_payload_schemas(dev_runner)
                 cache.update(schemas)
             except Exception as exc:
-                logger.debug(f"Failed to get payload schemas from dev_workspace runner: {exc}")
+                logger.debug(
+                    f"Failed to get payload schemas from dev_workspace runner: {exc}"
+                )
 
         # Phase 2: for actions still None, try the handler env runners
         still_missing = [name for name in missing if cache.get(name) is None]
@@ -302,10 +325,15 @@ async def _handle_get_payload_schemas(
             action = next((a for a in project.actions if a.name == action_name), None)
             if action is None:
                 continue
-            envs_to_try = {h.env for h in action.handlers if h.env and h.env != "dev_workspace"}
+            envs_to_try = {
+                h.env for h in action.handlers if h.env and h.env != "dev_workspace"
+            }
             for env_name in envs_to_try:
                 runner = runners_by_env.get(env_name)
-                if runner is None or runner.status != runner_client.RunnerStatus.RUNNING:
+                if (
+                    runner is None
+                    or runner.status != runner_client.RunnerStatus.RUNNING
+                ):
                     continue
                 try:
                     schemas = await runner_client.get_payload_schemas(runner)
