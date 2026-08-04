@@ -7,7 +7,6 @@ from pathlib import Path
 from typing import Any, AsyncIterator
 
 import pytest
-
 from finecode_extension_api.contrib.lsp_service import LspService
 from finecode_extension_api.interfaces import ifileeditor, ilspclient
 
@@ -30,6 +29,13 @@ class _FakeLspSession:
         # lets a test simulate a transport-level error (e.g. a server-side
         # cancellation) without a real LSP server.
         self.raise_on_send_request: Exception | None = None
+        # When set, send_request blocks until this event fires, so a test can
+        # hold one request open and observe whether a second is allowed to start.
+        self.release_request: asyncio.Event | None = None
+        # Requests currently being served, and the high-water mark over the
+        # session — how a test observes a concurrency limit taking effect.
+        self.in_flight = 0
+        self.max_in_flight = 0
 
     async def __aenter__(self) -> "_FakeLspSession":
         return self
@@ -43,9 +49,16 @@ class _FakeLspSession:
         params: dict[str, Any] | None = None,
         timeout: float | None = None,
     ) -> Any:
-        if self.raise_on_send_request is not None:
-            raise self.raise_on_send_request
-        return None
+        self.in_flight += 1
+        self.max_in_flight = max(self.max_in_flight, self.in_flight)
+        try:
+            if self.raise_on_send_request is not None:
+                raise self.raise_on_send_request
+            if self.release_request is not None:
+                await self.release_request.wait()
+            return None
+        finally:
+            self.in_flight -= 1
 
     async def send_notification(
         self, method: str, params: dict[str, Any] | None = None
@@ -88,8 +101,11 @@ class _FakeLspClient:
 
 
 class _FakeFileEditorSession:
-    def __init__(self, content: str) -> None:
+    def __init__(
+        self, content: str, events: asyncio.Queue[ifileeditor.FileEvent]
+    ) -> None:
         self._content = content
+        self._events = events
 
     @contextlib.asynccontextmanager
     async def read_file(
@@ -99,13 +115,13 @@ class _FakeFileEditorSession:
 
     @contextlib.asynccontextmanager
     async def subscribe_to_all_events(self) -> AsyncIterator[Any]:
-        async def _never_yields() -> AsyncIterator[Any]:
-            import asyncio
+        async def _drain_queue() -> AsyncIterator[Any]:
+            # Stays pending forever while the queue is empty, so tests that don't
+            # exercise event forwarding see the subscription simply never yield.
+            while True:
+                yield await self._events.get()
 
-            await asyncio.Event().wait()
-            yield  # pragma: no cover - unreachable, keeps this an async generator
-
-        yield _never_yields()
+        yield _drain_queue()
 
 
 class _FakeFileEditor:
@@ -118,10 +134,11 @@ class _FakeFileEditor:
     def __init__(self, file_path: Path, content: str) -> None:
         self.file_path = file_path
         self.content = content
+        self.events: asyncio.Queue[ifileeditor.FileEvent] = asyncio.Queue()
 
     @contextlib.asynccontextmanager
     async def session(self, author: Any) -> AsyncIterator[_FakeFileEditorSession]:
-        yield _FakeFileEditorSession(self.content)
+        yield _FakeFileEditorSession(self.content, self.events)
 
     def get_opened_files(self) -> list[Path]:
         return [self.file_path]
@@ -155,7 +172,7 @@ class _NullLogger:
 
 @contextlib.asynccontextmanager
 async def _running_service(
-    file_path: Path, content: str
+    file_path: Path, content: str, max_concurrent_requests: int | None = None
 ) -> AsyncIterator[tuple[LspService, _FakeLspSession, _FakeFileEditor]]:
     session = _FakeLspSession()
     file_editor = _FakeFileEditor(file_path, content)
@@ -165,6 +182,7 @@ async def _running_service(
         logger=_NullLogger(),  # type: ignore[arg-type]
         cmd="fake-lsp-server",
         language_id="python",
+        max_concurrent_requests=max_concurrent_requests,
     )
     await service.ensure_started(root_uri=file_path.parent.as_uri())
     try:
@@ -328,3 +346,107 @@ async def test_unrelated_send_request_error_is_not_mistranslated(
 
         with pytest.raises(RuntimeError, match="boom"):
             await service.get_hover(file_path, content, {"line": 0, "character": 0})
+
+
+async def test_capped_service_serializes_interactions_for_different_files(
+    tmp_path: Path,
+) -> None:
+    """With a limit of 1, a second file's interaction waits for the first.
+
+    LSP leaves parallel request execution to the server, and a server whose
+    shared document state degrades under concurrent access needs the client to
+    stop pipelining. The limit has to hold across the whole interaction, not
+    just the request, or another file's synchronization still interleaves.
+    """
+    file_a = tmp_path / "a.toml"
+    file_b = tmp_path / "b.toml"
+
+    async with _running_service(file_a, "x = 1\n", max_concurrent_requests=1) as (
+        service,
+        session,
+        _,
+    ):
+        session.release_request = asyncio.Event()
+        tasks = [
+            asyncio.create_task(service.format_file(file_a, "x = 1\n")),
+            asyncio.create_task(service.format_file(file_b, "y = 2\n")),
+        ]
+        # Long enough for both tasks to reach the server or queue behind the limit.
+        await asyncio.sleep(0.05)
+        assert session.in_flight == 1
+
+        session.release_request.set()
+        await asyncio.gather(*tasks)
+
+        assert session.max_in_flight == 1
+
+
+async def test_uncapped_service_leaves_interactions_concurrent(
+    tmp_path: Path,
+) -> None:
+    """The default must keep sending without bound.
+
+    Servers that parallelize properly are slowed down by serialization for no
+    benefit, so the limit is opt-in per server.
+    """
+    file_a = tmp_path / "a.py"
+    file_b = tmp_path / "b.py"
+
+    async with _running_service(file_a, "x = 1\n") as (service, session, _):
+        session.release_request = asyncio.Event()
+        tasks = [
+            asyncio.create_task(service.format_file(file_a, "x = 1\n")),
+            asyncio.create_task(service.format_file(file_b, "y = 2\n")),
+        ]
+        await asyncio.sleep(0.05)
+        assert session.in_flight == 2
+
+        session.release_request.set()
+        await asyncio.gather(*tasks)
+
+
+async def test_change_to_document_the_server_does_not_hold_open_is_not_opened(
+    tmp_path: Path,
+) -> None:
+    """A change to a closed document must not open it in the server.
+
+    didClose is only sent for documents an editor session opened, so a document
+    opened in response to a write would stay open for the rest of the session.
+    Every file written through the editor would accumulate that way — for a
+    server whose document state is contended, unboundedly so. The cached
+    content hash is dropped instead, leaving the next feature call to re-sync.
+    """
+    subject = tmp_path / "subject.py"
+    written = tmp_path / "written_by_a_handler.py"
+
+    async with _running_service(subject, "x = 1\n") as (service, session, file_editor):
+        await file_editor.events.put(
+            ifileeditor.FileChangeEvent(
+                file_path=written,
+                author=ifileeditor.FileOperationAuthor(id="some-handler"),
+                change=ifileeditor.FileChangeFull(text="y = 2\n"),
+            )
+        )
+        # Long enough for the forwarding loop to consume the event.
+        await asyncio.sleep(0.05)
+
+        assert session.sync_notification_count(written.as_uri()) == 0
+
+        # The next feature call still sends the current content, so dropping the
+        # notification costs no correctness.
+        await service.get_hover(written, "y = 2\n", {"line": 0, "character": 0})
+        assert session.sync_notification_count(written.as_uri()) == 1
+
+
+def test_concurrency_limit_below_one_is_rejected() -> None:
+    """A limit of 0 would block every request forever; fail at construction."""
+    file_editor = _FakeFileEditor(Path("/nonexistent"), "")
+    with pytest.raises(ValueError, match="max_concurrent_requests"):
+        LspService(
+            lsp_client=_FakeLspClient(_FakeLspSession()),
+            file_editor=file_editor,  # type: ignore[arg-type]
+            logger=_NullLogger(),  # type: ignore[arg-type]
+            cmd="fake-lsp-server",
+            language_id="python",
+            max_concurrent_requests=0,
+        )

@@ -15,10 +15,9 @@ from fine_semantic_tokens.text_document_semantic_tokens_action import (
     SEMANTIC_TOKEN_MODIFIERS,
     SEMANTIC_TOKEN_TYPES,
 )
+from finecode_extension_api import service
 from finecode_extension_api.contrib.lsp_service import LspService, apply_text_edits
 from finecode_extension_api.interfaces import ifileeditor, ilogger, ilspclient
-
-from finecode_extension_api import service
 
 _TOMBI_CLIENT_CAPABILITIES: dict[str, Any] = {
     "textDocument": {
@@ -62,10 +61,25 @@ class TombiLspService(service.DisposableService):
             lsp_client=lsp_client,
             file_editor=file_editor,
             logger=logger,
-            cmd=f"{tombi_bin} lsp",
+            # Without this tombi resolves dependency names over the network (e.g.
+            # against PyPI) while analyzing a pyproject.toml, on top of its local
+            # schema cache. No action here consumes live dependency data, so the
+            # lookups are latency for results nothing reads.
+            cmd=f"{tombi_bin} lsp --offline",
             language_id="toml",
             readable_id="tombi-lsp",
             client_capabilities=_TOMBI_CLIENT_CAPABILITIES,
+            # tombi guards its document, reference and schema stores with locks
+            # it can report contention on (DocumentLockError, ReferenceLockError,
+            # SchemaLockError). With requests for many documents in flight on one
+            # session, individual ones have been measured stalling for a minute
+            # or more while the process sits idle rather than busy — blocked on
+            # that shared state, not working through a backlog. It always
+            # recovers, answering after the client has given up, so the practical
+            # effect is a request that intermittently exceeds any timeout worth
+            # setting. One document at a time keeps the server off that path;
+            # this is a property of this implementation, not of the protocol.
+            max_concurrent_requests=1,
         )
 
     @override
@@ -93,7 +107,9 @@ class TombiLspService(service.DisposableService):
         file_content: str,
         timeout: float = 30.0,
     ) -> str:
-        raw_edits = await self._lsp_service.format_file(file_path, file_content, timeout=timeout)
+        raw_edits = await self._lsp_service.format_file(
+            file_path, file_content, timeout=timeout
+        )
         if not raw_edits:
             return file_content
         return apply_text_edits(file_content, raw_edits)

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import collections.abc
+import contextlib
 import sys
 import threading
 from pathlib import Path
@@ -43,6 +45,13 @@ class LspService(service.DisposableService):
            with the current settings.
 
         To push settings to an already running server, call ``send_settings``.
+
+    Request concurrency:
+        By default any number of interactions may be in flight on the session at
+        once. A server that does not stay responsive under concurrent access to
+        its document state is given a ``max_concurrent_requests`` limit, which
+        bounds whole interactions — the document synchronization around a request
+        as well as the request itself.
     """
 
     def __init__(
@@ -55,6 +64,7 @@ class LspService(service.DisposableService):
         language_id: str,
         readable_id: str = "",
         client_capabilities: dict[str, Any] | None = None,
+        max_concurrent_requests: int | None = None,
     ) -> None:
         self._lsp_client = lsp_client
         self._file_editor = file_editor
@@ -63,6 +73,24 @@ class LspService(service.DisposableService):
         self._language_id = language_id
         self._readable_id = readable_id
         self._client_capabilities = client_capabilities
+        # LSP leaves parallel request execution to the server's discretion: a
+        # server may answer requests concurrently and out of order, or process
+        # them strictly one at a time. Nothing in the protocol obliges it to stay
+        # responsive with many documents in flight on one session, so how much a
+        # given server tolerates is a property of that implementation. None
+        # (default) sends without bound, which suits servers that either
+        # parallelize properly or queue cleanly; a server whose shared document
+        # state degrades under concurrent access passes a limit instead.
+        if max_concurrent_requests is not None and max_concurrent_requests < 1:
+            raise ValueError(
+                "max_concurrent_requests must be >= 1 or None,"
+                f" got {max_concurrent_requests}"
+            )
+        self._request_semaphore: asyncio.Semaphore | None = (
+            asyncio.Semaphore(max_concurrent_requests)
+            if max_concurrent_requests is not None
+            else None
+        )
         self._file_operation_author = ifileeditor.FileOperationAuthor(
             id=readable_id or "LspService"
         )
@@ -164,6 +192,14 @@ class LspService(service.DisposableService):
             "client/registerCapability",
             self._handle_register_capability,
         )
+        # Servers may send this whenever their analysis changes, without checking
+        # that the client declared workspace.inlayHint.refreshSupport — for some
+        # that means once per document sync. Leaving it unhandled costs a warning
+        # and a -32601 error response every time.
+        self._session.on_request(
+            "workspace/inlayHint/refresh",
+            self._handle_inlay_hint_refresh,
+        )
 
         # some LSP servers read settings from didChangeConfiguration (e.g. pyrefly)
         if self._settings:
@@ -200,6 +236,29 @@ class LspService(service.DisposableService):
     def server_capabilities(self) -> dict[str, Any]:
         return self._server_capabilities
 
+    @contextlib.asynccontextmanager
+    async def _request_slot(self) -> collections.abc.AsyncIterator[None]:
+        """Bound the work in flight towards the server; a no-op when uncapped.
+
+        A slot covers a whole interaction rather than a single message, because
+        what a constrained server has to serialize is access to its document
+        state — and notifications mutate that state just as requests read it.
+
+        Not reentrant: at a limit of 1, taking a slot while already holding one
+        deadlocks. Code running under a held slot may therefore only send
+        notifications directly, never route back through ``request`` or
+        ``_send_cancellable_request``. For the same reason a slot is always
+        taken *before* a per-uri lock, never the other way round: the two are
+        acquired in one order everywhere so they cannot deadlock against each
+        other.
+        """
+        if self._request_semaphore is None:
+            yield
+            return
+
+        async with self._request_semaphore:
+            yield
+
     async def request(
         self,
         method: str,
@@ -208,7 +267,8 @@ class LspService(service.DisposableService):
     ) -> Any:
         """Send an arbitrary LSP request to the running server and return the result."""
         assert self._session is not None, "LspService not started"
-        return await self._session.send_request(method, params, timeout=timeout)
+        async with self._request_slot():
+            return await self._session.send_request(method, params, timeout=timeout)
 
     async def _sync_document(self, uri: str, content: str) -> bool:
         """Send didOpen/didChange only if content differs from what the server last saw.
@@ -302,7 +362,8 @@ class LspService(service.DisposableService):
         """
         assert self._session is not None, "LspService not started"
         try:
-            return await self._session.send_request(method, params, timeout=timeout)
+            async with self._request_slot():
+                return await self._session.send_request(method, params, timeout=timeout)
         except Exception as exc:
             if getattr(exc, "code", None) == _REQUEST_CANCELLED_CODE:
                 raise ilspclient.LspRequestCancelledError(
@@ -331,7 +392,15 @@ class LspService(service.DisposableService):
         event = threading.Event()
         self._diagnostics[uri] = event
 
-        if not await self._sync_document(uri, content):
+        # Only the document sync takes a slot, not the wait below it. Diagnostics
+        # arrive as a server-sent notification rather than as a response, so
+        # holding a slot across the wait would serialize whole analyses on a
+        # capped server, where the constraint is on concurrent access to document
+        # state — which the sync, not the waiting, is what performs.
+        async with self._request_slot():
+            document_synced = await self._sync_document(uri, content)
+
+        if not document_synced:
             # LSP already has the current content; return cached diagnostics
             self._diagnostics.pop(uri, None)
             return self._diagnostics_data.get(uri, [])
@@ -348,7 +417,8 @@ class LspService(service.DisposableService):
 
         self._diagnostics.pop(uri, None)
 
-        await self._close_if_not_editor_open(file_path, uri)
+        async with self._request_slot():
+            await self._close_if_not_editor_open(file_path, uri)
 
         return self._diagnostics_data.get(uri, [])
 
@@ -369,19 +439,28 @@ class LspService(service.DisposableService):
 
         uri = file_path.as_uri()
 
-        await self._sync_document(uri, content)
+        # One slot spans the whole open -> request -> close interaction, not just
+        # the request: a capped server is being protected from concurrent access
+        # to its document state, and the surrounding notifications are part of
+        # that state just as much as the request is.
+        async with self._request_slot():
+            await self._sync_document(uri, content)
 
-        formatting_options = options or {"tabSize": 4, "insertSpaces": True}
-        result = await self._session.send_request(
-            "textDocument/formatting",
-            {
-                "textDocument": {"uri": uri},
-                "options": formatting_options,
-            },
-            timeout=timeout,
-        )
-
-        await self._close_if_not_editor_open(file_path, uri)
+            formatting_options = options or {"tabSize": 4, "insertSpaces": True}
+            try:
+                result = await self._session.send_request(
+                    "textDocument/formatting",
+                    {
+                        "textDocument": {"uri": uri},
+                        "options": formatting_options,
+                    },
+                    timeout=timeout,
+                )
+            finally:
+                # Also on failure: a request that times out says nothing about
+                # whether the server opened the document, and leaving it open
+                # grows server-side state that nothing later closes.
+                await self._close_if_not_editor_open(file_path, uri)
 
         return result or []
 
@@ -738,6 +817,17 @@ class LspService(service.DisposableService):
         if self._session is None:
             return
 
+        # Forwarded events mutate the same server-side document state that
+        # requests read, so on a capped server they belong under a slot too.
+        # Taken here, around the per-uri lock rather than inside it, because
+        # `_sync_document` acquires the two in that order under an already-held
+        # slot; acquiring them in the opposite order here would deadlock.
+        async with self._request_slot():
+            await self._forward_file_event(event)
+
+    async def _forward_file_event(self, event: ifileeditor.FileEvent) -> None:
+        assert self._session is not None
+
         if isinstance(event, ifileeditor.FileOpenEvent):
             uri = event.file_path.as_uri()
             async with self._get_uri_lock(uri):
@@ -766,58 +856,47 @@ class LspService(service.DisposableService):
             change = event.change
 
             async with self._get_uri_lock(uri):
-                lsp_version = self._next_version(uri)
                 if uri not in self._open_documents:
-                    if isinstance(change, ifileeditor.FileChangeFull):
-                        content = change.text
-                    else:
-                        try:
-                            content = event.file_path.read_text()
-                        except OSError:
-                            return
-                    await self._session.send_notification(
-                        "textDocument/didOpen",
-                        {
-                            "textDocument": {
-                                "uri": uri,
-                                "languageId": self._language_id,
-                                "version": lsp_version,
-                                "text": content,
-                            },
-                        },
-                    )
-                    self._open_documents.add(uri)
-                    self._file_versions[uri] = str(hash(content))
+                    # A document the server does not hold open has no state to
+                    # update, and opening one here would add state that nothing
+                    # closes again: didClose is only sent for documents an editor
+                    # session opened, which this one is not. Written files would
+                    # then accumulate in the server for the lifetime of the
+                    # session. Dropping the cached hash is enough — the next
+                    # feature call re-syncs the document from scratch.
+                    self._file_versions.pop(uri, None)
+                    return
+
+                lsp_version = self._next_version(uri)
+                if isinstance(change, ifileeditor.FileChangeFull):
+                    content_changes = [{"text": change.text}]
+                    self._file_versions[uri] = str(hash(change.text))
                 else:
-                    if isinstance(change, ifileeditor.FileChangeFull):
-                        content_changes = [{"text": change.text}]
-                        self._file_versions[uri] = str(hash(change.text))
-                    else:
-                        content_changes = [
-                            {
-                                "range": {
-                                    "start": {
-                                        "line": change.range.start.line,
-                                        "character": change.range.start.character,
-                                    },
-                                    "end": {
-                                        "line": change.range.end.line,
-                                        "character": change.range.end.character,
-                                    },
-                                },
-                                "text": change.text,
-                            }
-                        ]
-                        # Partial change: invalidate cached version so check_file
-                        # will re-read and send the full updated content next time.
-                        self._file_versions.pop(uri, None)
-                    await self._session.send_notification(
-                        "textDocument/didChange",
+                    content_changes = [
                         {
-                            "textDocument": {"uri": uri, "version": lsp_version},
-                            "contentChanges": content_changes,
-                        },
-                    )
+                            "range": {
+                                "start": {
+                                    "line": change.range.start.line,
+                                    "character": change.range.start.character,
+                                },
+                                "end": {
+                                    "line": change.range.end.line,
+                                    "character": change.range.end.character,
+                                },
+                            },
+                            "text": change.text,
+                        }
+                    ]
+                    # Partial change: invalidate cached version so check_file
+                    # will re-read and send the full updated content next time.
+                    self._file_versions.pop(uri, None)
+                await self._session.send_notification(
+                    "textDocument/didChange",
+                    {
+                        "textDocument": {"uri": uri, "version": lsp_version},
+                        "contentChanges": content_changes,
+                    },
+                )
 
         elif isinstance(event, ifileeditor.FileCloseEvent):
             uri = event.file_path.as_uri()
@@ -834,14 +913,21 @@ class LspService(service.DisposableService):
         self._document_version[uri] = version
         return version
 
-    async def _handle_register_capability(
-        self, params: dict[str, Any] | None
-    ) -> None:
+    async def _handle_register_capability(self, params: dict[str, Any] | None) -> None:
         """Handle client/registerCapability from the LSP server.
 
         Many servers send this even when the client declared dynamicRegistration:
         false for specific capabilities. Returning null (None) acknowledges the
         registration per LSP spec without actually applying any behaviour change.
+        """
+        return None
+
+    async def _handle_inlay_hint_refresh(self, params: dict[str, Any] | None) -> None:
+        """Handle workspace/inlayHint/refresh from the LSP server.
+
+        Hints are pulled per call and never cached, so there is nothing to
+        invalidate. Null is the response the protocol defines for this request,
+        and answering it keeps the server from seeing an unhandled method.
         """
         return None
 
