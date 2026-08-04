@@ -26,10 +26,11 @@ else:
 
 import cattrs
 import culsans
+from loguru import logger
+
 from finecode_jsonrpc import _io_thread
 from finecode_jsonrpc._converter import converter as _converter
 from finecode_jsonrpc.tracing import ITracingHooks
-from loguru import logger
 
 
 class QueueEnd:
@@ -218,33 +219,35 @@ class JsonRpcClient:
         debug_port_future: concurrent.futures.Future[int] | None,
         connect: bool = True,
     ) -> None:
-        old_working_dir = os.getcwd()
-        os.chdir(working_dir_path)
+        # The working directory and environment are passed to the subprocess
+        # explicitly rather than by mutating this process's cwd/environ around the
+        # spawn. Several clients start concurrently and the spawn itself happens on
+        # the io thread, so process-global mutation is a race: a server could
+        # inherit whichever directory another client left current. Anything the
+        # server derives from its cwd (isort's first-party detection, for one)
+        # would then vary from run to run.
+        # VIRTUAL_ENV is dropped so that the server does not start in the wrong venv
+        env = {key: value for key, value in os.environ.items() if key != "VIRTUAL_ENV"}
 
-        # temporary remove VIRTUAL_ENV env variable to avoid starting in wrong venv
-        old_virtual_env_var = os.environ.pop("VIRTUAL_ENV", None)
-
-        try:
-            await self._start_server(
-                full_cmd=server_cmd,
-                io_thread=io_thread,
-                debug_port_future=debug_port_future,
-                stderr_buffer=self._stderr_buffer,
-                stdout_buffer=self._stdout_buffer,
-            )
-            if connect:
-                await self.connect_to_server(io_thread=io_thread)
-        finally:
-            if old_virtual_env_var is not None:
-                os.environ["VIRTUAL_ENV"] = old_virtual_env_var
-
-            os.chdir(old_working_dir)  # restore original working directory
+        await self._start_server(
+            full_cmd=server_cmd,
+            io_thread=io_thread,
+            debug_port_future=debug_port_future,
+            cwd=working_dir_path,
+            env=env,
+            stderr_buffer=self._stderr_buffer,
+            stdout_buffer=self._stdout_buffer,
+        )
+        if connect:
+            await self.connect_to_server(io_thread=io_thread)
 
     async def _start_server(
         self,
         full_cmd: str,
         io_thread: _io_thread.AsyncIOThread,
         debug_port_future: concurrent.futures.Future[int] | None,
+        cwd: Path,
+        env: dict[str, str],
         stderr_buffer: list[str] | None = None,
         stdout_buffer: list[str] | None = None,
     ) -> None:
@@ -258,6 +261,8 @@ class JsonRpcClient:
                 server_id=self.readable_id,
                 async_tasks=self._async_tasks_in_io_thread,
                 debug_port_future=debug_port_future,
+                cwd=cwd,
+                env=env,
                 stderr_buffer=stderr_buffer,
                 stdout_buffer=stdout_buffer,
             )
@@ -970,6 +975,8 @@ async def start_server(
     server_id: str,
     async_tasks: list[asyncio.Task[typing.Any]],
     debug_port_future: concurrent.futures.Future[int] | None,
+    cwd: Path,
+    env: dict[str, str],
     stderr_buffer: list[str] | None = None,
     stdout_buffer: list[str] | None = None,
 ) -> tuple[
@@ -993,6 +1000,10 @@ async def start_server(
     subprocess_kwargs = {
         "creationflags": creationflags,
         "start_new_session": start_new_session,
+        # explicit, so that the started server does not depend on the cwd/environ
+        # this process happens to have when the spawn reaches the io thread
+        "cwd": cwd,
+        "env": env,
     }
 
     # Start subprocess with appropriate stdio configuration
