@@ -1,9 +1,10 @@
 import pathlib
 from typing import Any
 
+from finecode_extension_api import code_action
+
 from fine_envs import create_envs_action
 from fine_envs.create_envs_discover_envs_handler import CreateEnvsDiscoverEnvsHandler
-from finecode_extension_api import code_action
 
 
 class _FakeProjectInfoProvider:

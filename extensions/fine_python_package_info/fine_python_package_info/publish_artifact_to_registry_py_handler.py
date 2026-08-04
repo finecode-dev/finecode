@@ -3,7 +3,6 @@ import dataclasses
 
 import requests
 from fine_dist_artifacts import publish_artifact_to_registry_action
-from fine_python_package_info import registry_endpoints
 from finecode_extension_api import code_action
 from finecode_extension_api.interfaces import (
     icommandrunner,
@@ -12,6 +11,8 @@ from finecode_extension_api.interfaces import (
 )
 from twine import settings as twine_settings
 from twine.commands import upload as twine_upload
+
+from fine_python_package_info import registry_endpoints
 
 
 @dataclasses.dataclass

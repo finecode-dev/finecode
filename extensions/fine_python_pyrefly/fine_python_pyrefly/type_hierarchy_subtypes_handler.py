@@ -9,14 +9,15 @@ from fine_code_hierarchy.type_hierarchy_subtypes_action import (
 from fine_python_lang.type_hierarchy_subtypes_python_action import (
     TypeHierarchySubtypesPythonAction,
 )
+from finecode_extension_api import code_action
+from finecode_extension_api.interfaces import ifileeditor, ilogger, iprojectinfoprovider
+from finecode_extension_api.resource_uri import resource_uri_to_path
+
 from fine_python_pyrefly._lsp_hierarchy_utils import (
     type_hierarchy_item_from_lsp,
     type_hierarchy_item_to_lsp,
 )
 from fine_python_pyrefly.pyrefly_lsp_service import PyreflyLspService
-from finecode_extension_api import code_action
-from finecode_extension_api.interfaces import ifileeditor, ilogger, iprojectinfoprovider
-from finecode_extension_api.resource_uri import resource_uri_to_path
 
 
 @dataclasses.dataclass

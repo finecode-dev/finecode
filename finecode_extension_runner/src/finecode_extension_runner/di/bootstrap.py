@@ -24,6 +24,8 @@ from finecode_extension_api.interfaces import (  # idevenvinfoprovider,
     iworkspaceactionrunner,
     iworkspaceinfoprovider,
 )
+from loguru import logger
+
 from finecode_extension_runner import context, domain, service_config
 from finecode_extension_runner._services import run_action as run_action_service
 from finecode_extension_runner.di.registry import Registry
@@ -45,7 +47,6 @@ from finecode_extension_runner.impls import (  # dev_env_info_provider,
     workspace_info_provider,
 )
 from finecode_extension_runner.run_utils import import_module_member_by_source_str
-from loguru import logger
 
 _COMMAND_RUNNER_INTERFACE = (
     "finecode_extension_api.interfaces.icommandrunner.ICommandRunner"

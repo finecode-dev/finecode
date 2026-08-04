@@ -1,9 +1,10 @@
 import dataclasses
 
 from finecode_extension_api import code_action
+from loguru import logger
+
 from finecode_extension_runner import context, run_utils
 from finecode_extension_runner._converter import converter as _converter
-from loguru import logger
 
 
 async def merge_results(

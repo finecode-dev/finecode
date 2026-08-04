@@ -1,7 +1,6 @@
 import dataclasses
 import pathlib
 
-from fine_python_lang import ipypackagelayoutinfoprovider
 from fine_src_artifacts import list_src_artifact_files_by_lang_action
 from finecode_extension_api import code_action
 from finecode_extension_api.interfaces import (
@@ -9,6 +8,8 @@ from finecode_extension_api.interfaces import (
     iprojectinfoprovider,
 )
 from finecode_extension_api.resource_uri import ResourceUri, path_to_resource_uri
+
+from fine_python_lang import ipypackagelayoutinfoprovider
 
 
 @dataclasses.dataclass

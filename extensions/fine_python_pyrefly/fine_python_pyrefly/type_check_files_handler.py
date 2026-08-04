@@ -6,7 +6,6 @@ import sys
 from pathlib import Path
 
 from fine_python_lang.type_check_python_files_action import TypeCheckPythonFilesAction
-from fine_python_pyrefly.pyrefly_lsp_service import PyreflyLspService
 from fine_type_check.diagnostic_types import (
     Diagnostic,
     DiagnosticFilesRunContext,
@@ -27,6 +26,8 @@ from finecode_extension_api.interfaces import (
     isrcartifactfileclassifier,
 )
 from finecode_extension_api.resource_uri import ResourceUri, resource_uri_to_path
+
+from fine_python_pyrefly.pyrefly_lsp_service import PyreflyLspService
 
 
 @dataclasses.dataclass

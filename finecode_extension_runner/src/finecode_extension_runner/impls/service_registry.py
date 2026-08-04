@@ -2,6 +2,7 @@ import typing
 
 import cattrs
 from finecode_extension_api.interfaces import iserviceregistry
+
 from finecode_extension_runner._converter import converter as _converter
 from finecode_extension_runner.di.registry import Registry
 from finecode_extension_runner.service_config import ServiceConfigResolver

@@ -6,6 +6,7 @@ import typing
 from pathlib import Path
 
 from finecode_extension_api import code_action, service
+
 from finecode_extension_runner.impls import process_executor as process_executor_impl
 
 

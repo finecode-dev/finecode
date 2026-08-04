@@ -21,11 +21,12 @@ from fine_python_lang.list_obtainable_python_interpreters_action import (
     ListObtainablePythonInterpretersAction,
     ListObtainablePythonInterpretersRunPayload,
 )
+from finecode_extension_runner.testing import run_handler
+
 from fine_python_uv._uv_common import get_uv_executable
 from fine_python_uv.list_obtainable_python_interpreters_handler import (
     UvListObtainablePythonInterpretersHandler,
 )
-from finecode_extension_runner.testing import run_handler
 
 pytestmark = pytest.mark.skipif(
     not get_uv_executable().exists(),

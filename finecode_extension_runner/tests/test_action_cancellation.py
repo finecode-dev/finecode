@@ -6,9 +6,10 @@ from pathlib import Path
 import pytest
 from finecode_extension_api import code_action
 from finecode_extension_api.interfaces import ilspclient, iprojectactionrunner
+from loguru import logger
+
 from finecode_extension_runner._services import run_action as run_action_service
 from finecode_extension_runner.testing import handler_test_session
-from loguru import logger
 
 
 class _CancellationTestAction(code_action.Action):

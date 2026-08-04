@@ -1,10 +1,11 @@
 import pathlib
 from typing import Any
 
+from finecode_extension_api import code_action
+
 from fine_envs import list_envs_action
 from fine_envs.env_inventory import EnvState
 from fine_envs.list_envs_scan_handler import ListEnvsScanHandler
-from finecode_extension_api import code_action
 
 
 class _FakeProjectInfoProvider:

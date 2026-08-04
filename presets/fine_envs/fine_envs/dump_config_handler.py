@@ -1,8 +1,9 @@
 # docs: docs/reference/actions.md
 import dataclasses
 
-from fine_envs import dump_config_action
 from finecode_extension_api import code_action
+
+from fine_envs import dump_config_action
 
 
 @dataclasses.dataclass

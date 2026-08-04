@@ -14,6 +14,8 @@ from finecode_extension_api.interfaces import (
     iprojectactionrunner,
     iprojectinfoprovider,
 )
+from loguru import logger
+
 from finecode_extension_runner import (
     context,
     domain,
@@ -31,7 +33,6 @@ from finecode_extension_runner import (
 from finecode_extension_runner._converter import converter as _converter
 from finecode_extension_runner.di import resolver as di_resolver
 from finecode_extension_runner.di.registry import Registry, ServiceNotFoundError
-from loguru import logger
 
 last_run_id: int = 0
 partial_result_sender: partial_result_sender_module.PartialResultSender

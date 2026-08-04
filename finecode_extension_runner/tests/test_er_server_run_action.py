@@ -4,6 +4,7 @@ import pathlib
 
 import finecode_jsonrpc
 import pytest
+
 from finecode_extension_runner import context, domain, er_server, services
 from finecode_extension_runner.di.registry import Registry
 

@@ -15,7 +15,6 @@ from fine_lint.diagnostic_types import (
     Range,
 )
 from fine_lint.lint_files_action import LintFilesAction
-from fine_python_ruff.ruff_lsp_service import RuffLspService
 from finecode_extension_api import code_action
 from finecode_extension_api.interfaces import (
     icache,
@@ -25,6 +24,8 @@ from finecode_extension_api.interfaces import (
     iprojectinfoprovider,
 )
 from finecode_extension_api.resource_uri import ResourceUri, resource_uri_to_path
+
+from fine_python_ruff.ruff_lsp_service import RuffLspService
 
 
 @dataclasses.dataclass

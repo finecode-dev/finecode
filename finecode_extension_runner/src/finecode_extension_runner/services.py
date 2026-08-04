@@ -9,6 +9,8 @@ import typing
 from pathlib import Path
 
 from finecode_extension_api import service
+from loguru import logger
+
 from finecode_extension_runner import (
     context,
     domain,
@@ -27,7 +29,6 @@ from finecode_extension_runner._services.run_action import (
     run_handlers_raw,
 )
 from finecode_extension_runner.di import bootstrap as di_bootstrap
-from loguru import logger
 
 
 def _compute_request_hash(request: schemas.UpdateConfigRequest) -> int:

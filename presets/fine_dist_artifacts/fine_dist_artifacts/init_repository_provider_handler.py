@@ -18,9 +18,10 @@ friends) resolve through the interface.
 
 import dataclasses
 
-from fine_dist_artifacts import init_repository_provider_action
 from finecode_extension_api import code_action
 from finecode_extension_runner.impls import repository_credentials_provider
+
+from fine_dist_artifacts import init_repository_provider_action
 
 
 @dataclasses.dataclass

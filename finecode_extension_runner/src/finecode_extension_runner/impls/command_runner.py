@@ -6,6 +6,7 @@ import subprocess
 from pathlib import Path
 
 from finecode_extension_api.interfaces import icommandrunner, ilogger
+
 from finecode_extension_runner.concurrency import (
     ConcurrencyDecision,
     default_layered_concurrency,

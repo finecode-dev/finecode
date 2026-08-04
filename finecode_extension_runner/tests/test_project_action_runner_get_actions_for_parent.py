@@ -5,6 +5,7 @@ import dataclasses
 import pytest
 from finecode_extension_api import code_action
 from finecode_extension_api.interfaces import iprojectactionrunner
+
 from finecode_extension_runner import domain, er_errors
 from finecode_extension_runner.impls import project_action_runner
 

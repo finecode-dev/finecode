@@ -8,9 +8,10 @@ from typing import Any, Awaitable, Callable
 
 from finecode_extension_api import code_action
 from finecode_extension_api.interfaces import iprojectactionrunner
+from loguru import logger
+
 from finecode_extension_runner import domain, er_errors, er_telemetry, run_utils
 from finecode_extension_runner._converter import converter as _converter
-from loguru import logger
 
 PayloadT = typing.TypeVar("PayloadT", bound=code_action.RunActionPayload)
 ResultT = typing.TypeVar("ResultT", bound=code_action.RunActionResult)

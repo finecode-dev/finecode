@@ -3,6 +3,7 @@ import pathlib
 from typing import Any, Callable
 
 from finecode_extension_api.interfaces import iprojectinfoprovider
+
 from finecode_extension_runner import er_errors
 
 

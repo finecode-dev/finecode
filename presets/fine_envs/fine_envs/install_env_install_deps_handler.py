@@ -1,5 +1,17 @@
 import dataclasses
 
+from finecode_extension_api import code_action
+from finecode_extension_api.interfaces import (
+    ilogger,
+    iprojectactionrunner,
+    iprojectinfoprovider,
+)
+from finecode_extension_api.resource_uri import (
+    path_to_resource_uri,
+    resource_uri_to_path,
+)
+from packaging.utils import canonicalize_name
+
 from fine_envs import (
     install_deps_in_env_action,
     install_env_action,
@@ -13,17 +25,6 @@ from fine_envs.dependency_config_utils import (
 from fine_envs.install_envs_action import (
     InstallEnvsRunResult,
 )
-from finecode_extension_api import code_action
-from finecode_extension_api.interfaces import (
-    ilogger,
-    iprojectactionrunner,
-    iprojectinfoprovider,
-)
-from finecode_extension_api.resource_uri import (
-    path_to_resource_uri,
-    resource_uri_to_path,
-)
-from packaging.utils import canonicalize_name
 
 
 @dataclasses.dataclass

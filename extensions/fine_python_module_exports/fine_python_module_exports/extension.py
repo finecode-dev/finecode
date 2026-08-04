@@ -5,9 +5,10 @@ from pathlib import Path
 
 from fine_inlay_hints import text_document_inlay_hint
 from fine_python_ast import iast_provider
-from fine_python_module_exports import api
 from finecode_extension_api import common_types
 from finecode_extension_api.resource_uri import resource_uri_to_path
+
+from fine_python_module_exports import api
 
 # from finecode_extension_api import code_action
 

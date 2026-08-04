@@ -2,10 +2,11 @@
 import dataclasses
 
 import tomlkit
-from fine_envs import dump_config_action
 from finecode_extension_api import code_action
 from finecode_extension_api.interfaces import ifileeditor, ifilemanager
 from finecode_extension_api.resource_uri import resource_uri_to_path
+
+from fine_envs import dump_config_action
 
 
 @dataclasses.dataclass

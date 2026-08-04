@@ -10,6 +10,7 @@ except ImportError:
     from typing_extensions import Literal
 
 from finecode_extension_api.code_action import RunActionMeta
+
 from finecode_extension_runner.schemas import RunActionOptions
 
 

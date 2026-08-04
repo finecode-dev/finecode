@@ -7,9 +7,10 @@ from pathlib import Path
 from types import TracebackType
 from typing import Any, Self
 
+from loguru import logger
+
 from finecode_jsonrpc import _io_thread
 from finecode_jsonrpc.transports import StdioTransport
-from loguru import logger
 
 
 class JsonRpcSessionImpl:

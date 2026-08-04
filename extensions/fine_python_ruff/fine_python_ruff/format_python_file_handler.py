@@ -14,13 +14,14 @@ from fine_format import format_file_action
 from fine_python_lang.format_python_file_action import (
     FormatPythonFileAction,
 )
-from fine_python_ruff.ruff_lsp_service import RuffLspService
 from finecode_extension_api import code_action
 from finecode_extension_api.interfaces import (
     ilogger,
     iprojectinfoprovider,
 )
 from finecode_extension_api.resource_uri import resource_uri_to_path
+
+from fine_python_ruff.ruff_lsp_service import RuffLspService
 
 
 @dataclasses.dataclass

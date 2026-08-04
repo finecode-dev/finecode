@@ -2,6 +2,13 @@ from __future__ import annotations
 
 import dataclasses
 
+from fine_src_artifacts.build_artifact_action import (
+    BuildArtifactAction,
+    BuildArtifactRunPayload,
+)
+from finecode_extension_api import code_action
+from finecode_extension_api.interfaces import ilogger, iprojectactionrunner
+
 from fine_release.release_package_action import (
     ReleasePackageAction,
     ReleasePackageRunContext,
@@ -9,12 +16,6 @@ from fine_release.release_package_action import (
     ReleasePackageRunResult,
     result_from_state,
 )
-from fine_src_artifacts.build_artifact_action import (
-    BuildArtifactAction,
-    BuildArtifactRunPayload,
-)
-from finecode_extension_api import code_action
-from finecode_extension_api.interfaces import ilogger, iprojectactionrunner
 
 
 @dataclasses.dataclass

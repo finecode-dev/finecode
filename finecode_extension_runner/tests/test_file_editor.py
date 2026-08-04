@@ -5,9 +5,10 @@ import pathlib
 
 import pytest
 from finecode_extension_api.interfaces import ifileeditor
+from loguru import logger
+
 from finecode_extension_runner.impls.file_editor import FileEditor
 from finecode_extension_runner.impls.file_manager import FileManager
-from loguru import logger
 
 _AUTHOR = ifileeditor.FileOperationAuthor(id="test")
 

@@ -2,17 +2,18 @@ import dataclasses
 import pathlib
 import shlex
 
-from fine_git.create_git_tag_action import (
-    CreateGitTagAction,
-    CreateGitTagRunContext,
-    CreateGitTagRunPayload,
-    CreateGitTagRunResult,
-)
 from finecode_extension_api import code_action
 from finecode_extension_api.interfaces import (
     icommandrunner,
     ilogger,
     iprojectinfoprovider,
+)
+
+from fine_git.create_git_tag_action import (
+    CreateGitTagAction,
+    CreateGitTagRunContext,
+    CreateGitTagRunPayload,
+    CreateGitTagRunResult,
 )
 
 

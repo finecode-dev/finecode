@@ -8,9 +8,6 @@ from fine_dist_artifacts.list_published_artifacts_action import (
     ListPublishedArtifactsAction,
     ListPublishedArtifactsRunPayload,
 )
-from fine_python_package_info.list_published_artifacts_python_handler import (
-    ListPublishedArtifactsPythonHandler,
-)
 from finecode_extension_api.interfaces.ihttpclient import IHttpClient
 from finecode_extension_api.interfaces.iprojectinfoprovider import IProjectInfoProvider
 from finecode_extension_api.interfaces.irepositorycredentialsprovider import (
@@ -22,6 +19,10 @@ from finecode_extension_runner.impls.repository_credentials_provider import (
     RepositoryCredentialsProviderConfig,
 )
 from finecode_extension_runner.testing import run_handler
+
+from fine_python_package_info.list_published_artifacts_python_handler import (
+    ListPublishedArtifactsPythonHandler,
+)
 
 
 def _repository_provider(

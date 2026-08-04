@@ -4,13 +4,14 @@ import dataclasses
 from pathlib import Path
 
 import pytest
+from finecode_extension_api.interfaces.icommandrunner import ICommandRunner
+from finecode_extension_runner.testing import run_handler
+
 from fine_git.create_git_tag_action import (
     CreateGitTagAction,
     CreateGitTagRunPayload,
 )
 from fine_git.git_create_git_tag_handler import GitCreateGitTagHandler
-from finecode_extension_api.interfaces.icommandrunner import ICommandRunner
-from finecode_extension_runner.testing import run_handler
 
 
 @dataclasses.dataclass

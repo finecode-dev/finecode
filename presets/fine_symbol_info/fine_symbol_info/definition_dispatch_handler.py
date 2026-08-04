@@ -6,12 +6,13 @@ import dataclasses
 from fine_src_artifacts import (
     group_src_artifact_files_by_lang_action,
 )
+from finecode_extension_api import code_action
+from finecode_extension_api.interfaces import ilogger, iprojectactionrunner
+
 from fine_symbol_info.text_document_definition_action import (
     DefinitionPayload,
     TextDocumentDefinitionAction,
 )
-from finecode_extension_api import code_action
-from finecode_extension_api.interfaces import ilogger, iprojectactionrunner
 
 
 @dataclasses.dataclass

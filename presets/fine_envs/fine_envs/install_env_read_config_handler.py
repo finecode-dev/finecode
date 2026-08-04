@@ -1,12 +1,13 @@
 import dataclasses
 
+from finecode_extension_api import code_action
+from finecode_extension_api.interfaces import ilogger, iprojectinfoprovider
+from finecode_extension_api.resource_uri import resource_uri_to_path
+
 from fine_envs import install_env_action
 from fine_envs.install_envs_action import (
     InstallEnvsRunResult,
 )
-from finecode_extension_api import code_action
-from finecode_extension_api.interfaces import ilogger, iprojectinfoprovider
-from finecode_extension_api.resource_uri import resource_uri_to_path
 
 
 @dataclasses.dataclass

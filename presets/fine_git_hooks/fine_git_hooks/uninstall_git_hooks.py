@@ -1,13 +1,14 @@
 # docs: docs/reference/actions.md
 import dataclasses
 
+from finecode_extension_api import code_action
+from finecode_extension_api.interfaces import ilogger, iprojectinfoprovider
+
 from fine_git_hooks import uninstall_git_hooks_action
 from fine_git_hooks.git_hooks_common import (
     FINECODE_HOOK_MARKER,
     resolve_project_git_dir,
 )
-from finecode_extension_api import code_action
-from finecode_extension_api.interfaces import ilogger, iprojectinfoprovider
 
 
 @dataclasses.dataclass

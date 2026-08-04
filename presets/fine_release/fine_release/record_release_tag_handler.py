@@ -3,6 +3,9 @@ from __future__ import annotations
 import dataclasses
 
 from fine_git.create_git_tag_action import CreateGitTagAction, CreateGitTagRunPayload
+from finecode_extension_api import code_action
+from finecode_extension_api.interfaces import ilogger, iprojectactionrunner
+
 from fine_release.release_package_action import (
     RegistryPublishOutcome,
     ReleasePackageAction,
@@ -11,8 +14,6 @@ from fine_release.release_package_action import (
     ReleasePackageRunResult,
     result_from_state,
 )
-from finecode_extension_api import code_action
-from finecode_extension_api.interfaces import ilogger, iprojectactionrunner
 
 
 @dataclasses.dataclass

@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+
 from finecode_extension_runner import er_telemetry
 
 # PRD-0004-AC7: each telemetry-provider initializer is a no-op when its

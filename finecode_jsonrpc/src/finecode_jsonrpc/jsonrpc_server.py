@@ -24,9 +24,10 @@ import collections.abc
 import contextlib
 from typing import Any
 
+from loguru import logger
+
 from finecode_jsonrpc.jsonrpc_client import JsonRpcError
 from finecode_jsonrpc.tracing import ITracingHooks
-from loguru import logger
 
 # JSON-RPC error codes
 _METHOD_NOT_FOUND = -32601

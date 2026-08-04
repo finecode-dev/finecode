@@ -2,11 +2,6 @@
 import asyncio
 import dataclasses
 
-from fine_dist_artifacts import (
-    list_published_artifacts_action,
-    publish_artifact_action,
-    publish_artifact_to_registry_action,
-)
 from fine_src_artifacts import (
     get_src_artifact_registries_action,
     get_src_artifact_version_action,
@@ -18,6 +13,12 @@ from finecode_extension_api.interfaces import (
     iprojectinfoprovider,
 )
 from finecode_extension_api.resource_uri import ResourceUri, resource_uri_to_path
+
+from fine_dist_artifacts import (
+    list_published_artifacts_action,
+    publish_artifact_action,
+    publish_artifact_to_registry_action,
+)
 
 
 @dataclasses.dataclass

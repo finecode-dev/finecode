@@ -4,6 +4,14 @@ import dataclasses
 from pathlib import Path
 
 import pytest
+from finecode_extension_api import code_action
+from finecode_extension_api.interfaces import (
+    ilogger,
+    iprojectinfoprovider,
+    iworkspaceactionrunner,
+)
+from finecode_extension_runner.testing import handler_test_session
+
 from fine_release.compute_release_order_handler import ComputeReleaseOrderHandler
 from fine_release.discover_release_candidates_handler import (
     DiscoverReleaseCandidatesHandler,
@@ -18,13 +26,6 @@ from fine_release.release_workspace_packages_action import (
     ReleaseWorkspacePackagesRunResult,
 )
 from fine_release.sweep_release_packages_handler import SweepReleasePackagesHandler
-from finecode_extension_api import code_action
-from finecode_extension_api.interfaces import (
-    ilogger,
-    iprojectinfoprovider,
-    iworkspaceactionrunner,
-)
-from finecode_extension_runner.testing import handler_test_session
 
 # Action identity is matched on the sub-action *class name* only: the real handler
 # passes an actual class object to ``run_action_in_projects``.

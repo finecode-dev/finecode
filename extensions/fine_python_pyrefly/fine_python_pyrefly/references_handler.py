@@ -5,8 +5,6 @@ import dataclasses
 from fine_python_lang.text_document_references_python_action import (
     TextDocumentReferencesPythonAction,
 )
-from fine_python_pyrefly._lsp_location_utils import locations_from_lsp
-from fine_python_pyrefly.pyrefly_lsp_service import PyreflyLspService
 from fine_symbol_info.text_document_references_action import (
     ReferencesPayload,
     ReferencesResult,
@@ -14,6 +12,9 @@ from fine_symbol_info.text_document_references_action import (
 from finecode_extension_api import code_action
 from finecode_extension_api.interfaces import ifileeditor, ilogger, iprojectinfoprovider
 from finecode_extension_api.resource_uri import resource_uri_to_path
+
+from fine_python_pyrefly._lsp_location_utils import locations_from_lsp
+from fine_python_pyrefly.pyrefly_lsp_service import PyreflyLspService
 
 
 @dataclasses.dataclass

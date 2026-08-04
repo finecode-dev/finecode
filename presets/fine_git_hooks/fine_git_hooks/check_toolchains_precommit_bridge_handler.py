@@ -8,7 +8,6 @@ from fine_envs.check_toolchains_action import (
     CheckToolchainsRunPayload,
     CheckToolchainsRunResult,
 )
-from fine_git_hooks import precommit_action
 from finecode_extension_api import code_action
 from finecode_extension_api.interfaces import (
     ilogger,
@@ -19,6 +18,8 @@ from finecode_extension_api.interfaces.iworkspaceinfoprovider import (
     actionable_project_paths,
 )
 from finecode_extension_api.workspace_utils import group_files_by_project
+
+from fine_git_hooks import precommit_action
 
 
 def _project_label(project_path: pathlib.Path) -> str:

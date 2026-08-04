@@ -4,10 +4,11 @@ import dataclasses
 from pathlib import Path
 
 import pytest
-from fine_git.git_push_git_refs_handler import GitPushGitRefsHandler
-from fine_git.push_git_refs_action import PushGitRefsAction, PushGitRefsRunPayload
 from finecode_extension_api.interfaces.icommandrunner import ICommandRunner
 from finecode_extension_runner.testing import run_handler
+
+from fine_git.git_push_git_refs_handler import GitPushGitRefsHandler
+from fine_git.push_git_refs_action import PushGitRefsAction, PushGitRefsRunPayload
 
 
 @dataclasses.dataclass

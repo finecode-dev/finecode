@@ -9,14 +9,15 @@ from fine_code_hierarchy.call_hierarchy_outgoing_calls_action import (
 from fine_python_lang.call_hierarchy_outgoing_calls_python_action import (
     CallHierarchyOutgoingCallsPythonAction,
 )
+from finecode_extension_api import code_action
+from finecode_extension_api.interfaces import ifileeditor, ilogger, iprojectinfoprovider
+from finecode_extension_api.resource_uri import resource_uri_to_path
+
 from fine_python_pyrefly._lsp_hierarchy_utils import (
     call_hierarchy_item_to_lsp,
     outgoing_call_from_lsp,
 )
 from fine_python_pyrefly.pyrefly_lsp_service import PyreflyLspService
-from finecode_extension_api import code_action
-from finecode_extension_api.interfaces import ifileeditor, ilogger, iprojectinfoprovider
-from finecode_extension_api.resource_uri import resource_uri_to_path
 
 
 @dataclasses.dataclass

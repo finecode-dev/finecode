@@ -6,7 +6,6 @@ from typing import Any
 from fine_python_lang.text_document_document_highlight_python_action import (
     TextDocumentDocumentHighlightPythonAction,
 )
-from fine_python_pyrefly.pyrefly_lsp_service import PyreflyLspService
 from fine_symbol_info.text_document_document_highlight_action import (
     DocumentHighlight,
     DocumentHighlightKind,
@@ -16,6 +15,8 @@ from fine_symbol_info.text_document_document_highlight_action import (
 from finecode_extension_api import code_action, common_types
 from finecode_extension_api.interfaces import ifileeditor, ilogger, iprojectinfoprovider
 from finecode_extension_api.resource_uri import resource_uri_to_path
+
+from fine_python_pyrefly.pyrefly_lsp_service import PyreflyLspService
 
 
 def _range_from_lsp(d: dict[str, Any]) -> common_types.Range:

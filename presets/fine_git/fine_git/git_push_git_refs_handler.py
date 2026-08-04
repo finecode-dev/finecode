@@ -1,17 +1,18 @@
 import dataclasses
 import shlex
 
-from fine_git.push_git_refs_action import (
-    PushGitRefsAction,
-    PushGitRefsRunContext,
-    PushGitRefsRunPayload,
-    PushGitRefsRunResult,
-)
 from finecode_extension_api import code_action
 from finecode_extension_api.interfaces import (
     icommandrunner,
     ilogger,
     iprojectinfoprovider,
+)
+
+from fine_git.push_git_refs_action import (
+    PushGitRefsAction,
+    PushGitRefsRunContext,
+    PushGitRefsRunPayload,
+    PushGitRefsRunResult,
 )
 
 

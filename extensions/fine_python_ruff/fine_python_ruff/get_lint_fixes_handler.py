@@ -21,7 +21,6 @@ from fine_lint.lint_fix import (
 from fine_python_lang.get_lint_fixes_python_files_action import (
     GetLintFixesPythonFilesAction,
 )
-from fine_python_ruff.ruff_lsp_service import RuffLspService
 from finecode_extension_api import code_action
 from finecode_extension_api.interfaces import (
     icommandrunner,
@@ -30,6 +29,8 @@ from finecode_extension_api.interfaces import (
     iprojectinfoprovider,
 )
 from finecode_extension_api.resource_uri import ResourceUri, resource_uri_to_path
+
+from fine_python_ruff.ruff_lsp_service import RuffLspService
 
 
 @dataclasses.dataclass

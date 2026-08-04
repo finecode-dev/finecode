@@ -6,7 +6,6 @@ import hashlib
 import sys
 from pathlib import Path
 
-import fine_python_mypy.output_parser as output_parser
 from fine_python_lang.type_check_python_files_action import TypeCheckPythonFilesAction
 from fine_type_check.diagnostic_types import (
     Diagnostic,
@@ -27,6 +26,8 @@ from finecode_extension_api.resource_uri import (
     path_to_resource_uri,
     resource_uri_to_path,
 )
+
+import fine_python_mypy.output_parser as output_parser
 
 
 class DmypyFailedError(Exception): ...

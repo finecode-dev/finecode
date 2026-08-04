@@ -2,12 +2,13 @@ import pathlib
 import stat
 
 import pytest
-from fine_envs import remove_envs_action
-from fine_envs.create_envs_action import EnvInfo
-from fine_envs.remove_envs_remove_handler import RemoveEnvsRemoveHandler
 from finecode_extension_api import code_action
 from finecode_extension_api.resource_uri import path_to_resource_uri
 from finecode_extension_runner.impls.file_manager import FileManager
+
+from fine_envs import remove_envs_action
+from fine_envs.create_envs_action import EnvInfo
+from fine_envs.remove_envs_remove_handler import RemoveEnvsRemoveHandler
 
 
 class _FakeLogger:

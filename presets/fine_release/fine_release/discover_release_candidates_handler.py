@@ -7,13 +7,6 @@ from fine_dep_graph.collect_project_dependency_info_action import (
     CollectProjectDependencyInfoAction,
     CollectProjectDependencyInfoRunPayload,
 )
-from fine_release.release_workspace_packages_action import (
-    ReleaseWorkspacePackagesAction,
-    ReleaseWorkspacePackagesRunContext,
-    ReleaseWorkspacePackagesRunPayload,
-    ReleaseWorkspacePackagesRunResult,
-    _Candidate,
-)
 from fine_src_artifacts.get_src_artifact_version_action import (
     GetSrcArtifactVersionAction,
     GetSrcArtifactVersionRunPayload,
@@ -25,6 +18,14 @@ from finecode_extension_api.interfaces import (
     iworkspaceactionrunner,
 )
 from finecode_extension_api.resource_uri import ResourceUri, path_to_resource_uri
+
+from fine_release.release_workspace_packages_action import (
+    ReleaseWorkspacePackagesAction,
+    ReleaseWorkspacePackagesRunContext,
+    ReleaseWorkspacePackagesRunPayload,
+    ReleaseWorkspacePackagesRunResult,
+    _Candidate,
+)
 
 
 @dataclasses.dataclass

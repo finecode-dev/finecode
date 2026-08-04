@@ -35,6 +35,8 @@ from finecode_extension_api.interfaces import (
     iprojectactionrunner,
     iprojectinfoprovider,
 )
+from loguru import logger
+
 from finecode_extension_runner import (
     context,
     er_errors,
@@ -52,7 +54,6 @@ from finecode_extension_runner.di import bootstrap as di_bootstrap
 from finecode_extension_runner.impls import (
     project_action_runner as project_action_runner_module,
 )
-from loguru import logger
 
 # ---------------------------------------------------------------------------
 # Protocol types

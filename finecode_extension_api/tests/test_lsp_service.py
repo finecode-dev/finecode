@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any, AsyncIterator
 
 import pytest
+
 from finecode_extension_api.contrib.lsp_service import LspService
 from finecode_extension_api.interfaces import ifileeditor, ilspclient
 

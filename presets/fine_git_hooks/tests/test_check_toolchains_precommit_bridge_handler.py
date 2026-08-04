@@ -13,14 +13,15 @@ import pathlib
 import pytest
 from fine_envs.check_toolchains_action import CheckToolchainsRunResult
 from fine_envs.sync_toolchains_action import EnvToolchainAxis
-from fine_git_hooks import precommit_action
-from fine_git_hooks.check_toolchains_precommit_bridge_handler import (
-    CheckToolchainsPrecommitBridgeHandler,
-)
 from finecode_extension_api import code_action
 from finecode_extension_api.interfaces.iworkspaceinfoprovider import (
     ProjectConfigStatus,
     WorkspaceProject,
+)
+
+from fine_git_hooks import precommit_action
+from fine_git_hooks.check_toolchains_precommit_bridge_handler import (
+    CheckToolchainsPrecommitBridgeHandler,
 )
 
 

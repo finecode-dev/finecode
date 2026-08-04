@@ -3,13 +3,14 @@ import dataclasses
 import stat
 import sys
 
+from finecode_extension_api import code_action
+from finecode_extension_api.interfaces import ilogger, iprojectinfoprovider
+
 from fine_git_hooks import install_git_hooks_action
 from fine_git_hooks.git_hooks_common import (
     FINECODE_HOOK_MARKER,
     resolve_project_git_dir,
 )
-from finecode_extension_api import code_action
-from finecode_extension_api.interfaces import ilogger, iprojectinfoprovider
 
 _HOOK_TEMPLATE = """\
 #!/usr/bin/env python3

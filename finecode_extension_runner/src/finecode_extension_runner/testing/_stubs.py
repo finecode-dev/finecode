@@ -4,6 +4,7 @@ import dataclasses
 import typing
 
 from finecode_extension_api.interfaces import ilogger
+
 from finecode_extension_runner import er_wal
 
 

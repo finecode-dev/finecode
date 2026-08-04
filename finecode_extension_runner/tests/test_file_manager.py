@@ -5,8 +5,9 @@ import stat
 
 import pytest
 from finecode_extension_api.interfaces import ifilemanager
-from finecode_extension_runner.impls.file_manager import FileManager
 from loguru import logger
+
+from finecode_extension_runner.impls.file_manager import FileManager
 
 
 def _make_dir_tree(root: pathlib.Path) -> pathlib.Path:

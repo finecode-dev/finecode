@@ -11,10 +11,6 @@ from fine_python_lang.sync_python_interpreters_action import (
     SyncPythonInterpretersAction,
     SyncPythonInterpretersRunPayload,
 )
-from fine_python_package_info.sync_python_interpreters_handler import (
-    SyncPythonInterpretersHandler,
-    derive_interpreters,
-)
 from finecode_extension_api import code_action
 from finecode_extension_api.interfaces.ifileeditor import IFileEditor
 from finecode_extension_api.interfaces.ilogger import ILogger
@@ -29,6 +25,10 @@ from finecode_extension_runner._services.run_action import (
 )
 from finecode_extension_runner.testing import InMemoryFileEditor, handler_test_session
 
+from fine_python_package_info.sync_python_interpreters_handler import (
+    SyncPythonInterpretersHandler,
+    derive_interpreters,
+)
 from tests.stubs import OBTAINABLE as _OBTAINABLE
 from tests.stubs import CollectingLogger, StubObtainableInterpretersHandler
 

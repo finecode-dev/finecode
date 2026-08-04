@@ -3,12 +3,13 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 
-from fine_semantic_tokens import text_document_semantic_tokens_action
 from fine_src_artifacts import (
     group_src_artifact_files_by_lang_action,
 )
 from finecode_extension_api import code_action
 from finecode_extension_api.interfaces import ilogger, iprojectactionrunner
+
+from fine_semantic_tokens import text_document_semantic_tokens_action
 
 
 @dataclasses.dataclass

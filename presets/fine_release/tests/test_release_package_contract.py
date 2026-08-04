@@ -4,6 +4,14 @@ import dataclasses
 from pathlib import Path
 
 import pytest
+from finecode_extension_api import code_action
+from finecode_extension_api.interfaces import (
+    ilogger,
+    iprojectactionrunner,
+    iprojectinfoprovider,
+)
+from finecode_extension_runner.testing import handler_test_session
+
 from fine_release.build_release_artifact_handler import BuildReleaseArtifactHandler
 from fine_release.publish_release_artifact_handler import PublishReleaseArtifactHandler
 from fine_release.record_release_tag_handler import RecordReleaseTagHandler
@@ -14,13 +22,6 @@ from fine_release.release_package_action import (
     ReleasePackageRunPayload,
     ReleasePackageRunResult,
 )
-from finecode_extension_api import code_action
-from finecode_extension_api.interfaces import (
-    ilogger,
-    iprojectactionrunner,
-    iprojectinfoprovider,
-)
-from finecode_extension_runner.testing import handler_test_session
 
 # Sub-actions are matched on class name: the handlers pass real classes to
 # ``ActionRef.from_type``.

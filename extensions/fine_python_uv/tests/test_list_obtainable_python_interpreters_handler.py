@@ -9,14 +9,15 @@ from fine_python_lang.list_obtainable_python_interpreters_action import (
     ListObtainablePythonInterpretersAction,
     ListObtainablePythonInterpretersRunPayload,
 )
-from fine_python_uv.list_obtainable_python_interpreters_handler import (
-    UvListObtainablePythonInterpretersHandler,
-)
 from finecode_extension_api.interfaces import icommandrunner, ilogger
 from finecode_extension_runner._services.run_action import (
     ActionFailedException as ActionRunFailed,
 )
 from finecode_extension_runner.testing import NoOpLogger, run_handler
+
+from fine_python_uv.list_obtainable_python_interpreters_handler import (
+    UvListObtainablePythonInterpretersHandler,
+)
 
 # These tests pin the handler's *logic* against controlled input: the paths real uv
 # cannot be made to produce on demand (a prerelease, a freethreaded variant, malformed

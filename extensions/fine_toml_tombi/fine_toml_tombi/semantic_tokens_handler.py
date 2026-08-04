@@ -11,10 +11,11 @@ from fine_semantic_tokens.text_document_semantic_tokens_action import (
 from fine_toml_lang.text_document_semantic_tokens_toml_action import (
     TextDocumentSemanticTokensTomlAction,
 )
-from fine_toml_tombi.tombi_lsp_service import TombiLspService
 from finecode_extension_api import code_action
 from finecode_extension_api.interfaces import ifileeditor, ilogger, iprojectinfoprovider
 from finecode_extension_api.resource_uri import resource_uri_to_path
+
+from fine_toml_tombi.tombi_lsp_service import TombiLspService
 
 
 @dataclasses.dataclass

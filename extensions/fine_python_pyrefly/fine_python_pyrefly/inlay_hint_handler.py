@@ -12,11 +12,12 @@ from fine_inlay_hints.text_document_inlay_hint import (
 from fine_python_lang.text_document_inlay_hint_python_action import (
     TextDocumentInlayHintPythonAction,
 )
-from fine_python_pyrefly.pyrefly_lsp_service import PyreflyLspService
 from finecode_extension_api import code_action
 from finecode_extension_api.common_types import Position
 from finecode_extension_api.interfaces import ifileeditor, ilogger, iprojectinfoprovider
 from finecode_extension_api.resource_uri import resource_uri_to_path
+
+from fine_python_pyrefly.pyrefly_lsp_service import PyreflyLspService
 
 
 def _inlay_hint_from_lsp(d: dict[str, Any]) -> InlayHint:

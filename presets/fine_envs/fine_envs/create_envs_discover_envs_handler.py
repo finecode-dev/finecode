@@ -1,6 +1,5 @@
 import dataclasses
 
-from fine_envs import create_envs_action
 from finecode_extension_api import code_action
 from finecode_extension_api.interfaces import (
     iextensionrunnerinfoprovider,
@@ -8,6 +7,8 @@ from finecode_extension_api.interfaces import (
     iprojectinfoprovider,
 )
 from finecode_extension_api.resource_uri import path_to_resource_uri
+
+from fine_envs import create_envs_action
 
 
 @dataclasses.dataclass

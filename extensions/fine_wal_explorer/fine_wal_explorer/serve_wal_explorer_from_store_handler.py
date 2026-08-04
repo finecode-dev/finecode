@@ -24,7 +24,6 @@ from fine_wal_events.serve_wal_explorer_from_store_action import (
     ServeWalExplorerFromStoreRunPayload,
     ServeWalExplorerFromStoreRunResult,
 )
-from fine_wal_explorer import store_queries
 from finecode_extension_api import code_action
 from finecode_extension_api.interfaces import (
     ilogger,
@@ -37,6 +36,8 @@ from finecode_extension_api.resource_uri import (
     path_to_resource_uri,
     resource_uri_to_path,
 )
+
+from fine_wal_explorer import store_queries
 
 SCHEMA_VERSION = 1
 _REQUIRED_TABLES = frozenset({"wal_events"})

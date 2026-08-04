@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 from finecode_extension_api import code_action
+
 from finecode_extension_runner import schemas, services
 from finecode_extension_runner._services import run_action as run_action_service
 from finecode_extension_runner.testing import handler_test_session

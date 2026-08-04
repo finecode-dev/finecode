@@ -2,7 +2,6 @@ import asyncio
 import dataclasses
 
 from fine_format import FormatTarget, check_formatting_action
-from fine_git_hooks import precommit_action
 from finecode_extension_api import code_action
 from finecode_extension_api.interfaces import (
     ilogger,
@@ -14,6 +13,8 @@ from finecode_extension_api.interfaces.iworkspaceinfoprovider import (
 )
 from finecode_extension_api.resource_uri import path_to_resource_uri
 from finecode_extension_api.workspace_utils import group_files_by_project
+
+from fine_git_hooks import precommit_action
 
 
 @dataclasses.dataclass

@@ -1,8 +1,9 @@
 import ast
 from pathlib import Path
 
-from fine_python_ast import iast_provider
 from finecode_extension_api.interfaces import icache, ifileeditor, ilogger
+
+from fine_python_ast import iast_provider
 
 
 class PythonSingleAstProvider(iast_provider.IPythonSingleAstProvider):

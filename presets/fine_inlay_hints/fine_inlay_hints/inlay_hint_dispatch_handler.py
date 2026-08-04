@@ -3,15 +3,16 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 
-from fine_inlay_hints.text_document_inlay_hint import (
-    InlayHintPayload,
-    TextDocumentInlayHintAction,
-)
 from fine_src_artifacts import (
     group_src_artifact_files_by_lang_action,
 )
 from finecode_extension_api import code_action
 from finecode_extension_api.interfaces import ilogger, iprojectactionrunner
+
+from fine_inlay_hints.text_document_inlay_hint import (
+    InlayHintPayload,
+    TextDocumentInlayHintAction,
+)
 
 
 @dataclasses.dataclass

@@ -5,7 +5,6 @@ import dataclasses
 from fine_python_lang.text_document_hover_python_action import (
     TextDocumentHoverPythonAction,
 )
-from fine_python_pyrefly.pyrefly_lsp_service import PyreflyLspService
 from fine_symbol_info.text_document_hover_action import (
     HoverPayload,
     HoverResult,
@@ -16,6 +15,8 @@ from finecode_extension_api import code_action
 from finecode_extension_api.common_types import Position, Range
 from finecode_extension_api.interfaces import ifileeditor, ilogger, iprojectinfoprovider
 from finecode_extension_api.resource_uri import resource_uri_to_path
+
+from fine_python_pyrefly.pyrefly_lsp_service import PyreflyLspService
 
 
 def _position_from_lsp(p: dict) -> Position:

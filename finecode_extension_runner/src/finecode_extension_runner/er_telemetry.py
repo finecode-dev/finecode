@@ -36,13 +36,14 @@ def apply_telemetry_config(
 def init_otel_logging(service_name: str, project_path: Path, endpoint: str) -> None:
     import importlib.metadata
 
-    from finecode_extension_runner.logs import filter_logs
     from loguru import logger
     from opentelemetry._logs.severity import SeverityNumber
     from opentelemetry.exporter.otlp.proto.grpc._log_exporter import OTLPLogExporter
     from opentelemetry.sdk._logs import LoggerProvider
     from opentelemetry.sdk._logs.export import BatchLogRecordProcessor
     from opentelemetry.sdk.resources import Resource
+
+    from finecode_extension_runner.logs import filter_logs
 
     try:
         version = importlib.metadata.version("finecode_extension_runner")

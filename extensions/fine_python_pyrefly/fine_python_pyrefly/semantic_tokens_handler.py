@@ -6,7 +6,6 @@ from typing import Any
 from fine_python_lang.text_document_semantic_tokens_python_action import (
     TextDocumentSemanticTokensPythonAction,
 )
-from fine_python_pyrefly.pyrefly_lsp_service import PyreflyLspService
 from fine_semantic_tokens.text_document_semantic_tokens_action import (
     SemanticTokensPayload,
     SemanticTokensResult,
@@ -15,6 +14,8 @@ from fine_semantic_tokens.text_document_semantic_tokens_action import (
 from finecode_extension_api import code_action
 from finecode_extension_api.interfaces import ifileeditor, ilogger, iprojectinfoprovider
 from finecode_extension_api.resource_uri import resource_uri_to_path
+
+from fine_python_pyrefly.pyrefly_lsp_service import PyreflyLspService
 
 
 @dataclasses.dataclass

@@ -2,9 +2,10 @@
 import dataclasses
 import enum
 
-from fine_inspect_code.diagnostic_types import DiagnosticFilesRunResult
 from finecode_extension_api import code_action
 from finecode_extension_api.resource_uri import ResourceUri
+
+from fine_inspect_code.diagnostic_types import DiagnosticFilesRunResult
 
 
 class InspectCodeTarget(enum.StrEnum):

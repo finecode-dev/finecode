@@ -1,7 +1,6 @@
 import asyncio
 import dataclasses
 
-from fine_git_hooks import precommit_action
 from fine_inspect_code.inspect_code_action import (
     InspectCodeAction,
     InspectCodeRunPayload,
@@ -18,6 +17,8 @@ from finecode_extension_api.interfaces.iworkspaceinfoprovider import (
 )
 from finecode_extension_api.resource_uri import path_to_resource_uri
 from finecode_extension_api.workspace_utils import group_files_by_project
+
+from fine_git_hooks import precommit_action
 
 
 @dataclasses.dataclass

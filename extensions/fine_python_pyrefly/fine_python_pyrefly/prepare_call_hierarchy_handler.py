@@ -9,11 +9,12 @@ from fine_code_hierarchy.text_document_prepare_call_hierarchy_action import (
 from fine_python_lang.text_document_prepare_call_hierarchy_python_action import (
     TextDocumentPrepareCallHierarchyPythonAction,
 )
-from fine_python_pyrefly._lsp_hierarchy_utils import call_hierarchy_item_from_lsp
-from fine_python_pyrefly.pyrefly_lsp_service import PyreflyLspService
 from finecode_extension_api import code_action
 from finecode_extension_api.interfaces import ifileeditor, ilogger, iprojectinfoprovider
 from finecode_extension_api.resource_uri import resource_uri_to_path
+
+from fine_python_pyrefly._lsp_hierarchy_utils import call_hierarchy_item_from_lsp
+from fine_python_pyrefly.pyrefly_lsp_service import PyreflyLspService
 
 
 @dataclasses.dataclass

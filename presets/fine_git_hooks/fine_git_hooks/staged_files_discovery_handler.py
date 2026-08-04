@@ -1,13 +1,14 @@
 import dataclasses
 from pathlib import Path
 
-from fine_git_hooks import precommit_action
 from finecode_extension_api import code_action
 from finecode_extension_api.interfaces import (
     icommandrunner,
     ilogger,
     iprojectinfoprovider,
 )
+
+from fine_git_hooks import precommit_action
 
 
 @dataclasses.dataclass

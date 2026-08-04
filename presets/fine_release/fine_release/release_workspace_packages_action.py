@@ -4,14 +4,15 @@ from __future__ import annotations
 import dataclasses
 import pathlib
 
+from finecode_extension_api import code_action, textstyler
+from finecode_extension_api.resource_uri import ResourceUri
+
 # Outcome vocabulary is owned by the per-package action, which is what observes
 # registry outcomes; only BLOCKED is produced here (ADR-0065).
 from fine_release.release_package_action import (
     PackageReleaseOutcome,
     RegistryPublishResult,
 )
-from finecode_extension_api import code_action, textstyler
-from finecode_extension_api.resource_uri import ResourceUri
 
 
 @dataclasses.dataclass

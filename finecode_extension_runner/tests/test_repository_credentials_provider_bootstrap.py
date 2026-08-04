@@ -5,6 +5,7 @@ import pathlib
 from finecode_extension_api.interfaces.irepositorycredentialsprovider import (
     IRepositoryCredentialsProvider,
 )
+
 from finecode_extension_runner import schemas
 from finecode_extension_runner.impls.repository_credentials_provider import (
     ConfigRepositoryCredentialsProvider,

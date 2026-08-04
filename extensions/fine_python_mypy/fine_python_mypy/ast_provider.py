@@ -5,8 +5,9 @@ import mypy.build as mypy_build
 import mypy.modulefinder as modulefinder
 import mypy.nodes as mypy_nodes
 import mypy.options as mypy_options
-from fine_python_mypy import iast_provider
 from finecode_extension_api.interfaces import icache, ifileeditor, ilogger
+
+from fine_python_mypy import iast_provider
 
 
 class MypySingleAstProvider(iast_provider.IMypySingleAstProvider):

@@ -10,10 +10,11 @@ else:
 
 from fine_format import format_file_action
 from fine_toml_lang.format_toml_file_action import FormatTomlFileAction
-from fine_toml_tombi.tombi_lsp_service import TombiLspService
 from finecode_extension_api import code_action
 from finecode_extension_api.interfaces import iprojectinfoprovider
 from finecode_extension_api.resource_uri import resource_uri_to_path
+
+from fine_toml_tombi.tombi_lsp_service import TombiLspService
 
 
 @dataclasses.dataclass

@@ -13,6 +13,7 @@ import signal
 import sys
 
 import pytest
+
 from finecode_jsonrpc import client as jc
 
 

@@ -8,10 +8,11 @@ from fine_lint.diagnostic_types import (
     DiagnosticFilesRunResult,
 )
 from fine_toml_lang.lint_toml_files_action import LintTomlFilesAction
-from fine_toml_tombi.tombi_lsp_service import TombiLspService
 from finecode_extension_api import code_action
 from finecode_extension_api.interfaces import iprojectinfoprovider
 from finecode_extension_api.resource_uri import ResourceUri, resource_uri_to_path
+
+from fine_toml_tombi.tombi_lsp_service import TombiLspService
 
 
 @dataclasses.dataclass

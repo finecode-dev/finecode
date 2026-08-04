@@ -4,9 +4,10 @@ from importlib import metadata
 from pathlib import Path
 
 import click
+from loguru import logger
+
 import finecode_extension_runner.start as runner_start
 from finecode_extension_runner import er_wal, global_state, logs
-from loguru import logger
 
 
 @click.group()

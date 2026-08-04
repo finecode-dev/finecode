@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import pytest
+
 from finecode_extension_runner import concurrency
 
 

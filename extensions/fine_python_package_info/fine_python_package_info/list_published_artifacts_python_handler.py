@@ -1,7 +1,6 @@
 import dataclasses
 
 from fine_dist_artifacts import list_published_artifacts_action
-from fine_python_package_info import registry_endpoints
 from finecode_extension_api import code_action
 from finecode_extension_api.interfaces import (
     ihttpclient,
@@ -9,6 +8,8 @@ from finecode_extension_api.interfaces import (
     iprojectinfoprovider,
     irepositorycredentialsprovider,
 )
+
+from fine_python_package_info import registry_endpoints
 
 
 @dataclasses.dataclass

@@ -6,18 +6,19 @@ try:
 except ModuleNotFoundError:
     import tomli as tomllib  # type: ignore[no-redef]
 
+from finecode_extension_api import code_action
+from finecode_extension_api.interfaces import ilogger, iprojectactionrunner
+from finecode_extension_api.resource_uri import (
+    path_to_resource_uri,
+    resource_uri_to_path,
+)
+
 from fine_envs import (
     install_deps_in_env_action,
     install_env_action,
 )
 from fine_envs.install_envs_action import (
     InstallEnvsRunResult,
-)
-from finecode_extension_api import code_action
-from finecode_extension_api.interfaces import ilogger, iprojectactionrunner
-from finecode_extension_api.resource_uri import (
-    path_to_resource_uri,
-    resource_uri_to_path,
 )
 
 
