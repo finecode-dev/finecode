@@ -50,8 +50,6 @@ from pathlib import Path
 
 import ordered_set
 
-from finecode.wm_server.config.config_models import ErLoggingConfig
-
 
 class ActionScope(StrEnum):
     """Dispatch scope declared by an Action.
@@ -459,6 +457,12 @@ class ProjectStatus(Enum):
     CONFIG_INVALID = auto()
     NO_FINECODE = auto()
     CONFIG_VALID = auto()
+
+
+@dataclasses.dataclass
+class ErLoggingConfig:
+    default_level: str = "INFO"
+    log_groups: dict[str, str] = dataclasses.field(default_factory=dict)
 
 
 class RunnerConfig:

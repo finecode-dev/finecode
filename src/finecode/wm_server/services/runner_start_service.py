@@ -40,7 +40,7 @@ from loguru import logger
 
 import finecode_jsonrpc as _jsonrpc_client
 from finecode.wm_server import context, domain
-from finecode.wm_server.runner import runner_manager
+from finecode.wm_server.runner import runner_manager, wm_bridge
 
 if TYPE_CHECKING:
     from finecode.wm_server.runner import runner_client
@@ -61,11 +61,10 @@ async def _auto_prepare_and_retry(
     On success the projects are fully initialized and the function returns normally.
     On any failure it re-raises ``exc``.
     """
-    from finecode.wm_server import wm_server as _wm
     from finecode.wm_server.runner import runner_client as rc
 
     def _notify(message: str, level: str = "ERROR") -> None:
-        _wm._notify_all_clients(
+        wm_bridge.handlers().notify_all_clients(
             "server/userMessage", {"message": message, "type": level}
         )
 

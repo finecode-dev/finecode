@@ -90,6 +90,16 @@ layers = [
     "config",
     "domain : errors : context",
 ]
+# context.py -> runner.runner_client (ExtensionRunnerInfo): this contract groups context
+# with domain/errors as the pure-data bottom, but context.py is not pure — it is the WM's
+# shared *mutable* state and by design holds live handles to running infrastructure (see
+# the matching carve-out in wm-domain-purity below). Nor can ExtensionRunnerInfo be pushed
+# down into domain to remove the upward reference: it wraps a live
+# jsonrpc_client.JsonRpcClient and an asyncio.Event, so it is genuinely a runner-layer
+# type. An intentional exception to layering direction, not a type awaiting relocation.
+ignore_imports = [
+    "finecode.wm_server.context -> finecode.wm_server.runner.runner_client",
+]
 
 
 # Client subsystems sit above the WM server core; clients import the core, never the
@@ -167,12 +177,9 @@ domain_modules = [
     "finecode.wm_server.errors",
     "finecode.wm_server.domain",
 ]
-# Pre-existing debt, out of scope for the contract that introduced this rule — real
-# wm-layered direction violations (domain, the bottom layer, importing config, a layer
-# above it) and a judgment call on whether a small utility/collections library counts as
-# "infrastructure" for this purpose. Flagged for separate cleanup, not silently allowed.
+# Judgment call: whether a small utility/collections library counts as "infrastructure"
+# for this purpose. Flagged as debt, not silently allowed.
 ignore_imports = [
-    "finecode.wm_server.domain -> finecode.wm_server.config.config_models",
     "finecode.wm_server.domain -> ordered_set",
 ]
 

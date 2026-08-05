@@ -15,7 +15,7 @@ from loguru import logger
 
 import finecode.wm_server.domain as domain
 import finecode_jsonrpc as jsonrpc_client
-from finecode.wm_server.config.config_models import ErLoggingConfig
+from finecode.wm_server.domain import ErLoggingConfig
 from finecode.wm_server.runner import _internal_client_api, _internal_client_types
 from finecode.wm_server.utils.iterable_subscribe import IterableSubscribe
 

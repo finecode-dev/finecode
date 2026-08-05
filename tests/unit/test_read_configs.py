@@ -7,7 +7,7 @@ import pytest
 from finecode.wm_server import context, domain
 from finecode.wm_server.config import config_models
 from finecode.wm_server.config.read_configs import (
-    _merge_projects_configs,
+    merge_projects_configs,
     read_preset_config,
     read_project_config,
     read_project_user_config,
@@ -52,7 +52,7 @@ def test_project_user_config_tool_table_raises(tmp_path: pathlib.Path) -> None:
 
     finecode-user.toml is unwrapped (no [tool.finecode] prefix); writing
     [tool.finecode.action.x] instead of [action.x] used to reach
-    `_merge_projects_configs` and crash there with a bare `KeyError('tool')`
+    `merge_projects_configs` and crash there with a bare `KeyError('tool')`
     surfaced to the client as `API error (-32603): 'tool'`. Reject it eagerly
     with an actionable message instead.
     """
@@ -93,7 +93,7 @@ def test_project_user_config_returns_flat_dict(tmp_path: pathlib.Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# _merge_projects_configs — user config priority
+# merge_projects_configs — user config priority
 # ---------------------------------------------------------------------------
 
 
@@ -138,7 +138,7 @@ def test_project_user_config_handler_override(tmp_path: pathlib.Path) -> None:
         }
     }
     wrapped_user: dict[str, Any] = {"tool": {"finecode": user_config_raw}}
-    _merge_projects_configs(
+    merge_projects_configs(
         project_config,
         tmp_path / "pyproject.toml",
         wrapped_user,
@@ -205,7 +205,7 @@ def test_project_user_config_new_action(tmp_path: pathlib.Path) -> None:
         }
     }
     wrapped_user: dict[str, Any] = {"tool": {"finecode": user_config_raw}}
-    _merge_projects_configs(
+    merge_projects_configs(
         project_config,
         tmp_path / "pyproject.toml",
         wrapped_user,
@@ -218,7 +218,7 @@ def test_project_user_config_new_action(tmp_path: pathlib.Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# _merge_projects_configs — env.install_project (ADR-0046)
+# merge_projects_configs — env.install_project (ADR-0046)
 # ---------------------------------------------------------------------------
 
 
@@ -237,7 +237,7 @@ def test_preset_install_project_merges_into_existing_env_config(
     preset_config: dict[str, Any] = {
         "tool": {"finecode": {"env": {"dev": {"install_project": True}}}},
     }
-    _merge_projects_configs(
+    merge_projects_configs(
         project_config,
         tmp_path / "pyproject.toml",
         preset_config,
@@ -260,7 +260,7 @@ def test_project_config_disables_preset_install_project(tmp_path: pathlib.Path) 
     project_override: dict[str, Any] = {
         "tool": {"finecode": {"env": {"dev": {"install_project": False}}}},
     }
-    _merge_projects_configs(
+    merge_projects_configs(
         project_config,
         tmp_path / "pyproject.toml",
         project_override,
@@ -271,7 +271,7 @@ def test_project_config_disables_preset_install_project(tmp_path: pathlib.Path) 
 
 
 # ---------------------------------------------------------------------------
-# _merge_projects_configs — env.interpreters (ADR-0047)
+# merge_projects_configs — env.interpreters (ADR-0047)
 # ---------------------------------------------------------------------------
 
 
@@ -296,7 +296,7 @@ def test_interpreters_merge_survives_env_already_exists_from_preset(
             }
         },
     }
-    _merge_projects_configs(
+    merge_projects_configs(
         project_config,
         tmp_path / "pyproject.toml",
         preset_config,
@@ -326,7 +326,7 @@ def test_interpreters_merge_project_overrides_preset(tmp_path: pathlib.Path) -> 
     project_override: dict[str, Any] = {
         "tool": {"finecode": {"env": {"testing": {"interpreters": ["pypy@3.11"]}}}},
     }
-    _merge_projects_configs(
+    merge_projects_configs(
         project_config,
         tmp_path / "pyproject.toml",
         project_override,
@@ -438,7 +438,7 @@ def test_single_env_with_non_matrix_env_handler_is_untouched() -> None:
     assert handler["env"] == "dev_no_runtime"
 
 
-async def test_config_served_to_extensions_has_matrices_already_expanded(
+def test_config_served_to_extensions_has_matrices_already_expanded(
     tmp_path: pathlib.Path,
 ) -> None:
     """The config stored for serving is expanded, not the file's own env table.
@@ -477,9 +477,9 @@ interpreters = ["cpython@3.11", "cpython@3.12"]
     )
     ws_context = context.WorkspaceContext(ws_dirs_paths=[tmp_path])
 
-    # no dev_workspace runner is registered, so preset collection is skipped and this
-    # exercises the project's own config through the real read path
-    await read_project_config(project, ws_context, resolve_presets=False)
+    # read_project_config contributes nothing from presets, so this exercises the
+    # project's own config through the real read path
+    read_project_config(project, ws_context)
 
     served_config = ws_context.ws_projects_raw_configs[tmp_path]
     env_table = served_config["tool"]["finecode"]["env"]
@@ -932,7 +932,7 @@ def test_preset_user_config_tool_table_raises(tmp_path: pathlib.Path) -> None:
 
     Same double-wrapping bug as at the project level — a preset's
     finecode-user.toml is unwrapped, so [tool.finecode.action.x] used to
-    reach `_merge_projects_configs` and crash with a bare `KeyError('tool')`
+    reach `merge_projects_configs` and crash with a bare `KeyError('tool')`
     instead of an actionable error.
     """
     _write_minimal_preset(tmp_path)

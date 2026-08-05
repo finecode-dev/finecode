@@ -4,6 +4,8 @@ from typing import Any
 
 from cattrs import ClassValidationError as ValidationError
 
+from finecode.wm_server.domain import ErLoggingConfig
+
 
 @dataclass
 class FinecodePresetDefinition:
@@ -74,12 +76,6 @@ class ActionDefinition:
 class ViewDefinition:
     name: str
     source: str
-
-
-@dataclass
-class ErLoggingConfig:
-    default_level: str = "INFO"
-    log_groups: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass

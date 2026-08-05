@@ -14,6 +14,7 @@ from finecode.wm_server._api_handlers._helpers import (
     _find_project_by_path,
     _project_to_dict,
 )
+from finecode.wm_server.runner import wm_bridge
 
 
 async def _handle_list_projects(
@@ -216,9 +217,7 @@ async def _handle_add_dir(
 
     try:
         for project in projects_to_init:
-            await read_configs.read_project_config(
-                project=project, ws_context=ws_context, resolve_presets=False
-            )
+            read_configs.read_project_config(project=project, ws_context=ws_context)
 
         if not start_runners:
             # Collect actions directly from raw config without needing runners.
@@ -247,9 +246,7 @@ async def _handle_add_dir(
                 initialize_all_handlers=initialize_all_handlers,
             )
         except runner_manager.RunnerFailedToStart as exc:
-            from finecode.wm_server import wm_server as _wm
-
-            _wm._notify_all_clients(
+            wm_bridge.handlers().notify_all_clients(
                 "server/userMessage",
                 {
                     "message": f"Starting runners failed: {exc.message}",

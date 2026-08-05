@@ -1,19 +1,18 @@
 # docs: docs/configuration.md
 import copy
+import dataclasses
 import os
 from importlib import metadata
 from pathlib import Path
-from typing import Any, NamedTuple
+from typing import Any
 
 import cattrs
 from loguru import logger
 from tomlkit import loads as toml_loads
 
-from finecode import user_messages
 from finecode._converter import converter as _converter
 from finecode.wm_server import context, domain
 from finecode.wm_server.config import config_models, interpreter_matrix
-from finecode.wm_server.runner import runner_client
 
 
 def read_project_finecode_config(project_dir: Path) -> dict | None:
@@ -336,204 +335,209 @@ def read_env_configs(project_config: dict[str, Any]) -> dict[str, domain.EnvConf
     return env_configs
 
 
-async def read_project_config(
-    project: domain.Project,
-    ws_context: context.WorkspaceContext,
-    resolve_presets: bool = True,
-) -> None:
-    # this function requires running project extension runner to get configuration
-    # from it
-    if project.def_path.name == "pyproject.toml":
-        with open(project.def_path, "rb") as pyproject_file:
-            # TODO: handle error if toml is invalid
-            project_def = toml_loads(pyproject_file.read()).unwrap()
-        # TODO: validate that finecode is installed?
+@dataclasses.dataclass
+class ProjectConfigSources:
+    """Everything read from disk for a project, before any py-preset contribution is
+    merged in. ``preset_sources`` is what a caller needs to resolve py-presets via a
+    runner (see ``runner.preset_resolution``) *before* calling ``finish_project_config``.
+    Splitting the read this way is what lets the RPC-dependent half live in the runner
+    layer without config needing to know about runners at all.
+    """
 
-        finecode_toml_raw = read_project_finecode_config(project.def_path.parent)
-        if finecode_toml_raw is not None:
-            finecode_section = dict(finecode_toml_raw.get("finecode", {}))
-            if "workspace" in finecode_section or "workspace" in finecode_toml_raw:
-                raise config_models.ConfigurationError(
-                    f"The [workspace] table is not allowed in "
-                    f"{project.def_path.parent / 'finecode.toml'}. "
-                    f"Workspace configuration must live in finecode-workspace.toml."
-                )
-            if "tool" not in project_def:
-                project_def["tool"] = {}
-            project_def["tool"]["finecode"] = finecode_section
+    project_def: dict[str, Any]
+    user_config_raw: dict[str, Any] | None
+    user_config_path: Path
+    preset_sources: list[str]
 
-        project_config = {}
 
-        user_config_raw = read_project_user_config(project.def_path.parent)
-        user_config_path = project.def_path.parent / "finecode-user.toml"
+def read_project_config_sources(
+    project: domain.Project, resolve_presets: bool = True
+) -> ProjectConfigSources | None:
+    """Read pyproject.toml/finecode.toml/finecode-user.toml from disk and compute the
+    preset sources this project declares. Pure — no runner involved. Returns ``None``
+    for def_path types other than ``pyproject.toml`` (not supported yet).
 
-        # fine_envs is always loaded as a mandatory preset; user presets are loaded
-        # only when resolve_presets=True. Both require a dev_workspace runner.
-        finecode_raw_config = project_def.get("tool", {}).get("finecode", None)
-        preset_sources: list[str] = ["fine_envs"]
-        if finecode_raw_config and resolve_presets:
-            try:
-                user_presets = [
-                    _converter.structure(
-                        raw_preset, config_models.FinecodePresetDefinition
-                    )
-                    for raw_preset in finecode_raw_config.get("presets", [])
-                ]
-            except cattrs.ClassValidationError as exception:
-                raise config_models.ConfigurationError(str(exception))
-            preset_sources += [preset.source for preset in user_presets]
-
-        if user_config_raw and resolve_presets:
-            try:
-                user_file_preset_defs = [
-                    _converter.structure(raw, config_models.FinecodePresetDefinition)
-                    for raw in user_config_raw.get("presets", [])
-                ]
-            except cattrs.ClassValidationError as exception:
-                raise config_models.ConfigurationError(str(exception))
-            preset_sources += [p.source for p in user_file_preset_defs]
-
-        # TODO: can it be the case that there is no such runner?
-        dev_workspace_runner = ws_context.ws_projects_extension_runners.get(
-            project.dir_path, {}
-        ).get("dev_workspace")
-        if dev_workspace_runner is not None:
-            new_config = await collect_config_from_py_presets(
-                presets_sources=preset_sources,
-                def_path=project.def_path,
-                runner=dev_workspace_runner,
-            )
-            if new_config is not None:
-                _merge_projects_configs(
-                    project_config, project.def_path, new_config, project.def_path
-                )
-
-        _merge_projects_configs(
-            project_config, project.def_path, project_def, project.def_path
-        )
-        # `_merge_projects_configs` merges only finecode config. Copy all other keys as
-        # is
-        for key, value in project_def.items():
-            if key != "tool":
-                project_config[key] = value
-        tool_raw_config = project_def.get("tool", None)
-        if tool_raw_config is not None:
-            if "tool" not in project_config:
-                project_config["tool"] = {}
-            project_tool_config = project_config["tool"]
-            for key, value in tool_raw_config.items():
-                if key != "finecode":
-                    project_tool_config[key] = value
-
-        if user_config_raw is not None:
-            # Exclude 'presets' (already resolved in preset_sources above) and
-            # 'dependency-groups' (handled separately below).
-            # Presets are excluded to avoid overwriting the project's presets list in
-            # the merged config — the else-branch in _merge_projects_configs assigns
-            # unknown keys directly, which would lose the project's preset entries.
-            user_finecode_section = {
-                k: v
-                for k, v in user_config_raw.items()
-                if k not in ("dependency-groups", "presets")
-            }
-            wrapped_user: dict[str, Any] = {"tool": {"finecode": user_finecode_section}}
-            # config2 (user) overwrites config1 (project) for conflicting items — user wins
-            _merge_projects_configs(
-                project_config, project.def_path, wrapped_user, user_config_path
-            )
-
-            if "dependency-groups" in user_config_raw:
-                dep_groups: dict[str, list[Any]] = project_config.setdefault(
-                    "dependency-groups", {}
-                )
-                for group_name, packages in user_config_raw[
-                    "dependency-groups"
-                ].items():
-                    if group_name not in dep_groups:
-                        dep_groups[group_name] = list(packages)
-                    else:
-                        for pkg in packages:
-                            if pkg not in dep_groups[group_name]:
-                                dep_groups[group_name].append(pkg)
-
-        # add runtime dependency group if it's not explicitly declared
-        add_runtime_dependency_group_if_new(project_config)
-
-        finecode_section = project_config.get("tool", {}).get("finecode", {})
-        actions = _structure_actions(finecode_section.get("action", {}))
-        services = _structure_services(finecode_section.get("service", []))
-
-        deps_groups: dict[str, list[Any]] = project_config.setdefault(
-            "dependency-groups", {}
-        )
-        merge_handlers_dependencies_into_groups(actions, deps_groups)
-        merge_services_dependencies_into_groups(services, deps_groups)
-        _deduplicate_deps_groups(deps_groups)
-        # ADR-0047: expand any interpreter-matrix matrix environment into concrete
-        # per-interpreter envs before the extension runner dependency is injected,
-        # so every concrete env's own dependency group receives it too.
-        resolve_interpreter_matrices(project_config)
-        # add extension runner after merging handlers dependencies into groups
-        # because env may be missing in dependency-groups and be used in handlers
-        add_extension_runner_to_dependencies(project_config)
-
-        ws_context.ws_projects_raw_configs[project.dir_path] = project_config
-    else:
+    Raises:
+        ConfigurationError: finecode.toml declares a [workspace] table, or a preset
+            entry does not match FinecodePresetDefinition.
+    """
+    if project.def_path.name != "pyproject.toml":
         logger.info(
             f"Project definition of type {project.def_path.name} is not supported yet"
         )
+        return None
+
+    with open(project.def_path, "rb") as pyproject_file:
+        # TODO: handle error if toml is invalid
+        project_def = toml_loads(pyproject_file.read()).unwrap()
+    # TODO: validate that finecode is installed?
+
+    finecode_toml_raw = read_project_finecode_config(project.def_path.parent)
+    if finecode_toml_raw is not None:
+        finecode_section = dict(finecode_toml_raw.get("finecode", {}))
+        if "workspace" in finecode_section or "workspace" in finecode_toml_raw:
+            raise config_models.ConfigurationError(
+                f"The [workspace] table is not allowed in "
+                f"{project.def_path.parent / 'finecode.toml'}. "
+                f"Workspace configuration must live in finecode-workspace.toml."
+            )
+        if "tool" not in project_def:
+            project_def["tool"] = {}
+        project_def["tool"]["finecode"] = finecode_section
+
+    user_config_raw = read_project_user_config(project.def_path.parent)
+    user_config_path = project.def_path.parent / "finecode-user.toml"
+
+    # fine_envs is always loaded as a mandatory preset; user presets are loaded
+    # only when resolve_presets=True. Both require a dev_workspace runner to
+    # actually resolve (see finish_project_config's py_presets_config parameter).
+    finecode_raw_config = project_def.get("tool", {}).get("finecode", None)
+    preset_sources: list[str] = ["fine_envs"]
+    if finecode_raw_config and resolve_presets:
+        try:
+            user_presets = [
+                _converter.structure(raw_preset, config_models.FinecodePresetDefinition)
+                for raw_preset in finecode_raw_config.get("presets", [])
+            ]
+        except cattrs.ClassValidationError as exception:
+            raise config_models.ConfigurationError(str(exception))
+        preset_sources += [preset.source for preset in user_presets]
+
+    if user_config_raw and resolve_presets:
+        try:
+            user_file_preset_defs = [
+                _converter.structure(raw, config_models.FinecodePresetDefinition)
+                for raw in user_config_raw.get("presets", [])
+            ]
+        except cattrs.ClassValidationError as exception:
+            raise config_models.ConfigurationError(str(exception))
+        preset_sources += [p.source for p in user_file_preset_defs]
+
+    return ProjectConfigSources(
+        project_def=project_def,
+        user_config_raw=user_config_raw,
+        user_config_path=user_config_path,
+        preset_sources=preset_sources,
+    )
 
 
-class PresetToProcess(NamedTuple):
-    source: str
-    project_def_path: Path
-    declared_by: str | None = None  # None means declared directly by the project
+def finish_project_config(
+    project: domain.Project,
+    ws_context: context.WorkspaceContext,
+    sources: ProjectConfigSources,
+    py_presets_config: dict[str, Any] | None,
+) -> None:
+    """Merge *sources* (and, if given, the config contributed by resolving its
+    py-presets through a runner) into the project's final config, and store it.
+    Pure — the runner round trip (if any) already happened before this is called.
 
+    Raises:
+        ConfigurationError: an action, handler, or service entry in the merged
+            config does not match its expected shape.
+    """
+    project_def = sources.project_def
+    user_config_raw = sources.user_config_raw
+    user_config_path = sources.user_config_path
 
-async def get_preset_project_path(
-    preset: PresetToProcess, def_path: Path, runner: runner_client.ExtensionRunnerInfo
-) -> Path:
-    logger.trace(f"Get preset project path: {preset.source}")
+    project_config: dict[str, Any] = {}
 
-    try:
-        resolve_path_result = await runner_client.resolve_package_path(
-            runner, preset.source
+    if py_presets_config is not None:
+        merge_projects_configs(
+            project_config, project.def_path, py_presets_config, project.def_path
         )
-    except runner_client.BaseRunnerRequestException as error:
-        error_message = error.message
-        lower_message = error_message.lower()
-        if "cannot find package" in lower_message or "no module named" in lower_message:
-            if preset.declared_by is not None:
-                description = (
-                    f"Preset '{preset.source}' is declared by preset '{preset.declared_by}' "
-                    f"(used in project {def_path.parent}) "
-                    f"but '{preset.source}' is not installed in the dev_workspace environment. "
-                    f"Add '{preset.source}' to the pip dependencies of '{preset.declared_by}' "
-                    f"in its pyproject.toml, then re-run 'prepare-envs'."
-                )
-            else:
-                description = (
-                    f"Preset '{preset.source}' is declared in project {def_path.parent} "
-                    f"but is not installed in the dev_workspace environment. "
-                    f"Add '{preset.source}' to the project's dev_workspace pip dependencies "
-                    f"in its pyproject.toml, then re-run 'prepare-envs'."
-                )
-            raise config_models.PresetPackageNotInstalledError(description)
 
-        await user_messages.error(f"Failed to get preset project path: {error_message}")
-        raise config_models.ConfigurationError(
-            "Failed to resolve preset package path "
-            f"for {preset.source} in project {def_path.parent}: {error_message}"
+    merge_projects_configs(
+        project_config, project.def_path, project_def, project.def_path
+    )
+    # `merge_projects_configs` merges only finecode config. Copy all other keys as
+    # is
+    for key, value in project_def.items():
+        if key != "tool":
+            project_config[key] = value
+    tool_raw_config = project_def.get("tool", None)
+    if tool_raw_config is not None:
+        if "tool" not in project_config:
+            project_config["tool"] = {}
+        project_tool_config = project_config["tool"]
+        for key, value in tool_raw_config.items():
+            if key != "finecode":
+                project_tool_config[key] = value
+
+    if user_config_raw is not None:
+        # Exclude 'presets' (already resolved in preset_sources above) and
+        # 'dependency-groups' (handled separately below).
+        # Presets are excluded to avoid overwriting the project's presets list in
+        # the merged config — the else-branch in merge_projects_configs assigns
+        # unknown keys directly, which would lose the project's preset entries.
+        user_finecode_section = {
+            k: v
+            for k, v in user_config_raw.items()
+            if k not in ("dependency-groups", "presets")
+        }
+        wrapped_user: dict[str, Any] = {"tool": {"finecode": user_finecode_section}}
+        # config2 (user) overwrites config1 (project) for conflicting items — user wins
+        merge_projects_configs(
+            project_config, project.def_path, wrapped_user, user_config_path
         )
-    try:
-        preset_project_path = Path(resolve_path_result["packagePath"])
-    except KeyError as exception:
-        raise config_models.ConfigurationError(
-            f"Preset source cannot be resolved — ER response missing 'packagePath': {preset.source}"
-        ) from exception
 
-    logger.trace(f"Got: {preset.source} -> {preset_project_path}")
-    return preset_project_path
+        if "dependency-groups" in user_config_raw:
+            dep_groups: dict[str, list[Any]] = project_config.setdefault(
+                "dependency-groups", {}
+            )
+            for group_name, packages in user_config_raw["dependency-groups"].items():
+                if group_name not in dep_groups:
+                    dep_groups[group_name] = list(packages)
+                else:
+                    for pkg in packages:
+                        if pkg not in dep_groups[group_name]:
+                            dep_groups[group_name].append(pkg)
+
+    # add runtime dependency group if it's not explicitly declared
+    add_runtime_dependency_group_if_new(project_config)
+
+    finecode_section = project_config.get("tool", {}).get("finecode", {})
+    actions = _structure_actions(finecode_section.get("action", {}))
+    services = _structure_services(finecode_section.get("service", []))
+
+    deps_groups: dict[str, list[Any]] = project_config.setdefault(
+        "dependency-groups", {}
+    )
+    merge_handlers_dependencies_into_groups(actions, deps_groups)
+    merge_services_dependencies_into_groups(services, deps_groups)
+    _deduplicate_deps_groups(deps_groups)
+    # ADR-0047: expand any interpreter-matrix matrix environment into concrete
+    # per-interpreter envs before the extension runner dependency is injected,
+    # so every concrete env's own dependency group receives it too.
+    resolve_interpreter_matrices(project_config)
+    # add extension runner after merging handlers dependencies into groups
+    # because env may be missing in dependency-groups and be used in handlers
+    add_extension_runner_to_dependencies(project_config)
+
+    ws_context.ws_projects_raw_configs[project.dir_path] = project_config
+
+
+def read_project_config(
+    project: domain.Project, ws_context: context.WorkspaceContext
+) -> None:
+    """Read and store a project's config, contributing nothing from its py-presets —
+    not even the mandatory ``fine_envs`` one, since every preset source needs a
+    dev_workspace runner to locate on disk. Callers that have (or can start) that
+    runner should use ``runner.preset_resolution.read_project_config_with_py_presets``
+    instead; it wraps this same sources/finish split around the runner round trip.
+
+    Takes no ``resolve_presets`` flag on purpose: with no runner to resolve against,
+    the declared preset sources are inert either way, so a flag here would suggest a
+    choice that does not exist. Synchronous for the same reason: the RPC round trip
+    was the only thing that ever needed awaiting.
+
+    Raises:
+        ConfigurationError: the project's config files are malformed — see
+            ``read_project_config_sources``.
+    """
+    sources = read_project_config_sources(project, resolve_presets=False)
+    if sources is None:
+        return
+    finish_project_config(project, ws_context, sources, py_presets_config=None)
 
 
 def read_preset_config(
@@ -603,7 +607,7 @@ def read_preset_config(
                 "at preset level; declare it in your project-root finecode-user.toml instead."
             )
         # 'presets' is excluded here and appended to preset_config.extends below instead
-        # of going through the generic merge: _merge_projects_configs overwrites
+        # of going through the generic merge: merge_projects_configs overwrites
         # list-valued keys wholesale (they aren't one of its special-cased keys), which
         # would silently drop the preset's own `presets` entries.
         finecode_section = {
@@ -613,7 +617,7 @@ def read_preset_config(
         }
         wrapped_user: dict[str, Any] = {"tool": {"finecode": finecode_section}}
         # config2 (user) overwrites config1 (preset) for conflicting items — user wins
-        _merge_projects_configs(
+        merge_projects_configs(
             preset_toml, config_path, wrapped_user, preset_user_config_path
         )
         if "presets" in preset_user_raw:
@@ -632,55 +636,6 @@ def read_preset_config(
 
     logger.trace(f"Reading preset config finished: {preset_id}")
     return (preset_toml, preset_config)
-
-
-async def collect_config_from_py_presets(
-    presets_sources: list[str],
-    def_path: Path,
-    runner: runner_client.ExtensionRunnerInfo,
-) -> dict[str, Any] | None:
-    config: dict[str, Any] | None = None
-    processed_presets: set[str] = set()
-    presets_to_process: set[PresetToProcess] = set(
-        [
-            PresetToProcess(source=preset_source, project_def_path=def_path)
-            for preset_source in presets_sources
-        ]
-    )
-    while len(presets_to_process) > 0:
-        preset = presets_to_process.pop()
-        processed_presets.add(preset.source)
-
-        preset_project_path = await get_preset_project_path(
-            preset=preset, def_path=def_path, runner=runner
-        )
-
-        preset_toml_path = preset_project_path / "preset.toml"
-        preset_toml, preset_config = read_preset_config(preset_toml_path, preset.source)
-        if config is None:
-            # use merge instead of just assigning config, because merge not only merges
-            # configs, but also adapts relative pathes etc.
-            config = {}
-            _merge_projects_configs(
-                config, def_path, preset_toml, preset_toml_path, is_from_preset=True
-            )
-        else:
-            _merge_projects_configs(
-                config, def_path, preset_toml, preset_toml_path, is_from_preset=True
-            )
-        new_presets_sources = (
-            set([extend.source for extend in preset_config.extends]) - processed_presets
-        )
-        for new_preset_source in new_presets_sources:
-            presets_to_process.add(
-                PresetToProcess(
-                    source=new_preset_source,
-                    project_def_path=def_path,
-                    declared_by=preset.source,
-                )
-            )
-
-    return config
 
 
 def _merge_override_specs(existing: list[str], new: list[str]) -> list[str]:
@@ -751,7 +706,7 @@ def _deep_merge_dicts(target: dict[str, Any], source: dict[str, Any]) -> None:
             target[key] = value
 
 
-def _merge_projects_configs(
+def merge_projects_configs(
     config1: dict[str, Any],
     config1_filepath: Path,
     config2: dict[str, Any],
@@ -1237,7 +1192,7 @@ def resolve_interpreter_matrices(project_config: dict[str, Any]) -> None:
     # being unique within one action's handler list (existing
     # convention; see domain.ActionHandler docstring). By this point in
     # read_project_config every action's "handlers" is already a plain
-    # list of dicts — _merge_projects_configs normalizes the dict-keyed
+    # list of dicts — merge_projects_configs normalizes the dict-keyed
     # [tool.finecode.action.X.handlers.<name>] authoring shorthand into
     # list form for every action it merges (including the project's own
     # pyproject.toml, which always passes through it), so no dict-keyed
@@ -1267,7 +1222,7 @@ def resolve_interpreter_matrices(project_config: dict[str, Any]) -> None:
     # no-mixing/set-equality rule — that pair of validations is scoped
     # to actions — but expansion itself is a property of the env, so it
     # applies here the same as for handlers). [[tool.finecode.service]]
-    # is always a plain list of dicts (see _merge_projects_configs's
+    # is always a plain list of dicts (see merge_projects_configs's
     # "service" branch, which merges by "interface" but never accepts a
     # dict-keyed shorthand), so no normalization concern applies here.
     if "service" in finecode_section:

@@ -17,13 +17,16 @@ from loguru import logger
 import finecode_jsonrpc as jsonrpc_client
 from finecode import telemetry
 from finecode.wm_server import context, domain, domain_helpers, errors
-from finecode.wm_server.config import collect_actions, config_models, read_configs
+from finecode.wm_server.config import collect_actions, config_models
 from finecode.wm_server.runner import (
     _internal_client_api,
     _internal_client_types,
     finecode_cmd,
     knowledge_bridge,
+    preset_resolution,
+    run_dispatch_bridge,
     runner_client,
+    wm_bridge,
 )
 from finecode_jsonrpc import _io_thread
 
@@ -48,25 +51,21 @@ async def notify_project_changed(project: domain.Project) -> None:
 def handle_er_log_records(
     runner: runner_client.ExtensionRunnerInfo, params: dict
 ) -> None:
-    """Redact, tag source, and feed ER records into the Phase-1 delivery pipeline.
+    """Tag source and feed ER records into the Phase-1 delivery pipeline.
 
-    Runs on the loop thread (feature callback), so ``_deliver_record`` is safe.
+    Runs on the loop thread (feature callback), so delivery is safe. Redaction
+    happens in the bridge implementation, at the WM boundary.
     """
-    from finecode.wm_server import wm_server as _wm
-    from finecode.wm_server.services import log_delivery
-
+    bridge = wm_bridge.handlers()
     source = f"runner:{runner.env_name}@{runner.working_dir_path.name}"
     for r in (params or {}).get("records", []):
-        record = log_delivery.ClientLogRecord(
+        bridge.deliver_er_log_record(
+            source=source,
             timestamp=r.get("timestamp", 0.0),
             level=r.get("level", "INFO"),
-            source=source,
             group=r.get("group", ""),
-            message=log_delivery.redact(
-                r.get("message", "")
-            ),  # redaction at WM boundary
+            message=r.get("message", ""),
         )
-        _wm._deliver_record(record)
 
 
 async def _apply_workspace_edit(
@@ -310,9 +309,8 @@ async def _start_extension_runner_process(
             params_dict = params
         else:
             params_dict = dataclasses.asdict(params)
-        from finecode.wm_server import wm_server as _wm
 
-        _wm._notify_all_clients(
+        wm_bridge.handlers().notify_all_clients(
             "server/userMessage",
             {
                 "message": params_dict.get("message", ""),
@@ -446,74 +444,24 @@ async def _start_extension_runner_process(
         fetch_knowledge_records,
     )
 
+    def _run_dispatch_handlers() -> run_dispatch_bridge.RunDispatchHandlers:
+        """The installed run-dispatch service, or a method error naming why there
+        is none. Mirrors ``_knowledge_handlers`` above: the runner cannot import
+        the service (it sits a layer above); it is handed one.
+        """
+        installed = run_dispatch_bridge.handlers()
+        if installed is None:
+            raise errors.InternalError(
+                "This WM has no run-dispatch service installed, so it cannot "
+                "execute ER-initiated actions."
+            )
+        return installed
+
     async def handle_run_action_in_project(
         params: _internal_client_types.RunActionInProjectParams,
     ) -> _internal_client_types.RunActionInProjectResult:
-        from finecode.wm_server.runner.runner_client import DevEnv, RunActionTrigger
-        from finecode.wm_server.services.run_service import ProjectExecutor
-        from finecode.wm_server.services.run_service.exceptions import ActionRunFailed
-
-        executor = ProjectExecutor(ws_context)
-
-        if params.partial_result_token is not None:
-            partial_count = 0
-            try:
-                async with executor.run_action_with_partial_results(
-                    action_source=params.action_source,
-                    params=params.payload,
-                    project_path=runner.working_dir_path,
-                    partial_result_token=params.partial_result_token,
-                    run_trigger=RunActionTrigger(params.meta.trigger),
-                    dev_env=DevEnv(params.meta.dev_env),
-                    orchestration_depth=params.meta.orchestration_depth,
-                    caller_kwargs=params.caller_kwargs,
-                ) as ctx:
-                    async for partial_raw in ctx:
-                        partial_count += 1
-                        runner.client.notify(
-                            _internal_client_types.PROGRESS,
-                            _internal_client_types.ProgressParams(
-                                token=params.partial_result_token,
-                                value=json.dumps(partial_raw),
-                            ),
-                        )
-            except ActionRunFailed:
-                raise
-
-            if ctx.responses:
-                final = ctx.responses[0]
-                if final.status != "streamed":
-                    final_json = final.result_by_format.get("json", {})
-                    if partial_count == 0 and final_json:
-                        runner.client.notify(
-                            _internal_client_types.PROGRESS,
-                            _internal_client_types.ProgressParams(
-                                token=params.partial_result_token,
-                                value=json.dumps(final_json),
-                            ),
-                        )
-                return _internal_client_types.RunActionInProjectResult(
-                    return_code=final.return_code,
-                )
-            return _internal_client_types.RunActionInProjectResult(
-                return_code=0,
-            )
-
-        try:
-            result = await executor.run_action(
-                action_source=params.action_source,
-                params=params.payload,
-                project_path=runner.working_dir_path,
-                run_trigger=RunActionTrigger(params.meta.trigger),
-                dev_env=DevEnv(params.meta.dev_env),
-                orchestration_depth=params.meta.orchestration_depth,
-                caller_kwargs=params.caller_kwargs,
-            )
-        except ActionRunFailed:
-            raise
-        return _internal_client_types.RunActionInProjectResult(
-            result=result.result_by_format.get("json", {}),
-            return_code=result.return_code,
+        return await _run_dispatch_handlers().run_action_in_project(
+            runner, params, ws_context
         )
 
     runner.client.feature(
@@ -523,112 +471,9 @@ async def _start_extension_runner_process(
 
     async def handle_run_action_in_workspace(
         params: _internal_client_types.RunActionInWorkspaceParams,
-    ) -> dict:
-        from finecode.wm_server.runner.runner_client import DevEnv, RunActionTrigger
-        from finecode.wm_server.services.run_service import WorkspaceExecutor
-        from finecode.wm_server.services.run_service.exceptions import ActionRunFailed
-        from finecode.wm_server.services.run_service.proxy_utils import (
-            find_all_projects_with_action,
-        )
-
-        run_trigger = RunActionTrigger(params.meta.trigger)
-        dev_env = DevEnv(params.meta.dev_env)
-
-        # Resolve action name from source via the runner's own project actions.
-        # Use canonical_source (resolved by ER)
-        project = ws_context.ws_projects.get(runner.working_dir_path)
-        if not isinstance(project, domain.CollectedProject):
-            raise errors.InternalError(
-                f"Project {runner.working_dir_path} has no valid config"
-            )
-
-        def _find_action_name() -> str | None:
-            return next(
-                (
-                    a.name
-                    for a in project.actions
-                    if a.canonical_source == params.action_source
-                ),
-                None,
-            )
-
-        action_name = _find_action_name()
-        if action_name is None:
-            # canonical_source is resolved asynchronously by each env's runner
-            # (update_runner_config -> resolveActionMeta). Right after a restart
-            # the runner that owns this action's handlers may still be
-            # initializing when this back-channel call arrives. Give any
-            # not-yet-resolved action in this project a chance to resolve
-            # before giving up, reusing the same mechanism the external API
-            # boundary already relies on (ensure_action_metadata). Each attempt
-            # TODO: untested — handle_run_action_in_workspace is a closure inside
-            # _start_extension_runner_process, not independently callable. A real
-            # regression test needs this extracted to a standalone
-            # (params, runner, ws_context) -> dict function first, then a unit test
-            # with ensure_action_metadata stubbed to resolve canonical_source as a
-            # side effect (race recovers) and stubbed as a no-op (still raises
-            # ActionNotFoundError).
-            # is independent — one action's metadata being unresolvable must
-            # not cancel another action's resolution that is about to succeed,
-            # so gather (not TaskGroup) with return_exceptions=True.
-            from finecode.wm_server.services import run_service
-
-            unresolved = [a for a in project.actions if a.canonical_source is None]
-            if unresolved:
-                await asyncio.gather(
-                    *(
-                        run_service.ensure_action_metadata(a, project, ws_context)
-                        for a in unresolved
-                    ),
-                    return_exceptions=True,
-                )
-                action_name = _find_action_name()
-
-        if action_name is None:
-            known = [
-                f"{a.name}(source={a.source!r}, canonical={a.canonical_source!r})"
-                for a in project.actions
-            ]
-            logger.info(
-                f"handle_run_action_in_workspace: action_source={params.action_source!r} not found"
-                f" in project {runner.working_dir_path}."
-                f" Known actions ({len(known)}): {known}"
-            )
-            raise errors.ActionNotFoundError(
-                f"No action with source '{params.action_source}' found in project {runner.working_dir_path}"
-            )
-
-        if params.project_paths:
-            actions_by_project = {Path(p): [action_name] for p in params.project_paths}
-        else:
-            actions_by_project = {
-                p: [action_name]
-                for p in find_all_projects_with_action(action_name, ws_context)
-            }
-
-        executor = WorkspaceExecutor(ws_context)
-        try:
-            results = await executor.run_actions_in_projects(
-                actions_by_project=actions_by_project,
-                params=params.payload,
-                run_trigger=run_trigger,
-                dev_env=dev_env,
-                orchestration_depth=params.meta.orchestration_depth,
-                concurrently=params.concurrently,
-            )
-        except ActionRunFailed:
-            raise
-        return _internal_client_types.RunActionInWorkspaceResult(
-            results_by_project={
-                k.as_posix(): {
-                    action: {
-                        "result": resp.result_by_format.get("json"),
-                        "status": resp.status,
-                    }
-                    for action, resp in v.items()
-                }
-                for k, v in results.items()
-            }
+    ) -> _internal_client_types.RunActionInWorkspaceResult:
+        return await _run_dispatch_handlers().run_action_in_workspace(
+            runner, params, ws_context
         )
 
     runner.client.feature(
@@ -639,36 +484,12 @@ async def _start_extension_runner_process(
     async def handle_get_actions_for_parent(
         params: _internal_client_types.GetActionsForParentParams,
     ) -> _internal_client_types.GetActionsForParentResult:
-        """Serve ``finecode/getActionsForParent`` (ADR-0045).
-
-        Lists every action in this project that specializes the given parent
-        action, regardless of which env owns its handler — an ER only ever
-        knows the actions its own env executes, so this cross-env picture can
-        only come from the WM. Resolution (including on-demand env startup
-        for actions not yet importable by any runner) is delegated to
-        ``find_subactions_for_parent``/``ensure_action_metadata``, the same
-        machinery used elsewhere to resolve action metadata.
+        """Serve ``finecode/getActionsForParent`` (ADR-0045). See
+        ``run_service.er_dispatch._BridgeHandlers.get_actions_for_parent`` for
+        the resolution logic.
         """
-        project = ws_context.ws_projects.get(runner.working_dir_path)
-        if not isinstance(project, domain.CollectedProject):
-            raise errors.ConfigurationError(
-                f"Project '{runner.working_dir_path}' has no valid config"
-            )
-
-        from finecode.wm_server.services import run_service
-
-        subactions = await run_service.find_subactions_for_parent(
-            params.parent_action_source, project, ws_context
-        )
-        return _internal_client_types.GetActionsForParentResult(
-            subactions=[
-                _internal_client_types.SubactionInfo(
-                    source=a.source,
-                    canonical_source=a.canonical_source,
-                    language=a.language,
-                )
-                for a in subactions
-            ]
+        return await _run_dispatch_handlers().get_actions_for_parent(
+            runner, params, ws_context
         )
 
     runner.client.feature(
@@ -877,7 +698,7 @@ async def start_runners_with_presets(
             continue
 
         try:
-            await read_configs.read_project_config(
+            await preset_resolution.read_project_config_with_py_presets(
                 project=project, ws_context=ws_context, resolve_presets=resolve_presets
             )
             collected = collect_actions.collect_project(
@@ -1020,7 +841,7 @@ async def _start_runner(
         project_def, domain.CollectedProject
     ):
         try:
-            await read_configs.read_project_config(
+            await preset_resolution.read_project_config_with_py_presets(
                 project=project_def, ws_context=ws_context
             )
             collect_actions.collect_project(
@@ -1055,9 +876,7 @@ async def _start_runner(
 
     # A runner that starts while a client is subscribed to logs must begin
     # forwarding immediately (ADR-0049 Phase 2); no-op when nobody is watching.
-    from finecode.wm_server import wm_server as _wm
-
-    await _wm.push_er_forwarding_to_runner(runner)
+    await wm_bridge.handlers().push_er_forwarding_to_runner(runner)
 
     return runner
 

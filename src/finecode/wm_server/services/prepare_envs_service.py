@@ -260,9 +260,7 @@ async def prepare_envs(
             project.dir_path.is_relative_to(workdir_path)
             and project.dir_path not in ws_context.ws_projects_raw_configs
         ):
-            await read_configs.read_project_config(
-                project=project, ws_context=ws_context, resolve_presets=False
-            )
+            read_configs.read_project_config(project=project, ws_context=ws_context)
 
     ws_context.ws_editable_packages = read_configs.resolve_workspace_editable_packages(
         ws_context

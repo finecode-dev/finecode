@@ -63,6 +63,7 @@ from finecode.wm_server._jsonrpc import (
     _write_message,
 )
 from finecode.wm_server.errors import ConfigurationError
+from finecode.wm_server.runner import wm_bridge
 from finecode.wm_server.services import (  # noqa: F401
     knowledge_service as _knowledge_service,
 )
@@ -75,6 +76,9 @@ from finecode.wm_server.services.run_service.exceptions import (
     StartingEnvironmentsFailed,
 )
 from finecode.wm_server.wm_lifecycle import discovery_file_path
+
+if typing.TYPE_CHECKING:
+    from finecode.wm_server.runner.runner_client import ExtensionRunnerInfo
 
 DISCONNECT_TIMEOUT_SECONDS = 30
 NO_CLIENT_TIMEOUT_SECONDS = 30
@@ -318,7 +322,7 @@ def _desired_forwarding() -> tuple[bool, str]:
     return (_log_registry.has_subscribers(), _min_forward_level_name())
 
 
-async def push_er_forwarding_to_runner(runner) -> None:
+async def push_er_forwarding_to_runner(runner: ExtensionRunnerInfo) -> None:
     """Send updateLogging to one runner iff its desired state changed. Best-effort."""
     if runner.client is None or not runner.initialized_event.is_set():
         return
@@ -337,6 +341,32 @@ async def push_er_forwarding_to_runner(runner) -> None:
         logger.trace(
             f"updateLogging to {runner.readable_id} failed; will retry on next change"
         )
+
+
+class _WmClientBridge:
+    """``wm_bridge``'s slot, filled by this module since it owns client connections."""
+
+    def notify_all_clients(self, method: str, params: dict[str, typing.Any]) -> None:
+        _notify_all_clients(method, params)
+
+    def deliver_er_log_record(
+        self, *, source: str, timestamp: float, level: str, group: str, message: str
+    ) -> None:
+        _deliver_record(
+            log_delivery.ClientLogRecord(
+                timestamp=timestamp,
+                level=level,
+                source=source,
+                group=group,
+                message=log_delivery.redact(message),
+            )
+        )
+
+    async def push_er_forwarding_to_runner(self, runner: ExtensionRunnerInfo) -> None:
+        await push_er_forwarding_to_runner(runner)
+
+
+wm_bridge.install(_WmClientBridge())
 
 
 def _sync_er_forwarding(ws_context: context.WorkspaceContext) -> None:

@@ -1,0 +1,233 @@
+"""Fills ``runner.run_dispatch_bridge``'s slot for ER-initiated action dispatch.
+
+Imported for its ``install`` side effect by ``run_service/__init__.py``, the same way
+``knowledge_service.py`` fills ``runner.knowledge_bridge``. See ADR-0072 for why the
+runner reaches this code through a slot rather than importing it.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+from pathlib import Path
+
+from loguru import logger
+
+from finecode.wm_server import context, domain, errors
+from finecode.wm_server.runner import _internal_client_types, run_dispatch_bridge
+from finecode.wm_server.runner.runner_client import (
+    DevEnv,
+    ExtensionRunnerInfo,
+    RunActionTrigger,
+)
+from finecode.wm_server.services.run_service.project_executor import ProjectExecutor
+from finecode.wm_server.services.run_service.proxy_utils import (
+    ensure_action_metadata,
+    find_all_projects_with_action,
+    find_subactions_for_parent,
+)
+from finecode.wm_server.services.run_service.workspace_executor import WorkspaceExecutor
+
+
+class _BridgeHandlers:
+    """``run_dispatch_bridge``'s slot, filled by the module that owns run dispatch."""
+
+    async def run_action_in_project(
+        self,
+        runner: ExtensionRunnerInfo,
+        params: "_internal_client_types.RunActionInProjectParams",
+        ws_context: context.WorkspaceContext,
+    ) -> "_internal_client_types.RunActionInProjectResult":
+        executor = ProjectExecutor(ws_context)
+
+        if params.partial_result_token is not None:
+            partial_count = 0
+            async with executor.run_action_with_partial_results(
+                action_source=params.action_source,
+                params=params.payload,
+                project_path=runner.working_dir_path,
+                partial_result_token=params.partial_result_token,
+                run_trigger=RunActionTrigger(params.meta.trigger),
+                dev_env=DevEnv(params.meta.dev_env),
+                orchestration_depth=params.meta.orchestration_depth,
+                caller_kwargs=params.caller_kwargs,
+            ) as ctx:
+                async for partial_raw in ctx:
+                    partial_count += 1
+                    runner.client.notify(
+                        _internal_client_types.PROGRESS,
+                        _internal_client_types.ProgressParams(
+                            token=params.partial_result_token,
+                            value=json.dumps(partial_raw),
+                        ),
+                    )
+
+            if ctx.responses:
+                final = ctx.responses[0]
+                if final.status != "streamed":
+                    final_json = final.result_by_format.get("json", {})
+                    if partial_count == 0 and final_json:
+                        runner.client.notify(
+                            _internal_client_types.PROGRESS,
+                            _internal_client_types.ProgressParams(
+                                token=params.partial_result_token,
+                                value=json.dumps(final_json),
+                            ),
+                        )
+                return _internal_client_types.RunActionInProjectResult(
+                    return_code=final.return_code,
+                )
+            return _internal_client_types.RunActionInProjectResult(
+                return_code=0,
+            )
+
+        result = await executor.run_action(
+            action_source=params.action_source,
+            params=params.payload,
+            project_path=runner.working_dir_path,
+            run_trigger=RunActionTrigger(params.meta.trigger),
+            dev_env=DevEnv(params.meta.dev_env),
+            orchestration_depth=params.meta.orchestration_depth,
+            caller_kwargs=params.caller_kwargs,
+        )
+        return _internal_client_types.RunActionInProjectResult(
+            result=result.result_by_format.get("json", {}),
+            return_code=result.return_code,
+        )
+
+    async def run_action_in_workspace(
+        self,
+        runner: ExtensionRunnerInfo,
+        params: "_internal_client_types.RunActionInWorkspaceParams",
+        ws_context: context.WorkspaceContext,
+    ) -> "_internal_client_types.RunActionInWorkspaceResult":
+        run_trigger = RunActionTrigger(params.meta.trigger)
+        dev_env = DevEnv(params.meta.dev_env)
+
+        # Resolve action name from source via the runner's own project actions.
+        # Use canonical_source (resolved by ER)
+        project = ws_context.ws_projects.get(runner.working_dir_path)
+        if not isinstance(project, domain.CollectedProject):
+            raise errors.InternalError(
+                f"Project {runner.working_dir_path} has no valid config"
+            )
+
+        def _find_action_name() -> str | None:
+            return next(
+                (
+                    a.name
+                    for a in project.actions
+                    if a.canonical_source == params.action_source
+                ),
+                None,
+            )
+
+        action_name = _find_action_name()
+        if action_name is None:
+            # canonical_source is resolved asynchronously by each env's runner
+            # (update_runner_config -> resolveActionMeta). Right after a restart
+            # the runner that owns this action's handlers may still be
+            # initializing when this back-channel call arrives. Give any
+            # not-yet-resolved action in this project a chance to resolve
+            # before giving up, reusing the same mechanism the external API
+            # boundary already relies on (ensure_action_metadata). Each attempt
+            # is independent — one action's metadata being unresolvable must
+            # not cancel another action's resolution that is about to succeed,
+            # so gather (not TaskGroup) with return_exceptions=True.
+            # TODO: untested. Needs a unit test with ensure_action_metadata
+            # stubbed to resolve canonical_source as a side effect (race
+            # recovers) and stubbed as a no-op (still raises
+            # ActionNotFoundError).
+            unresolved = [a for a in project.actions if a.canonical_source is None]
+            if unresolved:
+                await asyncio.gather(
+                    *(
+                        ensure_action_metadata(a, project, ws_context)
+                        for a in unresolved
+                    ),
+                    return_exceptions=True,
+                )
+                action_name = _find_action_name()
+
+        if action_name is None:
+            known = [
+                f"{a.name}(source={a.source!r}, canonical={a.canonical_source!r})"
+                for a in project.actions
+            ]
+            logger.info(
+                f"run_action_in_workspace: action_source={params.action_source!r} not found"
+                f" in project {runner.working_dir_path}."
+                f" Known actions ({len(known)}): {known}"
+            )
+            raise errors.ActionNotFoundError(
+                f"No action with source '{params.action_source}' found in project {runner.working_dir_path}"
+            )
+
+        if params.project_paths:
+            actions_by_project = {Path(p): [action_name] for p in params.project_paths}
+        else:
+            actions_by_project = {
+                p: [action_name]
+                for p in find_all_projects_with_action(action_name, ws_context)
+            }
+
+        executor = WorkspaceExecutor(ws_context)
+        results = await executor.run_actions_in_projects(
+            actions_by_project=actions_by_project,
+            params=params.payload,
+            run_trigger=run_trigger,
+            dev_env=dev_env,
+            orchestration_depth=params.meta.orchestration_depth,
+            concurrently=params.concurrently,
+        )
+        return _internal_client_types.RunActionInWorkspaceResult(
+            results_by_project={
+                k.as_posix(): {
+                    action: {
+                        "result": resp.result_by_format.get("json"),
+                        "status": resp.status,
+                    }
+                    for action, resp in v.items()
+                }
+                for k, v in results.items()
+            }
+        )
+
+    async def get_actions_for_parent(
+        self,
+        runner: ExtensionRunnerInfo,
+        params: "_internal_client_types.GetActionsForParentParams",
+        ws_context: context.WorkspaceContext,
+    ) -> "_internal_client_types.GetActionsForParentResult":
+        """Serve ``finecode/getActionsForParent`` (ADR-0045).
+
+        Lists every action in this project that specializes the given parent
+        action, regardless of which env owns its handler — an ER only ever
+        knows the actions its own env executes, so this cross-env picture can
+        only come from the WM. Resolution (including on-demand env startup
+        for actions not yet importable by any runner) is delegated to
+        ``find_subactions_for_parent``/``ensure_action_metadata``, the same
+        machinery used elsewhere to resolve action metadata.
+        """
+        project = ws_context.ws_projects.get(runner.working_dir_path)
+        if not isinstance(project, domain.CollectedProject):
+            raise errors.ConfigurationError(
+                f"Project '{runner.working_dir_path}' has no valid config"
+            )
+
+        subactions = await find_subactions_for_parent(
+            params.parent_action_source, project, ws_context
+        )
+        return _internal_client_types.GetActionsForParentResult(
+            subactions=[
+                _internal_client_types.SubactionInfo(
+                    source=a.source,
+                    canonical_source=a.canonical_source,
+                    language=a.language,
+                )
+                for a in subactions
+            ]
+        )
+
+
+run_dispatch_bridge.install(_BridgeHandlers())

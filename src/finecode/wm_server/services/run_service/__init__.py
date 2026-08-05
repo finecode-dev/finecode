@@ -26,6 +26,18 @@ from .proxy_utils import (
 )
 from .workspace_executor import WorkspaceExecutor
 
+# Installs this package's implementation into runner.run_dispatch_bridge on import
+# (side effect only — nothing here is re-exported). Imported last so the submodules
+# it depends on (project_executor, workspace_executor, proxy_utils, exceptions) are
+# already initialized. See er_dispatch.py and runner/run_dispatch_bridge.py.
+#
+# Nothing schedules this install explicitly: it happens because _api_handlers/_helpers
+# imports run_service.exceptions at module level, which initializes this package, and
+# wm_server imports _api_handlers at startup. An ER's first back-channel call therefore
+# always finds the slot filled. Keep that chain intact — breaking it turns ER-initiated
+# runs into "no run-dispatch service installed" errors rather than an import failure.
+from . import er_dispatch  # noqa: F401
+
 __all__ = [
     "ActionCancelledError",
     "ActionRunFailed",
