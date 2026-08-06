@@ -14,4 +14,4 @@ presets = [
 ]
 
 [tool.finecode.extension.fine_python_ruff]
-dependencies_override = ["ruff==0.15.*"]
+dependencies_override = ["ruff==0.16.*"]

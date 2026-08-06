@@ -596,7 +596,7 @@ class TextDocumentInfo:
 
 
 # Raw JSON object carrying a partial-result value in the WM protocol.
-type PartialResultRawValue = dict[str, typing.Any]
+PartialResultRawValue: typing.TypeAlias = dict[str, typing.Any]
 
 
 class PartialResult(typing.NamedTuple):
@@ -616,7 +616,7 @@ class PartialResult(typing.NamedTuple):
 
 # Raw JSON object carrying a progress value in the WM protocol.
 # The ``"type"`` field is one of ``"begin"``, ``"report"``, or ``"end"``.
-type ProgressRawValue = dict[str, typing.Any]
+ProgressRawValue: typing.TypeAlias = dict[str, typing.Any]
 
 
 class ProgressNotification(typing.NamedTuple):

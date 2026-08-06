@@ -132,7 +132,10 @@ async def run_action_in_runner(
     return response
 
 
-class AsyncList[T]:
+T = typing.TypeVar("T")
+
+
+class AsyncList(typing.Generic[T]):
     def __init__(self) -> None:
         self.data: list[T] = []
         self.change_event: asyncio.Event = asyncio.Event()
@@ -150,7 +153,7 @@ class AsyncList[T]:
         return AsyncListIterator(self)
 
 
-class AsyncListIterator[T](collections.abc.AsyncIterator[T]):
+class AsyncListIterator(collections.abc.AsyncIterator[T]):
     def __init__(self, async_list: AsyncList[T]):
         self.async_list = async_list
         self.current_index = 0

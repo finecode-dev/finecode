@@ -69,7 +69,7 @@ RunnerStatus = domain.ExtensionRunnerStatus
 
 
 # JSON object or text
-type RunActionRawResult = dict[str, Any] | str
+RunActionRawResult: typing.TypeAlias = dict[str, Any] | str
 
 
 @dataclasses.dataclass

@@ -7,6 +7,12 @@ source = "fine_python_lang.GetSrcArtifactLanguagePythonHandler"
 env = "dev_no_runtime"
 dependencies = ["fine_python_lang~=0.1.0a0"]
 
+[[tool.finecode.action.get_src_artifact_toolchain_range.handlers]]
+name = "get_src_artifact_toolchain_range_python"
+source = "fine_python_package_info.GetSrcArtifactToolchainRangePyHandler"
+env = "dev_no_runtime"
+dependencies = ["fine_python_package_info~=0.2.0a1"]
+
 [[tool.finecode.action.list_src_artifact_files_by_lang.handlers]]
 name = "list_src_artifact_files_by_lang_python"
 source = "fine_python_lang.ListSrcArtifactFilesByLangPythonHandler"

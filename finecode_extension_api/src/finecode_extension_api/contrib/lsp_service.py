@@ -44,7 +44,18 @@ class LspService(service.DisposableService):
         3. ``workspace/configuration`` pull requests from the server are answered
            with the current settings.
 
-        To push settings to an already running server, call ``send_settings``.
+        Whether a server accepts settings *after* it started is that server's own
+        business, and some accept none: ruff, for one, reads client settings only
+        during ``initialize`` and its ``didChangeConfiguration`` handler does
+        nothing, so for it route 2 is decoration and ``send_settings`` cannot take
+        effect. Treat the settings a server is started with as final unless that
+        server is known to reread them: a service shared by several handlers has to
+        collect every handler's settings before the first of them starts it, rather
+        than letting whichever handler runs first decide what the others get. See
+        ``RuffLspService`` for that shape.
+
+        To push settings to an already running server that does reread them, call
+        ``send_settings``.
 
     Request concurrency:
         By default any number of interactions may be in flight on the session at

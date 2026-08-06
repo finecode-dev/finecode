@@ -1,5 +1,7 @@
 [tool.finecode]
-presets = [{ source = "fine_format" }]
+# fine_python_src_artifacts registers get_src_artifact_toolchain_range's Python handler,
+# which is where the formatters' language level comes from when it is not configured
+presets = [{ source = "fine_format" }, { source = "fine_python_src_artifacts" }]
 
 [tool.finecode.action.format_python_file]
 source = "fine_python_lang.FormatPythonFileAction"
@@ -14,7 +16,7 @@ handlers = [
 ]
 
 [tool.finecode.extension.fine_python_ruff]
-dependencies_override = ["ruff==0.15.*"]
+dependencies_override = ["ruff==0.16.*"]
 
 [tool.finecode.extension.fine_python_isort]
 dependencies_override = ["isort==8.0.*"]

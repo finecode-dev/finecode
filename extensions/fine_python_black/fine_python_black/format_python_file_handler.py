@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import dataclasses
 import sys
 from typing import cast
@@ -12,11 +13,16 @@ else:
 import black
 from black.mode import Mode, TargetVersion
 from fine_format import format_file_action
+from fine_python_lang import support_range
 from fine_python_lang.format_python_file_action import (
     FormatPythonFileAction,
 )
 from finecode_extension_api import code_action
-from finecode_extension_api.interfaces import ilogger, iprocessexecutor
+from finecode_extension_api.interfaces import (
+    ilogger,
+    iprocessexecutor,
+    iprojectactionrunner,
+)
 
 
 def _resolve_target_version(version: str) -> TargetVersion | None:
@@ -26,10 +32,15 @@ def _resolve_target_version(version: str) -> TargetVersion | None:
     return TargetVersion.__members__.get(normalized)
 
 
-def get_black_mode(config: BlackFormatFileHandlerConfig) -> Mode:
+def get_black_mode(
+    config: BlackFormatFileHandlerConfig, derived_versions: list[str] | None = None
+) -> Mode:
+    # `_resolve_target_version` normalizes both spellings, so a derived "3.11" and a
+    # configured "py311" arrive here interchangeably
+    configured_versions = config.target_versions or derived_versions or []
     target_versions = {
         resolved
-        for version in config.target_versions
+        for version in configured_versions
         if (resolved := _resolve_target_version(version)) is not None
     }
     return Mode(
@@ -48,13 +59,18 @@ def get_black_mode(config: BlackFormatFileHandlerConfig) -> Mode:
 
 @dataclasses.dataclass
 class BlackFormatFileHandlerConfig(code_action.ActionHandlerConfig):
-    # TODO: should be set
     target_versions: list[
         # TODO: investigate why list of literals doesn't work
         # Literal["PY33", "PY34", "PY35", "PY36", "PY37",
         # "PY38", "PY39", "PY310", "PY311", "PY312"]
         str
     ] = dataclasses.field(default_factory=list)
+    """Language levels the output must stay valid for, e.g. ``["PY311"]``.
+
+    Empty derives the oldest supported version from the project's declared support
+    range (``get_src_artifact_toolchain_range``). The oldest is the whole answer here:
+    black's setting means "valid for all of these", so a range's floor and its full
+    enumeration produce the same formatting."""
     # default black line length is 88:
     # https://black.readthedocs.io/en/stable/the_black_code_style/current_style.html#line-length
     line_length: int = 88
@@ -74,12 +90,32 @@ class BlackFormatFileHandler(
         config: BlackFormatFileHandlerConfig,
         logger: ilogger.ILogger,
         process_executor: iprocessexecutor.IProcessExecutor,
+        action_runner: iprojectactionrunner.IProjectActionRunner,
     ) -> None:
         self.config = config
         self.logger = logger
         self.process_executor = process_executor
 
-        self.black_mode = get_black_mode(self.config)
+        self._support_range_resolver = support_range.PythonSupportRangeResolver(
+            action_runner=action_runner, logger=logger
+        )
+        # built on the first run, not here: deriving the target version is async
+        self._black_mode: Mode | None = None
+        self._black_mode_lock = asyncio.Lock()
+
+    async def _get_black_mode(self, meta: code_action.RunActionMeta) -> Mode:
+        if self._black_mode is not None:
+            return self._black_mode
+
+        async with self._black_mode_lock:
+            if self._black_mode is None:
+                derived_versions: list[str] = []
+                if not self.config.target_versions:
+                    declared = await self._support_range_resolver.get(meta)
+                    if declared.min_version is not None:
+                        derived_versions = [declared.min_version]
+                self._black_mode = get_black_mode(self.config, derived_versions)
+        return self._black_mode
 
     @override
     async def run(
@@ -87,6 +123,8 @@ class BlackFormatFileHandler(
         payload: format_file_action.FormatFileRunPayload,
         run_context: format_file_action.FormatFileRunContext,
     ) -> format_file_action.FormatFileRunResult:
+        black_mode = await self._get_black_mode(run_context.meta)
+
         file_content = run_context.file_info.file_content
         file_version = run_context.file_info.file_version
 
@@ -94,9 +132,7 @@ class BlackFormatFileHandler(
         self.logger.disable("fine_python_black")
         process_result = cast(
             tuple[str, bool],
-            await self.process_executor.submit(
-                format_one, file_content, self.black_mode
-            ),
+            await self.process_executor.submit(format_one, file_content, black_mode),
         )
         if process_result is None:
             raise code_action.ActionFailedException(

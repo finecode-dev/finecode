@@ -287,6 +287,55 @@ Default handler in this repo: `fine_python_setuptools_scm.GetSrcArtifactVersionS
 
 ---
 
+## `get_src_artifact_toolchain_range`
+
+Read the range of toolchain versions a source artifact supports — in Python, from
+`project.requires-python`.
+
+- **Source:** `fine_src_artifacts.GetSrcArtifactToolchainRangeAction`
+
+Default Python handler: `fine_python_package_info.GetSrcArtifactToolchainRangePyHandler`
+(registered by the `fine_python_src_artifacts` preset).
+
+This is the single source the language-level settings of the Python tools come from —
+ruff's `target-version`, black's `target_versions` — so they cannot disagree with each
+other or with what the project declares. Each tool still accepts an explicit value in
+its own handler config, which wins; leaving it unset is what defers to this action.
+
+It is deliberately **not** the interpreter axis (`sync_toolchains`). The axis is this
+range intersected with what the environment provisioner can obtain — what a project is
+*tested on*. This is what it *promises*, and the promise is what a language level must
+encode.
+
+**Payload fields:**
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `src_artifact_def_path` | `ResourceUri \| None` | `None` | Definition file to read. If omitted, the current project's. |
+
+**Result fields:**
+
+| Field | Type | Description |
+|---|---|---|
+| `min_version` | `str \| None` | Oldest supported version, e.g. `3.11`. `None` when nothing is declared. |
+| `max_version` | `str \| None` | Newest supported version. `None` when the upper end is open — the normal case for a published package. |
+| `derived_from` | `str \| None` | Where the range came from, so a surprising target version can be traced without reading handler source. |
+
+Contributions from multiple handlers **intersect**: merging can narrow a declared range
+but never widen one.
+
+**Handler config (`GetSrcArtifactToolchainRangePyHandler`):**
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `min_version` | `str \| None` | `None` | Pin the oldest supported version instead of deriving it. |
+| `max_version` | `str \| None` | `None` | Pin the newest supported version instead of deriving it. |
+
+Replacing the handler replaces the algorithm for every tool at once — that is the point
+of the range being an action rather than a config field on each tool.
+
+---
+
 ## `get_dist_artifact_version`
 
 Get the version of a distributable artifact.

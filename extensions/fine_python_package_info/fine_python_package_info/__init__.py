@@ -1,6 +1,9 @@
 from .build_artifact_py_handler import BuildArtifactPyHandler
 from .get_dist_artifact_version_py_handler import GetDistArtifactVersionPyHandler
 from .get_src_artifact_registries_py_handler import GetSrcArtifactRegistriesPyHandler
+from .get_src_artifact_toolchain_range_py_handler import (
+    GetSrcArtifactToolchainRangePyHandler,
+)
 from .get_src_artifact_version_py_handler import GetSrcArtifactVersionPyHandler
 from .list_published_artifacts_python_handler import ListPublishedArtifactsPythonHandler
 from .publish_artifact_to_registry_py_handler import PublishArtifactToRegistryPyHandler
@@ -14,6 +17,7 @@ __all__ = [
     "PyPackageLayoutInfoProvider",
     "GetSrcArtifactVersionPyHandler",
     "GetSrcArtifactRegistriesPyHandler",
+    "GetSrcArtifactToolchainRangePyHandler",
     "PublishArtifactToRegistryPyHandler",
     "ListPublishedArtifactsPythonHandler",
 ]

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import dataclasses
 import json
 import sys
@@ -18,6 +19,7 @@ from fine_lint.lint_fix import (
     Range,
     TextEdit,
 )
+from fine_python_lang import support_range
 from fine_python_lang.get_lint_fixes_python_files_action import (
     GetLintFixesPythonFilesAction,
 )
@@ -26,17 +28,23 @@ from finecode_extension_api.interfaces import (
     icommandrunner,
     ifileeditor,
     ilogger,
+    iprojectactionrunner,
     iprojectinfoprovider,
 )
 from finecode_extension_api.resource_uri import ResourceUri, resource_uri_to_path
 
+from fine_python_ruff import target_version as target_version_utils
 from fine_python_ruff.ruff_lsp_service import RuffLspService
 
 
 @dataclasses.dataclass
 class RuffGetLintFixesHandlerConfig(code_action.ActionHandlerConfig):
     line_length: int = 88
-    target_version: str = "py38"
+    target_version: str | None = None
+    """Language level to compute fixes for, e.g. ``"py311"``.
+
+    None derives it from the project's declared support range
+    (``get_src_artifact_toolchain_range``)."""
     select: list[str] | None = None
     ignore: list[str] | None = None
     extend_select: list[str] | None = None
@@ -60,6 +68,7 @@ class RuffGetLintFixesHandler(
         file_editor: ifileeditor.IFileEditor,
         command_runner: icommandrunner.ICommandRunner,
         project_info_provider: iprojectinfoprovider.IProjectInfoProvider,
+        action_runner: iprojectactionrunner.IProjectActionRunner,
         lsp_service: RuffLspService,
     ) -> None:
         self.config = config
@@ -71,11 +80,59 @@ class RuffGetLintFixesHandler(
 
         self.ruff_bin_path = Path(sys.executable).parent / "ruff"
 
+        self._support_range_resolver = support_range.PythonSupportRangeResolver(
+            action_runner=action_runner, logger=logger
+        )
+        self._target_version_resolved = False
+        self._target_version_lock = asyncio.Lock()
+        self._target_version: str | None = None
+
+        if not self.config.use_cli:
+            self.lsp_service.add_settings_provider(self._provide_lsp_settings)
+
+    async def _ensure_target_version(self, meta: code_action.RunActionMeta) -> None:
+        if self._target_version_resolved:
+            return
+
+        async with self._target_version_lock:
+            if self._target_version_resolved:
+                return
+
+            self._target_version = await target_version_utils.resolve_target_version(
+                configured=self.config.target_version,
+                resolver=self._support_range_resolver,
+                meta=meta,
+                logger=self.logger,
+            )
+            self._target_version_resolved = True
+
+    async def _provide_lsp_settings(
+        self, meta: code_action.RunActionMeta
+    ) -> dict[str, object]:
+        """The language level, for the case where no other handler supplies one.
+
+        Rule selection is deliberately not contributed here: fixes come from the same
+        diagnostics the lint handler configures, and a second `lint` block would race
+        with that one for a setting ruff reads once. The level is different -- a code
+        action can be the first thing a session ever asks ruff for, and without this the
+        server would be started with no language level at all.
+        """
+        await self._ensure_target_version(meta)
+
+        if self._target_version is None:
+            return {}
+        return {"configuration": {"target-version": self._target_version}}
+
     async def run(
         self,
         payload: GetLintFixesRunPayload,
         run_context: GetLintFixesRunContext,
     ) -> GetLintFixesRunResult:
+        if self.config.use_cli:
+            # the LSP path derives it inside the settings provider instead, so that it
+            # is in place before the shared server starts
+            await self._ensure_target_version(run_context.meta)
+
         file_path = resource_uri_to_path(payload.file_path)
 
         async with self.file_editor.session(
@@ -92,7 +149,7 @@ class RuffGetLintFixesHandler(
         if self.config.use_cli:
             fixes = await self._run_cli_fixes(file_path, file_content, payload)
         else:
-            fixes = await self._run_lsp_fixes(file_path, payload)
+            fixes = await self._run_lsp_fixes(file_path, payload, run_context.meta)
 
         return GetLintFixesRunResult(file_version=file_version, fixes=fixes)
 
@@ -113,12 +170,14 @@ class RuffGetLintFixesHandler(
             "json",
             "--line-length",
             str(self.config.line_length),
-            "--target-version",
-            self.config.target_version,
             "--stdin-filename",
             str(file_path),
             "-",
         ]
+
+        # omitted when unknown so ruff infers it from requires-python
+        if self._target_version is not None:
+            cmd += ["--target-version", self._target_version]
 
         if self.config.select is not None:
             cmd.append("--select=" + ",".join(self.config.select))
@@ -233,9 +292,10 @@ class RuffGetLintFixesHandler(
         self,
         file_path: Path,
         payload: GetLintFixesRunPayload,
+        meta: code_action.RunActionMeta,
     ) -> list[LintFix]:
         root_uri = self.project_info_provider.get_current_project_dir_path().as_uri()
-        await self.lsp_service.ensure_started(root_uri)
+        await self.lsp_service.ensure_started(root_uri, meta)
 
         # Ensure the document is open and current before requesting code actions.
         await self.lsp_service.check_file(file_path)
