@@ -25,7 +25,7 @@ from finecode.lsp_server.endpoints import inlay_hints as inlay_hints_endpoints
 from finecode.lsp_server.endpoints import navigation as navigation_endpoints
 from finecode.lsp_server.endpoints import semantic_tokens as semantic_tokens_endpoints
 from finecode.lsp_server.endpoints import type_hierarchy as type_hierarchy_endpoints
-from finecode.wm_client import ApiClient
+from finecode.wm_client import ApiClient, ReconnectPolicy
 from finecode.wm_server import wm_lifecycle
 
 _lsp_converter = lsp_converters.get_converter()
@@ -43,9 +43,10 @@ _EXECUTE_COMMANDS = [
     "finecode.runActionOnFile",
     "finecode.runActionOnProject",
     "finecode.reloadAction",
-    "finecode.reset",
     "finecode.restartExtensionRunner",
     "finecode.restartAndDebugExtensionRunner",
+    "finecode.reloadConfig",
+    "finecode.restartWm",
 ]
 
 
@@ -458,21 +459,17 @@ async def _on_initialized(server: LspServer, _params: dict | None) -> None:
         _report_wm_start_failure(server)
         return
 
-    try:
-        global_state.wm_client = ApiClient()
-        await global_state.wm_client.connect("127.0.0.1", port, client_id="lsp")
-    except (ConnectionRefusedError, OSError) as exc:
-        logger.error(f"Could not connect to FineCode WM server: {exc}")
-        global_state.wm_client = None
-        _report_wm_start_failure(server)
-        return
-
-    log_path = global_state.wm_client.server_info.get("logFilePath")
-    if log_path:
-        server.log_message(
-            f"FineCode WM Server log: {log_path}",
-            types.MessageType.Info.value,
-        )
+    # The client object is created before connecting so the notification handlers
+    # below can be registered first: connecting re-attaches the session, and
+    # notifications the WM sends during that must not fall on the floor.
+    global_state.wm_client = ApiClient()
+    global_state.wm_client.configure_reconnect(
+        ReconnectPolicy(may_start_server=True, workdir=workdir),
+        on_reattach=lambda *, first_connect: _attach_session(
+            server, first_connect=first_connect
+        ),
+        on_session_lost=lambda recoverable: _on_session_lost(server, recoverable),
+    )
 
     # Register notification handlers for server→client push messages.
     async def on_tree_changed(push_params: dict) -> None:
@@ -591,19 +588,92 @@ async def _on_initialized(server: LspServer, _params: dict | None) -> None:
 
     global_state.wm_client.on_notification("actions/progress", on_progress_notification)
 
-    # Add workspace directories via the WM server.
-    # server_initialized is set only on success — handlers must not call WM before it fires.
     try:
-        async with asyncio.TaskGroup() as tg:
-            for folder in server._workspace_folders:
-                dir_path = Path(folder["uri"].replace("file://", ""))
-                tg.create_task(global_state.wm_client.add_dir(dir_path))
-        global_state.server_initialized.set()
-        logger.trace("Workspace directories added, end of initialized handler")
+        await global_state.wm_client.connect("127.0.0.1", port, client_id="lsp")
+    except (ConnectionRefusedError, OSError) as exc:
+        logger.error(f"Could not connect to FineCode WM server: {exc}")
+        global_state.wm_client = None
+        _report_wm_start_failure(server)
+        return
     except ExceptionGroup as error:
+        # Raised by the re-attach TaskGroup: the socket is up but the session is
+        # not, so FineCode features stay disabled rather than half-working.
         logger.error(
             f"Workspace initialization failed, FineCode features are disabled: {error}"
         )
+        return
+
+    log_path = global_state.wm_client.server_info.get("logFilePath")
+    if log_path:
+        server.log_message(
+            f"FineCode WM Server log: {log_path}",
+            types.MessageType.Info.value,
+        )
+
+    logger.trace("End of initialized handler")
+
+
+def _on_session_lost(server: LspServer, recoverable: bool) -> None:
+    """Close the gate every endpoint waits on, for as long as it can reopen.
+
+    ``server_initialized`` is what each endpoint awaits before it talks to the
+    WM, and ``_attach_session`` only clears it once a replacement socket already
+    exists.  Between the drop and that point the gate would stand open over a
+    client that is not connected, so requests arriving in the reconnect window
+    — the window ``restart_wm`` deliberately opens for every other client —
+    would dispatch into it instead of waiting for the session to come back.
+
+    Once the client gives up, the gate is reopened rather than left shut: no
+    re-attach is coming, and an editor request that blocks forever is worse than
+    one that fails saying the WM is not connected.
+    """
+    if recoverable:
+        global_state.server_initialized.clear()
+        return
+
+    global_state.server_initialized.set()
+    logger.error("Lost the FineCode WM server session and could not reconnect")
+    server.log_message(
+        "FineCode: lost the connection to the workspace server and could not "
+        "reconnect. Restart the editor's FineCode extension to try again.",
+        types.MessageType.Error.value,
+    )
+
+
+async def _attach_session(server: LspServer, *, first_connect: bool) -> None:
+    """Establish everything the WM holds on this client's behalf.
+
+    Awaited by ``ApiClient`` on first connect and again after every reconnect,
+    so the two paths cannot drift (ADR-0074 rule 3). The notification handlers
+    are deliberately not re-registered here: they live on the client object and
+    survive, unlike the workspace directories and open documents, which a
+    restarted WM has never heard of.
+    """
+    if global_state.wm_client is None:
+        return
+
+    global_state.server_initialized.clear()
+    async with asyncio.TaskGroup() as tg:
+        for folder in server._workspace_folders:
+            dir_path = Path(folder["uri"].replace("file://", ""))
+            tg.create_task(global_state.wm_client.add_dir(dir_path))
+
+    if not first_connect:
+        # The editor will not re-send these, and without them the WM answers
+        # from what is on disk while the buffer says something else.
+        for document in list(global_state.opened_documents.values()):
+            await global_state.wm_client.notify_document_opened(
+                uri=document["uri"],
+                version=document["version"],
+                text=document["text"],
+            )
+        logger.info(
+            f"Reconnected to the FineCode WM server: workspace re-added and "
+            f"{len(global_state.opened_documents)} open document(s) re-supplied. "
+            f"Any action that was running was lost."
+        )
+
+    global_state.server_initialized.set()
 
 
 async def _on_shutdown(_server: LspServer, _params: dict | None) -> None:
@@ -681,12 +751,14 @@ async def _on_execute_command(server: LspServer, params: dict | None) -> typing.
         return await action_tree_endpoints.run_action_on_project(server, *arguments)
     elif command == "finecode.reloadAction":
         return await action_tree_endpoints.reload_action(server, *arguments)
-    elif command == "finecode.reset":
-        return await reset(server, params)
     elif command == "finecode.restartExtensionRunner":
         return await restart_extension_runner(server, *arguments)
     elif command == "finecode.restartAndDebugExtensionRunner":
         return await restart_and_debug_extension_runner(server, *arguments)
+    elif command == "finecode.reloadConfig":
+        return await reload_config(server, *arguments)
+    elif command == "finecode.restartWm":
+        return await restart_wm(server)
     else:
         logger.warning(f"Unknown command: {command}")
         return None
@@ -814,15 +886,69 @@ async def _on_inlay_hint_resolve(server: LspServer, params: dict | None) -> dict
 # ---------------------------------------------------------------------------
 
 
-async def reset(_server: LspServer, _params: dict | None) -> None:
-    logger.info("Reset WM")
+async def reload_config(
+    _server: LspServer, tree_node: dict | None = None, _param2: typing.Any = None
+) -> dict | None:
+    """Make the configuration on disk take effect for a project.
+
+    ``tree_node`` carries the project in ``projectPath``; ``{"allProjects": true}``
+    recovers the whole workspace. Workspace width is asked for, never reached by
+    omitting the project (ADR-0078).
+    """
+    logger.info(f"reload config {tree_node}")
     await global_state.server_initialized.wait()
 
     if global_state.wm_client is None:
-        logger.error("Reset requested but WM client not connected")
-        return
+        logger.error("Config recovery requested but WM client not connected")
+        return None
 
-    await global_state.wm_client.request("server/reset", {})
+    node = tree_node or {}
+    all_projects = bool(node.get("allProjects", False))
+    project = None
+    if not all_projects:
+        node_id = node.get("projectPath")
+        if not node_id:
+            logger.error(
+                "Config recovery needs a projectPath, or allProjects to recover "
+                "the whole workspace"
+            )
+            return None
+        project = node_id.split("::")[0]
+
+    projects = await global_state.wm_client.reload_config(
+        project=project, all_projects=all_projects
+    )
+    return {"projects": projects}
+
+
+async def restart_wm(_server: LspServer) -> dict | None:
+    """Replace the WM server process, so an edit to FineCode's own code takes effect.
+
+    Every other connected client is disconnected and reconnects on its own
+    (ADR-0074); they are reported here so the caller knows whom it disturbed.
+    """
+    logger.info("restart WM server")
+    await global_state.server_initialized.wait()
+
+    if global_state.wm_client is None:
+        logger.error("WM replacement requested but WM client not connected")
+        return None
+
+    info = await global_state.wm_client.get_info()
+    other_clients = [label for label in info.get("clients", []) if label != "lsp"]
+    workdir = Path.cwd()
+    if _server._workspace_folders:
+        workdir = Path(_server._workspace_folders[0]["uri"].replace("file://", ""))
+
+    replacement = await wm_lifecycle.replace_running_server(
+        global_state.wm_client, workdir
+    )
+    return {
+        "restarted": True,
+        "previousPid": info.get("pid"),
+        "port": replacement["port"],
+        "otherClientsDisconnected": other_clients,
+    }
 
 
 async def restart_extension_runner(
@@ -837,10 +963,7 @@ async def restart_extension_runner(
 
     runner_id = tree_node["projectPath"]
     parts = runner_id.split("::")
-    await global_state.wm_client.request(
-        "runners/restart",
-        {"runnerWorkingDir": parts[0], "envName": parts[-1]},
-    )
+    await global_state.wm_client.restart_runner(project=parts[0], env=parts[-1])
 
 
 async def restart_and_debug_extension_runner(
@@ -855,9 +978,8 @@ async def restart_and_debug_extension_runner(
 
     runner_id = tree_node["projectPath"]
     parts = runner_id.split("::")
-    await global_state.wm_client.request(
-        "runners/restart",
-        {"runnerWorkingDir": parts[0], "envName": parts[-1], "debug": True},
+    await global_state.wm_client.restart_runner(
+        project=parts[0], env=parts[-1], debug=True
     )
 
 

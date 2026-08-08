@@ -11,12 +11,48 @@ from __future__ import annotations
 
 import asyncio
 import collections.abc
+import contextlib
+import dataclasses
 import json
 import pathlib
+import random
 
 from loguru import logger
 
+from finecode.wm_server import wm_lifecycle
+
 CONTENT_LENGTH_HEADER = "Content-Length: "
+
+
+@dataclasses.dataclass(frozen=True)
+class ReconnectPolicy:
+    """How a client behaves when the WM connection drops (ADR-0074).
+
+    Whether a client may start a WM is configuration, never inferred: a client
+    that owns a dedicated server for one command must not resurrect one it or
+    its user deliberately stopped (rule 4).
+
+    The default schedule spends at most about 24s over its attempts, jitter
+    included, inside the WM's 30s disconnect timeout (ADR-0004) — past that
+    there is no server left to reconnect to, and what happens then is
+    ``may_start_server``'s business rather than the loop's.
+
+    Attributes:
+        may_start_server: Start a WM when none is listening.  Requires ``workdir``.
+        workdir: Directory a started WM is rooted at.
+        max_attempts: Attempts before the client reports itself disconnected.
+        base_delay: Delay before the first attempt, in seconds.
+        max_delay: Ceiling the doubling delay stops at, in seconds.
+        jitter: Fraction of each delay to randomize by, spreading the reconnects
+            of every client of a restarted WM.
+    """
+
+    may_start_server: bool = False
+    workdir: pathlib.Path | None = None
+    max_attempts: int = 7
+    base_delay: float = 0.2
+    max_delay: float = 5.0
+    jitter: float = 0.5
 
 
 class ApiError(Exception):
@@ -80,17 +116,107 @@ class ApiClient:
         ] = {}
         self._reader_task: asyncio.Task | None = None
         self.server_info: dict = {}
+        self._host: str = "127.0.0.1"
+        self._client_id: str | None = None
+        self._reconnect_policy: ReconnectPolicy | None = None
+        self._on_reattach: (
+            collections.abc.Callable[..., collections.abc.Coroutine] | None
+        ) = None
+        self._on_session_lost: collections.abc.Callable[[bool], None] | None = None
+        self._reconnect_task: asyncio.Task | None = None
+        # Distinguishes a deliberate close from a lost connection: close()
+        # cancels the reader, and a reconnect racing its own shutdown would
+        # leave a client nobody asked for.
+        self._closing = False
+        self._reconnecting = False
+        self._connected = asyncio.Event()
+        self._epoch = 0
 
     # -- Connection lifecycle -----------------------------------------------
 
+    def configure_reconnect(
+        self,
+        policy: ReconnectPolicy | None,
+        on_reattach: collections.abc.Callable[..., collections.abc.Coroutine]
+        | None = None,
+        on_session_lost: collections.abc.Callable[[bool], None] | None = None,
+    ) -> None:
+        """Reconnect when the connection drops, re-establishing the session first.
+
+        ``policy=None`` keeps the session hook without reconnecting, which is
+        what a client holding a dedicated server for one command wants: it must
+        not resurrect a server it deliberately stopped (ADR-0074 rule 4).
+
+        ``on_reattach`` is awaited with ``first_connect=True`` by :meth:`connect`
+        and with ``first_connect=False`` after each reconnect, so the session
+        setup has one definition rather than one per path.  It must re-establish
+        whatever the WM held on this client's behalf — a client that cannot
+        complete it is disconnected, not connected (ADR-0074 rule 3).
+
+        ``on_session_lost`` is the inverse edge, called synchronously the moment
+        the session stops existing: with ``True`` while a reconnect is still
+        coming, and with ``False`` once the client has given up.  A surface that
+        gates its own work on the session needs both — the first to stop
+        dispatching into a WM that has never heard of it, the second to stop
+        waiting for a re-attach that is never going to happen.  Not called for a
+        deliberate :meth:`close`, which is not a lost session.
+        """
+        self._reconnect_policy = policy
+        self._on_reattach = on_reattach
+        self._on_session_lost = on_session_lost
+
+    @property
+    def is_connected(self) -> bool:
+        return self._connected.is_set()
+
+    @property
+    def connection_epoch(self) -> int:
+        """Counts re-attached connections.
+
+        A caller waiting for a *replacement* connection cannot wait on
+        connectedness alone: the old connection reads as live until its reader
+        notices the peer is gone, so waiting would return immediately on a
+        socket that is already dead.
+        """
+        return self._epoch
+
+    async def wait_connected(
+        self, timeout: float, *, after_epoch: int | None = None
+    ) -> None:
+        """Block until the client holds a re-attached connection.
+
+        With ``after_epoch``, block until a *later* connection than that one is
+        established.
+
+        Raises:
+            TimeoutError: no such connection within *timeout*.
+        """
+
+        async def _wait() -> None:
+            while True:
+                await self._connected.wait()
+                if after_epoch is None or self._epoch > after_epoch:
+                    return
+                await asyncio.sleep(0.01)
+
+        await asyncio.wait_for(_wait(), timeout=timeout)
+
     async def connect(self, host: str, port: int, client_id: str | None = None) -> None:
+        self._closing = False
+        self._host = host
+        self._client_id = client_id
+        await self._open(host, port)
+        await self._reattach(first_connect=True)
+
+    async def _open(self, host: str, port: int) -> None:
+        """Establish the socket and identify this client to the server."""
         self._reader, self._writer = await asyncio.open_connection(host, port)
         self._reader_task = asyncio.create_task(self._read_loop())
         logger.info(f"Connected to FineCode API at {host}:{port}")
         try:
             params: dict = {}
-            if client_id is not None:
-                params["clientId"] = client_id
+            if self._client_id is not None:
+                params["clientId"] = self._client_id
             self.server_info = await self.request("client/initialize", params) or {}
             log_path = self.server_info.get("logFilePath")
             if log_path:
@@ -100,7 +226,54 @@ class ApiClient:
         except Exception as exception:
             logger.info(f"Failed to initialize with WM Server: {exception}")
 
+    async def _reattach(self, *, first_connect: bool) -> None:
+        """Re-establish the session, then report the client connected.
+
+        Raises:
+            Exception: whatever the surface's re-attach hook raises. [untranslated]
+        """
+        if self._on_reattach is not None:
+            await self._on_reattach(first_connect=first_connect)
+        self._epoch += 1
+        self._connected.set()
+
+    def _notify_session_lost(self, *, recoverable: bool) -> None:
+        """Tell the surface its session is gone, without letting it break us.
+
+        Called from a ``finally`` and from the reconnect loop, neither of which
+        has anywhere to report a hook that raises: a surface whose bookkeeping
+        failed must not also cost the client its reconnect.
+        """
+        if self._on_session_lost is None:
+            return
+        try:
+            self._on_session_lost(recoverable)
+        except Exception:
+            logger.exception("WmClient: on_session_lost hook failed")
+
+    async def drop_connection(self) -> None:
+        """Close the current transport and let the reconnect path take over.
+
+        Not a shutdown: the client is expected to come back. Used when the server
+        on the other end is being replaced — it has to see this connection end
+        before it can exit, and this client has to stop talking to it.
+        """
+        await self._drop_socket()
+
     async def close(self) -> None:
+        self._closing = True
+        self._connected.clear()
+        # Captured before the reader task is cancelled: its `finally` drops the
+        # transport, and this path still wants to await it closing.
+        writer = self._writer
+        if self._reconnect_task is not None:
+            self._reconnect_task.cancel()
+            try:
+                await self._reconnect_task
+            except asyncio.CancelledError:
+                pass
+            self._reconnect_task = None
+
         if self._reader_task is not None:
             self._reader_task.cancel()
             try:
@@ -109,11 +282,12 @@ class ApiClient:
                 pass
             self._reader_task = None
 
-        if self._writer is not None:
-            self._writer.close()
-            await self._writer.wait_closed()
-            self._writer = None
-            self._reader = None
+        if writer is not None:
+            writer.close()
+            with contextlib.suppress(ConnectionError, OSError):
+                await writer.wait_closed()
+        self._writer = None
+        self._reader = None
 
         # Fail any pending requests.
         for future in self._pending.values():
@@ -331,6 +505,23 @@ class ApiClient:
             body["partialResultToken"] = partial_result_token
         return await self.request("actions/run", body)
 
+    async def reload_action(
+        self, action_source: str, project: str | None = None
+    ) -> dict:
+        """Re-import the packages owning an action and its handlers.
+
+        Only those packages are re-imported — a change elsewhere (a shared
+        library, any config) needs a runner restart instead.  ``project``
+        omitted reloads the action in every project exposing it.
+
+        Raises:
+            ApiServerError: if no project has that action.
+        """
+        body: dict = {"action": action_source}
+        if project is not None:
+            body["project"] = project
+        return await self.request("actions/reload", body)
+
     async def add_dir(
         self,
         dir_path: pathlib.Path,
@@ -423,6 +614,76 @@ class ApiClient:
                 "runners/list", f"missing 'runners' field, got {result!r}"
             )
         return result["runners"]
+
+    async def reload_config(
+        self,
+        project: str | None = None,
+        *,
+        all_projects: bool = False,
+        rescan: bool = False,
+        kill_in_flight_runs: bool = False,
+    ) -> list[dict]:
+        """Make the configuration on disk take effect, reporting one result per
+        target project.
+
+        Exactly one of ``project`` and ``all_projects`` must be given (ADR-0078).
+        ``rescan`` picks up projects created since the server started.  A project
+        that could not be recovered carries ``"status": "failed"``, and one with a
+        run in flight is refused rather than recovered unless
+        ``kill_in_flight_runs`` accepts killing it.
+
+        Raises:
+            ApiServerError: if the target is unstated, doubly stated, or matches
+                no project.
+        """
+        body: dict = {}
+        if project is not None:
+            body["project"] = project
+        if all_projects:
+            body["allProjects"] = True
+        if rescan:
+            body["rescan"] = True
+        if kill_in_flight_runs:
+            body["killInFlightRuns"] = True
+        result = await self.request("workspace/reloadConfig", body)
+        if not isinstance(result, dict) or "projects" not in result:
+            raise ApiResponseError(
+                "workspace/reloadConfig", f"missing 'projects' field, got {result!r}"
+            )
+        return result["projects"]
+
+    async def restart_runner(
+        self,
+        project: str | None = None,
+        *,
+        all_projects: bool = False,
+        env: str | None = None,
+        debug: bool = False,
+        kill_in_flight_runs: bool = False,
+    ) -> dict:
+        """Restart extension runners, reporting one result per (project, env).
+
+        Exactly one of ``project`` and ``all_projects`` must be given — the
+        whole workspace is asked for, never defaulted into (ADR-0078).  ``env``
+        omitted restarts every environment of each target project.  A runner
+        that did not come back up is reported in ``failed`` rather than as an
+        error, and a project with a run in flight is reported in ``refused``
+        rather than restarted unless ``kill_in_flight_runs`` accepts killing it.
+
+        Raises:
+            ApiServerError: if the target is unstated, doubly stated, or matches
+                no runner.
+        """
+        body: dict = {"debug": debug}
+        if project is not None:
+            body["project"] = project
+        if all_projects:
+            body["allProjects"] = True
+        if env is not None:
+            body["env"] = env
+        if kill_in_flight_runs:
+            body["killInFlightRuns"] = True
+        return await self.request("runners/restart", body)
 
     async def check_env(self, project: str, env_name: str) -> bool:
         """Return whether the named environment is valid for a project."""
@@ -577,8 +838,115 @@ class ApiClient:
         except Exception:
             logger.exception("WmClient: error in reader loop")
         finally:
-            # Fail any remaining pending requests.
+            # Drop the transport before anything else can observe it.  A
+            # non-None writer is exactly what `request()` and
+            # `_send_notification()` read as "connected", so leaving it behind
+            # would let a call made during the reconnect window pass that guard,
+            # write into a closed transport, and then wait forever on a future
+            # this loop has already stopped serving and the next connection's
+            # reader will never see.
+            writer = self._writer
+            self._writer = None
+            self._reader = None
+            if writer is not None:
+                writer.close()
+            # Fail any remaining pending requests.  Never retried: an action may
+            # have formatted files, pushed a tag or published an artifact before
+            # the connection died, and the client cannot tell how far it got
+            # (ADR-0074 rule 2).
             for future in self._pending.values():
                 if not future.done():
                     future.set_exception(ConnectionError("Connection lost"))
             self._pending.clear()
+            self._connected.clear()
+            if not self._closing:
+                # Recoverable whenever reconnection is configured at all, not
+                # only when *this* loop is the one that starts it: a failed
+                # attempt lands here too, with the reconnect loop still running.
+                self._notify_session_lost(
+                    recoverable=self._reconnect_policy is not None
+                )
+                if not self._reconnecting and self._reconnect_policy is not None:
+                    self._reconnect_task = asyncio.create_task(self._reconnect())
+
+    # -- Reconnection (ADR-0074) --------------------------------------------
+
+    async def _reconnect(self) -> None:
+        """Re-establish the connection with bounded backoff, then re-attach."""
+        policy = self._reconnect_policy
+        if policy is None:
+            return
+        delay = policy.base_delay
+        # A failed attempt closes a socket whose reader loop then reaches the
+        # same `finally` that started this one; without the flag each failure
+        # would leave one more loop behind it.
+        self._reconnecting = True
+        try:
+            await self._reconnect_attempts(policy, delay)
+        finally:
+            self._reconnecting = False
+
+    async def _reconnect_attempts(self, policy: ReconnectPolicy, delay: float) -> None:
+        for attempt in range(1, policy.max_attempts + 1):
+            await asyncio.sleep(delay * (1 + random.uniform(0, policy.jitter)))
+            if self._closing:
+                return
+
+            port = await self._discover_port(policy)
+            if port is not None:
+                try:
+                    await self._open(self._host, port)
+                    await self._reattach(first_connect=False)
+                except Exception as exception:
+                    # Including a re-attach that failed: a client whose session
+                    # was not restored is talking to a server that has never
+                    # heard of it, so it counts as disconnected (rule 3).
+                    logger.warning(
+                        f"WmClient: reconnect attempt {attempt} failed: {exception}"
+                    )
+                    await self._drop_socket()
+                else:
+                    logger.info(
+                        f"WmClient: reconnected to FineCode API on port {port} "
+                        f"after {attempt} attempt(s). Requests that were in flight "
+                        f"when the connection dropped were not retried."
+                    )
+                    return
+
+            delay = min(delay * 2, policy.max_delay)
+
+        logger.error(
+            f"WmClient: gave up reconnecting to the FineCode WM server after "
+            f"{policy.max_attempts} attempts. The client is disconnected."
+        )
+        # No further attempt is coming, so a surface still holding its work back
+        # for the re-attach would hold it forever.
+        self._notify_session_lost(recoverable=False)
+
+    async def _discover_port(self, policy: ReconnectPolicy) -> int | None:
+        """Re-read the discovery file: a restarted WM listens on a new port
+        (ADR-0002), so the address this client last used is not reusable."""
+        # Blocking: `running_port` probes the port with a synchronous connect
+        # that takes its full 1s timeout when the port is filtered rather than
+        # refused, and this runs on the surface's own event loop.
+        port = await asyncio.to_thread(wm_lifecycle.running_port)
+        if port is not None:
+            return port
+        if not policy.may_start_server or policy.workdir is None:
+            return None
+        # Blocking: spawns the server and waits for it to be observable.
+        await asyncio.to_thread(wm_lifecycle.ensure_running, policy.workdir)
+        return await asyncio.to_thread(wm_lifecycle.running_port)
+
+    async def _drop_socket(self) -> None:
+        if self._reader_task is not None:
+            self._reader_task.cancel()
+            # Awaited so its `finally` runs now: it must not schedule a second
+            # reconnect after this one has finished.
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._reader_task
+            self._reader_task = None
+        if self._writer is not None:
+            self._writer.close()
+            self._writer = None
+            self._reader = None

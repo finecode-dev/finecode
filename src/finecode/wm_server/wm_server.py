@@ -14,6 +14,7 @@ Protocol:  see _jsonrpc.py (framing) and _api_handlers.py (method implementation
 from __future__ import annotations
 
 import asyncio
+import os
 import pathlib
 import socket
 import typing
@@ -34,6 +35,7 @@ from finecode.wm_server._api_handlers import (
     _handle_list_actions,
     _handle_list_projects,
     _handle_prepare_envs,
+    _handle_reload_config,
     _handle_remove_dir,
     _handle_run_action,
     _handle_run_action_with_partial_results_task,
@@ -45,7 +47,6 @@ from finecode.wm_server._api_handlers import (
     _handle_runners_list,
     _handle_runners_remove_env,
     _handle_runners_restart,
-    _handle_server_reset,
     _handle_set_config_overrides,
     _handle_start_runners,
     handle_documents_changed,
@@ -62,7 +63,7 @@ from finecode.wm_server._jsonrpc import (
     _read_message,
     _write_message,
 )
-from finecode.wm_server.errors import ConfigurationError
+from finecode.wm_server.errors import ConfigurationError, RunnerNotFoundError
 from finecode.wm_server.runner import wm_bridge
 from finecode.wm_server.services import (  # noqa: F401
     knowledge_service as _knowledge_service,
@@ -112,11 +113,17 @@ async def _handle_server_get_info(
 ) -> dict:
     """Handle ``server/getInfo``.
 
-    Returns static information about the running WM Server instance,
-    including the path to its log file.
+    Returns information about the running WM Server instance: the path to its
+    log file, its process id, and the labels of every currently connected
+    client — which is how a caller about to replace this server learns whose
+    session it is disturbing (PRD-0008 R8).
+
+    Result: ``{"logFilePath", "pid", "clients": ["lsp", "mcp-...", ...]}``
     """
     return {
         "logFilePath": str(_log_file_path) if _log_file_path is not None else None,
+        "pid": os.getpid(),
+        "clients": sorted(_client_labels.values()),
     }
 
 
@@ -150,6 +157,7 @@ _METHODS: dict[str, MethodHandler] = {
     "workspace/getProjectRawConfig": _handle_get_project_raw_config,
     "workspace/getWorkspaceEditablePackages": _handle_get_workspace_editable_packages,
     "workspace/startRunners": _handle_start_runners,
+    "workspace/reloadConfig": _handle_reload_config,
     "workspace/prepareEnvs": _handle_prepare_envs,
     # actions/
     "actions/list": _handle_list_actions,
@@ -165,7 +173,6 @@ _METHODS: dict[str, MethodHandler] = {
     "runners/removeEnv": _handle_runners_remove_env,
     # server/
     "server/getInfo": _handle_server_get_info,
-    "server/reset": _handle_server_reset,
     "server/shutdown": _handle_server_shutdown,
 }
 
@@ -427,6 +434,10 @@ async def _handle_request_task(
     except ValueError as exc:
         logger.warning(f"FineCode API: invalid request for {method}: {exc}")
         _write_message(writer, _jsonrpc_error(req_id, -32602, str(exc)))
+        await writer.drain()
+    except RunnerNotFoundError as exc:
+        logger.warning(f"FineCode API: unknown runner in {method}: {exc.message}")
+        _write_message(writer, _jsonrpc_error(req_id, -32602, exc.message))
         await writer.drain()
     except ConfigurationError as exc:
         logger.warning(f"FineCode API: configuration error in {method}: {exc.message}")

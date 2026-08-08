@@ -9,7 +9,6 @@ from finecode.wm_server._api_handlers._actions import (
     _handle_get_tree,
     _handle_run_action,
     _handle_run_batch,
-    _handle_server_reset,
     _handle_set_config_overrides,
 )
 from finecode.wm_server._api_handlers._runners import (
@@ -33,6 +32,7 @@ from finecode.wm_server._api_handlers._workspace import (
     _handle_list_actions,
     _handle_list_projects,
     _handle_prepare_envs,
+    _handle_reload_config,
     _handle_remove_dir,
 )
 from finecode.wm_server.services.document_sync import (
@@ -51,6 +51,7 @@ __all__ = [
     "_handle_remove_dir",
     "_handle_list_actions",
     "_handle_prepare_envs",
+    "_handle_reload_config",
     "_handle_run_action",
     "_handle_actions_reload",
     "_handle_run_batch",
@@ -63,7 +64,6 @@ __all__ = [
     "_handle_start_runners",
     "_handle_runners_check_env",
     "_handle_runners_remove_env",
-    "_handle_server_reset",
     "_handle_set_config_overrides",
     "_handle_get_payload_schemas",
     "handle_documents_opened",

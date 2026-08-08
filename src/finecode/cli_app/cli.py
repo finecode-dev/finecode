@@ -739,3 +739,173 @@ def dump_config(
     except dump_config_cmd.DumpFailed as exception:
         click.echo(exception.message, err=True)
         sys.exit(1)
+
+
+_LOG_LEVEL_OPTION = click.option(
+    "--log-level",
+    "log_level",
+    default="INFO",
+    type=click.Choice(
+        ["TRACE", "DEBUG", "INFO", "WARNING", "ERROR"], case_sensitive=False
+    ),
+    show_default=True,
+)
+
+
+def _run_recovery(coro_factory, log_level: str) -> None:
+    """Run a recovery command, reporting its failure the way the CLI reports others."""
+    from finecode.cli_app.commands import recover_cmd
+
+    _cwd = pathlib.Path(os.getcwd())
+    logger_utils.init_logger(
+        log_name="cli", log_level=log_level, stdout=True, workspace_path=_cwd
+    )
+    user_messages._notification_sender = show_user_message
+    try:
+        asyncio.run(coro_factory(_cwd))
+    except recover_cmd.RecoveryFailed as exception:
+        click.echo(exception.message, err=True)
+        sys.exit(1)
+    except WmError as exception:
+        click.echo(str(exception), err=True)
+        sys.exit(1)
+    except Exception as exception:
+        logger.exception(exception)
+        click.echo("Unexpected error, see logs in file for more details", err=True)
+        sys.exit(2)
+
+
+@click.command()
+@_LOG_LEVEL_OPTION
+@click.option("--shared-server", "shared_server", is_flag=True, default=False)
+@click.option(
+    "--action", "action", required=True, help="Action name or source to reload."
+)
+@click.option(
+    "--project",
+    "project",
+    default=None,
+    help="Project path. Omit to reload the action in every project exposing it.",
+)
+def reload_action(
+    log_level: str, shared_server: bool, action: str, project: str | None
+):
+    """Re-import an action and its handlers in a running workspace."""
+    from finecode.cli_app.commands import recover_cmd
+
+    _run_recovery(
+        lambda cwd: recover_cmd.reload_action(
+            workdir_path=cwd,
+            action=action,
+            project=project,
+            own_server=not shared_server,
+        ),
+        log_level,
+    )
+
+
+@click.command()
+@_LOG_LEVEL_OPTION
+@click.option("--shared-server", "shared_server", is_flag=True, default=False)
+@click.option("--project", "project", default=None, help="Project path to restart.")
+@click.option(
+    "--all-projects",
+    "all_projects",
+    is_flag=True,
+    default=False,
+    help="Restart every project's runners. Supply this or --project, never both.",
+)
+@click.option("--env", "env", default=None, help="Restart only this environment.")
+@click.option(
+    "--kill-in-flight-runs",
+    "kill_in_flight_runs",
+    is_flag=True,
+    default=False,
+    help="Proceed even though an action is running in the target, killing it.",
+)
+def restart_runner(
+    log_level: str,
+    shared_server: bool,
+    project: str | None,
+    all_projects: bool,
+    env: str | None,
+    kill_in_flight_runs: bool,
+):
+    """Replace the extension runner processes of a project."""
+    from finecode.cli_app.commands import recover_cmd
+
+    _run_recovery(
+        lambda cwd: recover_cmd.restart_runner(
+            workdir_path=cwd,
+            project=project,
+            all_projects=all_projects,
+            env=env,
+            kill_in_flight_runs=kill_in_flight_runs,
+            own_server=not shared_server,
+        ),
+        log_level,
+    )
+
+
+@click.command()
+@_LOG_LEVEL_OPTION
+@click.option("--shared-server", "shared_server", is_flag=True, default=False)
+@click.option("--project", "project", default=None, help="Project path to recover.")
+@click.option(
+    "--all-projects",
+    "all_projects",
+    is_flag=True,
+    default=False,
+    help="Recover every project. Supply this or --project, never both.",
+)
+@click.option(
+    "--rescan",
+    "rescan",
+    is_flag=True,
+    default=False,
+    help="Walk the workspace directories again first, picking up new projects.",
+)
+@click.option(
+    "--kill-in-flight-runs",
+    "kill_in_flight_runs",
+    is_flag=True,
+    default=False,
+    help="Proceed even though an action is running in the target, killing it.",
+)
+def reload_config(
+    log_level: str,
+    shared_server: bool,
+    project: str | None,
+    all_projects: bool,
+    rescan: bool,
+    kill_in_flight_runs: bool,
+):
+    """Make the configuration on disk take effect in a running workspace."""
+    from finecode.cli_app.commands import recover_cmd
+
+    _run_recovery(
+        lambda cwd: recover_cmd.reload_config(
+            workdir_path=cwd,
+            project=project,
+            all_projects=all_projects,
+            rescan=rescan,
+            kill_in_flight_runs=kill_in_flight_runs,
+            own_server=not shared_server,
+        ),
+        log_level,
+    )
+
+
+@click.command()
+@_LOG_LEVEL_OPTION
+@click.option("--shared-server", "shared_server", is_flag=True, default=False)
+def restart_wm(log_level: str, shared_server: bool):
+    """Replace the workspace server process itself."""
+    from finecode.cli_app.commands import recover_cmd
+
+    _run_recovery(
+        lambda cwd: recover_cmd.restart_wm(
+            workdir_path=cwd, own_server=not shared_server
+        ),
+        log_level,
+    )

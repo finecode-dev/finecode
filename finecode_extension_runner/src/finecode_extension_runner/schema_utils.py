@@ -40,6 +40,7 @@ def extract_payload_schema(payload_cls: type) -> dict:
     ``enum.Enum`` subclass    ``{"type": "string", "enum": [<member values>]}``
     ``list[T]``               ``{"type": "array", "items": <schema for T>}``
     ``T | None``              same schema as ``T`` (optionality via ``required``)
+    dataclass                 ``{"type": "object", "properties": {...}}`` (recursive)
     unknown                   ``{}``
     ========================  =====================================================
 
@@ -160,5 +161,29 @@ def _type_to_schema(t: type) -> dict:
             "format": "uri",
             "description": "A URI identifying a resource. For local files, use a file:// URI, e.g. file:///home/user/foo.py",
         }
+
+    # Nested dataclasses (e.g. Range, Position) — describe as a JSON object.
+    if dataclasses.is_dataclass(t) and isinstance(t, type):
+        try:
+            sub_hints = typing.get_type_hints(t)
+        except Exception:
+            sub_hints = {}
+
+        sub_properties: dict[str, dict] = {}
+        sub_required: list[str] = []
+        for sub_field in dataclasses.fields(t):
+            sub_properties[sub_field.name] = _type_to_schema(
+                sub_hints.get(sub_field.name, type(None))
+            )
+            if (
+                sub_field.default is dataclasses.MISSING
+                and sub_field.default_factory is dataclasses.MISSING  # type: ignore[misc]
+            ):
+                sub_required.append(sub_field.name)
+
+        schema: dict = {"type": "object", "properties": sub_properties}
+        if sub_required:
+            schema["required"] = sub_required
+        return schema
 
     return {}

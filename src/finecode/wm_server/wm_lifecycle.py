@@ -14,6 +14,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import typing
 
 from filelock import FileLock
 from loguru import logger
@@ -114,7 +115,9 @@ async def wait_until_ready(timeout: float = 30) -> int:
     """Wait for the WM server to become available. Returns the port."""
     deadline = asyncio.get_event_loop().time() + timeout
     while asyncio.get_event_loop().time() < deadline:
-        port = running_port()
+        # In a thread: `running_port` probes with a synchronous connect that
+        # takes its full timeout when the port is filtered rather than refused.
+        port = await asyncio.to_thread(running_port)
         if port is not None:
             return port
         await asyncio.sleep(0.5)
@@ -171,6 +174,72 @@ def start_own_server(
         stderr=subprocess.DEVNULL,
     )
     return port_file
+
+
+async def replace_running_server(
+    client: typing.Any,
+    workdir: pathlib.Path,
+    log_level: str = "INFO",
+    timeout: float = 30,
+) -> dict:
+    """Stop the running WM server, start a replacement, and re-attach *client*.
+
+    The only recovery operation that is not a WM method (ADR-0077 rule 1): a
+    server cannot define its own replacement. It lives in shared client
+    infrastructure rather than in one surface, which is what rule 2 — one
+    definition, not one per client — actually asks for.
+
+    ``client`` reconnects through its own configured reconnect policy
+    (ADR-0074), so it must have one; that is also what re-attaches its session.
+
+    Raises:
+        TimeoutError: the previous server did not stop, the replacement did not
+            start, or the client did not re-attach within *timeout*.
+    """
+    previous_port = read_port()
+    # Captured before the shutdown: the current connection reads as live until
+    # its reader notices the server is gone, so "connected" alone would be
+    # satisfied by the very connection being replaced.
+    epoch = client.connection_epoch
+    logger.info(f"Replacing FineCode WM server (port {previous_port})")
+    try:
+        await client.request("server/shutdown")
+    except (ConnectionError, OSError) as exception:
+        # The server may close the socket before its response is read; it is
+        # stopping either way, which is what the poll below actually verifies.
+        logger.debug(f"WM server closed the connection on shutdown: {exception}")
+
+    # The server removes its discovery file and stops accepting new connections
+    # before the ones it is already serving end, and it does not exit while a
+    # client is still attached. So the file going away proves nothing about the
+    # server this client is talking to — dropping the connection is both how the
+    # old process is allowed to exit and how this client starts coming back.
+    await client.drop_connection()
+
+    deadline = asyncio.get_event_loop().time() + timeout
+    while asyncio.get_event_loop().time() < deadline:
+        # In a thread: `running_port` probes with a synchronous connect that
+        # takes its full timeout when the port is filtered rather than refused,
+        # and this poll runs on the caller's event loop.
+        current_port = await asyncio.to_thread(running_port)
+        # A *different* port listening means the old server stopped and a
+        # replacement is already up: the client's own reconnect may start one
+        # (its policy allows it) before this poll ever observes the gap, and
+        # waiting for a `None` that has already been and gone would time out
+        # over a workspace that is healthy.
+        if current_port is None or current_port != previous_port:
+            break
+        await asyncio.sleep(STARTUP_READY_POLL_INTERVAL_SECONDS)
+    else:
+        raise TimeoutError(
+            f"FineCode WM server on port {previous_port} did not stop within {timeout}s"
+        )
+
+    await asyncio.to_thread(ensure_running, workdir, log_level)
+    port = await wait_until_ready(timeout=timeout)
+    await client.wait_connected(timeout=timeout, after_epoch=epoch)
+    logger.info(f"FineCode WM server replaced: port {previous_port} -> {port}")
+    return {"previousPort": previous_port, "port": port}
 
 
 async def wait_until_ready_from_file(

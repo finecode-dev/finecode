@@ -304,6 +304,42 @@ async def _handle_add_dir(
                 lock.release()
 
 
+async def _handle_reload_config(
+    params: dict | None, ws_context: context.WorkspaceContext
+) -> dict:
+    """Make the configuration on disk take effect for a project or the workspace.
+
+    Params: ``{"project": "/abs/path", "allProjects": false, "rescan": false,
+    "killInFlightRuns": false}`` — exactly one of ``project`` and ``allProjects``
+    (ADR-0078). ``rescan`` walks the workspace directories again first, so projects
+    created since startup are picked up. ``killInFlightRuns`` accepts that the
+    recovery kills whatever the project's runners are executing.
+    Result: ``{"projects": [{"project", "status", "actionsAdded", "actionsRemoved"}]}``
+    — one entry per target project; a project that could not be recovered carries
+    ``"status": "failed"`` and an ``error``, and one that was not attempted because a
+    run is in flight carries ``"status": "refused"`` with the runs it is waiting on.
+
+    Raises:
+        ValueError: the target is unstated or doubly stated.
+    """
+    from finecode.wm_server.services import config_reload_service
+
+    params = params or {}
+    project = params.get("project")
+    all_projects = params.get("allProjects", False)
+    rescan = params.get("rescan", False)
+    kill_in_flight_runs = params.get("killInFlightRuns", False)
+
+    results = await config_reload_service.reload_config(
+        ws_context,
+        project_dir=pathlib.Path(project) if project is not None else None,
+        all_projects=all_projects,
+        rescan=rescan,
+        kill_in_flight_runs=kill_in_flight_runs,
+    )
+    return {"projects": results}
+
+
 async def _handle_remove_dir(
     params: dict | None, ws_context: context.WorkspaceContext
 ) -> dict:

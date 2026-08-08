@@ -595,6 +595,29 @@ class TextDocumentInfo:
         return f'TextDocumentInfo(uri="{self.uri}", version="{self.version}")'
 
 
+@dataclasses.dataclass(frozen=True)
+class InFlightRun:
+    """An action run the WM has dispatched and not yet seen an outcome for.
+
+    Recovery replaces a project's runners and so kills whatever they are
+    executing; knowing what is in flight is what lets it refuse instead
+    (ADR-0079). Identified by the same run id the WAL records the run under, so
+    an entry that outlives its run can be traced to a stream that has no
+    terminal record for it.
+
+    Attributes:
+        run_id: Run identifier, shared with the WAL's ``wal_run_id``.
+        action_name: Config alias of the action being run.
+        project_path: Absolute path of the project the run was dispatched to.
+        started_at: Unix timestamp of when the run was accepted.
+    """
+
+    run_id: str
+    action_name: str
+    project_path: Path
+    started_at: float
+
+
 # Raw JSON object carrying a partial-result value in the WM protocol.
 PartialResultRawValue: typing.TypeAlias = dict[str, typing.Any]
 
@@ -646,4 +669,5 @@ __all__ = [
     "EnvConfig",
     "ExtensionRunnerStatus",
     "ExtensionRunner",
+    "InFlightRun",
 ]

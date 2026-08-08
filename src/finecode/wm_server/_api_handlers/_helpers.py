@@ -63,6 +63,23 @@ def _find_project_by_path(
 # ---------------------------------------------------------------------------
 
 
+def _matches_source(action: domain.Action, source: str) -> bool:
+    # canonical_source is set by update_runner_config for every action whose class
+    # can be imported; None comparisons are safe (None != any string).
+    return action.source == source or action.canonical_source == source
+
+
+def project_exposes_action(project: domain.CollectedProject, source: str) -> bool:
+    """Whether a project defines an action under the given alias, without asking
+    an ER to resolve it.
+
+    Only the direct match of :func:`find_action_by_source` — selecting the
+    projects a workspace-wide operation applies to must not cost one ER round
+    trip per project that does not have the action.
+    """
+    return any(_matches_source(action, source) for action in project.actions)
+
+
 async def find_action_by_source(
     actions: list[domain.Action],
     source: str,
@@ -89,12 +106,7 @@ async def find_action_by_source(
     """
     # Step 1: direct match — covers the alias written in project config (source)
     # and callers that already hold the canonical path (canonical_source).
-    # canonical_source is set by update_runner_config for every action whose class
-    # can be imported; None comparisons are safe (None != any string).
-    action = next(
-        (a for a in actions if a.source == source or a.canonical_source == source),
-        None,
-    )
+    action = next((a for a in actions if _matches_source(a, source)), None)
     if action is not None:
         return action
 

@@ -307,17 +307,24 @@ async def merge_results(
     return merge_result.merged
 
 
-async def reload_action(runner: ExtensionRunnerInfo, action_name: str) -> None:
+async def reload_action(runner: ExtensionRunnerInfo, action_name: str) -> bool:
+    """Ask a runner to re-import an action and its handlers.
+
+    Returns whether the request was sent: a runner that is not running has
+    nothing to reload, which is a normal condition rather than an error, but the
+    caller must be able to tell that from a reload that happened.
+    """
     if not runner.initialized_event.is_set():
         await runner.initialized_event.wait()
 
     if runner.status != RunnerStatus.RUNNING:
-        return
+        return False
 
     await runner.client.send_request(
         method=_internal_client_types.ER_RELOAD_ACTION,
         params=_internal_client_types.ErReloadActionParams(action_name=action_name),
     )
+    return True
 
 
 async def resolve_source(runner: ExtensionRunnerInfo, source: str) -> str | None:

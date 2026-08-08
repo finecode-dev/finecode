@@ -11,7 +11,7 @@ from loguru import logger
 
 from finecode.cli_app import utils
 from finecode.cli_app.log_render import render_log_records, user_message_log_level
-from finecode.wm_client import ApiClient, ApiError
+from finecode.wm_client import ApiClient, ApiError, ReconnectPolicy
 from finecode.wm_server import wm_lifecycle
 from finecode.wm_server.runner import runner_client
 
@@ -117,7 +117,73 @@ async def run_actions(
                 raise RunFailed(str(exc)) from exc
 
         client = ApiClient()
-        await client.connect("127.0.0.1", port)
+
+        # Notification handlers are registered before connecting: connecting
+        # establishes the session, and anything the WM pushes during that must
+        # not hit the "unhandled notification" fallback.
+        # Tree-change notifications are irrelevant in CLI (run-and-exit) mode;
+        # a no-op keeps them off that path.
+        async def _ignore_tree_changed(params: dict) -> None:
+            pass
+
+        client.on_notification("actions/treeChanged", _ignore_tree_changed)
+
+        async def _on_user_message(params: dict) -> None:
+            value = params or {}
+            level = user_message_log_level(value.get("type", "INFO"))
+            logger.log(level, value.get("message", ""))
+
+        client.on_notification("server/userMessage", _on_user_message)
+
+        async def _on_log_records(params: dict) -> None:
+            for line in render_log_records(params):
+                click.echo(line, err=True)
+
+        if verbose:
+            client.on_notification("server/logRecords", _on_log_records)
+
+        # When a project filter is given and we own the server, discover
+        # projects first (no runners), resolve names to paths, then start
+        # runners only for the requested projects.  In shared-server mode
+        # runners are already running, so always use the normal path.
+        deferred_runner_start = own_server and projects_names is not None
+
+        async def _attach_session(*, first_connect: bool) -> None:
+            """Establish the session state the WM holds for this client.
+
+            Called by ``ApiClient`` on first connect and again after every
+            reconnect, so a shared server that restarts mid-command does not
+            leave this one talking to a WM that has never heard of it.
+            """
+            if verbose:
+                await client.subscribe_logs(log_level)
+            logger.info("Initializing workspace...")
+            await client.add_dir(
+                workdir_path,
+                start_runners=not deferred_runner_start,
+                initialize_all_handlers=not own_server,
+            )
+
+        client.configure_reconnect(
+            # A dedicated server was started for this command alone; if it is
+            # gone, resurrecting it would run against a different process than
+            # the one the command was given (ADR-0074 rule 4).
+            None if own_server else ReconnectPolicy(workdir=workdir_path),
+            on_reattach=_attach_session,
+        )
+
+        try:
+            await client.connect("127.0.0.1", port)
+        except BaseException as exc:
+            # `connect` runs `_attach_session`, so a config error surfaces here
+            # rather than from a later call. The socket and its reader task are
+            # already up at that point and nothing else closes them: the block
+            # below owns that, and this never reaches it. A dedicated server
+            # would then wait out its whole disconnect timeout with no client.
+            await client.close()
+            if isinstance(exc, ApiError):
+                raise RunFailed(str(exc)) from exc
+            raise
         try:
             if handler_config_overrides or service_config_overrides:
                 if own_server:
@@ -129,45 +195,6 @@ async def run_actions(
                         "Warning: --config overrides are ignored in --shared-server mode. ",
                         err=True,
                     )
-
-            # Tree-change notifications are irrelevant in CLI (run-and-exit) mode;
-            # register a no-op before add_dir so notifications fired during project
-            # loading don't hit the "unhandled notification" fallback.
-            async def _ignore_tree_changed(params: dict) -> None:
-                pass
-
-            client.on_notification("actions/treeChanged", _ignore_tree_changed)
-
-            async def _on_user_message(params: dict) -> None:
-                value = params or {}
-                level = user_message_log_level(value.get("type", "INFO"))
-                logger.log(level, value.get("message", ""))
-
-            client.on_notification("server/userMessage", _on_user_message)
-
-            async def _on_log_records(params: dict) -> None:
-                for line in render_log_records(params):
-                    click.echo(line, err=True)
-
-            if verbose:
-                client.on_notification("server/logRecords", _on_log_records)
-                # Stream WM+ER logs at the single general level (--log-level).
-                await client.subscribe_logs(log_level)
-
-            # When a project filter is given and we own the server, discover
-            # projects first (no runners), resolve names to paths, then start
-            # runners only for the requested projects.  In shared-server mode
-            # runners are already running, so always use the normal path.
-            deferred_runner_start = own_server and projects_names is not None
-            logger.info("Initializing workspace...")
-            try:
-                await client.add_dir(
-                    workdir_path,
-                    start_runners=not deferred_runner_start,
-                    initialize_all_handlers=not own_server,
-                )
-            except ApiError as exc:
-                raise RunFailed(str(exc)) from exc
 
             # Resolve project names (CLI option) to paths (canonical API identifier).
             project_paths: list[str] | None = None

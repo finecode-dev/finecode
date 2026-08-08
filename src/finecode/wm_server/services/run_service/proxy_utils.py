@@ -15,7 +15,7 @@ from finecode.wm_server.config import interpreter_matrix
 from finecode.wm_server.runner import runner_client, runner_manager
 from finecode.wm_server.runner.runner_client import RunResultFormat  # reexport
 from finecode.wm_server.runner.runner_manager import RunnerFailedToStart
-from finecode.wm_server.services import runner_start_service
+from finecode.wm_server.services import in_flight_runs, runner_start_service
 
 from . import matrix_runner, run_concurrency
 from .exceptions import (
@@ -309,9 +309,25 @@ async def run_with_partial_results(
     logger.trace(f"Run {action_name} in project {project_dir_path}")
     wal_run_id = wal.new_wal_run_id()
 
-    with telemetry.action_run_span(
-        action_name, project_dir_path, wal_run_id, dev_env=dev_env.value
-    ):
+    async with contextlib.AsyncExitStack() as stack:
+        stack.enter_context(
+            telemetry.action_run_span(
+                action_name, project_dir_path, wal_run_id, dev_env=dev_env.value
+            )
+        )
+        # Registered for the whole streaming run, not just its dispatch: this is
+        # the path every editor-driven lint, format and diagnostic takes, and a
+        # recovery that replaced this project's runners while partials were
+        # still arriving would kill the run and report itself successful. It
+        # refuses while this entry exists (ADR-0079).
+        await stack.enter_async_context(
+            in_flight_runs.track(
+                ws_context,
+                run_id=wal_run_id,
+                action_name=action_name,
+                project_path=project_dir_path,
+            )
+        )
         result: AsyncList[domain.PartialResultRawValue] = AsyncList()
         progress_result: AsyncList[domain.ProgressRawValue] | None = None
         if progress_token is not None:
@@ -1019,70 +1035,81 @@ async def run_action(
         )
         telemetry.add_span_event("run.accepted")
 
-        payload = params
-        # Captured here (inside action_run_span, outside er_dispatch_span) so that
-        # handler_span on the ER becomes a child of action_run_span.  This explicit
-        # application-level propagation is required for multi-hop chains
-        # (WM → ER1 → WM → ER2 → …): JsonRpcServerSession is long-running and holds
-        # no per-request OTel context, so ambient context cannot carry the parent
-        # across process boundaries.  See ITracingHooks docstring for the full rationale.
-        traceparent = telemetry.get_current_traceparent()
+        # Registered around the whole dispatch: a recovery that replaced this
+        # project's runners at any point before the response arrives would kill
+        # the run, so it refuses while this entry exists (ADR-0079).
+        async with in_flight_runs.track(
+            ws_context,
+            run_id=wal_run_id,
+            action_name=action_name,
+            project_path=project_def.dir_path,
+        ):
+            payload = params
+            # Captured here (inside action_run_span, outside er_dispatch_span) so that
+            # handler_span on the ER becomes a child of action_run_span.  This explicit
+            # application-level propagation is required for multi-hop chains
+            # (WM → ER1 → WM → ER2 → …): JsonRpcServerSession is long-running and holds
+            # no per-request OTel context, so ambient context cannot carry the parent
+            # across process boundaries.  See ITracingHooks docstring for the full rationale.
+            traceparent = telemetry.get_current_traceparent()
 
-        # cases:
-        # - base: all action handlers are in one env
-        #   -> send `run_action` request to runner in env and let it handle concurrency etc.
-        #      It could be done also in workspace manager, but handlers share run context
-        # - mixed envs: action handlers are in different envs
-        # -- concurrent execution of handlers
-        # -- sequential execution of handlers
-        try:
-            action = next(
-                action for action in project_def.actions if action.name == action_name
-            )
-        except StopIteration:
-            raise ActionRunFailed(
-                f"Action '{action_name}' not found in project '{project_def.dir_path}'"
-            )
+            # cases:
+            # - base: all action handlers are in one env
+            #   -> send `run_action` request to runner in env and let it handle concurrency etc.
+            #      It could be done also in workspace manager, but handlers share run context
+            # - mixed envs: action handlers are in different envs
+            # -- concurrent execution of handlers
+            # -- sequential execution of handlers
+            try:
+                action = next(
+                    action
+                    for action in project_def.actions
+                    if action.name == action_name
+                )
+            except StopIteration:
+                raise ActionRunFailed(
+                    f"Action '{action_name}' not found in project '{project_def.dir_path}'"
+                )
 
-        if matrix_runner.is_matrixed(action):
-            response = await matrix_runner.run_matrix_action(
-                action=action,
-                action_name=action_name,
-                payload=payload,
-                project_def=project_def,
-                ws_context=ws_context,
-                run_trigger=run_trigger,
-                dev_env=dev_env,
-                result_formats=_result_formats,
-                initialize_all_handlers=initialize_all_handlers,
-                progress_token=progress_token,
-                wal_run_id=wal_run_id,
-                traceparent=traceparent,
-                orchestration_depth=orchestration_depth,
-                caller_kwargs=caller_kwargs,
-                run_variant=_execute_action,
-                selected_interpreters=selected_interpreters,
-            )
-        else:
-            response = await _execute_action(
-                action=action,
-                action_name=action_name,
-                payload=payload,
-                project_def=project_def,
-                ws_context=ws_context,
-                run_trigger=run_trigger,
-                dev_env=dev_env,
-                result_formats=_result_formats,
-                initialize_all_handlers=initialize_all_handlers,
-                progress_token=progress_token,
-                wal_run_id=wal_run_id,
-                traceparent=traceparent,
-                orchestration_depth=orchestration_depth,
-                caller_kwargs=caller_kwargs,
-                allow_no_handlers=allow_no_handlers,
-            )
+            if matrix_runner.is_matrixed(action):
+                response = await matrix_runner.run_matrix_action(
+                    action=action,
+                    action_name=action_name,
+                    payload=payload,
+                    project_def=project_def,
+                    ws_context=ws_context,
+                    run_trigger=run_trigger,
+                    dev_env=dev_env,
+                    result_formats=_result_formats,
+                    initialize_all_handlers=initialize_all_handlers,
+                    progress_token=progress_token,
+                    wal_run_id=wal_run_id,
+                    traceparent=traceparent,
+                    orchestration_depth=orchestration_depth,
+                    caller_kwargs=caller_kwargs,
+                    run_variant=_execute_action,
+                    selected_interpreters=selected_interpreters,
+                )
+            else:
+                response = await _execute_action(
+                    action=action,
+                    action_name=action_name,
+                    payload=payload,
+                    project_def=project_def,
+                    ws_context=ws_context,
+                    run_trigger=run_trigger,
+                    dev_env=dev_env,
+                    result_formats=_result_formats,
+                    initialize_all_handlers=initialize_all_handlers,
+                    progress_token=progress_token,
+                    wal_run_id=wal_run_id,
+                    traceparent=traceparent,
+                    orchestration_depth=orchestration_depth,
+                    caller_kwargs=caller_kwargs,
+                    allow_no_handlers=allow_no_handlers,
+                )
 
-        return response
+            return response
 
 
 async def _execute_action(

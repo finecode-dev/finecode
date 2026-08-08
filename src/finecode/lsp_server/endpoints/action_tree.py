@@ -183,8 +183,9 @@ async def reload_action(_ls: LspServer, params=None):
 
     params_dict = params[0]
     action_node_id = params_dict["projectPath"]
+    project, _, action_source = action_node_id.partition("::")
 
-    await global_state.wm_client.request(
-        "actions/reload", {"actionNodeId": action_node_id}
+    await global_state.wm_client.reload_action(
+        action_source=action_source, project=project
     )
     return {}

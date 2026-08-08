@@ -7,6 +7,7 @@ import pathlib
 
 from loguru import logger
 
+import finecode_jsonrpc as jsonrpc_client
 from finecode import telemetry
 from finecode.wm_server import context, domain
 from finecode.wm_server._api_handlers._helpers import (
@@ -17,6 +18,7 @@ from finecode.wm_server._api_handlers._helpers import (
     _parse_run_batch_params,
     _resolve_actions_by_project,
     find_action_by_source,
+    project_exposes_action,
 )
 from finecode.wm_server.services.action_tree import (  # noqa: F401 (re-export)
     _handle_get_tree,
@@ -87,39 +89,108 @@ async def _handle_run_action(
 async def _handle_actions_reload(
     params: dict | None, ws_context: context.WorkspaceContext
 ) -> dict:
-    """Reload an action's handlers in all relevant extension runners.
+    """Reload an action's handlers in every extension runner of each target project.
 
-    Params: ``{"actionNodeId": "project_path::action_source"}``
-    Result: ``{}``
+    A runner the action could not be reloaded in is reported in ``failed``, not
+    raised: the remaining runners are still attempted, and the record of the
+    projects already reloaded survives.  ``reloaded`` names only the
+    environments the reload actually reached, so the two lists together account
+    for every runner attempted.
+
+    Params: ``{"action": "import.path.Alias", "project": "/abs/path"}`` — ``project``
+    omitted means every project exposing that action (ADR-0078).
+    Result: ``{"reloaded": [{"project", "envs": [...]}],
+    "failed": [{"project", "env", "error"}]}``
+
+    Raises:
+        ValueError: ``action`` is missing, the named project is unknown, or the
+            target is narrowed by a parameter an action is not addressed by.
+        ActionNotFoundError: no target project has that action.
     """
     from finecode.wm_server.runner import runner_client
 
     params = params or {}
-    action_node_id = params.get("actionNodeId", "")
-    parts = action_node_id.split("::")
-    if len(parts) < 2:
-        raise ValueError(f"Invalid action_node_id: {action_node_id!r}")
+    action_source = params.get("action")
+    project_path_param = params.get("project")
 
-    project_path = pathlib.Path(parts[0])
-    action_source = parts[1]
-
-    project = ws_context.ws_projects.get(project_path)
-    if not isinstance(project, domain.CollectedProject):
-        raise ValueError(f"Project '{project_path}' not found or not initialized")
-
-    action = await find_action_by_source(
-        project.actions, action_source, project, ws_context
-    )
-    if action is None:
-        raise ActionNotFoundError(
-            f"Action with source '{action_source}' not found in project '{project_path}'"
+    if "env" in params:
+        raise ValueError(
+            "'env' does not narrow an action reload — an action is reloaded in "
+            "every environment of a project, since its handlers may bind to any "
+            "of them."
         )
+    if not action_source:
+        raise ValueError("'action' is required")
 
-    runners_by_env = ws_context.ws_projects_extension_runners.get(project_path, {})
-    for runner in runners_by_env.values():
-        await runner_client.reload_action(runner, action.name)
+    if project_path_param is not None:
+        project_path = pathlib.Path(project_path_param)
+        project = ws_context.ws_projects.get(project_path)
+        if not isinstance(project, domain.CollectedProject):
+            raise ValueError(f"Project '{project_path}' not found or not initialized")
+        target_projects = [project]
+    else:
+        target_projects = [
+            project
+            for project in ws_context.ws_projects.values()
+            if isinstance(project, domain.CollectedProject)
+            and project_exposes_action(project, action_source)
+        ]
+        if not target_projects:
+            raise ActionNotFoundError(
+                f"No project in the workspace exposes an action with source "
+                f"'{action_source}'"
+            )
 
-    return {}
+    reloaded: list[dict] = []
+    failed: list[dict] = []
+    for project in target_projects:
+        action = await find_action_by_source(
+            project.actions, action_source, project, ws_context
+        )
+        if action is None:
+            # Only reachable when the caller named the project: the
+            # workspace-wide path selects projects by the same predicate.
+            raise ActionNotFoundError(
+                f"Action with source '{action_source}' not found in project "
+                f"'{project.dir_path}'"
+            )
+
+        runners_by_env = ws_context.ws_projects_extension_runners.get(
+            project.dir_path, {}
+        )
+        reached_envs: list[str] = []
+        for env_name, runner in runners_by_env.items():
+            try:
+                reached = await runner_client.reload_action(runner, action.name)
+            except jsonrpc_client.BaseRunnerRequestException as exception:
+                logger.warning(
+                    f"Reload of '{action.name}' did not reach runner "
+                    f"'{runner.readable_id}': {exception.message}"
+                )
+                failed.append(
+                    {
+                        "project": str(project.dir_path),
+                        "env": env_name,
+                        "error": exception.message,
+                    }
+                )
+                continue
+
+            if not reached:
+                failed.append(
+                    {
+                        "project": str(project.dir_path),
+                        "env": env_name,
+                        "error": f"runner is {runner.status.name}, nothing was reloaded in it",
+                    }
+                )
+                continue
+
+            reached_envs.append(env_name)
+
+        reloaded.append({"project": str(project.dir_path), "envs": reached_envs})
+
+    return {"reloaded": reloaded, "failed": failed}
 
 
 async def _handle_run_batch(
@@ -178,17 +249,6 @@ async def _handle_run_batch(
             f"runBatch: done, projects_count={len(results)} returnCode={overall_return_code}"
         )
         return {"results": results, "returnCode": overall_return_code}
-
-
-async def _handle_server_reset(
-    _params: dict | None, _ws_context: context.WorkspaceContext
-) -> dict:
-    """Reset the server state.
-
-    Result: ``{}``
-    """
-    logger.info("FineCode API: server reset requested")
-    return {}
 
 
 async def _handle_set_config_overrides(

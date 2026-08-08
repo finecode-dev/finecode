@@ -186,6 +186,15 @@ class WorkspaceContext:
     # Set from config at construction; immutable thereafter.
     service_config_overrides: dict[str, dict[str, Any]] = field(default_factory=dict)
 
+    # project_path → { run_id → InFlightRun }: runs dispatched and not yet
+    # finished.  Always maintained, independently of whether the WAL is enabled,
+    # because recovery consults it to decide whether replacing that project's
+    # runners would kill a run (ADR-0079).  Keyed by run id rather than counted,
+    # since run fan-out is re-entrant and a project can hold several at once.
+    in_flight_runs: dict[Path, dict[str, domain.InFlightRun]] = field(
+        default_factory=dict
+    )
+
     # --- Caches (lazily populated; must be invalidated on project changes) -------
 
     # directory path (str) → { action_name → project_path }

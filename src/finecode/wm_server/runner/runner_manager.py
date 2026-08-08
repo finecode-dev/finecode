@@ -42,6 +42,29 @@ start_debug_session: typing.Callable[[int], collections.abc.Coroutine] | None = 
 RunnerFailedToStart = jsonrpc_client.ServerFailedToStart
 ServerConfigurationError = config_models.ConfigurationError
 
+# The ER reports this when its installed distributions no longer match the
+# configuration it was handed — a dependency added to pyproject.toml without
+# reinstalling the environment, typically.
+_ENV_REINSTALL_NEEDED_ERROR_CODE = -32001
+
+
+class EnvironmentOutOfDateError(RunnerFailedToStart):
+    """The runner's environment no longer satisfies its configuration.
+
+    A subclass so that every ``except RunnerFailedToStart`` — including the
+    auto-repair path — keeps catching it, while a caller that reports the
+    failure can name the environment command that fixes it rather than
+    surfacing an import error.
+
+    Carries ``env_name`` because the command that fixes it names one: a caller
+    that recovers a whole project has no single environment of its own to put
+    there, and the one that went stale is known only here.
+    """
+
+    def __init__(self, message: str, env_name: str | None = None) -> None:
+        super().__init__(message)
+        self.env_name = env_name
+
 
 async def notify_project_changed(project: domain.Project) -> None:
     if project_changed_callback is not None:
@@ -1071,9 +1094,16 @@ async def update_runner_config(
         runner.status = runner_client.RunnerStatus.FAILED
         await notify_project_changed(project)
         runner.initialized_event.set()
-        raise RunnerFailedToStart(
-            f"Runner failed to update config: {exception.message}"
-        ) from exception
+        stale_env = (
+            isinstance(exception, jsonrpc_client.ErrorOnRequest)
+            and exception.error.code == _ENV_REINSTALL_NEEDED_ERROR_CODE
+        )
+        message = f"Runner failed to update config: {exception.message}"
+        if stale_env:
+            raise EnvironmentOutOfDateError(
+                message, env_name=runner.env_name
+            ) from exception
+        raise RunnerFailedToStart(message) from exception
 
     try:
         action_meta_response = await runner_client.resolve_action_meta(runner)
@@ -1220,13 +1250,19 @@ def remove_runner_env(runner_dir: Path, env_name: str) -> None:
 async def restart_extension_runners(
     runner_working_dir_path: Path, ws_context: context.WorkspaceContext
 ) -> None:
+    """Restart every runner of a project.
+
+    Raises:
+        RunnerNotFoundError: the workspace has no runners for that project.
+    """
     try:
         runners_by_env = ws_context.ws_projects_extension_runners[
             runner_working_dir_path
         ]
-    except KeyError:
-        logger.error(f"Cannot find runner for {runner_working_dir_path}")
-        return
+    except KeyError as exception:
+        raise errors.RunnerNotFoundError(
+            f"Cannot find runner for {runner_working_dir_path}"
+        ) from exception
 
     # TODO: parallel?
     for runner in runners_by_env.values():
@@ -1243,22 +1279,28 @@ async def restart_extension_runner(
     ws_context: context.WorkspaceContext,
     debug: bool = False,
 ) -> None:
+    """Restart a single runner of a project.
+
+    Raises:
+        RunnerNotFoundError: the workspace has no runner for that project and env.
+        RunnerFailedToStart: the runner was stopped but did not come back up.
+    """
     # TODO: reload config?
     try:
         runners_by_env = ws_context.ws_projects_extension_runners[
             runner_working_dir_path
         ]
-    except KeyError:
-        logger.error(f"Cannot find runner for {runner_working_dir_path}")
-        return
+    except KeyError as exception:
+        raise errors.RunnerNotFoundError(
+            f"Cannot find runner for {runner_working_dir_path}"
+        ) from exception
 
     try:
         runner = runners_by_env[env_name]
-    except KeyError:
-        logger.error(
+    except KeyError as exception:
+        raise errors.RunnerNotFoundError(
             f"Cannot find runner for env {env_name} in {runner_working_dir_path}"
-        )
-        return
+        ) from exception
 
     await stop_extension_runner(runner)
 
