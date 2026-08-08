@@ -41,6 +41,7 @@ class WorkspaceExecutor:
         result_formats: list[RunResultFormat] | None = None,
         payload_overrides_by_project: dict[str, dict[str, typing.Any]] | None = None,
         progress_token_by_project: dict[pathlib.Path, dict[str, str]] | None = None,
+        cancellable: bool = False,
     ) -> dict[pathlib.Path, dict[str, RunActionResponse]]:
         # `max_project_fanout` is a runaway-orchestration guard (ADR-0016), not a
         # capacity limit — it bounds the blast radius of an action whose handler
@@ -78,4 +79,5 @@ class WorkspaceExecutor:
             payload_overrides_by_project=payload_overrides_by_project,
             progress_token_by_project=progress_token_by_project,
             orchestration_depth=orchestration_depth,
+            cancellable=cancellable,
         )

@@ -4,9 +4,16 @@ from loguru import logger
 
 from finecode.wm_server import context
 from finecode.wm_server.runner import runner_client, runner_manager
+from finecode.wm_server.services import knowledge_service
 
 
 async def on_shutdown(ws_context: context.WorkspaceContext) -> None:
+    # Knowledge fact writes are throttled, so a crash between them can lose
+    # the refreshes since the last one; a graceful shutdown has no reason to
+    # accept even that, so it flushes unconditionally before anything else --
+    # this needs no runner and nothing below it depends on runners being up.
+    await knowledge_service.persist_pending(ws_context)
+
     running_runners = []
     initializing_runners = []
     for runners_by_env in ws_context.ws_projects_extension_runners.values():

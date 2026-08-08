@@ -610,12 +610,19 @@ class InFlightRun:
         action_name: Config alias of the action being run.
         project_path: Absolute path of the project the run was dispatched to.
         started_at: Unix timestamp of when the run was accepted.
+        cancellable: True for a run the WM started on its own behalf whose
+            result is re-derivable and which no caller awaits, so recovery may
+            cancel it rather than be refused by work its caller never asked
+            for (ADR-0080). Declared at dispatch, never inferred from the
+            action: the same action a user invokes is an ordinary blocking
+            run. False, the default, keeps ADR-0079's refusal.
     """
 
     run_id: str
     action_name: str
     project_path: Path
     started_at: float
+    cancellable: bool = False
 
 
 # Raw JSON object carrying a partial-result value in the WM protocol.

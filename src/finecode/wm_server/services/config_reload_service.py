@@ -103,6 +103,11 @@ async def _reload_project_config(
     if project is None:
         return _failure(project_dir, f"Project '{project_dir}' is not in the workspace")
 
+    # `blocking_runs` has already dropped every cancellable run -- one the WM
+    # started on its own behalf, re-derivable and awaited by nobody -- so a
+    # reload cancels those rather than being refused by work its caller never
+    # asked for (ADR-0080). What reaches `blocking` below is only ever a run
+    # the user actually started, which is what ADR-0079 protects.
     blocking = in_flight_runs.blocking_runs(
         ws_context, project_dir, kill_in_flight_runs=kill_in_flight_runs
     )

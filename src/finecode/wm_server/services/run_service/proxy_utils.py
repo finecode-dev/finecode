@@ -728,6 +728,7 @@ async def run_actions_in_running_project(
     dev_env: runner_client.DevEnv,
     progress_token_by_action: dict[str, str] | None = None,
     orchestration_depth: int = 0,
+    cancellable: bool = False,
 ) -> dict[str, RunActionResponse]:
     """Run one or more actions in a single already-running project.
 
@@ -736,6 +737,10 @@ async def run_actions_in_running_project(
     cross-boundary hop, so each action is run at ``orchestration_depth + 1`` —
     the same convention `ProjectExecutor.run_action` uses for its own
     single-project ER dispatch.
+
+    ``cancellable`` forwards to every dispatched ``run_action`` unchanged — a
+    whole fan-out is cancellable or it is not; there is no per-action mix
+    within one caller's request.
     """
     result_by_action: dict[str, RunActionResponse] = {}
 
@@ -757,6 +762,7 @@ async def run_actions_in_running_project(
                             if progress_token_by_action
                             else None,
                             orchestration_depth=orchestration_depth + 1,
+                            cancellable=cancellable,
                         )
                     )
                     run_tasks.append(run_task)
@@ -794,6 +800,7 @@ async def run_actions_in_running_project(
                     if progress_token_by_action
                     else None,
                     orchestration_depth=orchestration_depth + 1,
+                    cancellable=cancellable,
                 )
             except ActionRunFailed as exception:
                 # Keep original context to avoid repetitive nested wrappers.
@@ -838,6 +845,7 @@ async def run_actions_in_projects(
     payload_overrides_by_project: dict[str, dict[str, typing.Any]] | None = None,
     progress_token_by_project: dict[pathlib.Path, dict[str, str]] | None = None,
     orchestration_depth: int = 0,
+    cancellable: bool = False,
 ) -> dict[pathlib.Path, dict[str, RunActionResponse]]:
     _payload_overrides_by_project = payload_overrides_by_project or {}
 
@@ -880,6 +888,7 @@ async def run_actions_in_projects(
                 dev_env=dev_env,
                 progress_token_by_action=progress_tokens,
                 orchestration_depth=orchestration_depth,
+                cancellable=cancellable,
             )
 
     project_handler_tasks: list[asyncio.Task] = []
@@ -962,6 +971,7 @@ async def run_action(
     caller_kwargs: dict | None = None,
     allow_no_handlers: bool = False,
     selected_interpreters: set[str] | None = None,
+    cancellable: bool = False,
 ) -> RunActionResponse:
     """Run a single action in the project's extension runner(s).
 
@@ -975,6 +985,12 @@ async def run_action(
     ``selected_interpreters`` (PRD-0003 AC8) restricts a matrixed action's
     fan-out to the given interpreter canonicals; ``None`` (the default) runs
     the full declared axis. Ignored for non-matrixed actions.
+
+    ``cancellable`` marks the run in ``in_flight_runs`` as one a config reload
+    may cancel outright rather than be refused by (ADR-0080) — see
+    ``in_flight_runs.track``. It is a property of this dispatch, not of the
+    action: set it only when the WM initiated the run itself, the result is
+    re-derivable, and no caller is waiting on it. ``False`` otherwise.
     """
     wal_run_id = wal.new_wal_run_id()
     formatted_params = str(params)
@@ -1037,12 +1053,14 @@ async def run_action(
 
         # Registered around the whole dispatch: a recovery that replaced this
         # project's runners at any point before the response arrives would kill
-        # the run, so it refuses while this entry exists (ADR-0079).
+        # the run, so it refuses while this entry exists (ADR-0079) -- unless
+        # `cancellable` says it may cancel it instead (ADR-0080).
         async with in_flight_runs.track(
             ws_context,
             run_id=wal_run_id,
             action_name=action_name,
             project_path=project_def.dir_path,
+            cancellable=cancellable,
         ):
             payload = params
             # Captured here (inside action_run_span, outside er_dispatch_span) so that

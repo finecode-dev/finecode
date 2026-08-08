@@ -18,9 +18,15 @@ from finecode.wm_server._jsonrpc import _read_message, _write_message
 
 class InProcClient:
     def __init__(
-        self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
+        self,
+        reader: asyncio.StreamReader,
+        writer: asyncio.StreamWriter,
+        ws_context: context.WorkspaceContext,
     ) -> None:
         self._reader, self._writer = reader, writer
+        # The server-side state this connection dispatches against, so tests can
+        # seed workspace state and read it back after a request.
+        self.ws_context = ws_context
         self._pending: dict = {}
         self._notifs: asyncio.Queue = asyncio.Queue()
         self.received_order: list[
@@ -100,7 +106,7 @@ async def wm_client():
     )
     port = srv.sockets[0].getsockname()[1]
     reader, writer = await asyncio.open_connection("127.0.0.1", port)
-    client = InProcClient(reader, writer)
+    client = InProcClient(reader, writer, ctx)
     try:
         yield client
     finally:

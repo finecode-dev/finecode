@@ -30,6 +30,7 @@ async def track(
     run_id: str,
     action_name: str,
     project_path: pathlib.Path,
+    cancellable: bool = False,
 ) -> typing.AsyncIterator[None]:
     """Register a run for the duration of the block.
 
@@ -37,6 +38,13 @@ async def track(
     completion, failure, cancellation, and the runner dying underneath it. An
     entry that outlived its run would refuse every future recovery of its
     project, which is a worse failure than the one this prevents.
+
+    ``cancellable`` marks a run the WM started on its own behalf, whose result
+    is re-derivable and which no caller awaits: a config reload drops it and
+    proceeds rather than refusing on it (``blocking_runs`` below, ADR-0080).
+    Every other run stays untouched — ADR-0079's refusal is exactly what
+    protects a *user's own* long-running action from having its runners
+    replaced underneath it.
     """
     runs = ws_context.in_flight_runs.setdefault(project_path, {})
     runs[run_id] = domain.InFlightRun(
@@ -44,6 +52,7 @@ async def track(
         action_name=action_name,
         project_path=project_path,
         started_at=time.time(),
+        cancellable=cancellable,
     )
     try:
         yield
@@ -90,6 +99,15 @@ def blocking_runs(
     accepted killing what is running — the override exists because a hung run is
     indistinguishable from a working one, and restarting its runner is the usual
     remedy (ADR-0079 rule 5).
+
+    ADR-0080's amendment lives here: a ``cancellable`` run is dropped from
+    consideration *before* anything else, regardless of
+    ``kill_in_flight_runs`` — it never refuses a reload on its own, because
+    its caller is the WM rather than the user the refusal exists to protect,
+    and cancelling it costs nothing. Only once every remaining run is one of
+    those is the project treated as idle; a single user-started run alongside
+    several cancellable ones still refuses, naming only the run that actually
+    matters.
     """
     runs = runs_in_project(ws_context, project_path)
     if not runs:
@@ -97,7 +115,11 @@ def blocking_runs(
     if kill_in_flight_runs:
         discard_project(ws_context, project_path)
         return []
-    return runs
+    blocking = [run for run in runs if not run.cancellable]
+    if not blocking:
+        _discard_cancellable(ws_context, project_path)
+        return []
+    return blocking
 
 
 def refusal_message(project_path: pathlib.Path, runs: list[domain.InFlightRun]) -> str:
@@ -123,3 +145,23 @@ def discard_project(
             f"Recovery of {project_path} is killing {len(dropped)} in-flight run(s): "
             f"{describe(list(dropped.values()))}"
         )
+
+
+def _discard_cancellable(
+    ws_context: context.WorkspaceContext, project_path: pathlib.Path
+) -> None:
+    """Drop *project_path*'s remaining runs, all of them cancellable, so the
+    reload proceeds and takes them with it (ADR-0080).
+
+    Deliberately not ``discard_project`` (and not its warning): that path is
+    for a caller *overriding* a refusal it was told about, which is worth a
+    log line. This one is the refusal never firing in the first place —
+    cancelling a re-derivable run nobody awaits is the expected, silent case,
+    not an event an operator needs to see.
+    """
+    project_runs = ws_context.in_flight_runs.get(project_path)
+    if not project_runs:
+        return
+    for run_id in list(project_runs):
+        project_runs.pop(run_id, None)
+    del ws_context.in_flight_runs[project_path]

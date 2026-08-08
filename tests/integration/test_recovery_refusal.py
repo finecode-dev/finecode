@@ -371,3 +371,64 @@ async def test_registry_entry_is_removed_when_the_run_is_cancelled(
             raise asyncio.CancelledError
 
     assert tmp_path not in ws_context.in_flight_runs
+
+
+async def test_config_recovery_cancels_a_refresh_rather_than_refusing_it(
+    wm_client, replaced_runners, tmp_path
+) -> None:
+    """on-demand-extraction-plan D-8, acceptance criterion 7 — a Phase 3
+    knowledge refresh never refuses a reload the way a user's own run does.
+    Its caller is the WM's own memo walk, not the user ADR-0079's refusal
+    exists to protect, and it is idempotent and millisecond-cheap, so the
+    reload cancels it (drops it from the registry) and proceeds.
+    """
+    _seed_project(wm_client, tmp_path)
+
+    async with in_flight_runs.track(
+        wm_client.ws_context,
+        run_id="refresh-1",
+        action_name="extract_knowledge",
+        project_path=tmp_path,
+        cancellable=True,
+    ):
+        result = await wm_client.request(
+            "workspace/reloadConfig", {"project": str(tmp_path)}
+        )
+
+    assert result["projects"][0]["status"] == "recovered"
+    assert replaced_runners == [tmp_path]
+    assert in_flight_runs.runs_in_project(wm_client.ws_context, tmp_path) == []
+
+
+async def test_config_recovery_still_refuses_a_user_run_alongside_a_refresh(
+    wm_client, replaced_runners, tmp_path
+) -> None:
+    """D-8's other half: a cancellable refresh sharing a project with a run the
+    user actually started still refuses, and names only the run that matters —
+    a reload must not silently proceed just because *something* in the
+    project happened to be cancellable.
+    """
+    _seed_project(wm_client, tmp_path)
+
+    async with in_flight_runs.track(
+        wm_client.ws_context,
+        run_id="refresh-1",
+        action_name="extract_knowledge",
+        project_path=tmp_path,
+        cancellable=True,
+    ), in_flight_runs.track(
+        wm_client.ws_context,
+        run_id="run-8",
+        action_name="lint",
+        project_path=tmp_path,
+    ):
+        result = await wm_client.request(
+            "workspace/reloadConfig", {"project": str(tmp_path)}
+        )
+
+    entry = result["projects"][0]
+    assert entry["status"] == "refused"
+    assert [(run["runId"], run["action"]) for run in entry["inFlight"]] == [
+        ("run-8", "lint")
+    ]
+    assert replaced_runners == []

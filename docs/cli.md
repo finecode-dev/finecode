@@ -178,6 +178,48 @@ Output is written to `<cwd>/finecode_config_dump/`.
 
 ---
 
+## Recovery commands
+
+`reload-action`, `restart-runner`, `reload-config` and `restart-wm` make a *running*
+workspace pick up something that changed on disk, without restarting the editor or
+agent that is using it. They form a ladder from cheapest to widest; pick the
+narrowest one that covers what you edited, because nothing detects staleness for you.
+
+| Command | Covers | Does not cover |
+| --- | --- | --- |
+| `reload-action` | the packages owning an action and its handlers | any other package; configuration |
+| `restart-runner` | any code a runner imported, and stuck or crashed runners | configuration |
+| `reload-config` | `pyproject.toml`, `finecode.toml` and presets — and, since it replaces runners, all code too | FineCode's own source |
+| `restart-wm` | everything, including FineCode's own source | — |
+
+**All four require `--shared-server`.** Without it each command would start a
+workspace server of its own, recover that, and exit — leaving the workspace an editor
+or agent is actually using untouched while reporting success. They exit with status 1
+and name the mode as the reason.
+
+Addressing follows the same rule everywhere: `--project` *or* `--all-projects`,
+never both and never neither, so workspace-wide recovery is always asked for
+explicitly (`reload-action` is the exception: it defaults to every project exposing
+the action, because reloading one unnecessarily costs almost nothing).
+
+A recovery that would replace runners is refused while an action is running in the
+target project, and the refusal names the run. `--kill-in-flight-runs` proceeds
+anyway; it is the remedy for a run that is hung, and it kills the run.
+
+```bash
+# after editing a handler
+python -m finecode reload-action --shared-server --action=lint --project=/abs/path
+
+# after editing pyproject.toml
+python -m finecode reload-config --shared-server --project=/abs/path
+
+# after adding a project directory
+python -m finecode reload-config --shared-server --all-projects --rescan
+
+# after editing FineCode itself
+python -m finecode restart-wm --shared-server
+```
+
 ## Dev environment detection
 
 FineCode tracks which environment triggered an action run (e.g. IDE, CLI, CI/CD). This value is passed to handlers via `RunActionMeta.dev_env` and can be used to adjust behavior — for example, to emit machine-readable output in CI.
