@@ -3,6 +3,13 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from fine_lint.apply_code_actions_action import (
+    CodeActionOperation,
+    CreateFileOperation,
+    DeleteFileOperation,
+    RenameFileOperation,
+    TextEditOperation,
+)
 from fine_lint.code_action_types import (
     CodeAction,
     DiagnosticRef,
@@ -15,6 +22,7 @@ from fine_lint.lint_fix import (
     Range,
     TextEdit,
 )
+from fine_lint.resolve_code_action_action import ResolveCodeActionRunResult
 from loguru import logger
 from lsprotocol import types
 
@@ -23,6 +31,45 @@ from finecode.lsp_server import global_state, pygls_types_utils
 
 if TYPE_CHECKING:
     from finecode.lsp_server.lsp_server import LspServer
+
+
+def _structure_code_action_operation(value: Any, _type: Any) -> CodeActionOperation:
+    """Pick the ``CodeActionOperation`` arm a wire dict describes.
+
+    cattrs cannot derive this itself: its default disambiguator needs each arm to
+    own a required field the others lack, and `CreateFileOperation` and
+    `DeleteFileOperation` share `file_path` with everything else while their own
+    fields both have defaults -- so it refuses the whole union, and every resolve
+    that actually returned operations raised. Trying each arm in turn is no
+    better, because cattrs ignores unknown keys: a delete would structure
+    happily as a create.
+
+    Discriminating fields, checked most-specific first (`TextEditOperation` and
+    `DeleteFileOperation` share `file_version`; `RenameFileOperation` and
+    `CreateFileOperation` share `overwrite`).
+    """
+    if not isinstance(value, dict):
+        raise TypeError(
+            f"Expected a mapping for a code action operation, got {value!r}"
+        )
+    if "edits" in value:
+        operation_type: type = TextEditOperation
+    elif "old_path" in value or "new_path" in value:
+        operation_type = RenameFileOperation
+    elif "overwrite" in value:
+        operation_type = CreateFileOperation
+    elif "file_version" in value:
+        operation_type = DeleteFileOperation
+    else:
+        raise ValueError(
+            f"Cannot tell which code action operation {sorted(value)} describes"
+        )
+    return _converter.structure(value, operation_type)
+
+
+_converter.register_structure_hook(
+    CodeActionOperation, _structure_code_action_operation
+)
 
 
 def _lsp_range_to_range(r: types.Range) -> Range:
@@ -58,7 +105,7 @@ def _text_edit_to_lsp(edit: TextEdit) -> types.TextEdit:
     )
 
 
-def _code_action_to_lsp(action: CodeAction) -> types.CodeAction:
+def _code_action_to_lsp(action: CodeAction, file_uri: str) -> types.CodeAction:
     workspace_edit: types.WorkspaceEdit | None = None
     if action.edits is not None:
         changes: dict[str, list[types.TextEdit]] = {
@@ -93,7 +140,17 @@ def _code_action_to_lsp(action: CodeAction) -> types.CodeAction:
         edit=workspace_edit,
         diagnostics=related_diagnostics,
         is_preferred=action.is_preferred if action.is_preferred else None,
-        data=action.action_id,
+        # Opaque to the client; round-tripped unchanged on codeAction/resolve.
+        # provider + action_id route the resolve request back to the owning
+        # provider (design note D1); file_path is carried too because resolve
+        # needs it to find the owning project, and params.data is the only
+        # source of truth codeAction/resolve gets (the LSP request carries no
+        # document context of its own).
+        data={
+            "provider": action.provider,
+            "action_id": action.action_id,
+            "file_path": file_uri,
+        },
     )
 
 
@@ -176,11 +233,104 @@ async def document_code_action(
 
     result = _converter.structure(json_result, GetCodeActionsRunResult)
 
-    return [_code_action_to_lsp(action) for action in result.actions]
+    return [_code_action_to_lsp(action, file_uri) for action in result.actions]
 
 
 async def code_action_resolve(
     _ls: LspServer, params: types.CodeAction
 ) -> types.CodeAction:
-    # v1: edits are always embedded; resolve returns unchanged action.
+    data = params.data
+    if not isinstance(data, dict):
+        logger.debug(f"Cannot resolve code action: no routing data on {params.title!r}")
+        return params
+
+    provider = data.get("provider")
+    action_id = data.get("action_id")
+    file_uri = data.get("file_path")
+    if (
+        not isinstance(provider, str)
+        or not isinstance(action_id, str)
+        or not isinstance(file_uri, str)
+    ):
+        logger.debug(f"Cannot resolve code action: malformed routing data {data!r}")
+        return params
+
+    if global_state.wm_client is None:
+        logger.error("Code action resolve requested but WM client not connected")
+        return params
+
+    file_path = pygls_types_utils.uri_str_to_path(file_uri)
+    project_dir = await global_state.wm_client.find_project_for_file(str(file_path))
+    if project_dir is None:
+        logger.debug(f"No project found for code action resolve: {file_path}")
+        return params
+
+    try:
+        response = await global_state.wm_client.run_action(
+            action_source="fine_lint.ResolveCodeActionAction",
+            project=project_dir,
+            params={
+                "provider": provider,
+                "action_id": action_id,
+                "file_path": file_uri,
+            },
+            options={"trigger": "user", "devEnv": "ide"},
+        )
+    except Exception as error:  # noqa: BLE001 - an editor must never get an error
+        # where it asked for a code action; every failure degrades to the
+        # unresolved action the client already has.
+        logger.error(
+            f"Error resolving code action {action_id!r} for {file_path}: {error}"
+        )
+        return params
+
+    if response is None:
+        return params
+
+    json_result = (response.get("resultByFormat") or {}).get("json")
+    if json_result is None:
+        return params
+
+    try:
+        result = _converter.structure(json_result, ResolveCodeActionRunResult)
+    except Exception as error:  # noqa: BLE001 - same contract as the run_action
+        # call above: an editor must never get an error where it asked for a
+        # code action. A result this endpoint cannot read is no more use to the
+        # client than a failed run, so it degrades the same way.
+        logger.error(
+            f"Cannot read resolved code action {action_id!r} for {file_path}: {error}"
+        )
+        return params
+
+    if result.operations is None:
+        logger.debug(f"No provider resolved code action {action_id!r}")
+        return params
+
+    # The read path still speaks `WorkspaceEdit.changes`, which is an unordered
+    # map applied simultaneously. An operation list is ordered and may contain
+    # file operations, so only the subset that `changes` can carry faithfully is
+    # convertible: text edits alone, at most one operation per file. Anything
+    # else is returned unresolved rather than flattened into edits that would
+    # mean something different from what the provider asked for. Lifting this
+    # needs the endpoint to emit `documentChanges` — see design note D11.
+    changes: dict[str, list[types.TextEdit]] = {}
+    for operation in result.operations:
+        if not isinstance(operation, TextEditOperation):
+            logger.debug(
+                f"Cannot resolve code action {action_id!r} for an editor: it"
+                f" contains a {type(operation).__name__}, which"
+                " WorkspaceEdit.changes cannot express"
+            )
+            return params
+        uri = str(operation.file_path)
+        if uri in changes:
+            logger.debug(
+                f"Cannot resolve code action {action_id!r} for an editor: it"
+                f" applies several ordered edit operations to {uri}, which"
+                " WorkspaceEdit.changes cannot express"
+            )
+            return params
+        changes[uri] = [_text_edit_to_lsp(edit) for edit in operation.edits]
+
+    params.edit = types.WorkspaceEdit(changes=changes)
     return params

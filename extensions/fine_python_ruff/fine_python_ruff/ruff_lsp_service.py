@@ -38,6 +38,38 @@ _RUFF_CLIENT_CAPABILITIES: dict[str, Any] = {
         "completion": {"dynamicRegistration": False},
         "hover": {"dynamicRegistration": False},
         "publishDiagnostics": {"relatedInformation": True},
+        # Pull diagnostics. Ruff advertises `diagnosticProvider` in response and
+        # `LspService` then asks for a document's diagnostics instead of waiting
+        # to be told about them -- the answer belongs to the request, so none of
+        # the push path's guesses apply. It also stops pushing once this is
+        # declared, which is the spec's intent and costs nothing here: nothing
+        # in this runner consumes unsolicited diagnostics.
+        #
+        # `relatedDocumentSupport` stays False: ruff reports
+        # `interFileDependencies: false`, so a file's diagnostics never depend
+        # on another file, and accepting related documents would only add
+        # results nobody asked about.
+        "diagnostic": {
+            "dynamicRegistration": False,
+            "relatedDocumentSupport": False,
+        },
+        # No dataSupport and no resolveSupport, deliberately. Declaring both tells
+        # ruff the client will fetch edits through codeAction/resolve, and it then
+        # answers with actions that carry no edit at all. An empty edit set is a
+        # legal LintFix (display-only fixes exist), so that arrives as fixes which
+        # look applicable and change nothing -- silently. Inline edits instead.
+        "codeAction": {
+            "dynamicRegistration": False,
+            "codeActionLiteralSupport": {
+                "codeActionKind": {
+                    "valueSet": [
+                        "quickfix",
+                        "source.fixAll",
+                        "source.organizeImports",
+                    ],
+                },
+            },
+        },
     },
     "workspace": {
         "workspaceFolders": True,
@@ -94,6 +126,10 @@ class RuffLspService(service.DisposableService):
             language_id="python",
             readable_id="ruff-lsp",
             client_capabilities=_RUFF_CLIENT_CAPABILITIES,
+            # `empty_diagnostics_settle_sec` is left at its default and never
+            # reached: the capability declared above puts this service on the
+            # pull path, where an empty answer means a clean file and nothing
+            # has to be waited out to find that out.
         )
         self._settings_providers: list[SettingsProvider] = []
         self._settings_resolved = False
@@ -143,14 +179,24 @@ class RuffLspService(service.DisposableService):
             self._lsp_service.update_settings(settings)
             self._settings_resolved = True
 
-    async def request(
+    async def get_code_actions(
         self,
-        method: str,
-        params: dict,
+        file_path: Path,
+        content: str,
+        range_dict: dict[str, Any],
+        *,
+        only: list[str] | None = None,
+        diagnostic_codes: list[str] | None = None,
         timeout: float = 30.0,
-    ):
-        """Forward an arbitrary LSP request to the running ruff server."""
-        return await self._lsp_service.request(method, params, timeout=timeout)
+    ) -> list[dict[str, Any]] | None:
+        return await self._lsp_service.get_code_actions(
+            file_path,
+            content,
+            range_dict,
+            only=only,
+            diagnostic_codes=diagnostic_codes,
+            timeout=timeout,
+        )
 
     async def check_file(
         self,

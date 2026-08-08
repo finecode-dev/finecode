@@ -153,8 +153,6 @@ class RequestCancelledError(asyncio.CancelledError):
 class ServerStoppedError(BaseRunnerRequestException):
     """Raised on pending requests when the server process exits."""
 
-    pass
-
 
 class JsonRpcClient:
     CHARSET: typing.Final[str] = "utf-8"

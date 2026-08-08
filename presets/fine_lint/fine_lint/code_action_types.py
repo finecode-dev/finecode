@@ -23,6 +23,10 @@ class DiagnosticRef:
 
 @dataclasses.dataclass
 class CodeAction:
+    provider: str
+    """Which provider produced this action, and therefore which handler can resolve
+    or apply it. Opaque to callers; round-tripped unchanged."""
+
     action_id: str
     """Identifier for lazy resolve. See LintFix.fix_id semantics."""
 

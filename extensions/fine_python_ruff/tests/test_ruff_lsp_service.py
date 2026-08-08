@@ -14,7 +14,10 @@ import typing
 
 from finecode_extension_api import code_action
 
-from fine_python_ruff.ruff_lsp_service import RuffLspService
+from fine_python_ruff.ruff_lsp_service import (
+    _RUFF_CLIENT_CAPABILITIES,
+    RuffLspService,
+)
 
 _META = code_action.RunActionMeta(
     trigger=code_action.RunActionTrigger.USER, dev_env=code_action.DevEnv.CLI
@@ -155,3 +158,17 @@ async def test_a_provider_registered_too_late_is_reported_rather_than_dropped_qu
 
     assert stub.settings_at_start == {"lineLength": 88}
     assert any("will not apply" in warning for warning in logger.warnings)
+
+
+def test_code_action_edits_are_not_deferred_to_a_resolve_round_trip() -> None:
+    """Ruff must answer code-action requests with the edits included.
+
+    Told that the client will fetch edits separately, ruff returns actions
+    carrying none. An empty edit set is a legal fix — display-only fixes exist —
+    so those arrive as fixes that look applicable, are offered to the user, and
+    change nothing when applied, with no error anywhere to explain it.
+    """
+    code_action = _RUFF_CLIENT_CAPABILITIES["textDocument"]["codeAction"]
+
+    assert "resolveSupport" not in code_action
+    assert "dataSupport" not in code_action

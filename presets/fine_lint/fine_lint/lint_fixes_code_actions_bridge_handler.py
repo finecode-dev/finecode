@@ -19,6 +19,10 @@ from fine_lint.get_lint_fixes_action import (
 )
 from fine_lint.lint_fix import LintFix
 
+PROVIDER_ID = "lint_fixes"
+"""Stamped on every CodeAction this bridge builds, and the routing key a resolve
+handler for this provider checks against `payload.provider` (design note D1)."""
+
 # LSP code-action kind prefixes that this bridge can satisfy.
 _LINT_FIX_KINDS = {"quickfix", "source.fixAll", "source.organizeImports"}
 
@@ -82,7 +86,7 @@ class LintFixesCodeActionsBridgeHandler(
             _kind_matches(k, _LINT_FIX_KINDS) for k in payload.only
         ):
             return GetCodeActionsRunResult(
-                file_version=payload.file_version or "",
+                file_version=run_context.file_version,
                 actions=[],
             )
 
@@ -93,13 +97,17 @@ class LintFixesCodeActionsBridgeHandler(
                 range=payload.range,
                 diagnostic_codes=_collect_codes(payload.diagnostics),
                 kinds=payload.only,
-                file_version=payload.file_version,
+                # The sub-action inherits the version pinned by this run's context,
+                # not the caller's optional staleness guard -- run_context is the
+                # source of truth once initialized (R-203).
+                file_version=run_context.file_version,
             ),
             meta=run_context.meta,
         )
 
         actions = [
             CodeAction(
+                provider=PROVIDER_ID,
                 action_id=fix.fix_id,
                 title=fix.title,
                 kind=fix.kind,

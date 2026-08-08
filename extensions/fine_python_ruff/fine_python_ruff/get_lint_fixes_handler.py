@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import json
+import re
 import sys
 from pathlib import Path
 from typing import Any
@@ -35,6 +36,17 @@ from finecode_extension_api.resource_uri import ResourceUri, resource_uri_to_pat
 
 from fine_python_ruff import target_version as target_version_utils
 from fine_python_ruff.ruff_lsp_service import RuffLspService
+
+_MAX_CHARACTER = 2**31 - 1
+
+# LSP counts lines by \n, \r\n and \r only. `str.splitlines` also breaks on
+# several other control and Unicode separators (vertical tab, form feed, the C1
+# NEL, the Unicode line/paragraph separators), which would make a file
+# containing any of them look longer here than it does to the server -- and a
+# whole-document range built from that count stops short of the real last line,
+# hiding every diagnostic below the first such character.
+_LINE_TERMINATOR_RE = re.compile(r"\r\n|\r|\n")
+"""A character offset no line reaches, for ranges meant to run to end of line."""
 
 
 @dataclasses.dataclass
@@ -142,6 +154,16 @@ class RuffGetLintFixesHandler(
                 file_content: str = file_info.content
                 file_version: str = file_info.version
 
+        # The run context pins one base version for the whole run (design note D6),
+        # so that concurrent handlers computing fixes for one file agree on the
+        # content they are fixing. A mismatch here means the file changed between
+        # the context's read and this handler's own read -- the same race the
+        # payload-level staleness guard below exists to catch, so it is handled
+        # identically: return no fixes rather than compute against content another
+        # handler was not shown.
+        if run_context.file_version != file_version:
+            return GetLintFixesRunResult(file_version=file_version, fixes=[])
+
         # Reject stale requests cheaply.
         if payload.file_version is not None and payload.file_version != file_version:
             return GetLintFixesRunResult(file_version=file_version, fixes=[])
@@ -149,7 +171,9 @@ class RuffGetLintFixesHandler(
         if self.config.use_cli:
             fixes = await self._run_cli_fixes(file_path, file_content, payload)
         else:
-            fixes = await self._run_lsp_fixes(file_path, payload, run_context.meta)
+            fixes = await self._run_lsp_fixes(
+                file_path, file_content, payload, run_context.meta
+            )
 
         return GetLintFixesRunResult(file_version=file_version, fixes=fixes)
 
@@ -203,7 +227,11 @@ class RuffGetLintFixesHandler(
 
         file_uri: ResourceUri = payload.file_path
         fixes: list[LintFix] = []
-        fix_index = 0
+        # Occurrences per semantic key, so that a diagnostic offering several fixes
+        # gets distinguishable ids without an unrelated earlier violation's presence
+        # or absence renumbering everything after it. Shared scheme with the LSP path
+        # -- see _next_occurrence_fix_id.
+        seen_keys: dict[str, int] = {}
 
         for violation in violations:
             raw_fix = violation.get("fix")
@@ -264,8 +292,8 @@ class RuffGetLintFixesHandler(
                     )
                 )
 
-            fix_id = f"ruff:{code}:{target_range.start.line}:{target_range.start.character}:{fix_index}"
-            fix_index += 1
+            key = f"ruff:{code}:{target_range.start.line}:{target_range.start.character}"
+            fix_id = _next_occurrence_fix_id(seen_keys, key)
             title = raw_fix.get("message") or f"Fix {code}"
             is_safe = applicability == FixApplicability.SAFE
 
@@ -291,55 +319,66 @@ class RuffGetLintFixesHandler(
     async def _run_lsp_fixes(
         self,
         file_path: Path,
+        file_content: str,
         payload: GetLintFixesRunPayload,
         meta: code_action.RunActionMeta,
     ) -> list[LintFix]:
         root_uri = self.project_info_provider.get_current_project_dir_path().as_uri()
         await self.lsp_service.ensure_started(root_uri, meta)
 
-        # Ensure the document is open and current before requesting code actions.
-        await self.lsp_service.check_file(file_path)
+        request_range = payload.range or _whole_document_range(file_content)
 
-        file_uri = file_path.as_uri()
-
-        request_range = payload.range or Range(
-            start=Position(line=0, character=0),
-            end=Position(line=0, character=0),
-        )
-
-        context: dict[str, Any] = {
-            "diagnostics": [],
-        }
-        if payload.kinds is not None:
-            context["only"] = payload.kinds
-
-        raw_actions = await self.lsp_service.request(
-            "textDocument/codeAction",
+        # The service holds the document open across the whole interaction and
+        # puts the file's own diagnostics into the request context; without both,
+        # ruff has nothing to attach a per-diagnostic fix to and answers with its
+        # blanket source actions at best.
+        raw_actions = await self.lsp_service.get_code_actions(
+            file_path,
+            file_content,
             {
-                "textDocument": {"uri": file_uri},
-                "range": {
-                    "start": {
-                        "line": request_range.start.line,
-                        "character": request_range.start.character,
-                    },
-                    "end": {
-                        "line": request_range.end.line,
-                        "character": request_range.end.character,
-                    },
+                "start": {
+                    "line": request_range.start.line,
+                    "character": request_range.start.character,
                 },
-                "context": context,
+                "end": {
+                    "line": request_range.end.line,
+                    "character": request_range.end.character,
+                },
             },
+            only=payload.kinds,
+            diagnostic_codes=payload.diagnostic_codes,
         )
 
         if not raw_actions:
             return []
 
-        return _map_lsp_code_actions_to_lint_fixes(raw_actions, file_uri, payload)
+        return _map_lsp_code_actions_to_lint_fixes(raw_actions, payload, self.logger)
 
 
 # ------------------------------------------------------------------
 # Helpers
 # ------------------------------------------------------------------
+
+
+def _whole_document_range(file_content: str) -> Range:
+    """A range spanning the entire document, for requests with no explicit range.
+
+    LSP servers only return code actions whose diagnostics overlap the requested
+    range, so this has to actually reach the last line rather than being a
+    zero-width placeholder at the start of the file.
+    """
+    # Always at least one element, empty content included -- an empty document
+    # still has a line 0 for a diagnostic to sit on.
+    lines = _LINE_TERMINATOR_RE.split(file_content)
+    return Range(
+        start=Position(line=0, character=0),
+        # Saturating rather than len(lines[-1]): LSP character offsets are UTF-16
+        # code units, so a last line with astral characters ends further along
+        # than its Python length, and a diagnostic there would fall outside the
+        # range. The spec requires servers to clamp an offset past the line end
+        # back to the line end, which makes the exact value unimportant.
+        end=Position(line=len(lines) - 1, character=_MAX_CHARACTER),
+    )
 
 
 def _ranges_overlap(a: Range, b: Range) -> bool:
@@ -351,12 +390,31 @@ def _ranges_overlap(a: Range, b: Range) -> bool:
     return a_start < b_end and b_start < a_end
 
 
+def _next_occurrence_fix_id(seen_keys: dict[str, int], key: str) -> str:
+    """Build a deterministic ``fix_id`` for *key*, suffixed by its occurrence count.
+
+    Shared by the CLI and LSP paths so their id schemes cannot drift apart again.
+    ``key`` is expected to be semantic and position-based (e.g.
+    ``ruff:{code}:{line}:{character}``), never index-based: a fix_id built from a
+    counter incremented across the whole response changes meaning as soon as an
+    unrelated fix is added or removed earlier in the file, which breaks resolve's
+    contract that identical content re-derives the same id (design note D9).
+    """
+    occurrence = seen_keys.get(key, 0)
+    seen_keys[key] = occurrence + 1
+    return f"{key}:{occurrence}"
+
+
 def _map_lsp_code_actions_to_lint_fixes(
     raw_actions: list[dict[str, Any]],
-    file_uri: ResourceUri,
     payload: GetLintFixesRunPayload,
+    logger: ilogger.ILogger,
 ) -> list[LintFix]:
     fixes: list[LintFix] = []
+    # Occurrences per semantic key, so that a diagnostic offering several fixes
+    # ("remove the import" / "add a noqa") gets distinguishable ids without
+    # position in the response deciding what they are.
+    seen_keys: dict[str, int] = {}
     for i, action in enumerate(raw_actions):
         if not isinstance(action, dict):
             continue
@@ -391,21 +449,55 @@ def _map_lsp_code_actions_to_lint_fixes(
                 for e in raw_edits
             ]
 
-        # Extract diagnostic codes from the action's diagnostics, if any.
+        # Extract diagnostic codes and range from the action's diagnostics, if any.
+        diagnostics = action.get("diagnostics") or []
         target_codes: list[str] = []
-        for diag in action.get("diagnostics") or []:
+        for diag in diagnostics:
             code = diag.get("code")
             if code:
                 target_codes.append(str(code))
 
-        # Determine target_range: use payload.range or default to start of file.
-        target_range = payload.range or Range(
-            start=Position(line=0, character=0),
-            end=Position(line=0, character=0),
-        )
+        # Prefer the diagnostic's own range -- it identifies which error this fix
+        # addresses. Falling back to the query range would make every fix from a
+        # whole-file request look identical and unattributable to a diagnostic.
+        first_diag_range = diagnostics[0].get("range") if diagnostics else None
+        if first_diag_range:
+            target_range = Range(
+                start=Position(
+                    line=first_diag_range["start"]["line"],
+                    character=first_diag_range["start"]["character"],
+                ),
+                end=Position(
+                    line=first_diag_range["end"]["line"],
+                    character=first_diag_range["end"]["character"],
+                ),
+            )
+        else:
+            target_range = payload.range or Range(
+                start=Position(line=0, character=0),
+                end=Position(line=0, character=0),
+            )
 
-        fix_id = f"ruff:lsp:{kind}:{i}"
-        is_preferred = bool(action.get("isPreferred", False))
+        # Stable across requests: fix_id is the codeAction/resolve key, so an id
+        # built from the action's index changes meaning as soon as an unrelated
+        # edit adds or removes a fix earlier in the file.
+        if target_codes:
+            key = (
+                f"ruff:{target_codes[0]}"
+                f":{target_range.start.line}:{target_range.start.character}"
+            )
+        else:
+            key = f"ruff:{kind}"
+        fix_id = _next_occurrence_fix_id(seen_keys, key)
+
+        if kind == "quickfix" and not edits:
+            # Not fatal, and not something a caller can tell apart from a
+            # display-only fix, so say it here: it is what a server switching to
+            # resolve-deferred edits looks like from the outside.
+            logger.warning(
+                f"ruff returned quickfix {title!r} with no edit; it will be offered"
+                " but will change nothing"
+            )
 
         fixes.append(
             LintFix(
@@ -415,10 +507,14 @@ def _map_lsp_code_actions_to_lint_fixes(
                 edits=edits,
                 target_range=target_range,
                 target_codes=target_codes,
-                is_preferred=is_preferred,
-                applicability=FixApplicability.SAFE
-                if is_preferred
-                else FixApplicability.UNSAFE,
+                # LSP carries no applicability signal, and ruff offers unsafe
+                # fixes over LSP only when configured to -- so everything that
+                # arrives here is applicable. isPreferred is the "highlight this
+                # one in the menu" flag and says nothing about safety; reading it
+                # as such marked every non-highlighted fix unsafe. Callers that
+                # need ruff's real applicability want the CLI path, which has it.
+                applicability=FixApplicability.SAFE,
+                is_preferred=bool(action.get("isPreferred", False)),
             )
         )
 
