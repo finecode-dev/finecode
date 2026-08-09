@@ -280,11 +280,14 @@ def map_ruff_violation_to_lint_message(
     location = violation.get("location", {})
     end_location = violation.get("end_location", {})
 
-    # Extract line/column info (ruff uses 1-based indexing)
+    # Ruff counts rows and columns from 1, LSP from 0 -- and the columns need the
+    # shift as much as the rows do: without it every CLI-path diagnostic sits one
+    # column to the right of where the same violation lands on the LSP path, so an
+    # editor underlines from one character into the offending name.
     start_line = max(1, location.get("row", 1))
-    start_column = max(0, location.get("column", 0))
+    start_column = max(1, location.get("column", 1))
     end_line = max(1, end_location.get("row", start_line + 1))
-    end_column = max(0, end_location.get("column", start_column))
+    end_column = max(1, end_location.get("column", start_column + 1))
 
     # Determine severity based on rule code
     code = violation.get("code", "")
@@ -298,12 +301,17 @@ def map_ruff_violation_to_lint_message(
 
     return Diagnostic(
         range=Range(
-            start=Position(line=start_line - 1, character=start_column),
-            end=Position(line=end_line - 1, character=end_column),
+            start=Position(line=start_line - 1, character=start_column - 1),
+            end=Position(line=end_line - 1, character=end_column - 1),
         ),
         message=violation.get("message", ""),
         code=code,
         code_description=code_description,
         source="ruff",
         severity=severity,
+        # ruff reports the fix inline with the violation, so fixability is known for
+        # every violation here -- False means "ruff has no fix", not "unknown".  An
+        # unsafe fix is still a fix; applicability travels with the fix itself and is
+        # what apply_lint_fixes filters on.
+        fixable=violation.get("fix") is not None,
     )

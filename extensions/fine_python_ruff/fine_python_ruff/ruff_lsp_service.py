@@ -204,7 +204,24 @@ class RuffLspService(service.DisposableService):
         timeout: float = 30.0,
     ) -> list[Diagnostic]:
         raw_diagnostics = await self._lsp_service.check_file(file_path, timeout)
-        return map_lsp_diagnostics(raw_diagnostics, default_source="ruff")
+        diagnostics = map_lsp_diagnostics(raw_diagnostics, default_source="ruff")
+        # LSP has no field for fixability, but ruff attaches its fix to the diagnostic's
+        # `data` -- an empty `edits` list there is ruff saying it has no fix, which is
+        # why absent `data` (a server that does not report at all) stays unknown.
+        #
+        # Unsafe fixes are in there too: ruff attaches the fix it has, and its
+        # `unsafe-fixes` setting gates only what `source.fixAll` composes, not what a
+        # diagnostic carries. So this agrees with the CLI path, which also counts an
+        # unsafe fix as a fix -- whether one may be applied unattended is the fix's own
+        # applicability, and apply_lint_fixes is where that is decided.
+        # strict, because pairing them by position is only meaningful while
+        # map_lsp_diagnostics stays 1:1 with its input -- if it ever starts dropping or
+        # merging entries, fixability would be read off the wrong diagnostic
+        for diagnostic, raw in zip(diagnostics, raw_diagnostics, strict=True):
+            data = raw.get("data")
+            if isinstance(data, dict) and "edits" in data:
+                diagnostic.fixable = bool(data["edits"])
+        return diagnostics
 
     async def format_file(
         self,

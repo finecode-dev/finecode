@@ -4,6 +4,7 @@ import asyncio
 import dataclasses
 import json
 import re
+import shlex
 import sys
 from pathlib import Path
 from typing import Any
@@ -181,12 +182,16 @@ class RuffGetLintFixesHandler(
     # CLI path
     # ------------------------------------------------------------------
 
-    async def _run_cli_fixes(
-        self,
-        file_path: Path,
-        file_content: str,
-        payload: GetLintFixesRunPayload,
-    ) -> list[LintFix]:
+    async def _run_ruff_check(
+        self, file_path: Path, file_content: str
+    ) -> list[dict[str, Any]]:
+        """``ruff check`` over *file_content*, as ruff's own JSON violations.
+
+        Shared with the LSP path, which runs this only for the applicability its own
+        answers lack -- so the rule selection and language level have to be built in one
+        place: a violation ruff reports under different settings than the ones the
+        server was started with cannot be matched to the server's fixes at all.
+        """
         cmd = [
             str(self.ruff_bin_path),
             "check",
@@ -212,18 +217,30 @@ class RuffGetLintFixesHandler(
         if self.config.preview:
             cmd.append("--preview")
 
-        ruff_process = await self.command_runner.run(cmd)
+        # ICommandRunner.run takes one shell string, not argv: passing the list got as
+        # far as "cmd must be a string" at runtime, which is why the CLI path only ever
+        # worked against a stub. shlex.join rather than " ".join, so a ruff binary or a
+        # file under a path with a space survives the shell.
+        ruff_process = await self.command_runner.run(shlex.join(cmd))
         ruff_process.write_to_stdin(file_content)
         ruff_process.close_stdin()
         await ruff_process.wait_for_end()
 
         output = ruff_process.get_output()
         try:
-            violations = json.loads(output)
+            return json.loads(output)
         except json.JSONDecodeError:
             raise code_action.ActionFailedException(
                 f"ruff output is not valid JSON: {output}"
             )
+
+    async def _run_cli_fixes(
+        self,
+        file_path: Path,
+        file_content: str,
+        payload: GetLintFixesRunPayload,
+    ) -> list[LintFix]:
+        violations = await self._run_ruff_check(file_path, file_content)
 
         file_uri: ResourceUri = payload.file_path
         fixes: list[LintFix] = []
@@ -243,14 +260,8 @@ class RuffGetLintFixesHandler(
             end_location = violation.get("end_location", {})
 
             target_range = Range(
-                start=Position(
-                    line=max(1, location.get("row", 1)) - 1,
-                    character=max(0, location.get("column", 0)),
-                ),
-                end=Position(
-                    line=max(1, end_location.get("row", 1)) - 1,
-                    character=max(0, end_location.get("column", 0)),
-                ),
+                start=_position_from_ruff(location),
+                end=_position_from_ruff(end_location),
             )
 
             # Filter by range when requested.
@@ -279,20 +290,16 @@ class RuffGetLintFixesHandler(
                 text_edits.append(
                     TextEdit(
                         range=Range(
-                            start=Position(
-                                line=max(1, edit_loc.get("row", 1)) - 1,
-                                character=max(0, edit_loc.get("column", 0)),
-                            ),
-                            end=Position(
-                                line=max(1, edit_end.get("row", 1)) - 1,
-                                character=max(0, edit_end.get("column", 0)),
-                            ),
+                            start=_position_from_ruff(edit_loc),
+                            end=_position_from_ruff(edit_end),
                         ),
                         new_text=raw_edit.get("content", ""),
                     )
                 )
 
-            key = f"ruff:{code}:{target_range.start.line}:{target_range.start.character}"
+            key = (
+                f"ruff:{code}:{target_range.start.line}:{target_range.start.character}"
+            )
             fix_id = _next_occurrence_fix_id(seen_keys, key)
             title = raw_fix.get("message") or f"Fix {code}"
             is_safe = applicability == FixApplicability.SAFE
@@ -352,7 +359,22 @@ class RuffGetLintFixesHandler(
         if not raw_actions:
             return []
 
-        return _map_lsp_code_actions_to_lint_fixes(raw_actions, payload, self.logger)
+        fixes = _map_lsp_code_actions_to_lint_fixes(raw_actions, payload, self.logger)
+        if fixes:
+            # Ruff sends no applicability over LSP -- a safe fix and an unsafe one
+            # arrive with byte-identical structure -- and it offers unsafe fixes as
+            # quickfixes regardless of configuration, so the fixes here are a mix that
+            # nothing in the protocol separates. `ruff check` is the only place ruff
+            # states applicability, so ask it, for the same content the server just
+            # answered about.
+            _label_applicability(
+                fixes,
+                _applicability_index(
+                    await self._run_ruff_check(file_path, file_content)
+                ),
+                self.logger,
+            )
+        return fixes
 
 
 # ------------------------------------------------------------------
@@ -403,6 +425,116 @@ def _next_occurrence_fix_id(seen_keys: dict[str, int], key: str) -> str:
     occurrence = seen_keys.get(key, 0)
     seen_keys[key] = occurrence + 1
     return f"{key}:{occurrence}"
+
+
+def _position_from_ruff(location: dict[str, Any]) -> Position:
+    """Ruff's 1-based row and column as an LSP 0-based line and character.
+
+    Both ends convert the same way: ruff's end column is exclusive, as LSP's is, so it
+    lands on the same character once shifted. Verified against the server for the same
+    file -- ruff's CLI puts ``os`` in ``import os`` at columns 8..10 and its LSP answer
+    puts it at characters 7..9.
+
+    Dropping the column shift is what made CLI-path ranges sit one column to the right
+    of the server's for the same violation: an editor highlighting from the fix's range
+    covered the wrong span, and ``payload.range`` filtered against positions no other
+    path in this handler agreed with.
+    """
+    return Position(
+        line=max(1, location.get("row", 1)) - 1,
+        character=max(1, location.get("column", 1)) - 1,
+    )
+
+
+_NOQA_EDIT_RE = re.compile(r"#\s*noqa", re.IGNORECASE)
+"""Ruff's "Disable for this line" action, recognised by what it writes.
+
+By its edit rather than its title, which is prose and translated in nothing but ruff's
+own English today, but is still the part most likely to be reworded."""
+
+
+def _applicability_index(
+    violations: list[dict[str, Any]],
+) -> dict[str, list[tuple[int, int, FixApplicability]]]:
+    """Where ruff puts a fix, and how applicable it says that fix is.
+
+    Keyed by rule code, then position, because that is all a fix arriving over LSP
+    carries to be recognised by: it has the diagnostic's code and range and nothing
+    else in common with the CLI's report of the same violation.
+    """
+    index: dict[str, list[tuple[int, int, FixApplicability]]] = {}
+    for violation in violations:
+        raw_fix = violation.get("fix")
+        code = violation.get("code")
+        if raw_fix is None or not code:
+            continue
+
+        try:
+            applicability = FixApplicability(raw_fix.get("applicability", "safe"))
+        except ValueError:
+            # an applicability this ruff knows and we do not: it is not "safe", and
+            # saying so is what the caller's include_unsafe guard is for
+            applicability = FixApplicability.UNSAFE
+
+        # LSP characters count UTF-16 units, which parts before the column in a
+        # non-ASCII line make differ from ruff's count -- the same-line fallback in
+        # _label_applicability covers that
+        position = _position_from_ruff(violation.get("location", {}))
+        index.setdefault(str(code), []).append(
+            (position.line, position.character, applicability)
+        )
+    return index
+
+
+def _label_applicability(
+    fixes: list[LintFix],
+    index: dict[str, list[tuple[int, int, FixApplicability]]],
+    logger: ilogger.ILogger,
+) -> None:
+    """Replace each LSP-derived fix's placeholder applicability with ruff's own."""
+    for fix in fixes:
+        if any(
+            _NOQA_EDIT_RE.search(edit.new_text)
+            for edits in fix.edits.values()
+            for edit in edits
+        ):
+            # Suppressing a diagnostic is not fixing it, and ruff never writes a noqa
+            # comment itself when fixing. Offer it -- an editor's menu is where it
+            # belongs -- but keep it out of every batch (design note D10).
+            fix.applicability = FixApplicability.DISPLAY_ONLY
+            continue
+
+        if not fix.kind.startswith("quickfix"):
+            # source.fixAll and source.organizeImports compose ruff's *applicable*
+            # fixes, and which those are is what ruff's `unsafe-fixes` setting decides.
+            # This client never enables it, so these batches are safe fixes only.
+            fix.applicability = FixApplicability.SAFE
+            continue
+
+        candidates = index.get(fix.target_codes[0]) if fix.target_codes else None
+        if candidates:
+            start = fix.target_range.start
+            exact = [
+                applicability
+                for line, character, applicability in candidates
+                if (line, character) == (start.line, start.character)
+            ]
+            same_line = [
+                applicability
+                for line, _, applicability in candidates
+                if line == start.line
+            ]
+            if exact or same_line:
+                fix.applicability = (exact or same_line)[0]
+                continue
+
+        # Ruff offered a fix its own check does not report -- so nothing here says the
+        # fix is safe, and the only honest reading of that is "not automatically".
+        logger.debug(
+            f"no ruff CLI applicability for LSP fix {fix.fix_id!r} ({fix.title!r});"
+            " treating it as unsafe"
+        )
+        fix.applicability = FixApplicability.UNSAFE
 
 
 def _map_lsp_code_actions_to_lint_fixes(
@@ -507,12 +639,12 @@ def _map_lsp_code_actions_to_lint_fixes(
                 edits=edits,
                 target_range=target_range,
                 target_codes=target_codes,
-                # LSP carries no applicability signal, and ruff offers unsafe
-                # fixes over LSP only when configured to -- so everything that
-                # arrives here is applicable. isPreferred is the "highlight this
-                # one in the menu" flag and says nothing about safety; reading it
-                # as such marked every non-highlighted fix unsafe. Callers that
-                # need ruff's real applicability want the CLI path, which has it.
+                # A placeholder: LSP carries no applicability signal at all (a safe
+                # fix and an unsafe one arrive with identical structure -- only the
+                # title differs), so _label_applicability overwrites this with what
+                # `ruff check` says before the fixes leave the handler. isPreferred
+                # is the "highlight this one in the menu" flag and says nothing about
+                # safety; reading it as such marked every non-highlighted fix unsafe.
                 applicability=FixApplicability.SAFE,
                 is_preferred=bool(action.get("isPreferred", False)),
             )
