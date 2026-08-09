@@ -184,14 +184,14 @@ class PyreflyTypeCheckFilesHandler(
             "--output-format=json",
             # path to python interpreter because pyrefly resolves .pth files only if
             # it is provided
-            f"--python-interpreter-path='{str(interpreter_path)}'",
+            f"--python-interpreter-path='{interpreter_path!s}'",
         ]
 
         if self.config.python_version is not None:
             cmd.append(f"--python-version='{self.config.python_version}'")
 
         for path in site_package_pathes:
-            cmd.append(f"--site-package-path={str(path)}")
+            cmd.append(f"--site-package-path={path!s}")
         cmd.append(str(file_path))
 
         cmd_str = " ".join(cmd)

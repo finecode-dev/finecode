@@ -1,5 +1,6 @@
 import inspect
-from typing import Any, Callable, Type, TypeVar
+from collections.abc import Callable
+from typing import Any, TypeVar
 
 from loguru import logger
 
@@ -65,7 +66,7 @@ class Registry:
                     logger.exception(f"Failed to dispose service: {instance}")
         self._container.clear()
 
-    async def get_instance(self, type_: Type[T]) -> T:
+    async def get_instance(self, type_: type[T]) -> T:
         if type_ in self._container:
             return self._container[type_]
 

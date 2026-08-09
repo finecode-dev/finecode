@@ -157,9 +157,7 @@ class ApplyCodeActionsHandler(
                     if op.file_path == file_path
                 ]
                 versions = {
-                    op.file_version
-                    for _, op in touching
-                    if op.file_version is not None
+                    op.file_version for _, op in touching if op.file_version is not None
                 }
                 if len(versions) > 1:
                     failed_files[file_path] = ApplyOutcome.VERSION_CONFLICT
@@ -310,8 +308,7 @@ class ApplyCodeActionsHandler(
                     )
                 except ifileeditor.FileVersionConflict as conflict:
                     self.logger.warning(
-                        f"Not applying code actions to {file_path}: "
-                        f"{conflict.message}"
+                        f"Not applying code actions to {file_path}: {conflict.message}"
                     )
                     write_failures[file_path] = ApplyOutcome.VERSION_CONFLICT
                     file_summaries[file_path] = FileApplySummary(written=False)

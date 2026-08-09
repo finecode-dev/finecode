@@ -27,7 +27,7 @@ from finecode_extension_api.resource_uri import (
     resource_uri_to_path,
 )
 
-import fine_python_mypy.output_parser as output_parser
+from fine_python_mypy import output_parser
 
 
 class DmypyFailedError(Exception): ...

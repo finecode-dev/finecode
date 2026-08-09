@@ -95,7 +95,7 @@ class FakeHttpSession:
         self._response = response
         self.requested_urls: list[str] = []
 
-    async def __aenter__(self) -> "FakeHttpSession":
+    async def __aenter__(self) -> FakeHttpSession:
         return self
 
     async def __aexit__(

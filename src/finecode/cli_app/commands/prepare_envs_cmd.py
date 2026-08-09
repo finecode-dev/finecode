@@ -130,4 +130,4 @@ async def _run(
         raise PrepareEnvsFailed(str(exc)) from exc
 
 
-__all__ = ["prepare_envs", "PrepareEnvsFailed"]
+__all__ = ["PrepareEnvsFailed", "prepare_envs"]

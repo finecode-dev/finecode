@@ -4,6 +4,6 @@ from .check_python_imports_handler import (
 )
 
 __all__ = [
-    "ImportLinterCheckPythonImportsHandlerConfig",
     "ImportLinterCheckPythonImportsHandler",
+    "ImportLinterCheckPythonImportsHandlerConfig",
 ]

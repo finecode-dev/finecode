@@ -3,7 +3,8 @@ from __future__ import annotations
 import dataclasses
 import pathlib
 import typing
-from typing import Any, Awaitable, Callable
+from collections.abc import Awaitable, Callable
+from typing import Any
 
 import cattrs.errors
 from finecode_extension_api import code_action

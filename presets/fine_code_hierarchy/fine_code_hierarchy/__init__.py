@@ -52,12 +52,12 @@ from fine_code_hierarchy.type_hierarchy_supertypes_dispatch_handler import (
 )
 
 __all__ = [
-    "CallHierarchyItem",
     "CallHierarchyIncomingCall",
     "CallHierarchyIncomingCallsAction",
     "CallHierarchyIncomingCallsDispatchHandler",
     "CallHierarchyIncomingCallsPayload",
     "CallHierarchyIncomingCallsResult",
+    "CallHierarchyItem",
     "CallHierarchyOutgoingCall",
     "CallHierarchyOutgoingCallsAction",
     "CallHierarchyOutgoingCallsDispatchHandler",

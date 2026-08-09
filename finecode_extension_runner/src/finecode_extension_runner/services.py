@@ -19,7 +19,7 @@ from finecode_extension_runner import (
     schema_utils,
     schemas,
 )
-from finecode_extension_runner._services.run_action import (
+from finecode_extension_runner._services.run_action import (  # noqa: F401 (re-export); `services` is the public facade over the private `_services` package:; er_server and tests reach these as `services.<name>`, which the linter; cannot see from here. Removing them breaks er_server's run_action and; run_handlers dispatch at runtime.
     ActionCancelledException,
     ActionFailedException,
     StopWithResponse,

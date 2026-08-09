@@ -42,7 +42,7 @@ DEFAULT_MAX_SEGMENTS = 20
 
 
 def utc_now_iso() -> str:
-    return dt.datetime.now(dt.timezone.utc).isoformat()
+    return dt.datetime.now(dt.UTC).isoformat()
 
 
 @dataclasses.dataclass

@@ -15,9 +15,6 @@ from __future__ import annotations
 
 import cattrs
 import pytest
-
-# Imported for its import side effect: registering the structure hook.
-import finecode.lsp_server.endpoints.code_actions  # noqa: F401
 from fine_lint.apply_code_actions_action import (
     CreateFileOperation,
     DeleteFileOperation,
@@ -26,6 +23,8 @@ from fine_lint.apply_code_actions_action import (
 )
 from fine_lint.resolve_code_action_action import ResolveCodeActionRunResult
 
+# Imported for its import side effect: registering the structure hook.
+import finecode.lsp_server.endpoints.code_actions  # noqa: F401
 from finecode._converter import converter
 
 _OPERATIONS = [

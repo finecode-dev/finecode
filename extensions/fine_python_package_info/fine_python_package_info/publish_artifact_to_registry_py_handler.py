@@ -111,10 +111,10 @@ class PublishArtifactToRegistryPyHandler(
             status_code = e.response.status_code if e.response is not None else None
             response_body = e.response.text if e.response is not None else None
             return failed(
-                f"Failed to upload package: {str(e)}\nStatus code: {status_code}\nResponse body: {response_body}"
+                f"Failed to upload package: {e!s}\nStatus code: {status_code}\nResponse body: {response_body}"
             )
         except Exception as e:
-            return failed(f"Failed to upload package: {str(e)}")
+            return failed(f"Failed to upload package: {e!s}")
 
         self.logger.info(
             f"Successfully published {dist_artifact_paths} to {payload.registry_name}"

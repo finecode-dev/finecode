@@ -34,12 +34,12 @@ from fine_format.format_files_iterate_handler import FormatFilesIterateHandler
 from fine_format.format_handler import FormatHandler
 
 __all__ = [
+    "FILE_OPERATION_AUTHOR",
     "CheckFormattingAction",
     "CheckFormattingHandler",
     "CheckFormattingRunContext",
     "CheckFormattingRunPayload",
     "CheckFormattingRunResult",
-    "FILE_OPERATION_AUTHOR",
     "FileInfo",
     "FormatAction",
     "FormatFileAction",

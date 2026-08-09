@@ -20,16 +20,16 @@ from fine_git_hooks.uninstall_git_hooks import UninstallGitHooksHandler
 from fine_git_hooks.uninstall_git_hooks_action import UninstallGitHooksAction
 
 __all__ = [
-    "PrecommitAction",
-    "InstallGitHooksAction",
-    "UninstallGitHooksAction",
-    "StagedFilesDiscoveryHandler",
-    "LintPrecommitBridgeHandler",
-    "FormatPrecommitBridgeHandler",
-    "TypeCheckPrecommitBridgeHandler",
-    "InstallGitHooksHandler",
-    "UninstallGitHooksHandler",
-    "InspectCodePrecommitBridgeHandler",
     "AuditCodePrecommitBridgeHandler",
     "CheckToolchainsPrecommitBridgeHandler",
+    "FormatPrecommitBridgeHandler",
+    "InspectCodePrecommitBridgeHandler",
+    "InstallGitHooksAction",
+    "InstallGitHooksHandler",
+    "LintPrecommitBridgeHandler",
+    "PrecommitAction",
+    "StagedFilesDiscoveryHandler",
+    "TypeCheckPrecommitBridgeHandler",
+    "UninstallGitHooksAction",
+    "UninstallGitHooksHandler",
 ]

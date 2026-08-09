@@ -171,12 +171,12 @@ class RuffLintFilesHandler(
         except icache.CacheMissException:
             pass
 
-        async with self.file_editor.session(
-            author=self.FILE_OPERATION_AUTHOR
-        ) as session:
-            async with session.read_file(file_path=file_path) as file_info:
-                file_content: str = file_info.content
-                file_version: str = file_info.version
+        async with (
+            self.file_editor.session(author=self.FILE_OPERATION_AUTHOR) as session,
+            session.read_file(file_path=file_path) as file_info,
+        ):
+            file_content: str = file_info.content
+            file_version: str = file_info.version
 
         if self.config.use_cli:
             lint_messages = await self.run_ruff_lint_on_single_file(

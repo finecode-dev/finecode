@@ -97,7 +97,7 @@ class IngestWalToStoreHandler(
         try:
             self._ensure_schema(connection)
             ingest_run_id = str(uuid.uuid4())
-            now = dt.datetime.now(dt.timezone.utc)
+            now = dt.datetime.now(dt.UTC)
             since_dt = _parse_iso_ts(payload.since_ts_iso)
             self._start_ingest_run(connection, ingest_run_id, now, payload, store_path)
 
@@ -419,7 +419,7 @@ class IngestWalToStoreHandler(
             WHERE ingest_run_id = ?
             """,
             [
-                dt.datetime.now(dt.timezone.utc),
+                dt.datetime.now(dt.UTC),
                 events_ingested,
                 events_skipped_duplicate,
                 events_failed_parse,
@@ -449,11 +449,9 @@ def _normalize_record(
         record.get(_mapped_field(spec, "action_name", "action_name"))
     )
     payload_value = record.get(_mapped_field(spec, "payload", "payload"), {})
-    ingested_at = dt.datetime.now(dt.timezone.utc)
+    ingested_at = dt.datetime.now(dt.UTC)
     raw_line = json.dumps(record, sort_keys=True, ensure_ascii=True)
-    event_hash_input = f"{spec.source_id}\0{file_path}\0{line_no}\0{raw_line}".encode(
-        "utf-8"
-    )
+    event_hash_input = f"{spec.source_id}\0{file_path}\0{line_no}\0{raw_line}".encode()
 
     return {
         "event_hash": hashlib.sha256(event_hash_input).hexdigest(),

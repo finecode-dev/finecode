@@ -130,7 +130,7 @@ async def test_same_env_name_in_two_projects_is_reported_once_per_project(
         ["cpython@3.11", "cpython@3.12"],
         ["cpython@3.13"],
     ]
-    assert all("testing" == axis.env_name for axis in reported.values())
+    assert all(axis.env_name == "testing" for axis in reported.values())
 
 
 async def test_project_labels_stay_distinct_when_basenames_collide(

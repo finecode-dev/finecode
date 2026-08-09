@@ -28,8 +28,8 @@ __all__ = [
     "GetSrcArtifactRegistriesAction",
     "GetSrcArtifactToolchainRangeAction",
     "GetSrcArtifactVersionAction",
-    "ListSrcArtifactFilesByLangAction",
     "GroupSrcArtifactFilesByLangAction",
+    "ListSrcArtifactFilesByLangAction",
     "LockDependenciesAction",
     "LockDependenciesDispatchHandler",
 ]

@@ -2,10 +2,10 @@
 from pathlib import Path
 
 import mypy.build as mypy_build
-import mypy.modulefinder as modulefinder
 import mypy.nodes as mypy_nodes
 import mypy.options as mypy_options
 from finecode_extension_api.interfaces import icache, ifileeditor, ilogger
+from mypy import modulefinder
 
 from fine_python_mypy import iast_provider
 
@@ -35,12 +35,12 @@ class MypySingleAstProvider(iast_provider.IMypySingleAstProvider):
         except icache.CacheMissException:
             ...
 
-        async with self.file_editor.session(
-            author=self.FILE_OPERATION_AUTHOR
-        ) as session:
-            async with session.read_file(file_path=file_path) as file_info:
-                file_text: str = file_info.content
-                file_version: str = file_info.version
+        async with (
+            self.file_editor.session(author=self.FILE_OPERATION_AUTHOR) as session,
+            session.read_file(file_path=file_path) as file_info,
+        ):
+            file_text: str = file_info.content
+            file_version: str = file_info.version
 
         base_dir = self.get_file_package_parent_dir_path(file_path)
         module_program_path = self.get_file_program_path(

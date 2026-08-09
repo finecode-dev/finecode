@@ -13,7 +13,6 @@ from finecode_extension_runner import er_wal, global_state, logs
 @click.group()
 def main():
     """FineCode Extension Runner CLI"""
-    pass
 
 
 @main.command()

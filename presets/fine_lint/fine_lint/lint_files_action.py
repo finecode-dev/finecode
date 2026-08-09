@@ -1,5 +1,4 @@
 # docs: docs/reference/actions.md
-from fine_inspect_code.diagnostic_types import Diagnostic as LintMessage
 from fine_inspect_code.diagnostic_types import (
     DiagnosticFilesRunContext as LintFilesRunContext,
 )
@@ -8,11 +7,6 @@ from fine_inspect_code.diagnostic_types import (
 )
 from fine_inspect_code.diagnostic_types import (
     DiagnosticFilesRunResult as LintFilesRunResult,
-)
-from fine_inspect_code.diagnostic_types import DiagnosticSeverity as LintMessageSeverity
-from fine_inspect_code.diagnostic_types import (
-    Position,
-    Range,
 )
 from finecode_extension_api import code_action
 

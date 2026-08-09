@@ -72,7 +72,7 @@ async def test_level_filtering(wm_client, emit_log_method) -> None:
         while True:
             params = await wm_client.next_notification("server/logRecords", timeout=0.3)
             messages.extend(r["message"] for r in params.get("records", []))
-    except asyncio.TimeoutError:
+    except TimeoutError:
         pass
 
     assert keep_message in messages

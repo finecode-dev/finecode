@@ -101,7 +101,7 @@ class FileManager(ifilemanager.IFileManager):
         # don't use this method directly, use `get_content` instead
         # TODO: handle errors: file doesn't exist, cannot be opened etc
         self.logger.debug(f"Read file: {file_path}")
-        with open(file_path, "r") as f:
+        with open(file_path) as f:
             file_content = f.read()
 
         return file_content

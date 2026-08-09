@@ -1,6 +1,7 @@
 import collections.abc
 import pathlib
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 from finecode_extension_api.interfaces import iprojectinfoprovider
 

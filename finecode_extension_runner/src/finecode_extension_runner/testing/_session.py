@@ -3,8 +3,9 @@ from __future__ import annotations
 import pathlib
 import tomllib
 import uuid
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from typing import Any, AsyncIterator, Literal
+from typing import Any, Literal
 
 from finecode_extension_api import code_action
 from finecode_extension_api.interfaces import ifileeditor

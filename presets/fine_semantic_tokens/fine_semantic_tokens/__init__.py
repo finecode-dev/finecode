@@ -7,7 +7,7 @@ from fine_semantic_tokens.text_document_semantic_tokens_action import (
 )
 
 __all__ = [
+    "SemanticTokensDispatchHandler",
     "TextDocumentSemanticTokensAction",
     "decode_lsp_semantic_tokens",
-    "SemanticTokensDispatchHandler",
 ]

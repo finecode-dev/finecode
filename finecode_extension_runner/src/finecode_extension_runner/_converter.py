@@ -1,5 +1,4 @@
 import types as _types
-import typing
 
 import cattrs
 from cattrs.gen import make_dict_structure_fn, override
@@ -7,7 +6,7 @@ from cattrs.gen import make_dict_structure_fn, override
 try:
     from typing import Literal
 except ImportError:
-    from typing_extensions import Literal
+    from typing import Literal
 
 from finecode_extension_api.code_action import RunActionMeta
 
@@ -50,8 +49,13 @@ converter.register_structure_hook_factory(
     lambda t: isinstance(t, _types.UnionType), _new_union_structure_fn
 )
 
-_result_format_union = typing.Union[Literal["json"], Literal["string"]]
-converter.register_structure_hook(_result_format_union, _result_format_union_structure)
+_result_format_union = Literal["json", "string"]
+# Registered by predicate rather than by type: `register_structure_hook` routes
+# types through `functools.singledispatch.register`, which rejects anything that
+# is not a class or a union — `Literal` included — since Python 3.14.
+converter.register_structure_hook_func(
+    lambda t: t is _result_format_union, _result_format_union_structure
+)
 
 # Camel-case structuring for protocol options (wire uses camelCase, Python fields use snake_case)
 converter.register_structure_hook(

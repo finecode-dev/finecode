@@ -5,7 +5,7 @@ import typing
 
 from finecode_extension_api import service
 
-__all__ = ["HandlerInfo", "ActionInfo", "IWorkspaceActionRegistry"]
+__all__ = ["ActionInfo", "HandlerInfo", "IWorkspaceActionRegistry"]
 
 
 @dataclasses.dataclass(frozen=True)

@@ -135,8 +135,7 @@ def set_log_level_for_group(group: str, level: LogLevel | None):
 
 
 def reset_log_level_for_group(group: str):
-    if group in log_level_by_group:
-        del log_level_by_group[group]
+    log_level_by_group.pop(group, None)
 
 
 def set_forward_sender(sender: typing.Callable[[list[dict]], None] | None) -> None:
@@ -251,13 +250,13 @@ def setup_logging(
 
 
 __all__ = [
+    "apply_logging_config",
+    "reset_log_level_for_group",
     "save_logs_to_file",
     "set_default_log_level",
-    "set_log_level_for_group",
-    "reset_log_level_for_group",
-    "apply_logging_config",
-    "setup_logging",
     "set_forward_sender",
     "set_log_forwarding",
+    "set_log_level_for_group",
+    "setup_logging",
     "should_forward",
 ]

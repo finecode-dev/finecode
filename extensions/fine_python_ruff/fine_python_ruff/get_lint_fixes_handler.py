@@ -148,12 +148,12 @@ class RuffGetLintFixesHandler(
 
         file_path = resource_uri_to_path(payload.file_path)
 
-        async with self.file_editor.session(
-            author=self.FILE_OPERATION_AUTHOR
-        ) as session:
-            async with session.read_file(file_path=file_path) as file_info:
-                file_content: str = file_info.content
-                file_version: str = file_info.version
+        async with (
+            self.file_editor.session(author=self.FILE_OPERATION_AUTHOR) as session,
+            session.read_file(file_path=file_path) as file_info,
+        ):
+            file_content: str = file_info.content
+            file_version: str = file_info.version
 
         # The run context pins one base version for the whole run (design note D6),
         # so that concurrent handlers computing fixes for one file agree on the

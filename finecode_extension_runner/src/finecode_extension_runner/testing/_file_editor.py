@@ -15,7 +15,7 @@ def _version_of(content: str) -> str:
 
 
 class _EmptyAsyncIterator:
-    def __aiter__(self) -> "_EmptyAsyncIterator":
+    def __aiter__(self) -> _EmptyAsyncIterator:
         return self
 
     async def __anext__(self) -> typing.Never:

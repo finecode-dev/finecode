@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import os
 import shutil
 import signal
@@ -59,7 +60,7 @@ def start_server(args: list[str], cwd: Path) -> subprocess.Popen:
     failure) via a background thread so the pipe buffer never blocks the child.
     """
     proc = subprocess.Popen(
-        [sys.executable, "-m", "finecode"] + args,
+        [sys.executable, "-m", "finecode", *args],
         cwd=cwd,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.PIPE,
@@ -87,10 +88,8 @@ def sigint_group(proc: subprocess.Popen) -> None:
     if sys.platform == "win32":
         os.kill(proc.pid, signal.CTRL_C_EVENT)
     else:
-        try:
+        with contextlib.suppress(ProcessLookupError):
             os.killpg(proc.pid, signal.SIGINT)
-        except ProcessLookupError:
-            pass
 
 
 def kill_group(proc: subprocess.Popen) -> None:
@@ -113,7 +112,7 @@ def kill_group(proc: subprocess.Popen) -> None:
                 except psutil.NoSuchProcess:
                     pass
             parent.kill()
-        except Exception:
+        except Exception:  # noqa: BLE001
             proc.kill()
     else:
         try:

@@ -1,5 +1,5 @@
 import pathlib
-from typing import Callable
+from collections.abc import Callable
 
 from finecode_extension_api.interfaces import iextensionrunnerinfoprovider, ilogger
 

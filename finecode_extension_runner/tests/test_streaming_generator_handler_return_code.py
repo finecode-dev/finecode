@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import dataclasses
+from collections.abc import AsyncIterator
 from pathlib import Path
-from typing import AsyncIterator
 
 from finecode_extension_api import code_action
 

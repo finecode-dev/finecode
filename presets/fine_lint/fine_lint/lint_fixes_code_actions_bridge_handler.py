@@ -43,7 +43,7 @@ def _collect_codes(diagnostics: list[DiagnosticRef]) -> list[str] | None:
     codes: list[str] = []
     for d in diagnostics:
         codes.extend(d.codes)
-    return codes if codes else None
+    return codes or None
 
 
 def _refs_matching_fix(

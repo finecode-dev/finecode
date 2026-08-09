@@ -410,17 +410,20 @@ async def test_config_recovery_still_refuses_a_user_run_alongside_a_refresh(
     """
     _seed_project(wm_client, tmp_path)
 
-    async with in_flight_runs.track(
-        wm_client.ws_context,
-        run_id="refresh-1",
-        action_name="extract_knowledge",
-        project_path=tmp_path,
-        cancellable=True,
-    ), in_flight_runs.track(
-        wm_client.ws_context,
-        run_id="run-8",
-        action_name="lint",
-        project_path=tmp_path,
+    async with (
+        in_flight_runs.track(
+            wm_client.ws_context,
+            run_id="refresh-1",
+            action_name="extract_knowledge",
+            project_path=tmp_path,
+            cancellable=True,
+        ),
+        in_flight_runs.track(
+            wm_client.ws_context,
+            run_id="run-8",
+            action_name="lint",
+            project_path=tmp_path,
+        ),
     ):
         result = await wm_client.request(
             "workspace/reloadConfig", {"project": str(tmp_path)}

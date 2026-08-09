@@ -32,8 +32,6 @@ from finecode_extension_api import code_action
 from finecode_extension_api import textstyler as _textstyler
 from finecode_extension_api.interfaces import (
     ifileeditor,
-    iprojectactionrunner,
-    iprojectinfoprovider,
 )
 from loguru import logger
 
@@ -811,7 +809,7 @@ async def run_action(server: ErServer, params: dict | None) -> dict:
             else:
                 logger.error("Unhandled exception in action run:")
                 logger.exception(exception)
-                error_msg = f"{type(exception)}: {str(exception)}"
+                error_msg = f"{type(exception)}: {exception!s}"
             er_wal.emit_run_event(
                 server._wal_writer,
                 event_type=er_wal.ErWalEventType.RUN_FAILED,
@@ -927,7 +925,7 @@ async def run_handlers(server: ErServer, params: dict | None) -> dict:
         else:
             logger.error("Unhandled exception in run_handlers:")
             logger.exception(exception)
-            error_msg = f"{type(exception)}: {str(exception)}"
+            error_msg = f"{type(exception)}: {exception!s}"
         er_wal.emit_run_event(
             server._wal_writer,
             event_type=er_wal.ErWalEventType.RUN_FAILED,
@@ -1094,7 +1092,7 @@ def create_er_server(wal_writer: er_wal.ErWalWriter | None = None) -> ErServer:
         token = params.get("token")
         value = params.get("value")
         if token is None or value is None:
-            logger.debug(f"$/progress from WM: missing token or value")
+            logger.debug("$/progress from WM: missing token or value")
             return
         try:
             value_dict = json.loads(value)

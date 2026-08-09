@@ -645,11 +645,11 @@ class LspService(service.DisposableService):
 
         uri = file_path.as_uri()
 
-        async with self._file_editor.session(
-            author=self._file_operation_author
-        ) as fe_session:
-            async with fe_session.read_file(file_path) as file_info:
-                content = file_info.content
+        async with (
+            self._file_editor.session(author=self._file_operation_author) as fe_session,
+            fe_session.read_file(file_path) as file_info,
+        ):
+            content = file_info.content
 
         with self._diagnostics_interest(uri) as event:
             async with self._document_open(file_path, uri, content) as synced:
@@ -1154,7 +1154,7 @@ class LspService(service.DisposableService):
         false for specific capabilities. Returning null (None) acknowledges the
         registration per LSP spec without actually applying any behaviour change.
         """
-        return None
+        return
 
     async def _handle_inlay_hint_refresh(self, params: dict[str, Any] | None) -> None:
         """Handle workspace/inlayHint/refresh from the LSP server.
@@ -1163,7 +1163,7 @@ class LspService(service.DisposableService):
         invalidate. Null is the response the protocol defines for this request,
         and answering it keeps the server from seeing an unhandled method.
         """
-        return None
+        return
 
     async def _handle_configuration_request(
         self, params: dict[str, Any] | None

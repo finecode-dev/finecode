@@ -4,7 +4,8 @@ import asyncio
 import collections.abc
 import dataclasses
 import typing
-from typing import Any, Awaitable, Callable
+from collections.abc import Awaitable, Callable
+from typing import Any
 
 from finecode_extension_api import code_action
 from finecode_extension_api.interfaces import iprojectactionrunner

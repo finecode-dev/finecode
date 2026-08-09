@@ -459,7 +459,7 @@ async def run_action(
             run_context = action_exec_info.run_context_type(**constructor_args)
         except Exception as exception:
             raise ActionFailedException(
-                f"Failed to instantiate run context of action {action_def.name}(Run {run_id}): {str(exception)}."
+                f"Failed to instantiate run context of action {action_def.name}(Run {run_id}): {exception!s}."
                 + " See ER logs for more details"
             ) from exception
     else:
@@ -482,7 +482,7 @@ async def run_action(
         run_context_instance = await run_context.__aenter__()
     except Exception as exception:
         raise ActionFailedException(
-            f"Failed to enter run context of action {action_def.name}(Run {run_id}): {str(exception)}."
+            f"Failed to enter run context of action {action_def.name}(Run {run_id}): {exception!s}."
             + " See ER logs for more details"
         ) from exception
 
@@ -792,7 +792,7 @@ async def run_action(
             await run_context_instance.__aexit__(None, None, None)
         except Exception as exception:
             raise ActionFailedException(
-                f"Failed to exit run context of action {action_def.name}(Run {run_id}): {str(exception)}."
+                f"Failed to exit run context of action {action_def.name}(Run {run_id}): {exception!s}."
                 + " See ER logs for more details"
             ) from exception
 
@@ -929,7 +929,7 @@ async def run_action_raw(
 
 def action_result_to_run_action_response(
     action_result: code_action.RunActionResult | None,
-    asked_result_formats: list[typing.Literal["json"] | typing.Literal["string"]],
+    asked_result_formats: list[typing.Literal["json", "string"]],
 ) -> schemas.RunActionResponse:
     result_by_format: dict[str, dict[str, typing.Any] | str] = {}
     run_return_code = code_action.RunReturnCode.SUCCESS

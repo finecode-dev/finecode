@@ -6,8 +6,8 @@ from fine_toml_tombi.semantic_tokens_handler import (
 )
 
 __all__ = [
-    "TombiLintTomlFilesHandler",
     "TombiFormatTomlFileHandler",
+    "TombiLintTomlFilesHandler",
     "TombiSemanticTokensHandler",
     "TombiSemanticTokensHandlerConfig",
 ]

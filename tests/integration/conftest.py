@@ -7,6 +7,7 @@ TCP loopback connection — no subprocess, no ``tests/e2e/``.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import uuid
 
 import pytest
@@ -82,14 +83,12 @@ class InProcClient:
 
     async def close(self) -> None:
         self._task.cancel()
-        try:
+        with contextlib.suppress(asyncio.CancelledError):
             await self._task
-        except asyncio.CancelledError:
-            pass
         self._writer.close()
         try:
             await self._writer.wait_closed()
-        except Exception:
+        except Exception:  # noqa: BLE001, S110
             pass
 
 

@@ -6,8 +6,8 @@ from .type_check_files_handler import (
 )
 
 __all__ = [
-    "MypySingleAstProvider",
     "IMypySingleAstProvider",
+    "MypySingleAstProvider",
     "MypyTypeCheckFilesHandler",
     "MypyTypeCheckFilesHandlerConfig",
 ]

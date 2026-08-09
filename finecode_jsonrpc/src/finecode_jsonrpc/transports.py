@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import collections.abc
+import contextlib
 import json
 import re
 import subprocess  # needed for windows
@@ -192,13 +193,11 @@ class StdioTransport:
                 await stdin.drain()
         except asyncio.CancelledError:
             pass
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
             logger.error(f"Error writing message | {self._readable_id}: {exc}")
         finally:
-            try:
+            with contextlib.suppress(Exception):
                 stdin.close()
-            except Exception:
-                pass
         logger.debug(f"End writing messages | {self._readable_id}")
 
     async def _read_messages(self, stdout: asyncio.StreamReader) -> None:
@@ -255,7 +254,7 @@ class StdioTransport:
                     if self._on_message is not None:
                         try:
                             await self._on_message(message)
-                        except Exception as exc:
+                        except Exception as exc:  # noqa: BLE001
                             logger.exception(
                                 f"Error in message handler | {self._readable_id}: {exc}"
                             )
@@ -294,5 +293,5 @@ class StdioTransport:
         if self._on_exit is not None:
             try:
                 await self._on_exit()
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001
                 logger.exception(f"Error in exit handler | {self._readable_id}: {exc}")

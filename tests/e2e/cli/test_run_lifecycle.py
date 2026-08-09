@@ -11,6 +11,8 @@ import pytest
 
 psutil = pytest.importorskip("psutil")
 
+import contextlib
+
 from tests.e2e.conftest import kill_group
 
 
@@ -86,7 +88,5 @@ def test_wm_exits_after_cli_run_completes(workspace_dir_with_er):
     finally:
         kill_group(proc)
         if wm_pid is not None:
-            try:
+            with contextlib.suppress(psutil.NoSuchProcess):
                 psutil.Process(wm_pid).kill()
-            except psutil.NoSuchProcess:
-                pass

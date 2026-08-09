@@ -115,7 +115,7 @@ class MkdocsServeDocsHandler(
                 process.terminate()
                 try:
                     await asyncio.wait_for(process.wait(), timeout=5.0)
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     process.kill()
                     await process.wait()
             self.logger.debug(f"mkdocs serve exit code: {process.returncode}")

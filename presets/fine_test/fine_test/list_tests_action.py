@@ -74,7 +74,7 @@ class TestItem:
     line: int | None = None
     """0-based line number."""
 
-    children: list["TestItem"] = dataclasses.field(default_factory=list)
+    children: list[TestItem] = dataclasses.field(default_factory=list)
     """Child nodes (e.g. test functions inside a class, classes inside a file)."""
 
 

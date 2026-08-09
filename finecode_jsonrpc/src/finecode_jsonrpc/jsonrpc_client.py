@@ -279,7 +279,7 @@ class JsonRpcSessionImpl:
 
         try:
             result = await handler(message.get("params"))
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
             logger.exception(
                 f"Error handling server request '{method}' | {self._readable_id}: {exc}"
             )
@@ -309,7 +309,7 @@ class JsonRpcSessionImpl:
         if handler is not None:
             try:
                 await handler(message.get("params"))
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001
                 logger.exception(
                     f"Error handling notification '{method}' | {self._readable_id}: {exc}"
                 )

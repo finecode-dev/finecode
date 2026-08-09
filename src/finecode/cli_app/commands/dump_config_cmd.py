@@ -1,11 +1,11 @@
 # docs: docs/cli.md
 import pathlib
 
+from finecode_extension_api.resource_uri import path_to_resource_uri
 from loguru import logger
 
 from finecode.wm_client import ApiClient, ApiError
 from finecode.wm_server import wm_lifecycle
-from finecode_extension_api.resource_uri import path_to_resource_uri
 
 
 class DumpFailed(Exception):

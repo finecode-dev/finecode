@@ -28,7 +28,7 @@ import cattrs
 import culsans
 from loguru import logger
 
-from finecode_jsonrpc import _io_thread
+from finecode_jsonrpc import _io_thread, error_codes
 from finecode_jsonrpc._converter import converter as _converter
 from finecode_jsonrpc.tracing import ITracingHooks
 
@@ -46,24 +46,16 @@ QUEUE_END = QueueEnd()
 # JSON-RPC 2.0 Standard Error Codes
 # See: https://www.jsonrpc.org/specification#error_object
 class JsonRpcErrorCode:
-    """Standard JSON-RPC 2.0 error codes."""
+    """Standard JSON-RPC 2.0 error codes.
 
-    PARSE_ERROR = -32700
-    """Invalid JSON was received by the server. An error occurred on the server while parsing the JSON text."""
+    Values live in `error_codes`, which is their single home in this package.
+    """
 
-    INVALID_REQUEST = -32600
-    """The JSON sent is not a valid Request object."""
-
-    METHOD_NOT_FOUND = -32601
-    """The method does not exist / is not available."""
-
-    INVALID_PARAMS = -32602
-    """Invalid method parameter(s)."""
-
-    INTERNAL_ERROR = -32603
-    """Internal JSON-RPC error."""
-
-    # -32000 to -32099: Server error - Reserved for implementation-defined server-errors
+    PARSE_ERROR = error_codes.PARSE_ERROR
+    INVALID_REQUEST = error_codes.INVALID_REQUEST
+    METHOD_NOT_FOUND = error_codes.METHOD_NOT_FOUND
+    INVALID_PARAMS = error_codes.INVALID_PARAMS
+    INTERNAL_ERROR = error_codes.INTERNAL_ERROR
 
 
 class WriterFromQueue:
@@ -165,6 +157,7 @@ class JsonRpcClient:
         readable_id: str,
         communication_type: CommunicationType = CommunicationType.TCP,
         tracing: ITracingHooks | None = None,
+        request_cancelled_code: int = error_codes.DEFAULT_REQUEST_CANCELLED,
     ) -> None:
         self.server_process_stopped: typing.Final = threading.Event()
         # Set as soon as the OS process is spawned (before the port handshake),
@@ -179,6 +172,10 @@ class JsonRpcClient:
         self.message_types = message_types
         self.readable_id: str = readable_id
         self.communication_type = communication_type
+        # Which error code an incoming request gets answered with when its
+        # handler is cancelled. See error_codes.DEFAULT_REQUEST_CANCELLED for
+        # why this is a parameter rather than a constant.
+        self._request_cancelled_code = request_cancelled_code
 
         self._async_tasks: list[asyncio.Task[typing.Any]] = []
         self._stop_event: typing.Final = threading.Event()
@@ -326,11 +323,8 @@ class JsonRpcClient:
 
     async def _server_process_stop_handler(self):
         """Cleanup handler that runs when the server process managed by the client exits"""
-        # await asyncio.to_thread(self.server_process_stopped.wait)
-
         logger.trace(f"Server process stopped handler {self.readable_id}")
-        while not self.server_process_stopped.is_set():
-            await asyncio.sleep(0.1)
+        await asyncio.to_thread(self.server_process_stopped.wait)
 
         logger.debug(f"Server process {self.readable_id} stopped")
 
@@ -373,12 +367,11 @@ class JsonRpcClient:
             subprocess.run(
                 ["taskkill", "/F", "/T", "/PID", str(self.pid)],
                 capture_output=True,
+                check=False,
             )
         else:
-            try:
+            with contextlib.suppress(ProcessLookupError):
                 os.killpg(self.pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
 
     def _send_data(self, data: str):
         header = (
@@ -393,7 +386,7 @@ class JsonRpcClient:
             logger.debug(
                 f"Cannot send data to {self.readable_id}: client already disconnected"
             )
-        except Exception as error:
+        except Exception as error:  # noqa: BLE001
             # the writer puts a message in the queue without size, so no exception
             # are expected. If one internal come such as shutdown exception because of
             # mistake in implementation, log it
@@ -434,8 +427,10 @@ class JsonRpcClient:
 
         try:
             notification_params_type = self.message_types[method][1]
-        except KeyError:
-            raise ValueError(f"Type of notification params for {method} not found")
+        except KeyError as error:
+            raise ValueError(
+                f"Type of notification params for {method} not found"
+            ) from error
 
         if notification_params_type is not None:
             notification_params_dict = _converter.unstructure(params)
@@ -471,8 +466,8 @@ class JsonRpcClient:
     ) -> concurrent.futures.Future[typing.Any]:
         try:
             request_params_type = self.message_types[method][1]
-        except KeyError:
-            raise ValueError(f"Type for method {method} not found")
+        except KeyError as error:
+            raise ValueError(f"Type for method {method} not found") from error
 
         msg_id = str(uuid.uuid4())
         logger.debug(
@@ -487,8 +482,8 @@ class JsonRpcClient:
         future = concurrent.futures.Future()
         try:
             self._expected_result_type_by_msg_id[msg_id] = self.message_types[method][2]
-        except KeyError:
-            raise ValueError(f"Message type not found for {method}")
+        except KeyError as error:
+            raise ValueError(f"Message type not found for {method}") from error
 
         self._sync_request_futures[msg_id] = future
 
@@ -534,8 +529,8 @@ class JsonRpcClient:
     ) -> typing.Any:
         try:
             request_params_type = self.message_types[method][1]
-        except KeyError:
-            raise ValueError(f"Type for method {method} not found")
+        except KeyError as error:
+            raise ValueError(f"Type for method {method} not found") from error
 
         msg_id = str(uuid.uuid4())
         logger.debug(
@@ -579,8 +574,8 @@ class JsonRpcClient:
                 self._expected_result_type_by_msg_id[msg_id] = self.message_types[
                     method
                 ][2]
-            except KeyError:
-                raise ValueError(f"Message type not found for {method}")
+            except KeyError as error:
+                raise ValueError(f"Message type not found for {method}") from error
 
             self._send_data(request_str)
 
@@ -591,11 +586,11 @@ class JsonRpcClient:
                 )
                 logger.debug(f"Got response on {method} from {self.readable_id}")
                 return response
-            except TimeoutError:
+            except TimeoutError as error:
                 raise ResponseTimeout(
                     f"Timeout {timeout}s for response on {method} to"
                     f" runner {self.readable_id}"
-                )
+                ) from error
             except asyncio.CancelledError as error:
                 raise RequestCancelledError(request_id=msg_id) from error
 
@@ -613,7 +608,7 @@ class JsonRpcClient:
 
                 try:
                     await self.handle_message(raw_message)
-                except Exception as exc:
+                except Exception as exc:  # noqa: BLE001
                     logger.exception(exc)
                 finally:
                     self.in_message_queue.async_q.task_done()
@@ -725,6 +720,12 @@ class JsonRpcClient:
                 new_task = asyncio.create_task(
                     self.run_feature_impl(message_id, impl(request.params), result_type)
                 )
+                new_task.add_done_callback(
+                    functools.partial(
+                        task_done_log_callback,
+                        task_id=f"run_feature_impl|{method}|{message_id}|{self.readable_id}",
+                    )
+                )
                 self._async_tasks.append(new_task)
             else:
                 # response on our request
@@ -810,6 +811,12 @@ class JsonRpcClient:
             new_task = asyncio.create_task(
                 self.run_notification_impl(impl(notification.params))
             )
+            new_task.add_done_callback(
+                functools.partial(
+                    task_done_log_callback,
+                    task_id=f"run_notification_impl|{method}|{self.readable_id}",
+                )
+            )
             self._async_tasks.append(new_task)
 
     async def run_feature_impl(
@@ -829,7 +836,30 @@ class JsonRpcClient:
             response_str = json.dumps(response_dict)
             logger.debug(f"Sending response for request {message_id}")
             self._send_data(response_str)
-        except Exception as exception:
+        except asyncio.CancelledError:
+            # JSON-RPC 2.0 requires exactly one response per request, and
+            # cancellation is not an `Exception`, so without this branch the
+            # request is answered by nothing at all and the peer waits for a
+            # response that will never come — indefinitely, if it sent the
+            # request without a timeout.
+            logger.debug(f"Handler of message {message_id} was cancelled")
+            self._send_error_response(
+                request_id=message_id,
+                code=self._request_cancelled_code,
+                message="Request cancelled",
+            )
+            current_task = asyncio.current_task()
+            if current_task is not None and current_task.cancelling() > 0:
+                # This task really was cancelled (loop teardown, an explicit
+                # .cancel()). The response is out; now honour the cancellation
+                # instead of reporting the task as completed normally.
+                raise
+            # Otherwise nobody cancelled this task: a nested *outbound* request
+            # made by the handler was cancelled and surfaced as
+            # RequestCancelledError, which subclasses CancelledError by design.
+            # This task is healthy, so leave it in a completed state — marking
+            # it cancelled would misreport it to done-callbacks and awaiters.
+        except Exception as exception:  # noqa: BLE001
             message = getattr(exception, "message", None) or str(exception)
             if not message:
                 message = type(exception).__name__
@@ -856,25 +886,21 @@ class JsonRpcClient:
             )
         finally:
             current_task = asyncio.current_task()
-            try:
+            with contextlib.suppress(ValueError):
                 self._async_tasks.remove(current_task)
-            except ValueError:
-                ...
 
     async def run_notification_impl(self, impl_coro) -> None:
         try:
             await impl_coro
-        except Exception as exception:
+        except Exception as exception:  # noqa: BLE001
             logger.warning(
                 f"Error occured on running handler of message | {self.readable_id}"
             )
             logger.exception(exception)
         finally:
             current_task = asyncio.current_task()
-            try:
+            with contextlib.suppress(ValueError):
                 self._async_tasks.remove(current_task)
-            except ValueError:
-                ...
 
     async def _connect_to_server_io(self, timeout: float | None) -> None:
         if self.communication_type == CommunicationType.TCP:
@@ -1364,7 +1390,7 @@ async def read_messages_from_reader(
                         logger.debug(
                             f'Something is wrong: {content_length} "{header}" {not header.strip()} | {server_id}'
                         )
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001
                 logger.exception(
                     f"Exception in message reader loop | {server_id}: {exc}"
                 )

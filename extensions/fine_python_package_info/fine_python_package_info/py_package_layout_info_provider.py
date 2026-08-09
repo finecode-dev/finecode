@@ -45,12 +45,12 @@ class PyPackageLayoutInfoProvider(
         except icache.CacheMissException:
             ...
 
-        async with self.file_editor.session(
-            author=self.FILE_OPERATION_AUTHOR
-        ) as session:
-            async with session.read_file(file_path=package_def_file) as file_info:
-                package_def_file_content: str = file_info.content
-                package_def_file_version: str = file_info.version
+        async with (
+            self.file_editor.session(author=self.FILE_OPERATION_AUTHOR) as session,
+            session.read_file(file_path=package_def_file) as file_info,
+        ):
+            package_def_file_content: str = file_info.content
+            package_def_file_version: str = file_info.version
 
         try:
             package_def_dict = tomlkit.loads(package_def_file_content)

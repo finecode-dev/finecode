@@ -27,7 +27,7 @@ class InMemoryCache(icache.ICache):
 
         if file_version != current_file_version:
             # `value` was created for older version of file, don't save it
-            return None
+            return
 
         if file_path not in self.cache_by_file:
             # no cache for file, create

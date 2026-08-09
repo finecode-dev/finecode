@@ -59,11 +59,11 @@ class PyreflyTypeHierarchySubtypesHandler(
         root_uri = self.project_info_provider.get_current_project_dir_path().as_uri()
         await self.lsp_service.ensure_started(root_uri)
 
-        async with self.file_editor.session(
-            author=self.FILE_OPERATION_AUTHOR
-        ) as session:
-            async with session.read_file(file_path) as file_info:
-                content = file_info.content
+        async with (
+            self.file_editor.session(author=self.FILE_OPERATION_AUTHOR) as session,
+            session.read_file(file_path) as file_info,
+        ):
+            content = file_info.content
 
         item_dict = type_hierarchy_item_to_lsp(payload.item)
         raw_result = await self.lsp_service.get_type_hierarchy_subtypes(

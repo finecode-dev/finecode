@@ -21,13 +21,13 @@ from finecode_extension_runner.testing._stubs import (
 __all__ = [
     "CollectingPartialResultSender",
     "CollectingProgressSender",
-    "handler_test_session",
     "InMemoryFileEditor",
     "InMemoryWalWriter",
     "LanguageDispatchCoverageTests",
     "NoOpLogger",
     "NullWalWriter",
-    "run_handler",
     "Session",
     "WalEvent",
+    "handler_test_session",
+    "run_handler",
 ]

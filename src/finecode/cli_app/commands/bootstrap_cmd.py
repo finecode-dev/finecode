@@ -98,7 +98,7 @@ async def _run(
     pyproject_path = workdir_path / "pyproject.toml"
     if not pyproject_path.exists():
         raise BootstrapFailed(
-            f"pyproject.toml not found: bootstrap must be run from the workspace/project root"
+            "pyproject.toml not found: bootstrap must be run from the workspace/project root"
         )
 
     # Discover projects (no runners — venv may not exist yet).
@@ -175,4 +175,4 @@ async def _run(
     )
 
 
-__all__ = ["bootstrap", "BootstrapFailed"]
+__all__ = ["BootstrapFailed", "bootstrap"]

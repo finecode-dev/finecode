@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import collections.abc
+import contextlib
 import json
 import re
 import sys
@@ -167,7 +168,7 @@ class ServerStdioTransport:
                 write_transport.write(data)  # type: ignore[attr-defined]
         except asyncio.CancelledError:
             pass
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
             logger.error(f"Error writing message | {self._readable_id}: {exc}")
         logger.debug(f"End writing messages | {self._readable_id}")
 
@@ -185,7 +186,7 @@ class ServerStdioTransport:
         if self._on_exit is not None:
             try:
                 await self._on_exit()
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001
                 logger.exception(f"Error in exit handler | {self._readable_id}: {exc}")
 
     async def _read_messages_newline(self, reader: asyncio.StreamReader) -> None:
@@ -194,7 +195,7 @@ class ServerStdioTransport:
             while not self._stop_event.is_set():
                 try:
                     line = await asyncio.wait_for(reader.readline(), timeout=0.1)
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     continue
                 except (ValueError, ConnectionResetError) as exc:
                     logger.warning(f"Read error | {self._readable_id}: {exc}")
@@ -223,7 +224,7 @@ class ServerStdioTransport:
                 if self._on_message is not None:
                     try:
                         await self._on_message(message)
-                    except Exception as exc:
+                    except Exception as exc:  # noqa: BLE001
                         logger.exception(
                             f"Error in message handler | {self._readable_id}: {exc}"
                         )
@@ -238,7 +239,7 @@ class ServerStdioTransport:
             while not self._stop_event.is_set():
                 try:
                     header = await asyncio.wait_for(reader.readline(), timeout=0.1)
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     continue
                 except (ValueError, ConnectionResetError) as exc:
                     logger.warning(f"Read error | {self._readable_id}: {exc}")
@@ -285,7 +286,7 @@ class ServerStdioTransport:
                     if self._on_message is not None:
                         try:
                             await self._on_message(message)
-                        except Exception as exc:
+                        except Exception as exc:  # noqa: BLE001
                             logger.exception(
                                 f"Error in message handler | {self._readable_id}: {exc}"
                             )
@@ -380,10 +381,8 @@ class TcpServerTransport:
             await asyncio.gather(*self._tasks, return_exceptions=True)
         self._tasks.clear()
 
-        try:
+        with contextlib.suppress(Exception):
             self._writer.close()
-        except Exception:
-            pass
 
         logger.debug(f"TcpServerTransport stopped | {self._readable_id}")
 
@@ -420,13 +419,11 @@ class TcpServerTransport:
                 await writer.drain()
         except asyncio.CancelledError:
             pass
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
             logger.error(f"Error writing message | {self._readable_id}: {exc}")
         finally:
-            try:
+            with contextlib.suppress(Exception):
                 writer.close()
-            except Exception:
-                pass
         logger.debug(f"End writing messages | {self._readable_id}")
 
     async def _read_messages(self, reader: asyncio.StreamReader) -> None:
@@ -482,7 +479,7 @@ class TcpServerTransport:
                     if self._on_message is not None:
                         try:
                             await self._on_message(message)
-                        except Exception as exc:
+                        except Exception as exc:  # noqa: BLE001
                             logger.exception(
                                 f"Error in message handler | {self._readable_id}: {exc}"
                             )
@@ -498,5 +495,5 @@ class TcpServerTransport:
         if self._on_exit is not None:
             try:
                 await self._on_exit()
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001
                 logger.exception(f"Error in exit handler | {self._readable_id}: {exc}")

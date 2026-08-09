@@ -169,12 +169,12 @@ class Flake8LintFilesHandler(
         except icache.CacheMissException:
             pass
 
-        async with self.file_editor.session(
-            author=self.FILE_OPERATION_AUTHOR
-        ) as session:
-            async with session.read_file(file_path=file_path) as file_info:
-                file_content: str = file_info.content
-                file_version: str = file_info.version
+        async with (
+            self.file_editor.session(author=self.FILE_OPERATION_AUTHOR) as session,
+            session.read_file(file_path=file_path) as file_info,
+        ):
+            file_content: str = file_info.content
+            file_version: str = file_info.version
 
         try:
             file_ast = await self.ast_provider.get_file_ast(file_path=file_path)
@@ -202,7 +202,7 @@ class Flake8LintFilesHandler(
     ) -> None:
         if self.config.select is not None and len(self.config.select) == 0:
             # empty set of rules is selected, no need to run flake8
-            return None
+            return
 
         file_uris = [file_uri async for file_uri in payload]
 
