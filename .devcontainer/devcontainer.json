@@ -6,7 +6,24 @@
     ],
     "service": "workspace",
     "shutdownAction": "stopCompose",
-    "postCreateCommand": "sh .devcontainer/post-create-dev-workspace.sh && sh .devcontainer/setup-shell.sh",
+    // Node.js is required by the pi coding agent, which setup_system installs via
+    // npm. Pi's preflight rejects anything older than 22.19.0, so Debian's own
+    // nodejs package is not an option, and so is the node devcontainer feature: the
+    // base image already ships nvm itself, and running the feature on top of that
+    // hits a BuildKit bug writing into nvm's cache dir. setup-node.sh installs Node
+    // via that pre-existing nvm instead, at container-create time. See
+    // setup-node.sh for the full explanation.
+    // remoteEnv (not containerEnv): containerEnv is baked into the compose
+    // service's own environment, including its `sleep infinity` entrypoint process —
+    // and "${containerEnv:PATH}" does not self-resolve there, so it overwrote PATH
+    // with the literal unexpanded string and broke everything, including `sleep`.
+    // remoteEnv only applies to devcontainer-managed processes (postCreateCommand,
+    // terminals), where the substitution does work.
+    "remoteEnv": {
+        "NVM_DIR": "/usr/local/share/nvm",
+        "PATH": "/usr/local/share/nvm/current/bin:${containerEnv:PATH}"
+    },
+    "postCreateCommand": "sh .devcontainer/setup-node.sh && sh .devcontainer/post-create-dev-workspace.sh && sh .devcontainer/setup-shell.sh",
     "customizations": {
         "vscode": {
             "extensions": [

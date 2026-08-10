@@ -5,6 +5,15 @@ This directory contains the DevContainer configuration for developing FineCode i
 - `devcontainer.json`: Main configuration file for VS Code DevContainers.
 - `docker-compose.devcontainer.yml`: Compose service definition for the main workspace container.
 
+## Node.js
+
+Node.js 22 is a runtime dependency of `setup_system` handlers that install
+npm-distributed tools (e.g. pi coding agent, which rejects Node older than
+22.19.0). The base image already ships `nvm` itself (no Node version installed), so
+`setup-node.sh` installs Node 22 through that pre-existing `nvm` in
+`postCreateCommand`. Because Node is installed via nvm under
+the `vscode` user, `npm install -g` works without sudo.
+
 ## Local observability stack (opt-in)
 
 The devcontainer includes the repository-level `docker-compose.otel.yml`, but all of
