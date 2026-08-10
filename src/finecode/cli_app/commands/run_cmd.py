@@ -9,7 +9,7 @@ import uuid
 import click
 from loguru import logger
 
-from finecode.cli_app import utils
+from finecode.cli_app import payload_uris, utils
 from finecode.cli_app.log_render import render_log_records, user_message_log_level
 from finecode.wm_client import ApiClient, ApiError, ReconnectPolicy
 from finecode.wm_server import wm_lifecycle
@@ -230,6 +230,14 @@ async def run_actions(
                 raise RunFailed(f"Unknown action(s): {unknown_actions}")
             action_sources = [name_to_source[a] for a in actions]
 
+            action_payload = await _absolutize_payload_resources(
+                client=client,
+                action_payload=action_payload,
+                action_sources=action_sources,
+                project_paths=project_paths,
+                base_dir=workdir_path,
+            )
+
             # Workspace-scoped actions run once on the root project and stream all
             # their sub-project output tagged with that single root path.  Repeating
             # the root header for every partial adds no information, so suppress it
@@ -411,6 +419,56 @@ def _build_streaming_result(
         return_code=overall_return_code,
         result_by_project=result_by_project,
     )
+
+
+async def _absolutize_payload_resources(
+    client: ApiClient,
+    action_payload: dict[str, typing.Any],
+    action_sources: list[str],
+    project_paths: list[str] | None,
+    base_dir: pathlib.Path,
+) -> dict[str, typing.Any]:
+    """Make every resource in *action_payload* absolute before it leaves the CLI.
+
+    Which fields hold resources comes from the actions' own payload schemas, so
+    a plain path is accepted wherever an action declares a ``ResourceUri`` and
+    nowhere else.
+
+    A relative ``file://`` URI that no schema accounts for stops the run.  It
+    cannot be left alone — each ER would resolve it against its own directory,
+    silently reading a different file per project — and it cannot be rewritten
+    either, because without a schema there is nothing saying the field is a
+    resource at all.  Refusing is the only answer that never acts on a guess.
+    """
+    # Any project the action runs in resolves the same payload types; the first
+    # requested one is as good as any, and the workspace root serves when the
+    # run is not restricted to a subset.
+    schema_project = project_paths[0] if project_paths else str(base_dir)
+    try:
+        schemas = await client.get_payload_schemas(schema_project, action_sources)
+    except ApiError as exc:
+        logger.debug(f"Could not read payload schemas from '{schema_project}': {exc}")
+        schemas = {}
+
+    properties = payload_uris.merge_payload_properties(schemas)
+    resolved = payload_uris.absolutize_payload(action_payload, properties, base_dir)
+
+    unresolved = payload_uris.find_unresolved_relative_uris(resolved)
+    if unresolved:
+        unschemad = [source for source in action_sources if not schemas.get(source)]
+        detail = (
+            f" No payload schema was available for {', '.join(unschemad)}"
+            f" in '{schema_project}', so these fields could not be confirmed to"
+            " hold resources."
+            if unschemad
+            else ""
+        )
+        raise RunFailed(
+            "Relative file:// URIs cannot be sent to extension runners — each"
+            " runner would resolve them against its own project directory."
+            f" Use absolute paths for: {'; '.join(unresolved)}.{detail}"
+        )
+    return resolved
 
 
 def _resolve_mapped_payload_fields(

@@ -8,18 +8,19 @@ WM server requests. If no WM server is running, starts one as a subprocess.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import pathlib
 import sys
 import uuid
 
+from finecode_extension_api.resource_uri import path_to_resource_uri
 from loguru import logger
 
 import finecode_jsonrpc
 from finecode import telemetry
 from finecode.wm_client import ApiClient, ReconnectPolicy
 from finecode.wm_server import wm_lifecycle
-from finecode_extension_api.resource_uri import path_to_resource_uri
 
 _wm_client = ApiClient()
 
@@ -488,15 +489,26 @@ async def _handle_list_tools(_params: dict | None) -> dict:
             description = (
                 schema.get("description") if schema else None
             ) or f"Run {name} on a project or the whole workspace"
-            input_schema: dict = {
-                "type": "object",
-                "properties": {
+            # A workspace-scoped action is always dispatched once and routed by
+            # the WM itself (see partial_results_service.run_action_with_partial_results:
+            # it resolves the workspace root when no project is given, and rejects
+            # an explicit one). Exposing "project" here would suggest a caller can
+            # scope the run by picking a project, which is wrong for these — the
+            # action's own payload carries whatever restriction field it defines
+            # instead (e.g. lint's project_paths), already included via schema
+            # properties below.
+            properties: dict = dict(schema["properties"]) if schema else {}
+            if action.get("scope") != "workspace":
+                properties = {
                     "project": {
                         "type": "string",
                         "description": "Absolute path to the project directory. Use the list_projects tool to see available projects. Omit to run on all projects in the workspace.",
                     },
-                    **(schema["properties"] if schema else {}),
-                },
+                    **properties,
+                }
+            input_schema: dict = {
+                "type": "object",
+                "properties": properties,
                 "required": schema.get("required", []) if schema else [],
             }
             tools.append(
@@ -721,7 +733,5 @@ def start(workdir: pathlib.Path, port_file: pathlib.Path | None = None) -> None:
             logger.info("MCP: Closing WM client")
             await _wm_client.close()
 
-    try:
+    with contextlib.suppress(KeyboardInterrupt):
         asyncio.run(_run())
-    except KeyboardInterrupt:
-        pass

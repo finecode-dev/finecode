@@ -256,6 +256,13 @@ async def show_user_message(message: str, message_type: str) -> None:
 
 
 def deserialize_action_payload(raw_payload: dict[str, str]) -> dict[str, typing.Any]:
+    """Parse raw ``--field=value`` strings into payload values.
+
+    Resource fields are left exactly as the user typed them.  Making them
+    absolute needs each action's payload schema to say which fields are
+    resources, and no schema is reachable until the WM is up — see
+    ``run_cmd._absolutize_payload_resources``, which does it there.
+    """
     deserialized_payload = {}
     for key, value in raw_payload.items():
         try:
