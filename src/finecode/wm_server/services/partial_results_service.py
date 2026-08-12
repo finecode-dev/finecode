@@ -193,6 +193,16 @@ async def run_action_with_partial_results(
         project = ws_context.ws_projects.get(pathlib.Path(project_path))
         if project is None or not isinstance(project, domain.CollectedProject):
             raise ValueError(f"Project '{project_path}' not found")
+        # Mirrors the non-streaming actions/run guard in _helpers.py: a
+        # workspace-scoped action's routing is the WM's decision (see the
+        # `else` branch below), not the caller's — accepting an explicit
+        # project here would silently narrow a workspace-wide action to one
+        # runner instead of rejecting the combination.
+        action = next((a for a in project.actions if a.name == action_name), None)
+        if action is not None and action.scope == domain.ActionScope.WORKSPACE:
+            raise ValueError(
+                f"Action '{action_name}' is workspace-scoped; do not pass a project path."
+            )
         projects = [project]
     else:
         paths = find_all_projects_with_action(action_name, ws_context)

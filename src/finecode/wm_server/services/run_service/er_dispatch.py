@@ -29,6 +29,35 @@ from finecode.wm_server.services.run_service.proxy_utils import (
 from finecode.wm_server.services.run_service.workspace_executor import WorkspaceExecutor
 
 
+_NEAREST_PROJECTS_IN_HINT = 3
+
+
+def _nearest_projects_hint(path: Path, ws_context: context.WorkspaceContext) -> str:
+    """Name the workspace projects lying closest to *path* on disk.
+
+    A workspace can hold a hundred projects, and listing all of them buries the
+    answer. The paths that get asked for and turn out not to be projects are
+    almost never random — they are a real project's path with a segment too many
+    or too few — so the projects sharing the longest prefix with the bad path are
+    the ones worth showing.
+    """
+    known = list(ws_context.ws_projects)
+    if not known:
+        return "This workspace has no projects."
+
+    def shared_segments(candidate: Path) -> int:
+        return sum(
+            1 for a, b in zip(path.parts, candidate.parts, strict=False) if a == b
+        )
+
+    nearest = sorted(known, key=shared_segments, reverse=True)[
+        :_NEAREST_PROJECTS_IN_HINT
+    ]
+    rest = len(known) - len(nearest)
+    suffix = f" (and {rest} more)" if rest > 0 else ""
+    return f"Nearest projects: {', '.join(str(p) for p in nearest)}{suffix}."
+
+
 class _BridgeHandlers:
     """``run_dispatch_bridge``'s slot, filled by the module that owns run dispatch."""
 
@@ -164,7 +193,22 @@ class _BridgeHandlers:
             )
 
         if params.project_paths:
-            actions_by_project = {Path(p): [action_name] for p in params.project_paths}
+            # The paths come from a handler's payload, which the WM has never
+            # vetted — typically a caller-supplied URI that some ER turned into
+            # a path. An unknown one used to surface as a bare KeyError from the
+            # dict lookup deep in proxy_utils, whose message was the repr of a
+            # PosixPath and nothing else.
+            requested = [Path(p) for p in params.project_paths]
+            unknown = [p for p in requested if p not in ws_context.ws_projects]
+            if unknown:
+                raise errors.ProjectError(
+                    f"Cannot run '{action_name}': "
+                    f"{', '.join(str(p) for p in unknown)} "
+                    f"{'are' if len(unknown) > 1 else 'is'} not a project in this "
+                    f"workspace (requested by {runner.working_dir_path}). "
+                    + " ".join(_nearest_projects_hint(p, ws_context) for p in unknown)
+                )
+            actions_by_project = {p: [action_name] for p in requested}
         else:
             actions_by_project = {
                 p: [action_name]

@@ -47,6 +47,7 @@ class RunDispatchHandlers(typing.Protocol):
         Raises:
             ActionNotFoundError: no action in the calling project has this source.
             ActionRunFailed: the action could not be dispatched, or a handler failed.
+            ProjectError: a requested project path is not a project in this workspace.
             InternalError: the calling project has no valid config.
         """
 

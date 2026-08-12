@@ -10,7 +10,14 @@ import ordered_set
 from loguru import logger
 
 from finecode import telemetry, user_messages
-from finecode.wm_server import context, domain, domain_helpers, find_project, wal
+from finecode.wm_server import (
+    context,
+    domain,
+    domain_helpers,
+    errors,
+    find_project,
+    wal,
+)
 from finecode.wm_server.config import interpreter_matrix
 from finecode.wm_server.runner import runner_client, runner_manager
 from finecode.wm_server.runner.runner_client import RunResultFormat  # reexport
@@ -859,7 +866,6 @@ async def run_actions_in_projects(
         and ws_context.ws_projects.get(p) is not None
     ]
     if unresolved:
-        from finecode.wm_server.services import runner_start_service
 
         unresolved_names = ", ".join(p.name for p in unresolved)
         logger.debug(
@@ -895,7 +901,16 @@ async def run_actions_in_projects(
     try:
         async with asyncio.TaskGroup() as tg:
             for project_dir_path, actions_to_run in actions_by_project.items():
-                project = ws_context.ws_projects[project_dir_path]
+                project = ws_context.ws_projects.get(project_dir_path)
+                if project is None:
+                    # Callers are expected to have resolved these paths against
+                    # the workspace already. Say which path is unknown anyway —
+                    # the bare KeyError this replaces reported only a PosixPath
+                    # repr, with no hint of what the path failed to match.
+                    raise errors.ProjectError(
+                        f"Cannot run {', '.join(actions_to_run)}: "
+                        f"'{project_dir_path}' is not a project in this workspace"
+                    )
                 project_payload = {
                     **action_payload,
                     **_payload_overrides_by_project.get(str(project_dir_path), {}),
