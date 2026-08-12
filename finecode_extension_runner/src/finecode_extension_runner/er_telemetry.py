@@ -1,6 +1,7 @@
 import contextlib
 import time
 from pathlib import Path
+import importlib.metadata
 
 _handler_duration_hist = None
 _handler_errors_counter = None
@@ -34,7 +35,6 @@ def apply_telemetry_config(
 
 
 def init_otel_logging(service_name: str, project_path: Path, endpoint: str) -> None:
-    import importlib.metadata
 
     from loguru import logger
     from opentelemetry._logs.severity import SeverityNumber
@@ -102,7 +102,6 @@ def init_otel_logging(service_name: str, project_path: Path, endpoint: str) -> N
 
 
 def init_tracer_provider(service_name: str, project_path: Path, endpoint: str) -> None:
-    import importlib.metadata
 
     from opentelemetry import trace
     from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
@@ -132,7 +131,6 @@ def init_tracer_provider(service_name: str, project_path: Path, endpoint: str) -
 def init_meter_provider(service_name: str, project_path: Path, endpoint: str) -> None:
     global _handler_duration_hist, _handler_errors_counter
 
-    import importlib.metadata
 
     from opentelemetry import metrics
     from opentelemetry.exporter.otlp.proto.grpc.metric_exporter import (

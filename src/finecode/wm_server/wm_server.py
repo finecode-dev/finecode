@@ -14,15 +14,16 @@ Protocol:  see _jsonrpc.py (framing) and _api_handlers.py (method implementation
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import os
 import pathlib
 import socket
 import typing
 
+import finecode_jsonrpc.client as jsonrpc_client
 from loguru import logger
 
 import finecode_jsonrpc
-import finecode_jsonrpc.client as jsonrpc_client
 from finecode.wm_server import context, domain, wal
 from finecode.wm_server._api_handlers import (
     _handle_actions_reload,
@@ -521,7 +522,7 @@ async def _handle_client(
                     logger.trace(f"[{label}] Received notification {method}")
                     try:
                         await notification_handler(params, ws_context)
-                    except Exception as exc:
+                    except Exception:
                         logger.exception(
                             f"FineCode API: error in notification {method} (client: {label})"
                         )
@@ -793,10 +794,8 @@ def stop() -> None:
     global _server, _discovery_file, _log_flush_task, _log_sink_id
 
     # flush any buffered tails to all subscribers before tearing down
-    try:
+    with contextlib.suppress(Exception):
         _log_batcher.flush_all()
-    except Exception:
-        pass
     if _log_flush_task is not None:
         _log_flush_task.cancel()
         _log_flush_task = None

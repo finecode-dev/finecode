@@ -71,11 +71,13 @@ async def test_ensure_action_metadata_raises_when_env_fails_to_start(
     async def _failing_start_runner(**_):
         raise runner_manager.RunnerFailedToStart("boom")
 
-    with mock.patch.object(
-        runner_manager, "start_runner", side_effect=_failing_start_runner
+    with (
+        mock.patch.object(
+            runner_manager, "start_runner", side_effect=_failing_start_runner
+        ),
+        pytest.raises(ActionNotResolvableError),
     ):
-        with pytest.raises(ActionNotResolvableError):
-            await proxy_utils.ensure_action_metadata(action, project, ws_context)
+        await proxy_utils.ensure_action_metadata(action, project, ws_context)
 
 
 async def test_ensure_action_metadata_raises_when_env_starts_but_class_stays_unresolved(
@@ -94,11 +96,13 @@ async def test_ensure_action_metadata_raises_when_env_starts_but_class_stays_unr
             working_dir_path=project_def.dir_path, env_name=env_name
         )
 
-    with mock.patch.object(
-        runner_manager, "start_runner", side_effect=_fake_start_runner
+    with (
+        mock.patch.object(
+            runner_manager, "start_runner", side_effect=_fake_start_runner
+        ),
+        pytest.raises(ActionNotResolvableError),
     ):
-        with pytest.raises(ActionNotResolvableError):
-            await proxy_utils.ensure_action_metadata(action, project, ws_context)
+        await proxy_utils.ensure_action_metadata(action, project, ws_context)
 
 
 async def test_ensure_action_metadata_raises_when_action_has_no_handlers(

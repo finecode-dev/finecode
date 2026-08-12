@@ -5,8 +5,6 @@ import uuid
 from typing import TYPE_CHECKING, Any
 
 from fine_semantic_tokens.text_document_semantic_tokens_action import (
-    SEMANTIC_TOKEN_MODIFIERS,
-    SEMANTIC_TOKEN_TYPES,
     SemanticToken,
 )
 from loguru import logger

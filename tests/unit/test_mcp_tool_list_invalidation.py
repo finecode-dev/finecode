@@ -14,6 +14,7 @@ from __future__ import annotations
 import pytest
 
 from finecode.mcp_server import server
+import asyncio
 
 
 class _RecordingSession:
@@ -114,7 +115,6 @@ async def test_unchanged_action_set_does_not_notify(
 def test_server_advertises_list_changed_capability() -> None:
     """The notification is only permitted if the capability was advertised at
     initialize time, so a client that never saw it may ignore it."""
-    import asyncio
 
     capabilities = asyncio.run(server._handle_initialize({}))["capabilities"]
 

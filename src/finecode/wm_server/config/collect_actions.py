@@ -4,9 +4,9 @@ from typing import Any
 
 import cattrs
 
-import finecode.wm_server.config.config_models as config_models
 from finecode._converter import converter as _converter
 from finecode.wm_server import context, domain
+from finecode.wm_server.config import config_models
 from finecode.wm_server.config.read_configs import read_env_configs
 
 

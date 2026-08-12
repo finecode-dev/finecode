@@ -1,4 +1,5 @@
 # docs: docs/guides/developing-finecode.md
+import contextlib
 import inspect
 import logging
 import sys
@@ -29,10 +30,8 @@ def init_logger(
 
     if log_groups:
         for group, level_str in log_groups.items():
-            try:
+            with contextlib.suppress(KeyError):
                 logs.set_log_level_for_group(group, logs.LogLevel[level_str.upper()])
-            except KeyError:
-                pass
 
     # pygls uses standard python logger, intercept it and pass logs to loguru
     class InterceptHandler(logging.Handler):

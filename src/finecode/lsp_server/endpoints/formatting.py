@@ -3,12 +3,12 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, cast
 
 from fine_format import format_files_action
+from finecode_extension_api.resource_uri import ResourceUri
 from loguru import logger
 from lsprotocol import types
 
 from finecode._converter import converter as _converter
 from finecode.lsp_server import global_state, pygls_types_utils
-from finecode_extension_api.resource_uri import ResourceUri
 
 if TYPE_CHECKING:
     from finecode.lsp_server.lsp_server import LspServer

@@ -13,8 +13,8 @@ from typing import Any
 
 from loguru import logger
 
-import finecode.wm_server.domain as domain
 import finecode_jsonrpc as jsonrpc_client
+from finecode.wm_server import domain
 from finecode.wm_server.domain import ErLoggingConfig
 from finecode.wm_server.runner import _internal_client_api, _internal_client_types
 from finecode.wm_server.utils.iterable_subscribe import IterableSubscribe
@@ -182,7 +182,7 @@ async def run_action(
         await _internal_client_api.cancel_request(
             client=runner.client, request_id=error.request_id
         )
-        raise error
+        raise
     except jsonrpc_client.ErrorOnRequest as error:
         if error.error.code == jsonrpc_client.REQUEST_CANCELLED:
             raise ActionRunCancelled(error.error.message) from error
@@ -258,7 +258,7 @@ async def run_handlers(
         await _internal_client_api.cancel_request(
             client=runner.client, request_id=error.request_id
         )
-        raise error
+        raise
     except jsonrpc_client.ErrorOnRequest as error:
         if error.error.code == jsonrpc_client.REQUEST_CANCELLED:
             raise ActionRunCancelled(error.error.message) from error
@@ -502,23 +502,23 @@ async def notify_document_did_change(
 
 
 __all__ = [
+    "ActionRunCancelled",
     "ActionRunFailed",
     "ActionRunStopped",
-    "ActionRunCancelled",
     "ExtensionRunnerInfo",
-    "RunnerStatus",
     "RunActionRawResult",
     "RunActionResponse",
     "RunResultFormat",
-    "run_action",
+    "RunnerConfig",
+    "RunnerStatus",
+    "get_payload_schemas",
     "merge_results",
+    "notify_document_did_close",
+    "notify_document_did_open",
     "reload_action",
     "resolve_action_meta",
-    "get_payload_schemas",
     "resolve_package_path",
-    "RunnerConfig",
+    "run_action",
     "update_config",
     "update_logging",
-    "notify_document_did_open",
-    "notify_document_did_close",
 ]

@@ -12,6 +12,7 @@ from __future__ import annotations
 import pytest
 
 from finecode.mcp_server import server
+import inspect
 
 # Each recovery tool, the operation that covers what it does not, a change class
 # it must claim, and whether it is the rung that picks up a configuration edit.
@@ -105,7 +106,6 @@ def test_the_code_rungs_never_claim_configuration_coverage() -> None:
 def test_recovery_tools_are_dispatchable() -> None:
     """PRD-0008-AC11 — a described tool that cannot be called is a description
     of nothing; every recovery tool is also handled by the call dispatcher."""
-    import inspect
 
     dispatch_source = inspect.getsource(server._handle_call_tool)
     for tool_name in _RECOVERY_TOOLS:

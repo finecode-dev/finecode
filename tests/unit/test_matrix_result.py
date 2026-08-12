@@ -8,10 +8,11 @@ property renders as `"cpython@3.11"`, per the plan's own example.
 
 import dataclasses
 
+from finecode_extension_api.code_action import RunActionResult, RunReturnCode
+
 from finecode.wm_server.config.interpreter_matrix import Interpreter
 from finecode.wm_server.matrix_result import VariantKeyedRunResult
 from finecode_extension_api import textstyler
-from finecode_extension_api.code_action import RunActionResult, RunReturnCode
 
 
 @dataclasses.dataclass

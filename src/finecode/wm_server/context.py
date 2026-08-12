@@ -6,18 +6,19 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from loguru import logger
-
-from finecode.wm_server import domain
-from finecode.wm_server.runner.runner_client import ExtensionRunnerInfo
 from finecode_extension_runner.concurrency import (
     ConcurrencyDecision,
     machine_subprocess_budget,
 )
+from loguru import logger
+
+from finecode.wm_server import domain
+from finecode.wm_server.runner.runner_client import ExtensionRunnerInfo
 
 if TYPE_CHECKING:
-    from finecode.wm_server.wal import WalWriter
     from finecode_jsonrpc._io_thread import AsyncIOThread
+
+    from finecode.wm_server.wal import WalWriter
 
 
 def resolve_er_startup_concurrency(env_value: str | None = None) -> ConcurrencyDecision:

@@ -194,7 +194,6 @@ async def start_runners_with_auto_prepare(
     On ``RunnerConfigurationError`` (missing venv or package) it runs the relevant
     ``fine_envs`` actions automatically and retries before surfacing the error.
     """
-    from finecode.wm_server.runner import runner_manager
 
     try:
         await runner_manager.start_runners_with_presets(
@@ -233,7 +232,9 @@ async def repair_no_venv_env(
     Raises ``prepare_envs_service.PrepareEnvsFailed`` if installation fails;
     propagates whatever the subsequent restart raises otherwise.
     """
-    from finecode.wm_server.services.prepare_envs_service import install_env_for_project
+    from finecode.wm_server.services.prepare_envs_service import (
+        install_env_for_project,
+    )
 
     logger.info(
         f"Environment '{env_name}' not prepared for {project.name}. "
@@ -286,7 +287,9 @@ async def get_or_start_runner_with_auto_prepare(
         if runner is None or runner.status != rc.RunnerStatus.NO_VENV:
             raise
 
-        from finecode.wm_server.services.prepare_envs_service import PrepareEnvsFailed
+        from finecode.wm_server.services.prepare_envs_service import (
+            PrepareEnvsFailed,
+        )
 
         try:
             await repair_no_venv_env(project_def, env_name, ws_context)
@@ -319,7 +322,6 @@ async def get_or_start_runners_with_presets(
     Returns the ``ExtensionRunnerInfo`` for the dev_workspace runner.
     Raises ``RunnerFailedToStart`` if the runner cannot reach RUNNING status.
     """
-    from finecode.wm_server.runner import runner_client, runner_manager
 
     has_dev_workspace_runner = (
         "dev_workspace"

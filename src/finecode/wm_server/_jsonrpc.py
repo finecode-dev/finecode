@@ -55,7 +55,7 @@ async def _read_message(reader: asyncio.StreamReader) -> dict | None:
 def _write_message(writer: asyncio.StreamWriter, msg: dict) -> None:
     """Write one Content-Length framed JSON-RPC message."""
     body = json.dumps(msg).encode("utf-8")
-    header = f"Content-Length: {len(body)}\r\n\r\n".encode("utf-8")
+    header = f"Content-Length: {len(body)}\r\n\r\n".encode()
     writer.write(header + body)
 
 

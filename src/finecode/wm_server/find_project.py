@@ -110,7 +110,4 @@ def is_project(dir_path: Path) -> bool:
         return True
 
     requirements_path = dir_path / "requirements.txt"
-    if requirements_path.exists():
-        return True
-
-    return False
+    return bool(requirements_path.exists())

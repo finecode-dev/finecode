@@ -6,12 +6,12 @@ from typing import TYPE_CHECKING, cast
 
 from fine_inspect_code import inspect_code_action
 from fine_inspect_code.diagnostic_types import Diagnostic
+from finecode_extension_api.resource_uri import ResourceUri
 from loguru import logger
 from lsprotocol import types
 
 from finecode._converter import converter as _converter
 from finecode.lsp_server import global_state, pygls_types_utils
-from finecode_extension_api.resource_uri import ResourceUri
 
 if TYPE_CHECKING:
     from finecode.lsp_server.lsp_server import LspServer
@@ -123,7 +123,7 @@ async def document_diagnostic_with_partial_results(
 
     if global_state.wm_client is None:
         logger.error("Diagnostics requested but WM client not connected")
-        return None
+        return
 
     # Store the expected response type for this token
     global_state.partial_result_tokens[partial_result_token] = (
@@ -141,7 +141,7 @@ async def document_diagnostic_with_partial_results(
         )
     except Exception as error:
         logger.error(f"Diagnostics API request failed: {error}")
-    return None
+    return
 
 
 async def document_diagnostic(

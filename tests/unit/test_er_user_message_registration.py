@@ -14,8 +14,9 @@ from __future__ import annotations
 
 import inspect
 
-from finecode.wm_server.runner import _internal_client_types as t
 from finecode_jsonrpc._converter import converter
+
+from finecode.wm_server.runner import _internal_client_types as t
 
 
 def test_er_user_message_is_registered() -> None:

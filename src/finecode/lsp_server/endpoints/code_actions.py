@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from fine_lint.apply_code_actions_action import (
@@ -136,10 +135,10 @@ def _code_action_to_lsp(action: CodeAction, file_uri: str) -> types.CodeAction:
 
     return types.CodeAction(
         title=action.title,
-        kind=action.kind if action.kind else None,
+        kind=action.kind or None,
         edit=workspace_edit,
         diagnostics=related_diagnostics,
-        is_preferred=action.is_preferred if action.is_preferred else None,
+        is_preferred=action.is_preferred or None,
         # Opaque to the client; round-tripped unchanged on codeAction/resolve.
         # provider + action_id route the resolve request back to the owning
         # provider (design note D1); file_path is carried too because resolve

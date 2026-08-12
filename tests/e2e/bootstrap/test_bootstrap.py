@@ -21,7 +21,7 @@ def _run_bootstrap(
     cwd: Path, *extra_args: str, timeout: int = 120
 ) -> subprocess.CompletedProcess:
     return subprocess.run(
-        [sys.executable, "-m", "finecode", "bootstrap"] + list(extra_args),
+        [sys.executable, "-m", "finecode", "bootstrap", *list(extra_args)],
         cwd=cwd,
         capture_output=True,
         text=True,

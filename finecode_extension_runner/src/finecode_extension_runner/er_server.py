@@ -52,6 +52,7 @@ from finecode_extension_runner.di import bootstrap as di_bootstrap
 from finecode_extension_runner.impls import (
     project_action_runner as project_action_runner_module,
 )
+import importlib
 
 # ---------------------------------------------------------------------------
 # Protocol types
@@ -1024,7 +1025,6 @@ async def resolve_source(_server: ErServer, params: dict | None) -> dict:
     last_dot = source.rfind(".")
     if last_dot == -1:
         raise ValueError(f"Invalid source path (no module separator): {source!r}")
-    import importlib
 
     module_path = source[:last_dot]
     attr_name = source[last_dot + 1 :]

@@ -8,7 +8,7 @@ from finecode.wm_server.errors import (
 
 __all__ = [
     "ActionCancelledError",
-    "ActionRunFailed",
     "ActionNotFoundError",
+    "ActionRunFailed",
     "StartingEnvironmentsFailed",
 ]

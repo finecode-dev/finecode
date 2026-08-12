@@ -227,6 +227,8 @@ async def run_matrix_with_partial_results(
     ]
     responses = await asyncio.gather(*tasks)
 
-    variants: dict[Interpreter, RunActionResponse] = dict(zip(interpreters, responses))
+    variants: dict[Interpreter, RunActionResponse] = dict(
+        zip(interpreters, responses, strict=False)
+    )
     combined = matrix_runner._combine_variant_responses(variants)
     return combined.result_by_format, combined.return_code

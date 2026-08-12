@@ -1,4 +1,5 @@
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 from finecode.wm_server.services.log_delivery import (
     ClientLogRecord,

@@ -232,7 +232,7 @@ async def _start_extension_runner_process(
             client.force_kill()
             runner.status = runner_client.RunnerStatus.FAILED
             runner.initialized_event.set()
-            raise exception
+            raise
 
         if start_with_debug:
             assert debug_port_future is not None
@@ -684,7 +684,7 @@ async def start_runners_with_presets(
         # cancel sibling startup tasks (which would leave them stuck in INITIALIZING).
         results = await asyncio.gather(*coros, return_exceptions=True)
 
-        for project, result in zip(projects_to_start, results):
+        for project, result in zip(projects_to_start, results, strict=False):
             if isinstance(result, BaseException):
                 if isinstance(
                     result,
@@ -842,11 +842,11 @@ async def _start_runner(
 
     try:
         await _init_lsp_client(runner=runner, project=project_def)
-    except RunnerFailedToStart as exception:
+    except RunnerFailedToStart:
         runner.status = runner_client.RunnerStatus.FAILED
         await notify_project_changed(project_def)
         runner.initialized_event.set()
-        raise exception
+        raise
 
     try:
         runner_info = await _internal_client_api.get_runner_info(runner.client)

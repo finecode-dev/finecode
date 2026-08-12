@@ -90,13 +90,13 @@ class InitializeParams:
     process_id: int | None = None
     """The process Id of the parent process that started
     the server.
-    
+
     Is `null` if the process has not been started by another process.
     If the parent process is not alive then the server should exit."""
 
     client_info: ClientInfo | None = None
     """Information about the client
-    
+
     @since 3.15.0"""
     # Since: 3.15.0
 
@@ -104,24 +104,24 @@ class InitializeParams:
     """The locale the client is currently showing the user interface
     in. This must not necessarily be the locale of the operating
     system.
-    
+
     Uses IETF language tags as the value's syntax
     (See https://en.wikipedia.org/wiki/IETF_language_tag)
-    
+
     @since 3.16.0"""
     # Since: 3.16.0
 
     root_path: str | None = None
     """The rootPath of the workspace. Is null
     if no folder is open.
-    
+
     @deprecated in favour of rootUri."""
 
     root_uri: str | None = None
     """The rootUri of the workspace. Is null if no
     folder is open. If both `rootPath` and `rootUri` are set
     `rootUri` wins.
-    
+
     @deprecated in favour of workspaceFolders."""
 
     initialization_options: LSPAny | None = None
@@ -135,11 +135,11 @@ class InitializeParams:
 
     workspace_folders: collections.abc.Sequence[WorkspaceFolder] | None = None
     """The workspace folders configured in the client when the server starts.
-    
+
     This property is only available if the client supports workspace folders.
     It can be `null` if the client supports workspace folders but none are
     configured.
-    
+
     @since 3.6.0"""
     # Since: 3.6.0
 
@@ -159,7 +159,7 @@ class InitializeResult(BaseResult):
 
     server_info: ServerInfo | None = None
     """Information about the server.
-    
+
     @since 3.15.0"""
     # Since: 3.15.0
 
@@ -201,19 +201,19 @@ class GeneralClientCapabilities:
     have to agree on the same position encoding to ensure that offsets
     (e.g. character position in a line) are interpreted the same on both
     sides.
-    
+
     To keep the protocol backwards compatible the following applies: if
     the value 'utf-16' is missing from the array of position encodings
     servers can assume that the client supports UTF-16. UTF-16 is
     therefore a mandatory encoding.
-    
+
     If omitted it defaults to ['utf-16'].
-    
+
     Implementation considerations: since the conversion from one encoding
     into another requires the content of the file / line the conversion
     is best done where the file is read which is usually on the server
     side.
-    
+
     @since 3.17.0"""
     # Since: 3.17.0
 
@@ -230,7 +230,7 @@ class ClientCapabilities:
 
     # notebook_document: NotebookDocumentClientCapabilities | None = None
     """Capabilities specific to the notebook document support.
-    
+
     @since 3.17.0"""
     # Since: 3.17.0
 
@@ -239,7 +239,7 @@ class ClientCapabilities:
 
     general: GeneralClientCapabilities | None = None
     """General client capabilities.
-    
+
     @since 3.16.0"""
     # Since: 3.16.0
 
@@ -276,7 +276,7 @@ optional as well.
 
 
 @enum.unique
-class TraceValue(str, enum.Enum):
+class TraceValue(enum.StrEnum):
     Off = "off"
     """Turn tracing off."""
     Messages = "messages"
@@ -311,12 +311,12 @@ class PositionEncodingKind(str, enum.Enum):
     """Character offsets count UTF-8 code units (e.g. bytes)."""
     Utf16 = "utf-16"
     """Character offsets count UTF-16 code units.
-    
+
     This is the default and must always be supported
     by servers"""
     Utf32 = "utf-32"
     """Character offsets count UTF-32 code units.
-    
+
     Implementation note: these are the same as Unicode codepoints,
     so this `PositionEncodingKind` may also be used for an
     encoding-agnostic representation of character offsets."""
@@ -387,7 +387,7 @@ class WorkspaceFoldersServerCapabilities:
     change_notifications: str | bool | None = None
     """Whether the server wants to receive workspace folder
     change notifications.
-    
+
     If a string is provided the string is treated as an ID
     under which the notification is registered on the client
     side. The ID can be used to unregister for these events
@@ -440,7 +440,7 @@ class FileOperationPattern:
 
     matches: FileOperationPatternKind | None = None
     """Whether to match files or folders with this pattern.
-    
+
     Matches both if undefined."""
 
     options: FileOperationPatternOptions | None = None
@@ -544,13 +544,13 @@ class WorkspaceOptions:
 
     workspace_folders: WorkspaceFoldersServerCapabilities | None = None
     """The server supports workspace folder.
-    
+
     @since 3.6.0"""
     # Since: 3.6.0
 
     file_operations: FileOperationOptions | None = None
     """The server is interested in notifications/requests for operations on files.
-    
+
     @since 3.16.0"""
     # Since: 3.16.0
 
@@ -558,7 +558,7 @@ class WorkspaceOptions:
         TextDocumentContentOptions | TextDocumentContentRegistrationOptions | None
     ) = None
     """The server supports the `workspace/textDocumentContent` request.
-    
+
     @since 3.18.0
     @proposed"""
     # Since: 3.18.0
@@ -573,12 +573,12 @@ class ServerCapabilities:
     position_encoding: PositionEncodingKind | str | None = None
     """The position encoding the server picked from the encodings offered
     by the client via the client capability `general.positionEncodings`.
-    
+
     If the client didn't provide any position encodings the only valid
     value that a server can return is 'utf-16'.
-    
+
     If omitted it defaults to 'utf-16'.
-    
+
     @since 3.17.0"""
     # Since: 3.17.0
 
@@ -591,7 +591,7 @@ class ServerCapabilities:
     #     Union[NotebookDocumentSyncOptions, NotebookDocumentSyncRegistrationOptions]
     # ] = attrs.field(default=None)
     """Defines how notebook documents are synced.
-    
+
     @since 3.17.0"""
     # Since: 3.17.0
 
@@ -699,7 +699,7 @@ class ServerCapabilities:
     #     Union[bool, CallHierarchyOptions, CallHierarchyRegistrationOptions]
     # ] = attrs.field(default=None)
     """The server provides call hierarchy support.
-    
+
     @since 3.16.0"""
     # Since: 3.16.0
 
@@ -707,7 +707,7 @@ class ServerCapabilities:
     #     Union[bool, LinkedEditingRangeOptions, LinkedEditingRangeRegistrationOptions]
     # ] = attrs.field(default=None)
     """The server provides linked editing range support.
-    
+
     @since 3.16.0"""
     # Since: 3.16.0
 
@@ -715,7 +715,7 @@ class ServerCapabilities:
     #     Union[SemanticTokensOptions, SemanticTokensRegistrationOptions]
     # ] = attrs.field(default=None)
     """The server provides semantic tokens support.
-    
+
     @since 3.16.0"""
     # Since: 3.16.0
 
@@ -723,7 +723,7 @@ class ServerCapabilities:
     #     Union[bool, MonikerOptions, MonikerRegistrationOptions]
     # ] = attrs.field(default=None)
     """The server provides moniker support.
-    
+
     @since 3.16.0"""
     # Since: 3.16.0
 
@@ -731,7 +731,7 @@ class ServerCapabilities:
     #     Union[bool, TypeHierarchyOptions, TypeHierarchyRegistrationOptions]
     # ] = attrs.field(default=None)
     """The server provides type hierarchy support.
-    
+
     @since 3.17.0"""
     # Since: 3.17.0
 
@@ -739,7 +739,7 @@ class ServerCapabilities:
     #     Union[bool, InlineValueOptions, InlineValueRegistrationOptions]
     # ] = attrs.field(default=None)
     """The server provides inline values.
-    
+
     @since 3.17.0"""
     # Since: 3.17.0
 
@@ -747,7 +747,7 @@ class ServerCapabilities:
     #     Union[bool, InlayHintOptions, InlayHintRegistrationOptions]
     # ] = attrs.field(default=None)
     """The server provides inlay hints.
-    
+
     @since 3.17.0"""
     # Since: 3.17.0
 
@@ -755,7 +755,7 @@ class ServerCapabilities:
     #     Union[DiagnosticOptions, DiagnosticRegistrationOptions]
     # ] = attrs.field(default=None)
     """The server has support for pull model diagnostics.
-    
+
     @since 3.17.0"""
     # Since: 3.17.0
 
@@ -763,7 +763,7 @@ class ServerCapabilities:
     #     attrs.field(default=None)
     # )
     """Inline completion options used during static registration.
-    
+
     @since 3.18.0
     @proposed"""
     # Since: 3.18.0
@@ -971,7 +971,7 @@ class ApplyWorkspaceEditParams:
 
     metadata: WorkspaceEditMetadata | None = None
     """Additional data about the edit.
-    
+
     @since 3.18.0
     @proposed"""
     # Since: 3.18.0
@@ -1041,10 +1041,10 @@ class WorkspaceEdit:
     are either an array of `TextDocumentEdit`s to express changes to n different text documents
     where each text document edit addresses a specific version of a text document. Or it can contain
     above `TextDocumentEdit`s mixed with create, rename and delete file / folder operations.
-    
+
     Whether a client supports versioned document edits is expressed via
     `workspace.workspaceEdit.documentChanges` client capability.
-    
+
     If a client neither supports `documentChanges` nor `workspace.workspaceEdit.resourceOperations` then
     only plain `TextEdit`s using the `changes` property are supported."""
 
@@ -1053,9 +1053,9 @@ class WorkspaceEdit:
     ) = None
     """A map of change annotations that can be referenced in `AnnotatedTextEdit`s or create, rename and
     delete file / folder operations.
-    
+
     Whether clients honor this property depends on the client capability `workspace.changeAnnotationSupport`.
-    
+
     @since 3.16.0"""
     # Since: 3.16.0
 
@@ -1075,7 +1075,7 @@ class CreateFile:
 
     annotation_id: ChangeAnnotationIdentifier | None = None
     """An optional annotation identifier describing the operation.
-    
+
     @since 3.16.0"""
     # Since: 3.16.0
 
@@ -1112,7 +1112,7 @@ class RenameFile:
 
     annotation_id: ChangeAnnotationIdentifier | None = None
     """An optional annotation identifier describing the operation.
-    
+
     @since 3.16.0"""
     # Since: 3.16.0
 
@@ -1143,7 +1143,7 @@ class DeleteFile:
 
     annotation_id: ChangeAnnotationIdentifier | None = None
     """An optional annotation identifier describing the operation.
-    
+
     @since 3.16.0"""
     # Since: 3.16.0
 
@@ -1262,7 +1262,7 @@ class Position:
 
     character: int
     """Character offset on a line in a document (zero-based).
-    
+
     The meaning of this offset is determined by the negotiated
     `PositionEncodingKind`."""
 
@@ -1323,10 +1323,10 @@ class TextDocumentEdit:
 
     edits: collections.abc.Sequence[TextEdit | AnnotatedTextEdit | SnippetTextEdit]
     """The edits to be applied.
-    
+
     @since 3.16.0 - support for AnnotatedTextEdit. This is guarded using a
     client capability.
-    
+
     @since 3.18.0 - support for SnippetTextEdit. This is guarded using a
     client capability."""
     # Since:
@@ -1640,7 +1640,7 @@ class TextDocumentContentChangePartial:
 
     range_length: int | None
     """The optional length of the range that got replaced.
-    
+
     @deprecated use range instead."""
 
 
@@ -1676,7 +1676,7 @@ class DidChangeTextDocumentParams:
     c2 (at array index 1) for a document in state S then c1 moves the document from
     S to S' and c2 from S' to S''. So c1 is computed on the state S and c2 is computed
     on the state S'.
-    
+
     To mirror the content of a document using change events use the following approach:
     - start with the same initial content
     - apply the 'textDocument/didChange' notifications in the order you receive them.

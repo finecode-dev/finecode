@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import copy
 import pathlib
 import typing
 
@@ -15,9 +14,6 @@ from finecode.wm_server.context import (
     pick_workspace_root_dir as _pick_workspace_root_dir,
 )
 from finecode.wm_server.services.run_service.exceptions import ActionNotFoundError
-from finecode.wm_server.services.run_service.merge_helpers import (
-    merge_partial_results_for_action as _merge_partial_results_for_action,
-)
 
 # ---------------------------------------------------------------------------
 # Server → client (single-client) notification helper

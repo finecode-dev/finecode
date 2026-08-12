@@ -25,6 +25,7 @@ from finecode_extension_runner.testing._stubs import (
     NullWalWriter,
     WalEvent,
 )
+import tempfile
 
 
 def _build_actions(
@@ -279,7 +280,6 @@ async def run_handler(
             service_overrides={IFileEditor: editor},
         )
     """
-    import tempfile
 
     action_source = f"{action_cls.__module__}.{action_cls.__qualname__}"
     handler_source = f"{handler_cls.__module__}.{handler_cls.__qualname__}"

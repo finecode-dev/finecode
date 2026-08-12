@@ -91,12 +91,10 @@ async def collect_config_from_py_presets(
 ) -> dict[str, Any] | None:
     config: dict[str, Any] | None = None
     processed_presets: set[str] = set()
-    presets_to_process: set[PresetToProcess] = set(
-        [
-            PresetToProcess(source=preset_source, project_def_path=def_path)
-            for preset_source in presets_sources
-        ]
-    )
+    presets_to_process: set[PresetToProcess] = {
+        PresetToProcess(source=preset_source, project_def_path=def_path)
+        for preset_source in presets_sources
+    }
     while len(presets_to_process) > 0:
         preset = presets_to_process.pop()
         processed_presets.add(preset.source)
@@ -116,9 +114,9 @@ async def collect_config_from_py_presets(
         read_configs.merge_projects_configs(
             config, def_path, preset_toml, preset_toml_path, is_from_preset=True
         )
-        new_presets_sources = (
-            set([extend.source for extend in preset_config.extends]) - processed_presets
-        )
+        new_presets_sources = {
+            extend.source for extend in preset_config.extends
+        } - processed_presets
         for new_preset_source in new_presets_sources:
             presets_to_process.add(
                 PresetToProcess(

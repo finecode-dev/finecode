@@ -18,15 +18,15 @@ import pathlib
 import uuid
 from typing import TYPE_CHECKING, Any
 
-from loguru import logger
-
-from finecode import user_messages
-from finecode.wm_server import context, domain
 from finecode_extension_runner.concurrency import (
     ConcurrencyDecision,
     default_layered_concurrency,
     machine_subprocess_budget,
 )
+from loguru import logger
+
+from finecode import user_messages
+from finecode.wm_server import context, domain
 
 if TYPE_CHECKING:
     from finecode.wm_server.config.env_selection import EnvSelection
@@ -697,7 +697,7 @@ async def install_env_for_project(
 
 __all__ = [
     "PrepareEnvsFailed",
-    "prepare_envs",
-    "install_env_for_project",
     "build_create_envs_params",
+    "install_env_for_project",
+    "prepare_envs",
 ]

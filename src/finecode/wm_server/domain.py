@@ -665,16 +665,16 @@ class ProgressNotification(typing.NamedTuple):
 
 
 __all__ = [
-    "ActionsDict",
     "Action",
-    "ServiceDeclaration",
-    "Project",
+    "ActionsDict",
     "CollectedProject",
-    "ResolvedProject",
-    "TextDocumentInfo",
-    "RunnerConfig",
     "EnvConfig",
-    "ExtensionRunnerStatus",
     "ExtensionRunner",
+    "ExtensionRunnerStatus",
     "InFlightRun",
+    "Project",
+    "ResolvedProject",
+    "RunnerConfig",
+    "ServiceDeclaration",
+    "TextDocumentInfo",
 ]

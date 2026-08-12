@@ -12,7 +12,6 @@ from finecode import telemetry
 from finecode.wm_server import context, domain
 from finecode.wm_server._api_handlers._helpers import (
     _build_batch_result,
-    _merge_partial_results_for_action,
     _notify_client,
     _parse_and_validate_run_action_params,
     _parse_run_batch_params,
@@ -34,6 +33,9 @@ from finecode.wm_server.services.run_service.execution_scopes import (
     DEFAULT_ORCHESTRATION_POLICY,
     OrchestrationPolicy,
 )
+from finecode.wm_server.services.run_service.merge_helpers import (
+    merge_partial_results_for_action,
+)
 
 
 async def _handle_run_action_with_partial_results(
@@ -53,9 +55,16 @@ async def _handle_run_action_with_partial_results(
         raise ValueError("params required")
     with telemetry.attach_incoming_traceparent(params):
         from finecode.wm_server.config import env_selection
-        from finecode.wm_server.services import partial_results_service, run_service
-        from finecode.wm_server.services.run_service import run_selection
-        from finecode.wm_server.services.run_service.exceptions import ActionRunFailed
+        from finecode.wm_server.services import (
+            partial_results_service,
+            run_service,
+        )
+        from finecode.wm_server.services.run_service import (
+            run_selection,
+        )
+        from finecode.wm_server.services.run_service.exceptions import (
+            ActionRunFailed,
+        )
 
         action_source = params.get("actionSource")
         token = params.get("partialResultToken")
@@ -176,7 +185,7 @@ async def _handle_run_action_with_partial_results(
             return_code = final.get("returnCode", 0) if isinstance(final, dict) else 0
             results: dict[str, dict] = {}
             for project_str, payloads in json_by_project.items():
-                merged_json = await _merge_partial_results_for_action(
+                merged_json = await merge_partial_results_for_action(
                     project_path=pathlib.Path(project_str),
                     action_name=action_name,
                     json_payloads=payloads,
@@ -278,7 +287,9 @@ async def _handle_run_batch_with_partial_results(
         proxy_utils,
         run_selection,
     )
-    from finecode.wm_server.services.run_service.exceptions import ActionRunFailed
+    from finecode.wm_server.services.run_service.exceptions import (
+        ActionRunFailed,
+    )
 
     params = params or {}
     with telemetry.attach_incoming_traceparent(params):
@@ -500,7 +511,7 @@ async def _handle_run_batch_with_partial_results(
             # for the response, so a caller that replaces-by-key keeps complete data
             # rather than only the last partial.
             if parsed.merge_results:
-                merged_json = await _merge_partial_results_for_action(
+                merged_json = await merge_partial_results_for_action(
                     project_path=project_path,
                     action_name=action_name,
                     json_payloads=json_payloads,
@@ -765,7 +776,10 @@ async def _handle_run_batch_with_progress(
     slots, and forwards the combined stream to the client as ``actions/progress``
     notifications while the batch is running.
     """
-    from finecode.wm_server.services import partial_results_service, run_service
+    from finecode.wm_server.services import (
+        partial_results_service,
+        run_service,
+    )
     from finecode.wm_server.services.run_service import proxy_utils
 
     params = params or {}
@@ -952,7 +966,9 @@ async def _resolve_source_to_name(
     Raises ``ValueError`` if the project or action cannot be found.
     """
     from finecode.wm_server import domain as _domain
-    from finecode.wm_server._api_handlers._helpers import find_action_by_source
+    from finecode.wm_server._api_handlers._helpers import (
+        find_action_by_source,
+    )
 
     if project_path_str:
         project = ws_context.ws_projects.get(pathlib.Path(project_path_str))

@@ -13,10 +13,11 @@ import threading
 import typing
 from pathlib import Path
 
+from finecode_jsonrpc.client import ResponseError
+
 import finecode_jsonrpc
 from finecode.wm_server import context, domain
 from finecode.wm_server.runner import _internal_client_types, runner_client
-from finecode_jsonrpc.client import ResponseError
 
 
 class FakeErClient:

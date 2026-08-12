@@ -488,7 +488,9 @@ async def _on_initialized(server: LspServer, _params: dict | None) -> None:
     # Forward progress notifications to the IDE progress reporter.
     from fine_inspect_code import inspect_code_action
 
-    from finecode.lsp_server.endpoints.diagnostics import map_lint_message_to_diagnostic
+    from finecode.lsp_server.endpoints.diagnostics import (
+        map_lint_message_to_diagnostic,
+    )
 
     def _map_lint_to_document_diagnostic_partial(
         lint_result: inspect_code_action.InspectCodeRunResult,
@@ -1013,4 +1015,4 @@ async def start_debug_session(server: LspServer, params: dict) -> None:
     logger.info(f"started debugging: {res}")
 
 
-__all__ = ["create_lsp_server", "LspServer"]
+__all__ = ["LspServer", "create_lsp_server"]

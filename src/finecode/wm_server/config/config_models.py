@@ -2,8 +2,6 @@
 from dataclasses import dataclass, field
 from typing import Any
 
-from cattrs import ClassValidationError as ValidationError
-
 from finecode.wm_server.domain import ErLoggingConfig
 
 

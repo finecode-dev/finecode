@@ -3,6 +3,8 @@ import socket
 import time
 from pathlib import Path
 from urllib.parse import urlparse
+import importlib.metadata
+import logging
 
 # Metric instruments — populated by init_meter_provider(); None when OTel is disabled.
 _action_duration_hist = None
@@ -38,7 +40,6 @@ def _silence_otel_export_logs() -> None:
     lifetime. The exporters buffer and retry regardless, so suppressing the retry
     churn (while still surfacing genuine ERROR-level export failures) is safe.
     """
-    import logging
 
     logging.getLogger("opentelemetry.exporter").setLevel(logging.ERROR)
 
@@ -80,16 +81,16 @@ def init_otel_logging(
     _silence_otel_export_logs()
     _probe_endpoint_once(endpoint, host, port)
 
-    import importlib.metadata
 
+    from finecode_extension_runner.logs import filter_logs
     from loguru import logger
     from opentelemetry._logs.severity import SeverityNumber
-    from opentelemetry.exporter.otlp.proto.grpc._log_exporter import OTLPLogExporter
+    from opentelemetry.exporter.otlp.proto.grpc._log_exporter import (
+        OTLPLogExporter,
+    )
     from opentelemetry.sdk._logs import LoggerProvider
     from opentelemetry.sdk._logs.export import BatchLogRecordProcessor
     from opentelemetry.sdk.resources import Resource
-
-    from finecode_extension_runner.logs import filter_logs
 
     try:
         version = importlib.metadata.version("finecode")
@@ -158,10 +159,11 @@ def init_tracer_provider(
     _silence_otel_export_logs()
     _probe_endpoint_once(endpoint, host, port)
 
-    import importlib.metadata
 
     from opentelemetry import trace
-    from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
+    from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import (
+        OTLPSpanExporter,
+    )
     from opentelemetry.sdk.resources import Resource
     from opentelemetry.sdk.trace import TracerProvider
     from opentelemetry.sdk.trace.export import BatchSpanProcessor
@@ -202,14 +204,15 @@ def init_meter_provider(
     _silence_otel_export_logs()
     _probe_endpoint_once(endpoint, host, port)
 
-    import importlib.metadata
 
     from opentelemetry import metrics
     from opentelemetry.exporter.otlp.proto.grpc.metric_exporter import (
         OTLPMetricExporter,
     )
     from opentelemetry.sdk.metrics import MeterProvider
-    from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
+    from opentelemetry.sdk.metrics.export import (
+        PeriodicExportingMetricReader,
+    )
     from opentelemetry.sdk.resources import Resource
 
     try:

@@ -34,7 +34,7 @@ from finecode.wm_server.runner import runner_client
 from finecode.wm_server.runner.runner_client import RunActionResponse
 from finecode.wm_server.services.run_service.exceptions import ActionRunFailed
 
-__all__ = ["run_matrix_action", "is_matrixed"]
+__all__ = ["is_matrixed", "run_matrix_action"]
 
 
 RunVariant = typing.Callable[..., typing.Awaitable[RunActionResponse]]
@@ -233,7 +233,7 @@ async def run_matrix_action(
     raw_results = await asyncio.gather(*tasks, return_exceptions=True)
 
     variants: dict[Interpreter, RunActionResponse] = {}
-    for interpreter, result in zip(interpreters, raw_results):
+    for interpreter, result in zip(interpreters, raw_results, strict=False):
         if isinstance(result, BaseException):
             variants[interpreter] = RunActionResponse(
                 result_by_format={

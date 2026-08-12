@@ -23,12 +23,12 @@ from finecode.wm_server.config.interpreter_matrix import (
 __all__ = [
     "EnvSelection",
     "EnvSelectionError",
-    "resolve_env_selection",
-    "resolve_selected_interpreters",
     "compute_create_set",
     "compute_install_set",
     "env_selector_known_in",
     "interpreter_selector_known_in",
+    "resolve_env_selection",
+    "resolve_selected_interpreters",
 ]
 
 

@@ -68,14 +68,18 @@ async def test_run_action_still_fails_when_metadata_cannot_resolve(
     async def _noop_ensure_action_metadata(action, project_arg, ws_context_arg):
         return None  # canonical_source stays unresolved
 
-    with mock.patch.object(
-        proxy_utils, "ensure_action_metadata", side_effect=_noop_ensure_action_metadata
+    with (
+        mock.patch.object(
+            proxy_utils,
+            "ensure_action_metadata",
+            side_effect=_noop_ensure_action_metadata,
+        ),
+        pytest.raises(exceptions.ActionRunFailed),
     ):
-        with pytest.raises(exceptions.ActionRunFailed):
-            await ProjectExecutor(ws_context).run_action(
-                action_source="does.not.Exist",
-                params={},
-                project_path=project.dir_path,
-                run_trigger=proxy_utils.RunActionTrigger.SYSTEM,
-                dev_env=proxy_utils.DevEnv.CI,
-            )
+        await ProjectExecutor(ws_context).run_action(
+            action_source="does.not.Exist",
+            params={},
+            project_path=project.dir_path,
+            run_trigger=proxy_utils.RunActionTrigger.SYSTEM,
+            dev_env=proxy_utils.DevEnv.CI,
+        )

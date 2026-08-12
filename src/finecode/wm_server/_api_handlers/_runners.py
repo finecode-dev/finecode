@@ -9,6 +9,7 @@ from loguru import logger
 from finecode.wm_server import context, errors
 from finecode.wm_server._api_handlers._helpers import _find_project_by_path
 from finecode.wm_server.services import in_flight_runs, next_step
+import asyncio
 
 
 async def _handle_runners_list(
@@ -182,7 +183,6 @@ async def _handle_start_runners(
     Params: ``{"projects": ["project_name", ...]}`` (optional, default: all projects)
     Result: ``{}``
     """
-    import asyncio
 
     from finecode.wm_server.runner import runner_manager
 

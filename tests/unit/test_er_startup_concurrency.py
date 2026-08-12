@@ -74,7 +74,7 @@ async def test_er_startup_concurrency_is_bounded_by_semaphore(
     runners_and_projects = [
         _make_runner_and_project(tmp_path, i) for i in range(runner_count)
     ]
-    for runner, project in runners_and_projects:
+    for _runner, project in runners_and_projects:
         ws_context.ws_projects[project.dir_path] = project
 
     with (

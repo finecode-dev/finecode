@@ -268,10 +268,8 @@ class ApiClient:
         writer = self._writer
         if self._reconnect_task is not None:
             self._reconnect_task.cancel()
-            try:
+            with contextlib.suppress(asyncio.CancelledError):
                 await self._reconnect_task
-            except asyncio.CancelledError:
-                pass
             self._reconnect_task = None
 
         if self._reader_task is not None:
@@ -747,7 +745,7 @@ class ApiClient:
         }
 
         body = json.dumps(msg).encode("utf-8")
-        header = f"Content-Length: {len(body)}\r\n\r\n".encode("utf-8")
+        header = f"Content-Length: {len(body)}\r\n\r\n".encode()
         self._writer.write(header + body)
         # Don't await drain for notifications, fire and forget
 
@@ -784,7 +782,7 @@ class ApiClient:
         self._pending[rid] = future
 
         body = json.dumps(msg).encode("utf-8")
-        header = f"Content-Length: {len(body)}\r\n\r\n".encode("utf-8")
+        header = f"Content-Length: {len(body)}\r\n\r\n".encode()
         self._writer.write(header + body)
         await self._writer.drain()
 

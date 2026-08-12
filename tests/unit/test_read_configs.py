@@ -855,7 +855,7 @@ def test_preset_user_config_absent_is_noop(tmp_path: pathlib.Path) -> None:
     config without any modification or error.
     """
     _write_minimal_preset(tmp_path)
-    preset_toml, preset_config = read_preset_config(tmp_path / "preset.toml", "mypkg")
+    preset_toml, _preset_config = read_preset_config(tmp_path / "preset.toml", "mypkg")
     assert "lint" in preset_toml["tool"]["finecode"]["action"]
     # No extra keys injected
     action = preset_toml["tool"]["finecode"]["action"]["lint"]
@@ -909,7 +909,7 @@ def test_preset_user_config_presets_appends_not_replaces(
         tmp_path / "finecode-user.toml",
         'presets = [{ source = "fine_python_aksem" }]\n',
     )
-    preset_toml, preset_config = read_preset_config(tmp_path / "preset.toml", "mypkg")
+    _preset_toml, preset_config = read_preset_config(tmp_path / "preset.toml", "mypkg")
 
     extends_sources = [p.source for p in preset_config.extends]
     assert extends_sources == ["fine_dep_graph", "fine_arch_facts", "fine_python_aksem"]

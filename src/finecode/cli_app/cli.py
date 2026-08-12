@@ -645,7 +645,6 @@ def bootstrap(recreate: bool, log_level: str) -> None:
     Can be run via ``pipx run finecode bootstrap`` or ``uvx finecode bootstrap``
     without a pre-existing virtualenv.
     """
-    import asyncio
 
     from finecode.cli_app.commands import bootstrap_cmd
     from finecode.wm_server.config import read_configs

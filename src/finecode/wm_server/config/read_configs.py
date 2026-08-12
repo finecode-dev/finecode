@@ -13,6 +13,7 @@ from tomlkit import loads as toml_loads
 from finecode._converter import converter as _converter
 from finecode.wm_server import context, domain
 from finecode.wm_server.config import config_models, interpreter_matrix
+import re
 
 
 def read_project_finecode_config(project_dir: Path) -> dict | None:
@@ -211,7 +212,6 @@ def _resolve_er_logging_config(
 def _apply_er_env_var_overrides(
     config: config_models.ErLoggingConfig, env_name: str
 ) -> config_models.ErLoggingConfig:
-    import os
 
     def _env_key(name: str) -> str:
         return name.upper().replace("-", "_").replace(".", "_")
@@ -232,7 +232,7 @@ def _apply_er_env_var_overrides(
             groups[group_key] = value
     for var, value in os.environ.items():
         prefix = "FINECODE_ER_LOG_GROUP_"
-        if var.startswith(prefix) and not var.startswith(f"FINECODE_ER_ENV_"):
+        if var.startswith(prefix) and not var.startswith("FINECODE_ER_ENV_"):
             group_key = var[len(prefix) :].lower().replace("_", ".")
             groups.setdefault(group_key, value)
 
@@ -245,7 +245,6 @@ def read_wm_logging_config(workspace_root: Path) -> config_models.ErLoggingConfi
     Env vars FINECODE_WM_LOG_GROUP_<GROUP>=LEVEL override file values (uppercase
     group name with dots replaced by underscores, e.g. FINECODE_WM_LOG_GROUP_FINECODE_JSONRPC=DEBUG).
     """
-    import os
 
     log_groups: dict[str, str] = {}
 
@@ -274,7 +273,6 @@ def read_wm_telemetry_config(workspace_root: Path) -> config_models.WmTelemetryC
 
     FINECODE_OTLP_ENDPOINT env var overrides the file value (highest priority).
     """
-    import os
 
     otlp_endpoint: str | None = None
 
@@ -326,7 +324,7 @@ def read_env_configs(project_config: dict[str, Any]) -> dict[str, domain.EnvConf
 
     # add default configs for dependency-group envs not explicitly listed under er
     deps_groups = project_config.get("dependency-groups", {})
-    for group_name in deps_groups.keys():
+    for group_name in deps_groups:
         if group_name not in env_configs:
             logging_config = _resolve_er_logging_config(project_config, group_name)
             runner_config = domain.RunnerConfig(debug=False, logging=logging_config)
@@ -586,7 +584,7 @@ def read_preset_config(
         try:
             with open(preset_user_config_path, "rb") as f:
                 preset_user_raw = dict(toml_loads(f.read()).unwrap())
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             raise config_models.ConfigurationError(
                 f"Failed to parse {preset_user_config_path}: {e}"
             )
@@ -640,7 +638,6 @@ def read_preset_config(
 
 def _merge_override_specs(existing: list[str], new: list[str]) -> list[str]:
     """Merge two PEP 508 override spec lists; later list wins per canonical package name."""
-    import re
 
     def _canonical(spec: str) -> str:
         m = re.match(r"^([A-Za-z0-9]([A-Za-z0-9._-]*[A-Za-z0-9])?)", spec.strip())
@@ -1080,7 +1077,7 @@ def merge_services_dependencies_into_groups(
 def _deduplicate_deps_groups(deps_groups: dict[str, list[Any]]) -> None:
     # dependency list can contain not only strings, but also dicts like
     # `{ 'include-group': 'runtime' }` which are not hashable, so use list-based dedup
-    for group_name in deps_groups.keys():
+    for group_name in deps_groups:  # noqa: PLC0206
         unique_deps: list[Any] = []
         for dep in deps_groups[group_name]:
             if dep not in unique_deps:
@@ -1319,7 +1316,7 @@ def add_extension_runner_to_dependencies(project_config: dict[str, Any]) -> None
         # unavailable (e.g. uv + python -m finecode). Fall back to source version.
         try:
             from finecode._version import version as finecode_version
-        except Exception:
+        except Exception:  # noqa: BLE001
             # TODO: raise an error?
             logger.warning(
                 "Could not resolve finecode version from package metadata or source; "
