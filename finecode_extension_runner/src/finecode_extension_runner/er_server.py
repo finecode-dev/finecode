@@ -18,6 +18,7 @@ import atexit
 import contextlib
 import dataclasses
 import functools
+import importlib
 import io
 import json
 import pathlib
@@ -52,7 +53,6 @@ from finecode_extension_runner.di import bootstrap as di_bootstrap
 from finecode_extension_runner.impls import (
     project_action_runner as project_action_runner_module,
 )
-import importlib
 
 # ---------------------------------------------------------------------------
 # Protocol types
@@ -194,6 +194,20 @@ _protocol_converter.register_unstructure_hook(
 # ---------------------------------------------------------------------------
 
 
+async def _wait_for_any(*events: asyncio.Event) -> None:
+    """Return as soon as any of *events* is set.
+
+    The losing waiters are cancelled and awaited, so no task outlives the call.
+    """
+    waiters = [asyncio.create_task(event.wait()) for event in events]
+    try:
+        await asyncio.wait(waiters, return_when=asyncio.FIRST_COMPLETED)
+    finally:
+        for waiter in waiters:
+            waiter.cancel()
+        await asyncio.gather(*waiters, return_exceptions=True)
+
+
 class ErServer:
     """Extension Runner JSON-RPC server.
 
@@ -293,8 +307,7 @@ class ErServer:
             stdout_buf=stdout_buf or sys.stdout.buffer,
         )
         # Block until the transport read loop finishes
-        while not transport._stop_event.is_set():
-            await asyncio.sleep(0.05)
+        await transport._stop_event.wait()
         await self._finecode_exit_stack.aclose()
         logger.debug("ER server stdio loop finished")
 
@@ -322,11 +335,7 @@ class ErServer:
             self._session.attach(transport)
             await transport.start()
             # Wait until transport is done or exit was requested
-            while (
-                not transport._stop_event.is_set()
-                and not self._async_exit_event.is_set()
-            ):
-                await asyncio.sleep(0.05)
+            await _wait_for_any(transport._stop_event, self._async_exit_event)
             self.shutdown()
             writer.close()
             if self._tcp_server is not None:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import pathlib
+import tempfile
 import tomllib
 import uuid
 from collections.abc import AsyncIterator
@@ -25,7 +26,6 @@ from finecode_extension_runner.testing._stubs import (
     NullWalWriter,
     WalEvent,
 )
-import tempfile
 
 
 def _build_actions(

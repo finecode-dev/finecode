@@ -22,13 +22,11 @@ from finecode_extension_runner import (
     er_errors,
     er_telemetry,
     er_wal,
+    run_utils,
+    schemas,
 )
 from finecode_extension_runner import (
     partial_result_sender as partial_result_sender_module,
-)
-from finecode_extension_runner import (
-    run_utils,
-    schemas,
 )
 from finecode_extension_runner._converter import converter as _converter
 from finecode_extension_runner.di import resolver as di_resolver

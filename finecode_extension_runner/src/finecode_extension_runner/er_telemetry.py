@@ -1,7 +1,7 @@
 import contextlib
+import importlib.metadata
 import time
 from pathlib import Path
-import importlib.metadata
 
 _handler_duration_hist = None
 _handler_errors_counter = None
@@ -130,7 +130,6 @@ def init_tracer_provider(service_name: str, project_path: Path, endpoint: str) -
 
 def init_meter_provider(service_name: str, project_path: Path, endpoint: str) -> None:
     global _handler_duration_hist, _handler_errors_counter
-
 
     from opentelemetry import metrics
     from opentelemetry.exporter.otlp.proto.grpc.metric_exporter import (

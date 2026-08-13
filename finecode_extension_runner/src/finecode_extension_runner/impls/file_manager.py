@@ -32,14 +32,15 @@ class FileManager(ifilemanager.IFileManager):
 
     async def save_file(self, file_path: Path, file_content: str) -> None:
         self.logger.debug(f"Save file {file_path}")
-        with open(file_path, "w") as f:
-            f.write(file_content)
+        await asyncio.to_thread(file_path.write_text, file_content)
 
     async def create_dir(
         self, dir_path: Path, create_parents: bool = True, exist_ok: bool = True
     ):
         # currently only local file system is supported
-        dir_path.mkdir(parents=create_parents, exist_ok=exist_ok)
+        await asyncio.to_thread(
+            dir_path.mkdir, parents=create_parents, exist_ok=exist_ok
+        )
 
     async def remove_dir(self, dir_path: Path, *, tolerant: bool = False) -> None:
         if not tolerant:
