@@ -10,6 +10,7 @@ ruff itself would not touch without ``--unsafe-fixes``.
 from __future__ import annotations
 
 import json
+from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any
 
@@ -46,6 +47,14 @@ class _StubProcess:
 
     def close_stdin(self) -> None:
         pass
+
+    async def stdout_lines(self) -> AsyncIterator[str]:
+        for line in self.get_output().splitlines():
+            yield line
+
+    async def stderr_lines(self) -> AsyncIterator[str]:
+        for line in self.get_error_output().splitlines():
+            yield line
 
     async def wait_for_end(self, timeout: float | None = None) -> None:
         pass

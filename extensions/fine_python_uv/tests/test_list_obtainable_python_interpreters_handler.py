@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import pathlib
+from collections.abc import AsyncIterator
 from typing import Any
 
 import pytest
@@ -76,6 +77,14 @@ class _FakeProcess:
 
     def close_stdin(self) -> None:
         pass
+
+    async def stdout_lines(self) -> AsyncIterator[str]:
+        for line in self.get_output().splitlines():
+            yield line
+
+    async def stderr_lines(self) -> AsyncIterator[str]:
+        for line in self.get_error_output().splitlines():
+            yield line
 
     async def wait_for_end(self, timeout: float | None = None) -> None:
         pass

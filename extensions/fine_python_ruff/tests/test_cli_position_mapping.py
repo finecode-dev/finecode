@@ -13,6 +13,7 @@ columns 8..10, the server puts it at characters 7..9.
 from __future__ import annotations
 
 import json
+from collections.abc import AsyncIterator
 from pathlib import Path
 
 from fine_lint.get_lint_fixes_action import GetLintFixesRunPayload
@@ -65,6 +66,14 @@ class _StubProcess:
 
     def close_stdin(self) -> None:
         pass
+
+    async def stdout_lines(self) -> AsyncIterator[str]:
+        for line in self.get_output().splitlines():
+            yield line
+
+    async def stderr_lines(self) -> AsyncIterator[str]:
+        for line in self.get_error_output().splitlines():
+            yield line
 
     async def wait_for_end(self, timeout: float | None = None) -> None:
         pass
