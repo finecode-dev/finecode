@@ -15,3 +15,30 @@ name = "git_push_git_refs"
 source = "fine_git.GitPushGitRefsHandler"
 env = "dev_workspace"
 dependencies = ["fine_git~=0.1.0a0"]
+
+[tool.finecode.action.get_git_status]
+source = "fine_git.GetGitStatusAction"
+
+[[tool.finecode.action.get_git_status.handlers]]
+name = "git_get_git_status"
+source = "fine_git.GitGetGitStatusHandler"
+env = "dev_workspace"
+dependencies = ["fine_git~=0.1.0a0"]
+
+[tool.finecode.action.get_git_diff]
+source = "fine_git.GetGitDiffAction"
+
+[[tool.finecode.action.get_git_diff.handlers]]
+name = "git_get_git_diff"
+source = "fine_git.GitGetGitDiffHandler"
+env = "dev_workspace"
+dependencies = ["fine_git~=0.1.0a0"]
+
+[tool.finecode.action.restore_git_files]
+source = "fine_git.RestoreGitFilesAction"
+
+[[tool.finecode.action.restore_git_files.handlers]]
+name = "git_restore_git_files"
+source = "fine_git.GitRestoreGitFilesHandler"
+env = "dev_workspace"
+dependencies = ["fine_git~=0.1.0a0"]

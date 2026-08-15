@@ -1028,6 +1028,69 @@ reported (`pushed_refs=[]`, `error=<stderr>`), never raised.
 
 ---
 
+## `get_git_status` (`fine_git`)
+
+Report the git status of paths in the project. Both porcelain columns
+(index vs HEAD, worktree vs index) are reported for every path rather than
+collapsing them into a single `staged` boolean, so a caller can project
+whichever view it needs — the staged set, the dirty set, the untracked set —
+from one complete answer. `repo_root=None` means the project is not inside a
+git repository, which is a result state, not an error.
+
+- **Source:** `fine_git.GetGitStatusAction`
+
+**Payload fields:**
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `paths` | `list[ResourceUri] \| None` | `None` | `None` -> the whole project directory. Empty list -> nothing requested, the result is empty |
+| `include_untracked` | `bool` | `True` | |
+| `include_ignored` | `bool` | `False` | |
+
+---
+
+## `get_git_diff` (`fine_git`)
+
+Get the git diff of paths in the project. Each file carries both the
+verbatim `patch` (for a human or a model reviewing the change) and the
+parsed `added_lines`/`removed_lines` (so mechanical consumers do not each
+have to write their own unified-diff parser) — both are produced for every
+file, one answer in two projections.
+
+- **Source:** `fine_git.GetGitDiffAction`
+
+**Payload fields:**
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `paths` | `list[ResourceUri] \| None` | `None` | `None` -> the whole project directory. Empty list -> nothing requested |
+| `source` | `GitDiffSource` (`worktree`\|`staged`\|`worktree_and_head`) | `worktree` | Which comparison to diff: unstaged only, staged only, or both vs `HEAD` |
+| `context_lines` | `int` | `3` | Lines of context around each hunk; `0` yields hunks with only changed lines |
+
+---
+
+## `restore_git_files` (`fine_git`)
+
+Restore files to their committed state, discarding local changes. `paths`
+is required with no wildcard for "restore everything", since this action
+destroys uncommitted work; a path outside the project directory is refused
+and reported in `skipped`, never restored; and deleting an untracked path
+is opt-in via `remove_untracked`, off by default because it is
+unrecoverable.
+
+- **Source:** `fine_git.RestoreGitFilesAction`
+
+**Payload fields:**
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `paths` | `list[ResourceUri]` | | Required, no wildcard |
+| `target` | `GitRestoreTarget` (`worktree`\|`index`\|`both`) | `worktree` | |
+| `source_ref` | `str` | `"HEAD"` | The commit to restore file content from |
+| `remove_untracked` | `bool` | `False` | Delete listed paths that are untracked; unrecoverable |
+
+---
+
 ## `list_tasks` (`fine_tasks`)
 
 List tasks across configured task providers (e.g. GitHub issues). A task is
