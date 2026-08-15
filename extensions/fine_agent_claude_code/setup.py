@@ -55,7 +55,7 @@ class CustomEggInfo(TempDirEggInfoMixin, egg_info):
 
 
 setup(
-    name="fine_system_claude_code",
+    name="fine_agent_claude_code",
     cmdclass={
         "build": CustomBuild,
         "build_py": CustomBuildPy,

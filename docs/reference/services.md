@@ -79,6 +79,79 @@ is not needed for the common case above. This is the ADR-0068 dividing line:
 an init action earns its keep by connecting and validating (ADR-0038); a pure
 config carrier with no I/O and nothing to validate is service config instead.
 
+## Reading process output with `ICommandRunner`
+
+A process spawned by `ICommandRunner.run()` offers its output two ways, and each
+stream chooses independently.
+
+**Buffered** — the default, and what most handlers want:
+
+```python
+process = await self.command_runner.run(cmd)
+await process.wait_for_end()
+output = process.get_output()
+```
+
+**Streamed** — for a long-lived child whose output must be read while it is still
+running (a watch-mode tool, or a line-framed RPC protocol):
+
+```python
+process = await self.command_runner.run(cmd)
+async for line in process.stdout_lines():
+    ...  # lines arrive as the child writes them, newline stripped
+```
+
+Both streams are drained from the moment the process is spawned, whether or not
+anyone reads them, so a child cannot block on an unread pipe. A stream
+accumulates its output until someone subscribes to it; from then on it belongs to
+the subscriber:
+
+- lines produced before the subscription are **replayed first**, so subscribing
+  late loses nothing;
+- `get_output()` on a subscribed stream **raises** — the output is no longer being
+  accumulated, and returning `""` would be indistinguishable from a child that
+  printed nothing;
+- only **one subscriber per stream** is supported; a second call raises;
+- the streams are independent, so streaming stdout leaves `get_error_output()`
+  working as usual — which is normally what you want for a failure message.
+
+Streaming is available only on `IAsyncProcess`. `run_sync()` has no way to
+interleave reads with anything else, so `ISyncProcess` is buffered only.
+
+## Stopping a process with `ICommandRunner`
+
+A handler that owns a long-lived child — an agent run, a watch-mode tool — has to
+be able to end it, because its own timeout otherwise only stops the *waiting*:
+
+```python
+process = await self.command_runner.run(cmd, new_process_group=True)
+...
+if process.is_alive():
+    process.terminate()          # SIGTERM, returns immediately
+    with contextlib.suppress(TimeoutError):
+        await process.wait_for_end(timeout=2.0)
+if process.is_alive():
+    process.kill()               # SIGKILL
+```
+
+Two things are easy to get wrong here:
+
+- **Ask `is_alive()`, not `get_exit_code()`.** Commands are spawned through a
+  shell, so the exit code belongs to the shell. A shell that forks rather than
+  execs exits the moment it is signalled — reporting a returncode that reads
+  exactly like a clean death — while the command it started, which may be
+  ignoring that signal, keeps running. `is_alive()` reports on the process group
+  when the process owns one, which is the question a teardown actually has.
+- **`new_process_group=True` is what makes the signal reach the tree.** Without
+  it the signal goes to the process alone, so anything the command spawned
+  (an agent's tool calls) survives. It is off by default because it also detaches
+  the command from the terminal's signals; a caller that never tears its process
+  down would only lose the Ctrl-C that used to reach it.
+
+The subprocess slot the process holds (ADR-0056) is released when the process
+actually exits, not when the handler returns — which is why a teardown that stops
+one rung early leaks a slot for the ER's lifetime.
+
 ## Caching with `ICache`
 
 FineCode has no framework-level rebuilder: deciding whether a cached result lets a handler skip recomputation is the handler's own responsibility. For the rationale behind this design, see [Caching is the handler's responsibility](../theory/why-action-model.md#caching-is-the-handlers-responsibility). `ICache` is the service that makes it convenient.

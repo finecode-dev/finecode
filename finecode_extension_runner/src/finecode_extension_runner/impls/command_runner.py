@@ -1,7 +1,9 @@
 import asyncio
 import asyncio.subprocess
 import dataclasses
+import os
 import shlex
+import signal
 import subprocess
 from collections.abc import AsyncIterator
 from pathlib import Path
@@ -22,6 +24,16 @@ from finecode_extension_runner.concurrency import (
 # payloads past 64 KiB, so the limit is raised to a size no realistic line hits.
 # It is a high-water mark, not an allocation.
 _STREAM_LINE_LIMIT = 8 * 1024 * 1024
+
+_POSIX = os.name == "posix"
+"""Process groups are a POSIX concept: `start_new_session`, `killpg` and
+`getpgid` all exist only there, so `new_process_group` degrades to signalling
+the process alone elsewhere rather than failing at spawn time."""
+
+_TERMINATE_SIGNAL = signal.SIGTERM
+_KILL_SIGNAL = getattr(signal, "SIGKILL", signal.SIGTERM)
+"""`SIGKILL` does not exist off POSIX. Falling back to `SIGTERM` there keeps the
+escalation ladder callable everywhere; it just cannot promise as much."""
 
 
 def _strip_eol(line: str) -> str:
@@ -226,8 +238,19 @@ class _LineStream:
 
 
 class AsyncProcess(icommandrunner.IAsyncProcess):
-    def __init__(self, async_subprocess: asyncio.subprocess.Process):
+    def __init__(
+        self,
+        async_subprocess: asyncio.subprocess.Process,
+        *,
+        owns_process_group: bool = False,
+    ):
         self.async_subprocess = async_subprocess
+        self._owns_process_group = owns_process_group
+        # Recorded now rather than looked up later. `start_new_session` makes
+        # the spawned shell the group leader, so the group id is its pid -- and
+        # `os.getpgid()` would stop answering the moment that leader exits,
+        # which is exactly when the surviving children still need signalling.
+        self._process_group_id = async_subprocess.pid
 
         self._stdout = _LineStream(async_subprocess.stdout)
         self._stderr = _LineStream(async_subprocess.stderr)
@@ -298,6 +321,47 @@ class AsyncProcess(icommandrunner.IAsyncProcess):
             self.async_subprocess.stdin.close()
         else:
             raise RuntimeError("Process was not created with stdin pipe")
+
+    def is_alive(self) -> bool:
+        if not self._owns_process_group:
+            return self.async_subprocess.returncode is None
+
+        # The group, not the shell's exit code. A shell that forks rather than
+        # execs exits as soon as it is signalled, reporting a returncode, while
+        # the command it started -- which may be ignoring that signal -- keeps
+        # running in the same group. Asking the group is the only way to tell
+        # "gone" from "the wrapper is gone".
+        try:
+            os.killpg(self._process_group_id, 0)
+        except ProcessLookupError:
+            return False
+        except PermissionError:
+            # Something in the group is alive, just not ours to signal.
+            return True
+        return True
+
+    def terminate(self) -> None:
+        self._signal(_TERMINATE_SIGNAL)
+
+    def kill(self) -> None:
+        self._signal(_KILL_SIGNAL)
+
+    def _signal(self, sig: signal.Signals) -> None:
+        # An already-gone target is the state the caller is asking for, so both
+        # the early return and the `ProcessLookupError` below are successes
+        # rather than problems: an escalation ladder (terminate, wait, kill)
+        # necessarily races the exit it is hoping for, and losing that race is
+        # the good outcome.
+        if not self.is_alive():
+            return
+
+        try:
+            if self._owns_process_group:
+                os.killpg(self._process_group_id, sig)
+            else:
+                self.async_subprocess.send_signal(sig)
+        except ProcessLookupError:
+            return
 
 
 class SyncProcess(icommandrunner.ISyncProcess):
@@ -378,7 +442,11 @@ class CommandRunner(icommandrunner.ICommandRunner):
         self._release_tasks: set[asyncio.Task[None]] = set()
 
     async def run(
-        self, cmd: str, cwd: Path | None = None, env: dict[str, str] | None = None
+        self,
+        cmd: str,
+        cwd: Path | None = None,
+        env: dict[str, str] | None = None,
+        new_process_group: bool = False,
     ) -> icommandrunner.IAsyncProcess:
         log_msg = f"Async subprocess run: {cmd}"
         if cwd is not None:
@@ -391,6 +459,7 @@ class CommandRunner(icommandrunner.ICommandRunner):
         # almost instantly and fail to bound how many subprocesses are alive
         # at once, which is what actually causes resource contention.
         await self._semaphore.acquire()
+        owns_process_group = new_process_group and _POSIX
         try:
             # TODO: investigate why it works only with shell, not exec
             async_subprocess = await asyncio.create_subprocess_shell(
@@ -401,6 +470,7 @@ class CommandRunner(icommandrunner.ICommandRunner):
                 cwd=cwd,
                 env=env,
                 limit=_STREAM_LINE_LIMIT,
+                start_new_session=owns_process_group,
             )
         except BaseException:
             self._semaphore.release()
@@ -408,7 +478,9 @@ class CommandRunner(icommandrunner.ICommandRunner):
         release_task = asyncio.create_task(self._release_when_done(async_subprocess))
         self._release_tasks.add(release_task)
         release_task.add_done_callback(self._release_tasks.discard)
-        return AsyncProcess(async_subprocess=async_subprocess)
+        return AsyncProcess(
+            async_subprocess=async_subprocess, owns_process_group=owns_process_group
+        )
 
     async def _release_when_done(self, proc: asyncio.subprocess.Process) -> None:
         try:
