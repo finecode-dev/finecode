@@ -79,8 +79,23 @@ def _startup_lock() -> FileLock:
     return FileLock(str(lock_path))
 
 
-def ensure_running(workdir: pathlib.Path, log_level: str = "INFO") -> None:
-    """Start the WM server as a subprocess if not already running."""
+def ensure_running(
+    workdir: pathlib.Path,
+    log_level: str = "INFO",
+    keep_alive: bool = False,
+    disconnect_timeout: int | None = None,
+    wal_enabled: bool = False,
+) -> None:
+    """Start the WM server as a subprocess if not already running.
+
+    *keep_alive* asks a server started *here* to disable its auto-stop timers.
+    It is passed explicitly rather than read from the environment: the shared
+    server is started by whichever client gets there first, and an ambient
+    setting would be inherited by dedicated servers too, which must stop.
+
+    A server that is already listening is left alone, whatever settings it was
+    started with — this ensures *a* server, not one configured like this.
+    """
     with _startup_lock():
         if is_running():
             return
@@ -88,18 +103,30 @@ def ensure_running(workdir: pathlib.Path, log_level: str = "INFO") -> None:
         python_cmd = sys.executable
         stderr_path = startup_stderr_log_path()
         logger.info(f"Starting FineCode WM server subprocess in {workdir}")
+        command = [
+            python_cmd,
+            "-m",
+            "finecode",
+            "start-wm-server",
+            f"--log-level={log_level}",
+        ]
+        if keep_alive:
+            command.append("--keep-alive")
+        if disconnect_timeout is not None:
+            command.append(f"--disconnect-timeout={disconnect_timeout}")
+        if wal_enabled:
+            command.append("--wal")
         with open(stderr_path, "w") as stderr_file:
             subprocess.Popen(
-                [
-                    python_cmd,
-                    "-m",
-                    "finecode",
-                    "start-wm-server",
-                    f"--log-level={log_level}",
-                ],
+                command,
                 cwd=str(workdir),
                 stdout=subprocess.DEVNULL,
                 stderr=stderr_file,
+                # Own session: the shared server must outlive whichever client
+                # happened to start it, so it must not take that client's
+                # signals. The disconnect timer is what keeps it from becoming
+                # an orphan.
+                start_new_session=True,
             )
 
         # Keep the lock until the spawned server is observable via discovery and
@@ -167,6 +194,9 @@ def start_own_server(
     if wal_enabled:
         command.append("--wal")
 
+    # No own session, unlike `ensure_running`: a dedicated server belongs to
+    # exactly one client and is reachable only through that client's port file,
+    # so outliving it would leave a ghost nobody can find.
     subprocess.Popen(
         command,
         cwd=str(workdir),

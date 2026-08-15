@@ -33,6 +33,26 @@ WAL events are recorded on disk regardless of whether the stack is running, so y
 bring it up later and ingest the history retroactively. See
 [ADR-0052](../../finecode_internal_docs/adr/0052-observability-stack-opt-in-via-compose-profile.md).
 
+## Persistent WM server
+
+`FINECODE_WM_AUTOSTART=1` is set in `.env.example`, so `postStartCommand` runs
+`start-wm-server --detach --keep-alive` on every container start, via
+`start-wm-server.sh`. The workspace stays warm across commands instead of rebuilding
+its config and runners each time. Comment the variable out to go back to a server
+per client; the script is also a no-op when the `dev_workspace` venv does not exist
+yet.
+
+Changing the variable needs the container **recreated**, not reopened — Compose
+resolves `.env` into a container's environment only when that container is created
+(the same caveat as `FINECODE_OTLP_ENDPOINT` above; see [Developing
+FineCode](../docs/guides/developing-finecode.md#local-observability-stack) for the
+rebuild commands).
+
+What comes with a keep-alive server — resident extension runners, a fixed log level,
+and why a server started lazily after a crash is not one — is described under
+[`start-wm-server`](../docs/cli.md#start-wm-server). Re-run
+`sh .devcontainer/start-wm-server.sh` to get the persistent one back.
+
 ## Optional private internal docs mount
 
 The workspace service supports an optional bind mount for private internal docs.

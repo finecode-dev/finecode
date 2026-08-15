@@ -2,9 +2,11 @@
 
 import socket
 import subprocess
+import time
 
 import pytest
 
+from finecode.wm_server.wm_server import NO_CLIENT_TIMEOUT_SECONDS
 from tests.e2e.conftest import (
     kill_group,
     sigint_group,
@@ -99,3 +101,81 @@ def test_auto_shutdown_after_disconnect_timeout(workspace_dir, tmp_path):
         "Port file was not removed after WM auto-shutdown — "
         "stop() cleanup may not have run"
     )
+
+
+def test_keep_alive_survives_client_disconnect(workspace_dir, tmp_path):
+    """--keep-alive suppresses the disconnect auto-stop.
+
+    The disconnect timeout is what makes a shared server throw away its loaded
+    config and started runners between two CLI calls. A server whose lifetime
+    something else owns (the devcontainer) must keep them.
+    """
+    port_file = tmp_path / "wm_port"
+
+    proc = start_server(
+        [
+            "start-wm-server",
+            "--port-file",
+            str(port_file),
+            "--disconnect-timeout",
+            "2",
+            "--keep-alive",
+        ],
+        cwd=workspace_dir,
+    )
+    try:
+        assert wait_for_file(port_file), (
+            "WM server did not write port file within 15 s — server failed to start"
+        )
+
+        port = int(port_file.read_text().strip())
+        assert wait_for_port("127.0.0.1", port), (
+            f"WM server not accepting connections on port {port}"
+        )
+
+        # Connect and immediately close — would trigger the 2-second disconnect
+        # timer on a server without --keep-alive.
+        with socket.create_connection(("127.0.0.1", port)):
+            pass
+
+        with pytest.raises(subprocess.TimeoutExpired):
+            proc.wait(timeout=6)
+
+        assert wait_for_port("127.0.0.1", port), (
+            "WM server stopped accepting connections after the last client "
+            "disconnected — --keep-alive did not suppress the disconnect auto-stop"
+        )
+    finally:
+        kill_group(proc)
+
+
+def test_keep_alive_survives_no_client_timeout(workspace_dir, tmp_path):
+    """--keep-alive suppresses the never-had-a-client auto-stop.
+
+    A server autostarted at container start has no client at all until someone
+    runs a command, which may be much later than this timeout.
+    """
+    port_file = tmp_path / "wm_port"
+
+    proc = start_server(
+        ["start-wm-server", "--port-file", str(port_file), "--keep-alive"],
+        cwd=workspace_dir,
+    )
+    try:
+        assert wait_for_file(port_file), (
+            "WM server did not write port file within 15 s — server failed to start"
+        )
+        port = int(port_file.read_text().strip())
+
+        # No client connects for the whole window — the only thing under test.
+        time.sleep(NO_CLIENT_TIMEOUT_SECONDS + 3)
+
+        assert proc.poll() is None, (
+            f"WM server exited within {NO_CLIENT_TIMEOUT_SECONDS + 3} s with no "
+            "client — --keep-alive did not suppress the no-client auto-stop"
+        )
+        assert wait_for_port("127.0.0.1", port), (
+            "WM server is no longer accepting connections"
+        )
+    finally:
+        kill_group(proc)

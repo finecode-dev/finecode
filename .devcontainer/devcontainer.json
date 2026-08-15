@@ -24,6 +24,10 @@
         "PATH": "/usr/local/share/nvm/current/bin:${containerEnv:PATH}"
     },
     "postCreateCommand": "sh .devcontainer/setup-node.sh && sh .devcontainer/post-create-dev-workspace.sh && sh .devcontainer/setup-shell.sh",
+    // postStart, not postCreate: a stopped container loses its WM server, so this
+    // has to run again on every start. The venv it needs may not exist yet on the
+    // first create; the script exits cleanly in that case.
+    "postStartCommand": "sh .devcontainer/start-wm-server.sh",
     "customizations": {
         "vscode": {
             "extensions": [

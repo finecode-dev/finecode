@@ -35,7 +35,9 @@ python -m finecode run --shared-server format
 
 This mode is used automatically by the LSP and MCP integrations. It gives faster repeated runs because configuration loading and runner startup are amortized across calls.
 
-The server waits 30 seconds after the last client disconnects before shutting down (configurable via `--disconnect-timeout` on `start-wm-server`).
+You do not have to start the shared server first — `run`, `prepare-envs` and `dump-config` start one if none is listening, and find it afterwards through the discovery file. (The [recovery commands](#recovery-commands) are the exception: they deliberately refuse to start one.)
+
+**What amortizes it is the server staying up, not the flag.** A client disconnecting does not discard the loaded configuration or the started runners — only the server exiting does, and it exits 30 seconds after the last client disconnects (`--disconnect-timeout` on `start-wm-server`). So two `run --shared-server` calls further apart than that each pay full startup, exactly as if the flag had not been passed. To hold the state for longer, run the shared server under something that owns its lifetime and pass `--keep-alive` (see [`start-wm-server`](#start-wm-server)).
 
 ---
 
@@ -323,26 +325,60 @@ For setup details, see [IDE and MCP Setup](getting-started-ide-mcp.md#mcp-setup-
 
 ## `start-wm-server`
 
-Start the FineCode Workspace Manager Server standalone (TCP JSON-RPC), listen for client connections. Shuts down after the last client disconnects and the disconnect timeout expires.
+Start the FineCode Workspace Manager Server standalone (TCP JSON-RPC), listen for client connections. Unless `--keep-alive` is given, it shuts down after the last client disconnects and the disconnect timeout expires.
 
 ```text
-python -m finecode start-wm-server [--log-level=<level>] [--disconnect-timeout=<seconds>] [--wal]
+python -m finecode start-wm-server [--log-level=<level>] [--disconnect-timeout=<seconds>]
+                                   [--keep-alive] [--detach] [--wal]
 ```
 
 | Option | Description |
 | --- | --- |
 | `--log-level=<level>` | Set log level: `TRACE`, `DEBUG`, `INFO`, `WARNING`, `ERROR` (default: `INFO`) |
 | `--disconnect-timeout=<seconds>` | Seconds to wait after the last client disconnects before shutting down (default: 30) |
+| `--keep-alive` | Never auto-stop — neither when no client connects after startup nor when the last one disconnects. `server/shutdown` (and so `restart-wm`) still stops it. |
+| `--detach` | Start the shared server in the background and exit, doing nothing if one is already listening. Cannot be combined with `--port-file`. |
 | `--wal` | Enable WM write-ahead log (WAL) for run lifecycle events. |
 
-Environment variable equivalent:
+`--keep-alive` is for a server whose lifetime something else owns — a devcontainer, a
+supervisor — where both auto-stop timers would end a workspace that is meant to stay
+warm. Three consequences come with it: extension runners stay resident for as long as
+that owner runs, closing the editor stops discarding them, so picking up changed code
+is entirely on the [recovery commands](#recovery-commands), and the log level the
+server started with is the one it keeps — configuring a different WM log level in an
+editor takes effect only after a `restart-wm`.
 
-- `FINECODE_WAL_ENABLED=1` (or `true`/`yes`/`on`)
+`--detach` ensures *a* server is running, not a keep-alive one: if one is already
+listening it does nothing, whatever that server's own settings are. On its own it is
+rarely what you want — nothing connects to the server it starts, so the disconnect
+timeout ends it seconds later. The other options are passed on to the server it
+starts.
+
+Together the two flags are how a workspace is kept warm: start the server from
+whatever owns that lifetime — a container start script, a systemd unit, a supervisor
+— and the CLI, LSP and MCP all find it through the usual discovery file.
+
+```bash
+python -m finecode start-wm-server --detach --keep-alive
+```
+
+Keep-alive has no environment variable and is never inherited: it is passed
+explicitly by whoever starts the server, so the dedicated per-command servers cannot
+pick it up and stop stopping. The flip side is that a server started *lazily* by a
+client — the first `run --shared-server` after a crash, or the replacement
+`restart-wm` starts — is a plain one, and the warm state is gone until the command
+above is run again.
+
+Usually started automatically by `start-lsp`, `start-mcp` or a CLI command in
+`--shared-server` mode. Can also be started manually for debugging.
+
+### Write-ahead log
+
+`--wal` has an environment variable equivalent: `FINECODE_WAL_ENABLED=1` (or
+`true`/`yes`/`on`).
 
 WAL storage and retention are fixed in this version:
 
 - WAL directory: `<venv>/state/finecode/wal/wm`
 - Max segment size: `1048576` bytes
 - Retention: last `20` segment files
-
-Usually started automatically by `start-lsp` or `start-mcp`. Can also be started manually for debugging.

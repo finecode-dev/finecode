@@ -198,6 +198,7 @@ _had_client: bool = False
 _running_partial_result_tasks: dict[asyncio.StreamWriter, set[asyncio.Task]] = {}
 _client_labels: dict[asyncio.StreamWriter, str] = {}
 _disconnect_timeout: int = DISCONNECT_TIMEOUT_SECONDS
+_keep_alive: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -714,7 +715,7 @@ async def _handle_client(
         await writer.wait_closed()
 
         # Schedule auto-stop if no clients remain.
-        if not _connected_clients:
+        if not _connected_clients and not _keep_alive:
             _auto_stop_task = asyncio.create_task(_schedule_auto_stop())
 
 
@@ -733,6 +734,7 @@ async def start(
     ws_context: context.WorkspaceContext,
     port_file: pathlib.Path | None = None,
     disconnect_timeout: int = DISCONNECT_TIMEOUT_SECONDS,
+    keep_alive: bool = False,
 ) -> None:
     """Start the FineCode API TCP server and write the discovery file.
 
@@ -744,15 +746,22 @@ async def start(
             server's discovery file.
         disconnect_timeout: Seconds to wait after the last client disconnects
             before shutting down. Defaults to DISCONNECT_TIMEOUT_SECONDS (30).
+        keep_alive: Never stop on our own — neither when no client connects after
+            startup nor when the last one disconnects.  For a server whose
+            lifetime something else owns (a devcontainer, a supervisor), where
+            both timers would end a workspace that is meant to stay warm.
+            ``server/shutdown`` still stops it.
     """
     global \
         _server, \
         _discovery_file, \
         _no_client_timeout_task, \
         _had_client, \
-        _disconnect_timeout
+        _disconnect_timeout, \
+        _keep_alive
     _had_client = False
     _disconnect_timeout = disconnect_timeout
+    _keep_alive = keep_alive
     port = _find_free_port()
 
     _server = await asyncio.start_server(
@@ -773,8 +782,11 @@ async def start(
     install_client_log_sink()
     _start_log_flush_loop()
 
-    # Shut down if no client connects within the timeout.
-    _no_client_timeout_task = asyncio.create_task(_no_client_timeout())
+    if keep_alive:
+        logger.info("FineCode WM server: keep-alive, auto-stop timers disabled")
+    else:
+        # Shut down if no client connects within the timeout.
+        _no_client_timeout_task = asyncio.create_task(_no_client_timeout())
 
     try:
         async with _server:
@@ -868,6 +880,7 @@ async def start_standalone(
     disconnect_timeout: int = DISCONNECT_TIMEOUT_SECONDS,
     wal_config: wal.WalConfig | None = None,
     otlp_endpoint: str | None = None,
+    keep_alive: bool = False,
 ) -> None:
     """Start the WM server as a standalone process with its own WorkspaceContext.
 
@@ -878,10 +891,16 @@ async def start_standalone(
         disconnect_timeout: Seconds to wait after the last client disconnects
             before shutting down.
         otlp_endpoint: OTLP endpoint for telemetry forwarding to extension runners.
+        keep_alive: Disable both auto-stop timers — see ``start()``.
     """
     ws_context = context.WorkspaceContext([])
     ws_context.otlp_endpoint = otlp_endpoint
     if wal_config is not None and wal_config.enabled:
         ws_context.wal_writer = wal.WalWriter(wal_config)
     _register_callbacks()
-    await start(ws_context, port_file=port_file, disconnect_timeout=disconnect_timeout)
+    await start(
+        ws_context,
+        port_file=port_file,
+        disconnect_timeout=disconnect_timeout,
+        keep_alive=keep_alive,
+    )
