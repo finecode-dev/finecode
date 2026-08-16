@@ -1,4 +1,5 @@
 import collections.abc
+import contextlib
 import hashlib
 import importlib
 import inspect
@@ -170,10 +171,8 @@ def _file_loc(cls: type, project_dir: Path | None) -> str | None:
 
     path = Path(source_file)
     if project_dir is not None:
-        try:
+        with contextlib.suppress(ValueError):
             path = path.relative_to(project_dir)
-        except ValueError:
-            pass
     return f"{path}:{lineno}"
 
 
@@ -233,7 +232,9 @@ async def resolve_action_meta(runner_context: context.RunnerContext) -> dict[str
                 "language": getattr(cls, "LANGUAGE", None),
                 "fileLoc": _file_loc(cls, project_dir),
             }
-        except Exception as exception:
+        # Importing an action executes its module's top-level code, so the
+        # reachable exception set is open and not enumerable here.
+        except Exception as exception:  # noqa: BLE001
             logger.warning(f"Failed to import action {action.source}: {exception}")
 
     handler_meta: dict[str, dict] = {}
@@ -251,7 +252,9 @@ async def resolve_action_meta(runner_context: context.RunnerContext) -> dict[str
                     ),
                     "fileLoc": _file_loc(handler_cls, project_dir),
                 }
-            except Exception as exception:
+            # Importing a handler executes its module's top-level code, so the
+            # reachable exception set is open and not enumerable here.
+            except Exception as exception:  # noqa: BLE001
                 logger.warning(
                     f"Failed to import handler {handler.source}: {exception}"
                 )
@@ -313,7 +316,9 @@ async def initialize_handlers(
                     f"Eagerly initialized handler '{handler.name}' "
                     f"for action '{action_name}'"
                 )
-            except Exception as e:
+            # Instantiation imports extension code and runs the handler-supplied
+            # on_initialize callable; the reachable exception set is open.
+            except Exception as e:  # noqa: BLE001
                 logger.error(
                     f"Failed to eagerly initialize handler '{handler.name}' "
                     f"for action '{action_name}': {e}"
@@ -326,9 +331,7 @@ def reload_action(action_name: str, runner_context: context.RunnerContext) -> No
     try:
         action_obj = project_def.actions[action_name]
     except KeyError:
-        available_actions_str = ",".join(
-            [action_name for action_name in project_def.actions]
-        )
+        available_actions_str = ",".join(list(project_def.actions))
         logger.warning(
             f"Action {action_name} not found."
             f" Available actions: {available_actions_str}"
@@ -365,14 +368,11 @@ def reload_action(action_name: str, runner_context: context.RunnerContext) -> No
     for source_to_remove in sources_to_remove:
         source_package = source_to_remove.split(".")[0]
 
-        loaded_package_modules = dict(
-            [
-                (key, value)
-                for key, value in sys.modules.items()
-                if key.startswith(source_package)
-                and isinstance(value, types.ModuleType)
-            ]
-        )
+        loaded_package_modules = {
+            key: value
+            for key, value in sys.modules.items()
+            if key.startswith(source_package) and isinstance(value, types.ModuleType)
+        }
 
         # delete references to these loaded modules from sys.modules
         for key in loaded_package_modules:
@@ -410,7 +410,8 @@ def shutdown_action_handler(
         logger.trace(f"Shutdown {action_handler_name} action handler")
         try:
             exec_info.lifecycle.on_shutdown_callable()
-        except Exception as e:
+        # The callable is supplied by extension code and can raise arbitrarily.
+        except Exception as e:  # noqa: BLE001
             logger.error(f"Failed to shutdown action {action_handler_name}: {e}")
     exec_info.status = domain.ActionHandlerExecInfoStatus.SHUTDOWN
 
@@ -423,7 +424,8 @@ def shutdown_action_handler(
                     try:
                         used_service.dispose()
                         logger.trace(f"Disposed service: {used_service}")
-                    except Exception as exception:
+                    # dispose() is extension-supplied code and can raise arbitrarily.
+                    except Exception as exception:  # noqa: BLE001
                         logger.error(f"Failed to dispose service: {used_service}")
                         logger.exception(exception)
                     # Drop it from the DI cache too, or the next handler to ask
@@ -461,7 +463,8 @@ def exit_action_handler(
         logger.trace(f"Exit {action_handler_name} action handler")
         try:
             exec_info.lifecycle.on_exit_callable()
-        except Exception as e:
+        # The callable is supplied by extension code and can raise arbitrarily.
+        except Exception as e:  # noqa: BLE001
             logger.error(f"Failed to exit action {action_handler_name}: {e}")
 
 
@@ -505,7 +508,9 @@ def get_payload_schemas(
                 if description:
                     schema["description"] = description
                 result[action_name] = schema
-        except Exception as exception:
+        # Importing an action executes its module's top-level code, so the
+        # reachable exception set is open and not enumerable here.
+        except Exception as exception:  # noqa: BLE001
             logger.debug(
                 f"Could not extract payload schema for action '{action_name}': {exception}"
             )

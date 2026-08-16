@@ -230,7 +230,9 @@ def _activate_extensions(
             activator_cls = all_eps[pkg_name].load()
             activator_cls(registry=svc_registry).activate()
             logger.debug(f"Activated extension '{pkg_name}'")
-        except Exception as e:
+        # Entry-point loading imports a third-party extension package and
+        # activate() is its code; the reachable exception set is open.
+        except Exception as e:  # noqa: BLE001
             logger.error(f"Failed to activate extension '{pkg_name}': {e}")
 
     return all_eps, packages_to_activate
@@ -246,7 +248,9 @@ def _make_deferred_activator(
             activator_cls = ep.load()
             activator_cls(registry=svc_registry).activate()
             logger.debug(f"On-demand activated extension '{pkg_name}'")
-        except Exception as e:
+        # Entry-point loading imports a third-party extension package and
+        # activate() is its code; the reachable exception set is open.
+        except Exception as e:  # noqa: BLE001
             logger.error(f"Failed to on-demand activate extension '{pkg_name}': {e}")
 
     return activate
@@ -310,7 +314,7 @@ def _pyproject_has_activator_ep(source_path: pathlib.Path) -> bool:
     try:
         with open(pyproject_path, "rb") as f:
             data = tomllib.load(f)
-    except Exception:
+    except (OSError, tomllib.TOMLDecodeError):
         return False
     return "finecode.activator" in data.get("project", {}).get("entry-points", {})
 
@@ -331,7 +335,9 @@ def _build_service_config_resolver(
             continue
         try:
             interface = import_module_member_by_source_str(svc.interface)
-        except Exception as e:
+        # The import executes the interface module's top-level code, so the
+        # reachable exception set is open and not enumerable here.
+        except Exception as e:  # noqa: BLE001
             logger.error(f"Failed to resolve service interface '{svc.interface}': {e}")
             continue
         existing = declared_by_interface.setdefault(interface, {})
@@ -381,7 +387,9 @@ def _apply_user_service_config(
             impl_cls = import_module_member_by_source_str(svc.source)
             svc_registry.register_impl(interface, impl_cls)
             logger.trace(f"Configured service '{svc.source}' for '{svc.interface}'")
-        except Exception as e:
+        # The imports execute user-configured modules' top-level code, so the
+        # reachable exception set is open and not enumerable here.
+        except Exception as e:  # noqa: BLE001
             logger.error(f"Failed to configure service '{svc.source}': {e}")
 
 
@@ -417,7 +425,9 @@ def _register_command_runner_service(
         impl_cls = import_module_member_by_source_str(source)
         svc_registry.register_impl(interface, impl_cls)
         logger.trace(f"Configured service '{source}' for '{_COMMAND_RUNNER_INTERFACE}'")
-    except Exception as e:
+    # `source` may be a user-declared override; the import executes its
+    # top-level code, so the reachable exception set is open.
+    except Exception as e:  # noqa: BLE001
         logger.error(f"Failed to configure service '{source}': {e}")
 
 
@@ -458,7 +468,9 @@ def _register_repository_credentials_provider_service(
         logger.trace(
             f"Configured service '{source}' for '{_REPOSITORY_CREDENTIALS_PROVIDER_INTERFACE}'"
         )
-    except Exception as e:
+    # `source` may be a user-declared override; the import executes its
+    # top-level code, so the reachable exception set is open.
+    except Exception as e:  # noqa: BLE001
         logger.error(f"Failed to configure service '{source}': {e}")
 
 

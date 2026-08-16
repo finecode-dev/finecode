@@ -715,7 +715,7 @@ async def run_action(
                         ) from eg
 
                     for handler, handler_task in zip(
-                        action_def.handlers, handlers_tasks
+                        action_def.handlers, handlers_tasks, strict=False
                     ):
                         coro_result = handler_task.result()
                         if coro_result is not None:
@@ -743,8 +743,8 @@ async def run_action(
                                 tracking_sender=tracking_sender,
                                 partial_result_queue=partial_result_queue,
                             )
-                        except ActionFailedException as exception:
-                            raise exception
+                        except ActionFailedException:
+                            raise
 
                         if handler_result is not None:
                             if action_result is None:
@@ -1086,7 +1086,7 @@ def create_action_exec_info(action: domain.ActionDeclaration) -> domain.ActionEx
         raise er_errors.PackageNotInstalledError(e.name or str(e)) from e
     except Exception as e:
         logger.error(f"Error importing action type: {e}")
-        raise e
+        raise
 
     if not issubclass(action_type_def, code_action.Action):
         raise Exception(
@@ -1123,7 +1123,7 @@ async def resolve_func_args_with_di(
     func_parameters = inspect.signature(func).parameters
     func_annotations = inspect.get_annotations(func, eval_str=True)
     args: dict[str, typing.Any] = {}
-    for param_name in func_parameters.keys():
+    for param_name in func_parameters:
         # default object constructor(__init__) has signature
         # __init__(self, *args, **kwargs)
         # args and kwargs have no annotation and should not be filled by DI resolver.

@@ -24,8 +24,8 @@ class ProcessExecutor(iprocessexecutor.IProcessExecutor):
         self._active = True
         try:
             yield
-        except Exception as exc:
-            raise exc
+        except Exception:
+            raise
         finally:
             if self._py_process_executor is not None:
                 self._py_process_executor.shutdown()
@@ -65,5 +65,5 @@ class ProcessExecutor(iprocessexecutor.IProcessExecutor):
             )
         except Exception as exc:
             logger.exception(exc)
-            raise exc
+            raise
         return result

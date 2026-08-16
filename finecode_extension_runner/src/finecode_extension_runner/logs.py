@@ -1,3 +1,4 @@
+import contextlib
 import enum
 import inspect
 import io
@@ -56,10 +57,8 @@ def save_logs_to_file(
     stdout: bool = True,
 ) -> Path:
     global _default_log_level
-    try:
+    with contextlib.suppress(KeyError):
         _default_log_level = LogLevel[log_level.upper()]
-    except KeyError:
-        pass
 
     if stdout is True:
         if isinstance(sys.stdout, io.TextIOWrapper):
