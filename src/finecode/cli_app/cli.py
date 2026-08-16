@@ -13,6 +13,9 @@ from loguru import logger
 from finecode import logger_utils, user_messages
 from finecode.wm_server.errors import WmError
 
+if typing.TYPE_CHECKING:
+    from finecode.cli_app import utils
+
 FINECODE_CONFIG_ENV_PREFIX = "FINECODE_CONFIG_"
 FINECODE_SERVICE_CONFIG_ENV_PREFIX = "FINECODE_SERVICE_CONFIG_"
 _VALID_DEV_ENVS = {"ide", "cli", "ai", "ci", "git_hook"}
@@ -282,6 +285,90 @@ def deserialize_action_payload(raw_payload: dict[str, str]) -> dict[str, typing.
     return deserialized_payload
 
 
+RUN_RESULTS_FILE_VERSION = 1
+
+
+def _write_run_results_file(
+    results_file: pathlib.Path,
+    result: "utils.RunActionsResult | None",
+    payload: dict[str, typing.Any],
+    projects_requested: list[str] | None,
+    return_code: int,
+) -> None:
+    """Write this run's results, and what the run *was*, to a file of its own.
+
+    Distinct from the shared `cache/finecode/results/<action>.json` in two ways
+    that matter to any reader deciding what a result describes:
+
+    * It is not merged. The shared file is read-modify-written on every run, so
+      it accumulates entries for projects the run in hand never touched, and a
+      reader cannot tell those apart from the current ones.
+    * It records each action's declared `scope`. A workspace-scoped action runs
+      once and files its result under the project that *hosted* it, whatever set
+      of projects it was pointed at, so the key is not a project identity and a
+      reader must take project membership from the file URIs in the result
+      instead. Nothing in the result itself says which case applies; `scope`
+      does.
+
+    `projects_requested`, `project_paths_requested` and `payload` record the
+    request rather than the outcome, which is what distinguishes "ran and found
+    nothing" from "was dispatched to nothing at all".
+
+    Called on every path out of the run, including the ones where the run
+    produced nothing at all (*result* is ``None``). A run that fails must still
+    replace the file: the previous run's document is complete and well-formed,
+    carries the same version and shape, and says nothing about being stale, so a
+    reader that finds it left behind reports the wrong run's outcome as this
+    one's.
+
+    The document goes through a temporary file in the same directory and is
+    `os.replace`d into place, so a concurrent reader sees either the whole old
+    document or the whole new one, never a half-written one.
+    """
+    scope_by_source = (
+        result.scope_by_action_source if result is not None else None
+    ) or {}
+    result_by_project = result.result_by_project if result is not None else {}
+    actions: dict[str, typing.Any] = {}
+    for project_path, result_by_action in result_by_project.items():
+        for action_source, action_result in result_by_action.items():
+            entry = actions.setdefault(
+                action_source,
+                {"scope": scope_by_source.get(action_source), "results": {}},
+            )
+            entry["results"][str(project_path)] = {
+                # Per action *and* per project, because the document's single
+                # top-level `return_code` cannot say which of them failed.
+                "return_code": action_result.return_code,
+                # `None` rather than an abort: a fully streamed matrixed action
+                # merges to no json payload at all, and failing the whole file
+                # over that would throw away a run that already succeeded.
+                "result": action_result.result_by_format.get("json"),
+            }
+
+    document = {
+        "finecode_results_version": RUN_RESULTS_FILE_VERSION,
+        "return_code": return_code,
+        "projects_requested": projects_requested,
+        # The names above are what the user typed; these are what they resolved
+        # to, and only these can be joined against the keys under `results`.
+        # `None` when the run never got as far as resolving them.
+        "project_paths_requested": (
+            result.project_paths_requested if result is not None else None
+        ),
+        "payload": payload,
+        "actions": actions,
+    }
+    results_file.parent.mkdir(parents=True, exist_ok=True)
+    tmp_file = results_file.with_name(f"{results_file.name}.{os.getpid()}.tmp")
+    try:
+        tmp_file.write_text(json.dumps(document, indent=2))
+        os.replace(tmp_file, results_file)
+    except OSError:
+        tmp_file.unlink(missing_ok=True)
+        raise
+
+
 @click.command(
     context_settings=dict(ignore_unknown_options=True, allow_extra_args=True)
 )
@@ -298,6 +385,7 @@ def run(ctx) -> None:
     log_level: str = "INFO"
     no_env_config: bool = False
     save_results: bool = True
+    results_file: pathlib.Path | None = None
     map_payload_fields: set[str] = set()
     shared_server: bool = False
     dev_env: str = detect_dev_env()
@@ -331,6 +419,23 @@ def run(ctx) -> None:
             no_env_config = True
         elif arg == "--no-save-results":
             save_results = False
+        elif arg.startswith("--results-file"):
+            # Matched on the bare prefix so that a missing or empty value is
+            # rejected here rather than silently consumed by the arg loop and
+            # discovered as an IsADirectoryError after the run has finished.
+            raw_results_file = arg.removeprefix("--results-file=").strip()
+            if not arg.startswith("--results-file=") or not raw_results_file:
+                click.echo(
+                    "--results-file requires a path: --results-file=<path>", err=True
+                )
+                sys.exit(1)
+            results_file = pathlib.Path(raw_results_file).expanduser()
+            if results_file.is_dir():
+                click.echo(
+                    f"Provided --results-file '{raw_results_file}' is a directory",
+                    err=True,
+                )
+                sys.exit(1)
         elif arg.startswith("--map-payload-fields"):
             fields = arg.removeprefix("--map-payload-fields=")
             map_payload_fields = {f.replace("-", "_") for f in fields.split(",")}
@@ -438,6 +543,7 @@ def run(ctx) -> None:
     user_messages._notification_sender = show_user_message
 
     deserialized_payload = deserialize_action_payload(action_payload)
+    result: utils.RunActionsResult | None = None
     try:
         result = asyncio.run(
             run_cmd.run_actions(
@@ -448,7 +554,10 @@ def run(ctx) -> None:
                 concurrently,
                 handler_config_overrides=handler_config_overrides,
                 service_config_overrides=service_config_overrides,
-                save_results=save_results,
+                # `--results-file` needs the structured data too, so it implies
+                # the json result format even under `--no-save-results` -- that
+                # flag suppresses the shared cache, not this run's own record.
+                save_results=save_results or results_file is not None,
                 map_payload_fields=map_payload_fields,
                 own_server=not shared_server,
                 log_level=log_level,
@@ -459,17 +568,52 @@ def run(ctx) -> None:
                 interpreter_selectors=interpreter_selectors,
             )
         )
-
+    except run_cmd.RunFailed as exception:
+        click.echo(exception.args[0], err=True)
+        exit_code = 1
+    except WmError as exception:
+        click.echo(str(exception), err=True)
+        exit_code = 1
+    except Exception as exception:
+        logger.exception(exception)
+        click.echo("Unexpected error, see logs in file for more details", err=True)
+        exit_code = 2
+    else:
         # if partial results were printed, final result is empty
         if result.output != "":
             click.echo(result.output)
 
-        if result.return_code == 0:
+        exit_code = result.return_code
+        if exit_code == 0:
             logger.info("Done.")
         else:
-            logger.info(f"Done (exit code {result.return_code}).")
+            logger.info(f"Done (exit code {exit_code}).")
 
-        if save_results:
+    # Before the shared cache below, and outside the `else`: this file was asked
+    # for explicitly, so neither a failed run nor a best-effort cache write may
+    # decide whether it gets written.
+    if results_file is not None:
+        try:
+            _write_run_results_file(
+                results_file,
+                result,
+                deserialized_payload,
+                projects,
+                return_code=exit_code,
+            )
+        except OSError as exception:
+            click.echo(
+                f"Could not write results file '{results_file}': {exception}", err=True
+            )
+            # The run's own outcome is already reported; this is a second,
+            # independent failure and must not pass as success.
+            exit_code = exit_code or 1
+        else:
+            # stderr: stdout on this path carries the action result blocks.
+            click.echo(f"Results written to {results_file}", err=True)
+
+    if result is not None and save_results:
+        try:
             results_dir = (
                 pathlib.Path(sys.executable).parent.parent
                 / "cache"
@@ -479,23 +623,24 @@ def run(ctx) -> None:
             results_dir.mkdir(parents=True, exist_ok=True)
             for project_path, result_by_action in result.result_by_project.items():
                 for action_name, action_result in result_by_action.items():
+                    json_payload = action_result.result_by_format.get("json")
+                    if json_payload is None:
+                        # No json result to cache (a fully streamed matrixed
+                        # action merges to none). Leave whatever the cache holds
+                        # for this project alone rather than failing the command.
+                        continue
                     output_file = results_dir / f"{action_name}.json"
                     json_result: dict[str, typing.Any] = {}
                     if output_file.exists():
                         json_result = json.loads(output_file.read_text())
-                    json_result[str(project_path)] = action_result.json()
+                    json_result[str(project_path)] = json_payload
                     output_file.write_text(json.dumps(json_result, indent=2))
-        sys.exit(result.return_code)
-    except run_cmd.RunFailed as exception:
-        click.echo(exception.args[0], err=True)
-        sys.exit(1)
-    except WmError as exception:
-        click.echo(str(exception), err=True)
-        sys.exit(1)
-    except Exception as exception:
-        logger.exception(exception)
-        click.echo("Unexpected error, see logs in file for more details", err=True)
-        sys.exit(2)
+        except Exception as exception:
+            logger.exception(exception)
+            click.echo("Unexpected error, see logs in file for more details", err=True)
+            exit_code = exit_code or 2
+
+    sys.exit(exit_code)
 
 
 @click.command()

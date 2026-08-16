@@ -326,7 +326,12 @@ async def run_actions(
             # Use the WM's type-safely merged per-project results (requested via
             # mergeResults) for the saved/returned data.
             return _build_streaming_result(
-                batch_result.get("results", {}), batch_result.get("returnCode", 0)
+                batch_result.get("results", {}),
+                batch_result.get("returnCode", 0),
+                scope_by_action_source={
+                    source: scope_by_source.get(source) for source in action_sources
+                },
+                project_paths_requested=project_paths,
             )
         finally:
             await client.close()
@@ -394,6 +399,8 @@ def _format_project_block(
 def _build_streaming_result(
     streaming_results: dict[str, dict],
     overall_return_code: int,
+    scope_by_action_source: dict[str, str | None] | None = None,
+    project_paths_requested: list[str] | None = None,
 ) -> utils.RunActionsResult:
     """Build a RunActionsResult from collected partial-result notifications.
 
@@ -418,6 +425,8 @@ def _build_streaming_result(
         output="",
         return_code=overall_return_code,
         result_by_project=result_by_project,
+        scope_by_action_source=scope_by_action_source,
+        project_paths_requested=project_paths_requested,
     )
 
 

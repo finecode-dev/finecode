@@ -62,6 +62,7 @@ python -m finecode run [options] <action> [<action> ...] [payload] [--config.<ke
 | `--verbose` / `-v` | Stream WM and ER diagnostic logs to stderr live over the protocol (`server/logRecords`). Auto-enabled in CI. |
 | `--no-env-config` | Ignore `FINECODE_CONFIG_*` and `FINECODE_SERVICE_CONFIG_*` environment variables |
 | `--no-save-results` | Do not write action results to the cache directory |
+| `--results-file=<path>` | Also write *this run's* results to `<path>`, unmerged, on every exit path, and report the path on stderr. See [Per-run results file](#per-run-results-file) |
 | `--dev-env=<env>` | Override the detected dev environment. One of: `ai`, `ci`, `cli`, `ide`, `precommit` (default: auto-detected — see [Dev environment detection](#dev-environment-detection)) |
 | `--env=<name>` | For a matrixed action (ADR-0047), restrict execution to the named interpreter environment(s) — a matrix base selects all of its children, a concrete child selects only itself. Repeatable. Non-matrix envs are unaffected. See [Preparing Environments — filtering by environment name](guides/preparing-environments.md#filtering-by-environment-name). |
 | `--interpreter=<impl>@<version>` | For a matrixed action, restrict execution to the named interpreter(s) across every matrix env the action touches. Repeatable; a bare version means `cpython`. See [Preparing Environments — filtering by interpreter](guides/preparing-environments.md#filtering-by-interpreter). |
@@ -71,6 +72,75 @@ In a multi-project workspace, `run` fans out across every project that declares 
 `--env` and `--interpreter` on `run` use the same selector semantics as `prepare-envs` (ADR-0050): they compose by intersection, and a matrix env's config-declared `default_interpreters` policy (see [Preparing Environments — default interpreter subset](guides/preparing-environments.md#default-interpreter-subset)) applies as the default when neither is given — so a plain `run` can execute only a local subset of a matrix (e.g. the newest interpreter) while CI still runs the full axis, mirroring `prepare-envs`.
 
 WAL environment variable and storage settings are shared with `start-wm-server` — see [`start-wm-server`](#start-wm-server) for details.
+
+### Per-run results file
+
+By default results go to `<venv>/cache/finecode/results/<action-source>.json`, which is
+**read-modify-written on every run**: each run adds or replaces one project key and
+leaves every other key in place. That file is what `--map-payload-fields` reads, so
+it stays as it is — but it means a reader cannot tell entries this run produced from
+entries left by earlier ones, possibly for projects the run never touched.
+
+`--results-file=<path>` writes a second file describing one run and nothing else:
+
+```bash
+python -m finecode run --results-file=/tmp/lint.json lint \
+  --project_paths='["file:///ws/backend"]'
+```
+
+```json
+{
+  "finecode_results_version": 1,
+  "return_code": 1,
+  "projects_requested": null,
+  "project_paths_requested": null,
+  "payload": {"project_paths": ["file:///ws/backend"]},
+  "actions": {
+    "fine_lint.LintAction": {
+      "scope": "workspace",
+      "results": {
+        "/ws": {"return_code": 1, "result": {"messages": {}}}
+      }
+    }
+  }
+}
+```
+
+`scope` is the field to read before anything else. A **workspace-scoped** action runs
+once and files its result under the project that *hosted* it — the workspace root —
+however many projects it was pointed at, so the key under `results` is not a project
+identity and looking up your project by key finds nothing. Take project membership
+from the file URIs inside the result instead. For a **project-scoped** action the key
+is the project, and a lookup is correct. Nothing else in the payload distinguishes the
+two cases, which is why `scope` is recorded.
+
+`scope` is `null` when the run could not resolve it — an action the WM reports without
+a declared scope, or a result filed under a source that was never listed. Treat `null`
+as "unknown", not as either case above: a key lookup may or may not be a project, so
+read project membership out of the result the way a workspace-scoped action requires.
+
+Each entry under `results` carries its own `return_code`, because the document's
+top-level `return_code` is the whole run's and cannot say which action or which project
+produced a failure. `result` is the action's JSON result, or `null` when the action
+returned none — a fully streamed matrixed action merges to no JSON payload at all.
+
+`projects_requested`, `project_paths_requested` and `payload` record the request rather
+than the outcome, which is what separates "ran and found nothing" from "was dispatched
+to nothing at all". `projects_requested` holds the `--project=<name>` values as typed;
+`project_paths_requested` holds what those names resolved to, and it is the one to join
+against the keys under `results`, which are paths. Both are `null` when the run was not
+restricted to a subset of projects, and `project_paths_requested` is also `null` when
+the run failed before resolving them.
+
+The file is written on **every** exit path, including runs that failed before any action
+executed (`actions` is then `{}`). A failed run must not leave the previous run's file in
+place: it is complete, well-formed, carries the same version, and nothing in it says it
+describes a different run. The write goes through a temporary file in the same directory
+and is renamed into place, so a concurrent reader never sees a half-written document.
+
+`--results-file` implies the JSON result format, so it works alongside
+`--no-save-results` when you want this run's record without touching the shared cache.
+The confirmation line is printed to stderr, leaving stdout to the action's own output.
 
 ### Payload
 
