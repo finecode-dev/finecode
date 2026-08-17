@@ -7,6 +7,7 @@ import pathlib
 import typing
 
 from finecode.wm_server import context, domain
+from finecode.wm_server.runner import elicitation_bridge
 from finecode.wm_server.runner.runner_client import (
     DevEnv,
     RunActionResponse,
@@ -89,6 +90,8 @@ class ProjectExecutor:
         caller_kwargs: dict | None = None,
         allow_no_handlers: bool = False,
         selected_interpreters: set[str] | None = None,
+        *,
+        origin: elicitation_bridge.RunDispatchOrigin | None,
     ) -> RunActionResponse:
         if orchestration_depth >= policy.max_recursion_depth:
             raise ActionRunFailed(
@@ -116,6 +119,7 @@ class ProjectExecutor:
             caller_kwargs=caller_kwargs,
             allow_no_handlers=allow_no_handlers,
             selected_interpreters=selected_interpreters,
+            origin=origin,
         )
 
     @contextlib.asynccontextmanager
@@ -132,6 +136,8 @@ class ProjectExecutor:
         result_formats: list[RunResultFormat] | None = None,
         progress_token: int | str | None = None,
         caller_kwargs: dict | None = None,
+        *,
+        origin: elicitation_bridge.RunDispatchOrigin | None,
     ) -> collections.abc.AsyncIterator[proxy_utils.RunWithPartialResultsContext]:
         if orchestration_depth >= policy.max_recursion_depth:
             raise ActionRunFailed(
@@ -156,5 +162,6 @@ class ProjectExecutor:
             result_formats=result_formats,
             progress_token=progress_token,
             caller_kwargs=caller_kwargs,
+            origin=origin,
         ) as ctx:
             yield ctx

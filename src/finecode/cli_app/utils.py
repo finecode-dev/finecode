@@ -124,6 +124,9 @@ async def run_actions_in_projects_and_concat_results(
         run_trigger=run_trigger,
         dev_env=dev_env,
         payload_overrides_by_project=payload_overrides_by_project or {},
+        # The CLI drives the WM in-process; there is no client connection an ER
+        # could be pointed at.
+        origin=None,
     )
 
     result_output: str = ""

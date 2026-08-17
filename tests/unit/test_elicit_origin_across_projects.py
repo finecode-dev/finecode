@@ -128,9 +128,8 @@ async def test_the_origin_reaches_the_project_the_run_fanned_into(
     ws_context = _workspace((project, runner), (other_project, other_runner))
 
     terminal = object()
-    with (
-        elicitation_bridge.originating_client(terminal),
-        elicitation_bridge.bind_run(_OUTER_RUN),
+    with elicitation_bridge.bind_run(
+        _OUTER_RUN, elicitation_bridge.RunDispatchOrigin(connection=terminal)
     ):
         await er_dispatch._BridgeHandlers().run_action_in_workspace(
             runner=runner,
@@ -183,9 +182,8 @@ async def test_a_second_client_running_the_same_project_is_not_confused_for_the_
     first_terminal = object()
     second_terminal = object()
     for run_id, terminal in (("run-a", first_terminal), ("run-b", second_terminal)):
-        with (
-            elicitation_bridge.originating_client(terminal),
-            elicitation_bridge.bind_run(run_id),
+        with elicitation_bridge.bind_run(
+            run_id, elicitation_bridge.RunDispatchOrigin(connection=terminal)
         ):
             await er_dispatch._BridgeHandlers().run_action_in_workspace(
                 runner=runner,
@@ -228,9 +226,8 @@ async def test_the_origin_survives_a_second_hop(tmp_path: pathlib.Path) -> None:
     second_client.dispatch_onward = _second_hop
 
     terminal = object()
-    with (
-        elicitation_bridge.originating_client(terminal),
-        elicitation_bridge.bind_run(_OUTER_RUN),
+    with elicitation_bridge.bind_run(
+        _OUTER_RUN, elicitation_bridge.RunDispatchOrigin(connection=terminal)
     ):
         await er_dispatch._BridgeHandlers().run_action_in_workspace(
             runner=runner,

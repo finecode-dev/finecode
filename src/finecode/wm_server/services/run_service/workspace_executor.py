@@ -4,6 +4,7 @@ import pathlib
 import typing
 
 from finecode.wm_server import context
+from finecode.wm_server.runner import elicitation_bridge
 from finecode.wm_server.runner.runner_client import (
     DevEnv,
     RunActionResponse,
@@ -42,6 +43,8 @@ class WorkspaceExecutor:
         payload_overrides_by_project: dict[str, dict[str, typing.Any]] | None = None,
         progress_token_by_project: dict[pathlib.Path, dict[str, str]] | None = None,
         cancellable: bool = False,
+        *,
+        origin: elicitation_bridge.RunDispatchOrigin | None,
     ) -> dict[pathlib.Path, dict[str, RunActionResponse]]:
         # `max_project_fanout` is a runaway-orchestration guard (ADR-0016), not a
         # capacity limit — it bounds the blast radius of an action whose handler
@@ -80,4 +83,5 @@ class WorkspaceExecutor:
             progress_token_by_project=progress_token_by_project,
             orchestration_depth=orchestration_depth,
             cancellable=cancellable,
+            origin=origin,
         )

@@ -18,7 +18,7 @@ from loguru import logger
 from finecode.wm_server import context, domain
 from finecode.wm_server.context import pick_workspace_root_dir
 from finecode.wm_server.errors import ActionNotResolvableError
-from finecode.wm_server.runner import runner_client
+from finecode.wm_server.runner import elicitation_bridge, runner_client
 from finecode.wm_server.services.run_service import (
     ActionRunFailed,
     DevEnv,
@@ -167,6 +167,7 @@ async def run_action_with_partial_results(
     run_trigger: RunActionTrigger,
     dev_env: DevEnv,
     ws_context: context.WorkspaceContext,
+    origin: elicitation_bridge.RunDispatchOrigin | None,
     result_formats: list[str] | None = None,
     progress_token: str | int | None = None,
     selected_interpreters: set[str] | None = None,
@@ -185,6 +186,11 @@ async def run_action_with_partial_results(
     fan-out to the given interpreter canonicals, forwarded to every project's
     ``matrix_streaming.run_matrix_with_partial_results`` call; ``None`` (the
     default) runs the full declared axis.
+
+    ``origin`` is who to ask if a handler elicits a choice while any of the
+    fanned-out projects run (ADR-0082), forwarded unchanged to every project's
+    dispatch; ``None`` is the honest answer for a run with no identifiable
+    client.
     """
 
     # determine target project(s) — only CollectedProject instances have actions
@@ -304,6 +310,7 @@ async def run_action_with_partial_results(
                 merge_results=False,
                 on_partial=_on_partial,
                 selected_interpreters=selected_interpreters,
+                origin=origin,
             )
             return_codes.append(matrix_return_code)
             return
@@ -323,6 +330,7 @@ async def run_action_with_partial_results(
             initialize_all_handlers=True,
             result_formats=runner_formats,
             progress_token=project_progress_token,
+            origin=origin,
         ) as ctx:
 
             async def _forward_partials() -> None:

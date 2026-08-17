@@ -51,6 +51,7 @@ async def test_run_action_retries_metadata_resolution_when_canonical_source_unre
             project_path=project.dir_path,
             run_trigger=proxy_utils.RunActionTrigger.SYSTEM,
             dev_env=proxy_utils.DevEnv.CI,
+            origin=None,
         )
 
     assert result.return_code == 0
@@ -82,4 +83,5 @@ async def test_run_action_still_fails_when_metadata_cannot_resolve(
             project_path=project.dir_path,
             run_trigger=proxy_utils.RunActionTrigger.SYSTEM,
             dev_env=proxy_utils.DevEnv.CI,
+            origin=None,
         )

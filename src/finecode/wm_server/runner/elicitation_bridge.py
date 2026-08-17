@@ -28,32 +28,48 @@ to the ER, so the ER can name it back when it asks (ADR-0082 rule 1, whose
 implementation notes park exactly this until such an identifier exists — it does
 now, independently of the WAL, since ADR-0079 keys in-flight runs by it).
 
-The two halves are separate on purpose: :func:`originating_client` marks *this
-task* as belonging to a connection, and :func:`bind_run` records the run id the
-dispatch minted under that connection. The first is a
-:class:`contextvars.ContextVar`, so it reaches the dispatch through call chains
-and into the tasks it spawns without every layer in between having to carry it;
-the second is what turns it into a lookup an ER on another connection can
-resolve.
+:class:`RunDispatchOrigin` carries the originating connection down to
+:func:`bind_run`, the one choke point every dispatch passes through
+(``in_flight_runs.track``): the request handler that still holds its caller's
+connection constructs it, threads it explicitly through the dispatch, and
+:func:`bind_run` records the run id the dispatch minted under it. Passed
+explicitly rather than read from ambient state, per "Ambient state: when a
+``ContextVar`` is allowed" in developing-finecode.md — a value many
+intermediate signatures carry is a cost, not a structural blocker.
 """
 
 from __future__ import annotations
 
 import collections.abc
 import contextlib
-import contextvars
+import dataclasses
 import typing
 
 __all__ = [
     "ElicitationBridge",
+    "RunDispatchOrigin",
     "bind_run",
     "handlers",
     "install",
-    "originating_client",
     "originating_client_for_run",
     "reset",
     "reset_origins",
 ]
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class RunDispatchOrigin:
+    """Which client connection, if any, is asking for a run.
+
+    Constructed at the request handler that still holds its caller's
+    connection — or, for a nested ER→WM→ER dispatch, derived from the calling
+    run's connection via :func:`originating_client_for_run` — and threaded
+    explicitly down to :func:`bind_run`. ``connection=None`` is the honest
+    answer for anything the WM started on its own behalf, or a dispatch that
+    never had a client to begin with, and binds nothing.
+    """
+
+    connection: object | None
 
 
 class ElicitationBridge(typing.Protocol):
@@ -113,49 +129,33 @@ def handlers() -> ElicitationBridge | None:
 # Addressing: which connection started a given run
 # ---------------------------------------------------------------------------
 
-# The connection whose request this task is executing. A ContextVar rather than
-# a parameter because the dispatch that mints a run id sits many layers below
-# the handler that knows the connection, and every layer in between would
-# otherwise have to carry something it has no use for. Tasks copy the context
-# they are created in, so a fan-out inherits it without being told.
-_origin: contextvars.ContextVar[object | None] = contextvars.ContextVar(
-    "finecode_elicitation_origin", default=None
-)
-
 # Run id → the connection that started it. Written for the life of the dispatch
 # and read by an ER on a different connection entirely, which is why this is a
-# registry and not just the ContextVar above.
+# registry rather than a value carried on the run's own call stack.
 _runs: dict[str, object] = {}
 
 
 @contextlib.contextmanager
-def originating_client(connection: object | None) -> collections.abc.Iterator[None]:
-    """Mark this task, and what it starts, as running for *connection*.
-
-    Entered by the request handlers that still hold their caller's connection,
-    and again by nested dispatch on behalf of the run that asked for it. Passing
-    ``None`` is meaningful: it states that the work in the block has no
-    identifiable origin, which is the honest answer for anything the WM started
-    on its own behalf.
-    """
-    token = _origin.set(connection)
-    try:
-        yield
-    finally:
-        _origin.reset(token)
-
-
-@contextlib.contextmanager
-def bind_run(run_id: str) -> collections.abc.Iterator[None]:
-    """Record *run_id* as belonging to the connection this task is running for.
+def bind_run(
+    run_id: str, origin: RunDispatchOrigin | None
+) -> collections.abc.Iterator[None]:
+    """Record *run_id* as belonging to *origin*'s connection.
 
     Entered where the run identifier is minted, so the binding lasts exactly as
     long as the run does: a question can only be addressed while the run that
     asks it is in flight, and an entry outliving its run would address a later
-    question to a client that has moved on. A dispatch with no originating
-    connection records nothing rather than an empty entry.
+    question to a client that has moved on. ``origin=None``, or an origin whose
+    ``connection`` is ``None``, records nothing rather than an empty entry —
+    that is the honest state for a dispatch with no identifiable origin.
+
+    *origin* has no default, here and at every hop that forwards it. Passing an
+    explicit ``None`` is cheap and states a real fact; a default would let the
+    argument be dropped silently at one hop of a long chain, and the result —
+    a connected client that is never asked — looks exactly like a run that
+    genuinely had nobody to ask. That is the failure this parameter replaced a
+    ``ContextVar`` to avoid, so it must not be reintroduced as a default.
     """
-    connection = _origin.get()
+    connection = origin.connection if origin is not None else None
     if connection is None:
         yield
         return

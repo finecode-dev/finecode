@@ -79,9 +79,8 @@ def _er_side_prompt() -> UserPrompt:
 @contextlib.contextmanager
 def _a_run_from(connection: object):
     """The WM half of a dispatch: this connection started run ``_RUN_ID``."""
-    with (
-        elicitation_bridge.originating_client(connection),
-        elicitation_bridge.bind_run(_RUN_ID),
+    with elicitation_bridge.bind_run(
+        _RUN_ID, elicitation_bridge.RunDispatchOrigin(connection=connection)
     ):
         yield
 

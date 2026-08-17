@@ -147,6 +147,7 @@ async def test_two_interpreters_tag_partials_and_combine_by_interpreter(
         ws_context=None,
         merge_results=True,
         on_partial=on_partial,
+        origin=None,
     )
 
     tagged_interpreters = {tag for tag, _ in received}
@@ -203,6 +204,7 @@ async def test_variant_failure_is_isolated_as_error_entry(
         ws_context=None,
         merge_results=False,
         on_partial=on_partial,
+        origin=None,
     )
 
     # The healthy variant's partial still made it through.
@@ -256,6 +258,7 @@ async def test_merge_results_false_still_keys_by_interpreter(
         ws_context=None,
         merge_results=False,
         on_partial=on_partial,
+        origin=None,
     )
 
     assert combined_rbf["json"] == {
@@ -306,6 +309,7 @@ async def test_selected_interpreters_restricts_fan_out_to_that_variant(
         merge_results=False,
         on_partial=on_partial,
         selected_interpreters={cpython_311.canonical},
+        origin=None,
     )
 
     assert {tag for tag, _ in received} == {cpython_311.canonical}
@@ -339,4 +343,5 @@ async def test_unknown_selected_interpreter_raises(
             merge_results=False,
             on_partial=on_partial,
             selected_interpreters={"cpython@3.14"},
+            origin=None,
         )

@@ -75,6 +75,10 @@ async def _handle_run_action(
                 result_formats=parsed.result_formats,
                 initialize_all_handlers=True,
                 selected_interpreters=selected_interpreters,
+                # Plain request/response: this handler never receives the
+                # caller's writer, so there is no connection to put a question
+                # to. Elicitation is available on the streamed paths only.
+                origin=None,
             )
             return {
                 "resultByFormat": result.result_by_format,
@@ -240,6 +244,8 @@ async def _handle_run_batch(
             concurrently=parsed.concurrently,
             result_formats=parsed.result_formats,
             payload_overrides_by_project=parsed.params_by_project,
+            # No writer here either — see `_handle_run_action` above.
+            origin=None,
         )
 
         results, overall_return_code = _build_batch_result(

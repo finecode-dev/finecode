@@ -353,9 +353,8 @@ def test_the_origin_is_only_recorded_for_the_duration_of_the_run() -> None:
     writer = _FakeWriter()
     assert elicitation_bridge.originating_client_for_run("run-1") is None
 
-    with (
-        elicitation_bridge.originating_client(writer),
-        elicitation_bridge.bind_run("run-1"),
+    with elicitation_bridge.bind_run(
+        "run-1", elicitation_bridge.RunDispatchOrigin(connection=writer)
     ):
         assert elicitation_bridge.originating_client_for_run("run-1") is writer
 
@@ -368,7 +367,7 @@ def test_a_run_nobody_started_is_bound_to_nobody() -> None:
     Binding it to whichever client happened to be around would put a question in
     front of someone who never asked for the work.
     """
-    with elicitation_bridge.bind_run("run-1"):
+    with elicitation_bridge.bind_run("run-1", None):
         assert elicitation_bridge.originating_client_for_run("run-1") is None
 
 
@@ -383,12 +382,14 @@ def test_two_clients_running_at_once_are_told_apart() -> None:
     second = _FakeWriter()
 
     with (
-        elicitation_bridge.originating_client(first),
-        elicitation_bridge.bind_run("run-first"),
+        elicitation_bridge.bind_run(
+            "run-first", elicitation_bridge.RunDispatchOrigin(connection=first)
+        ),
         # The second client starts while the first is still running, which is
         # the case the registry has to keep apart.
-        elicitation_bridge.originating_client(second),
-        elicitation_bridge.bind_run("run-second"),
+        elicitation_bridge.bind_run(
+            "run-second", elicitation_bridge.RunDispatchOrigin(connection=second)
+        ),
     ):
         assert elicitation_bridge.originating_client_for_run("run-first") is first
         assert elicitation_bridge.originating_client_for_run("run-second") is second
@@ -397,8 +398,7 @@ def test_two_clients_running_at_once_are_told_apart() -> None:
 def test_a_run_the_er_cannot_name_is_addressed_to_nobody() -> None:
     """An ER that predates the run id sends none, and is told so at once."""
     writer = _FakeWriter()
-    with (
-        elicitation_bridge.originating_client(writer),
-        elicitation_bridge.bind_run("run-1"),
+    with elicitation_bridge.bind_run(
+        "run-1", elicitation_bridge.RunDispatchOrigin(connection=writer)
     ):
         assert elicitation_bridge.originating_client_for_run(None) is None

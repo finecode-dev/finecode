@@ -97,6 +97,7 @@ async def test_config_recovery_is_refused_while_a_run_is_in_flight(
         run_id="run-7",
         action_name="test",
         project_path=tmp_path,
+        origin=None,
     ):
         result = await wm_client.request(
             "workspace/reloadConfig", {"project": str(tmp_path)}
@@ -128,6 +129,7 @@ async def test_runner_restart_is_refused_while_a_run_is_in_flight(
         run_id="run-9",
         action_name="test",
         project_path=tmp_path,
+        origin=None,
     ):
         result = await wm_client.request("runners/restart", {"project": str(tmp_path)})
 
@@ -153,7 +155,11 @@ async def test_refusal_is_scoped_to_the_project_with_the_run(
     _seed_project(wm_client, idle)
 
     async with in_flight_runs.track(
-        wm_client.ws_context, run_id="run-3", action_name="lint", project_path=busy
+        wm_client.ws_context,
+        run_id="run-3",
+        action_name="lint",
+        project_path=busy,
+        origin=None,
     ):
         result = await wm_client.request(
             "workspace/reloadConfig", {"allProjects": True}
@@ -179,7 +185,11 @@ async def test_override_proceeds_and_says_what_it_killed(
     _seed_project(wm_client, tmp_path)
 
     async with in_flight_runs.track(
-        wm_client.ws_context, run_id="run-1", action_name="test", project_path=tmp_path
+        wm_client.ws_context,
+        run_id="run-1",
+        action_name="test",
+        project_path=tmp_path,
+        origin=None,
     ):
         result = await wm_client.request(
             "workspace/reloadConfig",
@@ -205,7 +215,11 @@ async def test_override_is_not_reached_by_omission(
     _seed_project(wm_client, tmp_path)
 
     async with in_flight_runs.track(
-        wm_client.ws_context, run_id="run-2", action_name="test", project_path=tmp_path
+        wm_client.ws_context,
+        run_id="run-2",
+        action_name="test",
+        project_path=tmp_path,
+        origin=None,
     ):
         for params in (
             {"project": str(tmp_path)},
@@ -251,6 +265,7 @@ async def test_the_run_path_registers_the_run_it_dispatches(
         ws_context=ws_context,
         run_trigger=runner_client.RunActionTrigger.USER,
         dev_env=runner_client.DevEnv.IDE,
+        origin=None,
     )
 
     assert seen_during_dispatch == [["lint"]]
@@ -324,6 +339,7 @@ async def test_the_streaming_run_path_registers_the_run_it_dispatches(
         run_trigger=runner_client.RunActionTrigger.USER,
         dev_env=runner_client.DevEnv.IDE,
         ws_context=ws_context,
+        origin=None,
     ) as ctx:
         async for _ in ctx.partials:
             pass
@@ -345,7 +361,11 @@ async def test_registry_entry_is_removed_when_the_run_fails(
 
     with pytest.raises(RuntimeError):
         async with in_flight_runs.track(
-            ws_context, run_id="run-5", action_name="test", project_path=tmp_path
+            ws_context,
+            run_id="run-5",
+            action_name="test",
+            project_path=tmp_path,
+            origin=None,
         ):
             assert in_flight_runs.runs_in_project(ws_context, tmp_path) != []
             raise RuntimeError("action failed in the runner")
@@ -366,7 +386,11 @@ async def test_registry_entry_is_removed_when_the_run_is_cancelled(
 
     with pytest.raises(asyncio.CancelledError):
         async with in_flight_runs.track(
-            ws_context, run_id="run-6", action_name="test", project_path=tmp_path
+            ws_context,
+            run_id="run-6",
+            action_name="test",
+            project_path=tmp_path,
+            origin=None,
         ):
             raise asyncio.CancelledError
 
@@ -390,6 +414,7 @@ async def test_config_recovery_cancels_a_refresh_rather_than_refusing_it(
         action_name="extract_knowledge",
         project_path=tmp_path,
         cancellable=True,
+        origin=None,
     ):
         result = await wm_client.request(
             "workspace/reloadConfig", {"project": str(tmp_path)}
@@ -417,12 +442,14 @@ async def test_config_recovery_still_refuses_a_user_run_alongside_a_refresh(
             action_name="extract_knowledge",
             project_path=tmp_path,
             cancellable=True,
+            origin=None,
         ),
         in_flight_runs.track(
             wm_client.ws_context,
             run_id="run-8",
             action_name="lint",
             project_path=tmp_path,
+            origin=None,
         ),
     ):
         result = await wm_client.request(

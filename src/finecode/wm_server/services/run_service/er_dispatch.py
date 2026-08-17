@@ -8,8 +8,6 @@ runner reaches this code through a slot rather than importing it.
 from __future__ import annotations
 
 import asyncio
-import collections.abc
-import contextlib
 import json
 from pathlib import Path
 
@@ -64,9 +62,11 @@ def _nearest_projects_hint(path: Path, ws_context: context.WorkspaceContext) -> 
     return f"Nearest projects: {', '.join(str(p) for p in nearest)}{suffix}."
 
 
-@contextlib.contextmanager
-def _origin_of_calling_run(run_id: str | None) -> collections.abc.Iterator[None]:
-    """Run this dispatch for whoever started the run that asked for it.
+def _origin_of_calling_run(
+    run_id: str | None,
+) -> elicitation_bridge.RunDispatchOrigin:
+    """The origin to dispatch this call under: whoever started the run that
+    asked for it.
 
     A run that streams belongs to the client that started it. When a handler in
     that run dispatches another action, the run the WM mints for it is a
@@ -79,10 +79,9 @@ def _origin_of_calling_run(run_id: str | None) -> collections.abc.Iterator[None]
     special handling — the nested run is bound to the same connection, so its
     own dispatches inherit it in turn.
     """
-    with elicitation_bridge.originating_client(
-        elicitation_bridge.originating_client_for_run(run_id)
-    ):
-        yield
+    return elicitation_bridge.RunDispatchOrigin(
+        connection=elicitation_bridge.originating_client_for_run(run_id)
+    )
 
 
 class _BridgeHandlers:
@@ -100,14 +99,15 @@ class _BridgeHandlers:
         # the caller's connection is what lets a question asked inside it reach
         # the same person. Same-project dispatch is no exception — the run doing
         # the asking is a different one from the run that was addressed.
-        with _origin_of_calling_run(params.run_id):
-            return await self._run_action_in_project(runner, params, executor)
+        origin = _origin_of_calling_run(params.run_id)
+        return await self._run_action_in_project(runner, params, executor, origin)
 
     async def _run_action_in_project(
         self,
         runner: ExtensionRunnerInfo,
         params: _internal_client_types.RunActionInProjectParams,
         executor: ProjectExecutor,
+        origin: elicitation_bridge.RunDispatchOrigin,
     ) -> _internal_client_types.RunActionInProjectResult:
         if params.partial_result_token is not None:
             partial_count = 0
@@ -120,6 +120,7 @@ class _BridgeHandlers:
                 dev_env=DevEnv(params.meta.dev_env),
                 orchestration_depth=params.meta.orchestration_depth,
                 caller_kwargs=params.caller_kwargs,
+                origin=origin,
             ) as ctx:
                 async for partial_raw in ctx:
                     partial_count += 1
@@ -158,6 +159,7 @@ class _BridgeHandlers:
             dev_env=DevEnv(params.meta.dev_env),
             orchestration_depth=params.meta.orchestration_depth,
             caller_kwargs=params.caller_kwargs,
+            origin=origin,
         )
         return _internal_client_types.RunActionInProjectResult(
             result=result.result_by_format.get("json", {}),
@@ -256,15 +258,15 @@ class _BridgeHandlers:
             }
 
         executor = WorkspaceExecutor(ws_context)
-        with _origin_of_calling_run(params.run_id):
-            results = await executor.run_actions_in_projects(
-                actions_by_project=actions_by_project,
-                params=params.payload,
-                run_trigger=run_trigger,
-                dev_env=dev_env,
-                orchestration_depth=params.meta.orchestration_depth,
-                concurrently=params.concurrently,
-            )
+        results = await executor.run_actions_in_projects(
+            actions_by_project=actions_by_project,
+            params=params.payload,
+            run_trigger=run_trigger,
+            dev_env=dev_env,
+            orchestration_depth=params.meta.orchestration_depth,
+            concurrently=params.concurrently,
+            origin=_origin_of_calling_run(params.run_id),
+        )
         return _internal_client_types.RunActionInWorkspaceResult(
             results_by_project={
                 k.as_posix(): {

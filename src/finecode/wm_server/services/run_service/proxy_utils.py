@@ -19,7 +19,7 @@ from finecode.wm_server import (
     wal,
 )
 from finecode.wm_server.config import interpreter_matrix
-from finecode.wm_server.runner import runner_client, runner_manager
+from finecode.wm_server.runner import elicitation_bridge, runner_client, runner_manager
 from finecode.wm_server.runner.runner_client import RunResultFormat  # reexport
 from finecode.wm_server.runner.runner_manager import RunnerFailedToStart
 from finecode.wm_server.services import in_flight_runs, runner_start_service
@@ -312,6 +312,8 @@ async def run_with_partial_results(
     progress_token: int | str | None = None,
     caller_kwargs: dict | None = None,
     interpreter: interpreter_matrix.Interpreter | None = None,
+    *,
+    origin: elicitation_bridge.RunDispatchOrigin | None,
 ) -> collections.abc.AsyncIterator[RunWithPartialResultsContext]:
     logger.trace(f"Run {action_name} in project {project_dir_path}")
     wal_run_id = wal.new_wal_run_id()
@@ -333,6 +335,7 @@ async def run_with_partial_results(
                 run_id=wal_run_id,
                 action_name=action_name,
                 project_path=project_dir_path,
+                origin=origin,
             )
         )
         result: AsyncList[domain.PartialResultRawValue] = AsyncList()
@@ -736,6 +739,8 @@ async def run_actions_in_running_project(
     progress_token_by_action: dict[str, str] | None = None,
     orchestration_depth: int = 0,
     cancellable: bool = False,
+    *,
+    origin: elicitation_bridge.RunDispatchOrigin | None,
 ) -> dict[str, RunActionResponse]:
     """Run one or more actions in a single already-running project.
 
@@ -748,6 +753,10 @@ async def run_actions_in_running_project(
     ``cancellable`` forwards to every dispatched ``run_action`` unchanged — a
     whole fan-out is cancellable or it is not; there is no per-action mix
     within one caller's request.
+
+    ``origin`` forwards unchanged to every dispatched ``run_action`` too — a
+    fan-out belongs to the one client that asked for it, whichever project
+    ends up answering (ADR-0082).
     """
     result_by_action: dict[str, RunActionResponse] = {}
 
@@ -770,6 +779,7 @@ async def run_actions_in_running_project(
                             else None,
                             orchestration_depth=orchestration_depth + 1,
                             cancellable=cancellable,
+                            origin=origin,
                         )
                     )
                     run_tasks.append(run_task)
@@ -808,6 +818,7 @@ async def run_actions_in_running_project(
                     else None,
                     orchestration_depth=orchestration_depth + 1,
                     cancellable=cancellable,
+                    origin=origin,
                 )
             except ActionRunFailed as exception:
                 # Keep original context to avoid repetitive nested wrappers.
@@ -853,6 +864,8 @@ async def run_actions_in_projects(
     progress_token_by_project: dict[pathlib.Path, dict[str, str]] | None = None,
     orchestration_depth: int = 0,
     cancellable: bool = False,
+    *,
+    origin: elicitation_bridge.RunDispatchOrigin | None,
 ) -> dict[pathlib.Path, dict[str, RunActionResponse]]:
     _payload_overrides_by_project = payload_overrides_by_project or {}
 
@@ -866,7 +879,6 @@ async def run_actions_in_projects(
         and ws_context.ws_projects.get(p) is not None
     ]
     if unresolved:
-
         unresolved_names = ", ".join(p.name for p in unresolved)
         logger.debug(
             f"Lazily starting runners for {len(unresolved)} unresolved project(s): {unresolved_names}"
@@ -895,6 +907,7 @@ async def run_actions_in_projects(
                 progress_token_by_action=progress_tokens,
                 orchestration_depth=orchestration_depth,
                 cancellable=cancellable,
+                origin=origin,
             )
 
     project_handler_tasks: list[asyncio.Task] = []
@@ -987,6 +1000,8 @@ async def run_action(
     allow_no_handlers: bool = False,
     selected_interpreters: set[str] | None = None,
     cancellable: bool = False,
+    *,
+    origin: elicitation_bridge.RunDispatchOrigin | None,
 ) -> RunActionResponse:
     """Run a single action in the project's extension runner(s).
 
@@ -1006,6 +1021,10 @@ async def run_action(
     ``in_flight_runs.track``. It is a property of this dispatch, not of the
     action: set it only when the WM initiated the run itself, the result is
     re-derivable, and no caller is waiting on it. ``False`` otherwise.
+
+    ``origin`` is who to ask if a handler inside this run elicits a choice
+    (ADR-0082); ``None`` (the default) is the honest answer for a dispatch
+    with no identifiable client.
     """
     wal_run_id = wal.new_wal_run_id()
     formatted_params = str(params)
@@ -1076,6 +1095,7 @@ async def run_action(
             action_name=action_name,
             project_path=project_def.dir_path,
             cancellable=cancellable,
+            origin=origin,
         ):
             payload = params
             # Captured here (inside action_run_span, outside er_dispatch_span) so that

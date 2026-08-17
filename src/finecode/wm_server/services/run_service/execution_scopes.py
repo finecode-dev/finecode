@@ -6,6 +6,7 @@ import dataclasses
 import pathlib
 import typing
 
+from finecode.wm_server.runner import elicitation_bridge
 from finecode.wm_server.runner.runner_client import (
     DevEnv,
     RunActionResponse,
@@ -47,6 +48,8 @@ class IProjectExecutionScope(typing.Protocol):
         progress_token: int | str | None = None,
         initialize_all_handlers: bool = False,
         caller_kwargs: dict | None = None,
+        *,
+        origin: elicitation_bridge.RunDispatchOrigin | None,
     ) -> RunActionResponse: ...
 
     @contextlib.asynccontextmanager
@@ -63,6 +66,8 @@ class IProjectExecutionScope(typing.Protocol):
         result_formats: list[RunResultFormat] | None = None,
         progress_token: int | str | None = None,
         caller_kwargs: dict | None = None,
+        *,
+        origin: elicitation_bridge.RunDispatchOrigin | None,
     ) -> collections.abc.AsyncIterator[RunWithPartialResultsContext]: ...
 
 
@@ -85,4 +90,6 @@ class IWorkspaceExecutionScope(typing.Protocol):
         result_formats: list[RunResultFormat] | None = None,
         payload_overrides_by_project: dict[str, dict[str, typing.Any]] | None = None,
         progress_token_by_project: dict[pathlib.Path, dict[str, str]] | None = None,
+        *,
+        origin: elicitation_bridge.RunDispatchOrigin | None,
     ) -> dict[pathlib.Path, dict[str, RunActionResponse]]: ...

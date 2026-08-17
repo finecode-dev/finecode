@@ -32,6 +32,7 @@ async def track(
     action_name: str,
     project_path: pathlib.Path,
     cancellable: bool = False,
+    origin: elicitation_bridge.RunDispatchOrigin | None,
 ) -> typing.AsyncIterator[None]:
     """Register a run for the duration of the block.
 
@@ -46,6 +47,11 @@ async def track(
     Every other run stays untouched — ADR-0079's refusal is exactly what
     protects a *user's own* long-running action from having its runners
     replaced underneath it.
+
+    ``origin`` is who to ask if a handler inside this run elicits a choice
+    (ADR-0082); ``None`` is the honest answer for a dispatch with no
+    identifiable client, e.g. one the WM started on its own behalf. It has no
+    default and must be stated — see :func:`elicitation_bridge.bind_run`.
     """
     runs = ws_context.in_flight_runs.setdefault(project_path, {})
     runs[run_id] = domain.InFlightRun(
@@ -61,7 +67,7 @@ async def track(
     # refused a recovery is precisely a run that can still ask a question — and
     # a separate registration would be one more thing to forget at the next
     # dispatch site somebody adds.
-    with elicitation_bridge.bind_run(run_id):
+    with elicitation_bridge.bind_run(run_id, origin):
         try:
             yield
         finally:

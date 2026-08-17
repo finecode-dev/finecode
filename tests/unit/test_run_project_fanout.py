@@ -50,6 +50,7 @@ async def test_wide_fanout_allowed_at_depth_zero() -> None:
             dev_env=mock.Mock(),
             orchestration_depth=0,
             policy=policy,
+            origin=None,
         )
 
     assert run_mock.await_count == 1
@@ -71,6 +72,7 @@ async def test_wide_fanout_refused_when_nested() -> None:
             dev_env=mock.Mock(),
             orchestration_depth=1,
             policy=policy,
+            origin=None,
         )
 
     assert "10" in str(exc_info.value)
@@ -93,6 +95,7 @@ async def test_narrow_fanout_allowed_when_nested() -> None:
             dev_env=mock.Mock(),
             orchestration_depth=2,
             policy=policy,
+            origin=None,
         )
 
     assert run_mock.await_count == 1
@@ -192,6 +195,7 @@ async def test_fanout_is_throttled_not_refused(tmp_path: pathlib.Path) -> None:
             result_formats=[proxy_utils.RunResultFormat.JSON],
             run_trigger=mock.Mock(),
             dev_env=mock.Mock(),
+            origin=None,
         )
 
     assert max_observed == cap

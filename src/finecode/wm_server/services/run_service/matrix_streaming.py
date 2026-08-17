@@ -29,7 +29,7 @@ import typing
 from finecode.wm_server import context, domain
 from finecode.wm_server.config import interpreter_matrix
 from finecode.wm_server.config.interpreter_matrix import Interpreter
-from finecode.wm_server.runner import runner_client
+from finecode.wm_server.runner import elicitation_bridge, runner_client
 from finecode.wm_server.runner.runner_client import RunActionResponse
 
 from . import matrix_runner, proxy_utils
@@ -73,6 +73,7 @@ async def _run_variant(
     ws_context: context.WorkspaceContext,
     merge_results: bool,
     on_partial: OnPartial,
+    origin: elicitation_bridge.RunDispatchOrigin | None,
 ) -> RunActionResponse:
     """Run one interpreter variant end-to-end and return its serialized response.
 
@@ -97,6 +98,7 @@ async def _run_variant(
         initialize_all_handlers=True,
         result_formats=result_formats,
         interpreter=interpreter,
+        origin=origin,
     ) as ctx:
         async for value in ctx:
             partial_count += 1
@@ -176,6 +178,7 @@ async def run_matrix_with_partial_results(
     merge_results: bool,
     on_partial: OnPartial,
     selected_interpreters: set[str] | None = None,
+    origin: elicitation_bridge.RunDispatchOrigin | None,
 ) -> tuple[dict, int]:
     """Fan a matrixed action out per interpreter over the streaming path.
 
@@ -222,6 +225,7 @@ async def run_matrix_with_partial_results(
             ws_context=ws_context,
             merge_results=merge_results,
             on_partial=on_partial,
+            origin=origin,
         )
         for interpreter in interpreters
     ]

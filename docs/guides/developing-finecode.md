@@ -12,11 +12,59 @@ finecode_extension_api/            # Public API for extension authors
 finecode_extension_runner/         # Extension execution engine
 finecode_jsonrpc/                  # JSON-RPC client/transport layer
 finecode_httpclient/               # HTTP client for extensions
+finecode_knowledge/                # Knowledge model engine (schema-free; see below)
 extensions/                        # Extension packages (ruff, flake8, mypy, ...)
 presets/                           # Preset packages (recommended, lint, format)
 finecode_dev_common_preset/        # Preset used for developing FineCode itself
 tests/                             # Test suite
 ```
+
+### The knowledge packages split in two
+
+`finecode_knowledge` is the **engine**: the entity/fact model, the query IR and its
+interpreter, the memoization DAG. It is stdlib-only, carries no schema of its own, and is a
+runtime dependency of the WM — the WM loads the fact store and runs the DAG.
+
+`presets/fine_knowledge` is **FineCode's own schema**: entity types, providers,
+predicates, rules and the `extract_knowledge` / `which_handlers` / `audit_preset_deps`
+actions. It is an ordinary extension, reached through the preset, and it depends on the
+engine.
+
+The split is R20 ("the core contains no language- or tool-specific logic") made a *packaging*
+fact rather than a lint rule: the WM cannot import a rule, because the distribution holding
+rules is not installed in its environment. A schema hands its `SchemaRegistry` to the engine
+via `set_default_registry`; the engine never reaches for a schema module by name. Two tests
+guard the boundary — `finecode_knowledge/tests/test_packaging.py` and the last case in
+`tests/unit/test_knowledge_service.py` — and both read source text rather than the import
+graph, because the violations this replaced were *deferred* imports inside function bodies
+that no import-graph walk would traverse.
+
+### Knowledge freshness: what refreshes itself, and what does not
+
+`audit_code` and `which_handlers` answer from a fact store the WM owns. You do **not** normally
+need to run `extract_knowledge` first: a verified read re-fingerprints each fact bucket's declared
+sources, and any bucket whose sources moved is re-extracted on demand — one provider over one file,
+not a workspace sweep. Facts derived from `pyproject.toml`, `preset.toml` and scanned Python
+sources all work this way.
+
+**One provider is exempt, and it is the one supplying the most-used facts.** `wm_registry` reads
+the WM's *resolved configuration* through an in-process API — a merge of the preset chain and each
+project's `pyproject.toml`, with no single file behind it — so it has nothing to fingerprint and its
+bucket is permanently `UNTRACKED`. An untracked input means *we could not check*, not *it changed*,
+so it never marks the bucket as moved and nothing ever re-extracts it. The facts this covers are
+`Action`, `Handler` and `Environment`, and the `serves` / `handled_by` / `runs_in` edges — plus
+`calls`, which inherits the same verdict.
+
+The practical rule: **after changing a preset or a project's `[tool.finecode]` config, run
+`extract_knowledge` manually.** Editing ordinary source files needs no such step.
+
+Results always disclose this — every answer carries a freshness verdict, and the `UNTRACKED`
+reservation shows up as an `Information` diagnostic. But because it is *permanent* rather than
+raised when something actually changes, it cannot tell you whether these facts are currently stale;
+it only tells you they are uncheckable. Giving `wm_registry` a fingerprintable input (the resolved
+config dump, or the set of files feeding it) is what would retire that reservation, and is tracked
+as finding 2 of `knowledge-model-eval/use-cases/0002-developer-defined-knowledge.md` in the internal
+docs.
 
 ## Setting up the development environment
 
@@ -300,6 +348,56 @@ Structured fields are forwarded automatically to OTel/Loki (via the loguru→OTe
 - ~~prefer time-bounded overrides (TTL) so verbose logging auto-reverts~~
 - once resolved, remove temporary overrides and keep only useful `INFO`/`WARNING`
 
+### Local observability stack
+
+The repo ships a local observability stack (`grafana/otel-lgtm`, bundling the OTel
+Collector, Tempo, Prometheus, Loki, and Grafana, plus a standalone Jaeger) in
+`docker-compose.otel.yml` for inspecting traces, metrics, logs, and the WAL timeline. It
+is **opt-in and down by default** — the devcontainer starts
+lightweight — because a dev tool needs observability only occasionally, and WAL events
+are written to disk regardless and can be ingested retroactively (see
+[ADR-0052](../../../finecode_internal_docs/adr/0052-observability-stack-opt-in-via-compose-profile.md)).
+
+Capturing telemetry needs **two** things: the observability stack running, and
+`FINECODE_OTLP_ENDPOINT` set so the WM/ERs export to it. The endpoint arms telemetry
+**at WM startup** — it is read once when the process starts, so changing it takes effect
+only on the next WM (IDE) restart. Once armed, the collector itself can be started and
+stopped freely: a collector brought up after the WM is picked up automatically, because
+exporters buffer and retry.
+
+- **Persistent (enables telemetry)** — uncomment both `COMPOSE_PROFILES=otel` and
+  `FINECODE_OTLP_ENDPOINT` in `.env` (see `.env.example`), then **rebuild/recreate** the
+  devcontainer — a plain reopen is not enough. Compose only resolves `.env` into a
+  container's environment when that container is *created*; if it already exists,
+  reopening just reattaches to it with whatever environment it was created with, and
+  `FINECODE_OTLP_ENDPOINT` stays empty with no error to point at it. Use the Dev
+  Containers "Rebuild Container" command, or from the CLI:
+  `devcontainer up --workspace-folder . --remove-existing-container`. Once the container
+  is actually recreated, Compose reads the current `.env` and the WM starts with the
+  endpoint armed.
+- **On demand (manages the stack only)** — run `scripts/observability.sh {up,down,status}`
+  on the host (the devcontainer does not mount the Docker socket). This brings the stack
+  up or down but does **not** arm the endpoint. If the WM was already started with
+  `FINECODE_OTLP_ENDPOINT` set, data flows as soon as the stack is up; if it was not,
+  set the endpoint and restart the WM first — starting the stack alone records nothing.
+
+Once telemetry is flowing: Grafana at `http://localhost:3000`, Jaeger at
+`http://localhost:16686` (Jaeger's UI is the better view for FineCode traces).
+
+If you change a var in `docker-compose.otel.yml`'s `environment:` block (e.g. to add
+`ENABLE_LOGS_OTELCOL=true`, see below), the same rule applies: recreate that service, a
+restart isn't enough —
+`docker compose -f docker-compose.otel.yml up -d --force-recreate otel-lgtm`.
+
+By default, `otel-lgtm`'s own startup script suppresses each bundled component's
+stdout/stderr to `/dev/null` (no file-based fallback) unless that component's
+`ENABLE_LOGS_<NAME>` env var (e.g. `ENABLE_LOGS_OTELCOL`, `ENABLE_LOGS_GRAFANA`) or the
+blanket `ENABLE_LOGS_ALL` is `"true"`. An empty `docker compose logs otel-lgtm` doesn't
+mean nothing is happening — it may just mean logging for that component was never
+enabled. See [Troubleshooting](observability.md#troubleshooting-stack-is-up-but-no-data-appears-anywhere)
+in the observability guide for the general env-var/container-recreate pitfall this
+stack is also subject to.
+
 ## Dependency lock files
 
 FineCode uses [pylock.toml](https://packaging.python.org/en/latest/specifications/pylock-toml/) lock files for reproducible dependency installation.
@@ -398,6 +496,44 @@ Python **internal** data structures (dataclass fields, local variables, function
 
 **ER response dicts** (`finecode_extension_runner`): use camelCase keys (`returnCode`, `resultByFormat`, `status`).
 
+## Ambient state: when a `ContextVar` is allowed
+
+Some values belong to "the work currently being done" rather than to any one function: which run is executing, which client asked for it, which trace it belongs to. A `contextvars.ContextVar` makes such a value readable anywhere inside a task without every function in between carrying it.
+
+That convenience is also the cost. A value passed as a parameter is visible in the signature, checked by the type checker, and impossible to forget at a call site without a failure. An ambient value is none of those: a path that forgets to set it reads the default, and the resulting bug is a *silent wrong answer* — a question routed to nobody, a span attached to no trace — rather than a crash.
+
+### Rule: pass explicitly unless a structural fact prevents it
+
+Reach for a `ContextVar` only when explicit passing is blocked by something about the code that you can name. "It would touch a lot of signatures" is not such a fact; it is a cost, and usually the right one to pay. Record the blocker in the module docstring, so the next person can tell whether it still holds.
+
+Blockers that qualify, with the examples in this repo:
+
+- **The consumer is an object built before the value exists, and reused after it changes.** ER services are registered once per configuration with `register_instance` (`di/bootstrap.py`), and handler instances are cached in `RunnerContext.action_cache_by_name` and reused across runs. A per-run value therefore cannot reach a handler through the service it holds. This is why the current run id is ambient (`run_context.current_run_id()`), read by `UserPrompt` and the action-runner impls at the moment they call the WM.
+- **The alternative is a public API change that moves responsibility onto extension authors.** Putting `run_id` in `IUserPrompt.ask_choice` would make every handler responsible for naming its own run correctly, and a stale value there misroutes a question silently.
+
+Blockers that do **not** qualify:
+
+- *Many intermediate signatures would change.* Prefer one object that carries the values a dispatch needs over a long parameter list — and prefer either to ambient state. The WM's elicitation origin was ambient for this reason alone, which was not good enough: it is now `elicitation_bridge.RunDispatchOrigin`, an explicit dispatch descriptor constructed at the request handler (or, for a nested ER→WM→ER dispatch, derived from the calling run's connection) and threaded down to `in_flight_runs.track`, the one choke point every dispatch passes through.
+- *Tasks would have to be passed the value.* `asyncio.create_task` copying the current context is a convenience, not a justification: a coroutine can take a parameter.
+
+### Rule: a parameter replacing ambient state gets no default
+
+The reason to prefer a parameter is that it cannot be forgotten at a call site without a failure. A default takes that back: the argument can be dropped at any one hop of a long chain, it still type-checks, and the result is the same silent wrong answer the `ContextVar` produced. This is not hypothetical — the two `progressToken` request handlers in `_streaming.py` were left dispatching without an origin exactly this way, so a connected client asking for a run with live progress was told nobody could be asked.
+
+So `origin: RunDispatchOrigin | None` has no default at any hop, from `bind_run` up to the request handlers. `None` stays a legal *value* — it is the honest answer for a run the WM started on its own behalf, or one whose handler never held a connection — but it has to be written down, next to a comment saying which of those it is. A required parameter whose value is sometimes "nobody" is cheap; a default that silently means "nobody" is the bug.
+
+### Rule: ambient inside a process, explicit on the wire
+
+A `ContextVar` never crosses a process boundary. Anything the other side needs is a field in the message, written explicitly like every other key. The WM→ER dispatch carries `runId` and `traceparent` as options for exactly this reason, and the ER re-establishes both as ambient state on its own side after reading them.
+
+### Rule: set it at a choke point, not at each call site
+
+Bind an ambient value in the one place every path already passes through, so a new path cannot forget it. The run→client binding for elicitation lives inside `in_flight_runs.track()`, which every dispatch already enters, rather than beside each dispatch. Setting it per call site is how ambient state rots: the sites multiply, one of them omits it, and nothing fails.
+
+### Rule: read it at the edge, never store it
+
+Read the value where it is used and let it go. Copying it into a long-lived object (a service field, a module global, an attribute on a cached handler) reintroduces the sharing that ambient state exists to avoid: two runs executing concurrently in the same env would overwrite each other's value, where a `ContextVar` gives each task its own. A module-level global is never an acceptable substitute for a `ContextVar` — it is the same invisibility plus a race.
+
 ## Async generator handlers
 
 A handler's `run()` method can be either a regular coroutine (returns a result) or an **async generator** (yields one or more partial results). The framework detects which one it is at call time using `inspect.isasyncgen()`.
@@ -491,6 +627,31 @@ _io_thread = threading.Thread(target=_service_loop, daemon=True)
 - The ADR covers a broad design area — reference it only at the specific site that enforces the decision, not everywhere related code appears
 
 ADR references differ from user-doc references: user docs explain the *API surface* for consumers; ADRs explain *why a constraint exists* for contributors.
+
+## Comments
+
+A comment must carry information that is not recoverable from the code it annotates. Before writing one, ask: *could a competent reader derive this by reading the next five lines?* If yes, delete it.
+
+What earns a comment:
+
+- **Why, not what** — the constraint, tradeoff, or rejected alternative
+- Non-obvious external behavior (an API that lies, a protocol quirk, an ordering requirement imposed from outside)
+- A deliberate deviation from the obvious implementation, with the reason
+- An ADR reference at the site that enforces the decision (see above)
+
+Never write:
+
+- Restatements: `# increment the counter`, `# loop over the files`
+- Section banners: `# --- Helpers ---`, `# Main logic`
+- Change narration: `# now also handles X`, `# previously this used Y`, `# updated to support Z`. The comment describes the code as it is; the diff and commit message carry the history.
+- Docstring padding that repeats the signature — parameter lists that add nothing to the type annotations, `Returns: the result`
+- Tutorial voice: `# Note that`, `# Important:`, `# As you can see`, `# This is a common pattern`
+- Comments on self-naming code — a comment above `def stop_runner` saying `# stops the runner`
+- Type restatements the annotation already makes: `# a list of paths`
+
+Prefer no comment over a weak one. Renaming a variable or extracting a function is usually the better fix — a comment that exists to explain an unclear name is a bug report against the name.
+
+Match the density of the surrounding module. A file with three comments in 200 lines is not under-documented; adding twelve to a new function in that file makes it look foreign.
 
 ## Generality in comments, docstrings, and messages
 
@@ -625,6 +786,19 @@ class ProjectInfoUnavailableError(Exception): ...
 
 # wrong — leaks that the implementation talks to a WM over a specific protocol
 class WmCommunicationError(Exception): ...
+```
+
+### Boolean flags
+
+Boolean parameters must be keyword-only (`*`). A positional bool is unreadable at the call site — it's not obvious what it's toggling without checking the signature.
+
+```python
+# correct
+async def remove_dir(self, dir_path: Path, *, tolerant: bool = False) -> None: ...
+# call site is self-documenting: remove_dir(path, tolerant=True)
+
+# wrong — allows remove_dir(path, True), meaningless without checking the signature
+async def remove_dir(self, dir_path: Path, tolerant: bool = False) -> None: ...
 ```
 
 Use the `Error` suffix (Python standard library convention: `ValueError`, `TimeoutError`, etc.).

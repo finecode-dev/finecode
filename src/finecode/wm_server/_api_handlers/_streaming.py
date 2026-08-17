@@ -123,96 +123,97 @@ async def _handle_run_action_with_partial_results(
 
         # From here to the final result, this connection is the origin of the
         # run: an ER that asks a question mid-run is asking the client that
-        # started it and nobody else (ADR-0082 rule 1). Set on the streamed
-        # paths, which are the ones that still hold their caller's connection;
-        # the dispatch below binds it to the run id it mints, which is what the
-        # ER names when it asks.
-        with elicitation_bridge.originating_client(writer):
-            stream = await partial_results_service.run_action_with_partial_results(
-                action_name=action_name,
-                project_path=project_path,
-                params=params.get("params", {}),
-                partial_result_token=token,
-                run_trigger=trigger,
-                dev_env=dev_env,
-                ws_context=ws_context,
-                result_formats=result_formats,
-                progress_token=progress_token,
-                selected_interpreters=selected_interpreters,
-            )
+        # started it and nobody else (ADR-0082 rule 1). Constructed on the
+        # streamed paths, which are the ones that still hold their caller's
+        # connection; the dispatch below binds it to the run id it mints,
+        # which is what the ER names when it asks.
+        origin = elicitation_bridge.RunDispatchOrigin(connection=writer)
+        stream = await partial_results_service.run_action_with_partial_results(
+            action_name=action_name,
+            project_path=project_path,
+            params=params.get("params", {}),
+            partial_result_token=token,
+            run_trigger=trigger,
+            dev_env=dev_env,
+            ws_context=ws_context,
+            result_formats=result_formats,
+            progress_token=progress_token,
+            selected_interpreters=selected_interpreters,
+            origin=origin,
+        )
 
-            # Opt-in (collect-style callers like MCP): accumulate the `json` format of
-            # each partial per project so it can be type-safely merged into the response.
-            merge_results_enabled = options.get("mergeResults", False)
-            json_by_project: dict[str, list[dict]] = {}
+        # Opt-in (collect-style callers like MCP): accumulate the `json` format of
+        # each partial per project so it can be type-safely merged into the response.
+        merge_results_enabled = options.get("mergeResults", False)
+        json_by_project: dict[str, list[dict]] = {}
 
-            async def _forward_partials() -> int:
-                count = 0
-                async for value in stream:
-                    count += 1
-                    if merge_results_enabled and isinstance(value, dict):
-                        project_str = value.get("project", "")
-                        result_by_format = value.get("resultByFormat") or {}
-                        json_by_project.setdefault(project_str, []).append(
-                            result_by_format.get("json")
-                        )
-                    logger.trace(
-                        f"run+partialResults: sending partial #{count} for token={token}, keys={list(value.keys()) if isinstance(value, dict) else type(value)}"
+        async def _forward_partials() -> int:
+            count = 0
+            async for value in stream:
+                count += 1
+                if merge_results_enabled and isinstance(value, dict):
+                    project_str = value.get("project", "")
+                    result_by_format = value.get("resultByFormat") or {}
+                    json_by_project.setdefault(project_str, []).append(
+                        result_by_format.get("json")
                     )
-                    _notify_client(
-                        writer,
-                        "actions/partialResult",
-                        {"token": token, "value": value},
-                    )
-                    await writer.drain()
-                return count
+                logger.trace(
+                    f"run+partialResults: sending partial #{count} for token={token}, keys={list(value.keys()) if isinstance(value, dict) else type(value)}"
+                )
+                _notify_client(
+                    writer,
+                    "actions/partialResult",
+                    {"token": token, "value": value},
+                )
+                await writer.drain()
+            return count
 
-            async def _forward_progress() -> None:
-                if stream.progress_stream is None or progress_token is None:
-                    return
-                async for value in stream.progress_stream:
-                    logger.trace(
-                        f"run+partialResults: sending progress type={value.get('type')} for token={progress_token}"
-                    )
-                    _notify_client(
-                        writer,
-                        "actions/progress",
-                        {"token": progress_token, "value": value},
-                    )
-                    await writer.drain()
+        async def _forward_progress() -> None:
+            if stream.progress_stream is None or progress_token is None:
+                return
+            async for value in stream.progress_stream:
+                logger.trace(
+                    f"run+partialResults: sending progress type={value.get('type')} for token={progress_token}"
+                )
+                _notify_client(
+                    writer,
+                    "actions/progress",
+                    {"token": progress_token, "value": value},
+                )
+                await writer.drain()
 
-            partial_count = 0
-            async with asyncio.TaskGroup() as forward_tg:
-                partials_task = forward_tg.create_task(_forward_partials())
-                forward_tg.create_task(_forward_progress())
-            partial_count = partials_task.result()
+        partial_count = 0
+        async with asyncio.TaskGroup() as forward_tg:
+            partials_task = forward_tg.create_task(_forward_partials())
+            forward_tg.create_task(_forward_progress())
+        partial_count = partials_task.result()
 
-            final = await stream.final_result()
+        final = await stream.final_result()
 
-            if merge_results_enabled and json_by_project:
-                return_code = final.get("returnCode", 0) if isinstance(final, dict) else 0
-                results: dict[str, dict] = {}
-                for project_str, payloads in json_by_project.items():
-                    merged_json = await merge_partial_results_for_action(
-                        project_path=pathlib.Path(project_str),
-                        action_name=action_name,
-                        json_payloads=payloads,
-                        ws_context=ws_context,
-                    )
-                    if merged_json is not None:
-                        results[project_str] = {
-                            action_source: {
-                                "resultByFormat": {"json": merged_json},
-                                "returnCode": return_code,
-                            }
+        if merge_results_enabled and json_by_project:
+            return_code = final.get("returnCode", 0) if isinstance(final, dict) else 0
+            results: dict[str, dict] = {}
+            for project_str, payloads in json_by_project.items():
+                merged_json = await merge_partial_results_for_action(
+                    project_path=pathlib.Path(project_str),
+                    action_name=action_name,
+                    json_payloads=payloads,
+                    ws_context=ws_context,
+                )
+                if merged_json is not None:
+                    results[project_str] = {
+                        action_source: {
+                            "resultByFormat": {"json": merged_json},
+                            "returnCode": return_code,
                         }
-                if results:
-                    final = {**final, "results": results}
+                    }
+            if results:
+                final = {**final, "results": results}
 
-            logger.trace(
-                f"run+partialResults: done, sent {partial_count} partials, final keys={list(final.keys()) if isinstance(final, dict) else type(final)}"
-            )
-            return final
+        logger.trace(
+            f"run+partialResults: done, sent {partial_count} partials, final keys={list(final.keys()) if isinstance(final, dict) else type(final)}"
+        )
+        return final
 
 
 async def _handle_run_action_with_partial_results_task(
@@ -301,13 +302,11 @@ async def _handle_run_batch_with_partial_results(
 
     params = params or {}
     # The connection that asked for the batch is the origin of every run in it,
-    # including the ones the per-project tasks below dispatch: a task copies the
-    # context it is created in, so setting this before they exist is what makes
-    # it reach them (ADR-0082 rule 1).
-    with (
-        telemetry.attach_incoming_traceparent(params),
-        elicitation_bridge.originating_client(writer),
-    ):
+    # including the ones the per-project tasks below dispatch: `origin` is
+    # captured in `_stream_action`'s closure, so a task created from it carries
+    # the same descriptor to every dispatch it makes (ADR-0082 rule 1).
+    origin = elicitation_bridge.RunDispatchOrigin(connection=writer)
+    with telemetry.attach_incoming_traceparent(params):
         parsed = _parse_run_batch_params(params)
         token = params["partialResultToken"]
 
@@ -438,6 +437,7 @@ async def _handle_run_batch_with_partial_results(
                     merge_results=parsed.merge_results,
                     on_partial=_on_partial,
                     selected_interpreters=selected_interpreters,
+                    origin=origin,
                 )
                 if parsed.merge_results:
                     merged_results.setdefault(str(project_path), {})[action_source] = {
@@ -461,6 +461,7 @@ async def _handle_run_batch_with_partial_results(
                 ws_context=ws_context,
                 initialize_all_handlers=True,
                 result_formats=parsed.result_formats,
+                origin=origin,
             ) as ctx:
                 async for value in ctx:
                     partial_count += 1
@@ -727,6 +728,10 @@ async def _handle_run_action_with_progress(
                 result_formats=parsed.result_formats,
                 initialize_all_handlers=True,
                 progress_token=progress_token,
+                # Progress is forwarded to this connection for the whole run, so
+                # it is just as much the run's origin as on the partial-results
+                # paths: an ER that elicits mid-run has a client to ask.
+                origin=elicitation_bridge.RunDispatchOrigin(connection=writer),
             )
             return {
                 "resultByFormat": result.result_by_format,
@@ -906,6 +911,9 @@ async def _handle_run_batch_with_progress(
                 result_formats=parsed.result_formats,
                 payload_overrides_by_project=parsed.params_by_project or None,
                 progress_token_by_project=progress_token_by_project,
+                # Aggregated progress goes to this connection until the batch
+                # ends, so it is the origin of every run in the batch.
+                origin=elicitation_bridge.RunDispatchOrigin(connection=writer),
             )
         finally:
             # Cancel get_progress tasks first, then drain slot lists through aggregator,

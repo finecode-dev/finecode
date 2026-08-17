@@ -167,6 +167,9 @@ async def _run_env_action(
             result_formats=[rc.RunResultFormat.STRING],
             initialize_all_handlers=True,
             progress_token=progress_token,
+            # Started by the WM on its own behalf during env preparation, with
+            # no client connection behind it.
+            origin=None,
         )
     except run_service.ActionRunFailed as action_exc:
         return action_exc.message
