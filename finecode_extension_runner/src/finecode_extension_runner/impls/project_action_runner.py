@@ -11,7 +11,13 @@ from finecode_extension_api import code_action
 from finecode_extension_api.interfaces import iprojectactionrunner
 from loguru import logger
 
-from finecode_extension_runner import domain, er_errors, er_telemetry, run_utils
+from finecode_extension_runner import (
+    domain,
+    er_errors,
+    er_telemetry,
+    run_context,
+    run_utils,
+)
 from finecode_extension_runner._converter import converter as _converter
 
 PayloadT = typing.TypeVar("PayloadT", bound=code_action.RunActionPayload)
@@ -272,6 +278,9 @@ class ProjectActionRunnerImpl(iprojectactionrunner.IProjectActionRunner):
                 "orchestrationDepth": meta.orchestration_depth,
             },
             "traceparent": traceparent,
+            # The run this dispatch belongs to: the nested run the WM starts
+            # inherits this one's originating client (ADR-0082 rule 1).
+            "runId": run_context.current_run_id(),
         }
         if serialized_kwargs is not None:
             wm_params["callerKwargs"] = serialized_kwargs
@@ -362,6 +371,7 @@ class ProjectActionRunnerImpl(iprojectactionrunner.IProjectActionRunner):
                     },
                     "partialResultToken": token,
                     "traceparent": traceparent,
+                    "runId": run_context.current_run_id(),
                 }
                 if serialized_kwargs is not None:
                     wm_params["callerKwargs"] = serialized_kwargs

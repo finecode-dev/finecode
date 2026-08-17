@@ -157,7 +157,7 @@ class Session:
             previous_context=previous_context,
         )
         options = schemas.RunActionOptions(
-            wal_run_id=wal_run_id,
+            run_id=wal_run_id,
             meta=code_action.RunActionMeta(
                 trigger=code_action.RunActionTrigger.SYSTEM,
                 dev_env=code_action.DevEnv.CI,

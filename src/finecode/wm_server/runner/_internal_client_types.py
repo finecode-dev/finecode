@@ -49,6 +49,7 @@ RUN_ACTION_IN_PROJECT = "finecode/runActionInProject"
 RUN_ACTION_IN_WORKSPACE = "finecode/runActionInWorkspace"
 GET_ACTIONS_FOR_PARENT = "finecode/getActionsForParent"
 LIST_WORKSPACE_ACTIONS = "finecode/listWorkspaceActions"
+ELICIT = "finecode/elicit"
 KNOWLEDGE_REGISTER_SCHEMA = "knowledge/registerSchema"
 KNOWLEDGE_QUERY = "knowledge/query"
 KNOWLEDGE_RECORDS = "knowledge/records"
@@ -1565,6 +1566,10 @@ class RunActionInProjectParams:
     partial_result_token: int | str | None = None
     caller_kwargs: dict | None = None
     traceparent: str | None = None
+    # The calling run. The nested run the WM starts from this inherits its
+    # originating client, so a question asked from inside it reaches the same
+    # person (ADR-0082 rule 1).
+    run_id: str | None = None
 
 
 @dataclasses.dataclass
@@ -1592,6 +1597,9 @@ class RunActionInWorkspaceParams:
     project_paths: list[str] | None = None
     concurrently: bool = True
     traceparent: str | None = None
+    # See RunActionInProjectParams.run_id: every project this fans out into
+    # inherits the calling run's originating client.
+    run_id: str | None = None
 
 
 @dataclasses.dataclass
@@ -1608,6 +1616,62 @@ class RunActionInWorkspaceRequest(BaseRequest):
 @dataclasses.dataclass
 class RunActionInWorkspaceResponse(BaseResponse):
     result: RunActionInWorkspaceResult
+
+
+# ---------------------------------------------------------------------------
+# finecode/elicit  (ER → WM → the run's originating client), ADR-0082
+# ---------------------------------------------------------------------------
+
+
+@dataclasses.dataclass
+class ElicitParams:
+    """One question, with the full set of answers it accepts.
+
+    ``options`` is closed on purpose: this mechanism carries a decision with a
+    small, enumerable answer, not a review of something substantial. ``default``
+    is what the asking handler would pick on its own and is a hint to the client
+    for pre-selection — the WM never applies it, because "the person chose the
+    default" and "nobody was asked" must stay distinguishable.
+    """
+
+    message: str
+    options: list[str]
+    default: str | None = None
+    timeout_sec: float = 300.0
+    run_id: str | None = None
+    """The run asking, as the WM handed it to the ER at dispatch.
+
+    The only thing the WM can address a question by: the project the asking
+    runner serves does not identify a run, and two clients may be running the
+    same project at the same moment. ``None`` — an ER that predates this field,
+    or a call made outside any run — is answered "nobody could be asked" rather
+    than guessed at.
+    """
+
+
+@dataclasses.dataclass
+class ElicitRequest(BaseRequest):
+    params: ElicitParams
+    method = ELICIT
+
+
+@dataclasses.dataclass
+class ElicitResult(BaseResult):
+    """The outcome, always — never an error response for "no answer".
+
+    ``outcome`` is one of ``"answered"``, ``"declined"`` (a person was asked and
+    refused or cancelled) or ``"unavailable"`` (nobody could be asked: no
+    originating client, no declared capability, a disconnect, or the deadline).
+    ``value`` is the chosen option and is set only when answered.
+    """
+
+    outcome: str
+    value: str | None = None
+
+
+@dataclasses.dataclass
+class ElicitResponse(BaseResponse):
+    result: ElicitResult
 
 
 @dataclasses.dataclass
@@ -2159,6 +2223,12 @@ METHOD_TO_TYPES: dict[
         None,
         ListWorkspaceActionsResponse,
         ListWorkspaceActionsResult,
+    ),
+    ELICIT: (
+        ElicitRequest,
+        ElicitParams,
+        ElicitResponse,
+        ElicitResult,
     ),
     WORKSPACE_EDITABLE_PACKAGES_GET: (
         GetWorkspaceEditablePackagesRequest,

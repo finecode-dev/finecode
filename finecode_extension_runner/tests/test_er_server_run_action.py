@@ -5,7 +5,13 @@ import pathlib
 import finecode_jsonrpc
 import pytest
 
-from finecode_extension_runner import context, domain, er_server, services
+from finecode_extension_runner import (
+    context,
+    domain,
+    er_server,
+    run_context,
+    services,
+)
 from finecode_extension_runner.di.registry import Registry
 
 
@@ -35,7 +41,7 @@ def _run_action_params() -> dict:
         "actionName": "some_action",
         "params": {},
         "options": {
-            "walRunId": "test-run-id",
+            "runId": "test-run-id",
             "meta": {"trigger": "system", "devEnv": "ci"},
         },
     }
@@ -84,3 +90,27 @@ async def test_action_failed_exception_still_returns_error_dict(
     result = await er_server.run_action(server, _run_action_params())
 
     assert result == {"error": "boom"}
+
+
+async def test_the_run_is_named_while_it_executes(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Anything the run does can say which run it belongs to.
+
+    A handler asking a question has to name its run for the WM to know whose
+    terminal to put it in front of (ADR-0082 rule 1), and nothing hands the run
+    id down through the layers in between — the run marks itself here instead.
+    """
+    seen: list[str | None] = []
+
+    async def _record(*args, **kwargs):
+        seen.append(run_context.current_run_id())
+        raise services.ActionFailedException("done looking")
+
+    monkeypatch.setattr(er_server.services, "run_action_raw", _record)
+
+    await er_server.run_action(_fake_server(tmp_path), _run_action_params())
+
+    assert seen == ["test-run-id"]
+    # And no longer, once the run is over.
+    assert run_context.current_run_id() is None

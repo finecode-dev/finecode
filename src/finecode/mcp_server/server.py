@@ -37,6 +37,23 @@ _tool_name_to_source: dict[str, str] = {}
 _client_name: str | None = None
 _session: finecode_jsonrpc.JsonRpcServerSession | None = None
 
+# Whether the AI client declared, at `initialize`, that it can put a question to
+# its user. Only then does this server tell the WM that its own connection can
+# answer (ADR-0082 rule 2): declaring a capability the client lacks would turn
+# every ask into a wait for the WM's whole deadline.
+_client_can_elicit: bool = False
+
+# Protocol revisions this server implements. `elicitation/create` — the request
+# behind `client/elicit` — exists only from 2025-06-18, which is why the newest
+# is the one declared. Older revisions stay in the list and are echoed back when
+# a client asks for one, because negotiation is "the server answers with the
+# version it will speak" and a client that hears an unknown one is entitled to
+# hang up. A client on an older revision simply never gets asked anything.
+_MCP_PROTOCOL_VERSION = "2025-06-18"
+_SUPPORTED_MCP_PROTOCOL_VERSIONS = frozenset(
+    {"2024-11-05", "2025-03-26", _MCP_PROTOCOL_VERSION}
+)
+
 _PROJECT_ARG_DESCRIPTION = (
     "Absolute path to the project directory. Use the list_projects tool to see"
     " available projects."
@@ -264,12 +281,22 @@ async def _ensure_wm_connected() -> None:
     # survive a reconnect, so only the server-side session needs re-establishing.
     _setup_partial_result_forwarding()
     _setup_progress_forwarding()
+    _setup_elicitation_forwarding()
     _wm_client.configure_reconnect(
         ReconnectPolicy(may_start_server=True, workdir=_workdir),
         on_reattach=_attach_session,
     )
     try:
-        await _wm_client.connect("127.0.0.1", _wm_port, client_id=client_id)
+        await _wm_client.connect(
+            "127.0.0.1",
+            _wm_port,
+            client_id=client_id,
+            # Declared only when the AI client on the other side of this server
+            # can actually be asked; this server has no user of its own.
+            capabilities={"elicitation": {"choice": True}}
+            if _client_can_elicit
+            else None,
+        )
     except BaseException:
         # The socket and reader task outlive a `connect` that failed in
         # `_attach_session`, while `_wm_connected` stays false — so every
@@ -306,6 +333,65 @@ def _setup_progress_forwarding() -> None:
                 queue.put_nowait(value)
 
     _wm_client.on_notification("actions/progress", _on_progress)
+
+
+def _setup_elicitation_forwarding() -> None:
+    """Answer the WM's ``client/elicit`` by asking the AI client (ADR-0082).
+
+    The WM addresses the question to the connection that started the run, which
+    for a tool call is this one; this server's whole job here is translating
+    between the two protocols. MCP's three answers map onto two outcomes:
+    ``accept`` is an answer, while ``decline`` and ``cancel`` are both a person
+    who was asked and did not choose — the difference between refusing and
+    dismissing is not one a handler can act on differently.
+    """
+
+    async def _on_elicit(params: dict | None) -> dict:
+        value = params or {}
+        options = [str(option) for option in value.get("options") or []]
+        if _session is None or not _client_can_elicit or not options:
+            return {"outcome": "unavailable"}
+
+        try:
+            answer = await _session.send_request(
+                "elicitation/create",
+                {
+                    "message": str(value.get("message", "")),
+                    # A flat object with primitive properties is all MCP's
+                    # requested schema allows; an enum is how a closed set of
+                    # answers is expressed within that.
+                    "requestedSchema": {
+                        "type": "object",
+                        "properties": {
+                            "choice": {
+                                "type": "string",
+                                "title": "Choice",
+                                "enum": options,
+                            }
+                        },
+                        "required": ["choice"],
+                    },
+                },
+                timeout=value.get("timeoutSec"),
+            )
+        # The client may answer with an error, time out, or be gone; each is the
+        # same thing to the run that asked, and none of them may propagate into
+        # the WM client's reader loop.
+        except Exception as exception:  # noqa: BLE001
+            logger.warning(f"MCP: elicitation failed: {exception}")
+            return {"outcome": "unavailable"}
+
+        if not isinstance(answer, dict):
+            return {"outcome": "unavailable"}
+        if answer.get("action") != "accept":
+            return {"outcome": "declined"}
+        choice = (answer.get("content") or {}).get("choice")
+        if choice not in options:
+            logger.warning(f"MCP: client accepted with unoffered choice {choice!r}")
+            return {"outcome": "unavailable"}
+        return {"outcome": "answered", "value": choice}
+
+    _wm_client.on_request("client/elicit", _on_elicit)
 
 
 async def _send_log_message(
@@ -419,14 +505,30 @@ async def _run_with_progress(
 
 
 async def _handle_initialize(params: dict | None) -> dict:
-    global _client_name
+    global _client_name, _client_can_elicit
+    requested = _MCP_PROTOCOL_VERSION
     if params:
         client_info = params.get("clientInfo") or {}
         _client_name = client_info.get("name")
+        # Elicitation is a *client* capability: the client is the one that owns
+        # a user to ask. Read here and nowhere else, because `initialize` is the
+        # only place it is stated.
+        _client_can_elicit = bool((params.get("capabilities") or {}).get("elicitation"))
+        asked_for = params.get("protocolVersion")
+        if asked_for in _SUPPORTED_MCP_PROTOCOL_VERSIONS:
+            requested = asked_for
+    if _client_can_elicit and requested != _MCP_PROTOCOL_VERSION:
+        # Nothing carries `elicitation/create` on an older revision, so a client
+        # that declared the capability while pinning an older version does not
+        # get asked.
+        logger.info(
+            f"MCP: client declared elicitation but speaks {requested}; not using it"
+        )
+        _client_can_elicit = False
     return {
         # A recovery can add or remove actions, and a client that cached the tool
         # list would keep calling the old one; listChanged is what lets it be told.
-        "protocolVersion": "2024-11-05",
+        "protocolVersion": requested,
         "capabilities": {"tools": {"listChanged": True}},
         "serverInfo": {"name": "FineCode", "version": "1.0.0"},
     }

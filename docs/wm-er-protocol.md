@@ -574,12 +574,27 @@ When all handlers are in the same env, the WM uses `actions/run` — a single
 delegated call where the ER manages handler sequencing internally.
 `actions/runHandlers` is only used when handlers span multiple envs.
 
-### `walRunId` continuity
+### `runId` continuity
 
-The WM generates a single `walRunId` for the whole logical action run and
-passes it in every `actions/runHandlers` call's options. Each ER emits WAL
-events tagged with that ID for the handler(s) it executes, so traces can be
+The WM generates a single `runId` for the whole logical action run and passes it
+in every `actions/run` and `actions/runHandlers` call's options. Each ER emits
+WAL events tagged with that ID for the handler(s) it executes, so traces can be
 correlated across envs for the same logical run.
+
+It is not only a correlation id. The WM keys its register of in-flight runs by
+it (ADR-0079), and an ER names it back in two places:
+
+- `finecode/elicit`, so the WM can put the question to the client that started
+  *that run*. The project the asking runner serves cannot identify a run — two
+  clients may be running the same project at the same moment — so an elicit
+  without a `runId` is answered "unavailable" rather than guessed at (ADR-0082).
+- `finecode/runActionInProject` and `finecode/runActionInWorkspace`, where it
+  names the *calling* run. The nested run the WM starts gets an id of its own
+  and inherits the caller's originating client, so a question asked from inside
+  it reaches the same person however many hops down it is.
+
+An ER that omits it from a run request is refused: the id is required, and a
+missing one is a protocol error rather than a defaulted value.
 
 ## Error Handling and Cancellation
 

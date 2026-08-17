@@ -21,6 +21,7 @@ from finecode_extension_api.interfaces import (  # idevenvinfoprovider,
     iprojectactionrunner,
     iprojectinfoprovider,
     iuser_messenger,
+    iuserprompt,
     iworkspaceactionregistry,
     iworkspaceactionrunner,
     iworkspaceinfoprovider,
@@ -40,6 +41,7 @@ from finecode_extension_runner.impls import (  # dev_env_info_provider,
     project_action_runner,
     project_info_provider,
     service_registry,
+    user_prompt,
     workspace_action_registry,
     workspace_action_runner,
     workspace_info_provider,
@@ -120,6 +122,13 @@ def bootstrap(
     registry.register_instance(
         iuser_messenger.IUserMessenger,
         user_messenger_module.UserMessenger(send_notification=_send_user_message),
+    )
+    # Telling and asking are separate services (ADR-0082): the messenger above
+    # broadcasts a string to every connected client and cannot fail, this one
+    # addresses the run's originating client and returns what it said.
+    registry.register_instance(
+        iuserprompt.IUserPrompt,
+        user_prompt.UserPrompt(send_request_to_wm),
     )
     registry.register_instance(ifilemanager.IFileManager, file_manager_instance)
     registry.register_instance(ifileeditor.IFileEditor, file_editor_instance)

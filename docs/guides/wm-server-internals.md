@@ -184,6 +184,7 @@ outside the resolved axis raises `ActionRunFailed`.
 | `run_dispatch_bridge.py` | Slot filled by `services/run_service` — see [ER→WM callback slots](#erwm-callback-slots). |
 | `knowledge_bridge.py` | Slot filled by `services/knowledge_service`. |
 | `wm_bridge.py` | Slot filled by `wm_server.py`, for broadcasting to clients and ER log forwarding. |
+| `elicitation_bridge.py` | Slot filled by `wm_server.py`, for putting a question to the client that started the run (ADR-0082).  Also owns the registry mapping a streaming run to its originating connection. |
 | `_internal_client_api.py` | Low-level send/receive over the `AsyncIOThread`. |
 | `_internal_client_types.py` | Protocol types for WM↔ER communication (request/response/notification dataclasses, method name constants). |
 | `finecode_cmd.py` | Builds the command line to launch an ER subprocess. |
@@ -204,9 +205,19 @@ owning layer fills the slot as an import-time side effect
 and `wm-layered` stays green with no ignore entry for this surface.
 
 An unfilled slot behaves according to whether its caller needs an answer:
-`run_dispatch_bridge` and `knowledge_bridge` return `None` and their callbacks
-raise, while `wm_bridge` defaults to a null implementation that drops the
-notification.  See ADR-0072.
+`run_dispatch_bridge`, `knowledge_bridge` and `elicitation_bridge` return `None`
+and their callbacks raise, while `wm_bridge` defaults to a null implementation
+that drops the notification.  See ADR-0072.
+
+`elicitation_bridge` is the one slot whose traffic goes *back out* to a client
+rather than being answered inside the WM, and it is the only place the WM sends
+a client a request rather than a notification.  Two consequences worth knowing
+before touching it: the question is addressed to the connection that started the
+run — never broadcast, which is why the slot also owns the run→connection
+registry that `_api_handlers/_streaming.py` writes — and a client that did not
+declare the capability at `client/initialize` is never sent one, so the common
+non-interactive case costs a typed "nobody could be asked" rather than a
+timeout.  See ADR-0082.
 
 ### `config/` — config reading and domain object construction
 

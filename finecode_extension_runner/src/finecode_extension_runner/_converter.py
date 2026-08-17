@@ -73,7 +73,7 @@ converter.register_structure_hook(
     make_dict_structure_fn(
         RunActionOptions,
         converter,
-        wal_run_id=override(rename="walRunId"),
+        run_id=override(rename="runId"),
         partial_result_token=override(rename="partialResultToken"),
         progress_token=override(rename="progressToken"),
         result_formats=override(rename="resultFormats"),

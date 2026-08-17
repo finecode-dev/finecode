@@ -65,7 +65,7 @@ class RunActionRequest(BaseSchema):
 
 @dataclass
 class RunActionOptions(BaseSchema):
-    wal_run_id: str
+    run_id: str
     meta: code_action.RunActionMeta
     partial_result_token: int | str | None = None
     progress_token: int | str | None = None

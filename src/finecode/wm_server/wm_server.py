@@ -65,7 +65,7 @@ from finecode.wm_server._jsonrpc import (
     _write_message,
 )
 from finecode.wm_server.errors import ConfigurationError, RunnerNotFoundError
-from finecode.wm_server.runner import wm_bridge
+from finecode.wm_server.runner import elicitation_bridge, wm_bridge
 from finecode.wm_server.services import (  # noqa: F401
     knowledge_service as _knowledge_service,
 )
@@ -199,6 +199,161 @@ _running_partial_result_tasks: dict[asyncio.StreamWriter, set[asyncio.Task]] = {
 _client_labels: dict[asyncio.StreamWriter, str] = {}
 _disconnect_timeout: int = DISCONNECT_TIMEOUT_SECONDS
 _keep_alive: bool = False
+
+# What each connection declared it can be asked at ``client/initialize``
+# (ADR-0082 rule 2). A connection absent from here declared nothing and is never
+# sent a question: the point of declaring is that a surface which cannot answer
+# is known before the question is sent rather than discovered by waiting.
+_client_capabilities: dict[asyncio.StreamWriter, dict] = {}
+
+
+# ---------------------------------------------------------------------------
+# Server → one-client requests (ADR-0082)
+# ---------------------------------------------------------------------------
+
+# Outbound requests this server is waiting on an answer for, and the connection
+# each was addressed to. Two dicts rather than one of tuples because the id →
+# future lookup is on the hot path (every inbound response) and the owner lookup
+# only on disconnect.
+_pending_client_requests: dict[int, asyncio.Future] = {}
+_pending_client_request_owners: dict[int, asyncio.StreamWriter] = {}
+# Ids for outbound requests come from a counter of their own. Nothing else on
+# the wire allocates from it, so an answer can never be confused with a client's
+# own request id.
+_last_client_request_id: int = 0
+
+
+class ClientRequestFailed(Exception):
+    """No answer will come from the addressed client.
+
+    Raised for every way of not being answered — the client went away, it
+    replied with a JSON-RPC error, the deadline passed — because the caller's
+    reaction to all of them is the same: stop waiting. Which one it was is in
+    the message, for the log.
+    """
+
+
+async def _request_client(
+    writer: asyncio.StreamWriter,
+    method: str,
+    params: dict,
+    timeout_sec: float,
+) -> dict:
+    """Ask one specific client something and wait for its answer.
+
+    Addressed rather than broadcast: an answer is not idempotent across
+    recipients, so the caller names the connection (ADR-0082 rule 1).
+
+    The deadline is the server's, not the caller's (rule 4). An answer that
+    arrives after it is dropped rather than applied — the future is off the
+    registry by then, and the response route below has nowhere to put it, which
+    is the intended outcome and not a leak.
+
+    Raises:
+        ClientRequestFailed: the client disconnected, answered with an error, or
+            did not answer within *timeout_sec*.
+    """
+    global _last_client_request_id
+    _last_client_request_id += 1
+    request_id = _last_client_request_id
+
+    future: asyncio.Future = asyncio.get_running_loop().create_future()
+    _pending_client_requests[request_id] = future
+    _pending_client_request_owners[request_id] = writer
+    try:
+        _write_message(
+            writer,
+            {
+                "jsonrpc": "2.0",
+                "id": request_id,
+                "method": method,
+                "params": params,
+            },
+        )
+        await writer.drain()
+    except Exception as exception:
+        _discard_pending_client_request(request_id)
+        raise ClientRequestFailed(
+            f"could not send {method} to the client: {exception}"
+        ) from exception
+
+    try:
+        response = await asyncio.wait_for(future, timeout=timeout_sec)
+    except TimeoutError as exception:
+        raise ClientRequestFailed(
+            f"the client did not answer {method} within {timeout_sec}s"
+        ) from exception
+    finally:
+        _discard_pending_client_request(request_id)
+
+    if "error" in response:
+        error = response["error"] or {}
+        raise ClientRequestFailed(
+            f"the client answered {method} with an error: "
+            f"{error.get('code')} {error.get('message')}"
+        )
+    return response.get("result") or {}
+
+
+def _discard_pending_client_request(request_id: int) -> None:
+    _pending_client_requests.pop(request_id, None)
+    _pending_client_request_owners.pop(request_id, None)
+
+
+def _resolve_client_response(
+    request_id: int, msg: dict, writer: asyncio.StreamWriter | None = None
+) -> None:
+    """Route a client's answer back to whoever asked.
+
+    An id nobody is waiting on is logged and dropped, never answered: replying
+    to a response would make this server the one violating the protocol, and
+    the common cause is an answer that arrived after its deadline.
+
+    An answer is only taken from the connection the question was *put to*.
+    Request ids come from one counter shared by every connection, so without
+    this check any client could answer another client's question just by
+    guessing an id — and the run would act on it (ADR-0082 rule 1: one
+    addressee). *writer* is optional so the registry can still be resolved
+    directly in tests that never stood up a second connection.
+    """
+    if writer is not None:
+        owner = _pending_client_request_owners.get(request_id)
+        if owner is not None and owner is not writer:
+            logger.warning(
+                f"FineCode API: a client answered request {request_id}, which was "
+                f"put to a different client; discarding"
+            )
+            return
+    future = _pending_client_requests.get(request_id)
+    if future is None:
+        logger.debug(
+            f"FineCode API: response for request {request_id} arrived with nobody "
+            f"waiting on it (late answer, or never sent by this server); discarding"
+        )
+        return
+    if not future.done():
+        future.set_result(msg)
+
+
+def _fail_pending_requests_for(writer: asyncio.StreamWriter) -> None:
+    """Resolve every question outstanding on a connection that just went away.
+
+    ADR-0082 rule 4: the WM stops ~30s after its last client disconnects
+    (ADR-0004), so waiting out a five-minute deadline for an answer from a
+    client that no longer exists would outlive the server holding the question.
+    The asking run learns at once that nobody can be asked.
+    """
+    for request_id, owner in list(_pending_client_request_owners.items()):
+        if owner is not writer:
+            continue
+        future = _pending_client_requests.get(request_id)
+        _discard_pending_client_request(request_id)
+        if future is not None and not future.done():
+            future.set_exception(
+                ClientRequestFailed(
+                    "the client this question was addressed to disconnected"
+                )
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -378,6 +533,93 @@ class _WmClientBridge:
 wm_bridge.install(_WmClientBridge())
 
 
+# Deadline for a question nobody ever sees: how long a client that declared it
+# can answer is given before the WM gives up on it. Bounds the case where the
+# client is alive but its person is not looking; a client that *goes* is not
+# waited for at all (`_fail_pending_requests_for`).
+_ELICIT_MAX_TIMEOUT_SEC: typing.Final = 900.0
+
+
+class _WmElicitationBridge:
+    """``elicitation_bridge``'s slot, filled by this module since it owns clients.
+
+    Every branch here returns an outcome rather than raising: the ER turns an
+    error response into "unavailable" anyway, and a run that asked a question is
+    entitled to a typed answer for each way of not getting one (ADR-0082 rule 3).
+    """
+
+    async def elicit(
+        self,
+        *,
+        message: str,
+        options: list[str],
+        default: str | None,
+        timeout_sec: float,
+        run_writer_key: object | None,
+    ) -> dict:
+        # Opaque to the runner layer that passed it back, an
+        # ``asyncio.StreamWriter`` here: this module put it in the registry the
+        # runner read it from, and this module is the only one that dereferences
+        # it (`elicitation_bridge`'s module docstring).
+        writer = typing.cast("asyncio.StreamWriter", run_writer_key)
+        if run_writer_key is None:
+            # A run with no identifiable originating connection: dispatched
+            # through a non-streaming path, or through no client at all.
+            logger.debug("Elicitation: no originating client for this run")
+            return {"outcome": "unavailable"}
+        if writer not in _connected_clients:
+            logger.debug("Elicitation: the originating client is no longer connected")
+            return {"outcome": "unavailable"}
+        if not _client_capabilities.get(writer, {}).get("elicitation"):
+            # Rule 2: known before the question is sent, so the common
+            # non-interactive case costs a fast answer instead of a deadline.
+            logger.debug(
+                f"Elicitation: client '{_client_labels.get(writer)}' did not declare "
+                f"that it can answer questions"
+            )
+            return {"outcome": "unavailable"}
+
+        bounded = min(max(timeout_sec, 1.0), _ELICIT_MAX_TIMEOUT_SEC)
+        try:
+            result = await _request_client(
+                writer,
+                "client/elicit",
+                {
+                    "message": message,
+                    "options": options,
+                    "default": default,
+                    # Informational: the deadline is enforced here, but a client
+                    # that holds its own pending request (the MCP server does)
+                    # needs to know when to stop holding it.
+                    "timeoutSec": bounded,
+                },
+                timeout_sec=bounded,
+            )
+        except ClientRequestFailed as exception:
+            logger.info(f"Elicitation: no answer — {exception}")
+            return {"outcome": "unavailable"}
+
+        outcome = result.get("outcome")
+        if outcome == "answered":
+            value = result.get("value")
+            if value not in options:
+                # A client that answered with something nobody offered has not
+                # answered the question that was asked.
+                logger.warning(
+                    f"Elicitation: client answered with {value!r}, which is not one "
+                    f"of the offered options; treating the question as unanswered"
+                )
+                return {"outcome": "unavailable"}
+            return {"outcome": "answered", "value": value}
+        if outcome == "declined":
+            return {"outcome": "declined"}
+        logger.warning(f"Elicitation: client returned unknown outcome {outcome!r}")
+        return {"outcome": "unavailable"}
+
+
+elicitation_bridge.install(_WmElicitationBridge())
+
+
 def _sync_er_forwarding(ws_context: context.WorkspaceContext) -> None:
     """Schedule updateLogging to every running runner to match current subscription state.
 
@@ -508,12 +750,18 @@ async def _handle_client(
             is_notification = req_id is None
 
             if method is None:
+                # An id without a method is a *response*, not a malformed
+                # request: since ADR-0082 this server asks its clients things,
+                # and this is what an answer looks like. Answering it with an
+                # error — which is what this branch used to do — would have been
+                # a response to a response.
                 if not is_notification:
-                    _write_message(
-                        writer,
-                        _jsonrpc_error(req_id, -32600, "Invalid request: no method"),
+                    _resolve_client_response(req_id, msg, writer)
+                else:
+                    logger.warning(
+                        f"[{label}] FineCode API: message with neither id nor "
+                        f"method, ignoring"
                     )
-                    await writer.drain()
                 continue
 
             # Notifications (no id) — dispatch and don't respond.
@@ -545,6 +793,20 @@ async def _handle_client(
                     )
                     _client_labels[writer] = new_label
                     label = new_label
+                # Recorded per connection, not per client program: the same CLI
+                # binary can answer a question from a terminal and cannot from a
+                # pipeline, and it is the connection that knows which it is
+                # (ADR-0082 rule 2).
+                # `or {}` rather than a `.get` default: a client sending
+                # `"capabilities": null` would otherwise crash this dispatch
+                # loop before the initialize response is written, leaving it
+                # waiting on its own request.
+                elicitation = ((params or {}).get("capabilities") or {}).get(
+                    "elicitation"
+                )
+                if elicitation:
+                    _client_capabilities[writer] = {"elicitation": elicitation}
+                    logger.info(f"FineCode API: client '{label}' can answer questions")
                 _write_message(
                     writer,
                     _jsonrpc_response(
@@ -553,6 +815,9 @@ async def _handle_client(
                             "logFilePath": str(_log_file_path)
                             if _log_file_path is not None
                             else None,
+                            # What this server will actually use of what the
+                            # client offered, so the client can see it landed.
+                            "capabilities": {"elicitation": bool(elicitation)},
                         },
                     ),
                 )
@@ -704,6 +969,11 @@ async def _handle_client(
         _sync_er_forwarding(ws_context)
         _connected_clients.discard(writer)
         _client_labels.pop(writer, None)
+        _client_capabilities.pop(writer, None)
+        # Before the tasks below are cancelled: a run blocked on a question put
+        # to this client has to be told at once that nobody can answer it, or it
+        # would sit on its deadline while the server counts down to auto-stop.
+        _fail_pending_requests_for(writer)
 
         # Cancel any running partial result tasks for this client
         if writer in _running_partial_result_tasks:

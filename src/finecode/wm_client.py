@@ -96,9 +96,13 @@ async def _read_message(reader: asyncio.StreamReader) -> dict | None:
 class ApiClient:
     """JSON-RPC client using Content-Length framing over TCP.
 
-    After connect(), a background reader loop dispatches incoming messages:
-    - Responses (with ``id``) resolve the matching pending request future.
-    - Notifications (without ``id``) are dispatched to registered callbacks.
+    After connect(), a background reader loop dispatches incoming messages by
+    their JSON-RPC shape:
+    - Requests (``id`` *and* ``method``) go to an :meth:`on_request` callback and
+      are answered on this connection.
+    - Responses (``id``, no ``method``) resolve the matching pending future.
+    - Notifications (``method``, no ``id``) go to an :meth:`on_notification`
+      callback.
 
     Errors:
     - ``ApiServerError``: the server returned a JSON-RPC error.
@@ -114,6 +118,19 @@ class ApiClient:
         self._notification_handlers: dict[
             str, collections.abc.Callable[..., collections.abc.Coroutine]
         ] = {}
+        # Server→client *requests* (ADR-0082), kept apart from notifications
+        # because the two are answered differently: a notification handler's
+        # return value goes nowhere, a request handler's return value is the
+        # JSON-RPC result this client owes the server.
+        self._request_handlers: dict[
+            str, collections.abc.Callable[..., collections.abc.Coroutine]
+        ] = {}
+        # Strong references to in-flight inbound-request handlers. They run as
+        # tasks rather than inline in the read loop: a handler may wait on a
+        # person for minutes, and handling it inline would stall every other
+        # message on the connection — including the partial results of the very
+        # run that is asking.
+        self._inbound_request_tasks: set[asyncio.Task] = set()
         self._reader_task: asyncio.Task | None = None
         self.server_info: dict = {}
         self._host: str = "127.0.0.1"
@@ -124,6 +141,7 @@ class ApiClient:
         ) = None
         self._on_session_lost: collections.abc.Callable[[bool], None] | None = None
         self._reconnect_task: asyncio.Task | None = None
+        self._capabilities: dict = {}
         # Distinguishes a deliberate close from a lost connection: close()
         # cancels the reader, and a reconnect racing its own shutdown would
         # leave a client nobody asked for.
@@ -201,10 +219,26 @@ class ApiClient:
 
         await asyncio.wait_for(_wait(), timeout=timeout)
 
-    async def connect(self, host: str, port: int, client_id: str | None = None) -> None:
+    async def connect(
+        self,
+        host: str,
+        port: int,
+        client_id: str | None = None,
+        capabilities: dict | None = None,
+    ) -> None:
+        """Connect, identify this client and declare what it can do.
+
+        ``capabilities`` is what the WM is allowed to ask of this connection —
+        today only ``{"elicitation": {...}}``, which says a person can be put a
+        question (ADR-0082 rule 2). It is a property of the *connection*, not of
+        the binary: the same CLI declares it when attached to a terminal and
+        withholds it in a pipeline. Kept on the client so every reconnect
+        re-declares it, since a restarted WM has never heard of this client.
+        """
         self._closing = False
         self._host = host
         self._client_id = client_id
+        self._capabilities = capabilities or {}
         await self._open(host, port)
         await self._reattach(first_connect=True)
 
@@ -217,6 +251,8 @@ class ApiClient:
             params: dict = {}
             if self._client_id is not None:
                 params["clientId"] = self._client_id
+            if self._capabilities:
+                params["capabilities"] = self._capabilities
             self.server_info = await self.request("client/initialize", params) or {}
             log_path = self.server_info.get("logFilePath")
             if log_path:
@@ -293,6 +329,13 @@ class ApiClient:
                 future.set_exception(ConnectionError("Connection closed"))
         self._pending.clear()
 
+        # Drop any inbound request still being answered. There is no connection
+        # left to answer it on, and a handler waiting on a person would
+        # otherwise keep this process alive after the client asked to close.
+        for task in list(self._inbound_request_tasks):
+            task.cancel()
+        self._inbound_request_tasks.clear()
+
     # -- Notifications ------------------------------------------------------
 
     def on_notification(
@@ -302,6 +345,24 @@ class ApiClient:
     ) -> None:
         """Register an async callback for a server→client notification."""
         self._notification_handlers[method] = callback
+
+    # -- Inbound requests ----------------------------------------------------
+
+    def on_request(
+        self,
+        method: str,
+        callback: collections.abc.Callable[..., collections.abc.Coroutine],
+    ) -> None:
+        """Register an async callback for a server→client *request*.
+
+        The callback is awaited with the request's ``params`` and whatever it
+        returns becomes the JSON-RPC ``result`` sent back to the server. A
+        callback that raises is answered with an internal-error response rather
+        than being allowed to take down the reader loop: the server is waiting
+        on this id and a dead reader would leave it waiting for its whole
+        deadline.
+        """
+        self._request_handlers[method] = callback
 
     # -- Server methods -----------------------------------------------------
 
@@ -794,6 +855,63 @@ class ApiClient:
 
         return response.get("result")
 
+    # -- Inbound request dispatch -------------------------------------------
+
+    def _send_raw(self, msg: dict) -> None:
+        """Frame and write one message. No drain: the reader loop cannot block."""
+        if self._writer is None:
+            raise RuntimeError("Not connected to FineCode WM server")
+        body = json.dumps(msg).encode("utf-8")
+        header = f"Content-Length: {len(body)}\r\n\r\n".encode()
+        self._writer.write(header + body)
+
+    def _answer_request(self, req_id: int | str, payload: dict) -> None:
+        """Write one response for *req_id*, tolerating a connection that died.
+
+        A handler that took long enough for the connection to go away is the
+        ordinary case for a question put to a person, and there is nothing left
+        to report the write failure to.
+        """
+        try:
+            self._send_raw({"jsonrpc": "2.0", "id": req_id, **payload})
+        except (RuntimeError, ConnectionError, OSError):
+            logger.debug(
+                f"WmClient: could not answer request {req_id}; connection is gone"
+            )
+
+    def _dispatch_inbound_request(self, msg: dict) -> None:
+        """Answer a server→client request, out of band of the reader loop."""
+        req_id = msg["id"]
+        method = msg["method"]
+        handler = self._request_handlers.get(method)
+        if handler is None:
+            logger.warning(f"WmClient: unhandled request {method}")
+            self._answer_request(
+                req_id,
+                {"error": {"code": -32601, "message": f"Method not found: {method}"}},
+            )
+            return
+
+        async def _run() -> None:
+            try:
+                result = await handler(msg.get("params"))
+            # The handler is a surface's own code — a terminal prompt, an MCP
+            # round trip — so the reachable exception set is open. Narrowing this
+            # would let an unlisted failure kill the reader loop and leave the
+            # server waiting out its deadline on a client that is still running.
+            except Exception as exception:  # noqa: BLE001
+                logger.exception(f"WmClient: request handler for {method} failed")
+                self._answer_request(
+                    req_id,
+                    {"error": {"code": -32603, "message": str(exception)}},
+                )
+            else:
+                self._answer_request(req_id, {"result": result})
+
+        task = asyncio.create_task(_run())
+        self._inbound_request_tasks.add(task)
+        task.add_done_callback(self._inbound_request_tasks.discard)
+
     # -- Background reader --------------------------------------------------
 
     async def _read_loop(self) -> None:
@@ -804,7 +922,17 @@ class ApiClient:
                 if msg is None:
                     break
 
-                if "id" in msg:
+                # JSON-RPC 2.0 discrimination, in full: `id` alone does not
+                # identify a request. `id` *and* `method` is a request the
+                # server is waiting on, `id` without `method` is a response to
+                # something this client sent, `method` without `id` is a
+                # notification. Before the WM could send requests (ADR-0082)
+                # this loop tested `id` alone and read every inbound request as
+                # a response for an unknown id — silently, and with the server
+                # left waiting.
+                if "method" in msg and "id" in msg:
+                    self._dispatch_inbound_request(msg)
+                elif "id" in msg:
                     # Response to a pending request.
                     future = self._pending.pop(msg["id"], None)
                     if future is None:
@@ -856,6 +984,15 @@ class ApiClient:
                 if not future.done():
                     future.set_exception(ConnectionError("Connection lost"))
             self._pending.clear()
+            # Drop any inbound request still being answered, for the same reason
+            # `close()` does. The server resolved its side the moment this
+            # connection went away, so a question still on a person's screen can
+            # no longer be answered — and if it were, `_answer_request` would
+            # write an id the server has discarded into whatever transport the
+            # reconnect had put in place by then.
+            for task in list(self._inbound_request_tasks):
+                task.cancel()
+            self._inbound_request_tasks.clear()
             self._connected.clear()
             if not self._closing:
                 # Recoverable whenever reconnection is configured at all, not

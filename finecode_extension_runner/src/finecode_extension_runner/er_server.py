@@ -43,6 +43,7 @@ from finecode_extension_runner import (
     er_wal,
     global_state,
     logs,
+    run_context,
     schemas,
     services,
 )
@@ -746,9 +747,9 @@ async def run_action(server: ErServer, params: dict | None) -> dict:
     options: dict | None = params.get("options")
 
     logger.trace(f"Run action: {action_name}")
-    wal_run_id = (options or {}).get("walRunId")
+    wal_run_id = (options or {}).get("runId")
     if not isinstance(wal_run_id, str) or wal_run_id.strip() == "":
-        return {"error": "Missing required wal_run_id in run options"}
+        return {"error": "Missing required runId in run options"}
 
     meta = (options or {}).get("meta") or {}
     trigger = meta.get("trigger", "unknown")
@@ -777,11 +778,15 @@ async def run_action(server: ErServer, params: dict | None) -> dict:
     status: str = "success"
 
     try:
-        response = await services.run_action_raw(
-            request=request,
-            options=options_schema,
-            runner_context=server._runner_context,
-        )
+        # Everything this run starts is marked as belonging to it, so a
+        # back-channel call made deep inside a handler can name the run it
+        # speaks for without being handed it explicitly (ADR-0082 rule 1).
+        with run_context.run(wal_run_id):
+            response = await services.run_action_raw(
+                request=request,
+                options=options_schema,
+                runner_context=server._runner_context,
+            )
     except Exception as exception:
         if isinstance(exception, services.StopWithResponse):
             status = "stopped"
@@ -872,9 +877,9 @@ async def run_handlers(server: ErServer, params: dict | None) -> dict:
         f"has_previous_result={previous_result is not None}"
     )
 
-    wal_run_id = (options or {}).get("walRunId")
+    wal_run_id = (options or {}).get("runId")
     if not isinstance(wal_run_id, str) or wal_run_id.strip() == "":
-        return {"error": "Missing required wal_run_id in run options"}
+        return {"error": "Missing required runId in run options"}
 
     meta = (options or {}).get("meta") or {}
     trigger = meta.get("trigger", "unknown")
@@ -907,11 +912,12 @@ async def run_handlers(server: ErServer, params: dict | None) -> dict:
     status: str = "success"
 
     try:
-        response = await services.run_handlers_raw(
-            request=request,
-            options=options_schema,
-            runner_context=server._runner_context,
-        )
+        with run_context.run(wal_run_id):
+            response = await services.run_handlers_raw(
+                request=request,
+                options=options_schema,
+                runner_context=server._runner_context,
+            )
     except Exception as exception:
         if isinstance(exception, services.ActionCancelledException):
             error_msg = exception.message

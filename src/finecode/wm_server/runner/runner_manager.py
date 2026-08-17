@@ -21,6 +21,7 @@ from finecode.wm_server.config import collect_actions, config_models
 from finecode.wm_server.runner import (
     _internal_client_api,
     _internal_client_types,
+    elicitation_bridge,
     finecode_cmd,
     knowledge_bridge,
     preset_resolution,
@@ -564,6 +565,46 @@ async def _start_extension_runner_process(
     runner.client.feature(
         _internal_client_types.LIST_WORKSPACE_ACTIONS,
         handle_list_workspace_actions,
+    )
+
+    async def handle_elicit(
+        params: _internal_client_types.ElicitParams,
+    ) -> _internal_client_types.ElicitResult:
+        """Serve ``finecode/elicit`` (ER → WM → the run's originating client).
+
+        The addressee is resolved from the run the ER names, which is the run id
+        the WM handed it at dispatch. A run with no recorded origin — one
+        dispatched through a path that never held a client, or named by an ER
+        too old to send one — is told at once that nobody could be asked, rather
+        than waiting out a deadline for a client that was never listening.
+
+        A run that fans out across the workspace resolves just as exactly: the
+        nested dispatch inherits the calling run's connection, and the run it
+        mints is bound to that same client, so which project the asking ER
+        happens to serve never enters into it.
+        """
+        installed = elicitation_bridge.handlers()
+        if installed is None:
+            raise errors.InternalError(
+                "This WM has no client-connection layer installed, so it cannot "
+                "put a question to anyone."
+            )
+        origin = elicitation_bridge.originating_client_for_run(params.run_id)
+        answer = await installed.elicit(
+            message=params.message,
+            options=list(params.options),
+            default=params.default,
+            timeout_sec=params.timeout_sec,
+            run_writer_key=origin,
+        )
+        return _internal_client_types.ElicitResult(
+            outcome=answer.get("outcome", "unavailable"),
+            value=answer.get("value"),
+        )
+
+    runner.client.feature(
+        _internal_client_types.ELICIT,
+        handle_elicit,
     )
 
 

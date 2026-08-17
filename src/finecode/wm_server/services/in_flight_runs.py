@@ -21,6 +21,7 @@ import typing
 from loguru import logger
 
 from finecode.wm_server import context, domain
+from finecode.wm_server.runner import elicitation_bridge
 
 
 @contextlib.asynccontextmanager
@@ -54,14 +55,21 @@ async def track(
         started_at=time.time(),
         cancellable=cancellable,
     )
-    try:
-        yield
-    finally:
-        project_runs = ws_context.in_flight_runs.get(project_path)
-        if project_runs is not None:
-            project_runs.pop(run_id, None)
-            if not project_runs:
-                del ws_context.in_flight_runs[project_path]
+    # The same block also binds the run to the client that started it, for
+    # ADR-0082's addressing. Deliberately here rather than beside each dispatch:
+    # the two facts share a key and a lifetime exactly — a run that can be
+    # refused a recovery is precisely a run that can still ask a question — and
+    # a separate registration would be one more thing to forget at the next
+    # dispatch site somebody adds.
+    with elicitation_bridge.bind_run(run_id):
+        try:
+            yield
+        finally:
+            project_runs = ws_context.in_flight_runs.get(project_path)
+            if project_runs is not None:
+                project_runs.pop(run_id, None)
+                if not project_runs:
+                    del ws_context.in_flight_runs[project_path]
 
 
 def runs_in_project(

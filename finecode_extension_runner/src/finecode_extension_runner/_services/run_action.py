@@ -873,9 +873,13 @@ async def run_action_raw(
             action_name, request.params, action_exec_info.payload_type
         )
 
-    wal_run_id = getattr(options, "wal_run_id", None)
+    # `run_id` is taken in this function by the ER's own per-run log counter, so
+    # the WM's identifier keeps the name it is emitted under. They are different
+    # things: one is local and sequential, this one is the WM's handle on the
+    # whole logical run, and `RunActionMeta.wal_run_id` is where handlers see it.
+    wal_run_id = getattr(options, "run_id", None)
     if not isinstance(wal_run_id, str) or wal_run_id.strip() == "":
-        raise ActionFailedException("Missing required wal_run_id in run options")
+        raise ActionFailedException("Missing required run_id in run options")
 
     traceparent = getattr(options, "traceparent", None)
 
@@ -1024,9 +1028,13 @@ async def run_handlers_raw(
             request.action_name, request.params, action_exec_info.payload_type
         )
 
-    wal_run_id = getattr(options, "wal_run_id", None)
+    # `run_id` is taken in this function by the ER's own per-run log counter, so
+    # the WM's identifier keeps the name it is emitted under. They are different
+    # things: one is local and sequential, this one is the WM's handle on the
+    # whole logical run, and `RunActionMeta.wal_run_id` is where handlers see it.
+    wal_run_id = getattr(options, "run_id", None)
     if not isinstance(wal_run_id, str) or wal_run_id.strip() == "":
-        raise ActionFailedException("Missing required wal_run_id in run options")
+        raise ActionFailedException("Missing required run_id in run options")
 
     traceparent = getattr(options, "traceparent", None)
 

@@ -8,13 +8,19 @@ runner reaches this code through a slot rather than importing it.
 from __future__ import annotations
 
 import asyncio
+import collections.abc
+import contextlib
 import json
 from pathlib import Path
 
 from loguru import logger
 
 from finecode.wm_server import context, domain, errors
-from finecode.wm_server.runner import _internal_client_types, run_dispatch_bridge
+from finecode.wm_server.runner import (
+    _internal_client_types,
+    elicitation_bridge,
+    run_dispatch_bridge,
+)
 from finecode.wm_server.runner.runner_client import (
     DevEnv,
     ExtensionRunnerInfo,
@@ -58,6 +64,27 @@ def _nearest_projects_hint(path: Path, ws_context: context.WorkspaceContext) -> 
     return f"Nearest projects: {', '.join(str(p) for p in nearest)}{suffix}."
 
 
+@contextlib.contextmanager
+def _origin_of_calling_run(run_id: str | None) -> collections.abc.Iterator[None]:
+    """Run this dispatch for whoever started the run that asked for it.
+
+    A run that streams belongs to the client that started it. When a handler in
+    that run dispatches another action, the run the WM mints for it is a
+    continuation of the same work and belongs to the same person — so a question
+    asked from inside it must reach them, not nobody (ADR-0082 rule 1).
+
+    Inheritance is by run id rather than by project because that is the only
+    thing that identifies *which* run is calling: the runner making the call may
+    serve a project two clients are both using. Depth beyond one hop needs no
+    special handling — the nested run is bound to the same connection, so its
+    own dispatches inherit it in turn.
+    """
+    with elicitation_bridge.originating_client(
+        elicitation_bridge.originating_client_for_run(run_id)
+    ):
+        yield
+
+
 class _BridgeHandlers:
     """``run_dispatch_bridge``'s slot, filled by the module that owns run dispatch."""
 
@@ -69,6 +96,19 @@ class _BridgeHandlers:
     ) -> "_internal_client_types.RunActionInProjectResult":
         executor = ProjectExecutor(ws_context)
 
+        # The nested run gets its own id, so it needs its own binding: inheriting
+        # the caller's connection is what lets a question asked inside it reach
+        # the same person. Same-project dispatch is no exception — the run doing
+        # the asking is a different one from the run that was addressed.
+        with _origin_of_calling_run(params.run_id):
+            return await self._run_action_in_project(runner, params, executor)
+
+    async def _run_action_in_project(
+        self,
+        runner: ExtensionRunnerInfo,
+        params: _internal_client_types.RunActionInProjectParams,
+        executor: ProjectExecutor,
+    ) -> _internal_client_types.RunActionInProjectResult:
         if params.partial_result_token is not None:
             partial_count = 0
             async with executor.run_action_with_partial_results(
@@ -216,14 +256,15 @@ class _BridgeHandlers:
             }
 
         executor = WorkspaceExecutor(ws_context)
-        results = await executor.run_actions_in_projects(
-            actions_by_project=actions_by_project,
-            params=params.payload,
-            run_trigger=run_trigger,
-            dev_env=dev_env,
-            orchestration_depth=params.meta.orchestration_depth,
-            concurrently=params.concurrently,
-        )
+        with _origin_of_calling_run(params.run_id):
+            results = await executor.run_actions_in_projects(
+                actions_by_project=actions_by_project,
+                params=params.payload,
+                run_trigger=run_trigger,
+                dev_env=dev_env,
+                orchestration_depth=params.meta.orchestration_depth,
+                concurrently=params.concurrently,
+            )
         return _internal_client_types.RunActionInWorkspaceResult(
             results_by_project={
                 k.as_posix(): {

@@ -3,7 +3,7 @@ from __future__ import annotations
 import dataclasses
 import typing
 
-from finecode_extension_api.interfaces import ilogger
+from finecode_extension_api.interfaces import ilogger, iuserprompt
 
 from finecode_extension_runner import er_wal
 
@@ -127,3 +127,42 @@ class FakeUserMessenger:
 
     def info(self, message: str) -> None:
         self.infos.append(message)
+
+
+class FakeUserPrompt:
+    """IUserPrompt that answers from a script, and records what it was asked.
+
+    The default answer is ``UNAVAILABLE`` — the same thing a handler gets in CI,
+    in a pipeline, and from any client that did not declare the capability. That
+    is the path most likely to be wrong and least likely to be written a test
+    for, so it is what a handler under test meets unless the test says otherwise
+    (ADR-0082 rule 3).
+
+    Scripted answers are consumed in order, one per ``ask_choice``; running out
+    falls back to the default rather than raising, so a test that adds a second
+    question does not fail in the fixture instead of in the assertion.
+    """
+
+    def __init__(
+        self,
+        answers: list[iuserprompt.ElicitationResult] | None = None,
+        default: iuserprompt.ElicitationResult | None = None,
+    ) -> None:
+        self.answers = list(answers or [])
+        self.default = default or iuserprompt.ElicitationResult(
+            outcome=iuserprompt.ElicitationOutcome.UNAVAILABLE
+        )
+        self.asked: list[tuple[str, list[str]]] = []
+
+    async def ask_choice(
+        self,
+        message: str,
+        options: list[str],
+        *,
+        default: str | None = None,
+        timeout_sec: float = 300.0,
+    ) -> iuserprompt.ElicitationResult:
+        self.asked.append((message, list(options)))
+        if self.answers:
+            return self.answers.pop(0)
+        return self.default

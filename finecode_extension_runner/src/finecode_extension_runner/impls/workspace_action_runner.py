@@ -13,7 +13,7 @@ from finecode_extension_api.interfaces import (
     iworkspaceactionrunner,
 )
 
-from finecode_extension_runner import er_telemetry
+from finecode_extension_runner import er_telemetry, run_context
 from finecode_extension_runner._converter import converter as _converter
 
 PayloadT = typing.TypeVar("PayloadT", bound=code_action.RunActionPayload)
@@ -54,6 +54,10 @@ class WorkspaceActionRunnerImpl(iworkspaceactionrunner.IWorkspaceActionRunner):
                     else None,
                     "concurrently": concurrently,
                     "traceparent": traceparent,
+                    # Names the run this fan-out belongs to, so a question asked
+                    # by any project it reaches is still addressed to the client
+                    # that started the whole thing (ADR-0082 rule 1).
+                    "runId": run_context.current_run_id(),
                 },
             )
         except Exception as e:

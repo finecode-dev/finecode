@@ -201,7 +201,7 @@ async def run_action_and_notify(
 ) -> runner_client.RunActionResponse:
     options: dict[str, typing.Any] = {
         "partialResultToken": partial_result_token,
-        "walRunId": wal_run_id,
+        "runId": wal_run_id,
         "meta": {"trigger": run_trigger.value, "devEnv": dev_env.value},
     }
     if progress_token is not None:
@@ -1286,7 +1286,7 @@ async def _run_action_in_env_runner(
     try:
         options: dict[str, typing.Any] = {
             "resultFormats": result_formats,
-            "walRunId": wal_run_id,
+            "runId": wal_run_id,
             "traceparent": traceparent,
             "meta": {
                 "trigger": run_trigger.value,
@@ -1458,7 +1458,7 @@ async def _run_handlers_in_env_runner(
 
     options: dict[str, typing.Any] = {
         "resultFormats": result_formats,
-        "walRunId": wal_run_id,
+        "runId": wal_run_id,
         "traceparent": traceparent,
         "meta": {
             "trigger": run_trigger.value,

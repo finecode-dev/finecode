@@ -70,7 +70,7 @@ async def test_missing_required_payload_field_raises_readable_action_failed_exce
         wal_run_id = str(uuid.uuid4())
         request = schemas.RunActionRequest(action_name=_ACTION_NAME, params={})
         options = schemas.RunActionOptions(
-            wal_run_id=wal_run_id,
+            run_id=wal_run_id,
             meta=code_action.RunActionMeta(
                 trigger=code_action.RunActionTrigger.SYSTEM,
                 dev_env=code_action.DevEnv.CI,
