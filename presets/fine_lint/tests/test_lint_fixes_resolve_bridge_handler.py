@@ -176,10 +176,10 @@ async def test_a_fix_editing_a_different_file_than_requested_carries_no_version_
     None
 ):
     """A fix that edits a file other than the one resolve was asked about
-    (design note Q1, e.g. a structural fix that belongs in a sibling module)
+    (`applying-code-actions` Q1, e.g. a structural fix that belongs in a sibling module)
     must not stamp that other file with the requested file's pinned version --
     only the requested file's version was actually pinned by this run, and
-    reusing it for an unrelated file is exactly the bug design note D11 fixes.
+    reusing it for an unrelated file is exactly the bug ADR-0083 rule 5 fixes.
     """
     other_uri = path_to_resource_uri(pathlib.Path("/tmp/other.py"))
     fix = LintFix(

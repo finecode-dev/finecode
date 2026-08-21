@@ -38,7 +38,7 @@ class ResolveCodeActionRunResult(code_action.RunActionResult):
     """Content version resolution was performed against."""
 
     operations: list[CodeActionOperation] | None = None
-    """Ordered effect of the resolved action (design note D11) -- what apply
+    """Ordered effect of the resolved action (ADR-0083 rule 5) -- what apply
     consumes. None means no provider claimed this action_id, or it no longer
     exists."""
 
@@ -49,7 +49,7 @@ class ResolveCodeActionRunResult(code_action.RunActionResult):
             self.operations = other.operations
             if other.operations is not None:
                 self.file_version = other.file_version
-        # else: exactly one provider owns an action_id (design note D1); a later
+        # else: exactly one provider owns an action_id (ADR-0084); a later
         # non-None contribution would indicate a routing bug. Keep the first
         # winner rather than letting merge order decide.
 
@@ -64,7 +64,7 @@ class ResolveCodeActionRunContext(
     """Pins the file's base version for the whole run.
 
     Same rationale as ``GetLintFixesRunContext`` / ``GetCodeActionsRunContext``
-    (design note D6): read once in ``init()`` so every provider's resolve handler
+    (ADR-0083 rule 3): read once in ``init()`` so every provider's resolve handler
     agrees on the content it is resolving against, without excluding other
     readers via a claim.
     """
@@ -106,7 +106,7 @@ class ResolveCodeActionAction(
     """Recover a code action's edits from its provider and action id.
 
     Serves the LSP ``codeAction/resolve`` endpoint, and is the lazy-resolution
-    path a provider may use instead of embedding edits inline (design note D7).
+    path a provider may use instead of embedding edits inline (ADR-0084 rule 3).
     """
 
     DESCRIPTION = "Recover a code action's edits from its provider and action id."

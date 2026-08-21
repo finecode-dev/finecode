@@ -27,6 +27,9 @@ from lsprotocol import types
 
 from finecode._converter import converter as _converter
 from finecode.lsp_server import global_state, pygls_types_utils
+from finecode.wm_server.runner.apply_workspace_edit_bridge import (
+    ResourceOperationKind,
+)
 
 if TYPE_CHECKING:
     from finecode.lsp_server.lsp_server import LspServer
@@ -104,14 +107,106 @@ def _text_edit_to_lsp(edit: TextEdit) -> types.TextEdit:
     )
 
 
-def _code_action_to_lsp(action: CodeAction, file_uri: str) -> types.CodeAction:
-    workspace_edit: types.WorkspaceEdit | None = None
-    if action.edits is not None:
-        changes: dict[str, list[types.TextEdit]] = {
-            uri: [_text_edit_to_lsp(e) for e in edits]
-            for uri, edits in action.edits.items()
-        }
-        workspace_edit = types.WorkspaceEdit(changes=changes)
+def _workspace_edit_to_lsp(
+    operations: list[CodeActionOperation] | None,
+    *,
+    supports_document_changes: bool,
+    resource_operations: frozenset[ResourceOperationKind],
+) -> types.WorkspaceEdit | None:
+    """Convert an operation list to a ``WorkspaceEdit`` the client can read.
+
+    Returns None when the client cannot express the operations: a resource
+    operation whose kind the client did not list under ``resourceOperations``,
+    or (in the ``changes`` fallback) anything other than at most one text-edit
+    operation per file. An action that would be offered edit-less is dropped
+    instead (ADR-0089).
+    """
+    if operations is None:
+        return None
+
+    if supports_document_changes:
+        document_changes: list = []
+        for operation in operations:
+            if isinstance(operation, TextEditOperation):
+                document_changes.append(
+                    types.TextDocumentEdit(
+                        text_document=types.OptionalVersionedTextDocumentIdentifier(
+                            uri=str(operation.file_path), version=None
+                        ),
+                        edits=[_text_edit_to_lsp(e) for e in operation.edits],
+                    )
+                )
+            elif isinstance(operation, CreateFileOperation):
+                if ResourceOperationKind.CREATE not in resource_operations:
+                    return None
+                document_changes.append(
+                    types.CreateFile(
+                        uri=str(operation.file_path),
+                        options=(
+                            types.CreateFileOptions(overwrite=True)
+                            if operation.overwrite
+                            else None
+                        ),
+                    )
+                )
+            elif isinstance(operation, RenameFileOperation):
+                if ResourceOperationKind.RENAME not in resource_operations:
+                    return None
+                document_changes.append(
+                    types.RenameFile(
+                        old_uri=str(operation.old_path),
+                        new_uri=str(operation.new_path),
+                        options=(
+                            types.RenameFileOptions(overwrite=True)
+                            if operation.overwrite
+                            else None
+                        ),
+                    )
+                )
+            elif isinstance(operation, DeleteFileOperation):
+                if ResourceOperationKind.DELETE not in resource_operations:
+                    return None
+                document_changes.append(
+                    types.DeleteFile(
+                        uri=str(operation.file_path),
+                        options=(
+                            types.DeleteFileOptions(
+                                recursive=operation.recursive or None,
+                                ignore_if_not_exists=operation.missing_ok or None,
+                            )
+                            if operation.recursive or operation.missing_ok
+                            else None
+                        ),
+                    )
+                )
+        return types.WorkspaceEdit(document_changes=document_changes)
+
+    # `changes` can carry text edits only, at most one operation per file.
+    changes: dict[str, list[types.TextEdit]] = {}
+    for operation in operations:
+        if not isinstance(operation, TextEditOperation):
+            return None
+        uri = str(operation.file_path)
+        if uri in changes:
+            return None
+        changes[uri] = [_text_edit_to_lsp(edit) for edit in operation.edits]
+    return types.WorkspaceEdit(changes=changes)
+
+
+def _code_action_to_lsp(
+    action: CodeAction,
+    file_uri: str,
+    *,
+    supports_document_changes: bool,
+    resource_operations: frozenset[ResourceOperationKind],
+) -> types.CodeAction | None:
+    workspace_edit = _workspace_edit_to_lsp(
+        action.operations,
+        supports_document_changes=supports_document_changes,
+        resource_operations=resource_operations,
+    )
+    if workspace_edit is None:
+        return None
 
     related_diagnostics: list[types.Diagnostic] | None = None
     if action.diagnostics:
@@ -232,7 +327,22 @@ async def document_code_action(
 
     result = _converter.structure(json_result, GetCodeActionsRunResult)
 
-    return [_code_action_to_lsp(action, file_uri) for action in result.actions]
+    converted: list[types.CodeAction] = []
+    for action in result.actions:
+        lsp_action = _code_action_to_lsp(
+            action,
+            file_uri,
+            supports_document_changes=_ls.supports_document_changes(),
+            resource_operations=_ls.supported_resource_operations(),
+        )
+        if lsp_action is None:
+            logger.debug(
+                f"Dropping code action {action.title!r}: this client cannot"
+                " express its operations"
+            )
+            continue
+        converted.append(lsp_action)
+    return converted
 
 
 async def code_action_resolve(
@@ -305,31 +415,22 @@ async def code_action_resolve(
         logger.debug(f"No provider resolved code action {action_id!r}")
         return params
 
-    # The read path still speaks `WorkspaceEdit.changes`, which is an unordered
-    # map applied simultaneously. An operation list is ordered and may contain
-    # file operations, so only the subset that `changes` can carry faithfully is
-    # convertible: text edits alone, at most one operation per file. Anything
-    # else is returned unresolved rather than flattened into edits that would
-    # mean something different from what the provider asked for. Lifting this
-    # needs the endpoint to emit `documentChanges` — see design note D11.
-    changes: dict[str, list[types.TextEdit]] = {}
-    for operation in result.operations:
-        if not isinstance(operation, TextEditOperation):
-            logger.debug(
-                f"Cannot resolve code action {action_id!r} for an editor: it"
-                f" contains a {type(operation).__name__}, which"
-                " WorkspaceEdit.changes cannot express"
-            )
-            return params
-        uri = str(operation.file_path)
-        if uri in changes:
-            logger.debug(
-                f"Cannot resolve code action {action_id!r} for an editor: it"
-                f" applies several ordered edit operations to {uri}, which"
-                " WorkspaceEdit.changes cannot express"
-            )
-            return params
-        changes[uri] = [_text_edit_to_lsp(edit) for edit in operation.edits]
+    # The client cannot express this action's operations (ADR-0089): a resource
+    # operation the client did not declare, or an ordered list that the
+    # `changes` fallback cannot carry faithfully. The action stays unresolved
+    # rather than being flattened into edits that would mean something
+    # different from what the provider asked for.
+    workspace_edit = _workspace_edit_to_lsp(
+        result.operations,
+        supports_document_changes=_ls.supports_document_changes(),
+        resource_operations=_ls.supported_resource_operations(),
+    )
+    if workspace_edit is None:
+        logger.debug(
+            f"Cannot resolve code action {action_id!r} for this editor: the"
+            " client cannot express its operations"
+        )
+        return params
 
-    params.edit = types.WorkspaceEdit(changes=changes)
+    params.edit = workspace_edit
     return params

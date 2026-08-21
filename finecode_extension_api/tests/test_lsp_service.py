@@ -931,3 +931,310 @@ async def test_an_unchanged_report_keeps_the_diagnostics_it_refers_back_to(
         }
 
         assert await service.check_file(file_path) == [_F401]
+
+
+async def test_deleting_an_open_document_sends_did_close_once(
+    tmp_path: Path,
+) -> None:
+    """A file deleted while the server holds it open must be closed in the
+    server, or every later request for that path is answered against a document
+    that no longer exists."""
+    subject = tmp_path / "subject.py"
+    uri = subject.as_uri()
+
+    async with _running_service(subject, "x = 1\n") as (service, session, file_editor):
+        await service.get_hover(subject, "x = 1\n", {"line": 0, "character": 0})
+        assert session.sync_notification_count(uri) == 1
+
+        await file_editor.events.put(
+            ifileeditor.FileDeleteEvent(
+                file_path=subject,
+                author=ifileeditor.FileOperationAuthor(id="editor"),
+            )
+        )
+        await asyncio.sleep(0.05)
+
+        assert session.notification_count("textDocument/didClose", uri) == 1
+
+
+async def test_deleting_a_document_still_in_use_waits_for_the_lease(
+    tmp_path: Path,
+) -> None:
+    """A file deleted while a request is still using it must not drop the
+    document out from under that request; the close goes out once the last
+    lease is released, exactly as it does for a tab the user closed."""
+    subject = tmp_path / "subject.py"
+    uri = subject.as_uri()
+    content = "x = 1\n"
+
+    async with _running_service(subject, content) as (service, session, file_editor):
+        release = asyncio.Event()
+        session.release_request = release
+
+        hover_task = asyncio.create_task(
+            service.get_hover(subject, content, {"line": 0, "character": 0})
+        )
+        await asyncio.sleep(0.05)
+        assert service._document_leases.get(uri) == 1
+
+        file_editor.get_opened_files = lambda: []  # type: ignore[method-assign]
+        await service._handle_file_event(
+            ifileeditor.FileDeleteEvent(
+                file_path=subject,
+                author=ifileeditor.FileOperationAuthor(id="editor"),
+            )
+        )
+        assert session.notification_count("textDocument/didClose", uri) == 0
+
+        release.set()
+        await hover_task
+
+        assert session.notification_count("textDocument/didClose", uri) == 1
+
+
+async def test_renaming_drops_the_old_uris_cached_version(
+    tmp_path: Path,
+) -> None:
+    """After a rename, the old path must not look like a document the server
+    still holds: a later feature call for it has to re-sync from scratch, not
+    reuse a cached version of content that is no longer there."""
+    subject = tmp_path / "subject.py"
+    renamed = tmp_path / "renamed.py"
+    uri = subject.as_uri()
+
+    async with _running_service(subject, "x = 1\n") as (service, session, file_editor):
+        await service.get_hover(subject, "x = 1\n", {"line": 0, "character": 0})
+        assert session.sync_notification_count(uri) == 1
+
+        await file_editor.events.put(
+            ifileeditor.FileRenameEvent(
+                old_path=subject,
+                new_path=renamed,
+                author=ifileeditor.FileOperationAuthor(id="editor"),
+            )
+        )
+        await asyncio.sleep(0.05)
+
+        await service.get_hover(subject, "x = 1\n", {"line": 0, "character": 0})
+        assert session.sync_notification_count(uri) == 2
+
+
+async def test_deleting_a_directory_closes_open_documents_beneath_it(
+    tmp_path: Path,
+) -> None:
+    """A recursive delete must close every open document under the deleted
+    directory, not only the directory itself -- a server left holding a child
+    document would keep answering for a file that no longer exists."""
+    directory = tmp_path / "pkg"
+    directory.mkdir()
+    module = directory / "module.py"
+    module.write_text("x = 1\n")
+    nested = directory / "sub" / "nested.py"
+    nested.parent.mkdir()
+    nested.write_text("y = 2\n")
+    subject = tmp_path / "subject.py"
+
+    async with _running_service(subject, "x = 1\n") as (
+        service,
+        session,
+        file_editor,
+    ):
+        module_uri = module.as_uri()
+        nested_uri = nested.as_uri()
+        await service._sync_document(module_uri, "x = 1\n")
+        await service._sync_document(nested_uri, "y = 2\n")
+        assert module_uri in service._open_documents
+        assert nested_uri in service._open_documents
+
+        await file_editor.events.put(
+            ifileeditor.FileDeleteEvent(
+                file_path=directory,
+                author=ifileeditor.FileOperationAuthor(id="editor"),
+            )
+        )
+        await asyncio.sleep(0.05)
+
+        assert (
+            session.notification_count("textDocument/didClose", module_uri) == 1
+        )
+        assert (
+            session.notification_count("textDocument/didClose", nested_uri) == 1
+        )
+
+
+async def test_renaming_onto_an_open_document_resyncs_it_on_the_next_call(
+    tmp_path: Path,
+) -> None:
+    """A rename that overwrites a document the server holds open with different
+    content must produce a didChange on the next feature call, never a stale
+    document served from the pre-rename content."""
+    subject = tmp_path / "subject.py"
+    target = tmp_path / "target.py"
+    target_uri = target.as_uri()
+
+    async with _running_service(subject, "x = 1\n") as (service, session, file_editor):
+        await service._sync_document(target_uri, "old target\n")
+        assert target_uri in service._open_documents
+
+        await file_editor.events.put(
+            ifileeditor.FileRenameEvent(
+                old_path=subject,
+                new_path=target,
+                author=ifileeditor.FileOperationAuthor(id="editor"),
+            )
+        )
+        await asyncio.sleep(0.05)
+
+        await service.get_hover(
+            target, "renamed content\n", {"line": 0, "character": 0}
+        )
+
+        assert (
+            session.notification_count("textDocument/didChange", target_uri) == 1
+        )
+
+
+async def test_watched_file_notifications_require_registration(
+    tmp_path: Path,
+) -> None:
+    """A server that never asked to watch files must not be sent watched-file
+    notifications -- sending one to a client that did not declare support is a
+    protocol violation."""
+    subject = tmp_path / "subject.py"
+    created = tmp_path / "created.py"
+
+    async with _running_service(subject, "x = 1\n") as (
+        service,
+        session,
+        file_editor,
+    ):
+        await file_editor.events.put(
+            ifileeditor.FileCreateEvent(
+                file_path=created,
+                author=ifileeditor.FileOperationAuthor(id="editor"),
+            )
+        )
+        await asyncio.sleep(0.05)
+
+        assert not [
+            n
+            for n in session.notifications
+            if n.method == "workspace/didChangeWatchedFiles"
+        ]
+
+
+async def test_watched_file_create_and_delete_after_registration(
+    tmp_path: Path,
+) -> None:
+    """Once a server registers for watched files, a create and a delete must
+    reach it as Created and Deleted respectively."""
+    subject = tmp_path / "subject.py"
+    created = tmp_path / "created.py"
+    deleted = tmp_path / "deleted.py"
+    deleted.write_text("x = 1\n")
+
+    async with _running_service(subject, "x = 1\n") as (
+        service,
+        session,
+        file_editor,
+    ):
+        await service._handle_register_capability(
+            {"registrations": [{"method": "workspace/didChangeWatchedFiles"}]}
+        )
+
+        await file_editor.events.put(
+            ifileeditor.FileCreateEvent(
+                file_path=created,
+                author=ifileeditor.FileOperationAuthor(id="editor"),
+            )
+        )
+        await file_editor.events.put(
+            ifileeditor.FileDeleteEvent(
+                file_path=deleted,
+                author=ifileeditor.FileOperationAuthor(id="editor"),
+            )
+        )
+        await asyncio.sleep(0.05)
+
+        watched = [
+            n
+            for n in session.notifications
+            if n.method == "workspace/didChangeWatchedFiles"
+        ]
+        assert [c["type"] for n in watched for c in n.params["changes"]] == [1, 3]
+
+
+async def test_watched_file_rename_sends_deleted_and_created(
+    tmp_path: Path,
+) -> None:
+    """A rename is a delete of the old path and a create of the new one; both
+    must reach a watching server."""
+    subject = tmp_path / "subject.py"
+    old = tmp_path / "old.py"
+    old.write_text("x = 1\n")
+    new = tmp_path / "new.py"
+
+    async with _running_service(subject, "x = 1\n") as (
+        service,
+        session,
+        file_editor,
+    ):
+        await service._handle_register_capability(
+            {"registrations": [{"method": "workspace/didChangeWatchedFiles"}]}
+        )
+
+        await file_editor.events.put(
+            ifileeditor.FileRenameEvent(
+                old_path=old,
+                new_path=new,
+                author=ifileeditor.FileOperationAuthor(id="editor"),
+            )
+        )
+        await asyncio.sleep(0.05)
+
+        watched = [
+            n
+            for n in session.notifications
+            if n.method == "workspace/didChangeWatchedFiles"
+        ]
+        changes = [c for n in watched for c in n.params["changes"]]
+        assert [(c["uri"], c["type"]) for c in changes] == [
+            (old.as_uri(), 3),
+            (new.as_uri(), 1),
+        ]
+
+
+async def test_deleting_an_open_document_still_notifies_watchers(
+    tmp_path: Path,
+) -> None:
+    """A delete of a document the server holds open must send both the didClose
+    and the watched-file Deleted -- the two notifications are independent and
+    must not suppress each other."""
+    subject = tmp_path / "subject.py"
+    uri = subject.as_uri()
+
+    async with _running_service(subject, "x = 1\n") as (
+        service,
+        session,
+        file_editor,
+    ):
+        await service._handle_register_capability(
+            {"registrations": [{"method": "workspace/didChangeWatchedFiles"}]}
+        )
+        await service.get_hover(subject, "x = 1\n", {"line": 0, "character": 0})
+
+        await file_editor.events.put(
+            ifileeditor.FileDeleteEvent(
+                file_path=subject,
+                author=ifileeditor.FileOperationAuthor(id="editor"),
+            )
+        )
+        await asyncio.sleep(0.05)
+
+        assert session.notification_count("textDocument/didClose", uri) == 1
+        watched = [
+            n
+            for n in session.notifications
+            if n.method == "workspace/didChangeWatchedFiles"
+        ]
+        assert [c["type"] for n in watched for c in n.params["changes"]] == [3]

@@ -85,6 +85,11 @@ python -m finecode prepare-envs --project=finecode_extension_api
 python -m finecode prepare-envs --project=finecode_extension_api --env=dev_no_runtime
 ```
 
+No `--shared-server` here: on first setup the `dev_workspace` venv does not exist yet, so
+the devcontainer's autostart script is a no-op and there is no server to connect to. Once
+the workspace is prepared, add the flag to re-prepare runs as well — see
+[Running checks](#running-checks).
+
 ## Continuous Integration
 
 CI must exercise the current branch's source, so it has the same requirement as any contributor's dev environment: `finecode`, `finecode_dev_common_preset`, and the other monorepo packages need to be installed **editable, from local source** — not from a released version.
@@ -98,10 +103,87 @@ The devcontainer also runs a FalkorDB sidecar (used by `fine_dep_graph_falkordb`
 ## Running checks
 
 ```bash
-python -m finecode run lint
-python -m finecode run check_formatting
-pytest tests/
+python -m finecode run --shared-server inspect_code      # lint + type_check together
+python -m finecode run --shared-server check_formatting
+python -m finecode run --shared-server run_tests
+python -m finecode run --shared-server audit_code        # checkpoint checks — before a commit or a PR
 ```
+
+**Always pass `--shared-server` when developing FineCode.** The devcontainer's
+`postStartCommand` already runs `start-wm-server --detach --keep-alive`
+(see [.devcontainer/README.md](../../.devcontainer/README.md#persistent-wm-server)), so a
+warm server with resident extension runners is there for every command to connect to.
+Without the flag each `run` starts a dedicated WM server, reloads the workspace config and
+restarts the runners, then throws all of it away — seconds of setup per command, paid
+again on the next one. `prepare-envs` and `dump-config` take the same flag, for the same
+reason.
+
+Three cases where you drop it: CI (no shared server exists there — see
+[Continuous Integration](#continuous-integration) above), deliberately testing standalone
+behaviour, and raising the log level (below) — a shared server keeps the level it was
+started with, so `--log-level` only reaches a server the command starts itself.
+
+`inspect_code` is the continuous-inspection umbrella: both `lint` and `type_check`
+register into it, so one call reports what either would. Run them separately only when
+you want one of them alone. `audit_code` is the deliberate-checkpoint peer
+([ADR-0044](../../../finecode_internal_docs/adr/0044-continuous-inspection-and-on-demand-audit-are-separate-umbrellas.md))
+— import-linter, toolchain checks and other whole-project checks reach it through bridge
+handlers. It belongs at the end of a piece of work, not in the edit loop, and narrowing
+it does not reliably shorten it: a bridge fans out per project on its own, so
+`--project_paths` narrows what is *reported*, not what is *run* — a single-project
+`audit_code` was still running after seven minutes on this workspace.
+
+### Narrowing a check to one project or one file
+
+A workspace-wide check across ~70 projects takes a minute or more; the same check
+narrowed to the file you just edited takes a couple of seconds against a warm
+`--shared-server`. Narrow by **scope**:
+
+| Action | Scope | Narrow to a project with | Narrow to files with |
+|---|---|---|---|
+| `lint`, `type_check`, `inspect_code`, `audit_code` | workspace | `--project_paths='["<path>"]'` (payload) | `--target=files --file_paths='[...]'` |
+| `check_formatting`, `format` | project | `--project=<name>` (option) | `--target=files --file_paths='[...]'` |
+| `run_tests`, `list_tests` | project | `--project=<name>` (option) | `--file_paths='[...]'` (absolute paths) |
+
+```bash
+# workspace-scoped: the project selector is a payload field
+python -m finecode run --shared-server inspect_code --project_paths='["finecode_extension_api"]'
+
+# project-scoped: the project selector is a run option, before the action name
+python -m finecode run --shared-server --project=finecode_extension_api check_formatting
+python -m finecode run --shared-server --project=finecode_extension_runner --interpreter=3.13 run_tests
+
+# one file — the fast edit loop
+python -m finecode run --shared-server inspect_code --target=files \
+  --file_paths='["finecode_extension_runner/src/finecode_extension_runner/impls/file_editor.py"]'
+```
+
+`--project=<name>` takes the `[project].name` from `pyproject.toml`, not a path;
+`--project_paths` takes paths, and relative, absolute and `file://` forms all work.
+`--interpreter=3.13` runs one interpreter of the matrixed `testing` env instead of the
+whole axis — drop it for the full check.
+
+Three ways to get this wrong. The first two fail **silently**: the command exits
+normally and looks like it did what you asked.
+
+1. **Run options go before the action name; payload fields go after it.** The option
+   parser stops at the first non-`--` argument, so `run check_formatting --project=X`
+   is not rejected — `project` is accepted as a *payload field*, the action ignores it,
+   and the check runs in every workspace project. The correct form is
+   `run --project=X check_formatting`.
+2. **`run_tests --file_paths` needs absolute paths.** `lint`, `type_check`,
+   `inspect_code`, `audit_code` and `check_formatting` declare `file_paths` as
+   `ResourceUri` and the CLI absolutizes them, so relative paths work there. `run_tests`
+   declares `list[Path]` and passes it through: a relative path selects no tests and the
+   run exits 1 printing nothing, which reads like a real failure.
+3. **`--project` on a workspace-scoped action is an error**, not a narrowing:
+   `Action 'fine_lint.LintAction' is workspace-scoped; do not pass a project path`. Use
+   `--project_paths`.
+
+A file-scoped run of a *project*-scoped action (`check_formatting`, `run_tests`) still
+fans out to every project — the file list is not a project selector — so the output
+carries a block per project even though only the named files were checked. Add
+`--project=` to keep it to one block.
 
 ## Test documentation
 
@@ -204,6 +286,11 @@ CLI log level override:
 python -m finecode run --log-level=TRACE lint
 python -m finecode start-wm-server --log-level=DEBUG
 ```
+
+Note the absent `--shared-server`: a running server keeps the level it was started with,
+so `--log-level` on `run` only takes effect on a WM that same command starts. To raise the
+level of the devcontainer's persistent server, restart it with
+`python -m finecode start-wm-server --detach --keep-alive --log-level=DEBUG`.
 
 Notes:
 
@@ -423,7 +510,7 @@ The architecture decision is documented in ADR-0023.
 Use the `lock_dependencies` action:
 
 ```bash
-python -m finecode run lock_dependencies \
+python -m finecode run --shared-server lock_dependencies \
     --src_artifact_def_path=pyproject.toml \
     --output_dir=.
 ```
@@ -788,6 +875,10 @@ class ProjectInfoUnavailableError(Exception): ...
 class WmCommunicationError(Exception): ...
 ```
 
+Use the `Error` suffix (Python standard library convention: `ValueError`, `TimeoutError`, etc.).
+
+Define exceptions **alongside the interface or layer they belong to**, not inside the implementation. An interface-level exception must not reference implementation details in its name or message template.
+
 ### Boolean flags
 
 Boolean parameters must be keyword-only (`*`). A positional bool is unreadable at the call site — it's not obvious what it's toggling without checking the signature.
@@ -801,9 +892,57 @@ async def remove_dir(self, dir_path: Path, *, tolerant: bool = False) -> None: .
 async def remove_dir(self, dir_path: Path, tolerant: bool = False) -> None: ...
 ```
 
-Use the `Error` suffix (Python standard library convention: `ValueError`, `TimeoutError`, etc.).
+### Closed sets of values
 
-Define exceptions **alongside the interface or layer they belong to**, not inside the implementation. An interface-level exception must not reference implementation details in its name or message template.
+A parameter, field, or constant whose value comes from a **fixed, known set** must be an enum, not a bare `int` or `str` — even when the set is defined by an external protocol and even when the value never leaves the module.
+
+```python
+# correct — the call site says what it means
+class _FileChangeType(enum.IntEnum):
+    """`FileChangeType` of ``workspace/didChangeWatchedFiles``."""
+
+    CREATED = 1
+    CHANGED = 2
+    DELETED = 3
+
+await self._send_watched_file_change(uri, _FileChangeType.DELETED)
+
+# wrong — the reader has to know the LSP spec by heart to review this line
+await self._send_watched_file_change(uri, 3)
+```
+
+Notes:
+
+- **`IntEnum`/`StrEnum` when the value is a wire code**, so it serializes as the protocol expects; plain `enum.Enum` when the value is ours alone.
+- **The set is the spec's, not ours.** Define every member the protocol defines, including ones no current call site emits — an enum that mirrors only today's usage stops being a description of the protocol and turns into a second thing to keep in sync.
+- **Private when it is internal.** An enum used by one module is module-private (`_FileChangeType`); an enum in a signature callers depend on belongs to the interface and is exported.
+- **Do not reach for `lsprotocol` to get one.** Its types are confined to the LSP server subsystem (`wm-use-runner-client`) and `finecode_extension_api` does not depend on it. Declare the enum locally.
+- **Test-support code is not exempt.** `finecode_extension_runner.testing` is public API — extension authors assert against it, so a stringly-typed recorder shows up in their tests too.
+
+For enums on data crossing the LSP boundary, the conversion pattern is in `docs/guides/implementing-lsp-features.md` → "LSP ↔ FineCode conversion utilities": the FineCode side holds the enum, and `int()`/`Enum(...)` conversion happens at the boundary.
+
+### Tuples as records
+
+A tuple that is stored or returned as a **named part of an API** gets a `typing.NamedTuple`. A bare `tuple[...]` annotation documents the element types, not what the elements mean, so every use site ends up reading positionally and every reader has to reconstruct the shape from the code that produced it.
+
+```python
+# correct — the shape names itself
+class FileOperation(typing.NamedTuple):
+    kind: FileOperationKind
+    paths: tuple[pathlib.Path, ...]
+
+operations: list[FileOperation]
+
+# wrong — what is the str? what are the paths, and how many are there?
+operations: list[tuple[str, tuple[pathlib.Path, ...]]]
+```
+
+A plain tuple is still right for a pair that is unpacked where it is produced (`for name, value in mapping.items():`) and for genuinely positional data (a coordinate, a start/end range). Reach for a `NamedTuple` when the elements mean different things **and** the tuple outlives the expression that built it.
+
+Notes:
+
+- **`NamedTuple`, not a dataclass, when callers already compare against plain tuples.** A `NamedTuple` compares equal to the tuple of its fields, so the typed shape can be introduced without breaking existing assertions; a dataclass breaks all of them.
+- **Variadic arity is a contract, not a detail.** If the length varies by case — one path for a create, two for a rename — say so in the field docstring. A `NamedTuple` gives you somewhere to write that down; `tuple[Path, ...]` does not.
 
 ### Layered exception translation
 

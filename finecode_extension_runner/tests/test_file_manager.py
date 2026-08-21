@@ -118,3 +118,76 @@ async def test_remove_dir_tolerant_does_not_follow_symlink_out_of_tree(
 
     assert not tree.exists()
     assert (outside / "target").exists()
+
+
+async def test_reading_an_absent_path_raises_file_not_found(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Asking for the content or version of a file that is not there is an
+    error, never an empty or zero answer — a caller that reads a stale path
+    must hear about it rather than silently continue with plausible-looking
+    nothing."""
+    manager = FileManager(logger=logger)
+    missing = tmp_path / "never_existed.py"
+
+    with pytest.raises(ifilemanager.FileNotFound):
+        await manager.get_content(missing)
+    with pytest.raises(ifilemanager.FileNotFound):
+        await manager.get_file_version(missing)
+    assert await manager.file_exists(missing) is False
+
+
+async def test_rename_file_onto_an_existing_target(
+    tmp_path: pathlib.Path,
+) -> None:
+    source = tmp_path / "source.py"
+    target = tmp_path / "target.py"
+    source.write_text("new content\n")
+    target.write_text("old content\n")
+    manager = FileManager(logger=logger)
+
+    with pytest.raises(ifilemanager.FileAlreadyExists):
+        await manager.rename_file(source, target)
+    assert source.exists()
+    assert target.read_text() == "old content\n"
+
+    await manager.rename_file(source, target, overwrite=True)
+    assert not source.exists()
+    assert target.read_text() == "new content\n"
+
+
+async def test_rename_file_creates_the_target_parent_directory(
+    tmp_path: pathlib.Path,
+) -> None:
+    source = tmp_path / "source.py"
+    source.write_text("x = 1\n")
+
+    await FileManager(logger=logger).rename_file(
+        source, tmp_path / "new_dir" / "source.py"
+    )
+
+    assert not source.exists()
+    assert (tmp_path / "new_dir" / "source.py").read_text() == "x = 1\n"
+
+
+async def test_delete_file_missing_ok_gates_absence(
+    tmp_path: pathlib.Path,
+) -> None:
+    manager = FileManager(logger=logger)
+    missing = tmp_path / "never_existed.py"
+
+    with pytest.raises(ifilemanager.FileNotFound):
+        await manager.delete_file(missing)
+    await manager.delete_file(missing, missing_ok=True)
+
+
+async def test_delete_file_on_a_directory_raises(
+    tmp_path: pathlib.Path,
+) -> None:
+    directory = tmp_path / "package"
+    directory.mkdir()
+
+    with pytest.raises(ifilemanager.DeleteFileError):
+        await FileManager(logger=logger).delete_file(directory)
+
+    assert directory.exists()

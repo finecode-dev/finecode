@@ -16,19 +16,55 @@ class FileManager(ifilemanager.IFileManager):
         self.logger = logger
 
     async def get_content(self, file_path: Path) -> str:
-        file_content = self.read_content_file_from_fs(file_path=file_path)
+        try:
+            file_content = self.read_content_file_from_fs(file_path=file_path)
+        except FileNotFoundError as exception:
+            raise ifilemanager.FileNotFound() from exception
 
         return file_content
 
     async def get_file_version(self, file_path: Path) -> str:
-        file_version: str = ""
-        file_version = self.get_hash_of_file_from_fs(file_path=file_path)
+        try:
+            file_version = self.get_hash_of_file_from_fs(file_path=file_path)
+        except FileNotFoundError as exception:
+            raise ifilemanager.FileNotFound() from exception
 
         # 12 chars is enough to distinguish. The whole value is 64 chars length and
         # is not really needed in logs
         file_version_readable = f"{file_version[:12]}..."
         self.logger.debug(f"Version of {file_path}: {file_version_readable}")
         return file_version
+
+    async def file_exists(self, file_path: Path) -> bool:
+        return await asyncio.to_thread(file_path.is_file)
+
+    async def delete_file(self, file_path: Path, *, missing_ok: bool = False) -> None:
+        self.logger.debug(f"Delete file {file_path}")
+        try:
+            await asyncio.to_thread(file_path.unlink, missing_ok=missing_ok)
+        except FileNotFoundError as exception:
+            if missing_ok:
+                return
+            raise ifilemanager.FileNotFound() from exception
+        except OSError as exception:
+            raise ifilemanager.DeleteFileError(str(exception)) from exception
+
+    async def rename_file(
+        self, old_path: Path, new_path: Path, *, overwrite: bool = False
+    ) -> None:
+        self.logger.debug(f"Rename file {old_path} to {new_path}")
+        if new_path.exists() and not overwrite:
+            raise ifilemanager.FileAlreadyExists(f"{new_path} already exists")
+        await self.create_dir(new_path.parent)
+        try:
+            if overwrite:
+                await asyncio.to_thread(os.replace, old_path, new_path)
+            else:
+                await asyncio.to_thread(old_path.rename, new_path)
+        except FileNotFoundError as exception:
+            raise ifilemanager.FileNotFound() from exception
+        except OSError as exception:
+            raise ifilemanager.RenameFileError(str(exception)) from exception
 
     async def save_file(self, file_path: Path, file_content: str) -> None:
         self.logger.debug(f"Save file {file_path}")
@@ -100,7 +136,6 @@ class FileManager(ifilemanager.IFileManager):
     # helper methods
     def read_content_file_from_fs(self, file_path: Path) -> str:
         # don't use this method directly, use `get_content` instead
-        # TODO: handle errors: file doesn't exist, cannot be opened etc
         self.logger.debug(f"Read file: {file_path}")
         with open(file_path) as f:
             file_content = f.read()
@@ -109,7 +144,6 @@ class FileManager(ifilemanager.IFileManager):
 
     def get_hash_of_file_from_fs(self, file_path: Path) -> str:
         # don't use this method directly, use `get_file_version` instead
-        # TODO: handle errors: file doesn't exist, cannot be opened etc
         with open(file_path, "rb") as f:
             file_version = hashlib.file_digest(f, "sha256").hexdigest()
 

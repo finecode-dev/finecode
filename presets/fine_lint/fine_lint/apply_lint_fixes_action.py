@@ -24,11 +24,11 @@ class ApplyLintFixesRunPayload(code_action.RunActionPayload):
     include_unsafe: bool = False
     """When False (default), only ``FixApplicability.SAFE`` fixes are applied.
     When True, ``FixApplicability.UNSAFE`` fixes are applied too.
-    ``FixApplicability.DISPLAY_ONLY`` fixes are never applied (design note D10)."""
+    ``FixApplicability.DISPLAY_ONLY`` fixes are never applied (ADR-0085 rule 4)."""
     max_passes: int = 3
-    """Upper bound on re-fix passes per project (design note D8)."""
+    """Upper bound on re-fix passes per project (ADR-0085)."""
     dry_run: bool = False
-    """Forwarded to ``apply_lint_fixes_files`` per project (design note D12):
+    """Forwarded to ``apply_lint_fixes_files`` per project (ADR-0085 rule 5):
     preview pass 1 only and write nothing. See
     ``ApplyLintFixesFilesRunPayload.dry_run`` for the single-pass limitation."""
 
@@ -92,7 +92,7 @@ class ApplyLintFixesAction(
     """Compute and apply lint fixes across the workspace, converging per project.
 
     Routes files to their owning projects and runs the ``apply_lint_fixes_files``
-    pass loop (design note D8) once per project. ``python -m finecode run
+    pass loop (ADR-0085) once per project. ``python -m finecode run
     apply_lint_fixes`` is the ``--fix``-equivalent workflow for the whole
     project or workspace.
     """

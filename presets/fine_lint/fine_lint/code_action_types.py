@@ -3,9 +3,8 @@ from __future__ import annotations
 import dataclasses
 import enum
 
-from finecode_extension_api.resource_uri import ResourceUri
-
-from fine_lint.lint_fix import Range, TextEdit
+from fine_lint.apply_code_actions_action import CodeActionOperation
+from fine_lint.lint_fix import Range
 
 
 class CodeActionTriggerKind(enum.IntEnum):
@@ -33,8 +32,9 @@ class CodeAction:
     title: str
     kind: str
 
-    edits: dict[ResourceUri, list[TextEdit]] | None = None
-    """None means the bridge/handler returned a stub and the IDE must call resolve."""
+    operations: list[CodeActionOperation] | None = None
+    """None means the bridge/handler returned a stub and the IDE must call resolve.
+    The same ordered operation shape resolve and apply speak (ADR-0083 rule 5)."""
 
     diagnostics: list[DiagnosticRef] = dataclasses.field(default_factory=list)
     """The diagnostics this action addresses; empty for refactorings and source actions

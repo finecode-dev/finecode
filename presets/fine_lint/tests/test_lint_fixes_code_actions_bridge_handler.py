@@ -16,11 +16,13 @@ from fine_lint.get_lint_fixes_action import (
     GetLintFixesRunPayload,
     GetLintFixesRunResult,
 )
-from fine_lint.lint_fix import LintFix, Position, Range
+from fine_lint.lint_fix import LintFix, Position, Range, TextEdit
 from fine_lint.lint_fixes_code_actions_bridge_handler import (
     PROVIDER_ID,
     LintFixesCodeActionsBridgeHandler,
 )
+from fine_lint.lint_fixes_resolve_bridge_handler import LintFixesResolveBridgeHandler
+from fine_lint.resolve_code_action_action import ResolveCodeActionRunPayload
 
 _WHOLE_FILE_RANGE = Range(
     start=Position(line=0, character=0), end=Position(line=0, character=0)
@@ -146,3 +148,95 @@ async def test_bridge_forwards_the_runs_pinned_version_not_the_callers_guard() -
 
     assert action_runner.seen_payload is not None
     assert action_runner.seen_payload.file_version == "pinned-version"
+
+
+async def test_a_multifile_fix_becomes_one_operation_per_file() -> None:
+    """Every file a fix edits gets its own operation, and only the requested
+    file's operation carries the run's pinned version -- a flat mapping would
+    stamp an unrelated file with a version that never guarded it."""
+    other_uri = path_to_resource_uri(pathlib.Path("/tmp/other.py"))
+    fix = LintFix(
+        fix_id="ruff:F401:0:0:0",
+        title="Fix",
+        kind="quickfix",
+        edits={
+            _FILE_URI: [TextEdit(range=_WHOLE_FILE_RANGE, new_text="fixed")],
+            other_uri: [TextEdit(range=_WHOLE_FILE_RANGE, new_text="also fixed")],
+        },
+        target_range=_WHOLE_FILE_RANGE,
+        target_codes=["F401"],
+    )
+    action_runner = _StubActionRunner(
+        GetLintFixesRunResult(file_version="v1", fixes=[fix])
+    )
+    handler = LintFixesCodeActionsBridgeHandler(
+        action_runner=typing.cast(
+            iprojectactionrunner.IProjectActionRunner, action_runner
+        )
+    )
+    run_context = _RunContextStub(meta=_META, file_version="v1")
+
+    result = await handler.run(
+        GetCodeActionsRunPayload(
+            file_path=_FILE_URI,
+            range=_WHOLE_FILE_RANGE,
+            diagnostics=[],
+        ),
+        typing.cast(typing.Any, run_context),
+    )
+
+    operations = result.actions[0].operations
+    assert operations is not None
+    by_file = {operation.file_path: operation for operation in operations}
+    assert by_file[_FILE_URI].file_version == "v1"
+    assert by_file[other_uri].file_version is None
+
+
+async def test_get_and_resolve_bridges_produce_identical_operations() -> None:
+    """The get-side and resolve-side bridges must describe the same fix with
+    the same operation list -- agreement alone does not prove either is right,
+    but a divergence between the two is the bug that a shared helper prevents."""
+    other_uri = path_to_resource_uri(pathlib.Path("/tmp/other.py"))
+    fix = LintFix(
+        fix_id="ruff:F401:0:0:0",
+        title="Fix",
+        kind="quickfix",
+        edits={
+            _FILE_URI: [TextEdit(range=_WHOLE_FILE_RANGE, new_text="fixed")],
+            other_uri: [TextEdit(range=_WHOLE_FILE_RANGE, new_text="also fixed")],
+        },
+        target_range=_WHOLE_FILE_RANGE,
+        target_codes=["F401"],
+    )
+    get_handler = LintFixesCodeActionsBridgeHandler(
+        action_runner=typing.cast(
+            iprojectactionrunner.IProjectActionRunner,
+            _StubActionRunner(GetLintFixesRunResult(file_version="v1", fixes=[fix])),
+        )
+    )
+    resolve_handler = LintFixesResolveBridgeHandler(
+        action_runner=typing.cast(
+            iprojectactionrunner.IProjectActionRunner,
+            _StubActionRunner(GetLintFixesRunResult(file_version="v1", fixes=[fix])),
+        )
+    )
+    run_context = _RunContextStub(meta=_META, file_version="v1")
+
+    get_result = await get_handler.run(
+        GetCodeActionsRunPayload(
+            file_path=_FILE_URI,
+            range=_WHOLE_FILE_RANGE,
+            diagnostics=[],
+        ),
+        typing.cast(typing.Any, run_context),
+    )
+    resolve_result = await resolve_handler.run(
+        ResolveCodeActionRunPayload(
+            provider=PROVIDER_ID,
+            action_id=fix.fix_id,
+            file_path=_FILE_URI,
+        ),
+        typing.cast(typing.Any, run_context),
+    )
+
+    assert get_result.actions[0].operations == resolve_result.operations

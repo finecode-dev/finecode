@@ -22,10 +22,10 @@ class ApplyLintFixesFilesRunPayload(code_action.RunActionPayload):
     """When False (default), only ``FixApplicability.SAFE`` fixes are applied.
     When True, ``FixApplicability.UNSAFE`` fixes are applied too.
     ``FixApplicability.DISPLAY_ONLY`` fixes are never applied, regardless of this
-    flag (design note D10)."""
+    flag (ADR-0085 rule 4)."""
 
     max_passes: int = 3
-    """Upper bound on re-fix passes (design note D8). Each pass re-requests fixes
+    """Upper bound on re-fix passes (ADR-0085). Each pass re-requests fixes
     against the files' latest content, since an earlier pass's edits may reveal
     fixes that were not visible before, or invalidate fixes another provider
     offered. Exhausting this bound without converging is reported as
@@ -33,7 +33,7 @@ class ApplyLintFixesFilesRunPayload(code_action.RunActionPayload):
 
     dry_run: bool = False
     """When True, run exactly ONE pass through ``apply_code_actions`` in its
-    own dry-run mode and write nothing (design note D12). This previews pass 1
+    own dry-run mode and write nothing (ADR-0085 rule 5). This previews pass 1
     only: simulating later passes would require ``get_lint_fixes`` to run
     against simulated content, but providers read through the file editor
     rather than an injected string, so there is no simulated content to hand
@@ -45,7 +45,7 @@ class ApplyLintFixesFilesRunPayload(code_action.RunActionPayload):
 class ConvergenceStatus(enum.StrEnum):
     CONVERGED = "converged"
     """A pass applied zero edits -- no further progress is possible without new
-    input. The normal, successful exit (design note D8).
+    input. The normal, successful exit (ADR-0085).
 
     Also reported when the last pass in the budget applied every candidate it
     found and left nothing over: the loop stopped because it ran out of passes,
@@ -62,7 +62,7 @@ class ConvergenceStatus(enum.StrEnum):
     pass, with no convergence and no detected oscillation."""
 
     PREVIEWED = "previewed"
-    """Terminal status for a dry run (design note D12): pass 1's outcomes and
+    """Terminal status for a dry run (ADR-0085 rule 5): pass 1's outcomes and
     ``ApplyLintFixesFilesRunResult.resulting_content`` are a prediction of
     what a real run would do right now, not an applied result. Never used
     for a real (non-dry-run) run -- CONVERGED/OSCILLATED/MAX_PASSES_REACHED
@@ -92,8 +92,8 @@ class ApplyLintFixesFilesRunResult(code_action.RunActionResult):
     """Number of passes actually run before the loop stopped."""
 
     resulting_content: dict[ResourceUri, str] = dataclasses.field(default_factory=dict)
-    """Only populated for a dry run (``status == PREVIEWED``, design note
-    D12) -- the content each touched file would have after pass 1. The
+    """Only populated for a dry run (``status == PREVIEWED``, ADR-0085
+    rule 5) -- the content each touched file would have after pass 1. The
     normal, real-write pass loop never fills this in."""
 
     def update(self, other: code_action.RunActionResult) -> None:
@@ -129,17 +129,17 @@ class ApplyLintFixesFilesAction(
     """Compute and apply lint fixes for specific files, repeating until stable.
 
     Internal action dispatched by ``apply_lint_fixes``. Owns the re-fix pass
-    loop (design note D8): each pass calls ``get_lint_fixes`` per file, filters
-    by applicability and kind (design note D10), and applies the survivors as
+    loop (ADR-0085): each pass calls ``get_lint_fixes`` per file, filters
+    by applicability and kind (ADR-0085 rule 4), and applies the survivors as
     one ``apply_code_actions`` batch. Re-requesting fixes each pass re-derives
     positions for free and drops fixes another provider's edits invalidated --
     the only available answer to semantic interference between providers
-    (design note, section 2). The loop stops on the first of: a pass that
+    (ADR-0083, semantic interference). The loop stops on the first of: a pass that
     applies nothing (``CONVERGED``), a pass whose resulting content for some
     file repeats a hash already seen in an earlier pass (``OSCILLATED``), or
     ``max_passes`` (``MAX_PASSES_REACHED``). ``dry_run=True`` short-circuits
     all of that and previews pass 1 only, terminal status ``PREVIEWED``
-    (design note D12).
+    (ADR-0085 rule 5).
     """
 
     DESCRIPTION = "Compute and apply lint fixes for specific files, repeating passes until stable."

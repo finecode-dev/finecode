@@ -27,6 +27,9 @@ from finecode.lsp_server.endpoints import semantic_tokens as semantic_tokens_end
 from finecode.lsp_server.endpoints import type_hierarchy as type_hierarchy_endpoints
 from finecode.wm_client import ApiClient, ReconnectPolicy
 from finecode.wm_server import wm_lifecycle
+from finecode.wm_server.runner.apply_workspace_edit_bridge import (
+    ResourceOperationKind,
+)
 
 _lsp_converter = lsp_converters.get_converter()
 
@@ -60,6 +63,7 @@ class LspServer:
     def __init__(self) -> None:
         self._session = finecode_jsonrpc_module.JsonRpcServerSession()
         self._workspace_folders: list[dict] = []  # [{uri, name}, ...]
+        self._client_capabilities: dict = {}
         self._tcp_server: asyncio.Server | None = None
 
     # ------------------------------------------------------------------
@@ -99,6 +103,35 @@ class LspServer:
     def shutdown(self) -> None:
         if self._tcp_server is not None:
             self._tcp_server.close()
+
+    def supports_document_changes(self) -> bool:
+        """Whether the client can read a ``WorkspaceEdit.documentChanges``.
+
+        Missing or partial capabilities mean unsupported, never assumed.
+        """
+        workspace_edit = self._client_capabilities.get("workspace", {}).get(
+            "workspaceEdit", {}
+        )
+        return bool(workspace_edit.get("documentChanges"))
+
+    def supported_resource_operations(self) -> frozenset[ResourceOperationKind]:
+        """The resource operations the client can perform, or empty when it
+        declared none (the spec's default when the client is silent)."""
+        workspace_edit = self._client_capabilities.get("workspace", {}).get(
+            "workspaceEdit", {}
+        )
+        declared = workspace_edit.get("resourceOperations") or []
+        supported: set[ResourceOperationKind] = set()
+        for operation in declared:
+            try:
+                supported.add(ResourceOperationKind(operation))
+            except ValueError:
+                # Outside the three kinds the spec defines, so nothing this
+                # server could ever put in a WorkspaceEdit anyway.
+                logger.warning(
+                    f"Client declared an unknown resource operation: {operation!r}"
+                )
+        return frozenset(supported)
 
     # ------------------------------------------------------------------
     # Start methods
@@ -356,6 +389,7 @@ async def _on_initialize(server: LspServer, params: dict | None) -> dict:
     if params:
         wf = params.get("workspaceFolders") or []
         server._workspace_folders = [{"uri": f["uri"], "name": f["name"]} for f in wf]
+        server._client_capabilities = params.get("capabilities") or {}
     return {
         "capabilities": {
             "textDocumentSync": {
@@ -366,7 +400,7 @@ async def _on_initialize(server: LspServer, params: dict | None) -> dict:
             "documentFormattingProvider": True,
             "documentRangeFormattingProvider": True,
             "documentRangesFormattingProvider": True,
-            "codeActionProvider": True,
+            "codeActionProvider": {"resolveProvider": True},
             "codeLensProvider": {"resolveProvider": True},
             "diagnosticProvider": {
                 "interFileDependencies": False,

@@ -1,5 +1,5 @@
 """Tests for ``apply_lint_fixes_files``, the pass loop behind the ``--fix``-style
-workflow (design note D8)."""
+workflow (ADR-0085)."""
 
 from __future__ import annotations
 

@@ -4,17 +4,16 @@ No I/O and no knowledge of providers, selections, or files on disk -- everything
 here operates on plain ``Range``/``TextEdit`` values and ``str`` content, so it is
 unit-testable directly. ``apply_code_actions_handler`` is the only caller.
 
-Design note ``design-notes/applying-code-actions.md`` D2-D4 is the reasoning this
-module embodies:
+ADR-0083 (rules 1 and 4) is the reasoning this module embodies:
 
 - Ranges are LSP-style and half-open: ``[start, end)``.
 - Two edits *overlap* when their ranges intersect. Two zero-width edits
-  (``start == end``) at the *same* position also count as overlapping (D4) --
+  (``start == end``) at the *same* position also count as overlapping (rule 4) --
   they do not intersect by range arithmetic, but the resulting text order
   depends on which one is applied first, so they must not both be accepted.
 - Applying a batch of non-overlapping edits back-to-front (descending by start
   position) against one base version of the content is what makes multiple
-  providers' edits correct without re-analysis (D2): every edit's range
+  providers' edits correct without re-analysis (rule 1): every edit's range
   addresses the *original* content, and since nothing before an unprocessed
   edit's start has been touched yet, its range stays valid all the way through.
 """
@@ -129,7 +128,7 @@ def _apply_single_edit(content: str, edit: TextEdit) -> str:
 
 def apply_edits(content: str, edits: list[TextEdit]) -> str:
     """Apply *edits* to *content*, all interpreted against *content* as it was
-    before any of them were applied (D2).
+    before any of them were applied (ADR-0083 rule 1).
 
     Edits are sorted descending by start position and applied back-to-front:
     nothing before an as-yet-unapplied edit's start position has been touched

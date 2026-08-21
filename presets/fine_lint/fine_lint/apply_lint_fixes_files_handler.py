@@ -55,12 +55,12 @@ class ApplyLintFixesFilesHandler(
         ApplyLintFixesFilesAction, ApplyLintFixesFilesHandlerConfig
     ]
 ):
-    """Owns the re-fix pass loop (design note D8).
+    """Owns the re-fix pass loop (ADR-0085).
 
     Each pass re-requests fixes against the files' latest content, filters by
-    applicability and kind (design note D10), and applies the survivors as one
+    applicability and kind (ADR-0085 rule 4), and applies the survivors as one
     ``apply_code_actions`` batch -- re-deriving positions for free and dropping
-    fixes another provider's edits invalidated (design note, section 2). Stops
+    fixes another provider's edits invalidated (ADR-0083, semantic interference). Stops
     on the first of: a pass that applies nothing (``CONVERGED``), a pass whose
     resulting content for some file was already seen in an earlier pass
     (``OSCILLATED`` -- two fixes undoing each other), or ``max_passes``
@@ -85,7 +85,7 @@ class ApplyLintFixesFilesHandler(
             return True
         if fix.applicability == FixApplicability.UNSAFE:
             return include_unsafe
-        return False  # DISPLAY_ONLY -- never applied (design note D10)
+        return False  # DISPLAY_ONLY -- never applied (ADR-0085 rule 4)
 
     async def _content_hashes(
         self, file_paths: list[ResourceUri]
@@ -106,7 +106,7 @@ class ApplyLintFixesFilesHandler(
         max_passes: int,
         run_context: ApplyLintFixesFilesRunContext,
     ) -> None:
-        """Report a truncated run (design note D8, Q4): a caller polling only
+        """Report a truncated run (ADR-0085; `applying-code-actions` Q4): a caller polling only
         the CLI/IDE result would otherwise see ``OSCILLATED`` and
         ``MAX_PASSES_REACHED`` land nowhere but the result and read a run that
         did not finish fixing the project as indistinguishable from a fully
@@ -149,7 +149,7 @@ class ApplyLintFixesFilesHandler(
         dict[ResourceUri, list[LintFix]],
     ]:
         """Fetch and filter fixes for every requested file -- one pass' worth
-        of candidates, applicability- and kind-filtered (design note D10).
+        of candidates, applicability- and kind-filtered (ADR-0085 rule 4).
 
         Returns the candidates, the version each file's fixes were computed
         against, and the fixes held back because that version does not speak
@@ -206,8 +206,8 @@ class ApplyLintFixesFilesHandler(
         """Build one selection per candidate fix, mapping ``LintFix.edits``
         into one ``TextEditOperation`` per file. Only the file the fix was
         requested for gets the pinned version -- any other file the fix edits
-        (design note Q1) has no pinned version to guard it and gets None
-        (this is the bug D11 fixes: one version cannot speak for every edited
+        (`applying-code-actions` Q1) has no pinned version to guard it and gets None
+        (this is the bug ADR-0083 rule 5 fixes: one version cannot speak for every edited
         file, and versions are content hashes that agree by coincidence for
         files with identical content)."""
         return [
@@ -237,7 +237,7 @@ class ApplyLintFixesFilesHandler(
         payload: ApplyLintFixesFilesRunPayload,
         run_context: ApplyLintFixesFilesRunContext,
     ) -> ApplyLintFixesFilesRunResult:
-        """Preview pass 1 only (design note D12): later passes would need
+        """Preview pass 1 only (ADR-0085 rule 5): later passes would need
         ``get_lint_fixes`` to run against simulated content, but providers
         read through the file editor rather than an injected string."""
         candidates, file_versions, diverged = await self._fetch_pass_candidates(

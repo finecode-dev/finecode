@@ -21,6 +21,7 @@ from finecode.wm_server.config import collect_actions, config_models
 from finecode.wm_server.runner import (
     _internal_client_api,
     _internal_client_types,
+    apply_workspace_edit_bridge,
     elicitation_bridge,
     finecode_cmd,
     knowledge_bridge,
@@ -36,7 +37,6 @@ project_changed_callback: (
     | None
 ) = None
 # get_document: typing.Callable[[], collections.abc.Coroutine] | None = None
-apply_workspace_edit: typing.Callable[[], collections.abc.Coroutine] | None = None
 start_debug_session: typing.Callable[[int], collections.abc.Coroutine] | None = None
 
 # reexport
@@ -95,34 +95,38 @@ def handle_er_log_records(
 async def _apply_workspace_edit(
     params: _internal_client_types.ApplyWorkspaceEditParams,
 ):
-    def map_change_object(change):
-        return _internal_client_types.TextEdit(
-            range=_internal_client_types.Range(
-                start=_internal_client_types.Position(
-                    line=change.range.start.line, character=change.range.start.character
-                ),
-                end=_internal_client_types.Position(
-                    change.range.end.line, character=change.range.end.character
-                ),
-            ),
-            new_text=change.newText,
+    """Forward an ER's apply-edit request to the editor, preserving array order.
+
+    ``documentChanges`` is ordered and re-ordering it changes what it means, so
+    the mixed create/rename/delete/text-edit array is passed through exactly as
+    it arrived. An operation the editor cannot perform fails the request with
+    an explicit error rather than being dropped: this direction has a caller
+    waiting on a result.
+    """
+    bridge = apply_workspace_edit_bridge.handlers()
+    if bridge is None:
+        raise errors.InternalError(
+            "No editor connection is installed, so workspace/applyEdit cannot be answered"
         )
 
-    converted_params = _internal_client_types.ApplyWorkspaceEditParams(
-        edit=_internal_client_types.WorkspaceEdit(
-            document_changes=[
-                _internal_client_types.TextDocumentEdit(
-                    text_document=_internal_client_types.OptionalVersionedTextDocumentIdentifier(
-                        document_edit.text_document.uri
-                    ),
-                    edits=[map_change_object(change) for change in document_edit.edits],
-                )
-                for document_edit in params.edit.document_changes
-                if isinstance(document_edit, _internal_client_types.TextDocumentEdit)
-            ]
-        )
-    )
-    return await apply_workspace_edit(converted_params)
+    supported = bridge.supported_resource_operations()
+    for change in params.edit.document_changes or []:
+        if (
+            isinstance(
+                change,
+                (
+                    _internal_client_types.CreateFile,
+                    _internal_client_types.RenameFile,
+                    _internal_client_types.DeleteFile,
+                ),
+            )
+            and change.kind not in supported
+        ):
+            raise errors.InternalError(
+                f"the editor cannot perform the {change.kind!r} operation"
+            )
+
+    return await bridge.apply_workspace_edit(params)
 
 
 async def _start_extension_runner_process(
@@ -542,9 +546,9 @@ async def _start_extension_runner_process(
                         "name": action.name,
                         "source": action.source,
                         "canonicalSource": action.canonical_source,
-                        "scope": action.scope.value
-                        if action.scope is not None
-                        else None,
+                        "scope": (
+                            action.scope.value if action.scope is not None else None
+                        ),
                         "project": str(project.dir_path),
                         "language": action.language,
                         "parentActionSource": action.parent_action_source,

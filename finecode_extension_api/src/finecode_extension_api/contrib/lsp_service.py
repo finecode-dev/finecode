@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import collections.abc
 import contextlib
+import enum
 import sys
 import threading
 from pathlib import Path
@@ -18,6 +19,18 @@ from finecode_extension_api.interfaces import ifileeditor, ilogger, ilspclient
 
 # JSON-RPC "RequestCancelled" code
 _REQUEST_CANCELLED_CODE = -32800
+
+
+class _FileChangeType(enum.IntEnum):
+    """`FileChangeType` of ``workspace/didChangeWatchedFiles``.
+
+    The values are the wire codes defined by the LSP specification, not our
+    choice, so they are spelled out rather than auto-numbered.
+    """
+
+    CREATED = 1
+    CHANGED = 2
+    DELETED = 3
 
 
 class LspService(service.DisposableService):
@@ -153,6 +166,9 @@ class LspService(service.DisposableService):
         self._settings: dict[str, Any] = {}
         # server capabilities populated once after the initialize handshake
         self._server_capabilities: dict[str, Any] = {}
+        # whether the server asked to be told about workspace file changes via
+        # client/registerCapability; gate `workspace/didChangeWatchedFiles`.
+        self._registered_watched_files = False
 
     @override
     async def init(self) -> None:
@@ -183,6 +199,7 @@ class LspService(service.DisposableService):
         self._document_version.clear()
         self._uri_locks.clear()
         self._server_capabilities = {}
+        self._registered_watched_files = False
 
     async def ensure_started(
         self,
@@ -201,9 +218,9 @@ class LspService(service.DisposableService):
             cmd=self._cmd,
             root_uri=root_uri,
             workspace_folders=[{"uri": root_uri, "name": root_uri}],
-            initialization_options={"settings": self._settings}
-            if self._settings
-            else None,
+            initialization_options=(
+                {"settings": self._settings} if self._settings else None
+            ),
             readable_id=self._readable_id,
             client_capabilities=self._client_capabilities,
         )
@@ -1142,6 +1159,93 @@ class LspService(service.DisposableService):
                     # to reopen it, not skip the sync as unchanged.
                     self._file_versions.pop(uri, None)
 
+        elif isinstance(event, ifileeditor.FileCreateEvent):
+            # No didOpen/didChange: a document the server does not hold open has
+            # no state to update, and opening one here would add state nothing
+            # later closes -- the same leak the `FileChangeEvent` arm documents
+            # for a change to an unopened document. A server that registered for
+            # watched files still hears about the creation below.
+            await self._send_watched_file_change(
+                event.file_path.as_uri(), _FileChangeType.CREATED
+            )
+            return
+
+        elif isinstance(event, ifileeditor.FileDeleteEvent):
+            # A recursive delete names a directory; the affected documents are
+            # the directory itself and every uri beneath it. Prefix matching
+            # covers both without the event having to say which kind of delete
+            # it was -- a file delete simply has no uri beneath it.
+            deleted_uri = event.file_path.as_uri()
+            prefix = deleted_uri + "/"
+            affected_open = [
+                uri
+                for uri in self._open_documents
+                if uri == deleted_uri or uri.startswith(prefix)
+            ]
+            for uri in affected_open:
+                async with self._get_uri_lock(uri):
+                    # A held lease outranks a delete for the same reason it
+                    # outranks a close: an in-flight request must not be
+                    # answered against a document the server no longer holds.
+                    # The cached version is dropped unconditionally -- whatever
+                    # the server was last told about this path is now about a
+                    # file that no longer exists.
+                    if uri not in self._open_documents:
+                        continue
+                    if uri not in self._document_leases:
+                        await self._session.send_notification(
+                            "textDocument/didClose",
+                            {"textDocument": {"uri": uri}},
+                        )
+                        self._open_documents.discard(uri)
+                    self._file_versions.pop(uri, None)
+            for uri in [
+                uri
+                for uri in self._file_versions
+                if uri == deleted_uri or uri.startswith(prefix)
+            ]:
+                self._file_versions.pop(uri, None)
+            await self._send_watched_file_change(deleted_uri, _FileChangeType.DELETED)
+
+        elif isinstance(event, ifileeditor.FileRenameEvent):
+            old_uri = event.old_path.as_uri()
+            new_uri = event.new_path.as_uri()
+            async with self._get_uri_lock(old_uri):
+                if (
+                    old_uri in self._open_documents
+                    and old_uri not in self._document_leases
+                ):
+                    await self._session.send_notification(
+                        "textDocument/didClose",
+                        {"textDocument": {"uri": old_uri}},
+                    )
+                    self._open_documents.discard(old_uri)
+                self._file_versions.pop(old_uri, None)
+            # `new_path` needs nothing here. If the server does not hold it
+            # open, the next feature call opens it from scratch. If it does
+            # hold it open (a rename overwriting a live document), the next
+            # feature call's `_sync_document` compares content hashes and sends
+            # `didChange` on a mismatch, so the stale document is corrected
+            # rather than served -- that is why this arm stays this short.
+            await self._send_watched_file_change(old_uri, _FileChangeType.DELETED)
+            await self._send_watched_file_change(new_uri, _FileChangeType.CREATED)
+
+    async def _send_watched_file_change(
+        self, uri: str, change_type: _FileChangeType
+    ) -> None:
+        """Notify a server that registered for watched files of a change.
+
+        A server that never registered must not receive
+        ``workspace/didChangeWatchedFiles``: sending a notification the client
+        did not declare support for is a protocol violation.
+        """
+        if not self._registered_watched_files:
+            return
+        await self._session.send_notification(
+            "workspace/didChangeWatchedFiles",
+            {"changes": [{"uri": uri, "type": change_type.value}]},
+        )
+
     def _next_version(self, uri: str) -> int:
         version = self._document_version.get(uri, 0) + 1
         self._document_version[uri] = version
@@ -1150,10 +1254,20 @@ class LspService(service.DisposableService):
     async def _handle_register_capability(self, params: dict[str, Any] | None) -> None:
         """Handle client/registerCapability from the LSP server.
 
-        Many servers send this even when the client declared dynamicRegistration:
-        false for specific capabilities. Returning null (None) acknowledges the
-        registration per LSP spec without actually applying any behaviour change.
+        Most registrations are acknowledged without applying any behaviour
+        change, because many servers send this even when the client declared
+        dynamicRegistration: false for the capability. The one that matters is
+        ``workspace/didChangeWatchedFiles``: a server that asks to be told
+        about workspace file changes must then actually be told when files are
+        created, renamed or deleted.
         """
+        registrations = (params or {}).get("registrations", [])
+        if any(
+            isinstance(registration, dict)
+            and registration.get("method") == "workspace/didChangeWatchedFiles"
+            for registration in registrations
+        ):
+            self._registered_watched_files = True
         return
 
     async def _handle_inlay_hint_refresh(self, params: dict[str, Any] | None) -> None:

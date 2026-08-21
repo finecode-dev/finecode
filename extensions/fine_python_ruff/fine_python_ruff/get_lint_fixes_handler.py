@@ -155,7 +155,7 @@ class RuffGetLintFixesHandler(
             file_content: str = file_info.content
             file_version: str = file_info.version
 
-        # The run context pins one base version for the whole run (design note D6),
+        # The run context pins one base version for the whole run (ADR-0083 rule 3),
         # so that concurrent handlers computing fixes for one file agree on the
         # content they are fixing. A mismatch here means the file changed between
         # the context's read and this handler's own read -- the same race the
@@ -420,7 +420,7 @@ def _next_occurrence_fix_id(seen_keys: dict[str, int], key: str) -> str:
     ``ruff:{code}:{line}:{character}``), never index-based: a fix_id built from a
     counter incremented across the whole response changes meaning as soon as an
     unrelated fix is added or removed earlier in the file, which breaks resolve's
-    contract that identical content re-derives the same id (design note D9).
+    contract that identical content re-derives the same id (ADR-0084 rule 4).
     """
     occurrence = seen_keys.get(key, 0)
     seen_keys[key] = occurrence + 1
@@ -500,7 +500,7 @@ def _label_applicability(
         ):
             # Suppressing a diagnostic is not fixing it, and ruff never writes a noqa
             # comment itself when fixing. Offer it -- an editor's menu is where it
-            # belongs -- but keep it out of every batch (design note D10).
+            # belongs -- but keep it out of every batch (ADR-0085 rule 4).
             fix.applicability = FixApplicability.DISPLAY_ONLY
             continue
 

@@ -7,7 +7,7 @@ from fine_lint.resolve_code_action_action import ResolveCodeActionRunResult
 
 
 def test_a_later_none_contribution_does_not_erase_a_resolved_result() -> None:
-    """Exactly one provider owns a given action_id (design note D1); a resolve
+    """Exactly one provider owns a given action_id (ADR-0084); a resolve
     result that already found the operations must not be blanked out by
     another provider's "not mine" answer merging in afterwards, or an editor
     applying the result would see no effect for an action it was told exists.

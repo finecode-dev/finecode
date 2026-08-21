@@ -71,7 +71,7 @@ class GetCodeActionsRunContext(code_action.RunActionContext[GetCodeActionsRunPay
 
     Read once in ``init()`` via ``IFileEditor.read_file_version`` rather than left to
     each handler, so that concurrent handlers contributing code actions for the same
-    file agree on the content they were computed against (design note D6). This is a
+    file agree on the content they were computed against (ADR-0083 rule 3). This is a
     read path: the file is never claimed with ``modify_file``, since a claim would
     exclude every other reader of the file for the duration of the run.
     """
