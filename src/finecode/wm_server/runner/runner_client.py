@@ -18,6 +18,7 @@ from finecode.wm_server import domain
 from finecode.wm_server.domain import ErLoggingConfig
 from finecode.wm_server.runner import _internal_client_api, _internal_client_types
 from finecode.wm_server.utils.iterable_subscribe import IterableSubscribe
+from finecode_extension_runner import schema_utils
 
 # reexport
 BaseRunnerRequestException = jsonrpc_client.BaseRunnerRequestException
@@ -361,7 +362,9 @@ async def resolve_action_meta(runner: ExtensionRunnerInfo) -> dict[str, dict]:
     return response.result
 
 
-async def get_payload_schemas(runner: ExtensionRunnerInfo) -> dict[str, dict | None]:
+async def get_payload_schemas(
+    runner: ExtensionRunnerInfo,
+) -> dict[str, schema_utils.PayloadSchema | None]:
     """Fetch payload schemas for all actions known to the runner."""
     if not runner.initialized_event.is_set():
         await runner.initialized_event.wait()

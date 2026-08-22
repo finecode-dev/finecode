@@ -29,6 +29,7 @@ from finecode_extension_runner import (
     partial_result_sender as partial_result_sender_module,
 )
 from finecode_extension_runner._converter import converter as _converter
+from finecode_extension_runner._converter import payload_converter as _payload_converter
 from finecode_extension_runner.di import resolver as di_resolver
 from finecode_extension_runner.di.registry import Registry, ServiceNotFoundError
 
@@ -267,7 +268,7 @@ def _structure_payload(
     try:
         return typing.cast(
             code_action.RunActionPayload,
-            _converter.structure(params, payload_type),
+            _payload_converter.structure(params, payload_type),
         )
     except cattrs.errors.BaseValidationError as exception:
         details = "; ".join(cattrs.transform_error(exception))

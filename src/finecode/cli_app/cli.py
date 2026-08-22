@@ -264,7 +264,7 @@ def deserialize_action_payload(raw_payload: dict[str, str]) -> dict[str, typing.
     Resource fields are left exactly as the user typed them.  Making them
     absolute needs each action's payload schema to say which fields are
     resources, and no schema is reachable until the WM is up — see
-    ``run_cmd._absolutize_payload_resources``, which does it there.
+    ``run_cmd._resolve_payload``, which does it there.
     """
     deserialized_payload = {}
     for key, value in raw_payload.items():
@@ -551,7 +551,8 @@ def run(ctx) -> None:
                 projects,
                 actions_to_run,
                 deserialized_payload,
-                concurrently,
+                raw_action_payload=action_payload,
+                concurrently=concurrently,
                 handler_config_overrides=handler_config_overrides,
                 service_config_overrides=service_config_overrides,
                 # `--results-file` needs the structured data too, so it implies
@@ -594,10 +595,15 @@ def run(ctx) -> None:
     # decide whether it gets written.
     if results_file is not None:
         try:
+            resolved_payload = (
+                result.resolved_payload
+                if result is not None and result.resolved_payload is not None
+                else deserialized_payload
+            )
             _write_run_results_file(
                 results_file,
                 result,
-                deserialized_payload,
+                resolved_payload,
                 projects,
                 return_code=exit_code,
             )

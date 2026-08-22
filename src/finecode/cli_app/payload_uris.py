@@ -15,20 +15,30 @@ unmarked field the same string is just a string, and nothing here will touch it.
 
 from __future__ import annotations
 
+import ast
+import json
 import pathlib
-import typing
 
 from finecode_extension_api.resource_uri import (
     is_relative_file_uri,
     resource_location_to_uri,
 )
 
+# The schema vocabulary is defined next to the code that produces the fragments.
+# It is shared plumbing with no common package to live in yet — see the marked
+# block in `finecode_extension_runner.schema_utils`.
+from finecode_extension_runner.schema_utils import (
+    FieldSchema,
+    JsonValue,
+    PayloadSchema,
+)
+
 _URI_FORMAT = "uri"
 
 
 def merge_payload_properties(
-    schemas: dict[str, dict | None],
-) -> dict[str, dict]:
+    schemas: dict[str, PayloadSchema | None],
+) -> dict[str, FieldSchema]:
     """Combine the per-action field schemas into one field → schema map.
 
     One CLI invocation can name several actions, and they all receive the same
@@ -37,7 +47,7 @@ def merge_payload_properties(
     a usable resource for the action that asks for one, and an action that only
     wants a string still accepts the absolute URI it becomes.
     """
-    merged: dict[str, dict] = {}
+    merged: dict[str, FieldSchema] = {}
     for schema in schemas.values():
         if not schema:
             continue
@@ -50,11 +60,89 @@ def merge_payload_properties(
     return merged
 
 
+def coerce_raw_value(
+    raw: str, field_schema: FieldSchema, fallback: JsonValue
+) -> JsonValue:
+    """Parse one raw ``--field=value`` string guided by the field's schema.
+
+    A value whose type JSON parsing could not settle (``"1.0"`` as a number or
+    a string) is resolved by the declared type: a ``string`` field keeps the
+    text the user typed, a ``number`` field parses it.  Where the schema
+    vouches for nothing — an empty fragment, or one whose type this function
+    does not coerce — *fallback* is returned; it is the caller's blind parse of
+    the same string.
+
+    Raises:
+        ValueError: the raw text cannot be the declared type, with a message
+            that names the type and, for lists, shows the expected form.
+    """
+    if not field_schema:
+        return fallback
+
+    schema_type = field_schema.get("type")
+
+    if schema_type == "string":
+        if "enum" in field_schema:
+            valid = field_schema["enum"]
+            if raw not in valid:
+                raise ValueError(
+                    f"expected one of {', '.join(repr(value) for value in valid)}"
+                )
+        return raw
+
+    if schema_type == "boolean":
+        lowered = raw.strip().lower()
+        if lowered == "true":
+            return True
+        if lowered == "false":
+            return False
+        raise ValueError("expected a boolean ('true' or 'false')")
+
+    if schema_type == "integer":
+        try:
+            return int(raw)
+        except ValueError:
+            raise ValueError(f"expected an integer, got {raw!r}") from None
+
+    if schema_type == "number":
+        try:
+            return float(raw)
+        except ValueError:
+            raise ValueError(f"expected a number, got {raw!r}") from None
+
+    if schema_type == "array":
+        parsed = _parse_structured(raw)
+        if not isinstance(parsed, list):
+            raise ValueError(f"expected a list, got {raw!r}; use e.g. ['a', 'b']")
+        return parsed
+
+    if schema_type == "object":
+        parsed = _parse_structured(raw)
+        if not isinstance(parsed, dict):
+            raise ValueError(
+                f"expected an object, got {raw!r}; use e.g. {{'key': 'value'}}"
+            )
+        return parsed
+
+    return fallback
+
+
+def _parse_structured(raw: str) -> JsonValue:
+    """Return *raw* parsed as JSON, then as a Python literal, else unchanged."""
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        try:
+            return ast.literal_eval(raw)
+        except (ValueError, SyntaxError):
+            return raw
+
+
 def absolutize_payload(
-    payload: dict[str, typing.Any],
-    properties: dict[str, dict],
+    payload: dict[str, JsonValue],
+    properties: dict[str, FieldSchema],
     base_dir: pathlib.Path,
-) -> dict[str, typing.Any]:
+) -> dict[str, JsonValue]:
     """Return *payload* with every schema-confirmed resource made absolute.
 
     Fields absent from *properties* are passed through untouched — an unknown
@@ -67,7 +155,7 @@ def absolutize_payload(
 
 
 def find_unresolved_relative_uris(
-    payload: dict[str, typing.Any],
+    payload: dict[str, JsonValue],
 ) -> list[str]:
     """Locate relative ``file://`` URIs still left in *payload*.
 
@@ -82,13 +170,13 @@ def find_unresolved_relative_uris(
     return found
 
 
-def _describes_resource(field_schema: dict | None) -> bool:
+def _describes_resource(field_schema: FieldSchema | None) -> bool:
     return bool(field_schema) and field_schema.get("format") == _URI_FORMAT
 
 
 def _absolutize(
-    value: typing.Any, field_schema: dict | None, base_dir: pathlib.Path
-) -> typing.Any:
+    value: JsonValue, field_schema: FieldSchema | None, base_dir: pathlib.Path
+) -> JsonValue:
     if not field_schema:
         return value
 
@@ -114,7 +202,7 @@ def _absolutize(
     return value
 
 
-def _collect_relative_uris(value: typing.Any, path: str, found: list[str]) -> None:
+def _collect_relative_uris(value: JsonValue, path: str, found: list[str]) -> None:
     if isinstance(value, str):
         if is_relative_file_uri(value):
             found.append(f"{path} = {value}")

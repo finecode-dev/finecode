@@ -163,20 +163,23 @@ python -m finecode run --shared-server inspect_code --target=files \
 `--interpreter=3.13` runs one interpreter of the matrixed `testing` env instead of the
 whole axis — drop it for the full check.
 
+Payload fields are validated at the CLI against the action's schema before anything
+runs: an unknown field name is refused, and a value that cannot be the field's declared
+type (for example a scalar where the action declares a list) is refused with a message
+showing the expected form. Fields routed through `--map-payload-fields` keep their
+placeholder value and are not type-checked.
+
 Three ways to get this wrong. The first two fail **silently**: the command exits
 normally and looks like it did what you asked.
 
 1. **Run options go before the action name; payload fields go after it.** The option
    parser stops at the first non-`--` argument, so `run check_formatting --project=X`
-   is not rejected — `project` is accepted as a *payload field*, the action ignores it,
-   and the check runs in every workspace project. The correct form is
-   `run --project=X check_formatting`.
-2. **`run_tests --file_paths` needs absolute paths.** `lint`, `type_check`,
-   `inspect_code`, `audit_code` and `check_formatting` declare `file_paths` as
-   `ResourceUri` and the CLI absolutizes them, so relative paths work there. `run_tests`
-   declares `list[Path]` and passes it through: a relative path selects no tests and the
-   run exits 1 printing nothing, which reads like a real failure.
-3. **`--project` on a workspace-scoped action is an error**, not a narrowing:
+   is rejected — `project` is parsed as a *payload field*, and payload fields are
+   validated against the action's schema, so a field the action does not declare stops
+   the run with an exit-code-1 error naming the field. Before that validation the field
+   was silently ignored and the check ran in every workspace project. The correct form
+   is `run --project=X check_formatting`.
+2. **`--project` on a workspace-scoped action is an error**, not a narrowing:
    `Action 'fine_lint.LintAction' is workspace-scoped; do not pass a project path`. Use
    `--project_paths`.
 
@@ -827,6 +830,104 @@ Raises:
 
 - type the code
 -- use complete types, no holes in generics like `list` instead of `list[int]`
+
+**This rule loses to the surrounding code unless you make it win.** Neither check
+that would catch a violation is switched on today, and the codebase has **589
+bare-generic annotation sites across 74 files** in `src/` and
+`finecode_extension_runner/src/` (measured 2026-08-22 with pyrefly's
+`implicit-any-type-argument`, see `presets/fine_python_lint/LINT_COVERAGE.md`).
+Some of them sit on the exact call chain you are extending. They are legacy, not
+the convention: matching a violating neighbour is how the count got that high.
+Write the complete type and leave the neighbour alone.
+
+#### `Any` is honest for an open value, a hole for a known shape
+
+Both are spelled `typing.Any`, and the difference is not stylistic — it is
+whether the type is *unknown at runtime* or merely *unwritten*.
+
+```python
+# correct — a payload field's value is whatever the user typed; the type is
+# genuinely open, and narrowing happens by isinstance at the point of use
+def absolutize_payload(payload: dict[str, typing.Any]) -> dict[str, typing.Any]: ...
+
+# wrong — a payload *schema* fragment has a closed, documented shape, produced by
+# our own `schema_utils.extract_payload_schema`. `Any` here is a shape nobody
+# wrote down, and it spreads: every `.get()` off it returns `Any` too
+def coerce_raw_value(raw: str, field_schema: dict) -> typing.Any: ...
+
+# correct — the shape says what it holds, and `.get("type")` now narrows to
+# `str | None` instead of `Any`
+class FieldSchema(typing.TypedDict, total=False):
+    type: str
+    format: str
+    ...
+
+def coerce_raw_value(raw: str, field_schema: FieldSchema) -> JsonValue: ...
+```
+
+The test is: **can you write the shape down?** If the answer is yes and you
+reached for `Any` anyway, that is the hole. A `TypedDict` is usually the cheapest
+way to write it — especially for JSON-ish data whose producer is in this repo.
+
+Two consequences worth knowing:
+
+- **`Any` is contagious.** One `Any`-typed parameter silently turns every
+  expression derived from it into `Any`, so the hole is never confined to the
+  annotation that introduced it.
+- **`Any` as a *value* is not a hole.** `converter.structure(item, typing.Any)`
+  passes `Any` as a runtime argument to a library that expects a type object.
+  That is correct usage and this rule does not apply to it.
+
+#### Sentinels must not erase the return type
+
+A `object()` sentinel has no type to narrow against, so every function returning
+one is forced to `-> typing.Any`, and callers end up comparing against a private
+module member to find out what they got.
+
+```python
+# wrong — the return type is `Any`, and the caller reaches across a module
+# boundary for a private name to interpret it
+_NO_OPINION = object()
+
+def coerce_raw_value(raw: str, schema: FieldSchema) -> typing.Any: ...
+...
+if coerced is payload_uris._NO_OPINION:   # private access at every call site
+
+# correct — no sentinel at all: the caller already knows the "no opinion" answer,
+# so pass it in and let the function return it
+def coerce_raw_value(raw: str, schema: FieldSchema, fallback: JsonValue) -> JsonValue: ...
+```
+
+When a sentinel is genuinely unavoidable (the fallback is expensive, or "absent"
+must be distinguishable from a legitimate `None`), use a one-member `enum` rather
+than `object()` — it is narrowable via `typing.Literal` and keeps the return type
+concrete:
+
+```python
+class _Unset(enum.Enum):
+    TOKEN = enum.auto()
+
+def lookup(key: str) -> JsonValue | typing.Literal[_Unset.TOKEN]: ...
+```
+
+This is the same reasoning as [Closed sets of values](#closed-sets-of-values):
+a value drawn from a fixed set gets an enum, and "present or absent" is a fixed
+set of two.
+
+#### A hole in a generic is not only a style problem
+
+`list` and `list[str]` are different at runtime to any code that introspects the
+annotation — and this repo has such code. `cattrs` structure-hook factories read
+`cls.__args__`, which bare `list` does not have, so a payload field annotated
+`files: list` raises `AttributeError` from inside the converter instead of
+producing a validation error. Anything reachable by
+`typing.get_type_hints` — payload dataclasses, handler configs, service
+configs — is introspected somewhere, so a hole there is a latent crash, not a
+missing annotation.
+
+When you must handle a possibly-bare generic in such code, read it with
+`typing.get_args(cls)`, which returns `()` for bare `list`, rather than
+`cls.__args__`, which raises.
 
 ### Imports
 

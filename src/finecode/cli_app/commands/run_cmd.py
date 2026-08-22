@@ -1,5 +1,6 @@
 # docs: docs/cli.md
 import asyncio
+import difflib
 import json
 import pathlib
 import sys
@@ -9,6 +10,7 @@ import typing
 import uuid
 
 import click
+from finecode_extension_runner.schema_utils import JsonValue
 from loguru import logger
 
 from finecode.cli_app import payload_uris, utils
@@ -93,7 +95,7 @@ async def _ask_off_loop(message: str, options: list[str], default: str | None) -
     def _prompt() -> None:
         try:
             result = _ask_in_terminal(message, options, default)
-        except BaseException as exception:  # noqa: BLE001 - reported, not swallowed
+        except BaseException as exception:
             loop.call_soon_threadsafe(_settle, None, exception)
         else:
             loop.call_soon_threadsafe(_settle, result, None)
@@ -202,6 +204,7 @@ async def run_actions(
     projects_names: list[str] | None,
     actions: list[str],
     action_payload: dict[str, typing.Any],
+    raw_action_payload: dict[str, str],
     concurrently: bool,
     handler_config_overrides: dict[str, dict[str, dict[str, str]]] | None = None,
     service_config_overrides: dict[str, dict[str, typing.Any]] | None = None,
@@ -371,12 +374,14 @@ async def run_actions(
                 raise RunFailed(f"Unknown action(s): {unknown_actions}")
             action_sources = [name_to_source[a] for a in actions]
 
-            action_payload = await _absolutize_payload_resources(
+            action_payload = await _resolve_payload(
                 client=client,
                 action_payload=action_payload,
+                raw_action_payload=raw_action_payload,
                 action_sources=action_sources,
                 project_paths=project_paths,
                 base_dir=workdir_path,
+                map_payload_fields=map_payload_fields,
             )
 
             # Workspace-scoped actions run once on the root project and stream all
@@ -476,6 +481,7 @@ async def run_actions(
                     source: scope_by_source.get(source) for source in action_sources
                 },
                 project_paths_requested=project_paths,
+                resolved_payload=action_payload,
             )
         finally:
             await client.close()
@@ -545,6 +551,7 @@ def _build_streaming_result(
     overall_return_code: int,
     scope_by_action_source: dict[str, str | None] | None = None,
     project_paths_requested: list[str] | None = None,
+    resolved_payload: dict[str, typing.Any] | None = None,
 ) -> utils.RunActionsResult:
     """Build a RunActionsResult from collected partial-result notifications.
 
@@ -571,21 +578,30 @@ def _build_streaming_result(
         result_by_project=result_by_project,
         scope_by_action_source=scope_by_action_source,
         project_paths_requested=project_paths_requested,
+        resolved_payload=resolved_payload,
     )
 
 
-async def _absolutize_payload_resources(
+async def _resolve_payload(
     client: ApiClient,
     action_payload: dict[str, typing.Any],
+    raw_action_payload: dict[str, str],
     action_sources: list[str],
     project_paths: list[str] | None,
     base_dir: pathlib.Path,
+    map_payload_fields: set[str] | None,
 ) -> dict[str, typing.Any]:
-    """Make every resource in *action_payload* absolute before it leaves the CLI.
+    """Build the final payload from the raw CLI strings and the payload schemas.
 
-    Which fields hold resources comes from the actions' own payload schemas, so
-    a plain path is accepted wherever an action declares a ``ResourceUri`` and
-    nowhere else.
+    The raw ``--field=value`` strings are parsed *guided by* each field's
+    schema, so a numeric-looking string reaches a string field unchanged and a
+    scalar where a list was declared is refused before anything runs.  Fields
+    whose schema vouches for nothing, and fields routed through
+    ``--map-payload-fields``, keep the blind parse from
+    :func:`finecode.cli_app.cli.deserialize_action_payload`.
+
+    Which fields hold resources comes from the same schemas, so a plain path is
+    accepted wherever an action declares a ``ResourceUri`` and nowhere else.
 
     A relative ``file://`` URI that no schema accounts for stops the run.  It
     cannot be left alone — each ER would resolve it against its own directory,
@@ -604,7 +620,65 @@ async def _absolutize_payload_resources(
         schemas = {}
 
     properties = payload_uris.merge_payload_properties(schemas)
-    resolved = payload_uris.absolutize_payload(action_payload, properties, base_dir)
+
+    # Unknown names are refused only when every requested action's schema was
+    # available: an unschemad action's fields are unknown, so the union of known
+    # names is not a complete set and refusing would regress runs that work
+    # today.
+    missing_schema_sources = [
+        source for source in action_sources if not schemas.get(source)
+    ]
+    if missing_schema_sources:
+        logger.debug(
+            "Skipping payload field name check: no schema for {}",
+            ", ".join(missing_schema_sources),
+        )
+    else:
+        known = set(properties)
+        unknown = [name for name in raw_action_payload if name not in known]
+        if unknown:
+            suggestions = {
+                name: difflib.get_close_matches(name, known, n=1, cutoff=0.6)
+                for name in unknown
+            }
+            details = "\n".join(
+                f"  '{name}'"
+                + (
+                    f" — did you mean '{suggestions[name][0]}'?"
+                    if suggestions[name]
+                    else ""
+                )
+                for name in sorted(unknown)
+            )
+            raise RunFailed(
+                f"Unknown payload field(s): {', '.join(sorted(unknown))}.\n"
+                f"{details}\n"
+                f"Valid fields: {', '.join(sorted(known))}"
+            )
+
+    resolved: dict[str, JsonValue] = {}
+    for name, raw_value in raw_action_payload.items():
+        # The blind parse from `deserialize_action_payload` is what every branch
+        # below falls back to when the schema has nothing to say about the field.
+        blind_parse = action_payload[name]
+        if map_payload_fields and name in map_payload_fields:
+            # A mapped field carries a ``"<action>.<field>"`` placeholder that
+            # is resolved from a results file after this point, so its value is
+            # not the type the field declares and must not be type-checked.
+            resolved[name] = blind_parse
+            continue
+        field_schema = properties.get(name)
+        if field_schema is None:
+            resolved[name] = blind_parse
+            continue
+        try:
+            resolved[name] = payload_uris.coerce_raw_value(
+                raw_value, field_schema, blind_parse
+            )
+        except ValueError as exc:
+            raise RunFailed(f"Invalid value for payload field '{name}': {exc}") from exc
+
+    resolved = payload_uris.absolutize_payload(resolved, properties, base_dir)
 
     unresolved = payload_uris.find_unresolved_relative_uris(resolved)
     if unresolved:

@@ -13,11 +13,76 @@ import inspect
 import pathlib
 import textwrap
 import typing
+from typing import Literal, TypedDict
 
 from finecode_extension_api.resource_uri import ResourceUri
 
+# --- shared payload-schema vocabulary -------------------------------------
+#
+# Everything down to the next marker is shared between this package and
+# `finecode` (the WM), which consumes these fragments over
+# `actions/getPayloadSchemas` — see `finecode/cli_app/payload_uris.py` and
+# `finecode/wm_client.py`. It lives here because this module produces the
+# fragments, and `finecode` already depends on `finecode_extension_runner`
+# (as it does for `logs`, `concurrency` and `wal`).
+#
+# TODO: this belongs in a package common to both, not in the ER. There is no
+# such package today: `finecode_extension_api` is the extension authors'
+# public API and this is internal plumbing, so it must not go there. Move the
+# block wholesale when a common internal package exists.
 
-def extract_payload_schema(payload_cls: type) -> dict:
+JsonValue: typing.TypeAlias = (
+    "str | int | float | bool | None | list[JsonValue] | dict[str, JsonValue]"
+)
+"""One decoded JSON value.
+
+Deliberately open: a payload field holds whatever the caller sent, and the type
+is not knowable until it is narrowed by `isinstance` at the point of use. This
+is the *honest* open type, not a stand-in for a shape nobody wrote down — the
+shape of a schema fragment is `FieldSchema` below.
+"""
+
+SchemaType: typing.TypeAlias = Literal[
+    "boolean", "integer", "number", "string", "array", "object"
+]
+"""The `type` values `_type_to_schema` emits. A fragment for an unmapped Python
+type carries no `type` key at all rather than a seventh value."""
+
+
+class FieldSchema(TypedDict, total=False):
+    """A JSON Schema fragment describing one payload field.
+
+    Every key is optional because an unmapped Python type produces `{}`. The key
+    set is closed: it is exactly what `_type_to_schema` writes, and the mapping
+    table in `extract_payload_schema` is its documentation.
+    """
+
+    type: SchemaType
+    format: Literal["uri"]
+    """Present only on `ResourceUri` fields. This is the marker the CLI uses to
+    decide which fields it may rewrite to absolute URIs."""
+    description: str
+    enum: list[JsonValue]
+    """Members of an `enum.Enum` field, as their `.value`s."""
+    items: FieldSchema
+    """Element schema of an `array` field."""
+    properties: dict[str, FieldSchema]
+    """Field schemas of an `object` (nested dataclass) field."""
+    required: list[str]
+    """Names of the `object` field's properties that have no default."""
+
+
+class PayloadSchema(TypedDict):
+    """The schema of a whole `RunActionPayload` subclass."""
+
+    properties: dict[str, FieldSchema]
+    required: list[str]
+
+
+# --- end shared payload-schema vocabulary ---------------------------------
+
+
+def extract_payload_schema(payload_cls: type) -> PayloadSchema:
     """Return a JSON Schema fragment describing the fields of a RunActionPayload subclass.
 
     The result has two keys:
@@ -58,7 +123,7 @@ def extract_payload_schema(payload_cls: type) -> dict:
         hints = {}
 
     field_descriptions = _extract_field_descriptions(payload_cls)
-    properties: dict[str, dict] = {}
+    properties: dict[str, FieldSchema] = {}
     required: list[str] = []
 
     for field in dataclasses.fields(payload_cls):
@@ -121,7 +186,7 @@ def _extract_field_descriptions(cls: type) -> dict[str, str]:
     return descriptions
 
 
-def _type_to_schema(t: type) -> dict:
+def _type_to_schema(t: type) -> FieldSchema:
     """Convert a single Python type annotation to a JSON Schema type object."""
     args = typing.get_args(t)
 
@@ -137,7 +202,7 @@ def _type_to_schema(t: type) -> dict:
 
     # list[T]
     if origin is list:
-        item_schema = _type_to_schema(args[0]) if args else {}
+        item_schema: FieldSchema = _type_to_schema(args[0]) if args else {}
         return {"type": "array", "items": item_schema}
 
     # Enum subclasses (check before str — StrEnum is also a str subclass)
@@ -169,7 +234,7 @@ def _type_to_schema(t: type) -> dict:
         except Exception:
             sub_hints = {}
 
-        sub_properties: dict[str, dict] = {}
+        sub_properties: dict[str, FieldSchema] = {}
         sub_required: list[str] = []
         for sub_field in dataclasses.fields(t):
             sub_properties[sub_field.name] = _type_to_schema(
@@ -181,7 +246,7 @@ def _type_to_schema(t: type) -> dict:
             ):
                 sub_required.append(sub_field.name)
 
-        schema: dict = {"type": "object", "properties": sub_properties}
+        schema: FieldSchema = {"type": "object", "properties": sub_properties}
         if sub_required:
             schema["required"] = sub_required
         return schema

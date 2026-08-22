@@ -30,6 +30,13 @@ class RunActionsResult(typing.NamedTuple):
     the request and the outcome cannot be joined without this. `None` means the
     run was not restricted to a subset of projects."""
 
+    resolved_payload: dict[str, typing.Any] | None = None
+    """The payload the ERs actually received, after schema-guided deserialization
+
+    and resource absolutization. Distinct from the blind JSON parse the caller
+    built, so `--results-file` records what ran rather than what was typed.
+    `None` when the run failed before the payload was resolved."""
+
 
 def run_result_to_str(
     run_result: str | dict[str, list[str | dict[str, str | bool]]], action_name: str

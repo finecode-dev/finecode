@@ -16,18 +16,27 @@ from __future__ import annotations
 
 import pathlib
 
+import pytest
+from finecode_extension_runner.schema_utils import FieldSchema
+
 from finecode.cli_app.payload_uris import (
     absolutize_payload,
+    coerce_raw_value,
     find_unresolved_relative_uris,
     merge_payload_properties,
 )
 
 _WS = pathlib.Path("/ws")
-_URI = {"type": "string", "format": "uri"}
-_STRING = {"type": "string"}
+_URI: FieldSchema = {"type": "string", "format": "uri"}
+_STRING: FieldSchema = {"type": "string"}
+
+# Stands in for the caller's blind JSON parse of the same raw string. Every
+# `coerce_raw_value` test that does not exercise the fallback passes a value that
+# could not be confused with a real result.
+_UNUSED_FALLBACK = object()
 
 
-def _properties(**fields: dict) -> dict[str, dict]:
+def _properties(**fields: FieldSchema) -> dict[str, FieldSchema]:
     return dict(fields)
 
 
@@ -147,3 +156,51 @@ def test_nothing_is_reported_once_every_resource_is_absolute() -> None:
     )
 
     assert find_unresolved_relative_uris(resolved) == []
+
+
+def test_a_string_field_keeps_a_numeric_looking_string() -> None:
+    assert coerce_raw_value("1.0", _STRING, _UNUSED_FALLBACK) == "1.0"
+
+
+def test_a_number_field_parses_a_numeric_looking_string() -> None:
+    assert coerce_raw_value("1.0", {"type": "number"}, _UNUSED_FALLBACK) == 1.0
+
+
+def test_an_integer_field_parses_and_rejects() -> None:
+    assert coerce_raw_value("42", {"type": "integer"}, _UNUSED_FALLBACK) == 42
+    with pytest.raises(ValueError, match="expected an integer"):
+        coerce_raw_value("4.2", {"type": "integer"}, _UNUSED_FALLBACK)
+
+
+def test_a_boolean_field_accepts_true_and_false_case_insensitively() -> None:
+    assert coerce_raw_value("true", {"type": "boolean"}, _UNUSED_FALLBACK) is True
+    assert coerce_raw_value("FALSE", {"type": "boolean"}, _UNUSED_FALLBACK) is False
+    with pytest.raises(ValueError, match="expected a boolean"):
+        coerce_raw_value("no", {"type": "boolean"}, _UNUSED_FALLBACK)
+
+
+def test_an_array_field_parses_and_rejects_a_scalar() -> None:
+    assert coerce_raw_value('["a", "b"]', {"type": "array"}, _UNUSED_FALLBACK) == ["a", "b"]
+    with pytest.raises(ValueError, match="expected a list"):
+        coerce_raw_value("file:///a", {"type": "array"}, _UNUSED_FALLBACK)
+
+
+def test_an_object_field_parses_and_rejects_a_scalar() -> None:
+    assert coerce_raw_value('{"a": 1}', {"type": "object"}, _UNUSED_FALLBACK) == {"a": 1}
+    with pytest.raises(ValueError, match="expected an object"):
+        coerce_raw_value("x", {"type": "object"}, _UNUSED_FALLBACK)
+
+
+def test_an_enum_field_rejects_a_value_outside_the_list() -> None:
+    schema = {"type": "string", "enum": ["A", "B"]}
+    assert coerce_raw_value("B", schema, _UNUSED_FALLBACK) == "B"
+    with pytest.raises(ValueError, match="expected one of"):
+        coerce_raw_value("C", schema, _UNUSED_FALLBACK)
+
+
+def test_an_empty_schema_returns_the_callers_blind_parse() -> None:
+    """A schema that vouches for nothing hands the value back untouched, so the
+    caller does not need a sentinel to find out that nothing was decided."""
+    blind_parse = ["whatever", "the", "caller", "parsed"]
+
+    assert coerce_raw_value("anything", {}, blind_parse) is blind_parse
