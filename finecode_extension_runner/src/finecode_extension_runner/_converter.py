@@ -84,9 +84,13 @@ converter.register_structure_hook(
 )
 
 
+# These hooks reject a value for being the wrong *type*, so they raise
+# `TypeError` (ruff `TRY004`). cattrs wraps whatever a structure hook raises
+# into a `BaseValidationError`, which is what `_structure_payload` catches, so
+# the exception class chosen here does not change what a caller sees.
 def _structure_strict_bool(val, _):
     if not isinstance(val, bool):
-        raise ValueError(f"expected a boolean, got {type(val).__name__}")
+        raise TypeError(f"expected a boolean, got {type(val).__name__}")
     return val
 
 
@@ -94,19 +98,19 @@ def _structure_strict_int(val, _):
     # `bool` is an `int` subclass; JSON `true`/`false` must not satisfy an int
     # field and an integer must not satisfy a bool field.
     if isinstance(val, bool) or not isinstance(val, int):
-        raise ValueError(f"expected an integer, got {type(val).__name__}")
+        raise TypeError(f"expected an integer, got {type(val).__name__}")
     return val
 
 
 def _structure_strict_float(val, _):
     if isinstance(val, bool) or not isinstance(val, (int, float)):
-        raise ValueError(f"expected a number, got {type(val).__name__}")
+        raise TypeError(f"expected a number, got {type(val).__name__}")
     return float(val)
 
 
 def _structure_strict_str(val, _):
     if not isinstance(val, str):
-        raise ValueError(f"expected a string, got {type(val).__name__}")
+        raise TypeError(f"expected a string, got {type(val).__name__}")
     return val
 
 
@@ -115,7 +119,11 @@ def _is_list_type(t):
 
 
 def _structure_strict_list_factory(cls, conv):
-    item_type = cls.__args__[0] if cls.__args__ else typing.Any
+    # `typing.get_args`, not `cls.__args__`: a bare `list` annotation has no
+    # `__args__` at all, so reading it directly raises AttributeError before the
+    # fallback below can be reached. `get_args` returns `()` there instead.
+    args = typing.get_args(cls)
+    item_type = args[0] if args else typing.Any
 
     def structure(val, _):
         # Default cattrs iterates a string into its characters; a scalar meant
@@ -123,7 +131,7 @@ def _structure_strict_list_factory(cls, conv):
         if isinstance(val, (str, bytes)) or not isinstance(
             val, collections.abc.Sequence
         ):
-            raise ValueError(f"expected a list, got {type(val).__name__}")
+            raise TypeError(f"expected a list, got {type(val).__name__}")
         return [conv.structure(item, item_type) for item in val]
 
     return structure

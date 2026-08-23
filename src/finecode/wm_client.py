@@ -20,6 +20,7 @@ import random
 from loguru import logger
 
 from finecode.wm_server import wm_lifecycle
+from finecode_extension_runner import schema_utils
 
 CONTENT_LENGTH_HEADER = "Content-Length: "
 
@@ -438,7 +439,7 @@ class ApiClient:
 
     async def get_payload_schemas(
         self, project: str, action_sources: list[str]
-    ) -> dict[str, dict | None]:
+    ) -> dict[str, schema_utils.PayloadSchema | None]:
         """Return payload schemas for the given actions in a project.
 
         Delegates to the WM ``actions/getPayloadSchemas`` endpoint.
@@ -899,7 +900,7 @@ class ApiClient:
             # round trip — so the reachable exception set is open. Narrowing this
             # would let an unlisted failure kill the reader loop and leave the
             # server waiting out its deadline on a client that is still running.
-            except Exception as exception:  # noqa: BLE001
+            except Exception as exception:
                 logger.exception(f"WmClient: request handler for {method} failed")
                 self._answer_request(
                     req_id,

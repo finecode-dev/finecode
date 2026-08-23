@@ -20,7 +20,7 @@ Run linting across the workspace and report diagnostics.
 | `file_paths` | `list[ResourceUri]` | `[]` | Files to lint (required when `target="files"`) |
 | `project_paths` | `list[Path] \| None` | `None` | Restrict the workspace operation to these project paths; `None` means all workspace projects |
 
-**Result:** list of diagnostics (file, line, column, message, severity)
+**Result:** list of diagnostics (file, line, column, message, severity, fixability)
 
 ---
 
@@ -48,6 +48,24 @@ Register Python linting tools (ruff, mypy, …) as handlers for this action.
 
 ---
 
+## `apply_code_actions`
+
+Apply a batch of code-action selections to disk. The sole writer: providers
+compute edits and file operations; this action validates the whole batch and
+commits it.
+
+- **Source:** `fine_lint.ApplyCodeActionsAction`
+- **Scope:** project
+
+A selection carries an ordered list of operations — text edits, file creation,
+rename, and delete (including recursive directory deletes, which require an
+`allow_recursive_delete` opt-in). The whole batch is validated before anything
+is written; cross-selection text edits stay simultaneous, while whole-file
+operations (create/rename/delete) conflict with every other selection touching
+the same paths. A dry run previews the resulting content without writing.
+
+---
+
 ## `audit_code`
 
 Run all registered on-demand code audit tools and aggregate results. Peer of `inspect_code` (see [ADR-0044](../adr/0044-continuous-inspection-and-on-demand-audit-are-separate-umbrellas.md)): same result shape and `target="files"` existence-check guarantee, but invoked at deliberate checkpoints (explicit CLI/MCP call, precommit, CI) rather than per-keystroke, so its handlers may be whole-project and slow.
@@ -58,7 +76,7 @@ Run all registered on-demand code audit tools and aggregate results. Peer of `in
 
 **Payload fields:** same shape as `inspect_code` (`target`, `file_paths`, `project_paths`).
 
-**Result:** list of diagnostics (file, line, column, message, severity)
+**Result:** list of diagnostics (file, line, column, message, severity, fixability)
 
 Whole-project checks reach this umbrella through bridge handlers rather than being invoked separately — [`check_imports`](#check_imports) and [`check_toolchains`](#check_toolchains) both do. Such a bridge ignores per-file scoping for *what* it checks (a violation is a property of the project, not of one file) and anchors its diagnostics at the relevant config file. Adding a new checkpoint check therefore means registering a bridge, not adding a CI step.
 
@@ -224,7 +242,7 @@ Discover tests and return their hierarchical structure without running them.
 
 | Field | Type | Default | Description |
 |---|---|---|---|
-| `file_paths` | `list[Path]` | `[]` | Files or directories to search. Empty means the handler uses its own defaults (e.g. `testpaths` in pytest.ini). |
+| `file_paths` | `list[ResourceUri]` | `[]` | Files or directories to search. Empty means the handler uses its own defaults (e.g. `testpaths` in pytest.ini). |
 
 **Result fields:**
 
@@ -244,7 +262,7 @@ Execute tests and return structured pass/fail results.
 
 | Field | Type | Default | Description |
 |---|---|---|---|
-| `file_paths` | `list[Path]` | `[]` | Test files or directories to run. Empty means handler defaults. |
+| `file_paths` | `list[ResourceUri]` | `[]` | Test files or directories to run. Empty means handler defaults. |
 | `test_ids` | `list[TestId]` | `[]` | Specific tests to run, obtained from `list_tests`. |
 | `markers` | `list[str]` | `[]` | Marker/tag names to filter (e.g. `["unit", "slow"]`). Handlers map these to runner-specific flags. |
 
@@ -491,6 +509,21 @@ Verify that publishing succeeded by checking the registry.
 List source files grouped by programming language.
 
 - **Source:** `fine_src_artifacts.ListSrcArtifactFilesByLangAction`
+
+Handlers list the files of **their own project only**. A recursive walk does not stop at
+the root of a nested project, so a handler must prune those roots as it walks:
+`workspace_utils.nested_project_dirs` names the boundaries (from
+`actionable_project_paths` — a nested directory that is *not* an actionable project has
+no runner of its own, so its files stay with the enclosing project), and
+`workspace_utils.walk_project_files` walks without descending into them or into hidden
+directories.
+
+Without this, an operation restricted to the outer project (`lint --project-paths=...`)
+silently processes the inner project too, and an unrestricted workspace run processes
+those files twice — once for each project claiming them. Pruning during the walk rather
+than filtering afterwards is also what makes a workspace-root listing affordable: on
+FineCode's own repository the unpruned walk visits every nested project's virtualenv and
+takes ~17s, against ~0.1s pruned.
 
 ---
 
@@ -745,6 +778,124 @@ or project config; add personal handlers in `finecode-user.toml`.
 | `installed` | `list[str]` | Steps that completed installation or configuration |
 | `skipped` | `list[str]` | Steps skipped because the dependency or tool was already present |
 | `failed` | `list[str]` | Steps that failed; non-empty means `return_code` is `ERROR` |
+
+---
+
+## `run_agent_task`
+
+Delegate a task to an AI coding agent and return its output.
+
+- **Source:** `fine_agent.RunAgentTaskAction`
+- **Default handler execution:** sequential
+
+The `fine_agent` preset declares the action with no handler, so including it alone
+is a no-op. A backend extension supplies the implementation. Two exist today:
+`fine_agent_pi.PiAgentHandler`, which drives the `pi` CLI in its RPC mode, and
+`fine_agent_claude_code.ClaudeCodeAgentHandler`, which drives the `claude` CLI in
+its non-interactive print mode.
+
+**Exactly one handler.** Unlike most actions, this one gains nothing from merging
+several handlers' results: two agents independently attempting the same task would
+both write to the same files, and there is no meaningful way to combine their
+answers. Swap backends by *replacing* the registered handler, never by adding a
+second one. Nothing enforces this — the result merge degrades to last-writer-wins.
+
+**Payload fields:**
+
+| Field | Type | Description |
+|---|---|---|
+| `prompt` | `str` | The task, in natural language |
+
+Which model runs the task is handler configuration, not payload, so the same task
+definition is portable across setups.
+
+**Result fields:**
+
+| Field | Type | Description |
+|---|---|---|
+| `status` | `AgentRunStatus` | `settled`, `failed`, `aborted`, or `refused_interaction` |
+| `output` | `str` | The agent's final text |
+| `turns` | `int \| None` | Assistant turns taken, and a sign of looping; `None` where the backend has no turn concept |
+| `usage` | `AgentRunUsage \| None` | What the run consumed; `None` when the backend reported nothing |
+| `duration_sec` | `float \| None` | Wall-clock time, measured by the handler rather than reported by the backend |
+| `error` | `str \| None` | Why the run did not settle; `None` when `status` is `settled` |
+
+`refused_interaction` is deliberately distinct from `failed`: nothing went wrong,
+the agent asked the user a question and no interactive channel was available. A
+non-interactive caller (CI) needs to tell those apart.
+
+**`AgentRunUsage` fields**, all optional and independently so:
+
+| Field | Type | Description |
+|---|---|---|
+| `input_tokens` | `int \| None` | |
+| `output_tokens` | `int \| None` | |
+| `cache_read_tokens` | `int \| None` | Not universal — some backends report a single "cached" figure, or none |
+| `cache_write_tokens` | `int \| None` | |
+| `total_tokens` | `int \| None` | Reported as-is, never derived; may exceed input + output |
+| `approx_cost_usd` | `float \| None` | The backend's own estimate, in USD |
+| `provider`, `model` | `str \| None` | What produced the figures above |
+
+Backends differ in what they can account for, so a partially filled `AgentRunUsage`
+is the normal case rather than a degraded one. **`None` always means "the backend
+did not report this", never zero** — a handler that fills a gap with `0` would
+report a run as free, or as having read no input, when the truth is that nobody
+said. For the same reason handlers report only what the backend reported: no
+derived totals, no pricing against a table the handler carries, no currency
+conversion.
+
+`approx_cost_usd` is an estimate, not a bill. It is the backend's price table
+applied to its own token counts: the table can be stale, absent for a model the
+backend does not know, and for a subscription-covered agent it is what the run
+*would* have cost at API rates rather than anything charged.
+
+Usage is reported on failed and refused runs too, not only settled ones — a run
+that spent real money and then failed is exactly when the number is worth having.
+The one gap is cancellation: nothing is returned on that path, so what the run
+spent before being withdrawn is lost with it.
+
+### `PiAgentHandler` configuration
+
+| Option | Default | Description |
+|---|---|---|
+| `model` | `None` | Passed to `pi --model`; `None` leaves pi's own default |
+| `provider` | `None` | Passed to `pi --provider` |
+| `ui_policy` | `{}` | Per dialog method (`select`, `confirm`, `input`, `editor`) → how to answer |
+| `default_ui_policy` | `"abort"` | Applied to methods absent from `ui_policy` |
+| `settle_timeout_sec` | `900.0` | Ceiling on one run; an agent loop has no natural bound |
+
+A `ui_policy` value of `abort` refuses and ends the run, `cancel` declines and lets
+the agent continue, and any other string is sent back as the literal answer.
+
+Every dialog gets an answer, always. Leaving one unanswered is not neutral: pi
+resolves it with its own default once its timeout expires, silently — which for a
+tool-approval gate is an unlogged auto-approval. A dialog method FineCode does not
+recognise is refused rather than ignored, for the same reason.
+
+### `ClaudeCodeAgentHandler` configuration
+
+| Option | Default | Description |
+|---|---|---|
+| `model` | `None` | Passed to `claude --model`, as an alias (`opus`, `sonnet`) or a full name; `None` leaves the CLI's own default |
+| `permission_mode` | `None` | Passed to `claude --permission-mode` (`acceptEdits`, `bypassPermissions`, `plan`, …); `None` leaves the CLI's default, which approves nothing |
+| `allowed_tools` | `[]` | Tool patterns granted without asking, e.g. `["Read", "Bash(git *)"]` |
+| `disallowed_tools` | `[]` | Tool patterns denied outright, applied over `allowed_tools` |
+| `append_system_prompt` | `None` | Extra instructions appended to the CLI's own system prompt |
+| `max_budget_usd` | `None` | Ceiling on what one run may spend on API calls, enforced by the CLI |
+| `settle_timeout_sec` | `900.0` | Ceiling on one run; an agent loop has no natural bound |
+
+The default permission mode approves nothing, so a task that must edit files needs
+`permission_mode = "acceptEdits"` or an explicit `allowed_tools`. That is a
+deliberate decision to make: this handler runs an agent with write access to the
+project.
+
+Unlike pi, Claude Code does not ask the client questions in this mode — a tool call
+it cannot get approved is denied, and the agent is told and carries on. So a run
+that **settled** despite a denial is reported as `settled` (the agent found another
+way), while a run that **failed** with a denial recorded is `refused_interaction`:
+the run needed a decision this setup was configured not to make. The transcript is
+persisted; the handler logs the session id so `claude --resume <id>` can show what
+the agent actually did.
 
 ---
 
