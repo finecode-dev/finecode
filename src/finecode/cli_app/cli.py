@@ -698,13 +698,6 @@ def run(ctx) -> None:
     default=False,
     help="Stream WM/ER diagnostic logs to stderr over the protocol. Auto-enabled in CI.",
 )
-@click.option(
-    "--max-concurrent-projects",
-    "max_concurrent_projects",
-    default=None,
-    type=int,
-    help="Cap on concurrent projects during prepare-envs. Defaults to a machine-based value (see docs/guides/preparing-environments.md).",
-)
 def prepare_envs(
     log_level: str,
     debug: bool,
@@ -715,7 +708,6 @@ def prepare_envs(
     interpreter_names: tuple[str, ...],
     project_names: tuple[str, ...],
     verbose: bool,
-    max_concurrent_projects: int | None,
 ) -> None:
     """
     `prepare-envs` should be called from workspace/project root directory.
@@ -761,7 +753,6 @@ def prepare_envs(
                 project_names=list(project_names) if project_names else None,
                 dev_env=dev_env or detect_dev_env(),
                 verbose=verbose,
-                max_concurrent_projects=max_concurrent_projects,
             )
         )
     except prepare_envs_cmd.PrepareEnvsFailed as exception:

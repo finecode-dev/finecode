@@ -379,30 +379,22 @@ An explicit `--interpreter` selector always overrides the config default outrigh
 
 ## Bounding concurrency
 
-`prepare-envs` fans work out at two independent points, and each spawns real OS processes:
+`prepare-envs` fans work out across projects and across envs, and each fan-out ultimately spawns
+real OS processes. All of them draw from one machine-wide budget (ADR-0090): the WM leases
+subprocess *work slots* to each ER for the duration of an action run, and every spawn inside that
+ER — `CommandRunner` subprocesses (e.g. `uv install`) and `ProcessExecutor` pool workers alike —
+draws from the ER's leased gate. The budget is sized from `FINECODE_MAX_CONCURRENT_PROCESSES` if
+set, otherwise the machine's usable CPU count minus one core of headroom. See
+[Process budget](wm-server-internals.md#process-budget) for the mechanics.
 
-1. **Across projects** — `create_envs`/`install_envs` run concurrently for every project in the workspace, each on its own Extension Runner (ER) process.
-2. **Across envs, within one ER** — `install_envs` installs every env of a project concurrently, each running a package-manager subprocess (e.g. `uv install`). Interpreter-matrix envs (ADR-0047) make this worse, since one matrix env can expand into many concurrent children.
+A nested run (one asked for by another run's fan-out) is always granted at least one slot, so it
+can always make progress; the whole machine is never over-subscribed in the common, non-nested
+case.
 
-On a resource-constrained machine these two fan-outs compose multiplicatively — N projects × M envs concurrent subprocesses — and can starve the WM's own event loop. Both fan-outs are bounded to avoid this (ADR-0055).
+### Optional per-ER ceiling
 
-### Layer 1 — concurrent projects
-
-```bash
-python -m finecode prepare-envs --max-concurrent-projects=2
-```
-
-Or via environment variable:
-
-```bash
-export FINECODE_WM_PREPARE_ENVS_MAX_CONCURRENT_PROJECTS=2
-```
-
-Priority: `--max-concurrent-projects` > the env var > the default formula (below). This is a **machine-bound** setting — it has no `finecode-workspace.toml` equivalent, because that file is shared/committed and a number tuned for one developer's machine would be wrong on everyone else's.
-
-### Layer 2 — concurrent subprocesses per ER
-
-Every subprocess spawned inside an ER (via `CommandRunner`, e.g. `uv install`) goes through a shared cap, configured as service config on `ICommandRunner` (ADR-0056):
+A project that wants to pin one noisy ER below the machine budget can still set a local ceiling as
+service config on `ICommandRunner` (ADR-0056):
 
 ```toml
 [[tool.finecode.service]]
@@ -412,33 +404,20 @@ env = "dev_no_runtime"
 config.max_concurrent_processes = 4
 ```
 
-Since this is also a machine-bound tuning value rather than a project setting, put it in a gitignored `finecode-user.toml` instead of a committed `pyproject.toml` — see [`finecode-user.toml`](../configuration.md#finecode-usertoml).
+This is an *additional* ceiling on top of the shared gate, not a replacement for it, and defaults
+to unset. Since it is a machine-bound tuning value rather than a project setting, put it in a
+gitignored `finecode-user.toml` instead of a committed `pyproject.toml` — see
+[`finecode-user.toml`](../configuration.md#finecode-usertoml).
 
-### The default formula
+### A separate budget: ER startup concurrency
 
-When a layer's own cap is left unset, both layers default from the same formula:
-
-1. Start from the machine's usable CPU budget: `len(os.sched_getaffinity(0))` (respects container CPU quotas/pinning, unlike `os.cpu_count()`), minus one core of headroom so the WM keeps a guaranteed scheduling slot even under full subprocess load.
-2. Split that budget between the two layers via its square root, rather than handing each layer the full budget independently. The two layers compose multiplicatively in the worst case, so giving each the full budget would let their product overshoot the machine's real capacity by up to a squared factor (e.g. a 7-subprocess budget → 49 concurrent subprocesses if both layers used 7). The square-root split keeps the worst-case product close to the actual machine budget:
-
-   | Machine budget | Per-layer default | Worst-case product |
-   | --- | --- | --- |
-   | 1 | 1 | 1 |
-   | 3 | 2 | 4 |
-   | 7 | 3 | 9 |
-   | 15 | 4 | 16 |
-
-A configured value of `0` or less at either layer is treated as `1` — a zero-sized concurrency limit would deadlock the affected step forever, not disable it.
-
-### A third, separate cap: ER startup concurrency
-
-The two layers above bound `create_envs`/`install_envs` specifically. A related but independent cap
-bounds how many Extension Runner *processes* may be starting at once, regardless of which command
-triggered the starts — including `prepare-envs`' own "start runners in each `dev_workspace`" step,
-workspace init, and a matrixed `run`. It uses the same machine-budget formula but not the sqrt-split
-(a single flat axis, not two composing layers), and is configured separately via
-`FINECODE_WM_MAX_CONCURRENT_ER_STARTS`. See [ER startup concurrency](wm-server-internals.md#er-startup-concurrency)
-(ADR-0063) for the full picture.
+The process budget above bounds subprocess *work*. A related but independent cap bounds how many
+Extension Runner *processes* may be starting at once, regardless of which command triggered the
+starts — including `prepare-envs`' own "start runners in each `dev_workspace`" step, workspace
+init, and a matrixed `run`. It is configured via `FINECODE_WM_MAX_CONCURRENT_ER_STARTS` and is
+deliberately separate: the WM starts runners lazily *inside* a fan-out, so a run holding
+process-budget slots must never block on the same budget to start the ER it is fanning out into.
+See [ER startup concurrency](wm-server-internals.md#er-startup-concurrency) (ADR-0063).
 
 ---
 

@@ -8,6 +8,8 @@ import sys
 import typing
 
 from finecode_extension_api.interfaces import iprocessexecutor
+from finecode_extension_runner.concurrency import machine_subprocess_budget
+from finecode_extension_runner.process_slots import ProcessSlots, get_process_slots
 from loguru import logger
 
 P = typing.ParamSpec("P")
@@ -15,7 +17,10 @@ T = typing.TypeVar("T")
 
 
 class ProcessExecutor(iprocessexecutor.IProcessExecutor):
-    def __init__(self) -> None:
+    def __init__(self, process_slots: ProcessSlots | None = None) -> None:
+        self._process_slots = (
+            process_slots if process_slots is not None else get_process_slots()
+        )
         self._py_process_executor: concurrent.futures.ProcessPoolExecutor | None = None
         self._active: bool = False
 
@@ -45,7 +50,7 @@ class ProcessExecutor(iprocessexecutor.IProcessExecutor):
             else:
                 mp_context = mp.get_context("spawn")
             self._py_process_executor = concurrent.futures.ProcessPoolExecutor(
-                mp_context=mp_context
+                mp_context=mp_context, max_workers=machine_subprocess_budget()
             )
 
         loop = asyncio.get_running_loop()
@@ -59,6 +64,7 @@ class ProcessExecutor(iprocessexecutor.IProcessExecutor):
             f" processes: {len(self._py_process_executor._processes)},"
             f" max workers: {self._py_process_executor._max_workers}"
         )
+        await self._process_slots.acquire()
         try:
             result = await loop.run_in_executor(
                 self._py_process_executor, func_to_execute, *args
@@ -66,4 +72,6 @@ class ProcessExecutor(iprocessexecutor.IProcessExecutor):
         except Exception as exc:
             logger.exception(exc)
             raise
+        finally:
+            await self._process_slots.release()
         return result

@@ -395,9 +395,10 @@ protocol even though the runner never became reachable. (Regression-tested in
     - `payload` (object): serialized action payload
     - `meta` (object): `{ "trigger": string, "devEnv": string, "orchestrationDepth": int }`
     - `projectPaths` (list[string] | null): explicit POSIX project paths, or `null` for all projects that declare the action
+    - `payloadOverridesByProject` (object | null): complete per-project payload overrides (keyed by POSIX path); the WM shallow-merges `{**payload, **overrides[project]}`
     - `concurrently` (boolean, default `true`): run projects concurrently.
   - Result: `{ "resultsByProject": { "<posix path>": <json result>, ... } }`
-  - Fans out the action across the specified projects (or all projects that declare it). Because this route is always nested orchestration (an ER handler asking the WM to fan out, so `orchestrationDepth > 0`), the WM enforces `OrchestrationPolicy.max_project_fanout` before dispatching — see [ADR-0067](../../finecode_internal_docs/adr/0067-fanout-width-is-throttled-at-depth-zero-refused-only-when-nested.md). Requests arriving from external clients at depth 0 are throttled instead; see [run fan-out concurrency](guides/wm-server-internals.md#run-fan-out-concurrency).
+  - Fans out the action across the specified projects (or all projects that declare it). Because this route is always nested orchestration (an ER handler asking the WM to fan out, so `orchestrationDepth > 0`), the WM enforces `OrchestrationPolicy.max_project_fanout` before dispatching — see [ADR-0067](../../finecode_internal_docs/adr/0067-fanout-width-is-throttled-at-depth-zero-refused-only-when-nested.md). The subprocess fan-out a dispatch leads to is bounded by the [process budget](guides/wm-server-internals.md#process-budget) (ADR-0090).
 
 - `knowledge/registerSchema`
   - Params: `{ "snapshot": <object> }`

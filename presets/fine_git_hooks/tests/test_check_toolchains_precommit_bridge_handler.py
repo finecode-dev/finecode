@@ -57,6 +57,20 @@ class _FakeWorkspaceActionRunner:
             path: self._results[path] for path in project_paths if path in self._results
         }
 
+    async def run_action_per_project(
+        self,
+        action_type: type,
+        payload_by_project: dict[pathlib.Path, code_action.RunActionPayload],
+        meta: code_action.RunActionMeta,
+        concurrently: bool = True,
+    ) -> dict[pathlib.Path, CheckToolchainsRunResult]:
+        self.requested_project_paths.extend(payload_by_project)
+        return {
+            path: self._results[path]
+            for path in payload_by_project
+            if path in self._results
+        }
+
 
 class _FakeLogger:
     def info(self, message: str) -> None: ...

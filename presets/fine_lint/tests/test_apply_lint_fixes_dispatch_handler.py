@@ -57,6 +57,17 @@ class _FakeWorkspaceActionRunner:
         results = self._results_by_action.get(action_type, {})
         return {path: results[path] for path in project_paths if path in results}
 
+    async def run_action_per_project(
+        self,
+        action_type: type,
+        payload_by_project: dict[pathlib.Path, code_action.RunActionPayload],
+        meta: code_action.RunActionMeta,
+        concurrently: bool = True,
+    ) -> dict[pathlib.Path, code_action.RunActionResult]:
+        self.calls.append((action_type, list(payload_by_project)))
+        results = self._results_by_action.get(action_type, {})
+        return {path: results[path] for path in payload_by_project if path in results}
+
 
 class _FakeUserMessenger:
     def __init__(self) -> None:

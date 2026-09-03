@@ -1,10 +1,10 @@
-import asyncio
 import dataclasses
 
 from fine_lint import lint_action
 from finecode_extension_api import code_action
 from finecode_extension_api.interfaces import (
     ilogger,
+    iprojectactionrunner,
     iworkspaceactionrunner,
     iworkspaceinfoprovider,
 )
@@ -64,34 +64,28 @@ class LintPrecommitBridgeHandler(
             )
             return precommit_action.PrecommitRunResult()
 
+        payload_by_project = {
+            project_path: lint_action.LintRunPayload(
+                target=lint_action.LintTarget.FILES,
+                file_paths=[path_to_resource_uri(p) for p in project_files],
+            )
+            for project_path, project_files in files_by_project.items()
+        }
+
         try:
-            async with asyncio.TaskGroup() as tg:
-                tasks = [
-                    tg.create_task(
-                        self.workspace_action_runner.run_action_in_projects(
-                            action_type=lint_action.LintAction,
-                            payload=lint_action.LintRunPayload(
-                                target=lint_action.LintTarget.FILES,
-                                file_paths=[
-                                    path_to_resource_uri(p) for p in project_files
-                                ],
-                            ),
-                            meta=run_context.meta,
-                            project_paths=[project_path],
-                        )
-                    )
-                    for project_path, project_files in files_by_project.items()
-                ]
-        except ExceptionGroup as eg:
-            errors = [getattr(exc, "message", str(exc)) for exc in eg.exceptions]
+            results = await self.workspace_action_runner.run_action_per_project(
+                action_type=lint_action.LintAction,
+                payload_by_project=payload_by_project,
+                meta=run_context.meta,
+            )
+        except iprojectactionrunner.ActionRunFailed as exc:
             raise code_action.ActionFailedException(
-                "Lint failed:\n" + "\n".join(f"  - {e}" for e in errors)
-            ) from eg
+                "Lint failed:\n  - " + exc.message
+            ) from exc
 
         merged_lint_result = lint_action.LintRunResult(messages={})
-        for task in tasks:
-            for project_result in task.result().values():
-                merged_lint_result.update(project_result)
+        for project_result in results.values():
+            merged_lint_result.update(project_result)
 
         return precommit_action.PrecommitRunResult(
             action_results={"lint": merged_lint_result}

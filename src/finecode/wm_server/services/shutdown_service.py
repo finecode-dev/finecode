@@ -38,7 +38,9 @@ async def on_shutdown(ws_context: context.WorkspaceContext) -> None:
     # regardless of how many runners there are.
     await asyncio.gather(
         *(
-            runner_manager.stop_extension_runner(runner=runner)
+            runner_manager.stop_extension_runner(
+                runner=runner, ws_context=ws_context
+            )
             for runner in running_runners
         )
     )
@@ -51,6 +53,7 @@ async def on_shutdown(ws_context: context.WorkspaceContext) -> None:
     for runner in initializing_runners:
         if runner.client is not None:
             runner.client.force_kill()
+        await ws_context.process_budget.reclaim_for_runner(runner.readable_id)
 
     if ws_context.runner_io_thread is not None:
         logger.trace("Stop IO thread")

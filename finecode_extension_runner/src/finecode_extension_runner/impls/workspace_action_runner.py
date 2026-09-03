@@ -69,6 +69,53 @@ class WorkspaceActionRunnerImpl(iworkspaceactionrunner.IWorkspaceActionRunner):
             raise iprojectactionrunner.ActionRunFailed(
                 f"Running '{action_type.__name__}' in [{project_str}] failed: {e}"
             ) from e
+        return self._decode_results(action_type, raw)
+
+    async def run_action_per_project(
+        self,
+        action_type: type[code_action.Action[PayloadT, typing.Any, ResultT]],
+        payload_by_project: dict[pathlib.Path, PayloadT],
+        meta: code_action.RunActionMeta,
+        concurrently: bool = True,
+    ) -> dict[pathlib.Path, ResultT]:
+        action_source = f"{action_type.__module__}.{action_type.__qualname__}"
+        traceparent = er_telemetry.get_current_traceparent()
+        try:
+            raw = await self._send(
+                "finecode/runActionInWorkspace",
+                {
+                    "actionSource": action_source,
+                    # An empty base payload plus complete per-project overrides
+                    # is exactly a per-project payload: the WM shallow-merges
+                    # `{**payload, **overrides[project]}`.
+                    "payload": {},
+                    "meta": {
+                        "trigger": meta.trigger.value,
+                        "devEnv": meta.dev_env.value,
+                        "orchestrationDepth": meta.orchestration_depth,
+                    },
+                    "projectPaths": [p.as_posix() for p in payload_by_project],
+                    "payloadOverridesByProject": {
+                        p.as_posix(): dataclasses.asdict(payload)
+                        for p, payload in payload_by_project.items()
+                    },
+                    "concurrently": concurrently,
+                    "traceparent": traceparent,
+                    "runId": run_context.current_run_id(),
+                },
+            )
+        except Exception as e:
+            project_str = ", ".join(str(p) for p in payload_by_project)
+            raise iprojectactionrunner.ActionRunFailed(
+                f"Running '{action_type.__name__}' in [{project_str}] failed: {e}"
+            ) from e
+        return self._decode_results(action_type, raw)
+
+    def _decode_results(
+        self,
+        action_type: type[code_action.Action[PayloadT, typing.Any, ResultT]],
+        raw: dict,
+    ) -> dict[pathlib.Path, ResultT]:
         results_by_project: dict = raw["resultsByProject"]
         results: dict[pathlib.Path, ResultT] = {}
         for k, v in results_by_project.items():

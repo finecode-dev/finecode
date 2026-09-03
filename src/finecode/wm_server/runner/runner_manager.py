@@ -235,6 +235,7 @@ async def _start_extension_runner_process(
             # out waiting for the port handshake) — kill it now rather than leaving
             # it running unmanaged, since no status/attempt will ever revisit it.
             client.force_kill()
+            await ws_context.process_budget.reclaim_for_runner(runner.readable_id)
             runner.status = runner_client.RunnerStatus.FAILED
             runner.initialized_event.set()
             raise
@@ -248,6 +249,7 @@ async def _start_extension_runner_process(
                 await asyncio.wait_for(debug_async_future, timeout=30)
             except TimeoutError as exception:
                 client.force_kill()
+                await ws_context.process_budget.reclaim_for_runner(runner.readable_id)
                 runner.status = runner_client.RunnerStatus.FAILED
                 runner.initialized_event.set()
                 raise RunnerFailedToStart(
@@ -277,6 +279,7 @@ async def _start_extension_runner_process(
                     f"Runner {runner.readable_id} failed to connect to server: {exception}"
                 )
                 client.force_kill()
+                await ws_context.process_budget.reclaim_for_runner(runner.readable_id)
                 runner.status = runner_client.RunnerStatus.FAILED
                 runner.initialized_event.set()
                 raise RunnerFailedToStart(str(exception)) from exception
@@ -509,6 +512,40 @@ async def _start_extension_runner_process(
         handle_run_action_in_workspace,
     )
 
+    async def handle_lease_process_budget(
+        params: _internal_client_types.LeaseProcessBudgetParams,
+    ) -> _internal_client_types.LeaseProcessBudgetResult:
+        """Lease process-budget slots for one action run in this ER (ADR-0090)."""
+        lease = await ws_context.process_budget.lease(
+            runner_id=runner.readable_id,
+            requested=params.requested,
+            nested=params.nested,
+        )
+        target = ws_context.process_budget.target_for_runner(runner.readable_id)
+        await runner_client.update_process_budget(runner=runner, target=target)
+        return _internal_client_types.LeaseProcessBudgetResult(
+            lease_id=lease.lease_id, granted=lease.granted
+        )
+
+    runner.client.feature(
+        _internal_client_types.LEASE_PROCESS_BUDGET,
+        handle_lease_process_budget,
+    )
+
+    async def handle_release_process_budget(
+        params: _internal_client_types.ReleaseProcessBudgetParams,
+    ) -> _internal_client_types.ReleaseProcessBudgetResult:
+        """Release one action run's process-budget lease (ADR-0090)."""
+        await ws_context.process_budget.release(params.lease_id)
+        target = ws_context.process_budget.target_for_runner(runner.readable_id)
+        await runner_client.update_process_budget(runner=runner, target=target)
+        return _internal_client_types.ReleaseProcessBudgetResult()
+
+    runner.client.feature(
+        _internal_client_types.RELEASE_PROCESS_BUDGET,
+        handle_release_process_budget,
+    )
+
     async def handle_get_actions_for_parent(
         params: _internal_client_types.GetActionsForParentParams,
     ) -> _internal_client_types.GetActionsForParentResult:
@@ -615,7 +652,10 @@ async def _start_extension_runner_process(
 _STOP_TIMEOUT_SEC: typing.Final = 10
 
 
-async def stop_extension_runner(runner: runner_client.ExtensionRunnerInfo) -> None:
+async def stop_extension_runner(
+    runner: runner_client.ExtensionRunnerInfo,
+    ws_context: context.WorkspaceContext,
+) -> None:
     logger.trace(f"Trying to stop extension runner {runner.readable_id}")
     if runner.status in (
         runner_client.RunnerStatus.RUNNING,
@@ -656,6 +696,12 @@ async def stop_extension_runner(runner: runner_client.ExtensionRunnerInfo) -> No
         logger.trace(f"Stopped extension runner {runner.readable_id}")
     else:
         logger.trace("Extension runner was not running")
+
+    # Whatever the ER released gracefully on its way out, reclaim what it still
+    # holds. A force-killed or crashed ER cannot release its own leases, and a
+    # graceful one may not have released every run that was mid-flight when the
+    # exit arrived — the budget must not leak slots permanently (ADR-0090).
+    await ws_context.process_budget.reclaim_for_runner(runner.readable_id)
 
 
 async def start_runners_with_presets(
@@ -1347,7 +1393,7 @@ async def restart_extension_runner(
             f"Cannot find runner for env {env_name} in {runner_working_dir_path}"
         ) from exception
 
-    await stop_extension_runner(runner)
+    await stop_extension_runner(runner, ws_context)
 
     project_def = ws_context.ws_projects[runner.working_dir_path]
 

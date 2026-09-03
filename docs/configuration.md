@@ -143,6 +143,11 @@ env = "dev_no_runtime"
 config.max_concurrent_processes = 4
 ```
 
+`config.max_concurrent_processes` is an optional per-ER *ceiling* on top of the
+machine-wide process budget (ADR-0090); when unset, the shared budget is the
+only bound. Put machine-specific values in a gitignored `finecode-user.toml`
+rather than a committed `pyproject.toml`.
+
 ### Configuring Extension Runner logging
 
 Each Extension Runner is a separate subprocess. Its log level and per-group overrides are configured under `[tool.finecode.er]`. The WM reads this at startup and delivers the resolved config to the ER — the ER never reads config files directly.

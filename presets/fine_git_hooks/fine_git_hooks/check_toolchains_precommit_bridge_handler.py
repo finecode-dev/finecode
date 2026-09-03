@@ -1,4 +1,3 @@
-import asyncio
 import dataclasses
 import os
 import pathlib
@@ -11,6 +10,7 @@ from fine_envs.check_toolchains_action import (
 from finecode_extension_api import code_action
 from finecode_extension_api.interfaces import (
     ilogger,
+    iprojectactionrunner,
     iworkspaceactionrunner,
     iworkspaceinfoprovider,
 )
@@ -93,27 +93,18 @@ class CheckToolchainsPrecommitBridgeHandler(
             return precommit_action.PrecommitRunResult()
 
         try:
-            async with asyncio.TaskGroup() as tg:
-                tasks = [
-                    tg.create_task(
-                        self.workspace_action_runner.run_action_in_projects(
-                            action_type=CheckToolchainsAction,
-                            payload=CheckToolchainsRunPayload(),
-                            meta=run_context.meta,
-                            project_paths=[project_path],
-                        )
-                    )
-                    for project_path in files_by_project
-                ]
-        except ExceptionGroup as eg:
-            errors = [getattr(exc, "message", str(exc)) for exc in eg.exceptions]
+            results_by_project: dict[
+                pathlib.Path, CheckToolchainsRunResult
+            ] = await self.workspace_action_runner.run_action_in_projects(
+                action_type=CheckToolchainsAction,
+                payload=CheckToolchainsRunPayload(),
+                meta=run_context.meta,
+                project_paths=list(files_by_project),
+            )
+        except iprojectactionrunner.ActionRunFailed as exc:
             raise code_action.ActionFailedException(
-                "Toolchain check failed:\n" + "\n".join(f"  - {e}" for e in errors)
-            ) from eg
-
-        results_by_project: dict[pathlib.Path, CheckToolchainsRunResult] = {}
-        for task in tasks:
-            results_by_project.update(task.result())
+                "Toolchain check failed:\n  - " + exc.message
+            ) from exc
 
         # Drift is signalled by CheckToolchainsRunResult.return_code (ERROR), not by an
         # exception, so the failure propagates through PrecommitRunResult.return_code,

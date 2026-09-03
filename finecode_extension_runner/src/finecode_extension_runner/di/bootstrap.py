@@ -28,7 +28,7 @@ from finecode_extension_api.interfaces import (  # idevenvinfoprovider,
 )
 from loguru import logger
 
-from finecode_extension_runner import context, domain, service_config
+from finecode_extension_runner import context, domain, process_slots, service_config
 from finecode_extension_runner._services import run_action as run_action_service
 from finecode_extension_runner.di.registry import Registry
 from finecode_extension_runner.impls import (  # dev_env_info_provider,
@@ -118,6 +118,10 @@ def bootstrap(
         file_editor=file_editor_instance, logger=logger_instance
     )
     registry.register_instance(ilogger.ILogger, logger_instance)
+    # One ER-lifetime gate shared by CommandRunner and ProcessExecutor
+    # (ADR-0090). It must outlive every RunnerContext rebuild, so it is the
+    # process-wide singleton, registered fresh into each new registry.
+    registry.register_instance(process_slots.ProcessSlots, process_slots.get_process_slots())
     _send_user_message = send_user_message_notification or (lambda msg, level: None)
     registry.register_instance(
         iuser_messenger.IUserMessenger,

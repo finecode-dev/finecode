@@ -287,7 +287,7 @@ async def _handle_runners_remove_env(
     runners = ws_context.ws_projects_extension_runners.get(project.dir_path, {})
     runner = runners.get(env_name)
     if runner is not None:
-        await runner_manager.stop_extension_runner(runner=runner)
+        await runner_manager.stop_extension_runner(runner=runner, ws_context=ws_context)
 
     runner_manager.remove_runner_env(runner_dir=project.dir_path, env_name=env_name)
     return {}

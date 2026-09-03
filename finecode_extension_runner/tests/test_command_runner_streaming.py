@@ -27,6 +27,7 @@ from finecode_extension_runner.impls.command_runner import (
     CommandRunner,
     CommandRunnerConfig,
 )
+from finecode_extension_runner.process_slots import ProcessSlots
 
 
 class _NoopLogger:
@@ -41,7 +42,11 @@ class _NoopLogger:
 
 
 def _runner() -> CommandRunner:
-    return CommandRunner(logger=_NoopLogger(), config=CommandRunnerConfig())
+    return CommandRunner(
+        logger=_NoopLogger(),
+        config=CommandRunnerConfig(),
+        process_slots=ProcessSlots(target=4),
+    )
 
 
 def _python(script: str) -> str:

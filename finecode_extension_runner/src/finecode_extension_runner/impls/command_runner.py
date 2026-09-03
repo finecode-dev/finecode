@@ -10,11 +10,8 @@ from pathlib import Path
 
 from finecode_extension_api.interfaces import icommandrunner, ilogger
 
-from finecode_extension_runner.concurrency import (
-    ConcurrencyDecision,
-    default_layered_concurrency,
-    machine_subprocess_budget,
-)
+from finecode_extension_runner.concurrency import ConcurrencyDecision
+from finecode_extension_runner.process_slots import ProcessSlots
 
 # Per-line ceiling for the subprocess stream readers, well above asyncio's 64 KiB
 # default. A reader that overruns its limit does not merely raise -- it discards
@@ -403,23 +400,22 @@ class SyncProcess(icommandrunner.ISyncProcess):
 
 def resolve_command_runner_concurrency(
     configured_value: int | None,
-) -> ConcurrencyDecision:
-    """Effective cap on concurrent subprocesses for one ER's `CommandRunner`,
-    with the reason it was picked (for logging — see `ConcurrencyDecision`).
+) -> ConcurrencyDecision | None:
+    """Optional local ceiling for one ER's `CommandRunner`, with the reason it
+    was picked (for logging — see `ConcurrencyDecision`).
 
-    Priority: `config.max_concurrent_processes` (service config, if set and
-    positive) > `default_layered_concurrency()`. Has no env var of its own —
-    it's delivered as service config (see ADR-0056), which already has a
-    machine-local override path via a personal `finecode-user.toml`.
+    ``config.max_concurrent_processes`` (service config, if set and positive)
+    is kept as an *additional* ceiling on top of the WM-leased process gate
+    (ADR-0090); when unset there is no local cap and the shared gate is the
+    only bound.  It has no env var of its own — it's delivered as service
+    config (see ADR-0056), which already has a machine-local override path
+    via a personal `finecode-user.toml`.
     """
     if configured_value is not None:
         return ConcurrencyDecision(
             max(configured_value, 1), "service config max_concurrent_processes"
         )
-    return ConcurrencyDecision(
-        default_layered_concurrency(),
-        f"computed default (machine budget {machine_subprocess_budget()}, sqrt-split)",
-    )
+    return None
 
 
 @dataclasses.dataclass
@@ -428,17 +424,26 @@ class CommandRunnerConfig:
 
 
 class CommandRunner(icommandrunner.ICommandRunner):
-    def __init__(self, logger: ilogger.ILogger, config: CommandRunnerConfig):
+    def __init__(
+        self,
+        logger: ilogger.ILogger,
+        config: CommandRunnerConfig,
+        process_slots: ProcessSlots,
+    ):
         self.logger = logger
+        self._process_slots = process_slots
         decision = resolve_command_runner_concurrency(config.max_concurrent_processes)
-        logger.info(
-            f"Capping concurrent subprocesses to {decision.value} ({decision.source})"
-        )
-        self._semaphore = asyncio.Semaphore(decision.value)
+        if decision is not None:
+            logger.info(
+                f"Capping concurrent subprocesses to {decision.value} ({decision.source})"
+            )
+            self._local_cap = asyncio.Semaphore(decision.value)
+        else:
+            self._local_cap = None
         # Strong references to the in-flight release tasks. Without them the
         # event loop keeps only a weak reference, so a release task can be
         # garbage-collected before the process exits — permanently losing one
-        # semaphore slot, and eventually wedging the runner at the cap.
+        # gate slot, and eventually wedging the runner at the cap.
         self._release_tasks: set[asyncio.Task[None]] = set()
 
     async def run(
@@ -458,7 +463,9 @@ class CommandRunner(icommandrunner.ICommandRunner):
         # so bounding just this method's body would release the semaphore
         # almost instantly and fail to bound how many subprocesses are alive
         # at once, which is what actually causes resource contention.
-        await self._semaphore.acquire()
+        await self._process_slots.acquire()
+        if self._local_cap is not None:
+            await self._local_cap.acquire()
         owns_process_group = new_process_group and _POSIX
         try:
             # TODO: investigate why it works only with shell, not exec
@@ -473,7 +480,9 @@ class CommandRunner(icommandrunner.ICommandRunner):
                 start_new_session=owns_process_group,
             )
         except BaseException:
-            self._semaphore.release()
+            if self._local_cap is not None:
+                self._local_cap.release()
+            await self._process_slots.release()
             raise
         release_task = asyncio.create_task(self._release_when_done(async_subprocess))
         self._release_tasks.add(release_task)
@@ -486,7 +495,9 @@ class CommandRunner(icommandrunner.ICommandRunner):
         try:
             await proc.wait()
         finally:
-            self._semaphore.release()
+            if self._local_cap is not None:
+                self._local_cap.release()
+            await self._process_slots.release()
 
     def run_sync(
         self, cmd: str, cwd: Path | None = None, env: dict[str, str] | None = None

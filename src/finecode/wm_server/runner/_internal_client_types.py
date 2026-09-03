@@ -36,6 +36,7 @@ ER_RESOLVE_SOURCE = "actions/resolveSource"
 ER_RESOLVE_PACKAGE_PATH = "packages/resolvePath"
 ER_UPDATE_CONFIG = "finecodeRunner/updateConfig"
 ER_UPDATE_LOGGING = "finecodeRunner/updateLogging"
+ER_UPDATE_PROCESS_BUDGET = "finecodeRunner/updateProcessBudget"
 ER_RESOLVE_ACTION_META = "finecodeRunner/resolveActionMeta"
 ER_GET_INFO = "finecodeRunner/getInfo"
 WORKSPACE_APPLY_EDIT = "workspace/applyEdit"
@@ -47,6 +48,8 @@ WORKSPACE_EDITABLE_PACKAGES_GET = "workspace/getWorkspaceEditablePackages"
 WORKSPACE_PROJECT_PATHS_GET = "workspace/getProjectPaths"
 RUN_ACTION_IN_PROJECT = "finecode/runActionInProject"
 RUN_ACTION_IN_WORKSPACE = "finecode/runActionInWorkspace"
+LEASE_PROCESS_BUDGET = "finecode/leaseProcessBudget"
+RELEASE_PROCESS_BUDGET = "finecode/releaseProcessBudget"
 GET_ACTIONS_FOR_PARENT = "finecode/getActionsForParent"
 LIST_WORKSPACE_ACTIONS = "finecode/listWorkspaceActions"
 ELICIT = "finecode/elicit"
@@ -1595,6 +1598,7 @@ class RunActionInWorkspaceParams:
     payload: dict
     meta: RunActionInProjectMeta
     project_paths: list[str] | None = None
+    payload_overrides_by_project: dict[str, dict] | None = None
     concurrently: bool = True
     traceparent: str | None = None
     # See RunActionInProjectParams.run_id: every project this fans out into
@@ -1616,6 +1620,50 @@ class RunActionInWorkspaceRequest(BaseRequest):
 @dataclasses.dataclass
 class RunActionInWorkspaceResponse(BaseResponse):
     result: RunActionInWorkspaceResult
+
+
+@dataclasses.dataclass
+class LeaseProcessBudgetParams:
+    requested: int
+    nested: bool = False
+    run_id: str | None = None
+
+
+@dataclasses.dataclass
+class LeaseProcessBudgetResult(BaseResult):
+    lease_id: str
+    granted: int
+
+
+@dataclasses.dataclass
+class LeaseProcessBudgetRequest(BaseRequest):
+    params: LeaseProcessBudgetParams
+    method = LEASE_PROCESS_BUDGET
+
+
+@dataclasses.dataclass
+class LeaseProcessBudgetResponse(BaseResponse):
+    result: LeaseProcessBudgetResult
+
+
+@dataclasses.dataclass
+class ReleaseProcessBudgetParams:
+    lease_id: str
+
+
+@dataclasses.dataclass
+class ReleaseProcessBudgetResult(BaseResult): ...
+
+
+@dataclasses.dataclass
+class ReleaseProcessBudgetRequest(BaseRequest):
+    params: ReleaseProcessBudgetParams
+    method = RELEASE_PROCESS_BUDGET
+
+
+@dataclasses.dataclass
+class ReleaseProcessBudgetResponse(BaseResponse):
+    result: ReleaseProcessBudgetResult
 
 
 # ---------------------------------------------------------------------------
@@ -1995,6 +2043,25 @@ class ErUpdateLoggingResponse(BaseResponse):
 
 
 @dataclasses.dataclass
+class ErUpdateProcessBudgetParams:
+    target: int
+
+
+@dataclasses.dataclass
+class ErUpdateProcessBudgetRequest(BaseRequest):
+    params: ErUpdateProcessBudgetParams
+
+
+@dataclasses.dataclass
+class ErUpdateProcessBudgetResult(BaseResult): ...
+
+
+@dataclasses.dataclass
+class ErUpdateProcessBudgetResponse(BaseResponse):
+    result: ErUpdateProcessBudgetResult
+
+
+@dataclasses.dataclass
 class ErLogRecordsParams:
     records: list[dict]
 
@@ -2166,6 +2233,12 @@ METHOD_TO_TYPES: dict[
         ErUpdateLoggingResponse,
         None,
     ),
+    ER_UPDATE_PROCESS_BUDGET: (
+        ErUpdateProcessBudgetRequest,
+        ErUpdateProcessBudgetParams,
+        ErUpdateProcessBudgetResponse,
+        None,
+    ),
     ER_LOG_RECORDS: (ErLogRecordsNotification, ErLogRecordsParams, None, None),
     ER_USER_MESSAGE: (ErUserMessageNotification, ErUserMessageParams, None, None),
     ER_GET_INFO: (None, None, ErGetInfoResponse, None),
@@ -2210,6 +2283,18 @@ METHOD_TO_TYPES: dict[
         RunActionInWorkspaceParams,
         RunActionInWorkspaceResponse,
         RunActionInWorkspaceResult,
+    ),
+    LEASE_PROCESS_BUDGET: (
+        LeaseProcessBudgetRequest,
+        LeaseProcessBudgetParams,
+        LeaseProcessBudgetResponse,
+        LeaseProcessBudgetResult,
+    ),
+    RELEASE_PROCESS_BUDGET: (
+        ReleaseProcessBudgetRequest,
+        ReleaseProcessBudgetParams,
+        ReleaseProcessBudgetResponse,
+        ReleaseProcessBudgetResult,
     ),
     ER_RESOLVE_ACTION_META: (None, None, ErResolveActionMetaResponse, None),
     GET_ACTIONS_FOR_PARENT: (

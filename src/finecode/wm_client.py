@@ -643,7 +643,6 @@ class ApiClient:
         interpreter_names: list[str] | None = None,
         project_names: list[str] | None = None,
         dev_env: str | None = None,
-        max_concurrent_projects: int | None = None,
     ) -> None:
         """Prepare all environments for the workspace.
 
@@ -662,8 +661,6 @@ class ApiClient:
             params["projectNames"] = project_names
         if dev_env is not None:
             params["devEnv"] = dev_env
-        if max_concurrent_projects is not None:
-            params["maxConcurrentProjects"] = max_concurrent_projects
         await self.request("workspace/prepareEnvs", params)
 
     async def list_runners(self) -> list[dict]:

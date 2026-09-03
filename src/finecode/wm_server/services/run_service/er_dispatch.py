@@ -258,6 +258,15 @@ class _BridgeHandlers:
             }
 
         executor = WorkspaceExecutor(ws_context)
+        # Override keys arrive as the ER serialized them (`as_posix()`). The
+        # `proxy_utils` lookup uses `str(Path)`, and the two forms differ on
+        # Windows (`C:\ws\proj` vs `C:/ws/proj`) — normalize here at the one
+        # new boundary so no project silently receives the empty base payload
+        # (ADR-0090, D-B1).
+        payload_overrides_by_project = {
+            str(Path(k)): v
+            for k, v in (params.payload_overrides_by_project or {}).items()
+        } or None
         results = await executor.run_actions_in_projects(
             actions_by_project=actions_by_project,
             params=params.payload,
@@ -265,6 +274,7 @@ class _BridgeHandlers:
             dev_env=dev_env,
             orchestration_depth=params.meta.orchestration_depth,
             concurrently=params.concurrently,
+            payload_overrides_by_project=payload_overrides_by_project,
             origin=_origin_of_calling_run(params.run_id),
         )
         return _internal_client_types.RunActionInWorkspaceResult(

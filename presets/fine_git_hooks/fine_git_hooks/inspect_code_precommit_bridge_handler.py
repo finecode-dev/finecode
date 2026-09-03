@@ -1,4 +1,3 @@
-import asyncio
 import dataclasses
 
 from fine_inspect_code.inspect_code_action import (
@@ -9,6 +8,7 @@ from fine_inspect_code.inspect_code_action import (
 from finecode_extension_api import code_action
 from finecode_extension_api.interfaces import (
     ilogger,
+    iprojectactionrunner,
     iworkspaceactionrunner,
     iworkspaceinfoprovider,
 )
@@ -69,35 +69,29 @@ class InspectCodePrecommitBridgeHandler(
             return precommit_action.PrecommitRunResult()
 
         try:
-            async with asyncio.TaskGroup() as tg:
-                tasks = [
-                    tg.create_task(
-                        self.workspace_action_runner.run_action_in_projects(
-                            action_type=InspectCodeAction,
-                            payload=InspectCodeRunPayload(
-                                target=InspectCodeTarget.FILES,
-                                file_paths=[
-                                    path_to_resource_uri(p) for p in project_files
-                                ],
-                            ),
-                            meta=run_context.meta,
-                            project_paths=[project_path],
-                        )
+            results = await self.workspace_action_runner.run_action_per_project(
+                action_type=InspectCodeAction,
+                payload_by_project={
+                    project_path: InspectCodeRunPayload(
+                        target=InspectCodeTarget.FILES,
+                        file_paths=[
+                            path_to_resource_uri(p) for p in project_files
+                        ],
                     )
                     for project_path, project_files in files_by_project.items()
-                ]
-        except ExceptionGroup as eg:
-            errors = [getattr(exc, "message", str(exc)) for exc in eg.exceptions]
+                },
+                meta=run_context.meta,
+            )
+        except iprojectactionrunner.ActionRunFailed as exc:
             raise code_action.ActionFailedException(
-                "Inspect code failed:\n" + "\n".join(f"  - {e}" for e in errors)
-            ) from eg
+                "Inspect code failed:\n  - " + exc.message
+            ) from exc
 
         from fine_inspect_code.inspect_code_action import InspectCodeRunResult
 
         merged_result = InspectCodeRunResult(messages={})
-        for task in tasks:
-            for project_result in task.result().values():
-                merged_result.update(project_result)
+        for project_result in results.values():
+            merged_result.update(project_result)
 
         return precommit_action.PrecommitRunResult(
             action_results={"inspect_code": merged_result}

@@ -467,6 +467,18 @@ async def update_logging(
     )
 
 
+async def update_process_budget(runner: ExtensionRunnerInfo, target: int) -> None:
+    """Resize an ER's process-slot gate via ``finecodeRunner/updateProcessBudget``.
+
+    Process-level only on the ER side -- does NOT rebuild RunnerContext
+    (contrast ``update_config``). See ADR-0090.
+    """
+    await runner.client.send_request(
+        method=_internal_client_types.ER_UPDATE_PROCESS_BUDGET,
+        params=_internal_client_types.ErUpdateProcessBudgetParams(target=target),
+    )
+
+
 async def notify_document_did_open(
     runner: ExtensionRunnerInfo, document_info: domain.TextDocumentInfo
 ) -> None:
@@ -524,4 +536,5 @@ __all__ = [
     "run_action",
     "update_config",
     "update_logging",
+    "update_process_budget",
 ]

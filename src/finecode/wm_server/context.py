@@ -14,6 +14,7 @@ from loguru import logger
 
 from finecode.wm_server import domain
 from finecode.wm_server.runner.runner_client import ExtensionRunnerInfo
+from finecode.wm_server.services import process_budget
 
 if TYPE_CHECKING:
     from finecode_jsonrpc._io_thread import AsyncIOThread
@@ -40,10 +41,9 @@ def resolve_er_startup_concurrency(env_value: str | None = None) -> ConcurrencyD
     ``machine_subprocess_budget()`` rather than its sqrt-split.
 
     Priority: ``FINECODE_WM_MAX_CONCURRENT_ER_STARTS`` env var (if set) >
-    ``machine_subprocess_budget()``. Machine-bound like the layers above, so
-    no ``finecode-workspace.toml`` equivalent. Unlike
-    ``prepare_envs_service.resolve_project_concurrency``, there is no CLI
-    flag: this cap protects
+    ``machine_subprocess_budget()``. Machine-bound, so no
+    ``finecode-workspace.toml`` equivalent. Unlike the deleted
+    prepare-envs project throttle, there is no CLI flag: this cap protects
     the WM server's entire lifetime, not one command's request, so it is
     resolved once — here, as the default factory for
     ``WorkspaceContext.er_startup_semaphore`` — when the long-lived
@@ -127,6 +127,12 @@ class WorkspaceContext:
         runs afterward in that ER's own process.  Shared by every start
         trigger (workspace init, matrixed run, prepare-envs), since they all
         call through the same chokepoint. See ADR-0063.
+
+    ``process_budget``
+        The one machine-wide budget of subprocess work slots, leased to ERs
+        per action run and reclaimed on run end or ER death.  Each ER's
+        leased quota sizes that ER's local ``ProcessSlots`` gate, which both
+        ``CommandRunner`` and ``ProcessExecutor`` draw from. See ADR-0090.
 
     Caches
     ------
@@ -241,6 +247,14 @@ class WorkspaceContext:
     # constructs exactly one WorkspaceContext for its whole process lifetime.
     er_startup_semaphore: asyncio.Semaphore = field(
         default_factory=_make_er_startup_semaphore
+    )
+
+    # The machine-wide process budget (ADR-0090).  Sized once, at
+    # WorkspaceContext construction, for the same reason er_startup_semaphore
+    # is: the WM constructs exactly one WorkspaceContext for its whole
+    # process lifetime.
+    process_budget: process_budget.ProcessBudget = field(
+        default_factory=process_budget._make_process_budget
     )
 
 

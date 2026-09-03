@@ -173,6 +173,23 @@ class FakeActionRunner:
             results[path] = stored(payload) if callable(stored) else stored
         return results
 
+    async def run_action_per_project(
+        self,
+        action_type: type,
+        payload_by_project: dict[Path, object],
+        meta: object,
+        concurrently: bool = True,
+    ) -> dict[Path, object]:
+        action_name = action_type.__name__
+        self.recorded_calls.append((action_name, list(payload_by_project), payload_by_project))
+        results: dict[Path, object] = {}
+        for path, payload in payload_by_project.items():
+            stored = self._results[(action_name, path)]
+            if isinstance(stored, _Raises):
+                raise stored.exception
+            results[path] = stored(payload) if callable(stored) else stored
+        return results
+
     def was_invoked(self, action_name: str, project_path: str | None = None) -> bool:
         target = Path(project_path) if project_path is not None else None
         return any(

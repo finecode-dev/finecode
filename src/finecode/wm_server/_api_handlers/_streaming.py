@@ -335,7 +335,8 @@ async def _handle_run_batch_with_partial_results(
         # client (CLI, LSP, MCP), where fan-out width is whatever the
         # workspace contains and refusing would make every workspace-wide
         # action unusable past an arbitrary size. Width at depth 0 is
-        # throttled by the semaphore below instead. `orchestration_depth` and
+        # throttled by the machine-wide process budget (ADR-0090) instead.
+        # `orchestration_depth` and
         # `policy` are real parameters (not just an assumption in a comment)
         # so a future nested caller gets the same protection automatically.
         if (
@@ -555,25 +556,10 @@ async def _handle_run_batch_with_partial_results(
                 project_return_code |= rc
             return project_return_code
 
-        # Launch one task per project for project-level concurrency, bounded so
-        # that a large workspace does not put every project's ER to work at
-        # once (ADR-0067). Each project's ER may itself spawn subprocesses up to
-        # its own `ICommandRunner` cap (ADR-0056), so the two layers compose
-        # multiplicatively exactly as in ADR-0055.
-        project_semaphore = proxy_utils.make_project_semaphore(
-            len(actions_by_project), log_prefix="runBatch+partialResults: "
-        )
-
-        async def _stream_project_bounded(
-            project_path: pathlib.Path,
-            actions_to_run: list,
-            project_payload: dict,
-        ) -> int:
-            async with project_semaphore:
-                return await _stream_project(
-                    project_path, actions_to_run, project_payload
-                )
-
+        # Launch one task per project for project-level concurrency. The
+        # machine-wide process budget (ADR-0090), leased to each project's ER
+        # when its run begins, is what bounds the subprocess fan-out these
+        # tasks lead to.
         project_tasks: dict[pathlib.Path, asyncio.Task] = {}
         for project_path, actions_to_run in actions_by_project.items():
             project_payload = {
@@ -581,7 +567,7 @@ async def _handle_run_batch_with_partial_results(
                 **payload_overrides.get(str(project_path), {}),
             }
             task = asyncio.create_task(
-                _stream_project_bounded(project_path, actions_to_run, project_payload)
+                _stream_project(project_path, actions_to_run, project_payload)
             )
             project_tasks[project_path] = task
 

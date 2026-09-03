@@ -67,7 +67,7 @@ python -m finecode run [options] <action> [<action> ...] [payload] [--config.<ke
 | `--env=<name>` | For a matrixed action (ADR-0047), restrict execution to the named interpreter environment(s) — a matrix base selects all of its children, a concrete child selects only itself. Repeatable. Non-matrix envs are unaffected. See [Preparing Environments — filtering by environment name](guides/preparing-environments.md#filtering-by-environment-name). |
 | `--interpreter=<impl>@<version>` | For a matrixed action, restrict execution to the named interpreter(s) across every matrix env the action touches. Repeatable; a bare version means `cpython`. See [Preparing Environments — filtering by interpreter](guides/preparing-environments.md#filtering-by-interpreter). |
 
-In a multi-project workspace, `run` fans out across every project that declares the action, bounded by `FINECODE_WM_RUN_MAX_CONCURRENT_PROJECTS` (default: derived from the machine's CPU budget). Fan-out is throttled, never refused — workspace size does not limit which actions you can run. See [Run fan-out concurrency](guides/wm-server-internals.md#run-fan-out-concurrency).
+In a multi-project workspace, `run` fans out across every project that declares the action; spawned subprocesses are bounded by the machine-wide process budget (default: derived from the machine's CPU budget). Fan-out is throttled, never refused — workspace size does not limit which actions you can run. See [Process budget](guides/wm-server-internals.md#process-budget).
 
 `--env` and `--interpreter` on `run` use the same selector semantics as `prepare-envs` (ADR-0050): they compose by intersection, and a matrix env's config-declared `default_interpreters` policy (see [Preparing Environments — default interpreter subset](guides/preparing-environments.md#default-interpreter-subset)) applies as the default when neither is given — so a plain `run` can execute only a local subset of a matrix (e.g. the newest interpreter) while CI still runs the full axis, mirroring `prepare-envs`.
 
@@ -205,7 +205,7 @@ Create and populate virtual environments for all handler dependencies.
 
 ```
 python -m finecode prepare-envs [--recreate] [--env=<name>]...
-                                 [--project=<name>]... [--max-concurrent-projects=<n>]
+                                 [--project=<name>]...
                                  [--log-level=<level>] [--verbose] [--debug]
 ```
 
@@ -220,7 +220,6 @@ See [Preparing Environments](guides/preparing-environments.md) for a full explan
 | `--recreate` | Delete and recreate all venvs from scratch |
 | `--env=<name>` | Restrict handler dependency installation to the named env(s). Repeatable. See note below. |
 | `--project=<name>` | Restrict preparation to the named project(s) (matched by `[project].name` from `pyproject.toml`). Repeatable. |
-| `--max-concurrent-projects=<n>` | Cap on concurrent projects during `create_envs`/`install_envs`. Defaults to a machine-based value (same env var: `FINECODE_WM_PREPARE_ENVS_MAX_CONCURRENT_PROJECTS`). See [Preparing Environments — bounding concurrency](guides/preparing-environments.md#bounding-concurrency). |
 | `--log-level=<level>` | Set log level: `TRACE`, `DEBUG`, `INFO`, `WARNING`, `ERROR` (default: `INFO`) |
 | `--verbose` / `-v` | Stream WM and ER diagnostic logs to stderr live over the protocol (`server/logRecords`). Auto-enabled in CI. |
 | `--debug` | Wait for a debugpy client on port 5680 before starting |

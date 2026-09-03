@@ -13,16 +13,10 @@ Both functions raise :class:`PrepareEnvsFailed` on failure.
 from __future__ import annotations
 
 import asyncio
-import os
 import pathlib
 import uuid
 from typing import TYPE_CHECKING, Any
 
-from finecode_extension_runner.concurrency import (
-    ConcurrencyDecision,
-    default_layered_concurrency,
-    machine_subprocess_budget,
-)
 from loguru import logger
 
 from finecode import user_messages
@@ -36,32 +30,6 @@ class PrepareEnvsFailed(Exception):
     def __init__(self, message: str) -> None:
         super().__init__(message)
         self.message = message
-
-
-def resolve_project_concurrency(cli_value: int | None) -> ConcurrencyDecision:
-    """Effective cap on concurrent projects for `prepare-envs`, with the
-    reason it was picked (for logging — see `ConcurrencyDecision`).
-
-    Priority: --max-concurrent-projects CLI flag (if passed) >
-    FINECODE_WM_PREPARE_ENVS_MAX_CONCURRENT_PROJECTS env var (if set) >
-    `default_layered_concurrency()`. Intentionally has no
-    finecode-workspace.toml equivalent: this value is bound to the
-    machine invoking prepare-envs, not to the project, so committing it
-    to shared config would be wrong on every teammate's machine.
-    """
-    if cli_value is not None:
-        return ConcurrencyDecision(max(cli_value, 1), "--max-concurrent-projects flag")
-    if (
-        env_value := os.environ.get("FINECODE_WM_PREPARE_ENVS_MAX_CONCURRENT_PROJECTS")
-    ) is not None:
-        return ConcurrencyDecision(
-            max(int(env_value), 1),
-            "FINECODE_WM_PREPARE_ENVS_MAX_CONCURRENT_PROJECTS env var",
-        )
-    return ConcurrencyDecision(
-        default_layered_concurrency(),
-        f"computed default (machine budget {machine_subprocess_budget()}, sqrt-split)",
-    )
 
 
 def build_create_envs_params(
@@ -197,7 +165,6 @@ async def prepare_envs(
     interpreter_names: list[str] | None = None,
     project_names: list[str] | None = None,
     dev_env: str = "cli",
-    max_concurrent_projects: int | None = None,
 ) -> None:
     """Prepare all virtual environments for a workspace.
 
@@ -223,12 +190,6 @@ async def prepare_envs(
         dev_env: Active dev-env, used to resolve each matrix env's
             config-declared ``default_interpreters`` subset when
             `interpreter_names` is not given.
-        max_concurrent_projects: Cap on concurrent projects for steps 5 and 6
-            (see `resolve_project_concurrency`). ``None`` resolves the
-            machine-based default; this is a machine-bound tuning value, not
-            a project setting, so it has no `finecode-workspace.toml`
-            equivalent.
-
     Per project, `env_names` / `interpreter_names` / each matrix env's
     `default_interpreters` policy are resolved (via
     `finecode.wm_server.config.env_selection`) into a selection. When that
@@ -307,48 +268,40 @@ async def prepare_envs(
     logger.info(f"Found {len(projects)} project(s): {[p.name for p in projects]}")
     await user_messages.info(f"Found {len(projects)} project(s)")
 
-    # Concurrency cap (ADR-0055): computed once and shared by every concurrent
-    # project fan-out in this function (steps 2, 5, 6). They run sequentially
-    # relative to each other, so reusing one semaphore is safe — by the time a
-    # later step's fan-out starts, the previous one has released every permit.
-    concurrency_decision = resolve_project_concurrency(max_concurrent_projects)
-    logger.info(
-        f"Capping concurrent projects to {concurrency_decision.value} "
-        f"({concurrency_decision.source})"
-    )
-    semaphore = asyncio.Semaphore(concurrency_decision.value)
-
     # Step 2 — Check / remove dev_workspace envs.
     logger.info("Checking dev workspace environments...")
     await user_messages.info("Checking dev workspace environments...")
 
     async def _check_or_remove(project: domain.Project) -> None:
-        async with semaphore:
-            if recreate:
+        if recreate:
                 logger.trace(f"Recreating dev_workspace for '{project.name}'")
                 runners = ws_context.ws_projects_extension_runners.get(
                     project.dir_path, {}
                 )
                 runner = runners.get("dev_workspace")
                 if runner is not None:
-                    await runner_manager.stop_extension_runner(runner=runner)
+                    await runner_manager.stop_extension_runner(
+                        runner=runner, ws_context=ws_context
+                    )
                 runner_manager.remove_runner_env(project.dir_path, "dev_workspace")
-            else:
-                valid = await runner_manager.check_runner(
-                    runner_dir=project.dir_path, env_name="dev_workspace"
+        else:
+            valid = await runner_manager.check_runner(
+                runner_dir=project.dir_path, env_name="dev_workspace"
+            )
+            if not valid:
+                logger.warning(
+                    f"Env 'dev_workspace' in project '{project.name}' is invalid,"
+                    " recreating it"
                 )
-                if not valid:
-                    logger.warning(
-                        f"Env 'dev_workspace' in project '{project.name}' is invalid,"
-                        " recreating it"
+                runners = ws_context.ws_projects_extension_runners.get(
+                    project.dir_path, {}
+                )
+                runner = runners.get("dev_workspace")
+                if runner is not None:
+                    await runner_manager.stop_extension_runner(
+                        runner=runner, ws_context=ws_context
                     )
-                    runners = ws_context.ws_projects_extension_runners.get(
-                        project.dir_path, {}
-                    )
-                    runner = runners.get("dev_workspace")
-                    if runner is not None:
-                        await runner_manager.stop_extension_runner(runner=runner)
-                    runner_manager.remove_runner_env(project.dir_path, "dev_workspace")
+                runner_manager.remove_runner_env(project.dir_path, "dev_workspace")
 
     try:
         async with asyncio.TaskGroup() as tg:
@@ -482,10 +435,9 @@ async def prepare_envs(
     # `create_envs`/`install_envs` run exclusively on each project's own
     # dev_workspace ER (never on other per-env ERs, which aren't even started
     # during prepare-envs — see the module-level "Verified 'projects' is the
-    # right unit" note in the design). So for this operation "concurrent
-    # projects" and "concurrent ERs" are the same number, and bounding
-    # `step_projects` fan-out directly bounds concurrent ERs. Reuses the
-    # `semaphore` computed above (shared across steps 2, 5, 6).
+    # right unit" note in the design). The subprocess fan-out they drive is
+    # bounded by the machine-wide process budget (ADR-0090), leased by each
+    # ER when the action run begins.
     total_projects = len(step_projects)
     await user_messages.info(f"Creating envs for {total_projects} project(s)...")
 
@@ -498,10 +450,9 @@ async def prepare_envs(
         params = build_create_envs_params(
             sel, env_universe_by_project[p.dir_path], recreate
         )
-        async with semaphore:
-            err = await _run_env_action(
-                "fine_envs.CreateEnvsAction", params, p, ws_context
-            )
+        err = await _run_env_action(
+            "fine_envs.CreateEnvsAction", params, p, ws_context
+        )
         if err:
             create_errors.append(err)
         create_done += 1
@@ -528,10 +479,9 @@ async def prepare_envs(
         # invoked action) would otherwise never get its dev_workspace
         # dependency installed at all.
         params = {} if not sel.active else {"env_names": sorted(sel.selected_env_names)}
-        async with semaphore:
-            err = await _run_env_action(
-                "fine_envs.InstallEnvsAction", params, p, ws_context
-            )
+        err = await _run_env_action(
+            "fine_envs.InstallEnvsAction", params, p, ws_context
+        )
         if err:
             install_errors.append(err)
         install_done += 1

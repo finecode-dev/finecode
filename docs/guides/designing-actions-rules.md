@@ -206,9 +206,11 @@ Dispatch handlers are responsible for this guarantee across the whole payload: i
 ## R-308: Handlers callable via `run_action_in_projects` must always send a result
 
 A handler for action A that can be invoked by other handlers via
-`workspace_action_runner.run_action_in_projects(A, ...)` MUST always send at least one
+`workspace_action_runner.run_action_in_projects(A, ...)` or
+`workspace_action_runner.run_action_per_project(A, ...)` MUST always send at least one
 result through `partial_result_sender` before returning — even when the result is empty
-(e.g. `messages={}`).
+(e.g. `messages={}`). The two methods differ only in payload shape (one payload everywhere
+vs. a complete payload per project); the result contract is identical.
 
 Sending nothing produces a `null` JSON result that the caller cannot deserialize into the
 expected type. The error surfaces as a cryptic structural failure ("required field

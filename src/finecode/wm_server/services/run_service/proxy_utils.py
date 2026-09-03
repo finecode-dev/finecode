@@ -24,7 +24,7 @@ from finecode.wm_server.runner.runner_client import RunResultFormat  # reexport
 from finecode.wm_server.runner.runner_manager import RunnerFailedToStart
 from finecode.wm_server.services import in_flight_runs, runner_start_service
 
-from . import matrix_runner, run_concurrency
+from . import matrix_runner
 from .exceptions import (
     ActionCancelledError,
     ActionRunFailed,
@@ -835,23 +835,6 @@ async def run_actions_in_running_project(
     return result_by_action
 
 
-def make_project_semaphore(
-    project_count: int, *, log_prefix: str = ""
-) -> asyncio.Semaphore:
-    """Bound how many projects execute at once (ADR-0067).
-
-    Built per call, never shared: fan-out is re-entrant, and a shared
-    semaphore would let an outer fan-out hold every permit while waiting on
-    an inner one.
-    """
-    concurrency_decision = run_concurrency.resolve_run_project_concurrency()
-    logger.debug(
-        f"{log_prefix}capping concurrent projects to {concurrency_decision.value} "
-        f"({concurrency_decision.source}) for {project_count} project(s)"
-    )
-    return asyncio.Semaphore(concurrency_decision.value)
-
-
 async def run_actions_in_projects(
     actions_by_project: dict[pathlib.Path, list[str]],
     action_payload: dict[str, str],
@@ -889,27 +872,6 @@ async def run_actions_in_projects(
             initialize_all_handlers=True,
         )
 
-    semaphore = make_project_semaphore(len(actions_by_project))
-
-    async def _run_project_bounded(
-        project, actions_to_run, project_payload, progress_tokens
-    ):
-        async with semaphore:
-            return await run_actions_in_running_project(
-                actions=actions_to_run,
-                action_payload=project_payload,
-                project=project,
-                ws_context=ws_context,
-                concurrently=concurrently,
-                result_formats=result_formats,
-                run_trigger=run_trigger,
-                dev_env=dev_env,
-                progress_token_by_action=progress_tokens,
-                orchestration_depth=orchestration_depth,
-                cancellable=cancellable,
-                origin=origin,
-            )
-
     project_handler_tasks: list[asyncio.Task] = []
     try:
         async with asyncio.TaskGroup() as tg:
@@ -929,13 +891,23 @@ async def run_actions_in_projects(
                     **_payload_overrides_by_project.get(str(project_dir_path), {}),
                 }
                 project_task = tg.create_task(
-                    _run_project_bounded(
-                        project,
-                        actions_to_run,
-                        project_payload,
-                        progress_token_by_project.get(project_dir_path)
+                    run_actions_in_running_project(
+                        actions=actions_to_run,
+                        action_payload=project_payload,
+                        project=project,
+                        ws_context=ws_context,
+                        concurrently=concurrently,
+                        result_formats=result_formats,
+                        run_trigger=run_trigger,
+                        dev_env=dev_env,
+                        progress_token_by_action=progress_token_by_project.get(
+                            project_dir_path
+                        )
                         if progress_token_by_project
                         else None,
+                        orchestration_depth=orchestration_depth,
+                        cancellable=cancellable,
+                        origin=origin,
                     )
                 )
                 project_handler_tasks.append(project_task)

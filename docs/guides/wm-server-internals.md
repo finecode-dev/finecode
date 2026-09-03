@@ -359,39 +359,33 @@ This is what fixes `Didn't get port in 30 seconds` failures on constrained machi
 workspace-wide `run` can attempt far more concurrent ER spawns than the machine can schedule
 promptly, delaying some ERs' port handshake past the hardcoded 30s window in
 `finecode_jsonrpc.client._connect_to_server_io`. See ADR-0063 for the full rationale, including why
-this is a third, independent concurrency layer alongside `prepare-envs`' two
-([Bounding concurrency](../guides/preparing-environments.md#bounding-concurrency), ADR-0055).
+this stays a *separate* budget from the process budget below: the WM starts runners lazily *inside*
+a fan-out, so a run holding process-budget slots must never have to wait on the same budget to
+start the very ER it is fanning out into — that would deadlock (ADR-0090).
 
 The cap is sized once, when `WorkspaceContext` is constructed (`context.resolve_er_startup_concurrency`):
 `FINECODE_WM_MAX_CONCURRENT_ER_STARTS` env var if set, otherwise
-`finecode_extension_runner.concurrency.machine_subprocess_budget()` (not the sqrt-split used by
-`prepare-envs`' layers — this guards a single flat axis, not two composing ones). There is no CLI
+`finecode_extension_runner.concurrency.machine_subprocess_budget()`. There is no CLI
 flag, since this cap isn't scoped to one command's request — it protects the WM server's whole
 lifetime and every client that triggers ER starts against it. The resolved cap and its source are
 logged at INFO once, at construction.
 
-### Run fan-out concurrency
+### Process budget
 
-ER *startup* is bounded above, and subprocesses *inside* one ER are bounded by that ER's
-`ICommandRunner` cap (ADR-0056) — but neither bounds how many projects are made to do work at
-once. A `run` fanning out across N projects, each ER free to spawn up to its own subprocess cap,
-composes multiplicatively exactly as `prepare-envs`' two layers do (ADR-0055). Both `run` fan-out
-sites therefore acquire a per-project semaphore:
+The WM owns a single machine-wide budget of subprocess *work slots*,
+`services/process_budget.py:ProcessBudget`, sized from
+`FINECODE_MAX_CONCURRENT_PROCESSES` if set, otherwise `machine_subprocess_budget()`. ERs lease
+slots from it once per action run (over `finecode/leaseProcessBudget` / `finecode/releaseProcessBudget`)
+and the WM pushes each ER's granted quota down as a gate target
+(`finecodeRunner/updateProcessBudget`). Inside an ER, `CommandRunner` and `ProcessExecutor` draw
+from that one gate (`finecode_extension_runner/process_slots.py`), so project fan-out, the
+interpreter matrix, and `prepare-envs` all lead to the same three leaves and the same one bound.
 
-- `_api_handlers/_streaming.py` — the streaming path every external client uses (CLI, LSP, MCP).
-- `run_service/proxy_utils.run_actions_in_projects` — the path `WorkspaceExecutor` uses for
-  workspace-scoped actions and ER-originated fan-out.
-
-The cap is resolved by `run_service.run_concurrency.resolve_run_project_concurrency()`:
-`FINECODE_WM_RUN_MAX_CONCURRENT_PROJECTS` env var if set, otherwise
-`default_layered_concurrency()` — the sqrt-split, *unlike* the ER-startup cap above, because this
-layer composes with the per-ER subprocess cap beneath it. Machine-bound, so no
-`finecode-workspace.toml` equivalent.
-
-The semaphore is built **per fan-out call**, never shared process-wide. Fan-out is re-entrant (a
-workspace-scoped action's handler can call back into the WM to fan out again — that is what
-`OrchestrationPolicy.max_recursion_depth` bounds), and a shared semaphore would let an outer
-fan-out hold every permit while waiting on an inner one that can never acquire any.
+The allocator always grants a nested lease at least one slot, even when the budget is exhausted:
+a run asked for by another run must always be able to make progress, or the whole chain
+deadlocks. The bound is therefore the budget, or the number of active runs, whichever is greater
+— exact in the common case, soft only under nesting, where `OrchestrationPolicy.max_recursion_depth`
+already bounds the depth. See ADR-0090.
 
 `OrchestrationPolicy.max_project_fanout` (64) is a *separate* mechanism and is not a capacity
 limit: it refuses, and it applies only when `orchestration_depth > 0`. It guards against runaway

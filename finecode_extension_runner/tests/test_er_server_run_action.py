@@ -33,6 +33,11 @@ def _fake_server(tmp_path: pathlib.Path) -> object:
         _runner_context = runner_context
         _wal_writer = None
 
+        async def send_request_to_wm(self, method, params):
+            if method == "finecode/leaseProcessBudget":
+                return {"leaseId": "fake-lease", "granted": 1}
+            return {}
+
     return _FakeServer()
 
 
