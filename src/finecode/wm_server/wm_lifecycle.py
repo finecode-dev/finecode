@@ -180,6 +180,11 @@ def start_own_server(
     # Write empty content so the server overwrites rather than appends.
     port_file.write_text("")
 
+    stderr_path = startup_stderr_log_path()
+    # Unlike `ensure_running`, nothing else guarantees this directory exists
+    # first (there `_startup_lock()` creates it as a side effect before the
+    # log file is opened) — on a first-ever start in this venv it is missing.
+    stderr_path.parent.mkdir(parents=True, exist_ok=True)
     logger.info(f"Starting dedicated FineCode WM server in {workdir}")
     command = [
         sys.executable,
@@ -196,13 +201,17 @@ def start_own_server(
 
     # No own session, unlike `ensure_running`: a dedicated server belongs to
     # exactly one client and is reachable only through that client's port file,
-    # so outliving it would leave a ghost nobody can find.
-    subprocess.Popen(
-        command,
-        cwd=str(workdir),
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
+    # so outliving it would leave a ghost nobody can find. stderr is still
+    # captured to a file (not DEVNULL'd) so a crash before the server's own
+    # logger is initialized is not silently lost — see `wait_until_ready_from_file`,
+    # whose error message points here.
+    with open(stderr_path, "w") as stderr_file:
+        subprocess.Popen(
+            command,
+            cwd=str(workdir),
+            stdout=subprocess.DEVNULL,
+            stderr=stderr_file,
+        )
     return port_file
 
 
@@ -289,7 +298,19 @@ async def wait_until_ready_from_file(
         except (FileNotFoundError, ValueError, OSError):
             pass
         await asyncio.sleep(0.5)
+    stderr_path = startup_stderr_log_path()
+    # Inlined, not just referenced by path: on CI the runner's disk is gone by
+    # the time anyone could go look, so the message itself is the only place
+    # this content is ever seen.
+    try:
+        stderr_tail = stderr_path.read_text().strip()
+    except OSError:
+        stderr_tail = ""
+    detail = (
+        f"Captured stderr ({stderr_path}):\n{stderr_tail}"
+        if stderr_tail
+        else f"{stderr_path} is empty — the process is still starting, not crashing."
+    )
     raise TimeoutError(
-        f"Dedicated FineCode WM server did not start within {timeout}s. "
-        "Check logs for errors."
+        f"Dedicated FineCode WM server did not start within {timeout}s.\n{detail}"
     )
