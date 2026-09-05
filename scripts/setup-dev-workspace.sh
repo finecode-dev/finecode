@@ -21,16 +21,13 @@ is_valid_venv() {
         return 1
     fi
 
-    # Requested check first; fall back to a guaranteed CLI entrypoint check.
-    if "$VENV_PYTHON" -m finecode version >/dev/null 2>&1; then
-        return 0
-    fi
-
-    if "$VENV_PYTHON" -m finecode version >/dev/null 2>&1; then
-        return 0
-    fi
-
-    "$VENV_PYTHON" -m finecode --help >/dev/null 2>&1
+    # `--help` proves nothing: click resolves it without invoking any command
+    # body, so it can't catch a broken editable install (e.g. a package
+    # importable at the top level but missing a submodule prepare-envs's WM
+    # subprocess needs). Import the module prepare-envs actually starts, so a
+    # stale/broken venv restored from cache is caught here -- instantly --
+    # instead of surviving into prepare-envs's 30s dedicated-server timeout.
+    "$VENV_PYTHON" -c "import finecode.wm_server.wm_server" >/dev/null 2>&1
 }
 
 recreate_venv() {
