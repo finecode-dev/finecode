@@ -16,6 +16,8 @@ Nothing here executes Cypher: no server, no driver, no engine in the test path
 
 from __future__ import annotations
 
+import warnings
+
 import pytest
 from libcat import LIBCAT_SCHEMA, Author, Book, BookFields, Rel, Shelf
 
@@ -25,6 +27,7 @@ from finecode_knowledge.query.cypher import (
     compile_query,
     compile_rule,
 )
+from finecode_knowledge.query.validate import LookupLiteralWarning
 
 
 @q.derived
@@ -48,22 +51,31 @@ for _predicate in (_borrowed_isbn, _points_at):
     LIBCAT_SCHEMA.register_predicate(_predicate)
 
 
-@q.rule
-def shelved_book_not_borrowed(
-    subject: q.Var[Author],
-    missing: q.Var[str],
-    asserted_at: q.Prov,
-    expected_in: q.Prov,
-) -> q.Body:
-    """author {subject} shelved a book but never borrowed {missing}"""
-    book, shelf = q.var(Book), q.var(Shelf)
-    return q.all_(
-        Rel.wrote(subject, book, at=asserted_at),
-        Rel.shelved_on(book, shelf),
-        Shelf.key(shelf, code=missing),
-        BookFields.title(book, q.var(str), at=expected_in),
-        q.not_(_borrowed_isbn(subject, missing)),
-    )
+with warnings.catch_warnings():
+    # `title` is bound only to feed `expected_in`, which is exactly the shape
+    # `LookupLiteralWarning` exists to flag (ADR-0028) -- and here it is the point:
+    # `test_a_field_facts_provenance_binds_to_a_fact_node` below needs a rule that
+    # compiles a field fact's provenance to a `Fact` node, so this fixture must keep
+    # the literal a real rule should not have. Suppressed at the definition rather
+    # than filtered suite-wide, so the check still guards every other rule here.
+    warnings.simplefilter("ignore", LookupLiteralWarning)
+
+    @q.rule
+    def shelved_book_not_borrowed(
+        subject: q.Var[Author],
+        missing: q.Var[str],
+        asserted_at: q.Prov,
+        expected_in: q.Prov,
+    ) -> q.Body:
+        """author {subject} shelved a book but never borrowed {missing}"""
+        book, shelf = q.var(Book), q.var(Shelf)
+        return q.all_(
+            Rel.wrote(subject, book, at=asserted_at),
+            Rel.shelved_on(book, shelf),
+            Shelf.key(shelf, code=missing),
+            BookFields.title(book, q.var(str), at=expected_in),
+            q.not_(_borrowed_isbn(subject, missing)),
+        )
 
 
 # ---- the dialect's constraints show up in the output -------------------

@@ -27,6 +27,7 @@ if typing.TYPE_CHECKING:
     from finecode_knowledge.model.registry import SchemaRegistry
 
 __all__ = [
+    "LookupLiteralWarning",
     "UnconstrainedKeyBindingWarning",
     "validate_body",
     "validate_head_parameters",
@@ -65,6 +66,7 @@ def validate_body(
     _check_negation_safety(body, context=context)
     _check_range_restriction(body, context=context, projected=projected)
     _warn_unconstrained_key_bindings(body, context=context, projected=projected)
+    _warn_lookup_literals(body, context=context, projected=projected)
 
 
 def _check_literals_against_schema(
@@ -298,3 +300,83 @@ def _warn_unconstrained_key_bindings(
 
 class UnconstrainedKeyBindingWarning(UserWarning):
     """See ``_warn_unconstrained_key_bindings``."""
+
+
+def _warn_lookup_literals(
+    body: Conjunction, *, context: str, projected: typing.Sequence[object]
+) -> None:
+    """Warn where a FIELD literal exists only to bind provenance for the head.
+
+    **The mirror of ``_warn_unconstrained_key_bindings``.** That one catches a
+    body that addresses an entity and never requires it to exist -- possibly
+    under-constrained. This one catches the opposite: a body that *requires a
+    fact to exist* only because the author wanted its provenance -- possibly
+    over-constrained.
+
+    In a conjunctive language every literal is a filter, so retrieving a value
+    and requiring it are the same act. A literal added to fetch something the
+    head reports silently narrows the rule's extension, and it narrows it toward
+    **under-reporting** -- a rule that stops reporting a real violation, which is
+    the direction ADR-0013 D4.3 and ADR-0002 C3 refuse. ADR-0028 is the case
+    this was written for: ``expected_in`` was bound by adding
+    ``ProjectFields.def_path(subject, _, at=expected_in)`` to two rules, and a
+    project with no ``def_path`` fact therefore produced no finding at all.
+
+    The rule it enforces:
+
+        A ``Prov`` in the head must ride on a literal the body would contain
+        anyway. If you had to *add* a literal to bind it, the value is not part
+        of the rule's truth -- it is reporting metadata, and it belongs to
+        whoever displays the finding.
+
+    So the shape flagged is a literal whose removal would leave every one of its
+    variables still bound: the entity is constrained elsewhere, the value is a
+    throwaway variable read by nobody, and the only thing the literal yields is
+    a head-bound ``Prov``. Its whole contribution to the answer is an existence
+    test the author never asked for.
+
+    A warning rather than an error, for ``_warn_unconstrained_key_bindings``'
+    reason: requiring the fact is occasionally what the author meant. When it is,
+    the value term is usually wanted too, or the entity is bound here and nowhere
+    else -- both of which this check already declines to flag.
+    """
+    used_elsewhere: dict[int, int] = {}
+    for literal in body:
+        for term in literal.terms:
+            if isinstance(term, Var):
+                used_elsewhere[id(term)] = used_elsewhere.get(id(term), 0) + 1
+
+    exempt = {id(term) for term in projected if isinstance(term, Var)}
+    flagged: list[str] = []
+    for literal in body:
+        if literal.negated or literal.kind is not LiteralKind.FIELD:
+            continue
+        # Only a head-bound provenance makes the literal a lookup. With no `at=`
+        # the existence test is the literal's whole point, which is deliberate.
+        if not isinstance(literal.at, Prov) or id(literal.at) not in exempt:
+            continue
+        entity, value = literal.terms[0], literal.terms[1]
+        # A value the body reads, or projects, is a real constraint.
+        if not isinstance(value, Var) or id(value) in exempt:
+            continue
+        if used_elsewhere.get(id(value), 0) > 1:
+            continue
+        # If the entity is bound only here, the literal is load-bearing.
+        if not isinstance(entity, Var) or used_elsewhere.get(id(entity), 0) < 2:
+            continue
+        flagged.append(literal.predicate)
+
+    if flagged:
+        warnings.warn(
+            f"{context}: {len(flagged)} field literal(s) -- {', '.join(sorted(flagged))} -- "
+            "require a fact to exist only so their provenance can bind a head parameter. "
+            "In a conjunction that is a filter, so a subject missing the fact yields no "
+            "finding at all. Bind the head from a literal the rule needs anyway, or let "
+            "whoever displays the finding look the location up (ADR-0028).",
+            LookupLiteralWarning,
+            stacklevel=3,
+        )
+
+
+class LookupLiteralWarning(UserWarning):
+    """See ``_warn_lookup_literals``."""
