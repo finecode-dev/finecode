@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import importlib.metadata
 import os
 import pathlib
 import socket
@@ -115,15 +116,25 @@ async def _handle_server_get_info(
     """Handle ``server/getInfo``.
 
     Returns information about the running WM Server instance: the path to its
-    log file, its process id, and the labels of every currently connected
-    client — which is how a caller about to replace this server learns whose
-    session it is disturbing (PRD-0008 R8).
+    log file, its process id, its package version, and the labels of every
+    currently connected client — which is how a caller about to replace this
+    server learns whose session it is disturbing (PRD-0008 R8).
 
-    Result: ``{"logFilePath", "pid", "clients": ["lsp", "mcp-...", ...]}``
+    ``version`` is what ``finecode version`` reports: unlike printing
+    ``finecode.__version__`` from the invoking process, a client can only get
+    it *from here* by actually completing the server's full startup path
+    (spawn, import, bind, respond) — which is the point of asking.
+
+    Result: ``{"logFilePath", "pid", "version", "clients": ["lsp", "mcp-...", ...]}``
     """
+    try:
+        version = importlib.metadata.version("finecode")
+    except importlib.metadata.PackageNotFoundError:
+        version = "unknown"
     return {
         "logFilePath": str(_log_file_path) if _log_file_path is not None else None,
         "pid": os.getpid(),
+        "version": version,
         "clients": sorted(_client_labels.values()),
     }
 

@@ -21,16 +21,14 @@ is_valid_venv() {
         return 1
     fi
 
-    # Requested check first; fall back to a guaranteed CLI entrypoint check.
-    if "$VENV_PYTHON" -m finecode version >/dev/null 2>&1; then
-        return 0
-    fi
-
-    if "$VENV_PYTHON" -m finecode version >/dev/null 2>&1; then
-        return 0
-    fi
-
-    "$VENV_PYTHON" -m finecode --help >/dev/null 2>&1
+    # `version` starts the WM server and asks it to report back, rather than
+    # just resolving a CLI entrypoint (`--help` proves nothing: click
+    # resolves it without invoking any command body) -- so a broken editable
+    # install that only breaks once the server actually starts (e.g. a
+    # package importable at the top level but missing a submodule the server
+    # needs) fails here, instead of surviving into prepare-envs's own 30s
+    # dedicated-server startup timeout.
+    "$VENV_PYTHON" -m finecode version >/dev/null 2>&1
 }
 
 recreate_venv() {

@@ -1057,3 +1057,37 @@ def restart_wm(log_level: str, shared_server: bool):
         ),
         log_level,
     )
+
+
+@click.command()
+@_LOG_LEVEL_OPTION
+@click.option("--shared-server", "shared_server", is_flag=True, default=False)
+def version(log_level: str, shared_server: bool):
+    """Print the WM server's version.
+
+    Starts (or attaches to) the server and asks it directly, rather than
+    reading local package metadata — proving the server can actually
+    complete its startup path, not just that this process's own install is
+    intact.
+    """
+    from finecode.cli_app.commands import version_cmd
+
+    _cwd = pathlib.Path(os.getcwd())
+    logger_utils.init_logger(
+        log_name="cli", log_level=log_level, stdout=True, workspace_path=_cwd
+    )
+    user_messages._notification_sender = show_user_message
+
+    try:
+        reported_version = asyncio.run(
+            version_cmd.get_version(
+                workdir_path=_cwd,
+                own_server=not shared_server,
+                log_level=log_level,
+            )
+        )
+    except version_cmd.VersionCheckFailed as exception:
+        click.echo(exception.message, err=True)
+        sys.exit(1)
+
+    click.echo(reported_version)
