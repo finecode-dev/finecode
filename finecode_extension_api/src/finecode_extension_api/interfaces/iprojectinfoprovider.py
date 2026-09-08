@@ -58,6 +58,18 @@ class IProjectInfoProvider(Protocol):
         """
         ...
 
+    async def get_workspace_extra_selection(self) -> dict[str, list[str]]:
+        """Return the workspace's extra selection, keyed by canonical package name.
+
+        This is the validated, canonicalized reading of the gitignored
+        ``finecode-workspace-user.toml``, as the WM used it to rewrite
+        dependency specs. Empty when no selection file exists.
+
+        Raises:
+            ProjectInfoUnavailableError: selection could not be retrieved.
+        """
+        ...
+
 
 class ProjectInfoUnavailableError(Exception):
     """Raised when project information could not be retrieved."""

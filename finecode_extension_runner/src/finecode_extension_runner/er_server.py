@@ -528,7 +528,13 @@ async def get_project_raw_config(
         )
     except TimeoutError as exc:
         raise er_errors.WmCommunicationError(
-            f"WM did not respond to getRawConfig for '{project_def_path}' within 10s"
+            f"WM did not respond to getRawConfig for '{project_def_path}' within 10s. "
+            "This usually means the WM's event loop was starved of CPU by many "
+            "extension runners starting or running subprocesses at once (e.g. during "
+            "prepare-envs' project fan-out) — try lowering "
+            "FINECODE_WM_MAX_CONCURRENT_ER_STARTS and/or FINECODE_MAX_CONCURRENT_PROCESSES "
+            "so their sum leaves at least one core free "
+            "(see docs/guides/wm-server-internals.md#process-budget)."
         ) from exc
     except finecode_jsonrpc_module.JsonRpcError as exc:
         raise er_errors.WmCommunicationError(
@@ -555,7 +561,13 @@ async def get_workspace_editable_packages(
         )
     except TimeoutError as exc:
         raise er_errors.WmCommunicationError(
-            "WM did not respond to getWorkspaceEditablePackages within 10s"
+            "WM did not respond to getWorkspaceEditablePackages within 10s. "
+            "This usually means the WM's event loop was starved of CPU by many "
+            "extension runners starting or running subprocesses at once (e.g. during "
+            "prepare-envs' project fan-out) — try lowering "
+            "FINECODE_WM_MAX_CONCURRENT_ER_STARTS and/or FINECODE_MAX_CONCURRENT_PROCESSES "
+            "so their sum leaves at least one core free "
+            "(see docs/guides/wm-server-internals.md#process-budget)."
         ) from exc
     except finecode_jsonrpc_module.JsonRpcError as exc:
         raise er_errors.WmCommunicationError(
@@ -564,6 +576,37 @@ async def get_workspace_editable_packages(
     return {
         name: pathlib.Path(posix) for name, posix in result.get("packages", {}).items()
     }
+
+
+async def get_workspace_extra_selection(
+    server: ErServer,
+) -> dict[str, list[str]]:
+    """Fetch the workspace's extra selection from WM.
+
+    Raises:
+        WmCommunicationError: WM did not respond within 10s, or returned an
+            error response.
+    """
+    try:
+        result = await asyncio.wait_for(
+            server.send_request_to_wm("workspace/getExtraSelection", params={}),
+            10,
+        )
+    except TimeoutError as exc:
+        raise er_errors.WmCommunicationError(
+            "WM did not respond to getExtraSelection within 10s. "
+            "This usually means the WM's event loop was starved of CPU by many "
+            "extension runners starting or running subprocesses at once (e.g. during "
+            "prepare-envs' project fan-out) — try lowering "
+            "FINECODE_WM_MAX_CONCURRENT_ER_STARTS and/or FINECODE_MAX_CONCURRENT_PROCESSES "
+            "so their sum leaves at least one core free "
+            "(see docs/guides/wm-server-internals.md#process-budget)."
+        ) from exc
+    except finecode_jsonrpc_module.JsonRpcError as exc:
+        raise er_errors.WmCommunicationError(
+            f"WM returned error for getExtraSelection: {exc.rpc_message}"
+        ) from exc
+    return dict(result.get("selection", {}))
 
 
 async def _retire_runner_context(
@@ -664,6 +707,9 @@ async def update_config(server: ErServer, params: dict | None) -> dict:
             project_raw_config_getter=functools.partial(get_project_raw_config, server),
             workspace_editable_packages_getter=functools.partial(
                 get_workspace_editable_packages, server
+            ),
+            workspace_extra_selection_getter=functools.partial(
+                get_workspace_extra_selection, server
             ),
             send_request_to_wm=_send_request_to_wm,
             send_user_message_notification=server.send_user_message_notification,

@@ -27,6 +27,11 @@ class DumpConfigHandler(
         )
         if "presets" in finecode_config:
             del finecode_config["presets"]
+        # extra gates are resolved into `extends` the same way presets are; a
+        # re-processed dump must not re-activate a gate without the selection
+        # file that authorised it.
+        if "extra" in finecode_config:
+            del finecode_config["extra"]
 
         return dump_config_action.DumpConfigRunResult(
             config_dump=run_context.raw_config_dump

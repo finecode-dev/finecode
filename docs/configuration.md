@@ -219,7 +219,7 @@ There are two optional locations, following a **uniform sibling rule**: every pr
 | `{project-root}/finecode-user.toml` | Personal project-level preferences; merged into that project's resolved config above project config |
 | `{preset-dir}/finecode-user.toml` | Merged into that preset's config at read time; sits at preset priority |
 
-`finecode-workspace.toml` does not get a sibling — workspace-scoped settings are shared by definition.
+`finecode-workspace.toml` does not get a `finecode-user.toml` sibling — *shared* workspace-scoped settings are shared by definition. It does have one separate gitignored sibling, `finecode-workspace-user.toml`, which does not author settings but selects among tracked extras (see below).
 
 ### Schema
 
@@ -301,13 +301,26 @@ Project-level user config wins over all file-based shared config. Preset-level u
 
 ### gitignore convention
 
-Add `finecode-user.toml` to your `.gitignore`:
+Add both user files to your `.gitignore`:
 
 ```
 finecode-user.toml
+finecode-workspace-user.toml
 ```
 
-The file is gitignored by convention; FineCode does not enforce this. If the file is absent, all behavior is a safe no-op.
+Both files are gitignored by convention; FineCode does not enforce this. If either is absent, all behavior is a safe no-op.
+
+### finecode-workspace-user.toml (extras selection)
+
+`finecode-workspace-user.toml` sits at the workspace root and selects per-capability extras of workspace packages for the whole workspace. It is gitignored and deliberately narrow: `extras` is the only permitted top-level key, and its value is a table of `package = ["extra", ...]`.
+
+```toml
+extras = { finecode_dev_common_preset = ["lint_fix"] }
+```
+
+Each named extra must be declared twice in tracked config: in the package's `[project.optional-dependencies]` and in its `[tool.finecode.extra.<name>]` gate. The file only *selects* among those tracked options — it cannot declare a dependency spec. Packages not named in tracked config are untouched.
+
+Nothing creates this file; a developer with the private clones but no file simply gets a working checkout with the private layer off. Enabling an extra therefore requires two switches: the clones present on disk, and the selection present in this file.
 
 ### Example
 

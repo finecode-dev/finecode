@@ -45,6 +45,7 @@ ER_LOG_RECORDS = "er/logRecords"
 
 PROJECT_RAW_CONFIG_GET = "projects/getRawConfig"
 WORKSPACE_EDITABLE_PACKAGES_GET = "workspace/getWorkspaceEditablePackages"
+WORKSPACE_EXTRA_SELECTION_GET = "workspace/getExtraSelection"
 WORKSPACE_PROJECT_PATHS_GET = "workspace/getProjectPaths"
 RUN_ACTION_IN_PROJECT = "finecode/runActionInProject"
 RUN_ACTION_IN_WORKSPACE = "finecode/runActionInWorkspace"
@@ -1439,6 +1440,22 @@ class GetWorkspaceEditablePackagesResponse(BaseResponse):
 
 
 @dataclasses.dataclass
+class GetWorkspaceExtraSelectionRequest(BaseRequest):
+    params: dict | None = None
+    method = WORKSPACE_EXTRA_SELECTION_GET
+
+
+@dataclasses.dataclass
+class GetWorkspaceExtraSelectionResult(BaseResult):
+    selection: dict[str, list[str]]
+
+
+@dataclasses.dataclass
+class GetWorkspaceExtraSelectionResponse(BaseResponse):
+    result: GetWorkspaceExtraSelectionResult
+
+
+@dataclasses.dataclass
 class WorkspaceProjectInfo:
     path: str
     config_status: str
@@ -2320,6 +2337,12 @@ METHOD_TO_TYPES: dict[
         None,
         GetWorkspaceEditablePackagesResponse,
         GetWorkspaceEditablePackagesResult,
+    ),
+    WORKSPACE_EXTRA_SELECTION_GET: (
+        GetWorkspaceExtraSelectionRequest,
+        None,
+        GetWorkspaceExtraSelectionResponse,
+        GetWorkspaceExtraSelectionResult,
     ),
     WORKSPACE_PROJECT_PATHS_GET: (
         GetWorkspaceProjectPathsRequest,

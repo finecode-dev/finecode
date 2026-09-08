@@ -9,11 +9,11 @@ dependencies = [
   "click==8.1.*",
   "culsans==0.11.*",
   "filelock==3.18.*",
-  "fine_envs~=0.1.0a0",
+  "fine_envs~=0.2.0a0",
   "fine_format~=0.1.0a0",
   "fine_inlay_hints~=0.1.0a0",
   "fine_inspect_code~=0.1.0a0",
-  "fine_python_uv~=0.1.0a0",
+  "fine_python_uv~=0.2.0a0",
   "fine_semantic_tokens~=0.1.0a0",
   "finecode_extension_api~=0.4.0a0",
   "finecode_extension_runner~=0.4.0a0",
@@ -36,7 +36,6 @@ dev = ["debugpy==1.8.*", "psutil==7.2.*"]
 dev_workspace = [
   "debugpy==1.8.*",
   "fine_docs_markdown",
-  "fine_knowledge~=0.1.0a0",
   "fine_system_setup",
   # Some packages have no version, because they are always installed as editables
   "finecode",
@@ -55,8 +54,7 @@ build-backend = "setuptools.build_meta"
 presets = [
   { source = "finecode_dev_common_preset" },
   { source = "fine_docs_markdown" },
-  { source = "fine_system_setup" },
-  { source = "fine_knowledge" }
+  { source = "fine_system_setup" }
 ]
 
 [tool.finecode.action.setup_system]

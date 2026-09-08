@@ -1,100 +1,108 @@
 [tool.finecode]
 presets = [
-    { source = "fine_python_recommended" },
-    { source = "fine_git_hooks" },
-    { source = "fine_logs" }
+  { source = "fine_python_recommended" },
+  { source = "fine_git_hooks" },
+  { source = "fine_logs" },
+  { source = "fine_dep_graph" },
+  { source = "fine_release" },
+  { source = "fine_agent" },
 ]
 
-# currently, all packages in finecode repository are pure python packages, reuse
-# setuptools build in all of them
-[build-system]
-requires = ["setuptools>=64", "setuptools-scm>=8"]
-build-backend = "setuptools.build_meta"
-
-# TODO: recognize minimal python version automatically
-[[tool.finecode.action_handler]]
-source = "fine_python_ruff.RuffLintFilesHandler"
-config.target_version = 'py311'
+[tool.finecode.extra.lint_fix]
+presets = [{ source = "fine_lint_fix" }]
 
 [[tool.finecode.action_handler]]
 source = "fine_python_pyrefly.PyreflyLintFilesHandler"
-config.python_version = '3.11'
+config.python_version = "3.11"
 
-[tool.finecode.action.init_repository_provider]
-source = "fine_dist_artifacts.InitRepositoryProviderAction"
-handlers = [
-    { name = 'init_repository_provider', source = 'fine_dist_artifacts.InitRepositoryProviderHandler', env = "dev_no_runtime", dependencies = [
-        "fine_dist_artifacts~=0.1.0a0",
-    ] },
+# Repository definitions and credentials for the artifact-publishing actions
+# (get_src_artifact_registries, publish_artifact_to_registry,
+# list_published_artifacts) are provisioned as service config, not via an init
+# action (ADR-0068) -- registry definitions are non-secret and sit here;
+# credentials belong in finecode-user.toml (ADR-0040).
+[[tool.finecode.service]]
+interface = "finecode_extension_api.interfaces.irepositorycredentialsprovider.IRepositoryCredentialsProvider"
+source = "finecode_extension_runner.impls.repository_credentials_provider.ConfigRepositoryCredentialsProvider"
+env = "dev_no_runtime"
+config.repositories = [
+  { name = "pypi", index_url = "https://pypi.org/simple/", upload_url = "https://upload.pypi.org/legacy/" },
+  { name = "testpypi", index_url = "https://test.pypi.org/simple/", upload_url = "https://test.pypi.org/legacy/" },
 ]
+# config.credentials_by_repository -> finecode-user.toml
 
 [tool.finecode.action.publish_artifact]
 source = "fine_dist_artifacts.PublishArtifactAction"
 handlers = [
-    { name = 'publish_artifact', source = 'fine_dist_artifacts.PublishArtifactHandler', env = "dev_no_runtime", dependencies = [
-        "fine_dist_artifacts~=0.1.0a0",
-    ] },
+  { name = "publish_artifact", source = "fine_dist_artifacts.PublishArtifactHandler", env = "dev_no_runtime", dependencies = [
+    "fine_dist_artifacts~=0.1.0a0",
+  ] },
 ]
 
 [tool.finecode.action.get_src_artifact_version]
 source = "fine_src_artifacts.GetSrcArtifactVersionAction"
 handlers = [
-    { name = 'get_src_artifact_version_py', source = 'fine_python_package_info.GetSrcArtifactVersionPyHandler', env = "dev_no_runtime", dependencies = [
-        "fine_python_package_info~=0.2.0a1",
-    ] },
+  { name = "get_src_artifact_version_py", source = "fine_python_package_info.GetSrcArtifactVersionPyHandler", env = "dev_no_runtime", dependencies = [
+    "fine_python_package_info~=0.2.0a1",
+  ] },
 ]
 
 [tool.finecode.action.get_dist_artifact_version]
 source = "fine_dist_artifacts.GetDistArtifactVersionAction"
 handlers = [
-    { name = 'get_dist_artifact_version_py', source = 'fine_python_package_info.GetDistArtifactVersionPyHandler', env = "dev_no_runtime", dependencies = [
-        "fine_python_package_info~=0.2.0a1",
-    ] },
+  { name = "get_dist_artifact_version_py", source = "fine_python_package_info.GetDistArtifactVersionPyHandler", env = "dev_no_runtime", dependencies = [
+    "fine_python_package_info~=0.2.0a1",
+  ] },
 ]
 
 [tool.finecode.action.get_src_artifact_registries]
 source = "fine_src_artifacts.GetSrcArtifactRegistriesAction"
 handlers = [
-    { name = 'get_src_artifact_registries_py', source = 'fine_python_package_info.GetSrcArtifactRegistriesPyHandler', env = "dev_no_runtime", dependencies = [
-        "fine_python_package_info~=0.2.0a1",
-    ] },
+  { name = "get_src_artifact_registries_py", source = "fine_python_package_info.GetSrcArtifactRegistriesPyHandler", env = "dev_no_runtime", dependencies = [
+    "fine_python_package_info~=0.2.0a1",
+  ] },
 ]
 
 [tool.finecode.action.publish_artifact_to_registry]
 source = "fine_dist_artifacts.PublishArtifactToRegistryAction"
 handlers = [
-    { name = 'publish_artifact_to_registry_py', source = 'fine_python_package_info.PublishArtifactToRegistryPyHandler', env = "dev_no_runtime", dependencies = [
-        "fine_python_package_info~=0.2.0a1",
-    ] },
+  { name = "publish_artifact_to_registry_py", source = "fine_python_package_info.PublishArtifactToRegistryPyHandler", env = "dev_no_runtime", dependencies = [
+    "fine_python_package_info~=0.2.0a1",
+  ] },
 ]
 
-[tool.finecode.action.is_artifact_published_to_registry]
-source = "fine_dist_artifacts.IsArtifactPublishedToRegistryAction"
+[tool.finecode.action.list_published_artifacts]
+source = "fine_dist_artifacts.ListPublishedArtifactsAction"
 handlers = [
-    { name = 'is_artifact_published_to_registry_py', source = 'fine_python_package_info.IsArtifactPublishedToRegistryPyHandler', env = "dev_no_runtime", dependencies = [
-        "fine_python_package_info~=0.2.0a1",
-    ] },
+  { name = "list_published_artifacts_python", source = "fine_python_package_info.ListPublishedArtifactsPythonHandler", env = "dev_no_runtime", dependencies = [
+    "fine_python_package_info~=0.2.0a1",
+  ] },
 ]
 
 [tool.finecode.action.build_artifact]
 source = "fine_src_artifacts.BuildArtifactAction"
 handlers = [
-    { name = 'build_artifact_py', source = 'fine_python_package_info.BuildArtifactPyHandler', env = "dev_no_runtime", dependencies = [
-        "fine_python_package_info~=0.2.0a1",
-    ] },
+  { name = "build_artifact_py", source = "fine_python_package_info.BuildArtifactPyHandler", env = "dev_no_runtime", dependencies = [
+    "fine_python_package_info~=0.2.0a1",
+  ] },
 ]
 
 [tool.finecode.action.ingest_wal_to_store]
 source = "fine_wal_events.IngestWalToStoreAction"
 handlers = [
-    { name = "discover_sources", source = "fine_wal_explorer.IngestWalSourceDiscoveryHandler", env = "wal_explorer", dependencies = ["fine_wal_explorer~=0.1.0a0"] },
-    { name = "ingest_wal_to_store", source = "fine_wal_explorer.IngestWalToStoreHandler", env = "wal_explorer", dependencies = ["fine_wal_explorer~=0.1.0a0"] },
+  { name = "discover_sources", source = "fine_wal_explorer.IngestWalSourceDiscoveryHandler", env = "wal_explorer", dependencies = [
+    "fine_wal_explorer~=0.1.0a0"
+  ] },
+  { name = "ingest_wal_to_store", source = "fine_wal_explorer.IngestWalToStoreHandler", env = "wal_explorer", dependencies = [
+    "fine_wal_explorer~=0.1.0a0"
+  ] },
 ]
 
 [tool.finecode.action.discover_wal_sources]
 source = "fine_wal_events.DiscoverWalSourcesAction"
 handlers = [
-    { name = "discover_wal_sources", source = "fine_wal_explorer.DiscoverWalSourcesHandler", env = "wal_explorer", dependencies = ["fine_wal_explorer~=0.1.0a0"] },
+  { name = "discover_wal_sources", source = "fine_wal_explorer.DiscoverWalSourcesHandler", env = "wal_explorer", dependencies = [
+    "fine_wal_explorer~=0.1.0a0"
+  ] },
 ]
 
 [tool.finecode.action.verify_artifact_published_to_registry]
@@ -105,10 +113,26 @@ handlers = []
 [tool.finecode.action.publish_and_verify_artifact]
 source = "finecode_dev_extensions.publish_and_verify_artifact_action.PublishAndVerifyArtifactAction"
 handlers = [
-    { name = 'init_repository_provider', source = 'finecode_dev_extensions.PublishAndVerifyArtifactInitRepositoryProviderHandler', env = "dev_no_runtime", dependencies = [
-        "finecode_dev_extensions~=0.2.0a0",
-    ] },
-    { name = 'publish_and_verify_artifact', source = 'finecode_dev_extensions.PublishAndVerifyArtifactHandler', env = "dev_no_runtime", dependencies = [
-        "finecode_dev_extensions~=0.2.0a0",
-    ] },
+  { name = "publish_and_verify_artifact", source = "finecode_dev_extensions.PublishAndVerifyArtifactHandler", env = "dev_no_runtime", dependencies = [
+    "finecode_dev_extensions~=0.2.0a0",
+  ] },
 ]
+
+[tool.finecode.action.run_agent_task]
+handlers = [
+  { name = "pi_agent", source = "fine_agent_pi.PiAgentHandler", env = "dev_no_runtime", dependencies = [
+    "fine_agent_pi~=0.1.0a0",
+  ] },
+]
+
+[[tool.finecode.action.audit_code.handlers]]
+name = "check_toolchains_bridge"
+source = "fine_envs.check_toolchains_audit_code_bridge_handler.CheckToolchainsAuditCodeBridgeHandler"
+env = "dev_workspace"
+dependencies = ["fine_envs[audit]~=0.1.0a0"]
+
+# currently, all packages in finecode repository are pure python packages, reuse
+# setuptools build in all of them
+[build-system]
+requires = ["setuptools>=64", "setuptools-scm>=8"]
+build-backend = "setuptools.build_meta"

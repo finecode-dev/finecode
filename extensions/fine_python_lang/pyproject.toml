@@ -8,7 +8,7 @@ authors = [{ name = "Vladyslav Hnatiuk", email = "aders1234@gmail.com" }]
 dependencies = [
   "fine_check_imports~=0.1.0a0",
   "fine_code_hierarchy~=0.1.0a0",
-  "fine_envs~=0.1.0a0",
+  "fine_envs~=0.2.0a0",
   "fine_format~=0.1.0a0",
   "fine_inlay_hints~=0.1.0a0",
   "fine_lint~=0.1.0a0",

@@ -54,6 +54,10 @@ async def reload_config(
             "recover, or 'allProjects': true to recover the whole workspace."
         )
 
+    # The extras selection is memoised on the workspace context; recovery must
+    # re-read it so a renamed/removed finecode-workspace-user.toml is observed.
+    ws_context.ws_extra_selection = {}
+
     if rescan:
         # Projects created since startup are invisible until the workspace dirs
         # are walked again; this is the workspace-scope recovery that replaced

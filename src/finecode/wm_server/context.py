@@ -154,6 +154,12 @@ class WorkspaceContext:
     # Populated from finecode-workspace.toml during workspace scan; stable after that.
     ws_editable_packages: dict[str, Path] = field(default_factory=dict)
 
+    # Canonical package name → selected extras, read from the gitignored
+    # finecode-workspace-user.toml. Lazily computed by
+    # read_configs.read_workspace_extra_selection; reset on config reload so a
+    # rename/removal of the selection file is observed.
+    ws_extra_selection: dict[str, list[str]] = field(default_factory=dict)
+
     # Raw definition-file config per project path.  Populated by read_project_config
     # before collect_project is called.  Entries are not automatically removed when
     # projects are re-initialized.

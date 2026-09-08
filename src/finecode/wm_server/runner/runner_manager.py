@@ -17,7 +17,7 @@ from loguru import logger
 import finecode_jsonrpc as jsonrpc_client
 from finecode import telemetry
 from finecode.wm_server import context, domain, domain_helpers, errors
-from finecode.wm_server.config import collect_actions, config_models
+from finecode.wm_server.config import collect_actions, config_models, read_configs
 from finecode.wm_server.runner import (
     _internal_client_api,
     _internal_client_types,
@@ -396,6 +396,16 @@ async def _start_extension_runner_process(
     runner.client.feature(
         _internal_client_types.WORKSPACE_EDITABLE_PACKAGES_GET,
         get_workspace_editable_packages,
+    )
+
+    async def get_workspace_extra_selection(_params):
+        return {
+            "selection": read_configs.read_workspace_extra_selection(ws_context)
+        }
+
+    runner.client.feature(
+        _internal_client_types.WORKSPACE_EXTRA_SELECTION_GET,
+        get_workspace_extra_selection,
     )
 
     _PROJECT_STATUS_MAP = {

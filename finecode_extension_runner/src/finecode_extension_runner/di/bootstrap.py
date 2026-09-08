@@ -100,6 +100,10 @@ def bootstrap(
         [], collections.abc.Awaitable[dict[str, pathlib.Path]]
     ]
     | None = None,
+    workspace_extra_selection_getter: Callable[
+        [], collections.abc.Awaitable[dict[str, list[str]]]
+    ]
+    | None = None,
     send_request_to_wm: Callable[[str, dict], collections.abc.Awaitable[Any]]
     | None = None,
     send_user_message_notification: Callable[[str, str], None] | None = None,
@@ -173,6 +177,7 @@ def bootstrap(
             project_def_path_getter=project_def_path_getter,
             project_raw_config_getter=project_raw_config_getter,
             workspace_editable_packages_getter=workspace_editable_packages_getter,
+            workspace_extra_selection_getter=workspace_extra_selection_getter,
             current_project_raw_config_version_getter=current_project_raw_config_version_getter,
         ),
     )
@@ -540,11 +545,16 @@ def project_info_provider_factory(
         [], collections.abc.Awaitable[dict[str, pathlib.Path]]
     ]
     | None = None,
+    workspace_extra_selection_getter: Callable[
+        [], collections.abc.Awaitable[dict[str, list[str]]]
+    ]
+    | None = None,
 ):
     return project_info_provider.ProjectInfoProvider(
         project_def_path_getter=project_def_path_getter,
         project_raw_config_getter=project_raw_config_getter,
         workspace_editable_packages_getter=workspace_editable_packages_getter,
+        workspace_extra_selection_getter=workspace_extra_selection_getter,
         current_project_raw_config_version_getter=current_project_raw_config_version_getter,
     )
 

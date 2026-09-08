@@ -18,9 +18,10 @@ from fine_envs import (
 )
 from fine_envs.dependency_config_utils import (
     collect_transitive_editable_deps,
-    get_dependency_name,
+    make_dep,
     process_raw_deps,
     resolve_install_project,
+    split_dep_spec,
 )
 from fine_envs.install_envs_action import (
     InstallEnvsRunResult,
@@ -114,22 +115,25 @@ class InstallEnvInstallDepsHandler(
                     f"Applying {len(overrides)} dependencies_override(s) to env '{env.name}'"
                 )
                 for override_spec in overrides:
-                    raw_name = get_dependency_name(override_spec.strip())
+                    raw_name, extras, version_or_source = split_dep_spec(
+                        override_spec.strip()
+                    )
                     canonical = canonicalize_name(raw_name)
-                    version_or_source = override_spec.strip()[len(raw_name) :]
                     replaced = False
                     for dep in dependencies:
                         if canonicalize_name(dep["name"]) == canonical:
                             dep["name"] = raw_name
                             dep["version_or_source"] = version_or_source
+                            dep["extras"] = extras
                             replaced = True
                             break
                     if not replaced:
-                        new_dep: dict = {
-                            "name": raw_name,
-                            "version_or_source": version_or_source,
-                            "editable": False,
-                        }
+                        new_dep: dict = make_dep(
+                            name=raw_name,
+                            version_or_source=version_or_source,
+                            editable=False,
+                            extras=extras,
+                        )
                         if raw_name in ws_editable_packages:
                             path = ws_editable_packages[raw_name]
                             new_dep["version_or_source"] = (
@@ -148,6 +152,7 @@ class InstallEnvInstallDepsHandler(
                             name=dep["name"],
                             version_or_source=dep["version_or_source"],
                             editable=dep["editable"],
+                            extras=dep["extras"],
                         )
                         for dep in dependencies
                     ],

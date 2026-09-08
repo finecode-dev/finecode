@@ -91,9 +91,15 @@ class UvInstallDepsInEnvHandler(
             if dependency.editable:
                 install_params += "-e "
 
+            extras_str = ""
+            if dependency.extras:
+                extras_str = "[" + ",".join(dependency.extras) + "]"
+
             # uv supports the full PEP 508 'name @ file://...' syntax natively,
             # so no stripping of the package name is needed (unlike pip CLI).
-            install_params += f"'{dependency.name}{dependency.version_or_source}' "
+            install_params += (
+                f"'{dependency.name}{extras_str}{dependency.version_or_source}' "
+            )
 
         cmd = f'"{uv_executable}" --no-config pip install --python "{venv_dir_path}" {install_params}'
         return cmd

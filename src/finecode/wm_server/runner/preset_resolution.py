@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any, NamedTuple
 
 from loguru import logger
+from packaging.utils import canonicalize_name
 
 from finecode import user_messages
 from finecode.wm_server import context, domain
@@ -28,10 +29,15 @@ class PresetToProcess(NamedTuple):
     source: str
     project_def_path: Path
     declared_by: str | None = None  # None means declared directly by the project
+    gated_by_extra: str | None = None
+    gated_by_package: str | None = None
 
 
 async def get_preset_project_path(
-    preset: PresetToProcess, def_path: Path, runner: runner_client.ExtensionRunnerInfo
+    preset: PresetToProcess,
+    def_path: Path,
+    runner: runner_client.ExtensionRunnerInfo,
+    ws_context: context.WorkspaceContext,
 ) -> Path:
     """Ask *runner* where the preset package named by *preset* lives on disk.
 
@@ -51,7 +57,29 @@ async def get_preset_project_path(
         error_message = error.message
         lower_message = error_message.lower()
         if "cannot find package" in lower_message or "no module named" in lower_message:
-            if preset.declared_by is not None:
+            if preset.gated_by_extra is not None and preset.gated_by_package is not None:
+                clone_present = any(
+                    project.name is not None
+                    and canonicalize_name(project.name)
+                    == canonicalize_name(preset.source)
+                    for project in ws_context.ws_projects.values()
+                )
+                if clone_present:
+                    description = (
+                        f"Preset '{preset.source}' is enabled by extra "
+                        f"'{preset.gated_by_extra}' of '{preset.gated_by_package}' in "
+                        f"finecode-workspace-user.toml, but it is not installed in "
+                        f"the dev_workspace environment. Re-run 'prepare-envs'."
+                    )
+                else:
+                    description = (
+                        f"Preset '{preset.source}' is enabled by extra "
+                        f"'{preset.gated_by_extra}' of '{preset.gated_by_package}' in "
+                        f"finecode-workspace-user.toml, but its repository is not "
+                        f"present. Clone it, or remove '{preset.gated_by_extra}' "
+                        f"from that file."
+                    )
+            elif preset.declared_by is not None:
                 description = (
                     f"Preset '{preset.source}' is declared by preset '{preset.declared_by}' "
                     f"(used in project {def_path.parent}) "
@@ -88,6 +116,8 @@ async def collect_config_from_py_presets(
     presets_sources: list[str],
     def_path: Path,
     runner: runner_client.ExtensionRunnerInfo,
+    ws_context: context.WorkspaceContext,
+    selected_extras_by_package: dict[str, list[str]],
 ) -> dict[str, Any] | None:
     config: dict[str, Any] | None = None
     processed_presets: set[str] = set()
@@ -100,12 +130,15 @@ async def collect_config_from_py_presets(
         processed_presets.add(preset.source)
 
         preset_project_path = await get_preset_project_path(
-            preset=preset, def_path=def_path, runner=runner
+            preset=preset, def_path=def_path, runner=runner, ws_context=ws_context
         )
 
         preset_toml_path = preset_project_path / "preset.toml"
+        selected_extras = tuple(
+            selected_extras_by_package.get(canonicalize_name(preset.source), [])
+        )
         preset_toml, preset_config = read_configs.read_preset_config(
-            preset_toml_path, preset.source
+            preset_toml_path, preset.source, selected_extras=selected_extras
         )
         if config is None:
             # use merge instead of just assigning config, because merge not only merges
@@ -114,19 +147,52 @@ async def collect_config_from_py_presets(
         read_configs.merge_projects_configs(
             config, def_path, preset_toml, preset_toml_path, is_from_preset=True
         )
+
+        extra_gates = preset_toml.get("tool", {}).get("finecode", {}).get("extra", {})
+        gated_sources = {
+            raw_preset["source"]
+            for extra_name in selected_extras
+            for gate in [extra_gates.get(extra_name)]
+            if gate is not None
+            for raw_preset in gate.get("presets", [])
+            if isinstance(raw_preset, dict) and "source" in raw_preset
+        }
+
         new_presets_sources = {
             extend.source for extend in preset_config.extends
         } - processed_presets
         for new_preset_source in new_presets_sources:
+            is_gated = new_preset_source in gated_sources
             presets_to_process.add(
                 PresetToProcess(
                     source=new_preset_source,
                     project_def_path=def_path,
                     declared_by=preset.source,
+                    gated_by_extra=(
+                        _extra_for_source(selected_extras, extra_gates, new_preset_source)
+                        if is_gated
+                        else None
+                    ),
+                    gated_by_package=preset.source if is_gated else None,
                 )
             )
 
     return config
+
+
+def _extra_for_source(
+    selected_extras: tuple[str, ...],
+    extra_gates: dict[str, Any],
+    source: str,
+) -> str | None:
+    for extra_name in selected_extras:
+        gate = extra_gates.get(extra_name)
+        if gate is None:
+            continue
+        for raw_preset in gate.get("presets", []):
+            if isinstance(raw_preset, dict) and raw_preset.get("source") == source:
+                return extra_name
+    return None
 
 
 async def read_project_config_with_py_presets(
@@ -160,6 +226,10 @@ async def read_project_config_with_py_presets(
             presets_sources=sources.preset_sources,
             def_path=project.def_path,
             runner=dev_workspace_runner,
+            ws_context=ws_context,
+            selected_extras_by_package=read_configs.read_workspace_extra_selection(
+                ws_context
+            ),
         )
 
     read_configs.finish_project_config(project, ws_context, sources, py_presets_config)

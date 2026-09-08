@@ -1,6 +1,6 @@
 [project]
 name = "fine_envs"
-version = "0.1.0a0"
+version = "0.2.0a0"
 description = "FineCode preset that owns environment management and configuration action contracts"
 readme = "README.md"
 requires-python = ">=3.11"

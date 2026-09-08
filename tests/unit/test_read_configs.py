@@ -11,6 +11,7 @@ from finecode.wm_server.config.read_configs import (
     read_preset_config,
     read_project_config,
     read_project_user_config,
+    read_workspace_extra_selection,
     read_wm_telemetry_config,
     resolve_interpreter_matrices,
 )
@@ -487,6 +488,252 @@ interpreters = ["cpython@3.11", "cpython@3.12"]
     assert {"testing@cpython-3.11", "testing@cpython-3.12"} <= set(env_table)
     assert env_table["testing@cpython-3.11"]["interpreter"] == "cpython@3.11"
     assert "interpreters" not in env_table["testing@cpython-3.11"]
+
+
+def _make_project(
+    tmp_path: pathlib.Path,
+    name: str,
+    pyproject: str,
+) -> tuple[domain.Project, context.WorkspaceContext]:
+    _write_toml(tmp_path / "pyproject.toml", pyproject)
+    project = domain.Project(
+        name=name,
+        dir_path=tmp_path,
+        def_path=tmp_path / "pyproject.toml",
+        status=domain.ProjectStatus.CONFIG_VALID,
+    )
+    ws_context = context.WorkspaceContext(ws_dirs_paths=[tmp_path])
+    return project, ws_context
+
+
+def test_workspace_extra_selection_absent_is_empty(tmp_path: pathlib.Path) -> None:
+    """No selection file is a safe no-op."""
+    ws_context = context.WorkspaceContext(ws_dirs_paths=[tmp_path])
+    assert read_workspace_extra_selection(ws_context) == {}
+
+
+def test_workspace_extra_selection_parses_and_canonicalizes(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Package keys are canonicalized, so the two PEP 503 spellings select the
+    same package."""
+    _write_toml(
+        tmp_path / "finecode-workspace-user.toml",
+        'extras = { finecode-dev-common-preset = ["a", "b"] }\n',
+    )
+    ws_context = context.WorkspaceContext(ws_dirs_paths=[tmp_path])
+
+    result = read_workspace_extra_selection(ws_context)
+
+    assert result == {"finecode-dev-common-preset": ["a", "b"]}
+
+
+def test_workspace_extra_selection_rejects_unknown_key(
+    tmp_path: pathlib.Path,
+) -> None:
+    _write_toml(
+        tmp_path / "finecode-workspace-user.toml",
+        'presets = [{ source = "x" }]\n',
+    )
+    ws_context = context.WorkspaceContext(ws_dirs_paths=[tmp_path])
+
+    with pytest.raises(config_models.ConfigurationError, match="presets"):
+        read_workspace_extra_selection(ws_context)
+
+
+def test_workspace_extra_selection_rejects_non_list_value(
+    tmp_path: pathlib.Path,
+) -> None:
+    _write_toml(
+        tmp_path / "finecode-workspace-user.toml",
+        'extras = { pkg = "not-a-list" }\n',
+    )
+    ws_context = context.WorkspaceContext(ws_dirs_paths=[tmp_path])
+
+    with pytest.raises(config_models.ConfigurationError, match="list"):
+        read_workspace_extra_selection(ws_context)
+
+
+def test_workspace_extra_selection_rejects_malformed_toml(
+    tmp_path: pathlib.Path,
+) -> None:
+    (tmp_path / "finecode-workspace-user.toml").write_bytes(b"[bad toml\n")
+    ws_context = context.WorkspaceContext(ws_dirs_paths=[tmp_path])
+
+    with pytest.raises(config_models.ConfigurationError, match="Failed to parse"):
+        read_workspace_extra_selection(ws_context)
+
+
+def test_workspace_extra_selection_rejects_undeclared_extra(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Selecting an extra a workspace package does not declare is fatal."""
+    project, ws_context = _make_project(
+        tmp_path,
+        "pkg",
+        '[project]\nname = "pkg"\n[project.optional-dependencies]\nlint_fix = []\n',
+    )
+    ws_context.ws_projects[project.dir_path] = project
+    _write_toml(
+        tmp_path / "finecode-workspace-user.toml",
+        'extras = { pkg = ["unknown"] }\n',
+    )
+
+    with pytest.raises(config_models.ConfigurationError, match="unknown"):
+        read_workspace_extra_selection(ws_context)
+
+
+def test_workspace_extra_selection_accepts_declared_extra(
+    tmp_path: pathlib.Path,
+) -> None:
+    project, ws_context = _make_project(
+        tmp_path,
+        "pkg",
+        '[project]\nname = "pkg"\n[project.optional-dependencies]\nlint_fix = []\n',
+    )
+    ws_context.ws_projects[project.dir_path] = project
+    _write_toml(
+        tmp_path / "finecode-workspace-user.toml",
+        'extras = { pkg = ["lint_fix"] }\n',
+    )
+
+    assert read_workspace_extra_selection(ws_context) == {"pkg": ["lint_fix"]}
+
+
+def _selection_rewrites_spec(tmp_path: pathlib.Path, spec: str) -> list[str]:
+    _write_toml(
+        tmp_path / "finecode-workspace-user.toml",
+        'extras = { finecode_dev_common_preset = ["lint_fix"] }\n',
+    )
+    project, ws_context = _make_project(
+        tmp_path,
+        "consumer",
+        f'[project]\nname = "consumer"\n'
+        f'[dependency-groups]\nruntime = ["{spec}"]\n',
+    )
+    read_project_config(project, ws_context)
+    return ws_context.ws_projects_raw_configs[project.dir_path]["dependency-groups"][
+        "runtime"
+    ]
+
+
+def test_extra_selection_rewrites_matching_spec(tmp_path: pathlib.Path) -> None:
+    """A spec naming a selected package gains the extra in its bracket group."""
+    assert _selection_rewrites_spec(
+        tmp_path, "finecode_dev_common_preset~=0.3.0a0"
+    ) == ["finecode_dev_common_preset[lint_fix]~=0.3.0a0"]
+
+
+def test_extra_selection_rewrites_bare_spec(tmp_path: pathlib.Path) -> None:
+    assert _selection_rewrites_spec(
+        tmp_path, "finecode_dev_common_preset"
+    ) == ["finecode_dev_common_preset[lint_fix]"]
+
+
+def test_extra_selection_preserves_marker(tmp_path: pathlib.Path) -> None:
+    _write_toml(
+        tmp_path / "finecode-workspace-user.toml",
+        'extras = { finecode_dev_common_preset = ["lint_fix"] }\n',
+    )
+    project, ws_context = _make_project(
+        tmp_path,
+        "consumer",
+        '[project]\nname = "consumer"\n'
+        '[dependency-groups]\n'
+        'runtime = [\'finecode_dev_common_preset~=0.3.0a0; python_version<"3.12"\']\n',
+    )
+
+    read_project_config(project, ws_context)
+
+    runtime = ws_context.ws_projects_raw_configs[project.dir_path]["dependency-groups"][
+        "runtime"
+    ]
+    assert runtime == [
+        'finecode_dev_common_preset[lint_fix]~=0.3.0a0; python_version<"3.12"'
+    ]
+
+
+def test_extra_selection_rewrites_direct_reference(tmp_path: pathlib.Path) -> None:
+    assert _selection_rewrites_spec(
+        tmp_path, "finecode_dev_common_preset @ file:///tmp/pkg"
+    ) == ["finecode_dev_common_preset[lint_fix] @ file:///tmp/pkg"]
+
+
+def test_extra_selection_preserves_existing_extra(tmp_path: pathlib.Path) -> None:
+    _write_toml(
+        tmp_path / "finecode-workspace-user.toml",
+        'extras = { fine_envs = ["x"] }\n',
+    )
+    project, ws_context = _make_project(
+        tmp_path,
+        "consumer",
+        '[project]\nname = "consumer"\n'
+        '[dependency-groups]\nruntime = ["fine_envs[audit]~=0.1.0a0"]\n',
+    )
+
+    read_project_config(project, ws_context)
+
+    runtime = ws_context.ws_projects_raw_configs[project.dir_path]["dependency-groups"][
+        "runtime"
+    ]
+    assert runtime == ["fine_envs[audit,x]~=0.1.0a0"]
+
+
+def test_read_preset_config_folds_selected_gate(tmp_path: pathlib.Path) -> None:
+    _write_toml(
+        tmp_path / "preset.toml",
+        '[tool.finecode]\npresets = [{ source = "base" }]\n'
+        '[tool.finecode.extra.lint_fix]\n'
+        'presets = [{ source = "fine_lint_fix" }]\n',
+    )
+    _write_toml(
+        tmp_path / "pyproject.toml",
+        '[project]\nname = "pkg"\n[project.optional-dependencies]\nlint_fix = []\n',
+    )
+
+    _, preset_config = read_preset_config(
+        tmp_path / "preset.toml", "pkg", selected_extras=("lint_fix",)
+    )
+
+    assert [extend.source for extend in preset_config.extends] == [
+        "base",
+        "fine_lint_fix",
+    ]
+
+
+def test_read_preset_config_does_not_fold_unselected_gate(
+    tmp_path: pathlib.Path,
+) -> None:
+    _write_toml(
+        tmp_path / "preset.toml",
+        '[tool.finecode]\npresets = [{ source = "base" }]\n'
+        '[tool.finecode.extra.lint_fix]\n'
+        'presets = [{ source = "fine_lint_fix" }]\n',
+    )
+    _write_toml(
+        tmp_path / "pyproject.toml",
+        '[project]\nname = "pkg"\n[project.optional-dependencies]\nlint_fix = []\n',
+    )
+
+    _, preset_config = read_preset_config(tmp_path / "preset.toml", "pkg")
+
+    assert [extend.source for extend in preset_config.extends] == ["base"]
+
+
+def test_read_preset_config_gate_without_extra_raises(
+    tmp_path: pathlib.Path,
+) -> None:
+    _write_toml(
+        tmp_path / "preset.toml",
+        '[tool.finecode.extra.lint_fix]\npresets = [{ source = "fine_lint_fix" }]\n',
+    )
+    _write_toml(
+        tmp_path / "pyproject.toml",
+        '[project]\nname = "pkg"\n',
+    )
+
+    with pytest.raises(config_models.ConfigurationError, match="optional-dependencies"):
+        read_preset_config(tmp_path / "preset.toml", "pkg")
 
 
 def test_matrix_env_expands_to_one_concrete_env_per_interpreter() -> None:

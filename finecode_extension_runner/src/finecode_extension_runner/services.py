@@ -55,6 +55,10 @@ async def update_config(
         [], collections.abc.Awaitable[dict[str, Path]]
     ]
     | None = None,
+    workspace_extra_selection_getter: typing.Callable[
+        [], collections.abc.Awaitable[dict[str, list[str]]]
+    ]
+    | None = None,
     send_request_to_wm: typing.Callable[
         [str, dict], collections.abc.Awaitable[typing.Any]
     ]
@@ -139,6 +143,7 @@ async def update_config(
         project_def_path_getter=project_def_path_getter,
         project_raw_config_getter=project_raw_config_getter,
         workspace_editable_packages_getter=workspace_editable_packages_getter,
+        workspace_extra_selection_getter=workspace_extra_selection_getter,
         cache_dir_path_getter=cache_dir_path_getter,
         current_project_raw_config_version_getter=current_project_raw_config_version_getter,
         actions_getter=actions_getter,

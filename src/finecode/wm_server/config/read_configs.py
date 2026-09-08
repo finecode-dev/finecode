@@ -8,6 +8,7 @@ from typing import Any
 
 import cattrs
 from loguru import logger
+from packaging.utils import canonicalize_name
 from tomlkit import loads as toml_loads
 
 from finecode._converter import converter as _converter
@@ -502,6 +503,9 @@ def finish_project_config(
     )
     merge_handlers_dependencies_into_groups(actions, deps_groups)
     merge_services_dependencies_into_groups(services, deps_groups)
+    _apply_extra_selection_to_dependency_groups(
+        deps_groups, read_workspace_extra_selection(ws_context)
+    )
     _deduplicate_deps_groups(deps_groups)
     # ADR-0047: expand any interpreter-matrix matrix environment into concrete
     # per-interpreter envs before the extension runner dependency is injected,
@@ -539,7 +543,7 @@ def read_project_config(
 
 
 def read_preset_config(
-    config_path: Path, preset_id: str
+    config_path: Path, preset_id: str, selected_extras: tuple[str, ...] = ()
 ) -> tuple[dict[str, Any], config_models.PresetDefinition]:
     # preset_id is used only for logs to make them more useful
     logger.trace(f"Read preset config: {preset_id}")
@@ -568,10 +572,23 @@ def read_preset_config(
     except KeyError:
         presets = []
     try:
+        extra_gates = preset_toml["tool"]["finecode"]["extra"]
+    except KeyError:
+        extra_gates = {}
+
+    _validate_extra_gates(config_path, preset_id, extra_gates)
+
+    gated_presets: list[dict[str, Any]] = []
+    for extra_name in selected_extras:
+        gate = extra_gates.get(extra_name)
+        if gate is not None:
+            gated_presets.extend(gate.get("presets", []))
+
+    try:
         preset_config = config_models.PresetDefinition(
             extends=[
                 _converter.structure(raw_preset, config_models.FinecodePresetDefinition)
-                for raw_preset in presets
+                for raw_preset in presets + gated_presets
             ]
         )
     except cattrs.ClassValidationError as exception:
@@ -634,6 +651,72 @@ def read_preset_config(
 
     logger.trace(f"Reading preset config finished: {preset_id}")
     return (preset_toml, preset_config)
+
+
+def _find_package_pyproject(config_path: Path) -> Path | None:
+    parents = (
+        config_path.parent,
+        config_path.parent.parent,
+        config_path.parent.parent.parent,
+    )
+    for parent in parents:
+        candidate = parent / "pyproject.toml"
+        if candidate.exists():
+            return candidate
+    return None
+
+
+def _validate_extra_gates(
+    config_path: Path,
+    preset_id: str,
+    extra_gates: dict[str, Any],
+) -> None:
+    """Check that each ``[tool.finecode.extra.*]`` gate is mirrored by an
+    entry in the same package's ``[project.optional-dependencies]``, and vice
+    versa.
+
+    The two tracked files must stay in sync: a gate without an extra would
+    select nothing, and an extra without a gate is dead config (unless the
+    package never uses the gate mechanism at all — no ``extra`` table means
+    nothing is checked). Validation runs against the preset's own
+    ``preset.toml`` / ``pyproject.toml``, never the merged config, because two
+    presets each declaring ``extra`` would otherwise clobber one another.
+    """
+    if not isinstance(extra_gates, dict):
+        raise config_models.ConfigurationError(
+            f"[tool.finecode.extra] in {preset_id} must be a TOML table."
+        )
+    if not extra_gates:
+        return
+
+    for extra_name, gate in extra_gates.items():
+        if not isinstance(gate, dict) or not isinstance(gate.get("presets"), list):
+            raise config_models.ConfigurationError(
+                f"Extra gate '{extra_name}' in {preset_id} must be a table with a "
+                f"'presets' list."
+            )
+
+    pyproject_path = _find_package_pyproject(config_path)
+    if pyproject_path is None:
+        return
+    with open(pyproject_path, "rb") as f:
+        pyproject_toml = toml_loads(f.read()).unwrap()
+    declared_extras = pyproject_toml.get("project", {}).get(
+        "optional-dependencies", {}
+    )
+
+    for extra_name in extra_gates:
+        if extra_name not in declared_extras:
+            raise config_models.ConfigurationError(
+                f"Extra gate '{extra_name}' in {preset_id} has no matching "
+                f"[project.optional-dependencies] entry in {pyproject_path}."
+            )
+    for extra_name in declared_extras:
+        if extra_name not in extra_gates:
+            raise config_models.ConfigurationError(
+                f"[project.optional-dependencies] entry '{extra_name}' in "
+                f"{pyproject_path} has no matching extra gate in {preset_id}."
+            )
 
 
 def _merge_override_specs(existing: list[str], new: list[str]) -> list[str]:
@@ -1085,6 +1168,39 @@ def _deduplicate_deps_groups(deps_groups: dict[str, list[Any]]) -> None:
         deps_groups[group_name] = unique_deps
 
 
+def _rewrite_spec_with_extras(spec: str, selected_extras: list[str]) -> str:
+    name = get_dependency_name(spec)
+    rest = spec[len(name) :]
+    existing: list[str] = []
+    version_or_marker = rest
+    if rest.startswith("["):
+        closing = rest.index("]")
+        existing = sorted(
+            {extra.strip() for extra in rest[1:closing].split(",") if extra.strip()}
+        )
+        version_or_marker = rest[closing + 1 :]
+    merged = sorted(set(existing) | set(selected_extras))
+    return f"{name}[{','.join(merged)}]{version_or_marker}"
+
+
+def _apply_extra_selection_to_dependency_groups(
+    deps_groups: dict[str, list[Any]],
+    selection: dict[str, list[str]],
+) -> None:
+    if not selection:
+        return
+    for group_name, packages in deps_groups.items():
+        rewritten: list[Any] = []
+        for spec in packages:
+            if isinstance(spec, str):
+                name = get_dependency_name(spec)
+                selected = selection.get(canonicalize_name(name))
+                if selected:
+                    spec = _rewrite_spec_with_extras(spec, selected)
+            rewritten.append(spec)
+        deps_groups[group_name] = rewritten
+
+
 def resolve_interpreter_matrices(project_config: dict[str, Any]) -> None:
     """Expand interpreter-matrix matrix environments into concrete per-interpreter envs.
 
@@ -1301,6 +1417,94 @@ def resolve_workspace_editable_packages(
             result[pkg_name] = entry_path
 
     return result
+
+
+def read_workspace_extra_selection(
+    ws_context: context.WorkspaceContext,
+) -> dict[str, list[str]]:
+    """Read and validate the gitignored ``finecode-workspace-user.toml``.
+
+    The file may contain only an ``extras`` table mapping package names to the
+    extras they select. Keys are canonicalized (PEP 503), and each selected
+    extra is checked against the package's declared
+    ``[project.optional-dependencies]`` when the package is workspace-resident;
+    selections for packages not in the workspace are left alone (they may be
+    installed from an index). The result is memoised on the workspace context.
+
+    Raises:
+        ConfigurationError: the file is malformed, contains a key other than
+            ``extras``, has a non-list extras value, or selects an extra a
+            workspace package does not declare.
+    """
+    if ws_context.ws_extra_selection:
+        return ws_context.ws_extra_selection
+    if not ws_context.ws_dirs_paths:
+        return {}
+
+    ws_root = ws_context.ws_dirs_paths[0]
+    selection_path = ws_root / "finecode-workspace-user.toml"
+    if not selection_path.exists():
+        return {}
+
+    try:
+        with open(selection_path, "rb") as f:
+            raw = dict(toml_loads(f.read()).unwrap())
+    except Exception as e:  # noqa: BLE001
+        raise config_models.ConfigurationError(
+            f"Failed to parse {selection_path}: {e}"
+        ) from e
+
+    for key in raw:
+        if key != "extras":
+            raise config_models.ConfigurationError(
+                f"Unknown key '{key}' in {selection_path}; only 'extras' is allowed."
+            )
+
+    extras_raw = raw.get("extras", {})
+    if not isinstance(extras_raw, dict):
+        raise config_models.ConfigurationError(
+            f"The 'extras' table in {selection_path} must be a TOML table."
+        )
+
+    selection: dict[str, list[str]] = {}
+    for package, extras in extras_raw.items():
+        if not isinstance(extras, list):
+            raise config_models.ConfigurationError(
+                f"extras for package '{package}' in {selection_path} must be a list."
+            )
+        selection[canonicalize_name(package)] = [str(extra) for extra in extras]
+
+    _validate_selection_against_declared_extras(ws_context, selection_path, selection)
+
+    ws_context.ws_extra_selection = selection
+    return selection
+
+
+def _validate_selection_against_declared_extras(
+    ws_context: context.WorkspaceContext,
+    selection_path: Path,
+    selection: dict[str, list[str]],
+) -> None:
+    projects_by_name = {
+        canonicalize_name(project.name): project
+        for project in ws_context.ws_projects.values()
+        if project.name is not None
+    }
+    for package, selected_extras in selection.items():
+        project = projects_by_name.get(package)
+        if project is None:
+            continue
+        with open(project.def_path, "rb") as f:
+            project_toml = toml_loads(f.read()).unwrap()
+        declared = project_toml.get("project", {}).get(
+            "optional-dependencies", {}
+        )
+        unknown = [extra for extra in selected_extras if extra not in declared]
+        if unknown:
+            raise config_models.ConfigurationError(
+                f"Unknown extra(s) {', '.join(unknown)} for package '{package}' in "
+                f"{selection_path}. Declared extras: {sorted(declared)}"
+            )
 
 
 def add_extension_runner_to_dependencies(project_config: dict[str, Any]) -> None:
