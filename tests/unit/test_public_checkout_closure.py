@@ -1,8 +1,20 @@
 """Guards the placement rule that keeps the public CI pipeline installable.
 
-**Tracked configuration in the public repo may only name packages a clean public
-checkout can install: packages tracked in this repository, or packages published
-to PyPI and listed in `.github/ci/allowed_external_packages.txt`.**
+**Tracked configuration in the public repo may only name packages tracked in this
+repository.**
+
+There used to be a second admitted class — first-party packages published to PyPI
+but living outside the monorepo — carried by an explicit
+`.github/ci/allowed_external_packages.txt`. Its sole entry was
+`fine_python_aksem`, which moved behind the `aksem` extra of
+`finecode_dev_common_preset`; extras are outside this guard's reach by design, so
+the list emptied and was removed. **If such a package is ever needed again,
+restore the explicit file — do not reach for either shortcut.** The guard cannot
+ask PyPI: test legs run offline, indexes flake, and a yank would turn a
+repository property into a network property. It cannot infer "external" from disk
+presence either: several such packages are checked out locally on some developer
+machines and not others, so "is there a directory?" makes the result
+machine-dependent, which is worse than no test at all.
 
 Everything else — packages held in private repositories and never published — is
 declared in the gitignored `finecode-user.toml` layer, which a clean clone simply
@@ -11,6 +23,12 @@ rather than from the filesystem: a name resolving to a directory that happens to
 exist on one developer's disk is exactly the failure mode being guarded against,
 and a guard that consulted the disk would pass or fail depending on whose machine
 ran it.
+
+`.github/ci/` is deliberately outside D1. It holds `finecode-user.ci.toml`:
+config that deliberately names private packages and is only ever copied into
+place by the gated `audit-private` job after the private repos have been cloned.
+The `.ci` infix keeps it out of the `finecode-user.toml` basename scan, so the
+unanchored gitignore for `finecode-user.toml` needs no negation.
 
 Both tests skip when `.git` is absent (sdist installs, vendored checkouts), where
 "is this tracked?" has no answer.
@@ -28,7 +46,6 @@ from typing import Any
 import pytest
 
 _REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
-_ALLOWLIST_PATH = _REPO_ROOT / ".github" / "ci" / "allowed_external_packages.txt"
 
 # Names outside these prefixes are third-party packages on PyPI (click, loguru,
 # pytest...). Only FineCode's own namespaces can plausibly be an untracked local
@@ -95,15 +112,6 @@ def _load_resolve_workspace_packages():
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module.resolve_workspace_packages
-
-
-def _allowed_external_packages() -> set[str]:
-    lines = _ALLOWLIST_PATH.read_text(encoding="utf-8").splitlines()
-    return {
-        stripped
-        for line in lines
-        if (stripped := line.split("#", maxsplit=1)[0].strip())
-    }
 
 
 def _tracked_package_names() -> dict[str, str]:
@@ -195,12 +203,33 @@ def test_collect_named_packages_still_collects_root_presets() -> None:
     assert names == {"fine_lint_fix"}
 
 
+def _scanned_config_kind(rel_path: str) -> str | None:
+    """The config basename the guard scans `rel_path` as, or None to skip it.
+
+    `finecode-user.toml` is scanned as defence against a user file force-added
+    to git; the gitignore convention keeps ordinary instances out of tracked
+    config, and the tracked CI config lives under `.github/ci/` with a `.ci`
+    infix so it is not scanned here at all.
+    """
+    basename = rel_path.rsplit("/", maxsplit=1)[-1]
+    if basename in ("pyproject.toml", "preset.toml", "finecode-user.toml"):
+        return basename if _in_scope(rel_path) else None
+    return None
+
+
 def _names_by_tracked_config_file() -> dict[str, set[str]]:
-    """`{relative config path: first-party package names it declares}`."""
+    """`{relative config path: first-party package names it declares}`.
+
+    Scanned basenames are `pyproject.toml`, `preset.toml` and the user-config
+    layer `finecode-user.toml`. A user file has no `[tool.finecode]` wrapper, so
+    its `presets` sit at the document root and the whole parsed document is
+    walked with `at_finecode_root=True` — the same way the same keys are read at
+    a `tool.finecode` root elsewhere.
+    """
     result: dict[str, set[str]] = {}
     for rel_path in _tracked_files():
-        basename = rel_path.rsplit("/", maxsplit=1)[-1]
-        if basename not in ("pyproject.toml", "preset.toml") or not _in_scope(rel_path):
+        kind = _scanned_config_kind(rel_path)
+        if kind is None:
             continue
         with (_REPO_ROOT / rel_path).open("rb") as f:
             config = tomllib.load(f)
@@ -208,9 +237,12 @@ def _names_by_tracked_config_file() -> dict[str, set[str]]:
         for dep in config.get("project", {}).get("dependencies", []):
             if isinstance(dep, str):
                 names.add(_bare_name(dep))
-        _collect_named_packages(
-            config.get("tool", {}).get("finecode", {}), names, at_finecode_root=True
+        subtree = (
+            config
+            if kind == "finecode-user.toml"
+            else config.get("tool", {}).get("finecode", {})
         )
+        _collect_named_packages(subtree, names, at_finecode_root=True)
         first_party = {name for name in names if _is_first_party(name)}
         if first_party:
             result[rel_path] = first_party
@@ -239,18 +271,15 @@ def test_dev_workspace_closure_is_fully_tracked() -> None:
     packages = resolve_workspace_packages(_REPO_ROOT, roots=tracked_roots)
     assert packages, "expected the dev_workspace closure to resolve some packages"
 
-    # Allowlisted names are the same producer the second test handles: genuinely
-    # external packages that some machines also happen to have checked out
-    # locally, where `_package_dirs` then mistakes them for monorepo packages. On
-    # a clean checkout they are not directories at all and never reach this
-    # closure, so exempting them is what makes the assertion a property of the
-    # repository rather than of whoever ran it.
-    allowed_external = _allowed_external_packages()
+    # No exemptions: every name this closure reaches must be tracked. The one
+    # package that needed exempting (`fine_python_aksem`, checked out locally on
+    # some machines, where `_package_dirs` then mistakes it for a monorepo
+    # package) is behind an extra now, and extras are not followed from
+    # `[project].dependencies`, so it never reaches this closure at all.
     untracked = sorted(
         name
         for name, path in packages.items()
-        if name not in allowed_external
-        and not _git("ls-files", str(path.relative_to(_REPO_ROOT))).strip()
+        if not _git("ls-files", str(path.relative_to(_REPO_ROOT))).strip()
     )
     assert not untracked, (
         "these packages are installed editable by the bootstrap but have no tracked "
@@ -270,22 +299,18 @@ def test_tracked_configs_name_only_reachable_packages() -> None:
     reason to exempt them.
     """
     tracked_packages = _tracked_package_names()
-    allowed_external = _allowed_external_packages()
 
     violations: dict[str, list[str]] = {}
     for rel_path, names in sorted(_names_by_tracked_config_file().items()):
-        unreachable = sorted(
-            name
-            for name in names
-            if name not in tracked_packages and name not in allowed_external
-        )
+        unreachable = sorted(name for name in names if name not in tracked_packages)
         if unreachable:
             violations[rel_path] = unreachable
 
     assert not violations, (
         "tracked configuration names packages a clean public checkout cannot "
         f"install: {violations}. Either the package belongs in this repository, "
-        f"or it is published to PyPI and belongs in {_ALLOWLIST_PATH.name}, or it "
-        "is private and must be declared in the gitignored finecode-user.toml "
-        "layer instead of in tracked config."
+        "or it is optional and belongs behind a [project.optional-dependencies] "
+        "extra with a matching [tool.finecode.extra.<name>] gate, or it is "
+        "private and must be declared in the gitignored finecode-user.toml layer "
+        "instead of in tracked config."
     )

@@ -10,12 +10,12 @@ dependencies = [
   "fine_dep_graph~=0.1.0a0",
   "fine_git_hooks~=0.1.0a0",
   "fine_logs~=0.1.0a0",
-  "fine_python_aksem~=0.3.0a3",
   "fine_python_recommended~=0.5.0a0",
   "fine_release~=0.1.0a0",
 ]
 
 [project.optional-dependencies]
+aksem = ["fine_python_aksem~=0.3.0a3"]
 lint_fix = ["fine_lint_fix~=0.1.0a0"]
 
 [tool.setuptools.package-data]

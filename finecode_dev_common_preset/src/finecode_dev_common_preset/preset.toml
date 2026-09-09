@@ -8,6 +8,9 @@ presets = [
   { source = "fine_agent" },
 ]
 
+[tool.finecode.extra.aksem]
+presets = [{ source = "fine_python_aksem" }]
+
 [tool.finecode.extra.lint_fix]
 presets = [{ source = "fine_lint_fix" }]
 

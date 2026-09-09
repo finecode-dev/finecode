@@ -174,3 +174,118 @@ jobs:
         with:
           name: python-package-distributions
           path: dist/
+
+  audit-private:
+    name: Audit (private layer)
+    runs-on: ubuntu-24.04
+    # The `build` job's 40min budget is not enough: this job pays a cold
+    # prepare-envs over ~74 projects and then a workspace-wide audit_code, which
+    # is slow by design (see docs/guides/developing-finecode.md "Running checks").
+    timeout-minutes: 60
+    # `secrets` is NOT available in jobs.<job_id>.if -- only github, needs,
+    # vars, inputs. An unavailable context evaluates to empty, so a secrets test
+    # here would skip the job forever without ever erroring. Fork PRs are
+    # excluded with the `github` context alone; the credentials test is the
+    # `env` gate below, which step `if`s can read.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    env:
+      # jobs.<job_id>.env DOES have the secrets context, and steps' `if` has
+      # `env`. This one line is what bridges the two.
+      HAS_PRIVATE_CLONE_APP: ${{ secrets.PRIVATE_CLONE_APP_ID != '' && secrets.PRIVATE_CLONE_APP_PRIVATE_KEY != '' }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          # setuptools-scm uses tags to get the current version, fetch history and tags
+          # to get correct version
+          fetch-depth: 0
+          fetch-tags: 'true'
+
+      - name: Report skip reason
+        if: env.HAS_PRIVATE_CLONE_APP != 'true'
+        run: echo "::notice::Private-layer audit skipped - App credentials are not available on this run."
+
+      - name: Determine FineCode log level
+        if: env.HAS_PRIVATE_CLONE_APP == 'true'
+        run: |
+          # WM/ER diagnostic logs are streamed to the job log (verbose is auto-enabled
+          # in CI). Keep them at INFO normally; raise to DEBUG only when the job is
+          # re-run with "Enable debug logging" (GitHub sets RUNNER_DEBUG=1). This keeps
+          # the debug-vs-info decision in CI config — FineCode just honors --log-level.
+          if [ "${RUNNER_DEBUG:-0}" = "1" ]; then
+            echo "FINECODE_LOG_LEVEL=DEBUG" >> "$GITHUB_ENV"
+          else
+            echo "FINECODE_LOG_LEVEL=INFO" >> "$GITHUB_ENV"
+          fi
+
+      - name: Set up Python ${{ env.DEV_WORKSPACE_PYTHON_VERSION }}
+        if: env.HAS_PRIVATE_CLONE_APP == 'true'
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.DEV_WORKSPACE_PYTHON_VERSION }}
+
+      - name: Mint private-clone token
+        id: app_token
+        if: env.HAS_PRIVATE_CLONE_APP == 'true'
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ secrets.PRIVATE_CLONE_APP_ID }}
+          private-key: ${{ secrets.PRIVATE_CLONE_APP_PRIVATE_KEY }}
+          owner: finecode-dev
+          repositories: fine_knowledge,finecode_internal_experiments
+
+      - name: Check out fine_knowledge
+        if: env.HAS_PRIVATE_CLONE_APP == 'true'
+        uses: actions/checkout@v5
+        with:
+          repository: finecode-dev/fine_knowledge
+          path: presets/fine_knowledge
+          token: ${{ steps.app_token.outputs.token }}
+          # A `git clone` with the token in the URL writes it into the clone's
+          # .git/config; checkout with persist-credentials disabled does not.
+          persist-credentials: false
+
+      - name: Check out internal experiments
+        if: env.HAS_PRIVATE_CLONE_APP == 'true'
+        uses: actions/checkout@v5
+        with:
+          repository: finecode-dev/finecode_internal_experiments
+          path: finecode_internal_experiments
+          token: ${{ steps.app_token.outputs.token }}
+          persist-credentials: false
+
+      - name: Install the CI private-layer config
+        if: env.HAS_PRIVATE_CLONE_APP == 'true'
+        run: cp .github/ci/finecode-user.ci.toml finecode-user.toml
+
+      - name: Cache all venvs
+        if: env.HAS_PRIVATE_CLONE_APP == 'true'
+        uses: actions/cache@v4
+        with:
+          path: |
+            .venvs
+            **/.venvs
+          key: ${{ runner.os }}-private-venvs-${{ hashFiles('**/pyproject.toml', '**/preset.toml', 'finecode-user.toml') }}
+
+      - name: Install dependencies
+        if: env.HAS_PRIVATE_CLONE_APP == 'true'
+        run: |
+          # CI must exercise this branch's local source, so finecode and its sibling
+          # packages need an editable install, not a released version from PyPI — see
+          # docs/guides/developing-finecode.md#continuous-integration.
+          sh scripts/setup-dev-workspace.sh
+          source .venvs/dev_workspace/bin/activate
+        shell: bash
+
+      - name: Extract knowledge
+        if: env.HAS_PRIVATE_CLONE_APP == 'true'
+        run: |
+          source .venvs/dev_workspace/bin/activate
+          python -m finecode run --log-level="$FINECODE_LOG_LEVEL" extract_knowledge
+        shell: bash
+
+      - name: Audit code
+        if: env.HAS_PRIVATE_CLONE_APP == 'true'
+        run: |
+          source .venvs/dev_workspace/bin/activate
+          python -m finecode run --log-level="$FINECODE_LOG_LEVEL" audit_code
+        shell: bash
