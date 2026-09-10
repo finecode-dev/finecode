@@ -276,6 +276,13 @@ jobs:
           source .venvs/dev_workspace/bin/activate
         shell: bash
 
+      - name: Inspect code
+        if: env.HAS_PRIVATE_CLONE_APP == 'true'
+        run: |
+          source .venvs/dev_workspace/bin/activate
+          python -m finecode run --log-level="$FINECODE_LOG_LEVEL" inspect_code
+        shell: bash
+
       - name: Extract knowledge
         if: env.HAS_PRIVATE_CLONE_APP == 'true'
         run: |
@@ -288,4 +295,11 @@ jobs:
         run: |
           source .venvs/dev_workspace/bin/activate
           python -m finecode run --log-level="$FINECODE_LOG_LEVEL" audit_code
+        shell: bash
+
+      - name: Run unit tests
+        if: env.HAS_PRIVATE_CLONE_APP == 'true'
+        run: |
+          source .venvs/dev_workspace/bin/activate
+          python -m finecode run --log-level="$FINECODE_LOG_LEVEL" run_tests
         shell: bash

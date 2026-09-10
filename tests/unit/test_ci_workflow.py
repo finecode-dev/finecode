@@ -94,8 +94,10 @@ def test_audit_private_step_order() -> None:
         "Install the CI private-layer config",
         "Cache all venvs",
         "Install dependencies",
+        "Inspect code",
         "Extract knowledge",
         "Audit code",
+        "Run unit tests",
     ]
     names = [step["value"] for step in steps if step["key"] == "name"]
     positions = [names.index(name) for name in ordered]
