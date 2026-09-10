@@ -88,30 +88,40 @@ converter.register_structure_hook(
 # `TypeError` (ruff `TRY004`). cattrs wraps whatever a structure hook raises
 # into a `BaseValidationError`, which is what `_structure_payload` catches, so
 # the exception class chosen here does not change what a caller sees.
-def _structure_strict_bool(val, _):
+#
+# cattrs resolves these hooks through `str`/`int`/`bool`/`float`'s registration
+# in its *singledispatch* table, which matches by issubclass — so a payload
+# field typed as a `StrEnum` or `IntEnum` (e.g. `InspectCodeTarget`,
+# `DiagnosticSeverity`) is routed here too, not to cattrs' default enum
+# factory. `cl` is that concrete field type, not necessarily plain
+# `str`/`int`/`bool`/`float` — it must be used to build the result (`cl(val)`,
+# which is a no-op for the plain types and reconstructs the enum member
+# otherwise), or every enum-typed payload field silently degrades to its raw
+# primitive instead of a real enum instance.
+def _structure_strict_bool(val, cl):
     if not isinstance(val, bool):
         raise TypeError(f"expected a boolean, got {type(val).__name__}")
-    return val
+    return cl(val)
 
 
-def _structure_strict_int(val, _):
+def _structure_strict_int(val, cl):
     # `bool` is an `int` subclass; JSON `true`/`false` must not satisfy an int
     # field and an integer must not satisfy a bool field.
     if isinstance(val, bool) or not isinstance(val, int):
         raise TypeError(f"expected an integer, got {type(val).__name__}")
-    return val
+    return cl(val)
 
 
-def _structure_strict_float(val, _):
+def _structure_strict_float(val, cl):
     if isinstance(val, bool) or not isinstance(val, (int, float)):
         raise TypeError(f"expected a number, got {type(val).__name__}")
-    return float(val)
+    return cl(float(val))
 
 
-def _structure_strict_str(val, _):
+def _structure_strict_str(val, cl):
     if not isinstance(val, str):
         raise TypeError(f"expected a string, got {type(val).__name__}")
-    return val
+    return cl(val)
 
 
 def _is_list_type(t):
