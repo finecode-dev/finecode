@@ -10,7 +10,7 @@ handlers = [
 ]
 
 [tool.finecode.extension.fine_python_pyrefly]
-dependencies_override = ["pyrefly==1.2.*"]
+dependencies_override = ["pyrefly==1.3.*"]
 
 [[tool.finecode.action_handler]]
 source = "fine_python_pip.PipInstallDepsInEnvHandler"

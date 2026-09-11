@@ -17,7 +17,7 @@ env = "dev_no_runtime"
 dependencies = ["fine_python_pyrefly[jsonrpc]~=0.2.0a0"]
 
 [tool.finecode.extension.fine_python_pyrefly]
-dependencies_override = ["pyrefly==1.1.*"]
+dependencies_override = ["pyrefly==1.3.*"]
 
 [[tool.finecode.service]]
 interface = "finecode_extension_api.interfaces.ijsonrpcclient.IJsonRpcClient"

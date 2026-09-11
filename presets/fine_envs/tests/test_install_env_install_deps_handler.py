@@ -124,7 +124,7 @@ async def test_override_without_extras_replaces_existing_extras(
     """
     project_def = _make_project_def(["pyrefly[x]~=1.0"])
 
-    deps = await _run_handler(tmp_path, project_def, override=["pyrefly==1.2.*"])
+    deps = await _run_handler(tmp_path, project_def, override=["pyrefly==1.3.*"])
 
     assert deps[0].extras == []
     assert deps[0].version_or_source == "==1.2.*"
