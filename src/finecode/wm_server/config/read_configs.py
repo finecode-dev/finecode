@@ -91,6 +91,7 @@ async def read_projects_in_dir(
         ".mypy_cache",
         ".ruff_cache",
         ".pytest_cache",
+        ".uv-cache",
     }
 
     logger.trace(f"Read directories in {dir_path}")
