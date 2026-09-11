@@ -22,8 +22,17 @@ tests/                             # Test suite
 ### The knowledge packages split in two
 
 `finecode_knowledge` is the **engine**: the entity/fact model, the query IR and its
-interpreter, the memoization DAG. It is stdlib-only, carries no schema of its own, and is a
-runtime dependency of the WM — the WM loads the fact store and runs the DAG.
+interpreter, the memoization DAG. It is stdlib-only, carries no schema of its own, and is
+what the WM loads the fact store and runs the DAG with. It is not yet published, so the
+root `finecode` package declares it as the optional `knowledge` extra rather than a hard
+dependency — `pip install finecode` would otherwise be unresolvable outside this monorepo.
+The import is guarded at both call sites (`wm_server.py`, `shutdown_service.py`); without
+the extra installed, `runner.knowledge_bridge`'s slot is simply never filled and a WM built
+that way answers `knowledge/query`/`knowledge/registerSchema` with a method error (ADR-0072)
+instead of failing to start. `dependency-groups.dev_workspace` in the root `pyproject.toml`
+lists it explicitly for the same reason — `scripts/list_dev_workspace_editables.py` only
+follows `[project].dependencies` edges, not optional ones, so every dev workspace / CI
+checkout would otherwise stop installing it editable.
 
 `presets/fine_knowledge` is **FineCode's own schema**: entity types, providers,
 predicates, rules and the `extract_knowledge` / `which_handlers` / `audit_preset_deps`
