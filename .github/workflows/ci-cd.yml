@@ -34,7 +34,10 @@ env:
 jobs:
   build:
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 40
+    # A cold `prepare-envs` over the whole workspace plus the full check suite does
+    # not fit in 40 minutes on the slower matrix legs. The venvs cache keeps the
+    # happy path short; this budget only covers the cold run.
+    timeout-minutes: 120
     strategy:
       fail-fast: false
       matrix:
@@ -71,7 +74,7 @@ jobs:
           fi
 
       - name: Set up Python ${{ env.DEV_WORKSPACE_PYTHON_VERSION }}
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: ${{ env.DEV_WORKSPACE_PYTHON_VERSION }}
 
@@ -81,8 +84,9 @@ jobs:
       # skip reinstalling whenever a restored venv already looks valid, so a stale
       # partial-match restore could mask a dependency that was added since the cache
       # was written.
-      - name: Cache all venvs
-        uses: actions/cache@v4
+      - name: Restore venvs cache
+        id: venvs_cache
+        uses: actions/cache/restore@v5
         with:
           path: |
             .venvs
@@ -169,18 +173,33 @@ jobs:
 
       # TODO: try to replace by finecode action
       - name: Store the distribution packages
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         if: runner.os == 'Linux'
         with:
           name: python-package-distributions
           path: dist/
 
+      # Save the venvs explicitly instead of relying on actions/cache's own post-step:
+      # that post-step skips the save when the job fails, which throws away a perfectly
+      # good cold install just because a later check or test failed. The only
+      # precondition here is that the install itself succeeded; on an exact key match
+      # there is nothing new to save.
+      - name: Save venvs cache
+        if: ${{ always() && steps.install.outcome == 'success' && steps.venvs_cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@v5
+        with:
+          path: |
+            .venvs
+            **/.venvs
+          key: ${{ runner.os }}-venvs-${{ hashFiles('**/pyproject.toml', '**/preset.toml') }}
+
   audit-private:
     name: Audit (private layer)
     runs-on: ubuntu-24.04
-    # The `build` job's 40min budget is not enough: this job pays a cold
-    # prepare-envs over ~74 projects and then a workspace-wide audit_code, which
-    # is slow by design (see docs/guides/developing-finecode.md "Running checks").
+    # This job pays a cold prepare-envs over ~74 projects and then a
+    # workspace-wide audit_code, which is slow by design (see
+    # docs/guides/developing-finecode.md "Running checks"), so it carries its own
+    # budget rather than inheriting the build matrix's.
     timeout-minutes: 60
     # `secrets` is NOT available in jobs.<job_id>.if -- only github, needs,
     # vars, inputs. An unavailable context evaluates to empty, so a secrets test
@@ -219,7 +238,7 @@ jobs:
 
       - name: Set up Python ${{ env.DEV_WORKSPACE_PYTHON_VERSION }}
         if: env.HAS_PRIVATE_CLONE_APP == 'true'
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: ${{ env.DEV_WORKSPACE_PYTHON_VERSION }}
 
@@ -257,9 +276,10 @@ jobs:
         if: env.HAS_PRIVATE_CLONE_APP == 'true'
         run: cp .github/ci/finecode-user.ci.toml finecode-user.toml
 
-      - name: Cache all venvs
+      - name: Restore venvs cache
+        id: venvs_cache
         if: env.HAS_PRIVATE_CLONE_APP == 'true'
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v5
         with:
           path: |
             .venvs
@@ -267,6 +287,7 @@ jobs:
           key: ${{ runner.os }}-private-venvs-${{ hashFiles('**/pyproject.toml', '**/preset.toml', 'finecode-user.toml') }}
 
       - name: Install dependencies
+        id: install
         if: env.HAS_PRIVATE_CLONE_APP == 'true'
         run: |
           # CI must exercise this branch's local source, so finecode and its sibling
@@ -303,3 +324,14 @@ jobs:
           source .venvs/dev_workspace/bin/activate
           python -m finecode run --log-level="$FINECODE_LOG_LEVEL" run_tests
         shell: bash
+
+      # See the matching step in the `build` job for the rationale: save the venvs
+      # whenever the install succeeded, even if a later check, audit or test failed.
+      - name: Save venvs cache
+        if: ${{ always() && env.HAS_PRIVATE_CLONE_APP == 'true' && steps.install.outcome == 'success' && steps.venvs_cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@v5
+        with:
+          path: |
+            .venvs
+            **/.venvs
+          key: ${{ runner.os }}-private-venvs-${{ hashFiles('**/pyproject.toml', '**/preset.toml', 'finecode-user.toml') }}

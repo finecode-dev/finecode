@@ -27,14 +27,15 @@ jobs:
           fi
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: '3.14'
 
       # Same cache key pattern as ci-cd.yml so a preceding CI run on the same commit
       # can seed this cache and skip most of the install work.
-      - name: Cache all venvs
-        uses: actions/cache@v4
+      - name: Restore venvs cache
+        id: venvs_cache
+        uses: actions/cache/restore@v5
         with:
           path: |
             .venvs
@@ -42,6 +43,7 @@ jobs:
           key: ${{ runner.os }}-venvs-${{ hashFiles('**/pyproject.toml', '**/preset.toml') }}
 
       - name: Install dependencies
+        id: install
         run: sh scripts/setup-dev-workspace.sh
 
       - name: Build docs
@@ -58,3 +60,14 @@ jobs:
           external_repository: finecode-dev/finecode.github.io
           publish_branch: main
           publish_dir: ./site
+
+      # Save the venvs whenever the install succeeded, even if the docs build or
+      # deploy failed: the cold install is the expensive part and is still valid.
+      - name: Save venvs cache
+        if: ${{ always() && steps.install.outcome == 'success' && steps.venvs_cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@v5
+        with:
+          path: |
+            .venvs
+            **/.venvs
+          key: ${{ runner.os }}-venvs-${{ hashFiles('**/pyproject.toml', '**/preset.toml') }}
