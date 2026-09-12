@@ -383,13 +383,23 @@ An explicit `--interpreter` selector always overrides the config default outrigh
 real OS processes. All of them draw from one machine-wide budget (ADR-0090): the WM leases
 subprocess *work slots* to each ER for the duration of an action run, and every spawn inside that
 ER — `CommandRunner` subprocesses (e.g. `uv install`) and `ProcessExecutor` pool workers alike —
-draws from the ER's leased gate. The budget is sized from `FINECODE_MAX_CONCURRENT_PROCESSES` if
-set, otherwise the machine's usable CPU count minus one core of headroom. See
-[Process budget](wm-server-internals.md#process-budget) for the mechanics.
+draws from the ER's leased gate. The work budget is the work half of the combined
+subprocess-concurrency budget: one machine-bound total, split into an ER-startup cap and this work
+cap so their sum always leaves a core free for the WM's event loop
+([Combined subprocess-concurrency budget](wm-server-internals.md#combined-subprocess-concurrency-budget),
+ADR-0093). See [Process budget](wm-server-internals.md#process-budget) for the mechanics.
 
 A nested run (one asked for by another run's fan-out) is always granted at least one slot, so it
 can always make progress; the whole machine is never over-subscribed in the common, non-nested
 case.
+
+`prepare-envs` closes the gap for its own big fan-out: steps 5 and 6 give each project's
+`create_envs` / `install_envs` run a budget that waits and asks for `max(1, W // N)` slots
+(`W` = the work cap, `N` = the number of in-scope projects). With more projects than slots every
+project takes one, so about `W` projects build envs at once; with no more projects than slots a
+single project still gets the whole work cap. Step 3's batched `dev_workspace` bootstrap and
+auto-repair keep the ER's full request, because they run *inside* other dispatches and must not
+wait on slots their ancestors hold.
 
 ### Optional per-ER ceiling
 
@@ -414,10 +424,14 @@ gitignored `finecode-user.toml` instead of a committed `pyproject.toml` — see
 The process budget above bounds subprocess *work*. A related but independent cap bounds how many
 Extension Runner *processes* may be starting at once, regardless of which command triggered the
 starts — including `prepare-envs`' own "start runners in each `dev_workspace`" step, workspace
-init, and a matrixed `run`. It is configured via `FINECODE_WM_MAX_CONCURRENT_ER_STARTS` and is
-deliberately separate: the WM starts runners lazily *inside* a fan-out, so a run holding
-process-budget slots must never block on the same budget to start the ER it is fanning out into.
-See [ER startup concurrency](wm-server-internals.md#er-startup-concurrency) (ADR-0063).
+init, and a matrixed `run`. It is deliberately separate: the WM starts runners lazily *inside* a
+fan-out, so a run holding process-budget slots must never block on the same budget to start the ER
+it is fanning out into (ADR-0063, ADR-0090).
+
+It is sized as the other half of the combined budget — set `FINECODE_MAX_CONCURRENT_PROCESSES` to
+size the total and both halves move together. There is no separate ER-startup knob. See
+[Combined subprocess-concurrency budget](wm-server-internals.md#combined-subprocess-concurrency-budget)
+(ADR-0093).
 
 ---
 

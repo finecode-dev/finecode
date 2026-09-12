@@ -1,4 +1,6 @@
+from finecode.wm_server import testing as wm_testing
 from finecode.wm_server.config.env_selection import resolve_env_selection
+from finecode.wm_server.runner import runner_client
 from finecode.wm_server.services import prepare_envs_service
 from finecode.wm_server.services.prepare_envs_service import build_create_envs_params
 
@@ -125,3 +127,46 @@ class TestBuildCreateEnvsParamsExcludesDevWorkspace:
         params = build_create_envs_params(sel, env_table, recreate=True)
 
         assert "dev_workspace" not in params.get("env_names", [])
+
+
+async def test_run_env_action_forwards_budget(monkeypatch, tmp_path) -> None:
+    """`_run_env_action` must hand its declared budget to the project dispatcher.
+
+    Without this, prepare-envs' per-project fan-out would keep over-reserving
+    the work budget under the very load it exists to bound.
+    """
+    project = wm_testing.make_single_action_project(
+        dir_path=tmp_path,
+        action_name="create_envs",
+        action_source="fine_envs.CreateEnvsAction",
+    )
+    project.actions[0].canonical_source = "fine_envs.CreateEnvsAction"
+    ws_context = wm_testing.make_workspace_context(
+        project=project,
+        runner=wm_testing.make_running_runner(working_dir_path=tmp_path),
+    )
+
+    captured: dict = {}
+
+    async def _fake_run_action(self, **kwargs):
+        captured.update(kwargs)
+        return runner_client.RunActionResponse(
+            result_by_format={"string": ""}, return_code=0
+        )
+
+    monkeypatch.setattr(
+        "finecode.wm_server.services.run_service.ProjectExecutor.run_action",
+        _fake_run_action,
+    )
+
+    budget = prepare_envs_service.project_fan_out_budget(4, 12)
+    error = await prepare_envs_service._run_env_action(
+        "fine_envs.CreateEnvsAction",
+        {},
+        project,
+        ws_context,
+        budget=budget,
+    )
+
+    assert error is None
+    assert captured["budget"] is budget

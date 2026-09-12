@@ -1,15 +1,10 @@
 from __future__ import annotations
 
 import asyncio
-import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from finecode_extension_runner.concurrency import (
-    ConcurrencyDecision,
-    machine_subprocess_budget,
-)
 from loguru import logger
 
 from finecode.wm_server import domain
@@ -20,53 +15,6 @@ if TYPE_CHECKING:
     from finecode_jsonrpc._io_thread import AsyncIOThread
 
     from finecode.wm_server.wal import WalWriter
-
-
-def resolve_er_startup_concurrency(env_value: str | None = None) -> ConcurrencyDecision:
-    """Effective cap on concurrently-starting Extension Runner processes —
-    how many ERs may be mid-startup (spawned, importing, not yet reachable
-    over its RPC channel) at once, regardless of what triggered the starts:
-    workspace init, a matrixed ``run``, or ``prepare-envs``' own runner-start
-    step all funnel through the same chokepoint
-    (``runner_manager._start_extension_runner_process``) and share this one
-    cap. See ADR-0063.
-
-    Once an ER reports its port and its RPC channel connects, the cap no
-    longer applies to it — the triggering action then runs in that ER's own
-    process, a separate and much more variable resource cost (e.g. an actual
-    test-suite run) that this cap deliberately does not throttle.
-
-    Unlike the two ``prepare-envs`` layers (ADR-0055), this guards a single
-    flat resource axis rather than two composing layers, so it uses the full
-    ``machine_subprocess_budget()`` rather than its sqrt-split.
-
-    Priority: ``FINECODE_WM_MAX_CONCURRENT_ER_STARTS`` env var (if set) >
-    ``machine_subprocess_budget()``. Machine-bound, so no
-    ``finecode-workspace.toml`` equivalent. Unlike the deleted
-    prepare-envs project throttle, there is no CLI flag: this cap protects
-    the WM server's entire lifetime, not one command's request, so it is
-    resolved once — here, as the default factory for
-    ``WorkspaceContext.er_startup_semaphore`` — when the long-lived
-    ``WorkspaceContext`` is constructed, rather than threaded through a
-    single RPC call. ``env_value`` is injectable for tests; production
-    callers omit it and let this read ``os.environ`` directly.
-    """
-    if env_value is None:
-        env_value = os.environ.get("FINECODE_WM_MAX_CONCURRENT_ER_STARTS")
-    if env_value is not None:
-        return ConcurrencyDecision(
-            max(int(env_value), 1), "FINECODE_WM_MAX_CONCURRENT_ER_STARTS env var"
-        )
-    return ConcurrencyDecision(
-        machine_subprocess_budget(),
-        f"computed default (machine budget {machine_subprocess_budget()})",
-    )
-
-
-def _make_er_startup_semaphore() -> asyncio.Semaphore:
-    decision = resolve_er_startup_concurrency()
-    logger.info(f"ER startup concurrency cap: {decision.value} ({decision.source})")
-    return asyncio.Semaphore(decision.value)
 
 
 @dataclass
@@ -126,13 +74,15 @@ class WorkspaceContext:
         released.  Does not bound the triggering action's execution, which
         runs afterward in that ER's own process.  Shared by every start
         trigger (workspace init, matrixed run, prepare-envs), since they all
-        call through the same chokepoint. See ADR-0063.
+        call through the same chokepoint. See ADR-0063.  Its size is one half
+        of the combined subprocess-concurrency budget (ADR-0093).
 
     ``process_budget``
         The one machine-wide budget of subprocess work slots, leased to ERs
         per action run and reclaimed on run end or ER death.  Each ER's
         leased quota sizes that ER's local ``ProcessSlots`` gate, which both
         ``CommandRunner`` and ``ProcessExecutor`` draw from. See ADR-0090.
+        Its size is the other half of the same combined budget (ADR-0093).
 
     Caches
     ------
@@ -246,22 +196,31 @@ class WorkspaceContext:
     # from inside that same Phase 2.
     env_install_locks: dict[Path, asyncio.Lock] = field(default_factory=dict)
 
+    # Both budgets below are sized from ONE combined machine budget in
+    # __post_init__ (ADR-0093): their sum stays at or below
+    # machine_subprocess_budget(), so the WM's event loop keeps a free core.
+    # They stay separate objects on purpose — a run holding work slots must
+    # never block on the startup cap to start the ER it fans into (ADR-0090).
+
     # Bounds how many ERs may be mid-startup (spawned through RPC-connected) at
     # once, across every trigger (workspace init, matrixed run, prepare-envs'
-    # runner-start step) — see resolve_er_startup_concurrency and ADR-0063.
-    # Sized once here, at WorkspaceContext construction, since the WM
-    # constructs exactly one WorkspaceContext for its whole process lifetime.
-    er_startup_semaphore: asyncio.Semaphore = field(
-        default_factory=_make_er_startup_semaphore
-    )
+    # runner-start step) — see ADR-0063. Sized from the combined budget.
+    er_startup_semaphore: asyncio.Semaphore = field(init=False)
 
-    # The machine-wide process budget (ADR-0090).  Sized once, at
-    # WorkspaceContext construction, for the same reason er_startup_semaphore
-    # is: the WM constructs exactly one WorkspaceContext for its whole
-    # process lifetime.
-    process_budget: process_budget.ProcessBudget = field(
-        default_factory=process_budget._make_process_budget
-    )
+    # The machine-wide budget of subprocess work slots, leased to ERs per action
+    # run and reclaimed on run end or ER death (ADR-0090).  Sized from the same
+    # combined budget as er_startup_semaphore.
+    process_budget: process_budget.ProcessBudget = field(init=False)
+
+    def __post_init__(self) -> None:
+        budgets = process_budget.resolve_subprocess_budgets()
+        logger.info(
+            f"Subprocess concurrency budget: {budgets.total} total "
+            f"({budgets.total_source}); ER startup cap {budgets.startup_cap} "
+            f"(half of combined budget); process work budget {budgets.work_cap}"
+        )
+        self.er_startup_semaphore = asyncio.Semaphore(budgets.startup_cap)
+        self.process_budget = process_budget.ProcessBudget(budgets.work_cap)
 
 
 @dataclass

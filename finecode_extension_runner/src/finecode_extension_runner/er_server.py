@@ -141,6 +141,19 @@ class DidChangeTextDocumentParams:
 # Value is in the implementation-defined server error range (-32000 to -32099).
 _ENV_REINSTALL_NEEDED_ERROR_CODE = -32001
 
+# Appended to a WM-timeout error. The combined budget bounds ER startup and
+# prepare-envs' per-project env work, but most other action runs escape it, so a
+# timeout is not evidence that a wide run was throttled (ADR-0094).
+_WM_STARVATION_HINT = (
+    "This usually means the WM's event loop was starved of CPU by many "
+    "extension runners starting or running subprocesses at once. Lowering "
+    "FINECODE_MAX_CONCURRENT_PROCESSES bounds ER startup and prepare-envs' "
+    "per-project env work, so the combined budget leaves at least one core "
+    "free; most other action runs are still granted a slot when the budget is "
+    "exhausted, so a wide `run` is not bounded by it "
+    "(see docs/guides/wm-server-internals.md#process-budget)."
+)
+
 # Converter for the protocol types — handles camelCase ↔ snake_case.
 _protocol_converter = Converter()
 
@@ -529,12 +542,7 @@ async def get_project_raw_config(
     except TimeoutError as exc:
         raise er_errors.WmCommunicationError(
             f"WM did not respond to getRawConfig for '{project_def_path}' within 10s. "
-            "This usually means the WM's event loop was starved of CPU by many "
-            "extension runners starting or running subprocesses at once (e.g. during "
-            "prepare-envs' project fan-out) — try lowering "
-            "FINECODE_WM_MAX_CONCURRENT_ER_STARTS and/or FINECODE_MAX_CONCURRENT_PROCESSES "
-            "so their sum leaves at least one core free "
-            "(see docs/guides/wm-server-internals.md#process-budget)."
+            + _WM_STARVATION_HINT
         ) from exc
     except finecode_jsonrpc_module.JsonRpcError as exc:
         raise er_errors.WmCommunicationError(
@@ -562,12 +570,7 @@ async def get_workspace_editable_packages(
     except TimeoutError as exc:
         raise er_errors.WmCommunicationError(
             "WM did not respond to getWorkspaceEditablePackages within 10s. "
-            "This usually means the WM's event loop was starved of CPU by many "
-            "extension runners starting or running subprocesses at once (e.g. during "
-            "prepare-envs' project fan-out) — try lowering "
-            "FINECODE_WM_MAX_CONCURRENT_ER_STARTS and/or FINECODE_MAX_CONCURRENT_PROCESSES "
-            "so their sum leaves at least one core free "
-            "(see docs/guides/wm-server-internals.md#process-budget)."
+            + _WM_STARVATION_HINT
         ) from exc
     except finecode_jsonrpc_module.JsonRpcError as exc:
         raise er_errors.WmCommunicationError(
@@ -594,13 +597,7 @@ async def get_workspace_extra_selection(
         )
     except TimeoutError as exc:
         raise er_errors.WmCommunicationError(
-            "WM did not respond to getExtraSelection within 10s. "
-            "This usually means the WM's event loop was starved of CPU by many "
-            "extension runners starting or running subprocesses at once (e.g. during "
-            "prepare-envs' project fan-out) — try lowering "
-            "FINECODE_WM_MAX_CONCURRENT_ER_STARTS and/or FINECODE_MAX_CONCURRENT_PROCESSES "
-            "so their sum leaves at least one core free "
-            "(see docs/guides/wm-server-internals.md#process-budget)."
+            "WM did not respond to getExtraSelection within 10s. " + _WM_STARVATION_HINT
         ) from exc
     except finecode_jsonrpc_module.JsonRpcError as exc:
         raise er_errors.WmCommunicationError(

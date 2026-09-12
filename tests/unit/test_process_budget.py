@@ -10,10 +10,14 @@ which is what keeps the total at or below the budget in the common case.
 from __future__ import annotations
 
 import asyncio
+import time
 
 import pytest
 
-from finecode.wm_server.services.process_budget import ProcessBudget, resolve_process_budget
+from finecode.wm_server.services.process_budget import (
+    ProcessBudget,
+    resolve_process_budget,
+)
 
 
 async def test_peak_grants_never_exceed_budget_without_nesting() -> None:
@@ -62,7 +66,7 @@ async def test_reclaim_for_runner_returns_a_dead_runners_slots() -> None:
     to take its slots back and hand them to the next waiter.
     """
     budget = ProcessBudget(size=2)
-    first = await budget.lease("dead_runner", requested=2)
+    await budget.lease("dead_runner", requested=2)
     assert budget.granted == 2
 
     # The second run must wait — the budget is exhausted and it is not nested.
@@ -96,11 +100,13 @@ async def test_partial_grant_throttles_but_never_starves() -> None:
 
 
 def test_resolve_process_budget_env_var_overrides(monkeypatch) -> None:
+    # FINECODE_MAX_CONCURRENT_PROCESSES now sizes the *combined* budget, so the
+    # work half is smaller than the value (ADR-0093).
     monkeypatch.setenv("FINECODE_MAX_CONCURRENT_PROCESSES", "9")
 
     decision = resolve_process_budget()
 
-    assert decision.value == 9
+    assert decision.value == 5
     assert "env var" in decision.source
 
 
@@ -138,3 +144,96 @@ async def test_waiting_lease_is_rejected_when_reclaimed() -> None:
         await waiter
 
     await budget.release(first.lease_id)
+
+
+async def test_waiting_lease_gets_one_stall_escape_slot_when_nothing_moves() -> None:
+    """A lease that can never get a slot must still not hang forever.
+
+    Without this, a non-nested run waiting behind a slot holder that never
+    releases would wait for the entire WM session, and a caller of
+    ``prepare-envs`` would never see a result.
+    """
+    budget = ProcessBudget(size=1, stall_escape_sec=0.05)
+    holder = await budget.lease("holder", requested=1)
+
+    waiter = asyncio.create_task(budget.lease("waiter", requested=1))
+    escaped = await asyncio.wait_for(waiter, 2)
+
+    assert escaped.granted == 1
+    assert escaped.stall_escape is True
+    assert budget.granted == 2
+
+    await budget.release(escaped.lease_id)
+    await budget.release(holder.lease_id)
+    assert budget.granted == 0
+
+
+async def test_no_stall_escape_while_slots_keep_turning_over() -> None:
+    """A slot that keeps being released and re-taken is progress, not a stall.
+
+    If regular turnover could trip the escape, a healthy W-wide fan-out would
+    be granted slots over the budget for no reason.
+    """
+    budget = ProcessBudget(size=1, stall_escape_sec=0.2)
+    leases: list = []
+    peak = 0
+
+    async def _sample() -> None:
+        nonlocal peak
+        while True:
+            peak = max(peak, budget.granted)
+            await asyncio.sleep(0.01)
+
+    async def _turn_over() -> None:
+        end = time.monotonic() + 0.6
+        while time.monotonic() < end:
+            lease = await budget.lease("holder", requested=1)
+            leases.append(lease)
+            await asyncio.sleep(0.05)
+            await budget.release(lease.lease_id)
+
+    async def _waiter() -> None:
+        lease = await budget.lease("waiter", requested=1)
+        leases.append(lease)
+        await asyncio.sleep(0.01)
+        await budget.release(lease.lease_id)
+
+    sampler = asyncio.create_task(_sample())
+    turn_over = asyncio.create_task(_turn_over())
+    waiter = asyncio.create_task(_waiter())
+    await asyncio.gather(turn_over, waiter)
+    sampler.cancel()
+    await asyncio.gather(sampler, return_exceptions=True)
+
+    assert peak <= 1
+    assert all(not lease.stall_escape for lease in leases)
+    assert budget.granted == 0
+
+
+async def test_at_most_one_stall_escape_is_outstanding() -> None:
+    """Two waiters behind a dead holder must escape one at a time.
+
+    Letting both escape at once would let a stalled budget drift arbitrarily
+    far above its size, defeating the bound the budget exists to enforce.
+    """
+    budget = ProcessBudget(size=1, stall_escape_sec=0.15)
+    holder = await budget.lease("holder", requested=1)
+
+    first = asyncio.create_task(budget.lease("first", requested=1))
+    second = asyncio.create_task(budget.lease("second", requested=1))
+
+    await asyncio.sleep(0.3)
+    assert first.done() != second.done()
+    assert budget.granted == 2
+
+    escaped = first.result() if first.done() else second.result()
+    assert escaped.stall_escape is True
+    await budget.release(escaped.lease_id)
+
+    other = second if first.done() else first
+    remaining = await asyncio.wait_for(other, 2)
+    assert remaining.stall_escape is True
+
+    await budget.release(remaining.lease_id)
+    await budget.release(holder.lease_id)
+    assert budget.granted == 0

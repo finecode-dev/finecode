@@ -81,6 +81,9 @@ The top-level module.  Responsibilities:
   error code, `ActionRunFailed` / `StartingEnvironmentsFailed` → internal error code)
   so unhandled exceptions produce a well-formed error response rather than crashing the
   connection.
+- Runs a periodic event-loop lag monitor for the server's lifetime, so the WM records its
+  own starvation instead of leaving it to be inferred from an ER-side timeout — see
+  [Event-loop lag monitor](#event-loop-lag-monitor-servicesevent_loop_lag_monitorpy).
 
 **Key globals** (module-level, single instance per process):
 
@@ -121,6 +124,7 @@ Each service module is a collection of related functions (not classes).  They re
 | `in_flight_runs.py` | Register of runs dispatched and not yet finished, per project.  Maintained in memory regardless of WAL configuration, because recovery consults it to refuse replacing runners that are executing something (ADR-0079). |
 | `config_reload_service.py` | Configuration recovery (`workspace/reloadConfig`): re-reads a project's config from disk, resolves its presets, then replaces its runners.  The order is load-bearing — preset resolution needs a running `dev_workspace` ER (ADR-0073). |
 | `shutdown_service.py` | Cleans up runners and resources on server shutdown. |
+| `event_loop_lag_monitor.py` | Samples the WM's own event-loop lag; logs a rate-limited warning carrying runner, process-budget and in-flight-run context when the loop is starved.  Diagnostic only. |
 
 #### Run service
 
@@ -345,6 +349,23 @@ sent an exit request:
     `start()` is even called) specifically so this sweep always has a handle,
     regardless of how far the start attempt got.
 
+### Combined subprocess-concurrency budget
+
+ER startup and subprocess work are two phases of the same fleet, and both are CPU/IO-heavy, so the
+WM sizes them from **one** machine-bound total instead of letting each claim a full
+`machine_subprocess_budget()`. `WorkspaceContext.__post_init__` resolves `SubprocessBudgets` once
+(`services/process_budget.py:resolve_subprocess_budgets`) and splits it in half — `startup_cap =
+total // 2` for the ER-startup semaphore, the remainder for the process budget, both floored at
+`1`. The "-1 core for the WM" headroom therefore holds in aggregate:
+`startup_cap + work_cap ≤ machine_subprocess_budget()`. The two budgets stay **separate objects** —
+a run holding work slots must never block on the startup cap to start the ER it fans into
+(ADR-0090).
+
+The total is `FINECODE_MAX_CONCURRENT_PROCESSES` if set, otherwise `machine_subprocess_budget()`
+(CPU-affinity-aware core count minus one). There is no CLI flag and no `finecode-workspace.toml`
+entry: it is a property of the machine, and it protects the WM server's whole lifetime. The
+resolved total and both derived caps are logged at INFO once, at construction. See ADR-0093.
+
 ### ER startup concurrency
 
 `_start_extension_runner_process` holds `WorkspaceContext.er_startup_semaphore` from just before
@@ -363,29 +384,58 @@ this stays a *separate* budget from the process budget below: the WM starts runn
 a fan-out, so a run holding process-budget slots must never have to wait on the same budget to
 start the very ER it is fanning out into — that would deadlock (ADR-0090).
 
-The cap is sized once, when `WorkspaceContext` is constructed (`context.resolve_er_startup_concurrency`):
-`FINECODE_WM_MAX_CONCURRENT_ER_STARTS` env var if set, otherwise
-`finecode_extension_runner.concurrency.machine_subprocess_budget()`. There is no CLI
-flag, since this cap isn't scoped to one command's request — it protects the WM server's whole
-lifetime and every client that triggers ER starts against it. The resolved cap and its source are
-logged at INFO once, at construction.
+The cap is sized once, when `WorkspaceContext` is constructed, as half of the combined budget
+above — there is no dedicated env var for it. There is no CLI flag either, since this cap isn't
+scoped to one command's request — it protects the WM server's whole lifetime and every client that
+triggers ER starts against it. The resolved cap is logged at INFO once, at construction.
 
 ### Process budget
 
 The WM owns a single machine-wide budget of subprocess *work slots*,
-`services/process_budget.py:ProcessBudget`, sized from
-`FINECODE_MAX_CONCURRENT_PROCESSES` if set, otherwise `machine_subprocess_budget()`. ERs lease
+`services/process_budget.py:ProcessBudget`, sized as the work half of the combined budget above
+(`total − startup_cap`). ERs lease
 slots from it once per action run (over `finecode/leaseProcessBudget` / `finecode/releaseProcessBudget`)
 and the WM pushes each ER's granted quota down as a gate target
 (`finecodeRunner/updateProcessBudget`). Inside an ER, `CommandRunner` and `ProcessExecutor` draw
 from that one gate (`finecode_extension_runner/process_slots.py`), so project fan-out, the
 interpreter matrix, and `prepare-envs` all lead to the same three leaves and the same one bound.
 
-The allocator always grants a nested lease at least one slot, even when the budget is exhausted:
-a run asked for by another run must always be able to make progress, or the whole chain
-deadlocks. The bound is therefore the budget, or the number of active runs, whichever is greater
-— exact in the common case, soft only under nesting, where `OrchestrationPolicy.max_recursion_depth`
-already bounds the depth. See ADR-0090.
+The ER flags a lease *nested* when its run arrived at orchestration depth > 0. Every
+non-streaming dispatch arrives at depth ≥ 1, so almost every ER lease is nested. Only streaming
+client runs, the WM's own env checks, and runs whose dispatch declares `RunBudget(waits=True)`
+wait for a slot.
+
+Leases that wait are held to the budget plus at most one stall-escape slot; leases that do not
+wait take at least one slot each, so their total is the budget or the number of active
+non-waiting runs, whichever is greater. Recursion depth bounds a chain's *height*, not a
+fan-out's *width*. See ADR-0090 and ADR-0094.
+
+That non-waiting escape is load-bearing: auto-prepare (`install_env_for_project`) runs *inside*
+an already-dispatched run, as a root, and would deadlock waiting on slots its own ancestor holds
+if its leases were classified as nested.
+
+A waiting lease that has seen no budget movement for `STALL_ESCAPE_SEC` (30 s) is granted one
+slot over the budget, with a WARNING naming the waiting runner, how long it waited and the
+current holders. At most one stall escape is outstanding at a time, so a stalled budget drifts
+by at most one slot; nested leases never reach the wait path.
+
+A dispatch may declare a `RunBudget` (`domain.py`): `waits` overrides the ER's nesting flag and
+`max_slots` caps the requested width. It is recorded on the run's in-flight entry, which the
+lease handler looks up by the ER's run id, and declared at dispatch — the same action run from
+elsewhere keeps the ER's own request. `prepare-envs` steps 5 and 6 use it: each project's
+`create_envs` / `install_envs` run waits for `max(1, work_cap // project_count)` slots, so about
+`work_cap` projects build envs at once while a single project still gets the whole work cap.
+Back-channel project dispatches declare `RunBudget(waits=False)`, because a streaming child
+arrives at depth 0 and would otherwise wait while its parent holds slots.
+
+The WM leases from the same budget for subprocess work of its own: each env version check
+(`runner_manager.check_runner_within_budget`, used by `prepare-envs` and `runners/checkEnv`)
+holds one non-nested slot under the owner id `wm:env-version-check` while its interpreter
+runs. `prepare-envs` checks every project's env at once, and unbounded, the interpreters
+overload the machine until healthy envs miss the check's deadline — and a failed check gets
+the env deleted and recreated. A timed-out check is also retried with a longer deadline
+(`VERSION_CHECK_TIMEOUTS_SEC`) before the env is declared invalid, and every invalid verdict
+carries its reason into the `prepare-envs` warning.
 
 `OrchestrationPolicy.max_project_fanout` (64) is a *separate* mechanism and is not a capacity
 limit: it refuses, and it applies only when `orchestration_depth > 0`. It guards against runaway
@@ -438,6 +488,47 @@ replacement — the one recovery operation that is not a WM method.
 
 Optional feature.  When enabled, `WalWriter` appends action results to a log file for
 replay or inspection.  `WorkspaceContext.wal_writer` is `None` when WAL is disabled.
+
+### Event-loop lag monitor (`services/event_loop_lag_monitor.py`)
+
+A single `asyncio` task samples the delay between when it was due to run and when the loop
+actually ran it — `lag = loop.time() - next_due` — every 0.5 s.  It is the only place from
+which the WM can see its own starvation: when the loop is busy with a long synchronous
+callback, with ER or subprocess fan-out, or with external CPU pressure, the WM's own RPC
+replies are late but nothing in the WM otherwise records why.
+
+When lag exceeds 1 s the monitor logs one `WARNING` per 30 s cooldown carrying the lag and
+the evidence a reader needs to attribute it:
+
+- **What the WM consumed over the late window** (previous sample → this one):
+  `wm_cpu_ms` / `wm_cpu_pct` (process CPU time, all WM threads) and the
+  `voluntary_switches` / `involuntary_switches` deltas from `getrusage`.  CPU close to the
+  window means the WM's own code held the loop (a long synchronous callback, or a WM
+  thread holding the GIL); CPU near zero with a jump in involuntary switches means the WM
+  was runnable but the OS gave the CPU to other processes; CPU near zero with many
+  voluntary switches means the loop was blocked waiting, typically on synchronous I/O.
+- **How contended the host was**: `load_1m` against `cpu_count` (affinity-aware).
+- **How much work was queued on the loop**: `ready_callbacks`, the stdlib loop's ready
+  queue length — a flood of short callbacks lags the loop without any single long one.
+- **What the WM was doing**: `runners_starting` (ERs `INITIALIZING` or `REPAIRING`),
+  `runners_running`, `budget_granted` / `budget_total` from the process budget, and
+  `in_flight_runs`.
+
+Every value is written into the message text, because the file log and the client log
+stream render only the message; the same values are also bound as loguru `extra` fields
+for structured consumers such as the OTel sink.  Values the platform cannot provide
+(`getrusage` and the load average on Windows, the ready queue on non-stdlib loops) read
+`n/a` / `None`.  When lag drops back, a single `INFO` record closes the episode: how long
+the stall lasted, how many samples lagged and the worst lag among them, how many warnings
+the cooldown suppressed, and the WM CPU and context-switch totals over the whole episode
+(`max_lag_ms`, `lagging_samples`, `episode_*`).  Read the recovery line, not the warning,
+to judge a stall's size — the cooldown hides the later samples, which are often the
+worst.  A healthy loop produces nothing at all.
+
+It is diagnostic: it leases nothing, takes no lock, and nothing depends on it running.  The
+sample interval, threshold and cooldown are module constants (`SAMPLE_INTERVAL_SEC`,
+`WARN_THRESHOLD_SEC`, `WARN_COOLDOWN_SEC`).  `wm_server.start` launches it and
+`wm_server.stop` cancels it.
 
 ---
 

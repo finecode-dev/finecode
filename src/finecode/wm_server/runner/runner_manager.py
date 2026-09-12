@@ -5,6 +5,7 @@ API to manage ERs: start, stop, restart.
 import asyncio
 import collections.abc
 import concurrent.futures
+import contextlib
 import dataclasses
 import json
 import os
@@ -129,6 +130,36 @@ async def _apply_workspace_edit(
     return await bridge.apply_workspace_edit(params)
 
 
+def resolve_lease_terms(
+    ws_context: context.WorkspaceContext,
+    *,
+    requested: int,
+    nested: bool,
+    run_id: str | None,
+) -> tuple[int, bool]:
+    """(requested, nested) for a lease, after the run's declared RunBudget (ADR-0094).
+
+    A dispatch may declare how the process budget should treat its leases —
+    ``waits`` overrides the ER's nesting flag and ``max_slots`` caps the
+    requested width. An unknown run, or one dispatched without a run id, keeps
+    the ER's own values. The run is found by scanning the in-flight entries for
+    its id rather than by the runner's project path, so a project-key mismatch
+    cannot silently miss it.
+    """
+    if run_id is not None:
+        for runs in ws_context.in_flight_runs.values():
+            run = runs.get(run_id)
+            if run is None:
+                continue
+            budget = run.budget
+            if budget.waits is not None:
+                nested = not budget.waits
+            if budget.max_slots is not None:
+                requested = min(requested, budget.max_slots)
+            break
+    return requested, nested
+
+
 async def _start_extension_runner_process(
     runner: runner_client.ExtensionRunnerInfo,
     ws_context: context.WorkspaceContext,
@@ -148,7 +179,7 @@ async def _start_extension_runner_process(
             # fix them (pip/uv skip already-satisfied packages), so wipe it and let
             # the NO_VENV auto-repair path below do a genuine from-scratch create.
             logger.warning(str(exception))
-            remove_runner_env(runner.working_dir_path, runner.env_name)
+            await remove_runner_env(runner.working_dir_path, runner.env_name)
 
         try:
             runner.status = runner_client.RunnerStatus.NO_VENV
@@ -526,10 +557,16 @@ async def _start_extension_runner_process(
         params: _internal_client_types.LeaseProcessBudgetParams,
     ) -> _internal_client_types.LeaseProcessBudgetResult:
         """Lease process-budget slots for one action run in this ER (ADR-0090)."""
-        lease = await ws_context.process_budget.lease(
-            runner_id=runner.readable_id,
+        requested, nested = resolve_lease_terms(
+            ws_context,
             requested=params.requested,
             nested=params.nested,
+            run_id=params.run_id,
+        )
+        lease = await ws_context.process_budget.lease(
+            runner_id=runner.readable_id,
+            requested=requested,
+            nested=nested,
         )
         target = ws_context.process_budget.target_for_runner(runner.readable_id)
         await runner_client.update_process_budget(runner=runner, target=target)
@@ -1303,49 +1340,142 @@ async def send_opened_files(
         logger.error(f"Error while sending opened document: {eg.exceptions}")
 
 
-async def check_runner(runner_dir: Path, env_name: str) -> bool:
-    try:
-        python_cmd = finecode_cmd.get_python_cmd(runner_dir, env_name)
-    except ValueError:
-        logger.debug(f"No venv for {env_name} of {runner_dir}")
-        # no venv
-        return False
+VERSION_CHECK_TIMEOUTS_SEC: tuple[float, ...] = (5.0, 30.0)
+"""Successive timeouts for the ER version check of an env.
 
-    # get version of extension runner. If it works and we get valid
-    # value, assume extension runner works correctly
-    cmd = f"{python_cmd} -m finecode_extension_runner.cli version"
-    logger.debug(f"Run '{cmd}' in {runner_dir}")
-    async_subprocess = await asyncio.create_subprocess_shell(
-        cmd,
+The check starts a Python interpreter, so when many envs are checked at once
+(prepare-envs checks every project concurrently) a healthy env can miss a short
+deadline on a loaded machine. A timeout is retried with a longer deadline
+before the env is declared invalid, because the caller answers "invalid" by
+deleting and recreating it.
+"""
+
+_OUTPUT_TAIL_CHARS = 500
+
+
+@dataclasses.dataclass(frozen=True)
+class RunnerEnvCheck:
+    """Outcome of :func:`check_runner`; ``reason`` says why an env is invalid."""
+
+    valid: bool
+    reason: str = ""
+
+
+async def _run_version_check(
+    python_cmd: str, runner_dir: Path, timeout: float
+) -> tuple[int, str, str] | None:
+    """Run the ER version command; ``None`` if it did not finish within ``timeout``."""
+    process = await asyncio.create_subprocess_exec(
+        python_cmd,
+        "-m",
+        "finecode_extension_runner.cli",
+        "version",
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
         cwd=runner_dir,
     )
     try:
         raw_stdout, raw_stderr = await asyncio.wait_for(
-            async_subprocess.communicate(), timeout=5
+            process.communicate(), timeout=timeout
         )
     except TimeoutError:
-        logger.debug(f"Timeout 5 sec({runner_dir})")
-        return False
+        # Reap it: an abandoned check keeps competing for the CPU whose
+        # shortage made it slow in the first place.
+        with contextlib.suppress(ProcessLookupError):
+            process.kill()
+        await process.wait()
+        return None
+    assert process.returncode is not None
+    return process.returncode, raw_stdout.decode(), raw_stderr.decode()
 
-    if async_subprocess.returncode != 0:
-        logger.debug(
-            f"Return code: {async_subprocess.returncode}, stderr: {raw_stderr.decode()}"
+
+async def check_runner(runner_dir: Path, env_name: str) -> RunnerEnvCheck:
+    """Check that env ``env_name`` of ``runner_dir`` can start an extension runner.
+
+    Every invalid outcome carries its reason, so the caller's log line says why
+    an env is about to be recreated without needing debug logging.
+    """
+    try:
+        python_cmd = finecode_cmd.get_python_cmd(runner_dir, env_name)
+    except ValueError as exception:
+        return RunnerEnvCheck(valid=False, reason=str(exception))
+
+    # get version of extension runner. If it works and we get valid
+    # value, assume extension runner works correctly
+    logger.debug(f"Check ER version of env '{env_name}' in {runner_dir}")
+    result: tuple[int, str, str] | None = None
+    for attempt, timeout in enumerate(VERSION_CHECK_TIMEOUTS_SEC):
+        result = await _run_version_check(python_cmd, runner_dir, timeout)
+        if result is not None:
+            break
+        if attempt + 1 < len(VERSION_CHECK_TIMEOUTS_SEC):
+            logger.warning(
+                f"ER version check of env '{env_name}' in {runner_dir} did not"
+                f" finish within {timeout:g}s; retrying with"
+                f" {VERSION_CHECK_TIMEOUTS_SEC[attempt + 1]:g}s. A slow check"
+                " usually means the machine is overloaded, not that the env is"
+                " broken."
+            )
+    if result is None:
+        timeouts = ", ".join(f"{t:g}s" for t in VERSION_CHECK_TIMEOUTS_SEC)
+        return RunnerEnvCheck(
+            valid=False,
+            reason=f"ER version check did not finish within any of {timeouts}",
         )
-        return False
 
-    stdout = raw_stdout.decode()
-    return "FineCode Extension Runner " in stdout
+    returncode, stdout, stderr = result
+    if returncode != 0:
+        return RunnerEnvCheck(
+            valid=False,
+            reason=(
+                f"ER version check exited with code {returncode}:"
+                f" {stderr.strip()[-_OUTPUT_TAIL_CHARS:]}"
+            ),
+        )
+    if "FineCode Extension Runner " not in stdout:
+        return RunnerEnvCheck(
+            valid=False,
+            reason=(
+                "ER version check printed unexpected output:"
+                f" {stdout.strip()[-_OUTPUT_TAIL_CHARS:]!r}"
+            ),
+        )
+    return RunnerEnvCheck(valid=True)
 
 
-def remove_runner_env(runner_dir: Path, env_name: str) -> None:
+ENV_CHECK_BUDGET_OWNER = "wm:env-version-check"
+"""Process-budget owner id for the WM's own env version checks (not an ER)."""
+
+
+async def check_runner_within_budget(
+    ws_context: context.WorkspaceContext, runner_dir: Path, env_name: str
+) -> RunnerEnvCheck:
+    """:func:`check_runner`, holding one process-budget work slot for its interpreter.
+
+    prepare-envs checks every project's env at once. Unbounded, dozens of
+    interpreters start together, overload the machine the WM shares, and the
+    checks time out on healthy envs. The lease is non-nested: the WM holds no
+    other slot while it waits, so waiting cannot deadlock (ADR-0090).
+    """
+    lease = await ws_context.process_budget.lease(
+        runner_id=ENV_CHECK_BUDGET_OWNER, requested=1
+    )
+    try:
+        return await check_runner(runner_dir=runner_dir, env_name=env_name)
+    finally:
+        await ws_context.process_budget.release(lease.lease_id)
+
+
+async def remove_runner_env(runner_dir: Path, env_name: str) -> None:
     venv_dir_path = finecode_cmd.get_venv_dir_path(
         project_path=runner_dir, env_name=env_name
     )
     if venv_dir_path.exists():
         logger.debug(f"Remove venv {venv_dir_path}")
-        shutil.rmtree(venv_dir_path)
+        # A venv holds thousands of files: deleting it on the loop blocks every
+        # RPC the WM owes its clients for seconds, and prepare-envs may delete
+        # dozens at once.
+        await asyncio.to_thread(shutil.rmtree, venv_dir_path)
 
 
 async def restart_extension_runners(

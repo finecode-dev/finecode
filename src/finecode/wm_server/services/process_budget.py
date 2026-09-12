@@ -6,10 +6,18 @@ alive across *all* Extension Runners at once.  ERs ask for a lease when an
 action run begins and release it when the run ends; the WM re-grants freed
 slots to waiting leases and reclaims everything a dead runner held.
 
+This is the *work* half of one combined subprocess-concurrency budget: the WM
+splits a single machine-bound total into the ER-startup cap and this work cap
+so their sum leaves a core for the WM's own event loop (ADR-0093).
+``resolve_subprocess_budgets`` is the single resolution point.
+
 The allocator deliberately grants at least one slot to a *nested* lease even
 when the budget is already exhausted — a run that is asked for by another run
 must always be able to make progress, or the whole chain deadlocks (ADR-0090).
-Non-nested leases wait for a slot instead of oversubscribing the machine.
+Leases that wait (non-nested) are held to the budget plus at most one
+stall-escape slot — see ``STALL_ESCAPE_SEC``. Leases that do not wait take at
+least one slot each, so their total is the budget or the number of active
+non-waiting runs, whichever is greater (ADR-0094).
 
 See ADR-0090 for why this replaces the three per-axis throttles that used to
 bound project fan-out, prepare-envs fan-out and per-ER subprocess fan-out
@@ -21,6 +29,7 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import os
+import time
 import uuid
 
 from finecode_extension_runner.concurrency import (
@@ -29,10 +38,17 @@ from finecode_extension_runner.concurrency import (
 )
 from loguru import logger
 
+STALL_ESCAPE_SEC = 30.0
+"""A non-nested waiter with no budget movement this long is granted one slot
+over the budget, once, so no waiting lease can hang forever (ADR-0094)."""
+
 __all__ = [
+    "STALL_ESCAPE_SEC",
     "ProcessBudget",
     "ProcessLease",
+    "SubprocessBudgets",
     "resolve_process_budget",
+    "resolve_subprocess_budgets",
 ]
 
 
@@ -44,27 +60,69 @@ class ProcessLease:
     runner_id: str
     requested: int
     granted: int
+    stall_escape: bool = False
 
 
-def resolve_process_budget(env_value: str | None = None) -> ConcurrencyDecision:
-    """Effective size of the machine-wide process budget, with the reason it
-    was picked (for logging — see ``ConcurrencyDecision``).
+@dataclasses.dataclass(frozen=True)
+class SubprocessBudgets:
+    """The one machine-bound concurrency budget, split into its two consumers.
 
-    Priority: ``FINECODE_MAX_CONCURRENT_PROCESSES`` env var (if set) >
-    ``machine_subprocess_budget()``.  Machine-bound, like the ER-startup cap,
-    so there is no ``finecode-workspace.toml`` equivalent.  ``env_value`` is
-    injectable for tests; production callers omit it and let this read
-    ``os.environ`` directly.
+    ``total`` is the combined ceiling; ``startup_cap`` sizes the ER-startup
+    semaphore and ``work_cap`` the process-budget allocator.  Their sum stays
+    at or below ``total`` so the WM's own event loop always has headroom, while
+    the two caps remain separate objects so a run holding work slots can still
+    start the ER it fans into (ADR-0090).  ``total_source`` is carried for the
+    startup log.
+    """
+
+    total: int
+    startup_cap: int
+    work_cap: int
+    total_source: str
+
+
+def resolve_subprocess_budgets(env_value: str | None = None) -> SubprocessBudgets:
+    """Resolve the combined subprocess-concurrency budget and split it.
+
+    ``total``: ``FINECODE_MAX_CONCURRENT_PROCESSES`` env var (if set) >
+    ``machine_subprocess_budget()``.  ``startup_cap`` is half of the total and
+    ``work_cap`` the remainder, never below one each.  Machine-bound, so there
+    is no ``finecode-workspace.toml`` equivalent.  ``env_value`` is injectable
+    for tests; production callers omit it and let this read ``os.environ``
+    directly.  See ADR-0093.
     """
     if env_value is None:
         env_value = os.environ.get("FINECODE_MAX_CONCURRENT_PROCESSES")
     if env_value is not None:
-        return ConcurrencyDecision(
-            max(int(env_value), 1), "FINECODE_MAX_CONCURRENT_PROCESSES env var"
+        total = max(int(env_value), 1)
+        total_source = "FINECODE_MAX_CONCURRENT_PROCESSES env var"
+    else:
+        total = machine_subprocess_budget()
+        total_source = (
+            f"computed default (machine budget {machine_subprocess_budget()})"
         )
+
+    startup_cap = max(1, total // 2)
+    return SubprocessBudgets(
+        total=total,
+        startup_cap=startup_cap,
+        work_cap=max(1, total - startup_cap),
+        total_source=total_source,
+    )
+
+
+def resolve_process_budget(env_value: str | None = None) -> ConcurrencyDecision:
+    """Effective size of the work-slot half of the combined budget (ADR-0093).
+
+    Kept for callers and tests that only want the work cap;
+    ``WorkspaceContext`` uses ``resolve_subprocess_budgets`` directly so both
+    caps come from one resolution.  ``env_value`` is the combined total (the
+    work cap is then ``total − startup_cap``), injectable for tests.
+    """
+    budgets = resolve_subprocess_budgets(env_value=env_value)
     return ConcurrencyDecision(
-        machine_subprocess_budget(),
-        f"computed default (machine budget {machine_subprocess_budget()})",
+        budgets.work_cap,
+        f"{budgets.total_source}; work cap of combined budget {budgets.total}",
     )
 
 
@@ -73,17 +131,25 @@ class ProcessBudget:
 
     ``lease`` grants at least one slot to every request — waiting for a slot
     when the budget is exhausted and the request is not nested, but never
-    handing a nested request zero.  ``release`` returns one lease's slots;
+    handing a nested request zero.  A waiting lease that sees no budget
+    movement for ``stall_escape_sec`` is granted one slot over the budget,
+    and at most one such escape is outstanding at a time, so no waiter can
+    hang forever (ADR-0094).  ``release`` returns one lease's slots;
     ``reclaim_for_runner`` returns everything a runner still holds (used when
     an ER is force-killed and can no longer release its own leases).
     """
 
-    def __init__(self, size: int) -> None:
+    def __init__(
+        self, size: int, *, stall_escape_sec: float = STALL_ESCAPE_SEC
+    ) -> None:
         self._size = max(size, 1)
         self._granted = 0
         self._leases: dict[str, ProcessLease] = {}
         self._leases_by_runner: dict[str, set[str]] = {}
         self._condition = asyncio.Condition()
+        self._stall_escape_sec = stall_escape_sec
+        self._last_progress = time.monotonic()
+        self._stall_escape_lease_id: str | None = None
 
     @property
     def size(self) -> int:
@@ -122,6 +188,7 @@ class ProcessBudget:
                 was waiting for a slot.
         """
         requested = max(requested, 1)
+        waited_since = time.monotonic()
         lease_id = uuid.uuid4().hex
         lease = ProcessLease(
             lease_id=lease_id, runner_id=runner_id, requested=requested, granted=0
@@ -146,12 +213,61 @@ class ProcessBudget:
                     )
                     self._leases[lease_id] = granted_lease
                     self._granted += grant
+                    self._last_progress = time.monotonic()
                     logger.debug(
                         f"Process budget granted {grant}/{requested} slot(s) to "
                         f"'{runner_id}' ({self._granted}/{self._size} in use)"
                     )
                     return granted_lease
-                await self._condition.wait()
+                # Non-nested and nothing available: wait for a release, but
+                # escape a stall that never moves so no lease hangs forever.
+                now = time.monotonic()
+                stalled_for = now - max(waited_since, self._last_progress)
+                if (
+                    self._stall_escape_lease_id is None
+                    and stalled_for >= self._stall_escape_sec
+                ):
+                    granted_lease = ProcessLease(
+                        lease_id=lease_id,
+                        runner_id=runner_id,
+                        requested=requested,
+                        granted=1,
+                        stall_escape=True,
+                    )
+                    self._leases[lease_id] = granted_lease
+                    self._granted += 1
+                    self._last_progress = now
+                    self._stall_escape_lease_id = lease_id
+                    logger.warning(
+                        f"Process budget stalled: '{runner_id}' waited "
+                        f"{stalled_for:.1f}s for a slot (stall window "
+                        f"{self._stall_escape_sec:.1f}s); granting 1 over budget "
+                        f"({self._granted}/{self._size} in use). Holders: "
+                        f"{self._holders_summary()}"
+                    )
+                    return granted_lease
+                if self._stall_escape_lease_id is not None:
+                    # An escape is already outstanding; its release is what
+                    # will wake us, so there is nothing to time out.
+                    await self._condition.wait()
+                else:
+                    try:
+                        async with asyncio.timeout(
+                            max(self._stall_escape_sec - stalled_for, 0.01)
+                        ):
+                            await self._condition.wait()
+                    except TimeoutError:
+                        # Re-evaluate under the lock; the next pass may grant
+                        # the stall escape.
+                        pass
+
+    def _holders_summary(self) -> str:
+        """The active leases' runner ids and slot totals, largest first."""
+        totals: dict[str, int] = {}
+        for held in self._leases.values():
+            totals[held.runner_id] = totals.get(held.runner_id, 0) + held.granted
+        ranked = sorted(totals.items(), key=lambda item: item[1], reverse=True)
+        return ", ".join(f"{rid}→{slots}" for rid, slots in ranked[:5])
 
     async def release(self, lease_id: str) -> None:
         """Return every slot held by one lease."""
@@ -161,6 +277,9 @@ class ProcessBudget:
                 return
             self._leases_by_runner.get(lease.runner_id, set()).discard(lease_id)
             self._granted -= lease.granted
+            self._last_progress = time.monotonic()
+            if self._stall_escape_lease_id == lease_id:
+                self._stall_escape_lease_id = None
             logger.debug(
                 f"Process budget released {lease.granted} slot(s) from "
                 f"'{lease.runner_id}' ({self._granted}/{self._size} in use)"
@@ -181,6 +300,9 @@ class ProcessBudget:
                 if lease is not None:
                     freed += lease.granted
                     self._granted -= lease.granted
+                    self._last_progress = time.monotonic()
+                    if self._stall_escape_lease_id == lease_id:
+                        self._stall_escape_lease_id = None
             if freed:
                 logger.debug(
                     f"Process budget reclaimed {freed} slot(s) from "
@@ -196,9 +318,3 @@ class ProcessBudget:
             for lease_id in self._leases_by_runner.get(runner_id, set())
             if (lease := self._leases.get(lease_id)) is not None
         )
-
-
-def _make_process_budget() -> ProcessBudget:
-    decision = resolve_process_budget()
-    logger.info(f"Process budget: {decision.value} ({decision.source})")
-    return ProcessBudget(decision.value)

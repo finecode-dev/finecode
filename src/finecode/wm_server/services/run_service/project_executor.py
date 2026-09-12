@@ -90,6 +90,7 @@ class ProjectExecutor:
         caller_kwargs: dict | None = None,
         allow_no_handlers: bool = False,
         selected_interpreters: set[str] | None = None,
+        budget: domain.RunBudget = domain.RunBudget(),  # noqa: B008
         *,
         origin: elicitation_bridge.RunDispatchOrigin | None,
     ) -> RunActionResponse:
@@ -119,6 +120,7 @@ class ProjectExecutor:
             caller_kwargs=caller_kwargs,
             allow_no_handlers=allow_no_handlers,
             selected_interpreters=selected_interpreters,
+            budget=budget,
             origin=origin,
         )
 
@@ -136,6 +138,7 @@ class ProjectExecutor:
         result_formats: list[RunResultFormat] | None = None,
         progress_token: int | str | None = None,
         caller_kwargs: dict | None = None,
+        budget: domain.RunBudget = domain.RunBudget(),  # noqa: B008
         *,
         origin: elicitation_bridge.RunDispatchOrigin | None,
     ) -> collections.abc.AsyncIterator[proxy_utils.RunWithPartialResultsContext]:
@@ -162,6 +165,7 @@ class ProjectExecutor:
             result_formats=result_formats,
             progress_token=progress_token,
             caller_kwargs=caller_kwargs,
+            budget=budget,
             origin=origin,
         ) as ctx:
             yield ctx

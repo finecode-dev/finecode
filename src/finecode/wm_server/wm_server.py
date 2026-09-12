@@ -68,6 +68,7 @@ from finecode.wm_server._jsonrpc import (
 from finecode.wm_server.errors import ConfigurationError, RunnerNotFoundError
 from finecode.wm_server.runner import elicitation_bridge, wm_bridge
 from finecode.wm_server.services import (
+    event_loop_lag_monitor,
     log_delivery,
 )
 from finecode.wm_server.services.run_service.exceptions import (
@@ -383,6 +384,7 @@ def _fail_pending_requests_for(writer: asyncio.StreamWriter) -> None:
 _log_registry: log_delivery.SubscriptionRegistry
 _log_batcher: log_delivery.LogBatcher
 _log_flush_task: asyncio.Task | None = None
+_lag_monitor_task: asyncio.Task | None = None
 _log_loop: asyncio.AbstractEventLoop | None = None
 _log_sink_id: int | None = None
 _log_interval_ms: int = (
@@ -474,6 +476,20 @@ def _start_log_flush_loop() -> asyncio.Task:
 
     _log_flush_task = asyncio.create_task(_loop())
     return _log_flush_task
+
+
+def _start_lag_monitor(ws_context: context.WorkspaceContext) -> asyncio.Task:
+    """Sample the WM's own event-loop lag for the server's lifetime.
+
+    Diagnostic only, so it is never awaited or drained: a failure in it is
+    logged by the monitor itself and costs observability, not correctness.
+    """
+    global _lag_monitor_task
+
+    _lag_monitor_task = asyncio.create_task(
+        event_loop_lag_monitor.EventLoopLagMonitor().run(ws_context)
+    )
+    return _lag_monitor_task
 
 
 def _handle_subscribe_logs(writer: asyncio.StreamWriter, params: dict | None) -> dict:
@@ -1071,6 +1087,7 @@ async def start(
     reset_log_delivery()  # production defaults (interval 200ms)
     install_client_log_sink()
     _start_log_flush_loop()
+    _start_lag_monitor(ws_context)
 
     if keep_alive:
         logger.info("FineCode WM server: keep-alive, auto-stop timers disabled")
@@ -1093,7 +1110,7 @@ async def start(
 
 def stop() -> None:
     """Stop the WM server and remove the discovery file."""
-    global _server, _discovery_file, _log_flush_task, _log_sink_id
+    global _server, _discovery_file, _log_flush_task, _log_sink_id, _lag_monitor_task
 
     # flush any buffered tails to all subscribers before tearing down
     with contextlib.suppress(Exception):
@@ -1101,6 +1118,9 @@ def stop() -> None:
     if _log_flush_task is not None:
         _log_flush_task.cancel()
         _log_flush_task = None
+    if _lag_monitor_task is not None:
+        _lag_monitor_task.cancel()
+        _lag_monitor_task = None
     if _log_sink_id is not None:
         try:
             logger.remove(_log_sink_id)

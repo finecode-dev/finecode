@@ -596,6 +596,26 @@ class TextDocumentInfo:
 
 
 @dataclasses.dataclass(frozen=True)
+class RunBudget:
+    """How the process budget treats every lease this run's ERs ask for (ADR-0094).
+
+    Declared at dispatch, never inferred from the action — the same action run
+    from elsewhere keeps the ER's own request.
+
+    Attributes:
+        waits: ``True`` — the lease waits for a free slot (non-nested);
+            ``False`` — it never waits, getting at least one slot even when the
+            budget is exhausted (nested); ``None`` — the ER's own nesting flag
+            decides, which is today's behaviour.
+        max_slots: Upper bound on the slots the lease asks for; ``None`` keeps
+            the ER's request.
+    """
+
+    waits: bool | None = None
+    max_slots: int | None = None
+
+
+@dataclasses.dataclass(frozen=True)
 class InFlightRun:
     """An action run the WM has dispatched and not yet seen an outcome for.
 
@@ -616,6 +636,9 @@ class InFlightRun:
             for (ADR-0080). Declared at dispatch, never inferred from the
             action: the same action a user invokes is an ordinary blocking
             run. False, the default, keeps ADR-0079's refusal.
+        budget: How the process budget treats this run's ER leases (ADR-0094),
+            declared at dispatch. The default leaves the ER's own request
+            untouched.
     """
 
     run_id: str
@@ -623,6 +646,7 @@ class InFlightRun:
     project_path: Path
     started_at: float
     cancellable: bool = False
+    budget: RunBudget = RunBudget()
 
 
 # Raw JSON object carrying a partial-result value in the WM protocol.

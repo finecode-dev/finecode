@@ -312,6 +312,7 @@ async def run_with_partial_results(
     progress_token: int | str | None = None,
     caller_kwargs: dict | None = None,
     interpreter: interpreter_matrix.Interpreter | None = None,
+    budget: domain.RunBudget = domain.RunBudget(),  # noqa: B008
     *,
     origin: elicitation_bridge.RunDispatchOrigin | None,
 ) -> collections.abc.AsyncIterator[RunWithPartialResultsContext]:
@@ -335,6 +336,7 @@ async def run_with_partial_results(
                 run_id=wal_run_id,
                 action_name=action_name,
                 project_path=project_dir_path,
+                budget=budget,
                 origin=origin,
             )
         )
@@ -972,6 +974,7 @@ async def run_action(
     allow_no_handlers: bool = False,
     selected_interpreters: set[str] | None = None,
     cancellable: bool = False,
+    budget: domain.RunBudget = domain.RunBudget(),  # noqa: B008
     *,
     origin: elicitation_bridge.RunDispatchOrigin | None,
 ) -> RunActionResponse:
@@ -997,6 +1000,10 @@ async def run_action(
     ``origin`` is who to ask if a handler inside this run elicits a choice
     (ADR-0082); ``None`` (the default) is the honest answer for a dispatch
     with no identifiable client.
+
+    ``budget`` declares how the process budget should treat this run's ER
+    leases (ADR-0094), recorded on its in-flight entry. The default leaves the
+    ER's own nesting flag and requested width untouched.
     """
     wal_run_id = wal.new_wal_run_id()
     formatted_params = str(params)
@@ -1067,6 +1074,7 @@ async def run_action(
             action_name=action_name,
             project_path=project_def.dir_path,
             cancellable=cancellable,
+            budget=budget,
             origin=origin,
         ):
             payload = params

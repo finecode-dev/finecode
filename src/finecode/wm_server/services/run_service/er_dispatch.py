@@ -109,6 +109,11 @@ class _BridgeHandlers:
         executor: ProjectExecutor,
         origin: elicitation_bridge.RunDispatchOrigin,
     ) -> _internal_client_types.RunActionInProjectResult:
+        # Back-channel project dispatches never wait for the budget. A streaming
+        # child arrives at depth 0 (the streaming path forwards no
+        # orchestrationDepth), so if the run that asked for it holds slots it
+        # would deadlock waiting on them; declaring waits=False is what gives it
+        # the one slot it needs (ADR-0094).
         if params.partial_result_token is not None:
             partial_count = 0
             async with executor.run_action_with_partial_results(
@@ -120,6 +125,7 @@ class _BridgeHandlers:
                 dev_env=DevEnv(params.meta.dev_env),
                 orchestration_depth=params.meta.orchestration_depth,
                 caller_kwargs=params.caller_kwargs,
+                budget=domain.RunBudget(waits=False),
                 origin=origin,
             ) as ctx:
                 async for partial_raw in ctx:
@@ -159,6 +165,7 @@ class _BridgeHandlers:
             dev_env=DevEnv(params.meta.dev_env),
             orchestration_depth=params.meta.orchestration_depth,
             caller_kwargs=params.caller_kwargs,
+            budget=domain.RunBudget(waits=False),
             origin=origin,
         )
         return _internal_client_types.RunActionInProjectResult(

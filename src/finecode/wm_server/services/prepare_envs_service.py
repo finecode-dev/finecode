@@ -60,11 +60,25 @@ def build_create_envs_params(
     return {"recreate": recreate}
 
 
+def project_fan_out_budget(work_cap: int, project_count: int) -> domain.RunBudget:
+    """Each member of a prepare-envs project fan-out waits for its share of the budget.
+
+    ``work_cap // project_count`` (never below one) keeps about ``work_cap``
+    projects in flight while holding the fan-out's total at the budget; with
+    fewer projects than slots, each still gets the full ``work_cap``.
+    """
+    if project_count <= 0:
+        return domain.RunBudget(waits=True, max_slots=1)
+    return domain.RunBudget(waits=True, max_slots=max(1, work_cap // project_count))
+
+
 async def _run_env_action(
     action_source: str,
     params: dict,
     executor_project: domain.CollectedProject,
     ws_context: context.WorkspaceContext,
+    *,
+    budget: domain.RunBudget,
 ) -> str | None:
     """Run a ``fine_envs`` action on *executor_project*'s dev_workspace runner.
 
@@ -73,6 +87,10 @@ async def _run_env_action(
     subscribes to that progress stream and
     forwards each ``report`` event as a user message, so a single slow batched
     call still shows which env is currently being created/installed.
+
+    ``budget`` declares how the process budget treats this dispatch (ADR-0094).
+    It has no default: a waiting budget and a non-waiting one have opposite
+    failure modes, so which one this is must be written at every call site.
 
     Returns an error string on failure, ``None`` on success.
     """
@@ -135,6 +153,7 @@ async def _run_env_action(
             result_formats=[rc.RunResultFormat.STRING],
             initialize_all_handlers=True,
             progress_token=progress_token,
+            budget=budget,
             # Started by the WM on its own behalf during env preparation, with
             # no client connection behind it.
             origin=None,
@@ -283,15 +302,17 @@ async def prepare_envs(
                     await runner_manager.stop_extension_runner(
                         runner=runner, ws_context=ws_context
                     )
-                runner_manager.remove_runner_env(project.dir_path, "dev_workspace")
+                await runner_manager.remove_runner_env(
+                    project.dir_path, "dev_workspace"
+                )
         else:
-            valid = await runner_manager.check_runner(
-                runner_dir=project.dir_path, env_name="dev_workspace"
+            check = await runner_manager.check_runner_within_budget(
+                ws_context, runner_dir=project.dir_path, env_name="dev_workspace"
             )
-            if not valid:
+            if not check.valid:
                 logger.warning(
-                    f"Env 'dev_workspace' in project '{project.name}' is invalid,"
-                    " recreating it"
+                    f"Env 'dev_workspace' in project '{project.name}' is invalid"
+                    f" ({check.reason}), recreating it"
                 )
                 runners = ws_context.ws_projects_extension_runners.get(
                     project.dir_path, {}
@@ -301,7 +322,9 @@ async def prepare_envs(
                     await runner_manager.stop_extension_runner(
                         runner=runner, ws_context=ws_context
                     )
-                runner_manager.remove_runner_env(project.dir_path, "dev_workspace")
+                await runner_manager.remove_runner_env(
+                    project.dir_path, "dev_workspace"
+                )
 
     try:
         async with asyncio.TaskGroup() as tg:
@@ -343,13 +366,24 @@ async def prepare_envs(
     ]
     if dw_envs and isinstance(root_project, domain.CollectedProject):
         error = await _run_env_action(
-            "fine_envs.CreateEnvsAction", {"envs": dw_envs}, root_project, ws_context
+            "fine_envs.CreateEnvsAction",
+            {"envs": dw_envs},
+            root_project,
+            ws_context,
+            # One batched run on the root runner, not a fan-out: it needs its
+            # full grant to create every subproject's dev_workspace venv.
+            budget=domain.RunBudget(),
         )
         if error:
             raise PrepareEnvsFailed(f"dev_workspace create_envs failed: {error}")
 
         error = await _run_env_action(
-            "fine_envs.InstallEnvsAction", {"envs": dw_envs}, root_project, ws_context
+            "fine_envs.InstallEnvsAction",
+            {"envs": dw_envs},
+            root_project,
+            ws_context,
+            # Same batched bootstrap run as above; full grant, no fan-out.
+            budget=domain.RunBudget(),
         )
         if error:
             raise PrepareEnvsFailed(f"dev_workspace install_envs failed: {error}")
@@ -439,6 +473,9 @@ async def prepare_envs(
     # bounded by the machine-wide process budget (ADR-0090), leased by each
     # ER when the action run begins.
     total_projects = len(step_projects)
+    fan_out_budget = project_fan_out_budget(
+        ws_context.process_budget.size, total_projects
+    )
     await user_messages.info(f"Creating envs for {total_projects} project(s)...")
 
     create_errors: list[str] = []
@@ -451,7 +488,11 @@ async def prepare_envs(
             sel, env_universe_by_project[p.dir_path], recreate
         )
         err = await _run_env_action(
-            "fine_envs.CreateEnvsAction", params, p, ws_context
+            "fine_envs.CreateEnvsAction",
+            params,
+            p,
+            ws_context,
+            budget=fan_out_budget,
         )
         if err:
             create_errors.append(err)
@@ -480,7 +521,12 @@ async def prepare_envs(
         # dependency installed at all.
         params = {} if not sel.active else {"env_names": sorted(sel.selected_env_names)}
         err = await _run_env_action(
-            "fine_envs.InstallEnvsAction", params, p, ws_context
+            "fine_envs.InstallEnvsAction",
+            params,
+            p,
+            ws_context,
+            # Step 6 reuses the step 5 fan-out's per-project share.
+            budget=fan_out_budget,
         )
         if err:
             install_errors.append(err)
@@ -629,7 +675,13 @@ async def install_env_for_project(
 
     # Create the venv if it does not exist yet (idempotent on existing venvs).
     error = await _run_env_action(
-        "fine_envs.CreateEnvsAction", {"envs": [env_spec]}, executor_project, ws_context
+        "fine_envs.CreateEnvsAction",
+        {"envs": [env_spec]},
+        executor_project,
+        ws_context,
+        # Auto-prepare runs inside another dispatch, so it must never wait on
+        # slots its own ancestor holds — the escape is load-bearing.
+        budget=domain.RunBudget(),
     )
     if error:
         raise PrepareEnvsFailed(
@@ -641,6 +693,8 @@ async def install_env_for_project(
         {"envs": [env_spec]},
         executor_project,
         ws_context,
+        # Same load-bearing escape as the create above.
+        budget=domain.RunBudget(),
     )
     if error:
         raise PrepareEnvsFailed(

@@ -32,6 +32,7 @@ async def track(
     action_name: str,
     project_path: pathlib.Path,
     cancellable: bool = False,
+    budget: domain.RunBudget = domain.RunBudget(),  # noqa: B008
     origin: elicitation_bridge.RunDispatchOrigin | None,
 ) -> typing.AsyncIterator[None]:
     """Register a run for the duration of the block.
@@ -52,6 +53,11 @@ async def track(
     (ADR-0082); ``None`` is the honest answer for a dispatch with no
     identifiable client, e.g. one the WM started on its own behalf. It has no
     default and must be stated — see :func:`elicitation_bridge.bind_run`.
+
+    ``budget`` is how the process budget should treat this run's ER leases
+    (ADR-0094), declared at dispatch. It rides here because this is the one
+    choke point every dispatch already passes through, keyed by the same run
+    id the ER sends on its lease request.
     """
     runs = ws_context.in_flight_runs.setdefault(project_path, {})
     runs[run_id] = domain.InFlightRun(
@@ -60,6 +66,7 @@ async def track(
         project_path=project_path,
         started_at=time.time(),
         cancellable=cancellable,
+        budget=budget,
     )
     # The same block also binds the run to the client that started it, for
     # ADR-0082's addressing. Deliberately here rather than beside each dispatch:
