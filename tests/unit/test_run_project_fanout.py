@@ -1,10 +1,9 @@
-"""Fan-out width control on the `run` path (ADR-0067).
+"""Recursion-depth control on the workspace fan-out path (ADR-0095).
 
-``OrchestrationPolicy.max_project_fanout`` is a *runaway-recursion* guard and
-refuses. It applies only to nested orchestration. The throttling half of
-ADR-0067 was replaced by the machine-wide process budget (ADR-0090), which
-bounds subprocesses at the leaf instead of bounding project fan-out as a
-proxy.
+Workspace fan-out is bounded by height, not width. A nested fan-out's width can
+never exceed the workspace's project count, so a width cap measures the
+workspace rather than a runaway; the recursion-depth cap is what bounds nested
+orchestration, the same rule the project executor already applies.
 """
 
 from __future__ import annotations
@@ -25,14 +24,12 @@ def _actions_by_project(count: int) -> dict[pathlib.Path, list[str]]:
 
 
 async def test_wide_fanout_allowed_at_depth_zero() -> None:
-    """A workspace simply containing more projects than the cap is not a
-    runaway loop — refusing it made every workspace-wide action unusable past
-    an arbitrary workspace size.
+    """A workspace with many projects is not a runaway loop, so a
+    workspace-wide action is dispatched rather than refused for its width.
     """
     executor = workspace_executor.WorkspaceExecutor(
         context.WorkspaceContext(ws_dirs_paths=[pathlib.Path("/ws")])
     )
-    policy = OrchestrationPolicy(max_project_fanout=4)
 
     with mock.patch.object(
         workspace_executor.proxy_utils, "run_actions_in_projects", return_value={}
@@ -43,53 +40,60 @@ async def test_wide_fanout_allowed_at_depth_zero() -> None:
             run_trigger=mock.Mock(),
             dev_env=mock.Mock(),
             orchestration_depth=0,
-            policy=policy,
             origin=None,
         )
 
     assert run_mock.await_count == 1
 
 
-async def test_wide_fanout_refused_when_nested() -> None:
-    """At depth > 0 the width was produced by a handler fanning out, which is
-    exactly the blast radius ADR-0016 wants bounded."""
+async def test_wide_fanout_allowed_when_nested() -> None:
+    """At depth > 0 the width is still bounded by the workspace's project
+    count, not by the recursion — a workspace-wide gather must not be refused
+    for being wide (ADR-0095)."""
     executor = workspace_executor.WorkspaceExecutor(
         context.WorkspaceContext(ws_dirs_paths=[pathlib.Path("/ws")])
     )
-    policy = OrchestrationPolicy(max_project_fanout=4)
-
-    with pytest.raises(ActionRunFailed) as exc_info:
-        await executor.run_actions_in_projects(
-            actions_by_project=_actions_by_project(10),
-            params={},
-            run_trigger=mock.Mock(),
-            dev_env=mock.Mock(),
-            orchestration_depth=1,
-            policy=policy,
-            origin=None,
-        )
-
-    assert "10" in str(exc_info.value)
-    assert "depth 1" in str(exc_info.value)
-
-
-async def test_narrow_fanout_allowed_when_nested() -> None:
-    executor = workspace_executor.WorkspaceExecutor(
-        context.WorkspaceContext(ws_dirs_paths=[pathlib.Path("/ws")])
-    )
-    policy = OrchestrationPolicy(max_project_fanout=4)
 
     with mock.patch.object(
         workspace_executor.proxy_utils, "run_actions_in_projects", return_value={}
     ) as run_mock:
         await executor.run_actions_in_projects(
-            actions_by_project=_actions_by_project(3),
+            actions_by_project=_actions_by_project(100),
             params={},
             run_trigger=mock.Mock(),
             dev_env=mock.Mock(),
-            orchestration_depth=2,
-            policy=policy,
+            orchestration_depth=1,
             origin=None,
         )
 
     assert run_mock.await_count == 1
+
+
+async def test_depth_limit_refused_before_dispatch() -> None:
+    """Nested orchestration is bounded by height: a caller already at the
+    policy's depth limit is refused before anything fans out."""
+    executor = workspace_executor.WorkspaceExecutor(
+        context.WorkspaceContext(ws_dirs_paths=[pathlib.Path("/ws")])
+    )
+    policy = OrchestrationPolicy(max_recursion_depth=3)
+
+    with (
+        mock.patch.object(
+            workspace_executor.proxy_utils,
+            "run_actions_in_projects",
+            return_value={},
+        ) as run_mock,
+        pytest.raises(ActionRunFailed) as exc_info,
+    ):
+        await executor.run_actions_in_projects(
+            actions_by_project=_actions_by_project(1),
+            params={},
+            run_trigger=mock.Mock(),
+            dev_env=mock.Mock(),
+            orchestration_depth=3,
+            policy=policy,
+            origin=None,
+        )
+
+    assert "Orchestration depth 3 reached limit 3" in str(exc_info.value)
+    assert run_mock.await_count == 0

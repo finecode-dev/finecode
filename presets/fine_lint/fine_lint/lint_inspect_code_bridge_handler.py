@@ -65,7 +65,11 @@ class LintInspectCodeBridgeHandler(
             payload=LintRunPayload(
                 target=LintTarget(payload.target.value),
                 file_paths=payload.file_paths,
-                project_paths=payload.project_paths,
+                # `lint` is workspace-scoped, and this dispatches it into one
+                # project. Without narrowing, every per-project instance
+                # re-resolves the whole workspace and gathers across it: N
+                # instances x N projects.
+                project_paths=[path_to_resource_uri(project_path)],
             ),
             meta=run_meta,
             project_paths=[project_path],

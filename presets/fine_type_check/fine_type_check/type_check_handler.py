@@ -132,8 +132,17 @@ class TypeCheckHandler(
             and run_meta.dev_env == code_action.DevEnv.IDE
             and run_meta.trigger == code_action.RunActionTrigger.SYSTEM
         ):
+            # Only this run's projects: a narrowed run (e.g. one project of an
+            # inspect_code bridge) must not report the other projects' open files,
+            # because it would send them as empty -- and an empty list clears that
+            # file's diagnostics in the IDE, racing the project that owns it.
+            opened_by_project = group_files_by_project(
+                self.file_editor.get_opened_files(), project_paths
+            )
             file_uris = [
-                path_to_resource_uri(p) for p in self.file_editor.get_opened_files()
+                path_to_resource_uri(p)
+                for files in opened_by_project.values()
+                for p in files
             ]
         else:
             files = await _list_workspace_files(

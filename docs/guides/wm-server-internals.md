@@ -437,10 +437,12 @@ the env deleted and recreated. A timed-out check is also retried with a longer d
 (`VERSION_CHECK_TIMEOUTS_SEC`) before the env is declared invalid, and every invalid verdict
 carries its reason into the `prepare-envs` warning.
 
-`OrchestrationPolicy.max_project_fanout` (64) is a *separate* mechanism and is not a capacity
-limit: it refuses, and it applies only when `orchestration_depth > 0`. It guards against runaway
-recursive orchestration, not against a large workspace. A request arriving from a person at depth
-0 is never refused for width — see ADR-0067, which amends ADR-0016 on this point.
+`OrchestrationPolicy.max_recursion_depth` bounds orchestration at every entry point: the
+project executor, and both workspace fan-out entries (`WorkspaceExecutor` and the streaming
+batch handler). Each refuses a call whose caller is already at the limit. There is **no width
+refusal**: a nested fan-out's width can never exceed the workspace's project count, so a width
+cap would measure the workspace rather than a runaway. Subprocess width is bounded at the leaf
+by the process budget above — see ADR-0095, which supersedes ADR-0067's width decision.
 
 ### Auto-repair (`install_env_for_project`)
 

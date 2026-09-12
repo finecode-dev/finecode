@@ -21,7 +21,6 @@ from finecode.wm_server.services.run_service.proxy_utils import (
 @dataclasses.dataclass
 class OrchestrationPolicy:
     max_recursion_depth: int = 8
-    max_project_fanout: int = 64
 
 
 DEFAULT_ORCHESTRATION_POLICY = OrchestrationPolicy()

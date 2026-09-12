@@ -22,7 +22,7 @@ from finecode.wm_server.services.run_service.execution_scopes import (
 class WorkspaceExecutor:
     """Fan-out an action across multiple projects.
 
-    Wraps proxy_utils.run_actions_in_projects() with a fan-out cap guard.
+    Wraps proxy_utils.run_actions_in_projects() with a recursion-depth guard.
     actions_by_project uses action names (not sources) because workspace fan-out
     originates from external API calls which are name-centric.
     """
@@ -46,23 +46,17 @@ class WorkspaceExecutor:
         *,
         origin: elicitation_bridge.RunDispatchOrigin | None,
     ) -> dict[pathlib.Path, dict[str, RunActionResponse]]:
-        # `max_project_fanout` is a runaway-orchestration guard (ADR-0016), not a
-        # capacity limit — it bounds the blast radius of an action whose handler
-        # fans out, whose handlers fan out again. It therefore applies only to
-        # nested orchestration. At depth 0 the fan-out width is whatever the
-        # workspace happens to contain, chosen by a person, not by a recursion:
-        # a 100-project workspace is not a runaway loop, and refusing it makes
-        # every workspace-wide action unusable past an arbitrary size. Width at
-        # depth 0 is handled by throttling (the semaphore in
-        # proxy_utils.run_actions_in_projects), not by refusal.
-        if (
-            orchestration_depth > 0
-            and len(actions_by_project) > policy.max_project_fanout
-        ):
+        # Recursion is bounded by height, not width. A nested fan-out's width can
+        # never exceed the workspace's project count (er_dispatch validates every
+        # requested path), so a width cap measures the workspace, not a runaway:
+        # it could never fire at <= cap projects and refused every legitimate
+        # workspace-wide gather above it (ADR-0095). Subprocess width is bounded
+        # at the leaf by the process budget (ADR-0090).
+        if orchestration_depth >= policy.max_recursion_depth:
             raise ActionRunFailed(
-                f"Workspace fan-out {len(actions_by_project)} exceeds limit "
-                f"{policy.max_project_fanout} at orchestration depth "
-                f"{orchestration_depth}"
+                f"Orchestration depth {orchestration_depth} reached limit "
+                f"{policy.max_recursion_depth}. Actions: "
+                f"{sorted({a for names in actions_by_project.values() for a in names})}"
             )
 
         _result_formats = (

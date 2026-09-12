@@ -328,25 +328,17 @@ async def _handle_run_batch_with_partial_results(
             ws_context,
         )
 
-        # `max_project_fanout` is a runaway-orchestration guard (ADR-0016), not
-        # a capacity limit — see `WorkspaceExecutor.run_actions_in_projects`
-        # for the identical check. It applies only to nested orchestration:
-        # this handler is today always invoked at depth 0 from an external
-        # client (CLI, LSP, MCP), where fan-out width is whatever the
-        # workspace contains and refusing would make every workspace-wide
-        # action unusable past an arbitrary size. Width at depth 0 is
-        # throttled by the machine-wide process budget (ADR-0090) instead.
-        # `orchestration_depth` and
-        # `policy` are real parameters (not just an assumption in a comment)
-        # so a future nested caller gets the same protection automatically.
-        if (
-            orchestration_depth > 0
-            and len(actions_by_project) > policy.max_project_fanout
-        ):
+        # Recursion is bounded by height, not width. A nested fan-out's width can
+        # never exceed the workspace's project count (er_dispatch validates every
+        # requested path), so a width cap measures the workspace, not a runaway:
+        # it could never fire at <= cap projects and refused every legitimate
+        # workspace-wide gather above it (ADR-0095). Subprocess width is bounded
+        # at the leaf by the process budget (ADR-0090).
+        if orchestration_depth >= policy.max_recursion_depth:
             raise ActionRunFailed(
-                f"Workspace fan-out {len(actions_by_project)} exceeds limit "
-                f"{policy.max_project_fanout} at orchestration depth "
-                f"{orchestration_depth}"
+                f"Orchestration depth {orchestration_depth} reached limit "
+                f"{policy.max_recursion_depth}. Actions: "
+                f"{sorted({a for names in actions_by_project.values() for a in names})}"
             )
 
         await run_service.start_required_environments(actions_by_project, ws_context)

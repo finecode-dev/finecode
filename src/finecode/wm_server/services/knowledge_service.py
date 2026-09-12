@@ -798,9 +798,8 @@ async def _refresh(ws_context: context.WorkspaceContext, bucket: BucketKey) -> N
                     },
                     run_trigger=run_service.RunActionTrigger.SYSTEM,
                     dev_env=run_service.DevEnv.CLI,
-                    # Never zero, so the runaway-orchestration cap (ADR-0016,
-                    # `WorkspaceExecutor`'s own fan-out guard) applies to this
-                    # dispatch exactly as it would to any other nested one.
+                    # Never zero, so the recursion-depth cap (`WorkspaceExecutor`,
+                    # ADR-0095) counts this dispatch like any other nested one.
                     orchestration_depth=1,
                     # Nobody awaits this and its result is re-derivable, so a
                     # config reload cancels it rather than being refused by it
