@@ -184,6 +184,10 @@ jobs:
       # good cold install just because a later check or test failed. The only
       # precondition here is that the install itself succeeded; on an exact key match
       # there is nothing new to save.
+      # The key is reused from the restore step, never recomputed: by now every .venvs/
+      # is populated, so a `**/pyproject.toml` glob would walk all of site-packages
+      # (hashFiles times out at 120s) and could hash venv-internal files the restore
+      # key never saw, saving under a key no later run would ever restore.
       - name: Save venvs cache
         if: ${{ always() && steps.install.outcome == 'success' && steps.venvs_cache.outputs.cache-hit != 'true' }}
         uses: actions/cache/save@v5
@@ -191,7 +195,7 @@ jobs:
           path: |
             .venvs
             **/.venvs
-          key: ${{ runner.os }}-venvs-${{ hashFiles('**/pyproject.toml', '**/preset.toml') }}
+          key: ${{ steps.venvs_cache.outputs.cache-primary-key }}
 
   audit-private:
     name: Audit (private layer)
@@ -326,7 +330,8 @@ jobs:
         shell: bash
 
       # See the matching step in the `build` job for the rationale: save the venvs
-      # whenever the install succeeded, even if a later check, audit or test failed.
+      # whenever the install succeeded, even if a later check, audit or test failed,
+      # and reuse the restore step's key rather than recomputing it.
       - name: Save venvs cache
         if: ${{ always() && env.HAS_PRIVATE_CLONE_APP == 'true' && steps.install.outcome == 'success' && steps.venvs_cache.outputs.cache-hit != 'true' }}
         uses: actions/cache/save@v5
@@ -334,4 +339,4 @@ jobs:
           path: |
             .venvs
             **/.venvs
-          key: ${{ runner.os }}-private-venvs-${{ hashFiles('**/pyproject.toml', '**/preset.toml', 'finecode-user.toml') }}
+          key: ${{ steps.venvs_cache.outputs.cache-primary-key }}
