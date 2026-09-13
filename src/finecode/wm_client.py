@@ -438,7 +438,11 @@ class ApiClient:
         return result["actions"]
 
     async def get_payload_schemas(
-        self, project: str, action_sources: list[str]
+        self,
+        project: str,
+        action_sources: list[str],
+        *,
+        start_runners: bool = False,
     ) -> dict[str, schema_utils.PayloadSchema | None]:
         """Return payload schemas for the given actions in a project.
 
@@ -447,14 +451,21 @@ class ApiClient:
         Args:
             project: Absolute path to the project directory.
             action_sources: List of action import-path aliases (ADR-0019).
+            start_runners: When true, ask the WM to start the handler
+                environments before probing so a schema that needs one is
+                available. Defaults to false so passive listing never starts
+                environments.
 
         Returns:
             Mapping of action source → JSON Schema fragment, or ``None``
             for actions whose class could not be imported by the ER.
         """
+        params: dict = {"project": project, "actionSources": action_sources}
+        if start_runners:
+            params["startRunners"] = True
         result = await self.request(
             "actions/getPayloadSchemas",
-            {"project": project, "actionSources": action_sources},
+            params,
         )
         if not isinstance(result, dict) or "schemas" not in result:
             raise ApiResponseError(
