@@ -4,13 +4,7 @@ from loguru import logger
 
 from finecode.wm_server import context
 from finecode.wm_server.runner import runner_client, runner_manager
-
-try:
-    from finecode.wm_server.services import knowledge_service
-except ImportError:
-    # finecode_knowledge is the optional `finecode[knowledge]` extra; without it
-    # no store was ever loaded, so there is nothing pending to flush.
-    knowledge_service = None
+from finecode.wm_server.services import knowledge_service
 
 
 async def on_shutdown(ws_context: context.WorkspaceContext) -> None:
@@ -18,8 +12,7 @@ async def on_shutdown(ws_context: context.WorkspaceContext) -> None:
     # the refreshes since the last one; a graceful shutdown has no reason to
     # accept even that, so it flushes unconditionally before anything else --
     # this needs no runner and nothing below it depends on runners being up.
-    if knowledge_service is not None:
-        await knowledge_service.persist_pending(ws_context)
+    await knowledge_service.persist_pending(ws_context)
 
     running_runners = []
     initializing_runners = []

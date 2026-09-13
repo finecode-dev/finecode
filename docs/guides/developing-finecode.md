@@ -23,16 +23,16 @@ tests/                             # Test suite
 
 `finecode_knowledge` is the **engine**: the entity/fact model, the query IR and its
 interpreter, the memoization DAG. It is stdlib-only, carries no schema of its own, and is
-what the WM loads the fact store and runs the DAG with. It is not yet published, so the
-root `finecode` package declares it as the optional `knowledge` extra rather than a hard
-dependency — `pip install finecode` would otherwise be unresolvable outside this monorepo.
-The import is guarded at both call sites (`wm_server.py`, `shutdown_service.py`); without
-the extra installed, `runner.knowledge_bridge`'s slot is simply never filled and a WM built
-that way answers `knowledge/query`/`knowledge/registerSchema` with a method error (ADR-0072)
-instead of failing to start. `dependency-groups.dev_workspace` in the root `pyproject.toml`
-lists it explicitly for the same reason — `scripts/list_dev_workspace_editables.py` only
-follows `[project].dependencies` edges, not optional ones, so every dev workspace / CI
-checkout would otherwise stop installing it editable.
+what the WM loads the fact store and runs the DAG with. It is a hard runtime dependency of
+the root `finecode` package and is published to PyPI before `finecode` itself, so
+`pip install finecode` stays resolvable outside this monorepo. In this repository
+`scripts/list_dev_workspace_editables.py` follows the `[project].dependencies` edge and
+installs the engine editable, and the root `testing` envs get it too — the install-project
+transitive-editable walk reads `finecode`'s dependencies — which is what lets
+`tests/unit/test_knowledge_service*.py` run on a clean public checkout. The WM imports the
+engine unconditionally at startup (`wm_server.py`), which fills `runner.knowledge_bridge`'s
+slot (ADR-0072), and `shutdown_service.py` flushes any pending fact writes on a graceful
+shutdown.
 
 `presets/fine_knowledge` is **FineCode's own schema**: entity types, providers,
 predicates, rules and the `extract_knowledge` / `which_handlers` / `audit_preset_deps`
@@ -173,8 +173,11 @@ python -m finecode run --shared-server inspect_code --target=files \
 
 `--project=<name>` takes the `[project].name` from `pyproject.toml`, not a path;
 `--project_paths` takes paths, and relative, absolute and `file://` forms all work.
-`--interpreter=3.13` runs one interpreter of the matrixed `testing` env instead of the
-whole axis — drop it for the full check.
+`--interpreter=3.13` restricts a matrixed `testing` run to that interpreter.
+Dropping `--interpreter` does **not** widen to the whole axis: it runs the env's
+`default_interpreters` policy, which for `testing` selects the newest
+downloadable interpreter only. To run more, pass `--dev-env=ci` (the full
+axis) or repeat `--interpreter=` for each one.
 
 Payload fields are validated at the CLI against the action's schema before anything
 runs: an unknown field name is refused, and a value that cannot be the field's declared

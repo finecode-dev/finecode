@@ -78,17 +78,8 @@ from finecode.wm_server.services.run_service.exceptions import (
 )
 from finecode.wm_server.wm_lifecycle import discovery_file_path
 
-try:
-    # Import-time side effect only (fills runner.knowledge_bridge's slot, ADR-0072).
-    # finecode_knowledge is the optional `finecode[knowledge]` extra; a WM built
-    # without it simply never fills the slot, and knowledge_bridge.handlers()
-    # being None is already a handled state (runner_manager answers ER knowledge
-    # requests with a method error instead of this import crashing WM startup).
-    from finecode.wm_server.services import (  # noqa: F401
-        knowledge_service as _knowledge_service,
-    )
-except ImportError:
-    pass
+# Import-time side effect only (fills runner.knowledge_bridge's slot, ADR-0072).
+importlib.import_module("finecode.wm_server.services.knowledge_service")
 
 if typing.TYPE_CHECKING:
     from finecode.wm_server.runner.runner_client import ExtensionRunnerInfo
