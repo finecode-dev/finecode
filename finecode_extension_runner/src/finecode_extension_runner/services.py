@@ -10,6 +10,7 @@ import typing
 from pathlib import Path
 
 from finecode_extension_api import service
+from finecode_extension_api.interfaces import iprojectinfoprovider
 from loguru import logger
 
 from finecode_extension_runner import (
@@ -51,8 +52,8 @@ async def update_config(
     project_raw_config_getter: typing.Callable[
         [str], collections.abc.Awaitable[dict[str, typing.Any]]
     ],
-    workspace_editable_packages_getter: typing.Callable[
-        [], collections.abc.Awaitable[dict[str, Path]]
+    workspace_packages_getter: typing.Callable[
+        [], collections.abc.Awaitable[dict[str, iprojectinfoprovider.WorkspacePackage]]
     ]
     | None = None,
     workspace_extra_selection_getter: typing.Callable[
@@ -142,7 +143,7 @@ async def update_config(
         runner_context=runner_context,
         project_def_path_getter=project_def_path_getter,
         project_raw_config_getter=project_raw_config_getter,
-        workspace_editable_packages_getter=workspace_editable_packages_getter,
+        workspace_packages_getter=workspace_packages_getter,
         workspace_extra_selection_getter=workspace_extra_selection_getter,
         cache_dir_path_getter=cache_dir_path_getter,
         current_project_raw_config_version_getter=current_project_raw_config_version_getter,

@@ -101,7 +101,7 @@ shapes the return value.  Should contain no business logic.
 
 | Module | Methods covered |
 |---|---|
-| `_workspace.py` | `workspace/addDir`, `removeDir`, `listProjects`, `findProjectForFile`, `setConfigOverrides`, `getProjectRawConfig`, `getWorkspaceEditablePackages`, `startRunners`, `prepareEnvs`, `reloadConfig` |
+| `_workspace.py` | `workspace/addDir`, `removeDir`, `listProjects`, `findProjectForFile`, `setConfigOverrides`, `getProjectRawConfig`, `getWorkspacePackages`, `startRunners`, `prepareEnvs`, `reloadConfig` |
 | `_actions.py` | `actions/list`, `getTree`, `getPayloadSchemas`, `run` (non-streaming), `runBatch` (non-streaming), `reload` |
 | `_runners.py` | `runners/list`, `restart`, `checkEnv`, `removeEnv` |
 | `_streaming.py` | Streaming variants of `actions/run` and `actions/runBatch` (with `partialResultToken` / `progressToken`) |

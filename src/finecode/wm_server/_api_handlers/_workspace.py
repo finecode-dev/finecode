@@ -24,19 +24,14 @@ async def _handle_list_projects(
     return [_project_to_dict(p) for p in ws_context.ws_projects.values()]
 
 
-async def _handle_get_workspace_editable_packages(
+async def _handle_get_workspace_packages(
     params: dict | None, ws_context: context.WorkspaceContext
 ) -> dict:
-    """Return workspace editable packages as name → absolute posix path.
+    """Return workspace packages as name → {dir, wheel, editable}.
 
-    Result: ``{"packages": {"pkg_name": "/abs/path", ...}}``
+    Result: ``{"packages": {"pkg_name": {"dir": "/abs/path", "wheel": null, "editable": true}}}``
     """
-    return {
-        "packages": {
-            name: path.as_posix()
-            for name, path in ws_context.ws_editable_packages.items()
-        }
-    }
+    return {"packages": ws_context.workspace_packages_wire()}
 
 
 async def _handle_get_project_raw_config(
@@ -140,8 +135,8 @@ async def _handle_add_dir(
         if is_new_dir:
             ws_context.ws_dirs_paths.append(dir_path)
             await read_configs.read_projects_in_dir(dir_path, ws_context)
-            ws_context.ws_editable_packages = (
-                read_configs.resolve_workspace_editable_packages(ws_context)
+            ws_context.ws_workspace_packages = read_configs.resolve_workspace_packages(
+                ws_context
             )
 
         # Projects in this dir that haven't been config-initialized yet, covering
@@ -426,6 +421,8 @@ async def _handle_prepare_envs(
       projectNames: list[str] | null - limit to these projects
       devEnv: str - active dev-env, used to resolve each matrix env's
         config-declared default interpreter subset (default "cli")
+      workspacePackagesMode: "editable" | "wheel" | null - override how
+        workspace packages are installed (default: resolved from config)
     Result: {}
     """
     from finecode.wm_server.services.prepare_envs_service import (
@@ -442,6 +439,7 @@ async def _handle_prepare_envs(
     interpreter_names: list[str] | None = params.get("interpreters")
     project_names: list[str] | None = params.get("projectNames")
     dev_env: str = params.get("devEnv", "cli")
+    workspace_packages_mode: str | None = params.get("workspacePackagesMode")
 
     try:
         await prepare_envs(
@@ -452,6 +450,7 @@ async def _handle_prepare_envs(
             interpreter_names=interpreter_names,
             project_names=project_names,
             dev_env=dev_env,
+            workspace_packages_mode=workspace_packages_mode,
         )
     except PrepareEnvsFailed as exc:
         raise ValueError(exc.message) from exc

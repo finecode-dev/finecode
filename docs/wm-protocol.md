@@ -303,9 +303,9 @@ from context.
 
 ---
 
-#### `workspace/getWorkspaceEditablePackages`
+#### `workspace/getWorkspacePackages`
 
-Return the resolved workspace editable-package map from `finecode-workspace.toml`.
+Return the resolved workspace-package map from `finecode-workspace.toml`.
 
 - **Type:** request
 - **Clients:** CLI
@@ -318,17 +318,22 @@ Return the resolved workspace editable-package map from `finecode-workspace.toml
 ```json
 {
   "packages": {
-    "finecode": "/abs/path/to/finecode",
-    "fine_python_ruff": "/abs/path/to/extensions/fine_python_ruff"
+    "finecode": {"dir": "/abs/path/to/finecode", "wheel": null, "editable": true},
+    "fine_python_ruff": {"dir": "/abs/path/to/extensions/fine_python_ruff", "wheel": "/abs/path/to/.venvs/dev_workspace/cache/wheelhouse/fine_python_ruff-0.2.0a0-py3-none-any.whl", "editable": false}
   }
 }
 ```
 
-Each entry maps a package name (from `[project].name` in the target's `pyproject.toml`)
-to its absolute POSIX path. The map is the union of every discovered project when
-`all_workspace_packages_editable = true` in `finecode-workspace.toml` and any explicit
-`editable_packages` entries. Returns `{"packages": {}}` when no workspace config is found
-or the `[workspace]` table is absent.
+Each entry names a package (from `[project].name` in the target's `pyproject.toml`),
+its absolute POSIX source directory, and the resolved install decision for the
+active mode. ``editable`` is true when the package installs from its source
+directory (editable mode, or an excluded package); otherwise it installs from
+``wheel``, which is null when the wheelhouse has no entry — the consumer reports
+that as the stale/absent-manifest error rather than falling back to editable.
+The set is the union of every discovered project unless
+`[workspace.workspace_packages].all_projects = false` in `finecode-workspace.toml`
+(it defaults to true) and any explicit `extra` entries. Returns
+`{"packages": {}}` when there is no workspace root.
 
 ---
 

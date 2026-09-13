@@ -416,23 +416,16 @@ async def _start_extension_runner_process(
         get_project_raw_config,
     )
 
-    async def get_workspace_editable_packages(_params):
-        return {
-            "packages": {
-                name: path.as_posix()
-                for name, path in ws_context.ws_editable_packages.items()
-            }
-        }
+    async def get_workspace_packages(_params):
+        return {"packages": ws_context.workspace_packages_wire()}
 
     runner.client.feature(
-        _internal_client_types.WORKSPACE_EDITABLE_PACKAGES_GET,
-        get_workspace_editable_packages,
+        _internal_client_types.WORKSPACE_PACKAGES_GET,
+        get_workspace_packages,
     )
 
     async def get_workspace_extra_selection(_params):
-        return {
-            "selection": read_configs.read_workspace_extra_selection(ws_context)
-        }
+        return {"selection": read_configs.read_workspace_extra_selection(ws_context)}
 
     runner.client.feature(
         _internal_client_types.WORKSPACE_EXTRA_SELECTION_GET,

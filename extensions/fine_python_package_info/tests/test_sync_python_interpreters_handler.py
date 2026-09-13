@@ -217,7 +217,7 @@ class _StubProjectInfoProvider:
     def get_current_project_raw_config_version(self) -> int:
         return 0
 
-    async def get_workspace_editable_packages(self) -> dict:
+    async def get_workspace_packages(self) -> dict:
         return {}
 
 

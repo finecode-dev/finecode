@@ -1,5 +1,23 @@
+import dataclasses
 import pathlib
 from typing import Any, Protocol
+
+
+@dataclasses.dataclass
+class WorkspacePackage:
+    """A package that lives in the workspace.
+
+    ``dir`` is the package directory (the parent of its artifact definition
+    file). ``editable`` is the resolved install decision for the active mode:
+    ``True`` installs from ``dir``; ``False`` installs from ``wheel``, which the
+    WM sets only when the wheelhouse has an entry. A package that must install
+    from a wheel but has no ``wheel`` is the stale/absent-manifest case the
+    consumer reports (P5/R4).
+    """
+
+    dir: pathlib.Path
+    wheel: pathlib.Path | None = None
+    editable: bool = True
 
 
 class IProjectInfoProvider(Protocol):
@@ -50,8 +68,11 @@ class IProjectInfoProvider(Protocol):
 
     def get_current_project_raw_config_version(self) -> int: ...
 
-    async def get_workspace_editable_packages(self) -> dict[str, pathlib.Path]:
-        """Return editable packages in the workspace, keyed by package name.
+    async def get_workspace_packages(self) -> dict[str, WorkspacePackage]:
+        """Return the workspace's packages, keyed by package name.
+
+        Each entry carries the package's directory and, when the active
+        install mode built one, a wheel path to install instead.
 
         Raises:
             ProjectInfoUnavailableError: packages could not be retrieved.

@@ -670,6 +670,13 @@ def run(ctx) -> None:
     help="Override detected dev environment",
 )
 @click.option(
+    "--workspace-packages",
+    "workspace_packages_mode",
+    default=None,
+    type=click.Choice(["editable", "wheel"]),
+    help="Override how workspace packages are installed in every env.",
+)
+@click.option(
     "--env",
     "env_names",
     multiple=True,
@@ -704,6 +711,7 @@ def prepare_envs(
     recreate: bool,
     shared_server: bool,
     dev_env: str | None,
+    workspace_packages_mode: str | None,
     env_names: tuple[str, ...],
     interpreter_names: tuple[str, ...],
     project_names: tuple[str, ...],
@@ -752,6 +760,7 @@ def prepare_envs(
                 else None,
                 project_names=list(project_names) if project_names else None,
                 dev_env=dev_env or detect_dev_env(),
+                workspace_packages_mode=workspace_packages_mode,
                 verbose=verbose,
             )
         )

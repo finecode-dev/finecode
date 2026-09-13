@@ -22,6 +22,7 @@ from fine_envs.dependency_config_utils import (
     process_raw_deps,
     resolve_install_project,
     split_dep_spec,
+    workspace_package_ref,
 )
 from fine_envs.install_envs_action import (
     InstallEnvsRunResult,
@@ -73,14 +74,15 @@ class InstallEnvInstallDepsHandler(
                 project_def_path=project_def_path,
             )
 
-            ws_editable_packages = (
-                await self.project_info_provider.get_workspace_editable_packages()
+            ws_workspace_packages = (
+                await self.project_info_provider.get_workspace_packages()
             )
             for dep in dependencies:
-                if dep["name"] in ws_editable_packages:
-                    path = ws_editable_packages[dep["name"]]
-                    dep["version_or_source"] = f" @ file://{path.as_posix()}"
-                    dep["editable"] = True
+                package = ws_workspace_packages.get(dep["name"])
+                if package is not None:
+                    dep["version_or_source"], dep["editable"] = workspace_package_ref(
+                        dep["name"], package
+                    )
 
             # ADR-0046: an env may opt in to installing the project under test,
             # editable, from its own directory. Resolved before the transitive
@@ -102,11 +104,14 @@ class InstallEnvInstallDepsHandler(
                         "project.name is not declared in the project's pyproject.toml"
                     )
                 dependencies = resolve_install_project(
-                    dependencies, project_name, project_def_path.parent
+                    dependencies,
+                    project_name,
+                    project_def_path.parent,
+                    package=ws_workspace_packages.get(project_name),
                 )
 
             dependencies.extend(
-                collect_transitive_editable_deps(dependencies, ws_editable_packages)
+                collect_transitive_editable_deps(dependencies, ws_workspace_packages)
             )
 
             overrides = payload.env.dependencies_override
@@ -134,12 +139,12 @@ class InstallEnvInstallDepsHandler(
                             editable=False,
                             extras=extras,
                         )
-                        if raw_name in ws_editable_packages:
-                            path = ws_editable_packages[raw_name]
-                            new_dep["version_or_source"] = (
-                                f" @ file://{path.as_posix()}"
+                        if raw_name in ws_workspace_packages:
+                            new_dep["version_or_source"], new_dep["editable"] = (
+                                workspace_package_ref(
+                                    raw_name, ws_workspace_packages[raw_name]
+                                )
                             )
-                            new_dep["editable"] = True
                         dependencies.append(new_dep)
 
             install_deps_payload = (

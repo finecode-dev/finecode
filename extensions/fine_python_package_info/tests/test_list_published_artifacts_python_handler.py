@@ -9,7 +9,10 @@ from fine_dist_artifacts.list_published_artifacts_action import (
     ListPublishedArtifactsRunPayload,
 )
 from finecode_extension_api.interfaces.ihttpclient import IHttpClient
-from finecode_extension_api.interfaces.iprojectinfoprovider import IProjectInfoProvider
+from finecode_extension_api.interfaces.iprojectinfoprovider import (
+    IProjectInfoProvider,
+    WorkspacePackage,
+)
 from finecode_extension_api.interfaces.irepositorycredentialsprovider import (
     IRepositoryCredentialsProvider,
     Repository,
@@ -67,7 +70,7 @@ class _StubProjectInfoProvider:
     def get_current_project_raw_config_version(self) -> int:
         raise NotImplementedError
 
-    async def get_workspace_editable_packages(self) -> dict[str, pathlib.Path]:
+    async def get_workspace_packages(self) -> dict[str, WorkspacePackage]:
         raise NotImplementedError
 
 

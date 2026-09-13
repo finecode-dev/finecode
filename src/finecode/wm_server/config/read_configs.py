@@ -4,7 +4,7 @@ import dataclasses
 import os
 from importlib import metadata
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import cattrs
 from loguru import logger
@@ -702,9 +702,7 @@ def _validate_extra_gates(
         return
     with open(pyproject_path, "rb") as f:
         pyproject_toml = toml_loads(f.read()).unwrap()
-    declared_extras = pyproject_toml.get("project", {}).get(
-        "optional-dependencies", {}
-    )
+    declared_extras = pyproject_toml.get("project", {}).get("optional-dependencies", {})
 
     for extra_name in extra_gates:
         if extra_name not in declared_extras:
@@ -1354,34 +1352,42 @@ def resolve_interpreter_matrices(project_config: dict[str, Any]) -> None:
         finecode_section["service"] = new_services_raw
 
 
-def resolve_workspace_editable_packages(
+def resolve_workspace_packages(
     ws_context: context.WorkspaceContext,
 ) -> dict[str, Path]:
-    """Resolve workspace editable packages from finecode-workspace.toml.
+    """Resolve workspace packages from finecode-workspace.toml.
 
     Returns the union of:
       - Every discovered project's [project].name → project directory,
-        when [workspace].all_workspace_packages_editable is True.
-      - Each [workspace].editable_packages entry, validated.
+        unless [workspace.workspace_packages].all_projects is False. The
+        default is True, so a workspace with no finecode-workspace.toml (or no
+        ``[workspace.workspace_packages]`` table) treats every project as a
+        workspace package.
+      - Each [workspace.workspace_packages].extra entry, validated.
+
+    Raises:
+        ConfigurationError: an ``extra`` entry is missing, malformed, or two
+            different paths resolve to the same package name.
     """
     if not ws_context.ws_dirs_paths:
         return {}
 
     ws_root = ws_context.ws_dirs_paths[0]
     ws_config_path = ws_root / "finecode-workspace.toml"
-    if not ws_config_path.exists():
-        return {}
-
-    with open(ws_config_path, "rb") as f:
-        ws_config = toml_loads(f.read()).unwrap()
+    if ws_config_path.exists():
+        with open(ws_config_path, "rb") as f:
+            ws_config = toml_loads(f.read()).unwrap()
+    else:
+        ws_config = {}
 
     workspace_table = ws_config.get("workspace", {})
-    all_editable: bool = workspace_table.get("all_workspace_packages_editable", False)
-    explicit_paths: list[str] = workspace_table.get("editable_packages", [])
+    packages_table = workspace_table.get("workspace_packages", {})
+    all_projects: bool = packages_table.get("all_projects", True)
+    explicit_paths: list[str] = packages_table.get("extra", [])
 
     result: dict[str, Path] = {}
 
-    if all_editable:
+    if all_projects:
         for project in ws_context.ws_projects.values():
             if project.name is None:
                 continue
@@ -1393,24 +1399,24 @@ def resolve_workspace_editable_packages(
             entry_path = (ws_root / entry_path).resolve()
         if not entry_path.exists():
             raise config_models.ConfigurationError(
-                f"[workspace].editable_packages entry '{raw_entry}' does not exist: {entry_path}"
+                f"[workspace.workspace_packages].extra entry '{raw_entry}' does not exist: {entry_path}"
             )
         pyproject_path = entry_path / "pyproject.toml"
         if not pyproject_path.exists():
             raise config_models.ConfigurationError(
-                f"[workspace].editable_packages entry '{raw_entry}' has no pyproject.toml: {entry_path}"
+                f"[workspace.workspace_packages].extra entry '{raw_entry}' has no pyproject.toml: {entry_path}"
             )
         with open(pyproject_path, "rb") as f:
             entry_toml = toml_loads(f.read()).unwrap()
         pkg_name = entry_toml.get("project", {}).get("name")
         if pkg_name is None:
             raise config_models.ConfigurationError(
-                f"[workspace].editable_packages entry '{raw_entry}' has no [project].name: {entry_path}"
+                f"[workspace.workspace_packages].extra entry '{raw_entry}' has no [project].name: {entry_path}"
             )
         if pkg_name in result:
             if result[pkg_name] != entry_path:
                 raise config_models.ConfigurationError(
-                    f"[workspace].editable_packages: package '{pkg_name}' resolves to two different paths: "
+                    f"[workspace.workspace_packages].extra: package '{pkg_name}' resolves to two different paths: "
                     f"'{result[pkg_name]}' and '{entry_path}'"
                 )
             # same name + same path → silent de-dup
@@ -1418,6 +1424,83 @@ def resolve_workspace_editable_packages(
             result[pkg_name] = entry_path
 
     return result
+
+
+def resolve_workspace_packages_install_mode(
+    ws_context: context.WorkspaceContext, dev_env: str
+) -> Literal["editable", "wheel"]:
+    """Resolve how workspace packages are installed for the active dev-env.
+
+    Precedence: an exact ``dev_env`` key in
+    ``[workspace.workspace_packages_install]``, then the ``ci`` bucket when
+    ``dev_env == "ci"`` (else the ``local`` bucket), then the bucket default:
+    ``"wheel"`` for ``ci`` and ``"editable"`` otherwise. The defaults are
+    active even with no ``finecode-workspace.toml``.
+
+    Raises:
+        ConfigurationError: a configured value is not ``"editable"`` or
+            ``"wheel"``.
+    """
+    bucket = "ci" if dev_env == "ci" else "local"
+    default: Literal["editable", "wheel"] = "wheel" if bucket == "ci" else "editable"
+
+    if not ws_context.ws_dirs_paths:
+        return default
+
+    ws_root = ws_context.ws_dirs_paths[0]
+    ws_config_path = ws_root / "finecode-workspace.toml"
+    if not ws_config_path.exists():
+        return default
+
+    with open(ws_config_path, "rb") as f:
+        ws_config = toml_loads(f.read()).unwrap()
+
+    workspace_table = ws_config.get("workspace", {})
+    install_table = workspace_table.get("workspace_packages_install", {})
+
+    for key, value in install_table.items():
+        if key == "exclude":
+            continue
+        if value not in ("editable", "wheel"):
+            raise config_models.ConfigurationError(
+                f"[workspace.workspace_packages_install].{key} must be 'editable' or 'wheel', got {value!r}"
+            )
+
+    for key in (dev_env, bucket):
+        if key in install_table:
+            return install_table[key]
+    return default
+
+
+def resolve_workspace_packages_install_exclude(
+    ws_context: context.WorkspaceContext,
+) -> list[str]:
+    """Return the packages the wheelhouse build must skip.
+
+    ``[workspace.workspace_packages_install].exclude`` keeps a package editable
+    in every env and omits it from the wheelhouse. It is the explicit escape
+    hatch for a package no builder can turn into a wheel.
+    """
+    if not ws_context.ws_dirs_paths:
+        return []
+
+    ws_root = ws_context.ws_dirs_paths[0]
+    ws_config_path = ws_root / "finecode-workspace.toml"
+    if not ws_config_path.exists():
+        return []
+
+    with open(ws_config_path, "rb") as f:
+        ws_config = toml_loads(f.read()).unwrap()
+
+    install_table = ws_config.get("workspace", {}).get("workspace_packages_install", {})
+    excluded = install_table.get("exclude", [])
+    if not isinstance(excluded, list) or not all(
+        isinstance(entry, str) for entry in excluded
+    ):
+        raise config_models.ConfigurationError(
+            "[workspace.workspace_packages_install].exclude must be a list of package names"
+        )
+    return list(excluded)
 
 
 def read_workspace_extra_selection(
@@ -1497,9 +1580,7 @@ def _validate_selection_against_declared_extras(
             continue
         with open(project.def_path, "rb") as f:
             project_toml = toml_loads(f.read()).unwrap()
-        declared = project_toml.get("project", {}).get(
-            "optional-dependencies", {}
-        )
+        declared = project_toml.get("project", {}).get("optional-dependencies", {})
         unknown = [extra for extra in selected_extras if extra not in declared]
         if unknown:
             raise config_models.ConfigurationError(

@@ -13,10 +13,12 @@ Both functions raise :class:`PrepareEnvsFailed` on failure.
 from __future__ import annotations
 
 import asyncio
+import json
 import pathlib
 import uuid
 from typing import TYPE_CHECKING, Any
 
+from finecode_extension_api.resource_uri import resource_uri_to_path
 from loguru import logger
 
 from finecode import user_messages
@@ -176,6 +178,170 @@ async def _run_env_action(
     return None
 
 
+_BUILD_PYTHON_ARTIFACT_ACTION = "fine_python_lang.BuildPythonArtifactAction"
+
+
+def _wheelhouse_dir(workdir_path: pathlib.Path) -> pathlib.Path:
+    """Directory holding the built wheels and their manifest.
+
+    It lives under the workspace root's ``dev_workspace`` venv cache (beside the
+    WM's discovery file) rather than a separate workspace-root directory: the
+    wheelhouse is derived build state, not committed configuration, and a
+    recreated ``dev_workspace`` correctly invalidates it.
+    """
+    return workdir_path / ".venvs" / "dev_workspace" / "cache" / "wheelhouse"
+
+
+def _write_wheelhouse_manifest(
+    workdir_path: pathlib.Path,
+    ws_context: context.WorkspaceContext,
+    wheels: dict[str, pathlib.Path],
+) -> pathlib.Path:
+    """Write the wheelhouse manifest atomically and return its directory.
+
+    The manifest is ``{name: {dir, wheel}}``. It is written to a temp file and
+    renamed so a reader never observes a half-written file (R4).
+    """
+    wheelhouse_dir = _wheelhouse_dir(workdir_path)
+    wheelhouse_dir.mkdir(parents=True, exist_ok=True)
+    manifest = {
+        name: {
+            "dir": ws_context.ws_workspace_packages[name].as_posix(),
+            "wheel": wheel.as_posix(),
+        }
+        for name, wheel in wheels.items()
+    }
+    manifest_path = wheelhouse_dir / "manifest.json"
+    tmp_path = manifest_path.with_suffix(".json.tmp")
+    tmp_path.write_text(json.dumps(manifest, indent=2))
+    tmp_path.replace(manifest_path)
+    return wheelhouse_dir
+
+
+async def _build_wheelhouse(
+    ws_context: context.WorkspaceContext,
+    workdir_path: pathlib.Path,
+    excluded_packages: set[str],
+    budget: domain.RunBudget,
+) -> dict[str, pathlib.Path]:
+    """Build a wheel for every workspace package.
+
+    Each wheel is built by its own package's project runner, so that project's
+    handler selection and config apply — never by a single root-env builder.
+    A workspace package that is not itself a FineCode project (a preset-only
+    library) is built by the workspace root's runner, since it has no builder of
+    its own and no per-project config to override.
+
+    The wheelhouse is workspace-wide: any wheel-mode env must resolve *every*
+    workspace package it depends on to a wheel, so ``--project`` is rejected in
+    wheel mode rather than producing a partial wheelhouse (P5/R4).
+
+    Raises:
+        PrepareEnvsFailed: a package's project is not a collected project, does
+            not register ``build_python_artifact``, or a build failed.
+    """
+    from finecode.wm_server.runner import runner_client as rc
+    from finecode.wm_server.services import run_service
+
+    packages = {
+        name: package_dir
+        for name, package_dir in ws_context.ws_workspace_packages.items()
+        if name not in excluded_packages
+    }
+
+    root_project = ws_context.ws_projects.get(workdir_path)
+
+    plans: list[tuple[str, pathlib.Path, domain.CollectedProject, str]] = []
+    for name, package_dir in packages.items():
+        builder = ws_context.ws_projects.get(package_dir)
+        if not isinstance(builder, domain.CollectedProject):
+            # A workspace package that is not itself a FineCode project (e.g. a
+            # preset-only library) has no builder of its own. Build it on the
+            # workspace root's runner: it has the build handler, and with no
+            # per-project FineCode config there is no builder override to
+            # respect. A FineCode project still builds on its own runner.
+            builder = root_project
+        if not isinstance(builder, domain.CollectedProject):
+            raise PrepareEnvsFailed(
+                f"Workspace package '{name}' at {package_dir} has no builder: neither "
+                "it nor the workspace root is a collected project. Add it to "
+                "[workspace.workspace_packages_install].exclude to keep it editable."
+            )
+        action = next(
+            (
+                candidate
+                for candidate in builder.actions
+                if candidate.source == _BUILD_PYTHON_ARTIFACT_ACTION
+            ),
+            None,
+        )
+        if action is None or action.canonical_source is None:
+            raise PrepareEnvsFailed(
+                f"Workspace package '{name}': builder project '{builder.name}' does not "
+                f"register {_BUILD_PYTHON_ARTIFACT_ACTION}; cannot build its wheel. Add it "
+                "to [workspace.workspace_packages_install].exclude to keep it editable."
+            )
+        plans.append((name, package_dir, builder, action.canonical_source))
+
+    wheelhouse_dir = _wheelhouse_dir(workdir_path)
+    wheelhouse_dir.mkdir(parents=True, exist_ok=True)
+
+    wheels: dict[str, pathlib.Path] = {}
+    errors: list[str] = []
+
+    async def _build_one(
+        name: str,
+        package_dir: pathlib.Path,
+        project: domain.CollectedProject,
+        canonical_source: str,
+    ) -> None:
+        params = {
+            "src_artifact_def_path": (package_dir / "pyproject.toml").as_uri(),
+            "distributions": ["wheel"],
+            "output_dir": wheelhouse_dir.as_uri(),
+        }
+        try:
+            response = await run_service.ProjectExecutor(ws_context).run_action(
+                action_source=canonical_source,
+                params=params,
+                project_path=project.dir_path,
+                run_trigger=rc.RunActionTrigger.USER,
+                dev_env=rc.DevEnv.CLI,
+                result_formats=[rc.RunResultFormat.JSON],
+                initialize_all_handlers=True,
+                budget=budget,
+                origin=None,
+            )
+        except run_service.ActionRunFailed as action_exc:
+            errors.append(f"{name}: {action_exc.message}")
+            return
+        if response.return_code != 0:
+            errors.append(f"{name}: build failed")
+            return
+        json_result = response.result_by_format.get("json") or {}
+        output_paths = json_result.get("build_output_paths") or []
+        wheel_path = next(
+            (
+                resource_uri_to_path(uri)
+                for uri in output_paths
+                if str(uri).endswith(".whl")
+            ),
+            None,
+        )
+        if wheel_path is None:
+            errors.append(f"{name}: build reported no wheel")
+            return
+        wheels[name] = wheel_path
+
+    await asyncio.gather(*(_build_one(name, d, p, src) for name, d, p, src in plans))
+    if errors:
+        raise PrepareEnvsFailed(
+            "'build_python_artifact' failed for workspace packages:\n"
+            + "\n".join(sorted(errors))
+        )
+    return wheels
+
+
 async def prepare_envs(
     ws_context: context.WorkspaceContext,
     workdir_path: pathlib.Path,
@@ -184,6 +350,7 @@ async def prepare_envs(
     interpreter_names: list[str] | None = None,
     project_names: list[str] | None = None,
     dev_env: str = "cli",
+    workspace_packages_mode: str | None = None,
 ) -> None:
     """Prepare all virtual environments for a workspace.
 
@@ -193,8 +360,13 @@ async def prepare_envs(
     2.5. Start workspace root dev_workspace runner.
     3. create_envs + install_envs for subproject dev_workspace envs.
     4. Start all dev_workspace runners.
+    4.5. Install each project's dev_workspace env (preset-resolved deps).
+    4.6. Wheel mode only: build a wheel for every workspace package, each by
+         its own project's runner, into
+         ``<ws_root>/.venvs/dev_workspace/cache/wheelhouse``.
     5. create_envs across all projects (skips unselected matrix children).
-    6. install_envs across all projects (installs only the selected envs).
+    6. install_envs across all projects (installs the selected non-dev_workspace
+       envs; in wheel mode they install from the wheelhouse).
 
     Args:
         ws_context: Workspace context.
@@ -245,9 +417,28 @@ async def prepare_envs(
         ):
             read_configs.read_project_config(project=project, ws_context=ws_context)
 
-    ws_context.ws_editable_packages = read_configs.resolve_workspace_editable_packages(
+    ws_context.ws_workspace_packages = read_configs.resolve_workspace_packages(
         ws_context
     )
+    ws_context.workspace_packages_install_mode = (
+        workspace_packages_mode
+        or read_configs.resolve_workspace_packages_install_mode(ws_context, dev_env)
+    )
+    ws_context.ws_workspace_packages_install_exclude = set(
+        read_configs.resolve_workspace_packages_install_exclude(ws_context)
+    )
+    resolved_install_mode = ws_context.workspace_packages_install_mode
+    if resolved_install_mode == "wheel" and project_names is not None:
+        raise PrepareEnvsFailed(
+            "prepare-envs --workspace-packages=wheel builds a workspace-wide "
+            "wheelhouse and cannot be combined with --project; run it without "
+            "--project (or use --workspace-packages=editable for a filtered run)."
+        )
+    # The dev_workspace envs are the builders: they must install editable before
+    # the wheelhouse exists (steps 3 and 4.5). The resolved mode is applied just
+    # before the non-dev_workspace envs are installed (step 4.6 onward).
+    ws_context.workspace_packages_install_mode = "editable"
+    logger.info(f"Workspace packages install mode: {resolved_install_mode}")
 
     workdir_project = ws_context.ws_projects.get(workdir_path)
     if workdir_project is None:
@@ -293,18 +484,14 @@ async def prepare_envs(
 
     async def _check_or_remove(project: domain.Project) -> None:
         if recreate:
-                logger.trace(f"Recreating dev_workspace for '{project.name}'")
-                runners = ws_context.ws_projects_extension_runners.get(
-                    project.dir_path, {}
+            logger.trace(f"Recreating dev_workspace for '{project.name}'")
+            runners = ws_context.ws_projects_extension_runners.get(project.dir_path, {})
+            runner = runners.get("dev_workspace")
+            if runner is not None:
+                await runner_manager.stop_extension_runner(
+                    runner=runner, ws_context=ws_context
                 )
-                runner = runners.get("dev_workspace")
-                if runner is not None:
-                    await runner_manager.stop_extension_runner(
-                        runner=runner, ws_context=ws_context
-                    )
-                await runner_manager.remove_runner_env(
-                    project.dir_path, "dev_workspace"
-                )
+            await runner_manager.remove_runner_env(project.dir_path, "dev_workspace")
         else:
             check = await runner_manager.check_runner_within_budget(
                 ws_context, runner_dir=project.dir_path, env_name="dev_workspace"
@@ -424,6 +611,59 @@ async def prepare_envs(
         and p.dir_path.is_relative_to(workdir_path)
         and (project_paths_filter is None or str(p.dir_path) in project_paths_filter)
     ]
+    total_projects = len(step_projects)
+    fan_out_budget = project_fan_out_budget(
+        ws_context.process_budget.size, total_projects
+    )
+
+    # Step 4.5 — preset-resolved install of each project's dev_workspace env.
+    # Split out of step 6 because the wheelhouse build (4.6) needs each
+    # project's dev_workspace to carry its preset-resolved handlers (the build
+    # handlers among them) before it can run. The dev_workspace envs are the
+    # builders and the wheelhouse cannot exist before them, so they install
+    # editables even in wheel mode — the wheel map is still empty here.
+    logger.info("Installing dev_workspace environments...")
+    await user_messages.info("Installing dev_workspace environments...")
+    dev_workspace_install_errors: list[str] = []
+
+    async def _install_dev_workspace_one(p: domain.CollectedProject) -> None:
+        err = await _run_env_action(
+            "fine_envs.InstallEnvsAction",
+            {"env_names": ["dev_workspace"]},
+            p,
+            ws_context,
+            budget=fan_out_budget,
+        )
+        if err:
+            dev_workspace_install_errors.append(err)
+
+    await asyncio.gather(*(_install_dev_workspace_one(p) for p in step_projects))
+    if dev_workspace_install_errors:
+        raise PrepareEnvsFailed(
+            "'install_envs' failed for dev_workspace:\n"
+            + "\n".join(dev_workspace_install_errors)
+        )
+
+    # Step 4.6 — build the wheelhouse (wheel mode only).
+    if resolved_install_mode == "wheel":
+        ws_context.workspace_packages_install_mode = "wheel"
+        logger.info("Building workspace package wheels...")
+        await user_messages.info("Building workspace package wheels...")
+        excluded_packages = ws_context.ws_workspace_packages_install_exclude
+        wheels = await _build_wheelhouse(
+            ws_context=ws_context,
+            workdir_path=workdir_path,
+            excluded_packages=excluded_packages,
+            budget=fan_out_budget,
+        )
+        ws_context.ws_workspace_package_wheels = wheels
+        wheelhouse_dir = _write_wheelhouse_manifest(workdir_path, ws_context, wheels)
+        logger.info(
+            f"Built {len(wheels)} workspace package wheel(s) into {wheelhouse_dir}"
+        )
+    else:
+        ws_context.workspace_packages_install_mode = "editable"
+        ws_context.ws_workspace_package_wheels = {}
 
     def _project_env_universe(p: domain.CollectedProject) -> dict[str, Any]:
         """The project's full env-name -> `tool.finecode.env` entry map.
@@ -472,10 +712,6 @@ async def prepare_envs(
     # right unit" note in the design). The subprocess fan-out they drive is
     # bounded by the machine-wide process budget (ADR-0090), leased by each
     # ER when the action run begins.
-    total_projects = len(step_projects)
-    fan_out_budget = project_fan_out_budget(
-        ws_context.process_budget.size, total_projects
-    )
     await user_messages.info(f"Creating envs for {total_projects} project(s)...")
 
     create_errors: list[str] = []
@@ -507,19 +743,18 @@ async def prepare_envs(
     async def _install_one(p: domain.CollectedProject) -> None:
         nonlocal install_done
         sel = selections_by_project[p.dir_path]
-        # `dev_workspace` must stay in this step's env set (unlike step 5's
-        # create_envs, which excludes it). Step 3 only installs each project's
-        # *raw* dev_workspace deps, before presets are resolved. The
-        # preset-resolved set — e.g. a handler's `dependencies = [...]`, which
-        # is how packages like fine_python_package_info reach dev_workspace —
-        # is only ever installed here, via the project's own now-running
-        # runner. There is no other pass that applies it: auto-repair only
-        # fires on a `StaleEntryPointsError` raised from `updateConfig`, not on
-        # an ordinary lazy handler-import failure at `run_action` time, so a
-        # handler whose import is never eagerly checked (as with a rarely
-        # invoked action) would otherwise never get its dev_workspace
-        # dependency installed at all.
-        params = {} if not sel.active else {"env_names": sorted(sel.selected_env_names)}
+        if sel.active:
+            install_env_names = sorted(sel.selected_env_names - {"dev_workspace"})
+        else:
+            install_env_names = sorted(
+                name
+                for name in env_universe_by_project[p.dir_path]
+                if name != "dev_workspace"
+            )
+        # `dev_workspace` is excluded because step 4.5 already installed its
+        # preset-resolved deps on the project's own now-running runner;
+        # reinstalling it here would run from the env being replaced.
+        params = {"env_names": install_env_names}
         err = await _run_env_action(
             "fine_envs.InstallEnvsAction",
             params,

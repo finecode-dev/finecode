@@ -33,6 +33,7 @@ from finecode_extension_api import code_action
 from finecode_extension_api import textstyler as _textstyler
 from finecode_extension_api.interfaces import (
     ifileeditor,
+    iprojectinfoprovider,
 )
 from loguru import logger
 
@@ -551,10 +552,10 @@ async def get_project_raw_config(
     return raw_config["config"]
 
 
-async def get_workspace_editable_packages(
+async def get_workspace_packages(
     server: ErServer,
-) -> dict[str, pathlib.Path]:
-    """Fetch workspace editable packages from WM.
+) -> dict[str, iprojectinfoprovider.WorkspacePackage]:
+    """Fetch workspace packages from WM.
 
     Raises:
         WmCommunicationError: WM did not respond within 10s, or returned an
@@ -562,22 +563,27 @@ async def get_workspace_editable_packages(
     """
     try:
         result = await asyncio.wait_for(
-            server.send_request_to_wm(
-                "workspace/getWorkspaceEditablePackages", params={}
-            ),
+            server.send_request_to_wm("workspace/getWorkspacePackages", params={}),
             10,
         )
     except TimeoutError as exc:
         raise er_errors.WmCommunicationError(
-            "WM did not respond to getWorkspaceEditablePackages within 10s. "
+            "WM did not respond to getWorkspacePackages within 10s. "
             + _WM_STARVATION_HINT
         ) from exc
     except finecode_jsonrpc_module.JsonRpcError as exc:
         raise er_errors.WmCommunicationError(
-            f"WM returned error for getWorkspaceEditablePackages: {exc.rpc_message}"
+            f"WM returned error for getWorkspacePackages: {exc.rpc_message}"
         ) from exc
     return {
-        name: pathlib.Path(posix) for name, posix in result.get("packages", {}).items()
+        name: iprojectinfoprovider.WorkspacePackage(
+            dir=pathlib.Path(entry["dir"]),
+            wheel=(
+                pathlib.Path(entry["wheel"]) if entry.get("wheel") is not None else None
+            ),
+            editable=entry.get("editable", True),
+        )
+        for name, entry in result.get("packages", {}).items()
     }
 
 
@@ -702,9 +708,7 @@ async def update_config(server: ErServer, params: dict | None) -> dict:
         response, runner_context = await services.update_config(
             request=request,
             project_raw_config_getter=functools.partial(get_project_raw_config, server),
-            workspace_editable_packages_getter=functools.partial(
-                get_workspace_editable_packages, server
-            ),
+            workspace_packages_getter=functools.partial(get_workspace_packages, server),
             workspace_extra_selection_getter=functools.partial(
                 get_workspace_extra_selection, server
             ),

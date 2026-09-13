@@ -16,8 +16,9 @@ class ProjectInfoProvider(iprojectinfoprovider.IProjectInfoProvider):
             [str], collections.abc.Awaitable[dict[str, Any]]
         ],
         current_project_raw_config_version_getter: Callable[[], int],
-        workspace_editable_packages_getter: Callable[
-            [], collections.abc.Awaitable[dict[str, pathlib.Path]]
+        workspace_packages_getter: Callable[
+            [],
+            collections.abc.Awaitable[dict[str, iprojectinfoprovider.WorkspacePackage]],
         ]
         | None = None,
         workspace_extra_selection_getter: Callable[
@@ -30,7 +31,7 @@ class ProjectInfoProvider(iprojectinfoprovider.IProjectInfoProvider):
         self.current_project_raw_config_version_getter = (
             current_project_raw_config_version_getter
         )
-        self.workspace_editable_packages_getter = workspace_editable_packages_getter
+        self.workspace_packages_getter = workspace_packages_getter
         self.workspace_extra_selection_getter = workspace_extra_selection_getter
 
     def get_current_project_dir_path(self) -> pathlib.Path:
@@ -65,11 +66,13 @@ class ProjectInfoProvider(iprojectinfoprovider.IProjectInfoProvider):
     def get_current_project_raw_config_version(self) -> int:
         return self.current_project_raw_config_version_getter()
 
-    async def get_workspace_editable_packages(self) -> dict[str, pathlib.Path]:
-        if self.workspace_editable_packages_getter is None:
+    async def get_workspace_packages(
+        self,
+    ) -> dict[str, iprojectinfoprovider.WorkspacePackage]:
+        if self.workspace_packages_getter is None:
             return {}
         try:
-            return await self.workspace_editable_packages_getter()
+            return await self.workspace_packages_getter()
         except er_errors.WmCommunicationError as exc:
             raise iprojectinfoprovider.ProjectInfoUnavailableError(exc.message) from exc
 

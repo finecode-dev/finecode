@@ -9,6 +9,8 @@ from finecode_extension_api.resource_uri import ResourceUri
 class BuildArtifactRunPayload(code_action.RunActionPayload):
     src_artifact_def_path: ResourceUri | None = None
     """``file://`` URI of the artifact definition file (e.g. pyproject.toml). Defaults to the current project's artifact."""
+    output_dir: ResourceUri | None = None
+    """``file://`` URI of the directory where built artifacts are written. ``None`` means the handler default."""
 
 
 class BuildArtifactRunContext(

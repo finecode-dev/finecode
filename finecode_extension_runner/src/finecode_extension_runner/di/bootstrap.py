@@ -96,8 +96,8 @@ def bootstrap(
     handler_packages: set[str],
     service_declarations: list,
     service_config_overrides: dict[str, dict[str, Any]] | None = None,
-    workspace_editable_packages_getter: Callable[
-        [], collections.abc.Awaitable[dict[str, pathlib.Path]]
+    workspace_packages_getter: Callable[
+        [], collections.abc.Awaitable[dict[str, iprojectinfoprovider.WorkspacePackage]]
     ]
     | None = None,
     workspace_extra_selection_getter: Callable[
@@ -125,7 +125,9 @@ def bootstrap(
     # One ER-lifetime gate shared by CommandRunner and ProcessExecutor
     # (ADR-0090). It must outlive every RunnerContext rebuild, so it is the
     # process-wide singleton, registered fresh into each new registry.
-    registry.register_instance(process_slots.ProcessSlots, process_slots.get_process_slots())
+    registry.register_instance(
+        process_slots.ProcessSlots, process_slots.get_process_slots()
+    )
     _send_user_message = send_user_message_notification or (lambda msg, level: None)
     registry.register_instance(
         iuser_messenger.IUserMessenger,
@@ -176,7 +178,7 @@ def bootstrap(
             project_info_provider_factory,
             project_def_path_getter=project_def_path_getter,
             project_raw_config_getter=project_raw_config_getter,
-            workspace_editable_packages_getter=workspace_editable_packages_getter,
+            workspace_packages_getter=workspace_packages_getter,
             workspace_extra_selection_getter=workspace_extra_selection_getter,
             current_project_raw_config_version_getter=current_project_raw_config_version_getter,
         ),
@@ -541,8 +543,8 @@ def project_info_provider_factory(
         [str], collections.abc.Awaitable[dict[str, Any]]
     ],
     current_project_raw_config_version_getter: Callable[[], int],
-    workspace_editable_packages_getter: Callable[
-        [], collections.abc.Awaitable[dict[str, pathlib.Path]]
+    workspace_packages_getter: Callable[
+        [], collections.abc.Awaitable[dict[str, iprojectinfoprovider.WorkspacePackage]]
     ]
     | None = None,
     workspace_extra_selection_getter: Callable[
@@ -553,7 +555,7 @@ def project_info_provider_factory(
     return project_info_provider.ProjectInfoProvider(
         project_def_path_getter=project_def_path_getter,
         project_raw_config_getter=project_raw_config_getter,
-        workspace_editable_packages_getter=workspace_editable_packages_getter,
+        workspace_packages_getter=workspace_packages_getter,
         workspace_extra_selection_getter=workspace_extra_selection_getter,
         current_project_raw_config_version_getter=current_project_raw_config_version_getter,
     )

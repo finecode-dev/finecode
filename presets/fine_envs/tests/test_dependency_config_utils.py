@@ -1,17 +1,31 @@
 import pathlib
 
+import pytest
 from fine_envs.dependency_config_utils import (
     collect_transitive_editable_deps,
     make_dep,
     resolve_install_project,
+    workspace_package_ref,
 )
+from finecode_extension_api.interfaces import iprojectinfoprovider
+
+from finecode_extension_api import code_action
+
+
+def _pkg(
+    dir_path: pathlib.Path,
+    wheel: pathlib.Path | None = None,
+    *,
+    editable: bool = True,
+) -> iprojectinfoprovider.WorkspacePackage:
+    return iprojectinfoprovider.WorkspacePackage(
+        dir=dir_path, wheel=wheel, editable=editable
+    )
 
 
 def _make_pkg(dir_path: pathlib.Path, name: str, content: str) -> pathlib.Path:
     dir_path.mkdir(parents=True, exist_ok=True)
-    (dir_path / "pyproject.toml").write_text(
-        f'[project]\nname = "{name}"\n' + content
-    )
+    (dir_path / "pyproject.toml").write_text(f'[project]\nname = "{name}"\n' + content)
     return dir_path
 
 
@@ -98,11 +112,14 @@ def test_install_project_entry_is_included_in_transitive_editable_walk(
     )
     dep_dir = tmp_path / "my_project_dep"
     dep_dir.mkdir()
-    ws_editable_packages = {"my_project": project_dir, "my_project_dep": dep_dir}
+    ws_workspace_packages = {
+        "my_project": _pkg(project_dir),
+        "my_project_dep": _pkg(dep_dir),
+    }
 
     dependencies = resolve_install_project([], "my_project", project_dir)
     dependencies.extend(
-        collect_transitive_editable_deps(dependencies, ws_editable_packages)
+        collect_transitive_editable_deps(dependencies, ws_workspace_packages)
     )
 
     names = {dep["name"] for dep in dependencies}
@@ -132,11 +149,11 @@ def test_transitive_walk_grows_extras_and_re_enqueues(
         "B",
         '[project.optional-dependencies]\nx = ["b_x_dep"]\n',
     )
-    ws_editable_packages = {
-        "A": a_dir,
-        "C": c_dir,
-        "B": tmp_path / "B",
-        "b_x_dep": b_x_dep_dir,
+    ws_workspace_packages = {
+        "A": _pkg(a_dir),
+        "C": _pkg(c_dir),
+        "B": _pkg(tmp_path / "B"),
+        "b_x_dep": _pkg(b_x_dep_dir),
     }
 
     dependencies = [
@@ -152,7 +169,7 @@ def test_transitive_walk_grows_extras_and_re_enqueues(
         ),
     ]
 
-    result = collect_transitive_editable_deps(dependencies, ws_editable_packages)
+    result = collect_transitive_editable_deps(dependencies, ws_workspace_packages)
 
     b_entries = [dep for dep in result if dep["name"] == "B"]
     assert len(b_entries) == 1
@@ -176,10 +193,10 @@ def test_transitive_walk_merges_extras_from_project_and_groups(
         "B",
         '[project.optional-dependencies]\nx = ["b_x_dep"]\n',
     )
-    ws_editable_packages = {
-        "root": root_dir,
-        "B": tmp_path / "B",
-        "b_x_dep": b_x_dep_dir,
+    ws_workspace_packages = {
+        "root": _pkg(root_dir),
+        "B": _pkg(tmp_path / "B"),
+        "b_x_dep": _pkg(b_x_dep_dir),
     }
 
     dependencies = [
@@ -190,7 +207,7 @@ def test_transitive_walk_merges_extras_from_project_and_groups(
         )
     ]
 
-    result = collect_transitive_editable_deps(dependencies, ws_editable_packages)
+    result = collect_transitive_editable_deps(dependencies, ws_workspace_packages)
 
     b_entry = next(dep for dep in result if dep["name"] == "B")
     assert b_entry["extras"] == ["x"]
@@ -207,7 +224,7 @@ def test_transitive_walk_installs_only_editable_packages_from_extra(
         '[project.optional-dependencies]\nx = ["present", "absent"]\n',
     )
     present_dir = _make_pkg(tmp_path / "present", "present", "")
-    ws_editable_packages = {"root": root_dir, "present": present_dir}
+    ws_workspace_packages = {"root": _pkg(root_dir), "present": _pkg(present_dir)}
 
     dependencies = [
         make_dep(
@@ -218,6 +235,74 @@ def test_transitive_walk_installs_only_editable_packages_from_extra(
         )
     ]
 
-    result = collect_transitive_editable_deps(dependencies, ws_editable_packages)
+    result = collect_transitive_editable_deps(dependencies, ws_workspace_packages)
 
     assert {dep["name"] for dep in result} == {"present"}
+
+
+def test_workspace_package_ref_uses_wheel_when_present(
+    tmp_path: pathlib.Path,
+) -> None:
+    """A package with a built wheel is referenced by that wheel, non-editable.
+
+    This is what makes wheel mode install the artifact built from the checkout
+    instead of re-running the build backend for every env.
+    """
+    wheel = tmp_path / "present-1.0.0-py3-none-any.whl"
+
+    version_or_source, editable = workspace_package_ref(
+        "present", _pkg(tmp_path, wheel, editable=False)
+    )
+
+    assert version_or_source == f" @ file://{wheel.as_posix()}"
+    assert editable is False
+
+
+def test_workspace_package_ref_errors_when_wheel_missing(
+    tmp_path: pathlib.Path,
+) -> None:
+    """A package that must be installed from a wheel but has none is reported,
+    never silently reverted to an editable install.
+
+    A silent revert would reintroduce the per-env build cost wheel mode exists
+    to remove, and would make the env test different code than the wheelhouse
+    recorded (P5/R4).
+    """
+    with pytest.raises(code_action.ActionFailedException) as exc_info:
+        workspace_package_ref("present", _pkg(tmp_path, editable=False))
+
+    assert "present" in str(exc_info.value)
+    assert "prepare-envs" in str(exc_info.value)
+
+
+def test_transitive_walk_reads_source_but_emits_wheel(
+    tmp_path: pathlib.Path,
+) -> None:
+    """The transitive walk reads a package's source pyproject.toml to find its
+    workspace dependencies, but emits each dependency's wheel reference.
+
+    Reading the source is required to discover the dependency edges at all;
+    emitting the wheel is what the install then uses, so wheel mode still walks
+    the full workspace graph rather than stopping at the first wheel.
+    """
+    root_dir = _make_pkg(tmp_path / "root", "root", 'dependencies = ["present"]\n')
+    present_dir = _make_pkg(tmp_path / "present", "present", "")
+    root_wheel = tmp_path / "root-1.0.0-py3-none-any.whl"
+    present_wheel = tmp_path / "present-1.0.0-py3-none-any.whl"
+    ws_workspace_packages = {
+        "root": _pkg(root_dir, root_wheel, editable=False),
+        "present": _pkg(present_dir, present_wheel, editable=False),
+    }
+    dependencies = [
+        make_dep(
+            name="root",
+            version_or_source=f" @ file://{root_wheel.as_posix()}",
+            editable=False,
+        )
+    ]
+
+    result = collect_transitive_editable_deps(dependencies, ws_workspace_packages)
+
+    present = next(dep for dep in result if dep["name"] == "present")
+    assert present["version_or_source"] == f" @ file://{present_wheel.as_posix()}"
+    assert present["editable"] is False

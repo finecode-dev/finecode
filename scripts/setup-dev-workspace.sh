@@ -46,7 +46,12 @@ recreate_venv() {
 
     # FINECODE_LOG_LEVEL is set by CI (INFO normally, DEBUG on a debug re-run); it is
     # unset in the devcontainer, where it falls back to INFO.
+    #
+    # The elapsed line is what makes the wheel-mode win visible in the job log:
+    # a cold all-editable install measured ~2h; wheel mode should be minutes.
+    PREPARE_ENVS_START=$(date +%s)
     "$VENV_PYTHON" -m finecode prepare-envs --log-level="${FINECODE_LOG_LEVEL:-INFO}"
+    echo "prepare-envs elapsed: $(($(date +%s) - PREPARE_ENVS_START))s"
 }
 
 if [ -d "$VENV_DIR" ] && is_valid_venv; then

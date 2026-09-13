@@ -280,11 +280,15 @@ Build a distributable artifact (e.g. a Python wheel).
 
 - **Source:** `fine_src_artifacts.BuildArtifactAction`
 
+A dispatch handler detects the artifact's language and delegates to the
+language-specific subaction (e.g. `build_python_artifact`).
+
 **Payload fields:**
 
 | Field | Type | Default | Description |
 |---|---|---|---|
 | `src_artifact_def_path` | `Path \| None` | `None` | Path to the artifact definition. If omitted, builds the current source artifact. |
+| `output_dir` | `Path \| None` | `None` | Directory to write the built artifact(s) into. `None` uses the handler default (for Python, `<project>/dist`). |
 
 **Result fields:**
 
@@ -292,6 +296,21 @@ Build a distributable artifact (e.g. a Python wheel).
 |---|---|---|
 | `src_artifact_def_path` | `Path` | Path of the artifact that was built |
 | `build_output_paths` | `list[Path]` | Paths of the generated build outputs |
+
+---
+
+## `build_python_artifact`
+
+Build the wheel and/or sdist distributions of a Python artifact.
+
+- **Source:** `fine_python_lang.BuildPythonArtifactAction`
+- **Parent action:** `build_artifact`
+
+**Payload fields:** extends `BuildArtifactRunPayload` with
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `distributions` | `list["sdist" \| "wheel"] \| None` | `None` | Distribution formats to build. `None` builds the default (sdist, then wheel from it); `["wheel"]` builds only the wheel. |
 
 ---
 
@@ -778,6 +797,53 @@ or project config; add personal handlers in `finecode-user.toml`.
 | `installed` | `list[str]` | Steps that completed installation or configuration |
 | `skipped` | `list[str]` | Steps skipped because the dependency or tool was already present |
 | `failed` | `list[str]` | Steps that failed; non-empty means `return_code` is `ERROR` |
+
+**Handlers shipped today:** `fine_agent_pi.InstallPiHandler` installs the `pi` CLI
+itself; `fine_agent_pi.InstallPiPackagesHandler` installs configured pi packages into
+the project. The packages handler writes `<project>/.pi/settings.json`,
+`<project>/.pi/npm/` and (for git sources, which project discovery does not skip)
+`<project>/.pi/git/`, and never `~/.pi/agent`. List it after `install_pi`. pi resolves
+project packages from the session's cwd only, so register it where pi sessions start —
+not in a widely included preset — and give each project its own `.pi/`.
+
+The FineCode `packages` config is authoritative for additions and pins; the settings
+file's `packages` key is generated output (pi merges it and keeps pi's other keys). Stale
+entries are logged and left in place — remove one with `pi remove <src> -l`. In a project
+that commits `.pi/settings.json`, register only shared packages in tracked config;
+personal ones belong in `finecode-user.toml` and only while that file is untracked.
+Configure one version per npm package; a second spec of the same package fails. The first
+install makes pi prompt for trust once, and RPC/print sessions (`PiAgentHandler`
+included) load none of the packages until the project is trusted. `--approve` extends
+FineCode's trust to the project's `.pi/settings.json` for the handler's own commands,
+including a project `npmCommand`, which pi executes; it loads no project extensions and
+persists nothing. npm lifecycle scripts are off for the handler's own installs only, and
+only while npm is the command (`allow_lifecycle_scripts = true` opts out); pi's startup
+self-heal, `pi update`, manual installs and custom `npmCommand`s still run them, with
+`ignore-scripts=true` in `~/.npmrc` as the machine-wide control. Pin npm versions and
+git refs — pi's docs warn that packages run with full system access.
+
+```toml
+# finecode-user.toml (no [finecode] wrapper)
+[action.setup_system]
+handlers = [
+  { name = "install_pi_packages", source = "fine_agent_pi.InstallPiPackagesHandler", env = "dev_workspace", dependencies = [
+    "fine_agent_pi~=0.1.0a0",
+  ], config.packages = ["npm:pi-clear@0.1.1", "npm:@ff-labs/pi-fff@0.10.6"] },
+]
+```
+
+```toml
+# pyproject.toml
+[tool.finecode.action.setup_system]
+handlers = [
+  { name = "install_pi", source = "fine_agent_pi.InstallPiHandler", env = "dev_workspace", dependencies = [
+    "fine_agent_pi~=0.1.0a0",
+  ] },
+  { name = "install_pi_packages", source = "fine_agent_pi.InstallPiPackagesHandler", env = "dev_workspace", dependencies = [
+    "fine_agent_pi~=0.1.0a0",
+  ], config.packages = ["npm:pi-clear@0.1.1"] },
+]
+```
 
 ---
 

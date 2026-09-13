@@ -140,7 +140,9 @@ class _FakeProjectInfoProvider:
     def get_current_project_raw_config_version(self) -> int:
         raise NotImplementedError
 
-    async def get_workspace_editable_packages(self) -> dict[str, pathlib.Path]:
+    async def get_workspace_packages(
+        self,
+    ) -> dict[str, iprojectinfoprovider.WorkspacePackage]:
         raise NotImplementedError
 
 

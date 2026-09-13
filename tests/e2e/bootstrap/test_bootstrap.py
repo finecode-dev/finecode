@@ -39,7 +39,7 @@ def _resolve_finecode_closure() -> dict[str, Path]:
     """Local monorepo packages `finecode` transitively depends on, by name.
 
     `bootstrap` (unlike `prepare-envs`) never rewrites dependencies to local
-    editable paths — that only happens later, once `ws_editable_packages` is
+    editable paths — that only happens later, once `ws_workspace_packages` is
     populated. A bare `"finecode"` entry therefore resolves against whatever
     `finecode` release is currently published on PyPI, which drifts out of
     sync with local source (e.g. it still pinned the now-removed `pygls`

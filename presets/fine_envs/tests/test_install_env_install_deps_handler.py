@@ -2,6 +2,7 @@ import pathlib
 from typing import Any
 
 from finecode_extension_api import code_action
+from finecode_extension_api.interfaces import iprojectinfoprovider
 
 from fine_envs import (
     install_deps_in_env_action,
@@ -27,11 +28,15 @@ class _FakeActionRunner:
 
 
 class _FakeProjectInfoProvider:
-    def __init__(self, ws_editable_packages: dict[str, pathlib.Path]) -> None:
-        self._ws_editable_packages = ws_editable_packages
+    def __init__(
+        self, ws_workspace_packages: dict[str, iprojectinfoprovider.WorkspacePackage]
+    ) -> None:
+        self._ws_workspace_packages = ws_workspace_packages
 
-    async def get_workspace_editable_packages(self) -> dict[str, pathlib.Path]:
-        return self._ws_editable_packages
+    async def get_workspace_packages(
+        self,
+    ) -> dict[str, iprojectinfoprovider.WorkspacePackage]:
+        return self._ws_workspace_packages
 
 
 class _FakeLogger:
@@ -71,12 +76,13 @@ async def _run_handler(
     tmp_path: pathlib.Path,
     project_def: dict[str, Any],
     override: list[str] | None = None,
+    ws_packages: dict[str, iprojectinfoprovider.WorkspacePackage] | None = None,
 ) -> list[install_deps_in_env_action.Dependency]:
     action_runner = _FakeActionRunner()
     handler = InstallEnvInstallDepsHandler(
         action_runner=action_runner,
         logger=_FakeLogger(),
-        project_info_provider=_FakeProjectInfoProvider({}),
+        project_info_provider=_FakeProjectInfoProvider(ws_packages or {}),
     )
     env = _make_env(tmp_path, override=override)
     payload = install_env_action.InstallEnvRunPayload(env=env)
@@ -164,3 +170,42 @@ async def test_install_project_preserves_extras_on_replaced_entry(
     assert deps[0].editable is True
     assert deps[0].extras == ["x"]
     assert deps[0].version_or_source == f" @ file://{tmp_path.as_posix()}"
+
+
+async def test_workspace_package_installs_from_wheel_in_wheel_mode(
+    tmp_path: pathlib.Path,
+) -> None:
+    """A workspace package with a built wheel is installed from that wheel, not
+    its source directory, so wheel-mode envs test the built artifact."""
+    wheel = tmp_path / "my_project-1.0.0-py3-none-any.whl"
+    project_def = _make_project_def(["my_project~=1.0"])
+
+    deps = await _run_handler(
+        tmp_path,
+        project_def,
+        ws_packages={
+            "my_project": iprojectinfoprovider.WorkspacePackage(
+                dir=tmp_path, wheel=wheel, editable=False
+            )
+        },
+    )
+
+    assert deps[0].version_or_source == f" @ file://{wheel.as_posix()}"
+    assert deps[0].editable is False
+
+
+async def test_workspace_package_installs_editable_without_wheel(
+    tmp_path: pathlib.Path,
+) -> None:
+    """The default editable mode (no wheel in the map) still installs from the
+    package's source directory, preserving today's local workflow."""
+    project_def = _make_project_def(["my_project~=1.0"])
+
+    deps = await _run_handler(
+        tmp_path,
+        project_def,
+        ws_packages={"my_project": iprojectinfoprovider.WorkspacePackage(dir=tmp_path)},
+    )
+
+    assert deps[0].version_or_source == f" @ file://{tmp_path.as_posix()}"
+    assert deps[0].editable is True

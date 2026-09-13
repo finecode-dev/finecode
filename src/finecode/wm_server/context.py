@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 from loguru import logger
 
@@ -39,7 +39,7 @@ class WorkspaceContext:
        non-``None`` for the rest of the server's lifetime.
 
     3. **Workspace discovery** — triggered by ``addDir`` API calls.
-       ``ws_dirs_paths`` grows; ``ws_projects`` and ``ws_editable_packages`` are
+       ``ws_dirs_paths`` grows; ``ws_projects`` and ``ws_workspace_packages`` are
        populated.  Protected by ``workspace_state_lock``.
 
     4. **Project initialization** — per project, protected by the project's entry
@@ -100,9 +100,23 @@ class WorkspaceContext:
     # Mutated under workspace_state_lock (discovery) and project_init_locks (init).
     ws_projects: dict[Path, domain.Project] = field(default_factory=dict)
 
-    # Name → absolute path of workspace-resident editable packages.
+    # Name → absolute path of workspace-resident packages.
     # Populated from finecode-workspace.toml during workspace scan; stable after that.
-    ws_editable_packages: dict[str, Path] = field(default_factory=dict)
+    ws_workspace_packages: dict[str, Path] = field(default_factory=dict)
+
+    # Package name → wheel built from that package's source for the active
+    # wheel install mode. Empty in editable mode; populated by prepare-envs
+    # after the wheelhouse fan-out.
+    ws_workspace_package_wheels: dict[str, Path] = field(default_factory=dict)
+
+    # How workspace packages are installed in envs ("editable" or "wheel").
+    # Resolved from [workspace.workspace_packages_install] per dev-env (or the
+    # CLI flag override); "editable" until a prepare-envs run resolves it.
+    workspace_packages_install_mode: Literal["editable", "wheel"] = "editable"
+
+    # Packages the wheelhouse must skip; kept editable in every env even in
+    # wheel mode. Resolved alongside the install mode by prepare-envs.
+    ws_workspace_packages_install_exclude: set[str] = field(default_factory=set)
 
     # Canonical package name → selected extras, read from the gitignored
     # finecode-workspace-user.toml. Lazily computed by
@@ -211,6 +225,30 @@ class WorkspaceContext:
     # run and reclaimed on run end or ER death (ADR-0090).  Sized from the same
     # combined budget as er_startup_semaphore.
     process_budget: process_budget.ProcessBudget = field(init=False)
+
+    def workspace_packages_wire(self) -> dict[str, dict]:
+        """Project the resolved workspace packages into the WM API/ER wire shape.
+
+        Each entry carries the package's source directory and the resolved
+        install decision for the active mode. ``editable`` is True for editable
+        mode and for an excluded package; otherwise the package installs from
+        ``wheel``, which is None when the wheelhouse has no entry — the
+        consumer turns that into the P5/R4 error rather than falling back to
+        editable.
+        """
+        result: dict[str, dict] = {}
+        for name, package_dir in self.ws_workspace_packages.items():
+            editable = (
+                self.workspace_packages_install_mode == "editable"
+                or name in self.ws_workspace_packages_install_exclude
+            )
+            wheel = None if editable else self.ws_workspace_package_wheels.get(name)
+            result[name] = {
+                "dir": package_dir.as_posix(),
+                "wheel": wheel.as_posix() if wheel is not None else None,
+                "editable": editable,
+            }
+        return result
 
     def __post_init__(self) -> None:
         budgets = process_budget.resolve_subprocess_budgets()

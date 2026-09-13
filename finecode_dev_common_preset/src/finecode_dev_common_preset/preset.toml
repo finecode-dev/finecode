@@ -81,14 +81,6 @@ handlers = [
   ] },
 ]
 
-[tool.finecode.action.build_artifact]
-source = "fine_src_artifacts.BuildArtifactAction"
-handlers = [
-  { name = "build_artifact_py", source = "fine_python_package_info.BuildArtifactPyHandler", env = "dev_no_runtime", dependencies = [
-    "fine_python_package_info~=0.2.0a1",
-  ] },
-]
-
 [tool.finecode.action.ingest_wal_to_store]
 source = "fine_wal_events.IngestWalToStoreAction"
 handlers = [

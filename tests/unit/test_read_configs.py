@@ -14,6 +14,8 @@ from finecode.wm_server.config.read_configs import (
     read_workspace_extra_selection,
     read_wm_telemetry_config,
     resolve_interpreter_matrices,
+    resolve_workspace_packages,
+    resolve_workspace_packages_install_mode,
 )
 
 
@@ -1283,7 +1285,7 @@ def test_wm_telemetry_config_no_telemetry_section_is_none(
     monkeypatch.delenv("FINECODE_OTLP_ENDPOINT", raising=False)
     _write_toml(
         tmp_path / "finecode-workspace.toml",
-        "[workspace]\nall_workspace_packages_editable = true\n\n"
+        "[workspace.workspace_packages]\nall_projects = true\n\n"
         "[workspace.wm.wal]\nenabled = true\n",
     )
     result = read_wm_telemetry_config(tmp_path)
@@ -1304,3 +1306,74 @@ def test_wm_telemetry_config_malformed_toml_is_swallowed(
     (tmp_path / "finecode-workspace.toml").write_bytes(b"[bad toml\n")
     result = read_wm_telemetry_config(tmp_path)
     assert result.otlp_endpoint is None
+
+
+# ---------------------------------------------------------------------------
+# resolve_workspace_packages / resolve_workspace_packages_install_mode defaults
+# ---------------------------------------------------------------------------
+
+
+def _discovered_project(
+    tmp_path: pathlib.Path, name: str
+) -> tuple[domain.Project, context.WorkspaceContext]:
+    project_dir = tmp_path / name
+    project_dir.mkdir()
+    project = domain.Project(
+        name=name,
+        dir_path=project_dir,
+        def_path=project_dir / "pyproject.toml",
+        status=domain.ProjectStatus.CONFIG_VALID,
+    )
+    ws_context = context.WorkspaceContext(ws_dirs_paths=[tmp_path])
+    ws_context.ws_projects[project_dir] = project
+    return project, ws_context
+
+
+def test_workspace_packages_default_to_all_discovered_projects(
+    tmp_path: pathlib.Path,
+) -> None:
+    """With no finecode-workspace.toml, every discovered project is a workspace
+    package. Without this default a monorepo that never wrote the table would
+    install its local packages from an index instead of from source."""
+    project, ws_context = _discovered_project(tmp_path, "pkg")
+
+    assert resolve_workspace_packages(ws_context) == {"pkg": project.dir_path}
+
+
+def test_workspace_packages_all_projects_false_excludes_projects(
+    tmp_path: pathlib.Path,
+) -> None:
+    """`all_projects = false` opts out of the default project set; only explicit
+    `extra` paths remain."""
+    _write_toml(
+        tmp_path / "finecode-workspace.toml",
+        "[workspace.workspace_packages]\nall_projects = false\n",
+    )
+    _, ws_context = _discovered_project(tmp_path, "pkg")
+
+    assert resolve_workspace_packages(ws_context) == {}
+
+
+def test_workspace_packages_install_mode_defaults_by_dev_env(
+    tmp_path: pathlib.Path,
+) -> None:
+    """With no config the mode is editable locally and wheel in CI, so a CI run
+    gets the wheelhouse without any workspace config while a developer keeps
+    editable installs."""
+    _, ws_context = _discovered_project(tmp_path, "pkg")
+
+    assert resolve_workspace_packages_install_mode(ws_context, "cli") == "editable"
+    assert resolve_workspace_packages_install_mode(ws_context, "ci") == "wheel"
+
+
+def test_workspace_packages_install_mode_exact_key_wins(
+    tmp_path: pathlib.Path,
+) -> None:
+    """An exact dev-env key overrides the ci bucket default."""
+    _write_toml(
+        tmp_path / "finecode-workspace.toml",
+        '[workspace.workspace_packages_install]\nci = "editable"\n',
+    )
+    _, ws_context = _discovered_project(tmp_path, "pkg")
+
+    assert resolve_workspace_packages_install_mode(ws_context, "ci") == "editable"

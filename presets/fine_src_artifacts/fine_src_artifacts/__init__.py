@@ -1,4 +1,7 @@
 from fine_src_artifacts.build_artifact_action import BuildArtifactAction
+from fine_src_artifacts.build_artifact_dispatch_handler import (
+    BuildArtifactDispatchHandler,
+)
 from fine_src_artifacts.get_src_artifact_language_action import (
     GetSrcArtifactLanguageAction,
 )
@@ -24,6 +27,7 @@ from fine_src_artifacts.lock_dependencies_dispatch_handler import (
 
 __all__ = [
     "BuildArtifactAction",
+    "BuildArtifactDispatchHandler",
     "GetSrcArtifactLanguageAction",
     "GetSrcArtifactRegistriesAction",
     "GetSrcArtifactToolchainRangeAction",

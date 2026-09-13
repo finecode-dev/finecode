@@ -224,6 +224,7 @@ See [Preparing Environments](guides/preparing-environments.md) for a full explan
 | `--verbose` / `-v` | Stream WM and ER diagnostic logs to stderr live over the protocol (`server/logRecords`). Auto-enabled in CI. |
 | `--debug` | Wait for a debugpy client on port 5680 before starting |
 | `--dev-env=<env>` | Override the detected dev environment. One of: `ai`, `ci`, `cli`, `ide`, `precommit` (default: auto-detected) |
+| `--workspace-packages=editable\|wheel` | Override how workspace packages are installed in every env for this run. `editable` installs from source; `wheel` builds one wheel per package and installs it (see [Preparing Environments — workspace packages](guides/preparing-environments.md#workspace-packages)). Default: resolved from `[workspace.workspace_packages_install]` for the active dev-env. |
 
 
 !!! note `--env` restricts only the `install_envs` step. The `create_envs` step still runs for **all** envs regardless of this flag — virtualenvs must exist for every env even when you only need to update dependencies in one of them.

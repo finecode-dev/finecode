@@ -50,27 +50,42 @@ Even so, explicit `[dependency-groups]` entries are still preferred when you wan
 
 Environments that need the project's runtime dependencies reference the project itself by name — for example `dev = ["finecode", ...]`. This pulls `[project.dependencies]` transitively through the project package and keeps the runtime dependency list in exactly one place. Do not re-list the project's runtime deps inside the group.
 
-### Workspace editable packages
+### Workspace packages
 
-In a workspace, local packages can be installed as editable installs. PEP 508 requirement strings cannot express editable installs from a local path, so FineCode provides a workspace-level mechanism in `finecode-workspace.toml` at the workspace root:
+In a workspace, local packages can be installed as editable installs, or from wheels built from the checkout. PEP 508 requirement strings cannot express editable installs from a local path, so FineCode provides a workspace-level mechanism in `finecode-workspace.toml` at the workspace root:
 
 ```toml
-[workspace]
-# When true, every project discovered in this workspace is automatically
-# installed as an editable install when it appears as a dependency.
-all_workspace_packages_editable = true
+[workspace.workspace_packages]
+# Defaults to true, so this table is optional: with no finecode-workspace.toml
+# every discovered project is a workspace package.
+all_projects = true
 
-# Optional: explicit paths to treat as editable installs — useful for
+# Optional: explicit paths to treat as workspace packages — useful for
 # vendored forks outside normal project discovery. Paths are relative to
 # the workspace root.
-editable_packages = [
+extra = [
     "./vendored_forks/some_lib",
 ]
 ```
 
-Any dependency whose package name matches a workspace editable package is automatically rewritten to an editable install from its declared path, across every env in every project. No per-env supplement tables are needed.
+How they are installed is selected separately, per dev-env (exact key, then the `local`/`ci` bucket, then the bucket default — `editable` for non-`ci`, `wheel` for `ci`; the CLI flag wins). Both entries are the defaults, so this table is optional:
 
-The resolved editable-packages set is the union of every discovered project (when `all_workspace_packages_editable` is `true`) and every explicit `editable_packages` entry.
+```toml
+[workspace.workspace_packages_install]
+local = "editable"
+ci    = "wheel"
+exclude = ["pkg-a"]
+```
+
+- `editable` rewrites a matching dependency to an editable install from its declared path, across every env in every project. No per-env supplement tables are needed.
+- `wheel` builds one wheel per package with `build_python_artifact` into `<workspace-root>/.venvs/dev_workspace/cache/wheelhouse` and installs it as a direct `name @ file:///…whl` reference, so every env resolves the package to the artifact built from the checkout — never a PyPI release. Each package is built by **its own project's** builder, so a project's handler override and config apply.
+- `exclude` keeps the named packages editable in every env and omits them from the wheelhouse — the escape hatch for a package no builder can turn into a wheel.
+
+In wheel mode, a workspace package that has no wheel in the wheelhouse is an **error** naming the package and pointing at `prepare-envs`; it is never silently installed editable. Only packages listed in `exclude` install editable in wheel mode.
+
+`prepare-envs --workspace-packages=wheel|editable` overrides the config for a single run. Wheel mode builds a workspace-wide wheelhouse, so it cannot be combined with `--project`: run `prepare-envs --workspace-packages=wheel` at the workspace root, or use the default editable mode for a `--project` run.
+
+The resolved workspace-packages set is the union of every discovered project (unless `all_projects = false`) and every explicit `extra` entry.
 
 ### Installing the project under test
 
@@ -147,7 +162,7 @@ After the root `dev_workspace` exists, FineCode can start its runner. `prepare-e
 
 In a multi-project workspace, subproject `dev_workspace` envs follow the same raw-then-merged pattern, but you do not run `bootstrap` for them manually. `prepare-envs` creates their raw `dev_workspace` envs automatically before starting their runners, then runs the preset-resolved install after those runners are available.
 
-Editable installs are only relevant for packages that are local to your workspace and that you want FineCode to install from source. If you enable workspace editable packages in `finecode-workspace.toml`, those local packages are rewritten to editable installs automatically (see [Workspace editable packages](#workspace-editable-packages)). Published FineCode packages such as `finecode` and `finecode_extension_runner` remain ordinary dependency requirements unless you are developing FineCode itself in a local checkout.
+Workspace packages are only relevant for packages that are local to your workspace. When you declare them in `finecode-workspace.toml`, those local packages are rewritten to editable installs or to wheels built from source, depending on the selected mode (see [Workspace packages](#workspace-packages)). Published FineCode packages such as `finecode` and `finecode_extension_runner` remain ordinary dependency requirements unless you are developing FineCode itself in a local checkout.
 
 ### Workspace root bootstrap (one-time)
 

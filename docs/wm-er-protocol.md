@@ -325,13 +325,16 @@ protocol even though the runner never became reachable. (Regression-tested in
     `interpreter`. Extensions reading the env table can rely on this ordering; it is
     pinned by `test_config_served_to_extensions_has_matrices_already_expanded`.
 
-- `workspace/getWorkspaceEditablePackages`
+- `workspace/getWorkspacePackages`
   - Params: `{}`
-  - Result: `{ "packages": { "<pkg_name>": "/abs/posix/path", ... } }`
-  - Returns the workspace-level editable-package map resolved from
-    `finecode-workspace.toml` (see ADR-0029). The WM resolves this map once during
-    `workspace/addDir` and caches it for the lifetime of the workspace
-    context.
+  - Result: `{ "packages": { "<pkg_name>": {"dir": "/abs/posix/path", "wheel": "/abs/wheel.whl" | null, "editable": bool}, ... } }`
+  - Returns the workspace-level package map resolved from
+    `finecode-workspace.toml` (see ADR-0029). Each entry carries the package's
+    source directory and the resolved install decision (`editable`, and the
+    wheel built for it in wheel mode). The WM resolves this map once during
+    `workspace/addDir` and caches it for the lifetime of the workspace context.
+    The install mode and `exclude` set are resolved by `prepare-envs`, so the
+    decision reflects the most recent run.
 
 - `workspace/getProjectPaths`
   - Params: `{}`

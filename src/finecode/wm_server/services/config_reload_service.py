@@ -92,8 +92,8 @@ async def _rescan_workspace_dirs(ws_context: context.WorkspaceContext) -> None:
     async with ws_context.workspace_state_lock:
         for dir_path in ws_context.ws_dirs_paths:
             await read_configs.read_projects_in_dir(dir_path, ws_context)
-        ws_context.ws_editable_packages = (
-            read_configs.resolve_workspace_editable_packages(ws_context)
+        ws_context.ws_workspace_packages = (
+            read_configs.resolve_workspace_packages(ws_context)
         )
 
 

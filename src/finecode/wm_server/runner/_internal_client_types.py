@@ -44,7 +44,7 @@ ER_USER_MESSAGE = "er/userMessage"
 ER_LOG_RECORDS = "er/logRecords"
 
 PROJECT_RAW_CONFIG_GET = "projects/getRawConfig"
-WORKSPACE_EDITABLE_PACKAGES_GET = "workspace/getWorkspaceEditablePackages"
+WORKSPACE_PACKAGES_GET = "workspace/getWorkspacePackages"
 WORKSPACE_EXTRA_SELECTION_GET = "workspace/getExtraSelection"
 WORKSPACE_PROJECT_PATHS_GET = "workspace/getProjectPaths"
 RUN_ACTION_IN_PROJECT = "finecode/runActionInProject"
@@ -1426,7 +1426,7 @@ class GetProjectRawConfigResponse(BaseResponse):
 @dataclasses.dataclass
 class GetWorkspaceEditablePackagesRequest(BaseRequest):
     params: dict | None = None
-    method = WORKSPACE_EDITABLE_PACKAGES_GET
+    method = WORKSPACE_PACKAGES_GET
 
 
 @dataclasses.dataclass
@@ -2332,7 +2332,7 @@ METHOD_TO_TYPES: dict[
         ElicitResponse,
         ElicitResult,
     ),
-    WORKSPACE_EDITABLE_PACKAGES_GET: (
+    WORKSPACE_PACKAGES_GET: (
         GetWorkspaceEditablePackagesRequest,
         None,
         GetWorkspaceEditablePackagesResponse,

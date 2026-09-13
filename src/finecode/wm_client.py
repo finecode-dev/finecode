@@ -403,12 +403,12 @@ class ApiClient:
             )
         return result.get("project")
 
-    async def get_workspace_editable_packages(self) -> dict[str, str]:
-        """Return workspace editable packages as name → absolute posix path."""
-        result = await self.request("workspace/getWorkspaceEditablePackages")
+    async def get_workspace_packages(self) -> dict[str, dict]:
+        """Return workspace packages as name → ``{dir, wheel}``."""
+        result = await self.request("workspace/getWorkspacePackages")
         if not isinstance(result, dict) or "packages" not in result:
             raise ApiResponseError(
-                "workspace/getWorkspaceEditablePackages",
+                "workspace/getWorkspacePackages",
                 f"missing 'packages' field, got {result!r}",
             )
         return result["packages"]
@@ -654,6 +654,7 @@ class ApiClient:
         interpreter_names: list[str] | None = None,
         project_names: list[str] | None = None,
         dev_env: str | None = None,
+        workspace_packages_mode: str | None = None,
     ) -> None:
         """Prepare all environments for the workspace.
 
@@ -672,6 +673,8 @@ class ApiClient:
             params["projectNames"] = project_names
         if dev_env is not None:
             params["devEnv"] = dev_env
+        if workspace_packages_mode is not None:
+            params["workspacePackagesMode"] = workspace_packages_mode
         await self.request("workspace/prepareEnvs", params)
 
     async def list_runners(self) -> list[dict]:

@@ -369,25 +369,38 @@ For developers without a `finecode-user.toml`, the action runs with no handlers 
 
 Workspace-level configuration lives in `finecode-workspace.toml` at the workspace root, under the `[workspace]` table.
 
-### Workspace editable packages
+### Workspace packages
 
-In a monorepo, local packages should be installed as editable installs. Declare them once in `finecode-workspace.toml`:
+In a monorepo, local packages can be installed from their source (editable) or from wheels built from that source. Declare the *set* once in `finecode-workspace.toml`:
 
 ```toml
-[workspace]
-# When true, every project discovered in this workspace is automatically
-# installed as an editable install when it appears as a dependency.
-all_workspace_packages_editable = true
+[workspace.workspace_packages]
+# Defaults to true, so this table is optional: with no finecode-workspace.toml
+# every discovered project is a workspace package.
+all_projects = true
 
-# Optional: explicit paths to treat as editable installs — useful for
+# Optional: explicit paths to treat as workspace packages — useful for
 # vendored forks outside normal project discovery. Paths are relative to
 # the workspace root.
-editable_packages = [
+extra = [
     "./vendored_forks/some_lib",
 ]
 ```
 
-Any dependency whose package name matches a workspace editable package is automatically rewritten to an editable install from its declared path, across every env in every project. The resolved set is the union of every discovered project (when `all_workspace_packages_editable` is `true`) and every explicit `editable_packages` entry.
+How workspace packages are installed is selected separately, per dev-env. Both entries are the defaults, so this table is optional too:
+
+```toml
+[workspace.workspace_packages_install]
+local = "editable"   # default for dev-envs other than ci
+ci    = "wheel"      # default for ci
+exclude = ["pkg-a"]  # keep these editable and out of the wheelhouse
+```
+
+`editable` rewrites a matching dependency to an editable install from its declared path. `wheel` installs a wheel built from the checkout by `build_python_artifact` into `<workspace-root>/.venvs/dev_workspace/cache/wheelhouse`; each package is built by its own project's builder. The mode is resolved by exact dev-env key, then the `local`/`ci` bucket, then `editable` (non-ci) / `wheel` (ci); `prepare-envs --workspace-packages=wheel|editable` overrides it.
+
+Any dependency whose package name matches a workspace package is rewritten accordingly, across every env in every project. The resolved set is the union of every discovered project (unless `all_projects = false`) and every explicit `extra` entry.
+
+In wheel mode a workspace package with no wheel in the wheelhouse is an **error** naming the package and pointing at `prepare-envs` — never a silent editable fallback. Only the packages in `exclude` install editable in wheel mode.
 
 ### WM telemetry
 
