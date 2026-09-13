@@ -374,12 +374,15 @@ async def run_actions(
                 raise RunFailed(f"Unknown action(s): {unknown_actions}")
             action_sources = [name_to_source[a] for a in actions]
 
+            schema_project = _choose_schema_project(
+                project_paths, all_actions, action_sources, workdir_path
+            )
             action_payload = await _resolve_payload(
                 client=client,
                 action_payload=action_payload,
                 raw_action_payload=raw_action_payload,
                 action_sources=action_sources,
-                project_paths=project_paths,
+                schema_project=schema_project,
                 base_dir=workdir_path,
                 map_payload_fields=map_payload_fields,
             )
@@ -582,12 +585,38 @@ def _build_streaming_result(
     )
 
 
+def _choose_schema_project(
+    project_paths: list[str] | None,
+    all_actions: list[dict],
+    action_sources: list[str],
+    base_dir: pathlib.Path,
+) -> str:
+    """Pick the project whose WM holds the action's payload schema.
+
+    The schema lives in the project that exposes the action, not necessarily
+    the workspace root, so a run that did not name a project still has a real
+    project to ask. First match wins: an explicit project path, then a listed
+    action in *base_dir*, then the first listed action, and finally *base_dir*.
+    """
+    if project_paths:
+        return project_paths[0]
+
+    base_dir_str = str(base_dir)
+    for action in all_actions:
+        if action["project"] == base_dir_str and action["source"] in action_sources:
+            return base_dir_str
+    for action in all_actions:
+        if action["source"] in action_sources:
+            return action["project"]
+    return base_dir_str
+
+
 async def _resolve_payload(
     client: ApiClient,
     action_payload: dict[str, typing.Any],
     raw_action_payload: dict[str, str],
     action_sources: list[str],
-    project_paths: list[str] | None,
+    schema_project: str,
     base_dir: pathlib.Path,
     map_payload_fields: set[str] | None,
 ) -> dict[str, typing.Any]:
@@ -609,15 +638,19 @@ async def _resolve_payload(
     either, because without a schema there is nothing saying the field is a
     resource at all.  Refusing is the only answer that never acts on a guess.
     """
-    # Any project the action runs in resolves the same payload types; the first
-    # requested one is as good as any, and the workspace root serves when the
-    # run is not restricted to a subset.
-    schema_project = project_paths[0] if project_paths else str(base_dir)
+    # Any project the action runs in resolves the same payload types; the
+    # schema project was chosen by the caller from a project that exposes the
+    # action, so a path value can be converted before dispatch.
     try:
-        schemas = await client.get_payload_schemas(schema_project, action_sources)
+        schemas = await client.get_payload_schemas(
+            schema_project, action_sources, start_runners=True
+        )
     except ApiError as exc:
-        logger.debug(f"Could not read payload schemas from '{schema_project}': {exc}")
-        schemas = {}
+        raise RunFailed(
+            f"Could not read the payload schema of {', '.join(action_sources)} "
+            f"from '{schema_project}': {exc}. The run was not started: without "
+            "the schema, path values cannot be converted to file:// URIs."
+        ) from exc
 
     properties = payload_uris.merge_payload_properties(schemas)
 
@@ -629,10 +662,17 @@ async def _resolve_payload(
         source for source in action_sources if not schemas.get(source)
     ]
     if missing_schema_sources:
-        logger.debug(
-            "Skipping payload field name check: no schema for {}",
-            ", ".join(missing_schema_sources),
-        )
+        if raw_action_payload:
+            logger.warning(
+                "Skipping payload field name check: no schema for {}; "
+                "payload fields were sent without type validation or path conversion",
+                ", ".join(missing_schema_sources),
+            )
+        else:
+            logger.debug(
+                "Skipping payload field name check: no schema for {}",
+                ", ".join(missing_schema_sources),
+            )
     else:
         known = set(properties)
         unknown = [name for name in raw_action_payload if name not in known]

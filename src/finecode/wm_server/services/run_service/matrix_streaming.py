@@ -26,6 +26,8 @@ from __future__ import annotations
 import asyncio
 import typing
 
+from loguru import logger
+
 from finecode.wm_server import context, domain
 from finecode.wm_server.config import interpreter_matrix
 from finecode.wm_server.config.interpreter_matrix import Interpreter
@@ -150,13 +152,35 @@ async def _run_variant(
 async def _run_variant_safe(
     *,
     interpreter: Interpreter,
+    on_partial: OnPartial,
+    result_formats: list[runner_client.RunResultFormat] | None,
     **kwargs: typing.Any,
 ) -> RunActionResponse:
     """Run one interpreter variant, converting any exception into a synthetic
     failed response so one variant's failure never aborts the others (R5)."""
     try:
-        return await _run_variant(interpreter=interpreter, **kwargs)
+        return await _run_variant(
+            interpreter=interpreter,
+            on_partial=on_partial,
+            result_formats=result_formats,
+            **kwargs,
+        )
     except Exception as exc:
+        # A variant that fails before streaming anything would otherwise leave
+        # only the synthetic response below, which a merged caller never prints.
+        # Forward the failure as a partial for string-format callers so it
+        # reaches their output; JSON-only callers get no new partial shape.
+        if (
+            result_formats is not None
+            and runner_client.RunResultFormat.STRING in result_formats
+        ):
+            try:
+                await on_partial(interpreter.canonical, {"string": f"error: {exc}"})
+            except Exception:  # noqa: BLE001 - a failed notifier must not replace the variant's own error
+                logger.warning(
+                    f"Could not forward failure of interpreter "
+                    f"'{interpreter.canonical}' to the partial-result consumer"
+                )
         return RunActionResponse(
             result_by_format={"string": f"error: {exc}", "json": {"error": str(exc)}},
             return_code=1,

@@ -351,6 +351,11 @@ async def _handle_get_payload_schemas(
             "Ensure the project is initialized before requesting schemas."
         )
 
+    # Bind the narrowed type for the nested probe below: pyrefly widens a
+    # closure variable back to its declared type, so the isinstance narrowing
+    # above does not reach inside ``_probe_handler_envs``.
+    collected_project: domain.CollectedProject = project
+
     # Resolve each requested source to an action and its name (for schema cache lookup).
     source_to_name: dict[str, str] = {}
     action_names: list[str] = []
@@ -386,30 +391,49 @@ async def _handle_get_payload_schemas(
                 )
 
         # Phase 2: for actions still None, try the handler env runners
-        still_missing = [name for name in missing if cache.get(name) is None]
-        for action_name in still_missing:
-            action = next((a for a in project.actions if a.name == action_name), None)
-            if action is None:
-                continue
-            envs_to_try = {
-                h.env for h in action.handlers if h.env and h.env != "dev_workspace"
-            }
-            for env_name in envs_to_try:
-                runner = runners_by_env.get(env_name)
-                if (
-                    runner is None
-                    or runner.status != runner_client.RunnerStatus.RUNNING
-                ):
+        async def _probe_handler_envs(names: list[str]) -> None:
+            for action_name in names:
+                action = next(
+                    (a for a in collected_project.actions if a.name == action_name),
+                    None,
+                )
+                if action is None:
                     continue
-                try:
-                    schemas = await runner_client.get_payload_schemas(runner)
-                    if schemas.get(action_name) is not None:
-                        cache[action_name] = schemas[action_name]
-                        break
-                except Exception as exc:
-                    logger.debug(
-                        f"Failed to get payload schemas from runner '{env_name}': {exc}"
-                    )
+                envs_to_try = {
+                    h.env for h in action.handlers if h.env and h.env != "dev_workspace"
+                }
+                for env_name in envs_to_try:
+                    runner = runners_by_env.get(env_name)
+                    if (
+                        runner is None
+                        or runner.status != runner_client.RunnerStatus.RUNNING
+                    ):
+                        continue
+                    try:
+                        schemas = await runner_client.get_payload_schemas(runner)
+                        if schemas.get(action_name) is not None:
+                            cache[action_name] = schemas[action_name]
+                            break
+                    except Exception as exc:
+                        logger.debug(
+                            f"Failed to get payload schemas from runner '{env_name}': {exc}"
+                        )
+
+        still_missing = [name for name in missing if cache.get(name) is None]
+        await _probe_handler_envs(still_missing)
+
+        # A caller that cannot proceed without the schema may ask the WM to start
+        # the handler envs first; the run's own gate starts the same envs a moment
+        # later, so this only moves that start earlier. Off by default so MCP's
+        # startup tool listing never starts every handler env.
+        start_runners = params.get("startRunners", False)
+        if start_runners and still_missing:
+            from finecode.wm_server.services import run_service
+
+            await run_service.start_required_environments(
+                {project.dir_path: still_missing}, ws_context
+            )
+            await _probe_handler_envs(still_missing)
 
     # Re-key schemas by the requested source rather than internal action name.
     result_schemas: dict[str, dict | None] = {}

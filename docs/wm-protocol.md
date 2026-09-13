@@ -412,14 +412,20 @@ Return payload schemas for the specified actions in a project. Used by the MCP
 server to build accurate `inputSchema` entries for each tool.
 
 - **Type:** request
-- **Clients:** MCP
+- **Clients:** MCP, CLI
 - **Status:** implemented
 
 **Params:**
 
 ```json
-{"project": "/abs/path/to/project", "actionSources": ["finecode_extension_api.actions.LintAction", "fine_format.FormatAction"]}
+{"project": "/abs/path/to/project", "actionSources": ["finecode_extension_api.actions.LintAction", "fine_format.FormatAction"], "startRunners": false}
 ```
+
+`startRunners` (optional, default `false`): when `true`, the WM starts the
+handler environments for actions whose schema is not yet available, then
+probes them again. The CLI sets it so payload values with a path type can be
+converted before dispatch; MCP leaves it off so listing tools never starts
+environments.
 
 **Result:**
 

@@ -9,7 +9,7 @@ import pytest
 
 from finecode.wm_server import domain
 from finecode.wm_server.config.interpreter_matrix import Interpreter
-from finecode.wm_server.runner.runner_client import RunActionResponse
+from finecode.wm_server.runner.runner_client import RunActionResponse, RunResultFormat
 from finecode.wm_server.services.run_service import matrix_streaming
 from finecode.wm_server.services.run_service.exceptions import ActionRunFailed
 
@@ -216,6 +216,110 @@ async def test_variant_failure_is_isolated_as_error_entry(
     assert "error" in combined_rbf["json"][cpython_312.canonical]
     assert combined_rbf["json"][cpython_311.canonical] == {"ok": True}
     assert return_code != 0
+    # JSON-only callers get no new partial shape for the failure.
+    assert len(received) == 1
+
+
+async def test_variant_failure_is_forwarded_as_a_string_partial(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A variant that fails must reach a string-format caller's output under
+    its own header. Otherwise a merged run only carries the failure inside the
+    merged result, which the terminal never prints, and the user sees a bare
+    exit code.
+    """
+    cpython_311 = Interpreter("cpython", "3.11")
+    cpython_312 = Interpreter("cpython", "3.12")
+    action = _make_matrix_action(
+        interpreters=[cpython_311.canonical, cpython_312.canonical]
+    )
+
+    scripted = {
+        cpython_311.canonical: (
+            [{"json": {"ok": True}, "string": "all good"}],
+            [RunActionResponse(result_by_format={}, return_code=0, status="streamed")],
+        ),
+        # cpython_312 not scripted — its variant raises before being looked up.
+    }
+    monkeypatch.setattr(
+        matrix_streaming.proxy_utils,
+        "run_with_partial_results",
+        _make_fake_run_with_partial_results(scripted, raising={cpython_312.canonical}),
+    )
+
+    received: list[tuple[str, dict]] = []
+
+    async def on_partial(interpreter_canonical: str, result_by_format: dict) -> None:
+        received.append((interpreter_canonical, result_by_format))
+
+    await matrix_streaming.run_matrix_with_partial_results(
+        project=_make_project(),
+        action=action,
+        action_name="test_action",
+        params={},
+        result_formats=[RunResultFormat.STRING],
+        partial_result_token="tok",
+        run_trigger=None,
+        dev_env=None,
+        ws_context=None,
+        merge_results=False,
+        on_partial=on_partial,
+        origin=None,
+    )
+
+    assert (
+        cpython_312.canonical,
+        {"string": "error: boom on cpython@3.12"},
+    ) in received
+
+
+async def test_variant_failure_is_not_forwarded_to_a_json_only_caller(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A caller that asked only for JSON must not receive the string-format
+    error partial. This separates "filtered by requested format" from "the
+    check never matches", which the result_formats=None case alone cannot.
+    """
+    cpython_311 = Interpreter("cpython", "3.11")
+    cpython_312 = Interpreter("cpython", "3.12")
+    action = _make_matrix_action(
+        interpreters=[cpython_311.canonical, cpython_312.canonical]
+    )
+
+    scripted = {
+        cpython_311.canonical: (
+            [{"json": {"ok": True}}],
+            [RunActionResponse(result_by_format={}, return_code=0, status="streamed")],
+        ),
+        # cpython_312 not scripted — its variant raises before being looked up.
+    }
+    monkeypatch.setattr(
+        matrix_streaming.proxy_utils,
+        "run_with_partial_results",
+        _make_fake_run_with_partial_results(scripted, raising={cpython_312.canonical}),
+    )
+
+    received: list[tuple[str, dict]] = []
+
+    async def on_partial(interpreter_canonical: str, result_by_format: dict) -> None:
+        received.append((interpreter_canonical, result_by_format))
+
+    await matrix_streaming.run_matrix_with_partial_results(
+        project=_make_project(),
+        action=action,
+        action_name="test_action",
+        params={},
+        result_formats=[RunResultFormat.JSON],
+        partial_result_token="tok",
+        run_trigger=None,
+        dev_env=None,
+        ws_context=None,
+        merge_results=False,
+        on_partial=on_partial,
+        origin=None,
+    )
+
+    assert received == [(cpython_311.canonical, {"json": {"ok": True}})]
 
 
 async def test_merge_results_false_still_keys_by_interpreter(

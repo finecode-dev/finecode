@@ -117,6 +117,10 @@ protocol even though the runner never became reachable. (Regression-tested in
 
 - `actions/run`
   - Params: `{ "actionName": string, "params": object, "options": object | null }`
+  - Executes only the action's handlers whose `env` equals this ER's env;
+    handlers without an `env` always run. The WM relies on this to address one
+    interpreter variant of a matrixed action by sending `actions/run` to that
+    variant's env.
   - Options keys (camelCase):
     - `meta`: `{ "trigger": "user|system|unknown", "devEnv": "ide|cli|ai|git_hook|ci", "orchestrationDepth": int }`
       - `orchestrationDepth`: cross-boundary hop counter, defaults to `0`. The ER propagates it unchanged via `RunActionMeta.orchestration_depth`.
@@ -398,7 +402,7 @@ protocol even though the runner never became reachable. (Regression-tested in
     - `payloadOverridesByProject` (object | null): complete per-project payload overrides (keyed by POSIX path); the WM shallow-merges `{**payload, **overrides[project]}`
     - `concurrently` (boolean, default `true`): run projects concurrently.
   - Result: `{ "resultsByProject": { "<posix path>": <json result>, ... } }`
-  - Fans out the action across the specified projects (or all projects that declare it). Because this route is always nested orchestration (an ER handler asking the WM to fan out, so `orchestrationDepth > 0`), the WM enforces `OrchestrationPolicy.max_project_fanout` before dispatching — see [ADR-0067](../../finecode_internal_docs/adr/0067-fanout-width-is-throttled-at-depth-zero-refused-only-when-nested.md). The subprocess fan-out a dispatch leads to is bounded by the [process budget](guides/wm-server-internals.md#process-budget) (ADR-0090).
+  - Fans out the action across the specified projects (or all projects that declare it). Because this route is always nested orchestration (an ER handler asking the WM to fan out, so `orchestrationDepth > 0`), the WM enforces `OrchestrationPolicy.max_recursion_depth` before dispatching, and never refuses a fan-out for its width — see [ADR-0095](../../finecode_internal_docs/adr/0095-workspace-fan-out-is-bounded-by-recursion-depth-not-width.md). The subprocess fan-out a dispatch leads to is bounded by the [process budget](guides/wm-server-internals.md#process-budget) (ADR-0090).
 
 - `knowledge/registerSchema`
   - Params: `{ "snapshot": <object> }`

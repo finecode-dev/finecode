@@ -22,6 +22,7 @@ from finecode_extension_runner import (
     er_errors,
     er_telemetry,
     er_wal,
+    global_state,
     run_utils,
     schemas,
 )
@@ -853,6 +854,27 @@ async def run_action_raw(
         raise ActionFailedException(
             f"R{run_id} | Action {request.action_name} not found"
         ) from exception
+
+    # A matrixed action's declaration holds one copy of each handler per
+    # interpreter variant, and `actions/run` names only the action. Execute
+    # only this ER's variant so the others do not multiply the result.
+    current_env = global_state.env_name
+    if current_env != "":
+        filtered_handlers = [
+            handler
+            for handler in action.handlers
+            if handler.env is None or handler.env == current_env
+        ]
+        if len(filtered_handlers) == 0:
+            raise ActionFailedException(
+                f"R{run_id} | Action {request.action_name} has no handlers bound to env '{current_env}' in this runner"
+            )
+        action = domain.ActionDeclaration(
+            name=action.name,
+            config=action.config,
+            handlers=filtered_handlers,
+            source=action.source,
+        )
 
     action_name = request.action_name
 
