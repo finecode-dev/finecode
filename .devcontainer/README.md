@@ -53,6 +53,33 @@ and why a server started lazily after a crash is not one — is described under
 [`start-wm-server`](../docs/cli.md#start-wm-server). Re-run
 `sh .devcontainer/start-wm-server.sh` to get the persistent one back.
 
+## Profiling the WM with py-spy
+
+When the WM looks stalled, `py-spy` shows what its threads are doing without
+restarting it or changing its code. It lives in the root `dev_workspace` group, so
+it is at `.venvs/dev_workspace/bin/py-spy` after `prepare-envs --env=dev_workspace`
+(or `scripts/setup-dev-workspace.sh`).
+
+Use `sudo`: Yama's `ptrace_scope=1` lets a process attach only to its own
+children, and the `vscode` user has no effective caps even with `SYS_PTRACE` in the
+container's bound set. `sudo` also resets `PATH`, so invoke the binary by path from
+the repo root.
+
+```bash
+# find the pid — a dedicated WM, or the shared keep-alive one
+pgrep -f 'start-wm-server --port-file'
+pgrep -f 'start-wm-server.*--keep-alive'
+
+# one stack dump per thread
+sudo .venvs/dev_workspace/bin/py-spy dump --pid "$PID"
+
+# a 90-second flame graph
+sudo .venvs/dev_workspace/bin/py-spy record --pid "$PID" --duration 90 --output wm-profile.svg
+```
+
+`--subprocesses` is deliberately left off: it would fold every Extension Runner into
+the WM's flame graph. Profile an ER separately by pointing `--pid` at it.
+
 ## Optional private internal docs mount
 
 The workspace service supports an optional bind mount for private internal docs.

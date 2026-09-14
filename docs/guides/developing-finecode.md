@@ -464,6 +464,7 @@ Structured fields are forwarded automatically to OTel/Loki (via the loguru→OTe
 - during incident analysis, enable `TRACE` only for affected modules
 - ~~prefer time-bounded overrides (TTL) so verbose logging auto-reverts~~
 - once resolved, remove temporary overrides and keep only useful `INFO`/`WARNING`
+- to profile a stalled WM from outside the process, see [Profiling the WM with py-spy](../../.devcontainer/README.md#profiling-the-wm-with-py-spy)
 
 ### Local observability stack
 

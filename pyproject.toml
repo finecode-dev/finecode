@@ -44,6 +44,9 @@ dev_workspace = [
   "opentelemetry-exporter-otlp-proto-grpc==1.41.*",
   "opentelemetry-instrumentation==0.62.*",
   "opentelemetry-sdk==1.41.*",
+  # Out-of-process profiler; attaches by pid. Lives here because dev_workspace is
+  # always present and gets no ER injected.
+  "py-spy==0.4.*",
 ]
 
 [build-system]
