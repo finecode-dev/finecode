@@ -38,9 +38,7 @@ async def on_shutdown(ws_context: context.WorkspaceContext) -> None:
     # regardless of how many runners there are.
     await asyncio.gather(
         *(
-            runner_manager.stop_extension_runner(
-                runner=runner, ws_context=ws_context
-            )
+            runner_manager.stop_extension_runner(runner=runner, ws_context=ws_context)
             for runner in running_runners
         )
     )

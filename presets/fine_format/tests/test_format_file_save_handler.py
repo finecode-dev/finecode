@@ -5,7 +5,11 @@ import pathlib
 import pytest
 from finecode_extension_api.interfaces import ifileeditor
 from finecode_extension_api.resource_uri import path_to_resource_uri
-from finecode_extension_runner.testing import InMemoryFileEditor, NoOpLogger
+from finecode_extension_runner.testing import (
+    FileWrite,
+    InMemoryFileEditor,
+    NoOpLogger,
+)
 
 from fine_format import format_file_action
 from fine_format.format_file_save_handler import SaveFormatFileHandler
@@ -72,7 +76,7 @@ async def test_formatted_content_is_committed_when_the_file_is_unchanged(
     )
 
     assert file_editor.contents(file_path) == "x = 1\n"
-    assert file_editor.writes == [(file_path, "x = 1\n")]
+    assert file_editor.writes == [FileWrite(file_path, "x = 1\n")]
 
 
 async def test_commit_is_refused_when_the_file_changed_since_it_was_read(

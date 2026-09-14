@@ -70,7 +70,9 @@ async def test_payload_overrides_are_forwarded_with_normalized_keys(
         return {}
 
     with mock.patch.object(
-        er_dispatch.WorkspaceExecutor, "run_actions_in_projects", _fake_run_actions_in_projects
+        er_dispatch.WorkspaceExecutor,
+        "run_actions_in_projects",
+        _fake_run_actions_in_projects,
     ):
         await er_dispatch._BridgeHandlers().run_action_in_workspace(
             runner=runner, params=params, ws_context=ws_context

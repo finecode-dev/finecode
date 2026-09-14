@@ -18,7 +18,11 @@ def _handler() -> UvInstallDepsInEnvHandler:
 
 
 def _dep(
-    name: str, version_or_source: str, *, editable: bool = False, extras: list[str] | None = None
+    name: str,
+    version_or_source: str,
+    *,
+    editable: bool = False,
+    extras: list[str] | None = None,
 ) -> install_deps_in_env_action.Dependency:
     return install_deps_in_env_action.Dependency(
         name=name,
@@ -33,9 +37,7 @@ def test_uv_editable_dep_emits_extras() -> None:
     cmd = _handler()._construct_uv_install_cmd(
         uv_executable="uv",
         venv_dir_path=pathlib.Path("/venv"),
-        dependencies=[
-            _dep("pkg", " @ file:///tmp/pkg", editable=True, extras=["a"])
-        ],
+        dependencies=[_dep("pkg", " @ file:///tmp/pkg", editable=True, extras=["a"])],
     )
 
     assert "pkg[a] @ file:///tmp/pkg" in cmd

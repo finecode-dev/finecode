@@ -86,6 +86,7 @@ async def test_non_gated_preset_keeps_legacy_message() -> None:
             ws_context,
         )
 
-    assert "Add 'fine_lint_fix' to the pip dependencies of 'finecode_dev_common_preset'" in str(
-        exc.value
+    assert (
+        "Add 'fine_lint_fix' to the pip dependencies of 'finecode_dev_common_preset'"
+        in str(exc.value)
     )

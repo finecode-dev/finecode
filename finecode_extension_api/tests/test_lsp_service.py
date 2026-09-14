@@ -1054,12 +1054,8 @@ async def test_deleting_a_directory_closes_open_documents_beneath_it(
         )
         await asyncio.sleep(0.05)
 
-        assert (
-            session.notification_count("textDocument/didClose", module_uri) == 1
-        )
-        assert (
-            session.notification_count("textDocument/didClose", nested_uri) == 1
-        )
+        assert session.notification_count("textDocument/didClose", module_uri) == 1
+        assert session.notification_count("textDocument/didClose", nested_uri) == 1
 
 
 async def test_renaming_onto_an_open_document_resyncs_it_on_the_next_call(
@@ -1089,9 +1085,7 @@ async def test_renaming_onto_an_open_document_resyncs_it_on_the_next_call(
             target, "renamed content\n", {"line": 0, "character": 0}
         )
 
-        assert (
-            session.notification_count("textDocument/didChange", target_uri) == 1
-        )
+        assert session.notification_count("textDocument/didChange", target_uri) == 1
 
 
 async def test_watched_file_notifications_require_registration(

@@ -43,7 +43,9 @@ def test_a_field_literal_bound_only_to_a_head_prov_warns() -> None:
         BookFields.title(book, q.var(str), at=at),
     )
 
-    with pytest.warns(LookupLiteralWarning, match="provenance can bind a head parameter"):
+    with pytest.warns(
+        LookupLiteralWarning, match="provenance can bind a head parameter"
+    ):
         validate_body(body, LIBCAT_SCHEMA, context="test", projected=(author, book, at))
 
 

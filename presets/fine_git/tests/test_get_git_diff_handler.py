@@ -170,9 +170,7 @@ _MARKDOWN_RULE_SECTION = (
 )
 
 _MODE_CHANGE_QUOTED_PATH_SECTION = (
-    'diff --git "a/we\\"ird.txt" "b/we\\"ird.txt"\n'
-    "old mode 100644\n"
-    "new mode 100755\n"
+    'diff --git "a/we\\"ird.txt" "b/we\\"ird.txt"\nold mode 100644\nnew mode 100755\n'
 )
 
 

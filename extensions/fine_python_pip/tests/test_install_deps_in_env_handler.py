@@ -16,7 +16,11 @@ def _handler() -> PipInstallDepsInEnvHandler:
 
 
 def _dep(
-    name: str, version_or_source: str, *, editable: bool = False, extras: list[str] | None = None
+    name: str,
+    version_or_source: str,
+    *,
+    editable: bool = False,
+    extras: list[str] | None = None,
 ) -> install_deps_in_env_action.Dependency:
     return install_deps_in_env_action.Dependency(
         name=name,
@@ -30,9 +34,7 @@ def test_pip_editable_dep_emits_extras() -> None:
     """An editable spec with extras appends the bracket group to the file URI."""
     cmd = _handler()._construct_pip_install_cmd(
         python_executable=pathlib.Path("/venv/bin/python"),
-        dependencies=[
-            _dep("pkg", " @ file:///tmp/pkg", editable=True, extras=["a"])
-        ],
+        dependencies=[_dep("pkg", " @ file:///tmp/pkg", editable=True, extras=["a"])],
     )
 
     assert "file:///tmp/pkg[a]" in cmd

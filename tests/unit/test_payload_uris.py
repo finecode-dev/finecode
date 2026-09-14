@@ -180,13 +180,18 @@ def test_a_boolean_field_accepts_true_and_false_case_insensitively() -> None:
 
 
 def test_an_array_field_parses_and_rejects_a_scalar() -> None:
-    assert coerce_raw_value('["a", "b"]', {"type": "array"}, _UNUSED_FALLBACK) == ["a", "b"]
+    assert coerce_raw_value('["a", "b"]', {"type": "array"}, _UNUSED_FALLBACK) == [
+        "a",
+        "b",
+    ]
     with pytest.raises(ValueError, match="expected a list"):
         coerce_raw_value("file:///a", {"type": "array"}, _UNUSED_FALLBACK)
 
 
 def test_an_object_field_parses_and_rejects_a_scalar() -> None:
-    assert coerce_raw_value('{"a": 1}', {"type": "object"}, _UNUSED_FALLBACK) == {"a": 1}
+    assert coerce_raw_value('{"a": 1}', {"type": "object"}, _UNUSED_FALLBACK) == {
+        "a": 1
+    }
     with pytest.raises(ValueError, match="expected an object"):
         coerce_raw_value("x", {"type": "object"}, _UNUSED_FALLBACK)
 

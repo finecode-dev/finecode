@@ -52,12 +52,16 @@ class _RecordingWorkspaceActionRunner:
     ) -> dict[pathlib.Path, LintRunResult]:
         self.calls.append((action_type, payload_by_project))
         return {
-            path: self._results[path] for path in payload_by_project if path in self._results
+            path: self._results[path]
+            for path in payload_by_project
+            if path in self._results
         }
 
 
 class _RaisingWorkspaceActionRunner:
-    async def run_action_per_project(self, action_type, payload_by_project, meta, concurrently=True):
+    async def run_action_per_project(
+        self, action_type, payload_by_project, meta, concurrently=True
+    ):
         raise iprojectactionrunner.ActionRunFailed("boom")
 
 

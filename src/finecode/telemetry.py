@@ -81,7 +81,6 @@ def init_otel_logging(
     _silence_otel_export_logs()
     _probe_endpoint_once(endpoint, host, port)
 
-
     from finecode_extension_runner.logs import filter_logs
     from loguru import logger
     from opentelemetry._logs.severity import SeverityNumber
@@ -159,7 +158,6 @@ def init_tracer_provider(
     _silence_otel_export_logs()
     _probe_endpoint_once(endpoint, host, port)
 
-
     from opentelemetry import trace
     from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import (
         OTLPSpanExporter,
@@ -203,7 +201,6 @@ def init_meter_provider(
     host, port = _validate_endpoint(endpoint)
     _silence_otel_export_logs()
     _probe_endpoint_once(endpoint, host, port)
-
 
     from opentelemetry import metrics
     from opentelemetry.exporter.otlp.proto.grpc.metric_exporter import (

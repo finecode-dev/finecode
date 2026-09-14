@@ -168,4 +168,6 @@ class GitGetGitStatusHandler(
             )
         except Exception as exception:
             self.logger.debug(f"Getting git status raised: {exception}")
-            return GetGitStatusRunResult(repo_root=None, changes=[], error=str(exception))
+            return GetGitStatusRunResult(
+                repo_root=None, changes=[], error=str(exception)
+            )

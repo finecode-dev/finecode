@@ -610,8 +610,7 @@ def _selection_rewrites_spec(tmp_path: pathlib.Path, spec: str) -> list[str]:
     project, ws_context = _make_project(
         tmp_path,
         "consumer",
-        f'[project]\nname = "consumer"\n'
-        f'[dependency-groups]\nruntime = ["{spec}"]\n',
+        f'[project]\nname = "consumer"\n[dependency-groups]\nruntime = ["{spec}"]\n',
     )
     read_project_config(project, ws_context)
     return ws_context.ws_projects_raw_configs[project.dir_path]["dependency-groups"][
@@ -627,9 +626,9 @@ def test_extra_selection_rewrites_matching_spec(tmp_path: pathlib.Path) -> None:
 
 
 def test_extra_selection_rewrites_bare_spec(tmp_path: pathlib.Path) -> None:
-    assert _selection_rewrites_spec(
-        tmp_path, "finecode_dev_common_preset"
-    ) == ["finecode_dev_common_preset[lint_fix]"]
+    assert _selection_rewrites_spec(tmp_path, "finecode_dev_common_preset") == [
+        "finecode_dev_common_preset[lint_fix]"
+    ]
 
 
 def test_extra_selection_preserves_marker(tmp_path: pathlib.Path) -> None:
@@ -641,8 +640,8 @@ def test_extra_selection_preserves_marker(tmp_path: pathlib.Path) -> None:
         tmp_path,
         "consumer",
         '[project]\nname = "consumer"\n'
-        '[dependency-groups]\n'
-        'runtime = [\'finecode_dev_common_preset~=0.3.0a0; python_version<"3.12"\']\n',
+        "[dependency-groups]\n"
+        "runtime = ['finecode_dev_common_preset~=0.3.0a0; python_version<\"3.12\"']\n",
     )
 
     read_project_config(project, ws_context)
@@ -685,7 +684,7 @@ def test_read_preset_config_folds_selected_gate(tmp_path: pathlib.Path) -> None:
     _write_toml(
         tmp_path / "preset.toml",
         '[tool.finecode]\npresets = [{ source = "base" }]\n'
-        '[tool.finecode.extra.lint_fix]\n'
+        "[tool.finecode.extra.lint_fix]\n"
         'presets = [{ source = "fine_lint_fix" }]\n',
     )
     _write_toml(
@@ -709,7 +708,7 @@ def test_read_preset_config_does_not_fold_unselected_gate(
     _write_toml(
         tmp_path / "preset.toml",
         '[tool.finecode]\npresets = [{ source = "base" }]\n'
-        '[tool.finecode.extra.lint_fix]\n'
+        "[tool.finecode.extra.lint_fix]\n"
         'presets = [{ source = "fine_lint_fix" }]\n',
     )
     _write_toml(

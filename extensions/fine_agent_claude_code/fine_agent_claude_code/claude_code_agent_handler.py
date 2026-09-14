@@ -131,7 +131,9 @@ class ClaudeCodeAgentHandler(
         )
 
         try:
-            result = await self._run_with_process(payload, run_context, process, command)
+            result = await self._run_with_process(
+                payload, run_context, process, command
+            )
         except BaseException:
             # Anything escaping the drive that the paths inside do not already
             # handle -- a stream that failed its size limit or its encoding

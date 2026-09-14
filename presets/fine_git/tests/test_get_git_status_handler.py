@@ -71,9 +71,7 @@ async def test_not_a_git_repository_is_a_result_state_not_an_error() -> None:
     """A non-zero `git rev-parse` means the project is outside any repository -- this
     is reported as `repo_root=None` with no error, and `git status` is never run."""
     command_runner = FakeCommandRunner(
-        results=[
-            FakeCommandResult(exit_code=128, stderr="fatal: not a git repository")
-        ]
+        results=[FakeCommandResult(exit_code=128, stderr="fatal: not a git repository")]
     )
 
     result = await run_handler(
@@ -110,7 +108,9 @@ async def test_empty_paths_list_skips_status_but_still_reports_repo_root() -> No
 
 
 @pytest.mark.asyncio
-async def test_include_ignored_without_untracked_asks_git_for_both_and_filters() -> None:
+async def test_include_ignored_without_untracked_asks_git_for_both_and_filters() -> (
+    None
+):
     """`include_ignored=True` with `include_untracked=False` is not expressible as
     git flags: `-uno --ignored=matching` is `fatal: Unsupported combination of
     ignored and untracked-files arguments`, and `-uno --ignored=traditional`

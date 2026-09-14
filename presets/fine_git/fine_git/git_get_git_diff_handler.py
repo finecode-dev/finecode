@@ -151,7 +151,9 @@ class GitGetGitDiffHandler(
                 removed_lines.append(line[1:].rstrip("\n"))
         return added_lines, removed_lines
 
-    def _parse_file_diff(self, section: str, repo_root: pathlib.Path) -> FileDiff | None:
+    def _parse_file_diff(
+        self, section: str, repo_root: pathlib.Path
+    ) -> FileDiff | None:
         """Parse one file's section, or `None` if it names no path.
 
         `None` rather than raising: a section whose header this parser does not
@@ -176,7 +178,9 @@ class GitGetGitDiffHandler(
             path_rel = new_path if new_path is not None else old_path
 
         original_path_rel = (
-            old_path if change_kind in (GitChangeKind.RENAMED, GitChangeKind.COPIED) else None
+            old_path
+            if change_kind in (GitChangeKind.RENAMED, GitChangeKind.COPIED)
+            else None
         )
 
         added_lines: list[str] = []

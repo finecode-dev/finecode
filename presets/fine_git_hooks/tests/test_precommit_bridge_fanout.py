@@ -18,7 +18,10 @@ import pytest
 from fine_audit_code.audit_code_action import AuditCodeRunResult, AuditCodeTarget
 from fine_envs.check_toolchains_action import CheckToolchainsRunResult
 from fine_format import FormatTarget, check_formatting_action
-from fine_inspect_code.inspect_code_action import InspectCodeRunResult, InspectCodeTarget
+from fine_inspect_code.inspect_code_action import (
+    InspectCodeRunResult,
+    InspectCodeTarget,
+)
 from fine_type_check.type_check_action import TypeCheckRunResult, TypeCheckTarget
 from finecode_extension_api import code_action
 from finecode_extension_api.interfaces import iprojectactionrunner
@@ -65,7 +68,9 @@ class _RecordedCall:
 
 
 class _RecordingWorkspaceActionRunner:
-    def __init__(self, results: dict[pathlib.Path, code_action.RunActionResult]) -> None:
+    def __init__(
+        self, results: dict[pathlib.Path, code_action.RunActionResult]
+    ) -> None:
         self._results = results
         self.calls: list[_RecordedCall] = []
 
@@ -77,7 +82,9 @@ class _RecordingWorkspaceActionRunner:
         concurrently: bool = True,
     ) -> dict[pathlib.Path, code_action.RunActionResult]:
         self.calls.append(
-            _RecordedCall(action_type, payload_by_project=payload_by_project, project_paths=None)
+            _RecordedCall(
+                action_type, payload_by_project=payload_by_project, project_paths=None
+            )
         )
         return {
             path: self._results[path]
@@ -94,7 +101,9 @@ class _RecordingWorkspaceActionRunner:
         concurrently: bool = True,
     ) -> dict[pathlib.Path, code_action.RunActionResult]:
         self.calls.append(
-            _RecordedCall(action_type, payload_by_project=None, project_paths=project_paths)
+            _RecordedCall(
+                action_type, payload_by_project=None, project_paths=project_paths
+            )
         )
         assert project_paths is not None
         return {
@@ -103,7 +112,9 @@ class _RecordingWorkspaceActionRunner:
 
 
 class _RaisingWorkspaceActionRunner:
-    async def run_action_per_project(self, action_type, payload_by_project, meta, concurrently=True):
+    async def run_action_per_project(
+        self, action_type, payload_by_project, meta, concurrently=True
+    ):
         raise iprojectactionrunner.ActionRunFailed("boom")
 
     async def run_action_in_projects(
@@ -247,12 +258,20 @@ async def test_check_toolchains_makes_one_projects_call_without_payloads(
 @pytest.mark.parametrize(
     ("handler_cls", "expected_message"),
     [
-        pytest.param(TypeCheckPrecommitBridgeHandler, "Type check failed:\n  - boom", id="type_check"),
         pytest.param(
-            InspectCodePrecommitBridgeHandler, "Inspect code failed:\n  - boom", id="inspect_code"
+            TypeCheckPrecommitBridgeHandler,
+            "Type check failed:\n  - boom",
+            id="type_check",
         ),
         pytest.param(
-            AuditCodePrecommitBridgeHandler, "Audit code failed:\n  - boom", id="audit_code"
+            InspectCodePrecommitBridgeHandler,
+            "Inspect code failed:\n  - boom",
+            id="inspect_code",
+        ),
+        pytest.param(
+            AuditCodePrecommitBridgeHandler,
+            "Audit code failed:\n  - boom",
+            id="audit_code",
         ),
         pytest.param(
             CheckToolchainsPrecommitBridgeHandler,

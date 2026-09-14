@@ -154,9 +154,7 @@ async def test_narrowed_ide_run_lints_only_its_own_opened_files(
     action_runner = _RecordingWorkspaceActionRunner()
     sender = _CollectingPartialResultSender()
 
-    await _handler(
-        action_runner, [project_a, project_b], [file_a, file_b]
-    ).run(
+    await _handler(action_runner, [project_a, project_b], [file_a, file_b]).run(
         LintRunPayload(
             target=LintTarget.PROJECT,
             project_paths=[path_to_resource_uri(project_a)],
@@ -190,9 +188,7 @@ async def test_unscoped_ide_run_lints_opened_files_in_every_project(
     action_runner = _RecordingWorkspaceActionRunner()
     sender = _CollectingPartialResultSender()
 
-    await _handler(
-        action_runner, [project_a, project_b], [file_a, file_b]
-    ).run(
+    await _handler(action_runner, [project_a, project_b], [file_a, file_b]).run(
         LintRunPayload(target=LintTarget.PROJECT, project_paths=None),
         _FakeRunContext(
             sender, code_action.RunActionTrigger.SYSTEM, code_action.DevEnv.IDE

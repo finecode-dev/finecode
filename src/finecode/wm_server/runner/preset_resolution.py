@@ -57,7 +57,10 @@ async def get_preset_project_path(
         error_message = error.message
         lower_message = error_message.lower()
         if "cannot find package" in lower_message or "no module named" in lower_message:
-            if preset.gated_by_extra is not None and preset.gated_by_package is not None:
+            if (
+                preset.gated_by_extra is not None
+                and preset.gated_by_package is not None
+            ):
                 clone_present = any(
                     project.name is not None
                     and canonicalize_name(project.name)
@@ -169,7 +172,9 @@ async def collect_config_from_py_presets(
                     project_def_path=def_path,
                     declared_by=preset.source,
                     gated_by_extra=(
-                        _extra_for_source(selected_extras, extra_gates, new_preset_source)
+                        _extra_for_source(
+                            selected_extras, extra_gates, new_preset_source
+                        )
                         if is_gated
                         else None
                     ),

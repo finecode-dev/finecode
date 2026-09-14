@@ -181,7 +181,9 @@ class FakeActionRunner:
         concurrently: bool = True,
     ) -> dict[Path, object]:
         action_name = action_type.__name__
-        self.recorded_calls.append((action_name, list(payload_by_project), payload_by_project))
+        self.recorded_calls.append(
+            (action_name, list(payload_by_project), payload_by_project)
+        )
         results: dict[Path, object] = {}
         for path, payload in payload_by_project.items():
             stored = self._results[(action_name, path)]

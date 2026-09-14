@@ -75,9 +75,7 @@ class TypeCheckPrecommitBridgeHandler(
                 payload_by_project={
                     project_path: TypeCheckRunPayload(
                         target=TypeCheckTarget.FILES,
-                        file_paths=[
-                            path_to_resource_uri(p) for p in project_files
-                        ],
+                        file_paths=[path_to_resource_uri(p) for p in project_files],
                     )
                     for project_path, project_files in files_by_project.items()
                 },

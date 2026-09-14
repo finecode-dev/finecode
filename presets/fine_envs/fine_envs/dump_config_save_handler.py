@@ -82,9 +82,7 @@ def _attribution_comment(
         for spec in specs:
             if not isinstance(spec, str):
                 continue
-            extras = active_selection.get(
-                canonicalize_name(get_dependency_name(spec))
-            )
+            extras = active_selection.get(canonicalize_name(get_dependency_name(spec)))
             if extras:
                 lines.append(
                     f"# {spec} (selected by extra(s) {', '.join(extras)} "

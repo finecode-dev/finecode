@@ -537,7 +537,9 @@ async def test_rename_file_completes_inside_claims_on_both_paths(
     async with editor.session(author=_AUTHOR) as session:
         async with asyncio.timeout(2):
             async with session.modify_file(old_path) as claimed:
-                await session.rename_file(old_path, new_path, if_version=claimed.version)
+                await session.rename_file(
+                    old_path, new_path, if_version=claimed.version
+                )
 
     assert not old_path.exists()
     assert new_path.read_text(encoding="utf-8") == "x = 1\n"

@@ -21,8 +21,7 @@ class BuildArtifactDispatchHandler(
         BuildArtifactDispatchHandlerConfig,
     ]
 ):
-    """Detect the artifact's language and dispatch to the language-specific build subaction.
-    """
+    """Detect the artifact's language and dispatch to the language-specific build subaction."""
 
     def __init__(
         self,

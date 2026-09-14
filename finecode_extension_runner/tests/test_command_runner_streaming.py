@@ -87,9 +87,7 @@ async def test_line_longer_than_the_default_reader_limit_survives() -> None:
     spawn. Without that, this line would come back truncated or not at all.
     """
     payload_size = 512 * 1024
-    process = await _runner().run(
-        _python(f"print('x' * {payload_size}, flush=True)")
-    )
+    process = await _runner().run(_python(f"print('x' * {payload_size}, flush=True)"))
 
     received = [line async for line in process.stdout_lines()]
     await process.wait_for_end()
@@ -157,7 +155,9 @@ async def test_output_without_a_trailing_newline_is_preserved() -> None:
     assert process.get_output() == "no-eol"
 
 
-async def test_get_output_after_subscribing_raises_rather_than_returning_empty() -> None:
+async def test_get_output_after_subscribing_raises_rather_than_returning_empty() -> (
+    None
+):
     """Accumulation stops at subscribe, and says so.
 
     Returning `""` here would be indistinguishable from a child that printed
@@ -371,7 +371,9 @@ async def test_a_trailing_carriage_return_without_a_newline_is_data() -> None:
 async def test_crlf_line_endings_are_still_stripped() -> None:
     """The `\\r` that does precede a `\\n` is part of the terminator."""
     process = await _runner().run(
-        _python("import sys\nsys.stdout.write('one\\r\\ntwo\\r\\n')\nsys.stdout.flush()")
+        _python(
+            "import sys\nsys.stdout.write('one\\r\\ntwo\\r\\n')\nsys.stdout.flush()"
+        )
     )
 
     received = [line async for line in process.stdout_lines()]
