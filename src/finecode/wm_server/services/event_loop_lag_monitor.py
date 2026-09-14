@@ -21,7 +21,7 @@ import time
 
 from loguru import logger
 
-from finecode.wm_server import context, domain
+from finecode.wm_server import context, domain, host_pressure
 
 try:
     import resource
@@ -380,6 +380,7 @@ class EventLoopLagMonitor:
     ) -> None:
         lag_context = snapshot_context(ws_context)
         host = read_host_load()
+        pressure = host_pressure.read_host_pressure()
         ready_callbacks = _ready_callbacks()
 
         # The window runs from the previous sample to this late one. WM CPU
@@ -405,6 +406,7 @@ class EventLoopLagMonitor:
             budget_granted=lag_context.budget_granted,
             budget_total=lag_context.budget_total,
             in_flight_runs=lag_context.in_flight_runs,
+            **pressure.fields(),
         ).warning(
             f"WM event loop lag exceeded threshold: lag={lag_ms}ms"
             f" (threshold {threshold_ms}ms);"
@@ -414,5 +416,6 @@ class EventLoopLagMonitor:
             f" runners starting={lag_context.runners_starting}"
             f" running={lag_context.runners_running};"
             f" process budget {lag_context.budget_granted}/{lag_context.budget_total};"
-            f" in-flight runs={lag_context.in_flight_runs}"
+            f" in-flight runs={lag_context.in_flight_runs};"
+            f" {pressure.describe()}"
         )

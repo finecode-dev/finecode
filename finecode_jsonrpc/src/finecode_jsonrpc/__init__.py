@@ -7,6 +7,7 @@ from .client import (
     ResponseTimeout,
     ServerFailedToStart,
     ServerStoppedError,
+    StartupTimeline,
 )
 from .error_codes import DEFAULT_REQUEST_CANCELLED
 from .error_codes import DEFAULT_REQUEST_CANCELLED as REQUEST_CANCELLED
@@ -32,6 +33,7 @@ __all__ = [
     "ServerFailedToStart",
     "ServerStdioTransport",
     "ServerStoppedError",
+    "StartupTimeline",
     "StdioTransport",
     "TcpServerTransport",
 ]

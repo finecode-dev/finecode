@@ -17,6 +17,10 @@ import pytest
 from finecode_jsonrpc import client as jc
 
 
+async def _fake_start_server(**_kwargs) -> tuple[None, None, None, int]:
+    return (None, None, None, 4242)
+
+
 def _make_client() -> jc.JsonRpcClient:
     return jc.JsonRpcClient(message_types={}, readable_id="test-client")
 
@@ -64,3 +68,38 @@ def test_force_kill_swallows_already_exited_process(
     monkeypatch.setattr("os.killpg", _raise)
 
     client.force_kill()  # must not raise
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX-only kill path")
+async def test_force_kill_before_pid_is_known_still_kills(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A start cancellation can land between the OS spawn and the pid being
+    recorded on the main loop. A force_kill() in that window must still reach
+    the process once the pid is known, or the start leaks an ER process."""
+    client = _make_client()
+    monkeypatch.setattr(jc, "start_server", _fake_start_server)
+    killed: list[tuple[int, int]] = []
+    monkeypatch.setattr("os.killpg", lambda pid, sig: killed.append((pid, sig)))
+
+    client.force_kill()
+    await client._spawn_and_record()
+
+    assert killed == [(4242, signal.SIGKILL)]
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX-only kill path")
+async def test_spawn_records_pid_without_killing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The common path must record the pid as soon as the process exists and
+    must not signal anything when no kill was requested."""
+    client = _make_client()
+    monkeypatch.setattr(jc, "start_server", _fake_start_server)
+    killed: list[tuple[int, int]] = []
+    monkeypatch.setattr("os.killpg", lambda pid, sig: killed.append((pid, sig)))
+
+    await client._spawn_and_record()
+
+    assert killed == []
+    assert client.pid == 4242

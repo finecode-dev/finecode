@@ -621,48 +621,73 @@ async def start_required_environments(
                         project_required_envs.add(handler.env)
             required_envs_by_project[project_dir_path] = project_required_envs
 
-    try:
-        async with asyncio.TaskGroup() as tg:
-            # start runners for required environments that aren't already running
-            for project_dir_path, required_envs in required_envs_by_project.items():
-                project = ws_context.ws_projects[project_dir_path]
-                existing_runners = ws_context.ws_projects_extension_runners.get(
-                    project_dir_path, {}
-                )
-                action_names = actions_by_projects[project_dir_path]
+    starts: list[
+        tuple[
+            domain.Project, str, collections.abc.Coroutine[typing.Any, typing.Any, None]
+        ]
+    ] = []
+    for project_dir_path, required_envs in required_envs_by_project.items():
+        project = ws_context.ws_projects[project_dir_path]
+        existing_runners = ws_context.ws_projects_extension_runners.get(
+            project_dir_path, {}
+        )
+        action_names = actions_by_projects[project_dir_path]
 
-                for env_name in required_envs:
-                    if initialize_all_handlers:
-                        handlers_to_init = (
-                            domain_helpers.collect_all_handlers_to_initialize(
-                                project, env_name
-                            )
-                        )
-                    elif initialize_handlers:
-                        handlers_to_init = (
-                            domain_helpers.collect_handlers_to_initialize_for_actions(
-                                project, env_name, action_names
-                            )
-                        )
-                    else:
-                        handlers_to_init = None
-                    tg.create_task(
-                        _start_runner_or_update_config(
-                            env_name=env_name,
-                            existing_runners=existing_runners,
-                            project=project,
-                            ws_context=ws_context,
-                            handlers_to_initialize=handlers_to_init,
-                        )
+        for env_name in required_envs:
+            if initialize_all_handlers:
+                handlers_to_init = domain_helpers.collect_all_handlers_to_initialize(
+                    project, env_name
+                )
+            elif initialize_handlers:
+                handlers_to_init = (
+                    domain_helpers.collect_handlers_to_initialize_for_actions(
+                        project, env_name, action_names
                     )
-    except ExceptionGroup as eg:
-        errors: list[str] = []
-        for exception in eg.exceptions:
-            if isinstance(exception, StartingEnvironmentsFailed):
-                errors.append(exception.message)
+                )
             else:
-                errors.append(str(exception))
-        raise StartingEnvironmentsFailed(".".join(errors)) from eg
+                handlers_to_init = None
+            starts.append(
+                (
+                    project,
+                    env_name,
+                    _start_runner_or_update_config(
+                        env_name=env_name,
+                        existing_runners=existing_runners,
+                        project=project,
+                        ws_context=ws_context,
+                        handlers_to_initialize=handlers_to_init,
+                    ),
+                )
+            )
+
+    # gather, not TaskGroup: one env failing to start must not cancel its
+    # siblings. TaskGroup cancels every other task when one raises, so a single
+    # "Didn't get port" cancelled 27 healthy starts and marked them FAILED. The
+    # caller still gets one failure naming every env that failed, after all
+    # starts have settled. Same pattern as
+    # `runner_manager.start_runners_with_presets`.
+    results = await asyncio.gather(
+        *(coro for _project, _env_name, coro in starts), return_exceptions=True
+    )
+
+    errors: list[str] = []
+    for (project, env_name, _coro), result in zip(starts, results, strict=True):
+        if not isinstance(result, BaseException):
+            continue
+        if isinstance(result, StartingEnvironmentsFailed):
+            errors.append(result.message)
+        elif isinstance(result, asyncio.CancelledError):
+            errors.append(
+                f"Start of runner for env '{env_name}' in project '{project.name}' was cancelled"
+            )
+        else:
+            errors.append(str(result))
+
+    if errors:
+        first_exception = next(
+            result for result in results if isinstance(result, BaseException)
+        )
+        raise StartingEnvironmentsFailed(".".join(errors)) from first_exception
 
 
 async def _start_runner_or_update_config(

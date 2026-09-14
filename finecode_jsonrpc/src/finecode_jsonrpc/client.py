@@ -14,6 +14,7 @@ import signal
 import subprocess
 import sys
 import threading
+import time
 import traceback
 import typing
 import uuid
@@ -30,6 +31,8 @@ from loguru import logger
 
 from finecode_jsonrpc import _io_thread, error_codes
 from finecode_jsonrpc._converter import converter as _converter
+from finecode_jsonrpc._loop_event import LoopAwareEvent
+from finecode_jsonrpc._proc_snapshot import describe_process_group
 from finecode_jsonrpc.tracing import ITracingHooks
 
 
@@ -79,6 +82,38 @@ class ServerExitedBeforePort(Exception):
     def __init__(self, return_code: int | None) -> None:
         super().__init__()
         self.return_code: typing.Final = return_code
+
+
+@dataclasses.dataclass
+class StartupTimeline:
+    """Monotonic timestamps of the milestones of a server's startup.
+
+    Every field is ``time.monotonic()`` at the moment the milestone occurred, or
+    ``None`` if it never did. Kept as raw timestamps rather than durations so a
+    failure diagnostic can say how long ago the spawn was even after the wait
+    that failed has ended.
+    """
+
+    spawned_at: float | None = None
+    first_output_at: float | None = None
+    port_line_at: float | None = None
+    connected_at: float | None = None
+
+    def describe(self, now: float) -> str:
+        if self.spawned_at is None:
+            return "not spawned"
+        parts = [f"spawned {now - self.spawned_at:.1f}s ago"]
+        if self.first_output_at is None:
+            parts.append("no output from the server")
+        else:
+            parts.append(
+                f"first output after {self.first_output_at - self.spawned_at:.1f}s"
+            )
+        if self.port_line_at is None:
+            parts.append("no port line")
+        else:
+            parts.append(f"port line after {self.port_line_at - self.spawned_at:.1f}s")
+        return "; ".join(parts)
 
 
 class BaseRunnerRequestException(Exception):
@@ -159,10 +194,14 @@ class JsonRpcClient:
         tracing: ITracingHooks | None = None,
         request_cancelled_code: int = error_codes.DEFAULT_REQUEST_CANCELLED,
     ) -> None:
-        self.server_process_stopped: typing.Final = threading.Event()
+        self.server_process_stopped: typing.Final = LoopAwareEvent()
         # Set as soon as the OS process is spawned (before the port handshake),
         # so a start attempt that later times out still has a handle to kill.
         self.pid: int | None = None
+        # Set by a force_kill() that arrives before the spawned pid is known;
+        # the spawn side checks it and kills the process itself then.
+        self._kill_requested: bool = False
+        self.startup_timeline = StartupTimeline()
         self.server_exit_callback: (
             collections.abc.Callable[[], collections.abc.Coroutine] | None
         ) = None
@@ -178,7 +217,7 @@ class JsonRpcClient:
         self._request_cancelled_code = request_cancelled_code
 
         self._async_tasks: list[asyncio.Task[typing.Any]] = []
-        self._stop_event: typing.Final = threading.Event()
+        self._stop_event: typing.Final = LoopAwareEvent()
         self._sync_request_futures: dict[str, concurrent.futures.Future] = {}
         self._async_request_futures: dict[str, asyncio.Future] = {}
         self._stderr_buffer: list[str] = []
@@ -236,6 +275,20 @@ class JsonRpcClient:
         if connect:
             await self.connect_to_server(io_thread=io_thread)
 
+    async def _spawn_and_record(self, **start_server_kwargs):
+        """Spawn the server and publish its pid on the IO thread.
+
+        ``pid`` must be set before ``start()`` returns control to the main
+        loop, so a cancellation or a force-kill landing in that window still
+        has a process to kill. A kill requested before the pid existed is
+        applied here, once it does.
+        """
+        result = await start_server(**start_server_kwargs)
+        self.pid = result[3]
+        if self._kill_requested:
+            self.force_kill()
+        return result
+
     async def _start_server(
         self,
         full_cmd: str,
@@ -247,7 +300,7 @@ class JsonRpcClient:
         stdout_buffer: list[str] | None = None,
     ) -> None:
         server_future = io_thread.run_coroutine(
-            start_server(
+            self._spawn_and_record(
                 cmd=full_cmd,
                 communication_type=self.communication_type,
                 out_message_queue=self.out_message_queue,
@@ -260,6 +313,7 @@ class JsonRpcClient:
                 env=env,
                 stderr_buffer=stderr_buffer,
                 stdout_buffer=stdout_buffer,
+                timeline=self.startup_timeline,
             )
         )
 
@@ -324,7 +378,7 @@ class JsonRpcClient:
     async def _server_process_stop_handler(self):
         """Cleanup handler that runs when the server process managed by the client exits"""
         logger.trace(f"Server process stopped handler {self.readable_id}")
-        await asyncio.to_thread(self.server_process_stopped.wait)
+        await self.server_process_stopped.wait_async()
 
         logger.debug(f"Server process {self.readable_id} stopped")
 
@@ -359,6 +413,7 @@ class JsonRpcClient:
         it (and any subprocess it spawns, e.g. a package manager invocation)
         can be reached as one process group here.
         """
+        self._kill_requested = True
         if self.pid is None:
             return
 
@@ -914,6 +969,7 @@ class JsonRpcClient:
 
                 raise ServerFailedToStart(
                     f"Server exited before publishing TCP port (exit code: {exception.return_code})"
+                    f"\nStartup timeline: {self.startup_timeline.describe(time.monotonic())}"
                     f"{self._stdout_tail()}"
                     f"{self._stderr_tail()}"
                 ) from exception
@@ -921,8 +977,16 @@ class JsonRpcClient:
                 for task in self._async_tasks_in_io_thread:
                     task.cancel()
 
+                process_group_snapshot = (
+                    describe_process_group(self.pid)
+                    if self.pid is not None
+                    else "process group snapshot unavailable"
+                )
                 raise ServerFailedToStart(
-                    f"Didn't get port in {timeout} seconds{self._stdout_tail()}{self._stderr_tail()}"
+                    f"Didn't get port in {timeout} seconds"
+                    f"\nStartup timeline: {self.startup_timeline.describe(time.monotonic())}"
+                    f"\nServer process group at timeout:\n{process_group_snapshot}"
+                    f"{self._stdout_tail()}{self._stderr_tail()}"
                 ) from exception
 
             port = self._tcp_port_future.result()
@@ -932,6 +996,7 @@ class JsonRpcClient:
                 self._reader, self._writer = await asyncio.open_connection(
                     "127.0.0.1", port
                 )
+                self.startup_timeline.connected_at = time.monotonic()
             except Exception as exception:
                 logger.exception(exception)
 
@@ -994,7 +1059,7 @@ async def start_server(
     cmd: str,
     communication_type: CommunicationType,
     out_message_queue: culsans.Queue[bytes],
-    stop_event: threading.Event,
+    stop_event: LoopAwareEvent,
     server_stopped_event: threading.Event,
     server_id: str,
     async_tasks: list[asyncio.Task[typing.Any]],
@@ -1003,6 +1068,7 @@ async def start_server(
     env: dict[str, str],
     stderr_buffer: list[str] | None = None,
     stdout_buffer: list[str] | None = None,
+    timeline: StartupTimeline | None = None,
 ) -> tuple[
     asyncio.StreamReader | None,
     asyncio.StreamWriter | None,
@@ -1052,9 +1118,14 @@ async def start_server(
     else:
         raise ValueError(f"Unsupported communication type: {communication_type}")
 
+    if timeline is not None:
+        timeline.spawned_at = time.monotonic()
+
     logger.debug(f"{server_id} - process id: {server.pid}")
 
-    task = asyncio.create_task(log_stderr(server.stderr, stop_event, stderr_buffer))
+    task = asyncio.create_task(
+        log_stderr(server.stderr, stop_event, stderr_buffer, timeline=timeline)
+    )
     task.add_done_callback(
         functools.partial(task_done_log_callback, task_id=f"log_stderr|{server_id}")
     )
@@ -1079,6 +1150,7 @@ async def start_server(
                 server.pid,
                 debug_port_future,
                 stdout_buffer,
+                timeline=timeline,
             )
         )
         task.add_done_callback(
@@ -1124,7 +1196,7 @@ async def wait_for_stop_event_and_clean(
     # wait either on stop event (=user asks to stop the client) or end of the server
     # process
     logger.debug("Wait on one of tasks")
-    wait_stop_task = asyncio.create_task(asyncio.to_thread(stop_event.wait))
+    wait_stop_task = asyncio.create_task(stop_event.wait_async())
     wait_process_task = asyncio.create_task(server_process.wait())
     done, _ = await asyncio.wait(
         [wait_stop_task, wait_process_task], return_when=asyncio.FIRST_COMPLETED
@@ -1158,6 +1230,8 @@ async def log_stderr(
     stderr: asyncio.StreamReader,
     stop_event: threading.Event,
     stderr_buffer: list[str] | None = None,
+    *,
+    timeline: StartupTimeline | None = None,
 ) -> None:
     """Read and log stderr output from the subprocess."""
     logger.debug("Start reading logs from stderr")
@@ -1166,6 +1240,8 @@ async def log_stderr(
             line = await stderr.readline()
             if not line:
                 break
+            if timeline is not None and timeline.first_output_at is None:
+                timeline.first_output_at = time.monotonic()
             decoded = line.decode("utf-8", errors="replace").rstrip()
             if stderr_buffer is not None:
                 stderr_buffer.append(decoded)
@@ -1187,6 +1263,8 @@ async def read_stdout(
     server_pid: int,
     debug_port_future: concurrent.futures.Future[int] | None,
     stdout_buffer: list[str] | None = None,
+    *,
+    timeline: StartupTimeline | None = None,
 ) -> None:
     logger.debug(f"Start reading logs from stdout | {server_pid}")
     try:
@@ -1199,10 +1277,14 @@ async def read_stdout(
 
             if not line:
                 break
+            if timeline is not None and timeline.first_output_at is None:
+                timeline.first_output_at = time.monotonic()
             if b"Serving on (" in line:
                 match = re.search(rb"Serving on \('[\d.]+', (\d+)\)", line)
                 if match:
                     port = int(match.group(1))
+                    if timeline is not None and timeline.port_line_at is None:
+                        timeline.port_line_at = time.monotonic()
                     if not port_future.done():
                         port_future.set_result(port)
             elif b"Debug session:" in line:

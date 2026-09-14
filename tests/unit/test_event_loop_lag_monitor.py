@@ -14,9 +14,10 @@ import asyncio
 import contextlib
 import time
 
+import pytest
 from loguru import logger
 
-from finecode.wm_server import context, domain, wm_server
+from finecode.wm_server import context, domain, host_pressure, wm_server
 from finecode.wm_server.runner import runner_client
 from finecode.wm_server.services import event_loop_lag_monitor
 
@@ -154,6 +155,39 @@ def test_warning_reports_wm_cpu_and_context_switches_over_the_late_window() -> N
     assert extra["involuntary_switches"] == 400
     assert "WM CPU 250ms over 2500ms window (10%)" in record["message"]
     assert "involuntary=+400" in record["message"]
+
+
+def test_warning_includes_host_pressure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A lag warning must carry the host's memory/IO pressure.
+
+    The same lag means different things on an idle host and one that is
+    swapping; without the pressure fields the reader has to guess which one it
+    was looking at.
+    """
+    pressure = host_pressure.HostPressure(
+        mem_available_mb=100,
+        swap_used_mb=200,
+        psi_memory_full_avg10=0.1,
+        psi_io_full_avg10=0.2,
+        psi_cpu_some_avg10=0.3,
+    )
+    monkeypatch.setattr(
+        event_loop_lag_monitor.host_pressure, "read_host_pressure", lambda: pressure
+    )
+    ws_context = context.WorkspaceContext([])
+    monitor = event_loop_lag_monitor.EventLoopLagMonitor(
+        threshold_sec=1.0, cooldown_sec=30.0
+    )
+
+    with _capture(level="WARNING") as records:
+        monitor.observe(ws_context, now=100.0, lag=2.0)
+
+    (record,) = records
+    assert "swap used=200MB" in record["message"]
+    assert record["extra"]["swap_used_mb"] == 200
+    assert record["extra"]["psi_memory_full_avg10"] == 0.1
 
 
 def test_recovery_reports_max_lag_and_usage_over_the_whole_episode() -> None:

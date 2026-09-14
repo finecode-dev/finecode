@@ -4,6 +4,7 @@ import asyncio
 import pathlib
 from unittest import mock
 
+import finecode_jsonrpc
 from finecode.wm_server import context, domain
 from finecode.wm_server import testing as wm_testing
 from finecode.wm_server.runner import runner_manager
@@ -20,6 +21,7 @@ class _ConcurrencyTrackingClient:
         self.readable_id = readable_id
         self.pid = None
         self.server_exit_callback = None
+        self.startup_timeline = finecode_jsonrpc.StartupTimeline()
 
     async def start(self, **_kwargs) -> None:
         type(self).current += 1

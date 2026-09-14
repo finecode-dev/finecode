@@ -10,6 +10,7 @@ import dataclasses
 import json
 import os
 import shutil
+import time
 import typing
 from pathlib import Path
 
@@ -17,7 +18,7 @@ from loguru import logger
 
 import finecode_jsonrpc as jsonrpc_client
 from finecode import telemetry
-from finecode.wm_server import context, domain, domain_helpers, errors
+from finecode.wm_server import context, domain, domain_helpers, errors, host_pressure
 from finecode.wm_server.config import collect_actions, config_models, read_configs
 from finecode.wm_server.runner import (
     _internal_client_api,
@@ -48,6 +49,8 @@ ServerConfigurationError = config_models.ConfigurationError
 # configuration it was handed — a dependency added to pyproject.toml without
 # reinstalling the environment, typically.
 _ENV_REINSTALL_NEEDED_ERROR_CODE = -32001
+
+SLOW_START_WARN_SEC: typing.Final = 10.0
 
 
 class EnvironmentOutOfDateError(RunnerFailedToStart):
@@ -259,8 +262,10 @@ async def _start_extension_runner_process(
                 connect=not start_with_debug,
             )
         except RunnerFailedToStart as exception:
-            logger.error(
-                f"Runner {runner.readable_id} failed to start: {exception.message}"
+            pressure = host_pressure.read_host_pressure()
+            logger.bind(**pressure.fields()).error(
+                f"Runner {runner.readable_id} failed to start: {exception.message};"
+                f" host: {pressure.describe()}"
             )
             # client.start() may have already spawned the OS process (e.g. it timed
             # out waiting for the port handshake) — kill it now rather than leaving
@@ -270,6 +275,38 @@ async def _start_extension_runner_process(
             runner.status = runner_client.RunnerStatus.FAILED
             runner.initialized_event.set()
             raise
+
+        timeline = client.startup_timeline
+        if timeline.connected_at is not None and timeline.spawned_at is not None:
+            spawn_to_output_ms = (
+                None
+                if timeline.first_output_at is None
+                else round((timeline.first_output_at - timeline.spawned_at) * 1000)
+            )
+            spawn_to_port_ms = (
+                None
+                if timeline.port_line_at is None
+                else round((timeline.port_line_at - timeline.spawned_at) * 1000)
+            )
+            spawn_to_connected_ms = round(
+                (timeline.connected_at - timeline.spawned_at) * 1000
+            )
+            pressure = host_pressure.read_host_pressure()
+            start_log = logger.bind(
+                spawn_to_output_ms=spawn_to_output_ms,
+                spawn_to_port_ms=spawn_to_port_ms,
+                spawn_to_connected_ms=spawn_to_connected_ms,
+                **pressure.fields(),
+            )
+            start_message = (
+                f"Runner {runner.readable_id} start timeline:"
+                f" {timeline.describe(time.monotonic())};"
+                f" host: {pressure.describe()}"
+            )
+            if spawn_to_connected_ms >= SLOW_START_WARN_SEC * 1000:
+                start_log.warning(start_message)
+            else:
+                start_log.debug(start_message)
 
         if start_with_debug:
             assert debug_port_future is not None
@@ -721,7 +758,8 @@ async def stop_extension_runner(
         # subprocesses (e.g. a package-manager invocation). Killing it mid
         # cleanup risks orphaning exactly the children a slower-but-graceful
         # exit would have reaped itself. `force_kill()` is only used where no
-        # exit RPC was ever sent (start-attempt failures, INITIALIZING runners
+        # exit RPC was ever sent (start-attempt failures, `_start_runner`'s
+        # abandon path (any exit before `RUNNING`), INITIALIZING runners
         # swept on WM shutdown — see `_start_extension_runner_process` and
         # `shutdown_service.on_shutdown`), never as a timeout fallback here.
         stopped = await asyncio.to_thread(
@@ -922,6 +960,19 @@ async def get_or_start_runners_with_presets(
         )
 
 
+async def _abandon_start(
+    runner: runner_client.ExtensionRunnerInfo,
+    ws_context: context.WorkspaceContext,
+) -> None:
+    """A start attempt that ended before RUNNING: leave no process and no waiter behind (ADR-0097)."""
+    if runner.client is not None:
+        runner.client.force_kill()
+    if runner.status == runner_client.RunnerStatus.INITIALIZING:
+        runner.status = runner_client.RunnerStatus.FAILED
+    runner.initialized_event.set()
+    await ws_context.process_budget.reclaim_for_runner(runner.readable_id)
+
+
 async def start_runner(
     project_def: domain.Project,
     env_name: str,
@@ -960,68 +1011,75 @@ async def _start_runner(
     )
     save_runner_in_context(runner=runner, ws_context=ws_context)
     try:
-        await _start_extension_runner_process(
-            runner=runner, ws_context=ws_context, debug=debug
-        )
-    except asyncio.CancelledError:
-        logger.warning(
-            f"Startup of runner '{runner.readable_id}' was cancelled — marking as FAILED"
-        )
-        runner.status = runner_client.RunnerStatus.FAILED
-        runner.initialized_event.set()
-        raise
-
-    try:
-        await _init_lsp_client(runner=runner, project=project_def)
-    except RunnerFailedToStart:
-        runner.status = runner_client.RunnerStatus.FAILED
-        await notify_project_changed(project_def)
-        runner.initialized_event.set()
-        raise
-
-    try:
-        runner_info = await _internal_client_api.get_runner_info(runner.client)
-        if runner_info.log_file_path is not None:
-            runner.log_file_path = Path(runner_info.log_file_path)
-            logger.debug(
-                f"Runner {runner.readable_id} log file: {runner.log_file_path}"
-            )
-        else:
-            logger.debug(f"Runner {runner.readable_id} returned no log file path")
-    except Exception as e:
-        logger.warning(f"Failed to get runner info for {runner.readable_id}: {e}")
-
-    if project_def.dir_path not in ws_context.ws_projects_raw_configs or not isinstance(
-        project_def, domain.CollectedProject
-    ):
         try:
-            await preset_resolution.read_project_config_with_py_presets(
-                project=project_def, ws_context=ws_context
+            await _start_extension_runner_process(
+                runner=runner, ws_context=ws_context, debug=debug
             )
-            collect_actions.collect_project(
-                project_path=project_def.dir_path, ws_context=ws_context
+        except asyncio.CancelledError:
+            logger.warning(
+                f"Startup of runner '{runner.readable_id}' was cancelled — marking as FAILED"
             )
-        except config_models.ConfigurationError as exception:
             runner.status = runner_client.RunnerStatus.FAILED
             runner.initialized_event.set()
+            raise
+
+        try:
+            await _init_lsp_client(runner=runner, project=project_def)
+        except RunnerFailedToStart:
+            runner.status = runner_client.RunnerStatus.FAILED
             await notify_project_changed(project_def)
-            raise RunnerFailedToStart(
-                f"Found problem in configuration of {project_def.dir_path}: {exception.message}"
-            ) from exception
+            runner.initialized_event.set()
+            raise
 
-    # Re-fetch from context — may now be CollectedProject if collection just happened
-    current_project_def = ws_context.ws_projects[project_def.dir_path]
-    if isinstance(current_project_def, domain.CollectedProject):
-        # update runner config if project actions are already known, otherwise it will
-        # be done as separate step
-        await update_runner_config(
-            runner=runner,
-            project=current_project_def,
-            handlers_to_initialize=handlers_to_initialize,
-            ws_context=ws_context,
+        try:
+            runner_info = await _internal_client_api.get_runner_info(runner.client)
+            if runner_info.log_file_path is not None:
+                runner.log_file_path = Path(runner_info.log_file_path)
+                logger.debug(
+                    f"Runner {runner.readable_id} log file: {runner.log_file_path}"
+                )
+            else:
+                logger.debug(f"Runner {runner.readable_id} returned no log file path")
+        except Exception as e:
+            logger.warning(f"Failed to get runner info for {runner.readable_id}: {e}")
+
+        if (
+            project_def.dir_path not in ws_context.ws_projects_raw_configs
+            or not isinstance(project_def, domain.CollectedProject)
+        ):
+            try:
+                await preset_resolution.read_project_config_with_py_presets(
+                    project=project_def, ws_context=ws_context
+                )
+                collect_actions.collect_project(
+                    project_path=project_def.dir_path, ws_context=ws_context
+                )
+            except config_models.ConfigurationError as exception:
+                runner.status = runner_client.RunnerStatus.FAILED
+                runner.initialized_event.set()
+                await notify_project_changed(project_def)
+                raise RunnerFailedToStart(
+                    f"Found problem in configuration of {project_def.dir_path}: {exception.message}"
+                ) from exception
+
+        # Re-fetch from context — may now be CollectedProject if collection just happened
+        current_project_def = ws_context.ws_projects[project_def.dir_path]
+        if isinstance(current_project_def, domain.CollectedProject):
+            # update runner config if project actions are already known, otherwise it will
+            # be done as separate step
+            await update_runner_config(
+                runner=runner,
+                project=current_project_def,
+                handlers_to_initialize=handlers_to_initialize,
+                ws_context=ws_context,
+            )
+
+        await _finish_runner_init(
+            runner=runner, project=project_def, ws_context=ws_context
         )
-
-    await _finish_runner_init(runner=runner, project=project_def, ws_context=ws_context)
+    except BaseException:
+        await _abandon_start(runner, ws_context)
+        raise
 
     runner.status = runner_client.RunnerStatus.RUNNING
     telemetry.er_active_inc(runner.env_name)
