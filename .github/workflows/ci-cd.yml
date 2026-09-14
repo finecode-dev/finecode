@@ -78,6 +78,18 @@ jobs:
         with:
           python-version: ${{ env.DEV_WORKSPACE_PYTHON_VERSION }}
 
+      # uv hardlinks (Linux/Windows) or CoW-clones (macOS) package files out of its
+      # cache into each venv only within one filesystem. The default cache is on C: on
+      # Windows runners while the workspace is on D:, so every venv file becomes a full
+      # copy. RUNNER_TEMP is on the workspace volume on every hosted image and is wiped
+      # between jobs, so only what actions/cache restores carries over.
+      # See docs/guides/preparing-environments.md.
+      - name: Configure uv cache
+        id: uv_env
+        run: |
+          echo "UV_CACHE_DIR=$RUNNER_TEMP/uv-cache" >> "$GITHUB_ENV"
+          echo "generation=$(date -u +%Y-%m)" >> "$GITHUB_OUTPUT"
+
       # Every package in the monorepo has its own .venvs/ (root dev_workspace plus one
       # per project for envs created by `prepare-envs`, e.g. dev_no_runtime, runtime).
       # Exact-match only (no restore-keys): setup-dev-workspace.sh and prepare-envs
@@ -92,6 +104,20 @@ jobs:
             .venvs
             **/.venvs
           key: ${{ runner.os }}-venvs-${{ hashFiles('**/pyproject.toml', '**/preset.toml') }}
+
+      # Restore only on a venvs miss: on a hit nothing installs, so fetching a
+      # multi-GB uv entry would be wasted. A partial match is safe here, unlike for
+      # `.venvs`: the cache is content-addressed and uv re-resolves against the
+      # project, so a stale entry can only miss, never mask a missing dependency.
+      - name: Restore uv cache
+        id: uv_cache
+        if: steps.venvs_cache.outputs.cache-hit != 'true'
+        uses: actions/cache/restore@v5
+        with:
+          path: ${{ runner.temp }}/uv-cache
+          key: uv-${{ steps.uv_env.outputs.generation }}-${{ steps.venvs_cache.outputs.cache-primary-key }}
+          restore-keys: |
+            uv-${{ steps.uv_env.outputs.generation }}-${{ runner.os }}-venvs-
 
       - name: Install dependencies
         id: install
@@ -197,6 +223,36 @@ jobs:
             **/.venvs
           key: ${{ steps.venvs_cache.outputs.cache-primary-key }}
 
+      # Remove workspace packages from the cache before saving. uv's documented CI
+      # recipe (`uv cache prune --ci`) keeps source builds and drops downloaded wheels;
+      # for this repo that keeps the wrong half — the only sdists are FineCode's own
+      # packages, and a fresh checkout can never reuse those builds (uv checks local
+      # source freshness against timestamps a checkout resets). The reusable part is the
+      # PyPI wheels, and `--ci` deletes exactly those. Clean by name through uv's own
+      # interface — bucket directories carry version suffixes that change between uv
+      # releases — then prune dangling entries.
+      - name: Trim uv cache to reusable entries
+        id: uv_trim
+        if: ${{ always() && steps.install.outcome == 'success' && steps.uv_cache.outcome == 'success' }}
+        run: |
+          manifest=".venvs/dev_workspace/cache/wheelhouse/manifest.json"
+          if [ -f "$manifest" ]; then
+            # Wheel mode is the CI default; the manifest is the authoritative installed set.
+            names=$(python -c "import json,sys; print(' '.join(json.load(open(sys.argv[1]))))" "$manifest")
+          else
+            # Fallback: derive the same names from the workspace's own resolver. Covers a
+            # future non-wheel CI mode and mirrors what prepare-envs installed.
+            names=$(python -c "import pathlib,sys; sys.path.insert(0,'scripts'); import list_dev_workspace_editables as m; print(' '.join(m.resolve_workspace_packages(pathlib.Path.cwd())))")
+          fi
+          uv cache clean finecode $names
+          uv cache prune
+      - name: Save uv cache
+        if: ${{ always() && steps.install.outcome == 'success' && steps.uv_trim.outcome == 'success' }}
+        uses: actions/cache/save@v5
+        with:
+          path: ${{ runner.temp }}/uv-cache
+          key: ${{ steps.uv_cache.outputs.cache-primary-key }}
+
   audit-private:
     name: Audit (private layer)
     runs-on: ubuntu-24.04
@@ -280,6 +336,13 @@ jobs:
         if: env.HAS_PRIVATE_CLONE_APP == 'true'
         run: cp .github/ci/finecode-user.ci.toml finecode-user.toml
 
+      - name: Configure uv cache
+        id: uv_env
+        if: env.HAS_PRIVATE_CLONE_APP == 'true'
+        run: |
+          echo "UV_CACHE_DIR=$RUNNER_TEMP/uv-cache" >> "$GITHUB_ENV"
+          echo "generation=$(date -u +%Y-%m)" >> "$GITHUB_OUTPUT"
+
       - name: Restore venvs cache
         id: venvs_cache
         if: env.HAS_PRIVATE_CLONE_APP == 'true'
@@ -289,6 +352,18 @@ jobs:
             .venvs
             **/.venvs
           key: ${{ runner.os }}-private-venvs-${{ hashFiles('**/pyproject.toml', '**/preset.toml', 'finecode-user.toml') }}
+
+      - name: Restore uv cache
+        id: uv_cache
+        if: ${{ env.HAS_PRIVATE_CLONE_APP == 'true' && steps.venvs_cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/restore@v5
+        with:
+          path: ${{ runner.temp }}/uv-cache
+          # `private-venvs-`, never `venvs-`: a public run (a fork PR included) must not
+          # restore an entry written by the private job, and vice versa.
+          key: uv-${{ steps.uv_env.outputs.generation }}-${{ steps.venvs_cache.outputs.cache-primary-key }}
+          restore-keys: |
+            uv-${{ steps.uv_env.outputs.generation }}-${{ runner.os }}-private-venvs-
 
       - name: Install dependencies
         id: install
@@ -340,3 +415,27 @@ jobs:
             .venvs
             **/.venvs
           key: ${{ steps.venvs_cache.outputs.cache-primary-key }}
+
+      # See the matching step in the `build` job for the rationale behind the trim and
+      # the save gating.
+      - name: Trim uv cache to reusable entries
+        id: uv_trim
+        if: ${{ always() && env.HAS_PRIVATE_CLONE_APP == 'true' && steps.install.outcome == 'success' && steps.uv_cache.outcome == 'success' }}
+        run: |
+          manifest=".venvs/dev_workspace/cache/wheelhouse/manifest.json"
+          if [ -f "$manifest" ]; then
+            # Wheel mode is the CI default; the manifest is the authoritative installed set.
+            names=$(python -c "import json,sys; print(' '.join(json.load(open(sys.argv[1]))))" "$manifest")
+          else
+            # Fallback: derive the same names from the workspace's own resolver. Covers a
+            # future non-wheel CI mode and mirrors what prepare-envs installed.
+            names=$(python -c "import pathlib,sys; sys.path.insert(0,'scripts'); import list_dev_workspace_editables as m; print(' '.join(m.resolve_workspace_packages(pathlib.Path.cwd())))")
+          fi
+          uv cache clean finecode $names
+          uv cache prune
+      - name: Save uv cache
+        if: ${{ always() && env.HAS_PRIVATE_CLONE_APP == 'true' && steps.install.outcome == 'success' && steps.uv_trim.outcome == 'success' }}
+        uses: actions/cache/save@v5
+        with:
+          path: ${{ runner.temp }}/uv-cache
+          key: ${{ steps.uv_cache.outputs.cache-primary-key }}

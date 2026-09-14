@@ -454,7 +454,7 @@ size the total and both halves move together. There is no separate ER-startup kn
 
 The built-in `create_envs`/`install_envs` handlers (`fine_python_uv`) shell out to `uv`. `uv` avoids re-copying package files into every venv by hardlinking (or CoW-cloning) them out of its local cache directly into each venv's `site-packages` — this is what keeps N venvs from each consuming the full size of every shared dependency.
 
-Hardlinks and CoW clones only work within a single filesystem. If your devcontainer (or any container setup) puts `uv`'s cache (`~/.cache/uv` by default) on a different filesystem than the venvs it populates, `uv` silently falls back to full copies for every package in every venv — no warning, no error. This is easy to hit by accident: a `docker-compose.yml`/`devcontainer.json` that bind-mounts the project as one volume (e.g. `.:/workspaces/myproject`) leaves the container's home directory — where `uv`'s default cache lives — on the container's own root/overlay filesystem, a different device from the bind-mounted workspace.
+Hardlinks and CoW clones only work within a single filesystem. If your devcontainer (or any container setup) puts `uv`'s cache (`~/.cache/uv` by default) on a different filesystem than the venvs it populates, `uv` prints `Failed to hardlink files; falling back to full copy. This may lead to degraded performance.` and continues with full copies for every package in every venv. This is easy to hit by accident: a `docker-compose.yml`/`devcontainer.json` that bind-mounts the project as one volume (e.g. `.:/workspaces/myproject`) leaves the container's home directory — where `uv`'s default cache lives — on the container's own root/overlay filesystem, a different device from the bind-mounted workspace.
 
 **Symptom:** every env (including matrix children like `testing@cpython-3.11`) grows by the full size of every sizeable dependency instead of sharing one cached copy. `uv` itself is a good example if `fine_python_uv` is present in an env — its own PyPI package bundles a ~60MB binary. Across a workspace with many projects × many envs, this adds up to tens of GB of pure duplication.
 
@@ -470,11 +470,18 @@ environment:
 .uv-cache
 ```
 
+CI does the same, into a per-job scratch directory that `actions/cache` carries across runs: `UV_CACHE_DIR=$RUNNER_TEMP/uv-cache` in the three `prepare-envs` jobs (`build`, `audit-private`, `deploy`). `RUNNER_TEMP` is on the workspace volume and is wiped between jobs, so the cache is restored only when the venvs cache misses (a hit means nothing installs) and saved only after a successful install. Before saving, the workspace packages are removed with `uv cache clean <names>` followed by `uv cache prune`, so the persisted entry holds only third-party PyPI artifacts; the `audit-private` job uses a separate key prefix so a public run can never restore an entry containing private-package sources. The cache key carries a `YYYY-MM` generation prefix, which starts a fresh chain each month and bounds the wheels of superseded versions that plain `prune` never removes.
+
 **Verifying it worked:** check the link count on a file that should be shared, not its apparent size. `du -sh` on a single venv directory reports the file's full logical size regardless of hardlinking — it has no visibility into the fact that the same blocks are also claimed by the cache directory outside its traversal.
 
 ```bash
+# Linux:
 stat -c '%h' path/to/venv/bin/uv   # >1 means hardlinked; 1 means it was copied
+# Windows:
+fsutil hardlink list path\to\venv\Scripts\uv.exe   # more than one path listed means hardlinked
 ```
+
+On macOS, APFS uses copy-on-write clones rather than hardlinks, so the link count stays `1` even when sharing works. The signal there is the *absence* of the `Failed to hardlink files; falling back to full copy` warning, not the link count.
 
 ---
 

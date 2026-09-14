@@ -20,13 +20,14 @@ import re
 
 _REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 _WORKFLOW_PATH = _REPO_ROOT / ".github" / "workflows" / "ci-cd.yml"
+_DOCS_WORKFLOW_PATH = _REPO_ROOT / ".github" / "workflows" / "docs.yml"
 
 _STEP_START_RE = re.compile(r"^      - (name|uses):\s*(.*)$")
 _STEP_IF_RE = re.compile(r"^        if:\s*(.*)$")
 
 
-def _workflow_text() -> str:
-    return _WORKFLOW_PATH.read_text(encoding="utf-8")
+def _workflow_text(path: pathlib.Path = _WORKFLOW_PATH) -> str:
+    return path.read_text(encoding="utf-8")
 
 
 def _job_block(text: str, job_name: str) -> list[str]:
@@ -57,6 +58,32 @@ def _steps(block: list[str]) -> list[dict[str, str]]:
             if if_match:
                 current["if"] = if_match.group(1)
     return steps
+
+
+def _step_body(block: list[str], step_name: str) -> list[str]:
+    """The body lines of the named step, up to the next step start."""
+    body: list[str] = []
+    found = False
+    for line in block:
+        start = _STEP_START_RE.match(line)
+        if start:
+            if found:
+                break
+            if start.group(2) == step_name:
+                found = True
+            continue
+        if found:
+            body.append(line)
+    assert found, f"step {step_name!r} not found"
+    return body
+
+
+def _uv_restore_prefix(block: list[str]) -> str:
+    """The single line under a job's `restore-keys:` block."""
+    for i, line in enumerate(block):
+        if re.match(r"^\s*restore-keys:\s*\|\s*$", line):
+            return block[i + 1].strip()
+    raise AssertionError("no restore-keys block found")
 
 
 def test_no_if_expression_references_secrets() -> None:
@@ -92,12 +119,17 @@ def test_audit_private_step_order() -> None:
         "Check out fine_knowledge",
         "Check out internal experiments",
         "Install the CI private-layer config",
-        "Cache all venvs",
+        "Configure uv cache",
+        "Restore venvs cache",
+        "Restore uv cache",
         "Install dependencies",
         "Inspect code",
         "Extract knowledge",
         "Audit code",
         "Run unit tests",
+        "Save venvs cache",
+        "Trim uv cache to reusable entries",
+        "Save uv cache",
     ]
     names = [step["value"] for step in steps if step["key"] == "name"]
     positions = [names.index(name) for name in ordered]
@@ -113,13 +145,62 @@ def test_audit_private_cache_key_namespace_and_hash_inputs() -> None:
 
 
 def test_audit_private_steps_gated_on_has_private_clone_app() -> None:
-    """Steps after the public checkout are gated on the credentials bridge; the one exception is the skip notice, which runs only when credentials are absent."""
+    """Steps after the public checkout are gated on the credentials bridge; the one exception is the skip notice, which runs only when credentials are absent.
+
+    The gate is asserted as a substring rather than by exact equality: a save step
+    legitimately composes the gate with `always() &&` so it still runs when a later
+    step failed, and exact equality would reject that intended form.
+    """
     block = _job_block(_workflow_text(), "audit-private")
     steps = _steps(block)
 
     assert steps[0]["if"] == ""
     for step in steps[1:]:
         if step["value"] == "Report skip reason":
-            assert step["if"] == "env.HAS_PRIVATE_CLONE_APP != 'true'", step
+            assert "env.HAS_PRIVATE_CLONE_APP != 'true'" in step["if"], step
         else:
-            assert step["if"] == "env.HAS_PRIVATE_CLONE_APP == 'true'", step
+            assert "env.HAS_PRIVATE_CLONE_APP == 'true'" in step["if"], step
+
+
+def test_uv_trim_runs_before_uv_save() -> None:
+    """The uv save is gated on the trim, so a failed trim skips the save instead of persisting an untrimmed entry that would leak workspace-package sources."""
+    for job_name in ("build", "audit-private"):
+        steps = _steps(_job_block(_workflow_text(), job_name))
+        save = next(step for step in steps if step["value"] == "Save uv cache")
+        assert "steps.uv_trim.outcome == 'success'" in save["if"], save
+
+
+def test_public_and_private_uv_chains_do_not_cross() -> None:
+    """A public run (a fork PR included) must never restore an entry written by the private job, and vice versa."""
+    build_prefix = _uv_restore_prefix(_job_block(_workflow_text(), "build"))
+    private_prefix = _uv_restore_prefix(_job_block(_workflow_text(), "audit-private"))
+
+    assert (
+        build_prefix
+        == "uv-${{ steps.uv_env.outputs.generation }}-${{ runner.os }}-venvs-"
+    ), build_prefix
+    assert (
+        private_prefix
+        == "uv-${{ steps.uv_env.outputs.generation }}-${{ runner.os }}-private-venvs-"
+    ), private_prefix
+
+
+def test_uv_trim_lists_workspace_packages() -> None:
+    """The trim must name the workspace packages so their sources are removed before the uv entry is saved."""
+    for job_name in ("build", "audit-private"):
+        body = "\n".join(
+            _step_body(
+                _job_block(_workflow_text(), job_name),
+                "Trim uv cache to reusable entries",
+            )
+        )
+        assert "manifest.json" in body, job_name
+        assert "uv cache clean finecode" in body, job_name
+
+
+def test_docs_save_venvs_key_matches_restore() -> None:
+    """The docs deploy job must reuse the restore step's key, never recompute it: a post-install `hashFiles` walks every venv and saves under a key no later run restores."""
+    block = _job_block(_workflow_text(_DOCS_WORKFLOW_PATH), "deploy")
+    body = "\n".join(_step_body(block, "Save venvs cache"))
+    assert "key: ${{ steps.venvs_cache.outputs.cache-primary-key }}" in body
+    assert "hashFiles" not in body
