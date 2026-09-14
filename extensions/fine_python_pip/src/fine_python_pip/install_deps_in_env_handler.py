@@ -1,8 +1,8 @@
 import dataclasses
 import pathlib
 
-from finecode_extension_api import code_action
 from fine_envs import install_deps_in_env_action
+from finecode_extension_api import code_action
 from finecode_extension_api.interfaces import icommandrunner, ilogger
 from finecode_extension_api.resource_uri import resource_uri_to_path
 
@@ -73,6 +73,10 @@ class PipInstallDepsInEnvHandler(
             if dependency.editable:
                 install_params += "-e "
 
+            extras_str = ""
+            if dependency.extras:
+                extras_str = "[" + ",".join(dependency.extras) + "]"
+
             if "@ file://" in dependency.version_or_source:
                 # dependency is specified as '<name> @ file://' but pip CLI supports
                 # only 'file://'
@@ -80,12 +84,15 @@ class PipInstallDepsInEnvHandler(
                 # put in single quoutes to avoid problems in case of spaces in path
                 # because in CLI commands single dependencies are splitted by space
                 install_params += (
-                    f"'{dependency.version_or_source[start_idx_of_file_uri:]}' "
+                    f"'{dependency.version_or_source[start_idx_of_file_uri:]}"
+                    f"{extras_str}' "
                 )
             else:
                 # put in single quoutes to avoid problems in case of spaces in version,
                 # because in CLI commands single dependencies are splitted by space
-                install_params += f"'{dependency.name}{dependency.version_or_source}' "
+                install_params += (
+                    f"'{dependency.name}{extras_str}{dependency.version_or_source}' "
+                )
         cmd = f"{python_executable} -m pip --disable-pip-version-check install {install_params}"
         return cmd
 
@@ -110,7 +117,7 @@ class PipInstallDepsInEnvHandler(
             else:
                 logs = process_stderr
 
-            error = f'Installation of dependencies in env {env_name} from {project_dir_path} failed (cmd: {cmd}):\n{logs}'
+            error = f"Installation of dependencies in env {env_name} from {project_dir_path} failed (cmd: {cmd}):\n{logs}"
             self.logger.error(error)
             return error
 

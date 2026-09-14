@@ -2,11 +2,10 @@ from __future__ import annotations
 
 import asyncio
 import pathlib
-import threading
 
 import pytest
 
-from finecode.wm_server import testing as wm_testing
+from finecode.wm_server import context, testing as wm_testing
 from finecode.wm_server.runner import runner_manager
 
 
@@ -21,8 +20,11 @@ async def test_stop_extension_runner_waits_for_process_to_actually_exit(
     client = wm_testing.FakeErClient()
     client.configure_response(None)
     runner = wm_testing.make_running_runner(working_dir_path=tmp_path, client=client)
+    ws_context = context.WorkspaceContext(ws_dirs_paths=[tmp_path])
 
-    stop_task = asyncio.create_task(runner_manager.stop_extension_runner(runner))
+    stop_task = asyncio.create_task(
+        runner_manager.stop_extension_runner(runner, ws_context)
+    )
     await asyncio.sleep(0.05)
     assert not stop_task.done()
 
@@ -41,27 +43,8 @@ async def test_stop_extension_runner_gives_up_after_timeout_instead_of_hanging(
     client = wm_testing.FakeErClient()
     client.configure_response(None)
     runner = wm_testing.make_running_runner(working_dir_path=tmp_path, client=client)
+    ws_context = context.WorkspaceContext(ws_dirs_paths=[tmp_path])
 
-    await asyncio.wait_for(runner_manager.stop_extension_runner(runner), timeout=2)
-
-
-def test_stop_extension_runner_sync_waits_for_process_to_actually_exit(
-    tmp_path: pathlib.Path,
-) -> None:
-    """Same contract as the async variant: the sync stop path must not
-    return before the runner's process has actually exited.
-    """
-    client = wm_testing.FakeErClient()
-    client.configure_response(None)
-    runner = wm_testing.make_running_runner(working_dir_path=tmp_path, client=client)
-
-    stop_thread = threading.Thread(
-        target=runner_manager.stop_extension_runner_sync, args=(runner,)
+    await asyncio.wait_for(
+        runner_manager.stop_extension_runner(runner, ws_context), timeout=2
     )
-    stop_thread.start()
-    stop_thread.join(timeout=0.05)
-    assert stop_thread.is_alive()
-
-    client.server_process_stopped.set()
-    stop_thread.join(timeout=2)
-    assert not stop_thread.is_alive()

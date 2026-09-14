@@ -2,8 +2,9 @@
 import dataclasses
 
 from finecode_extension_api import code_action
-from fine_git_hooks import uninstall_git_hooks_action
 from finecode_extension_api.interfaces import ilogger, iprojectinfoprovider
+
+from fine_git_hooks import uninstall_git_hooks_action
 from fine_git_hooks.git_hooks_common import (
     FINECODE_HOOK_MARKER,
     resolve_project_git_dir,
@@ -42,9 +43,7 @@ class UninstallGitHooksHandler(
         git_dir = resolve_project_git_dir(project_dir)
         if git_dir is None:
             reason = f"{project_dir} is not a git repository root"
-            self.logger.info(
-                f"Skipping git hook uninstallation: {reason}."
-            )
+            self.logger.info(f"Skipping git hook uninstallation: {reason}.")
             return uninstall_git_hooks_action.UninstallGitHooksRunResult(
                 skip_reason=reason,
             )

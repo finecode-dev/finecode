@@ -1,52 +1,62 @@
+# Installs this package's implementation into runner.run_dispatch_bridge on import
+# (side effect only — nothing here is re-exported). Imported last so the submodules
+# it depends on (project_executor, workspace_executor, proxy_utils, exceptions) are
+# already initialized. See er_dispatch.py and runner/run_dispatch_bridge.py.
+#
+# Nothing schedules this install explicitly: it happens because _api_handlers/_helpers
+# imports run_service.exceptions at module level, which initializes this package, and
+# wm_server imports _api_handlers at startup. An ER's first back-channel call therefore
+# always finds the slot filled. Keep that chain intact — breaking it turns ER-initiated
+# runs into "no run-dispatch service installed" errors rather than an import failure.
+from . import er_dispatch  # noqa: F401
 from .exceptions import (
     ActionCancelledError,
     ActionRunFailed,
     StartingEnvironmentsFailed,
 )
-from .proxy_utils import (
-    run_action,
-    find_action_project_and_run,
-    find_projects_with_actions,
-    find_all_projects_with_action,
-    run_with_partial_results,
-    start_required_environments,
-    ensure_action_metadata,
-    find_subactions_for_parent,
-    run_actions_in_projects,
-    RunResultFormat,
-    RunActionTrigger,
-    DevEnv,
-)
 from .execution_scopes import (
-    OrchestrationPolicy,
     DEFAULT_ORCHESTRATION_POLICY,
     IProjectExecutionScope,
     IWorkspaceExecutionScope,
+    OrchestrationPolicy,
 )
 from .project_executor import ProjectExecutor
+from .proxy_utils import (
+    DevEnv,
+    RunActionTrigger,
+    RunResultFormat,
+    ensure_action_metadata,
+    find_action_project_and_run,
+    find_all_projects_with_action,
+    find_projects_with_actions,
+    find_subactions_for_parent,
+    run_action,
+    run_actions_in_projects,
+    run_with_partial_results,
+    start_required_environments,
+)
 from .workspace_executor import WorkspaceExecutor
 
-
 __all__ = [
+    "DEFAULT_ORCHESTRATION_POLICY",
     "ActionCancelledError",
     "ActionRunFailed",
-    "StartingEnvironmentsFailed",
-    "run_action",
-    "find_action_project_and_run",
-    "find_projects_with_actions",
-    "find_all_projects_with_action",
-    "run_with_partial_results",
-    "start_required_environments",
-    "ensure_action_metadata",
-    "find_subactions_for_parent",
-    "run_actions_in_projects",
-    "RunResultFormat",
-    "RunActionTrigger",
     "DevEnv",
-    "OrchestrationPolicy",
-    "DEFAULT_ORCHESTRATION_POLICY",
     "IProjectExecutionScope",
     "IWorkspaceExecutionScope",
+    "OrchestrationPolicy",
     "ProjectExecutor",
+    "RunActionTrigger",
+    "RunResultFormat",
+    "StartingEnvironmentsFailed",
     "WorkspaceExecutor",
+    "ensure_action_metadata",
+    "find_action_project_and_run",
+    "find_all_projects_with_action",
+    "find_projects_with_actions",
+    "find_subactions_for_parent",
+    "run_action",
+    "run_actions_in_projects",
+    "run_with_partial_results",
+    "start_required_environments",
 ]

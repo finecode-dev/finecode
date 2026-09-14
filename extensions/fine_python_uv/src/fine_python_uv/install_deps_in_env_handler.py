@@ -1,8 +1,13 @@
 import dataclasses
 
-from finecode_extension_api import code_action
 from fine_envs import install_deps_in_env_action
-from finecode_extension_api.interfaces import icommandrunner, ilogger, iprojectactionrunner, iprojectinfoprovider
+from finecode_extension_api import code_action
+from finecode_extension_api.interfaces import (
+    icommandrunner,
+    ilogger,
+    iprojectactionrunner,
+    iprojectinfoprovider,
+)
 from finecode_extension_api.resource_uri import resource_uri_to_path
 
 from ._uv_common import dump_project_config, get_uv_executable
@@ -59,9 +64,7 @@ class UvInstallDepsInEnvHandler(
             venv_dir_path=venv_dir_path,
             dependencies=dependencies,
         )
-        error = await self._run_uv_cmd(
-            cmd=cmd, env_name=env_name, cwd=dump_dir
-        )
+        error = await self._run_uv_cmd(cmd=cmd, env_name=env_name, cwd=dump_dir)
         if error is not None:
             errors = [error]
         else:
@@ -88,16 +91,20 @@ class UvInstallDepsInEnvHandler(
             if dependency.editable:
                 install_params += "-e "
 
+            extras_str = ""
+            if dependency.extras:
+                extras_str = "[" + ",".join(dependency.extras) + "]"
+
             # uv supports the full PEP 508 'name @ file://...' syntax natively,
             # so no stripping of the package name is needed (unlike pip CLI).
-            install_params += f"'{dependency.name}{dependency.version_or_source}' "
+            install_params += (
+                f"'{dependency.name}{extras_str}{dependency.version_or_source}' "
+            )
 
         cmd = f'"{uv_executable}" --no-config pip install --python "{venv_dir_path}" {install_params}'
         return cmd
 
-    async def _run_uv_cmd(
-        self, cmd: str, env_name: str, cwd
-    ) -> str | None:
+    async def _run_uv_cmd(self, cmd: str, env_name: str, cwd) -> str | None:
         self.logger.debug(f"Running uv: {cmd}")
         process = await self.command_runner.run(cmd, cwd=cwd)
         await process.wait_for_end()
@@ -116,7 +123,7 @@ class UvInstallDepsInEnvHandler(
             else:
                 logs = process_stderr
 
-            error = f'Installation of dependencies in env {env_name} from {cwd} failed (cmd: {cmd}):\n{logs}'
+            error = f"Installation of dependencies in env {env_name} from {cwd} failed (cmd: {cmd}):\n{logs}"
             self.logger.error(error)
             return error
 

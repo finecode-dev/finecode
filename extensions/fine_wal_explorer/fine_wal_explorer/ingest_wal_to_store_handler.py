@@ -11,7 +11,6 @@ import uuid
 from typing import Any
 
 import duckdb
-from finecode_extension_api import code_action
 from fine_wal_events.ingest_wal_to_store_action import (
     IngestWalToStoreAction,
     IngestWalToStoreRunContext,
@@ -20,6 +19,7 @@ from fine_wal_events.ingest_wal_to_store_action import (
     SourceIngestSummary,
     WalSourceSpec,
 )
+from finecode_extension_api import code_action
 from finecode_extension_api.interfaces import ilogger
 from finecode_extension_api.resource_uri import (
     path_to_resource_uri,
@@ -97,7 +97,7 @@ class IngestWalToStoreHandler(
         try:
             self._ensure_schema(connection)
             ingest_run_id = str(uuid.uuid4())
-            now = dt.datetime.now(dt.timezone.utc)
+            now = dt.datetime.now(dt.UTC)
             since_dt = _parse_iso_ts(payload.since_ts_iso)
             self._start_ingest_run(connection, ingest_run_id, now, payload, store_path)
 
@@ -125,7 +125,9 @@ class IngestWalToStoreHandler(
 
                             try:
                                 record = json.loads(line)
-                                normalized = _normalize_record(record, spec, file_path, line_no)
+                                normalized = _normalize_record(
+                                    record, spec, file_path, line_no
+                                )
                             except Exception as exc:
                                 summary.events_failed_parse += 1
                                 source_warnings.append(
@@ -134,7 +136,11 @@ class IngestWalToStoreHandler(
                                 continue
 
                             event_ts = normalized["ts"]
-                            if since_dt is not None and event_ts is not None and event_ts < since_dt:
+                            if (
+                                since_dt is not None
+                                and event_ts is not None
+                                and event_ts < since_dt
+                            ):
                                 continue
 
                             try:
@@ -189,7 +195,9 @@ class IngestWalToStoreHandler(
     def _validate_source_specs(self, source_specs: list[WalSourceSpec]) -> None:
         source_ids = [spec.source_id for spec in source_specs]
         if len(source_ids) != len(set(source_ids)):
-            raise code_action.ActionFailedException("source_specs.source_id must be unique")
+            raise code_action.ActionFailedException(
+                "source_specs.source_id must be unique"
+            )
 
     def _resolve_store_path(self, payload: IngestWalToStoreRunPayload) -> pathlib.Path:
         if payload.store_uri is not None:
@@ -411,7 +419,7 @@ class IngestWalToStoreHandler(
             WHERE ingest_run_id = ?
             """,
             [
-                dt.datetime.now(dt.timezone.utc),
+                dt.datetime.now(dt.UTC),
                 events_ingested,
                 events_skipped_duplicate,
                 events_failed_parse,
@@ -437,13 +445,13 @@ def _normalize_record(
     ts_field = _mapped_field(spec, "ts", "ts")
     parsed_ts = _parse_iso_ts(record.get(ts_field))
     run_id = _read_run_id(record, spec)
-    action_name = _coerce_str(record.get(_mapped_field(spec, "action_name", "action_name")))
-    payload_value = record.get(_mapped_field(spec, "payload", "payload"), {})
-    ingested_at = dt.datetime.now(dt.timezone.utc)
-    raw_line = json.dumps(record, sort_keys=True, ensure_ascii=True)
-    event_hash_input = (
-        f"{spec.source_id}\0{file_path}\0{line_no}\0{raw_line}".encode("utf-8")
+    action_name = _coerce_str(
+        record.get(_mapped_field(spec, "action_name", "action_name"))
     )
+    payload_value = record.get(_mapped_field(spec, "payload", "payload"), {})
+    ingested_at = dt.datetime.now(dt.UTC)
+    raw_line = json.dumps(record, sort_keys=True, ensure_ascii=True)
+    event_hash_input = f"{spec.source_id}\0{file_path}\0{line_no}\0{raw_line}".encode()
 
     return {
         "event_hash": hashlib.sha256(event_hash_input).hexdigest(),

@@ -1,5 +1,6 @@
 import dataclasses
 
+from fine_src_artifacts import get_src_artifact_language_action
 from finecode_extension_api import code_action
 from finecode_extension_api.interfaces import (
     ilogger,
@@ -7,12 +8,14 @@ from finecode_extension_api.interfaces import (
     iprojectinfoprovider,
 )
 from finecode_extension_api.resource_uri import path_to_resource_uri
+
 from fine_envs import list_obtainable_toolchains_action
-from fine_src_artifacts import get_src_artifact_language_action
 
 
 @dataclasses.dataclass
-class ListObtainableToolchainsDispatchHandlerConfig(code_action.ActionHandlerConfig): ...
+class ListObtainableToolchainsDispatchHandlerConfig(
+    code_action.ActionHandlerConfig
+): ...
 
 
 class ListObtainableToolchainsDispatchHandler(

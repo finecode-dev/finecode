@@ -5,27 +5,28 @@ import json
 import sys
 from pathlib import Path
 
-from finecode_extension_api import code_action
+from fine_python_lang.type_check_python_files_action import TypeCheckPythonFilesAction
 from fine_type_check.diagnostic_types import (
     Diagnostic,
-    DiagnosticFilesRunPayload,
     DiagnosticFilesRunContext,
+    DiagnosticFilesRunPayload,
     DiagnosticFilesRunResult,
     DiagnosticSeverity,
     Position,
     Range,
 )
-from fine_python_lang.type_check_python_files_action import TypeCheckPythonFilesAction
+from finecode_extension_api import code_action
 from finecode_extension_api.interfaces import (
     icache,
     icommandrunner,
-    ilogger,
+    iextensionrunnerinfoprovider,
     ifileeditor,
+    ilogger,
     iprojectinfoprovider,
     isrcartifactfileclassifier,
-    iextensionrunnerinfoprovider,
 )
 from finecode_extension_api.resource_uri import ResourceUri, resource_uri_to_path
+
 from fine_python_pyrefly.pyrefly_lsp_service import PyreflyLspService
 
 
@@ -47,9 +48,7 @@ class PyreflyTypeCheckFilesHandler(
     """
 
     CACHE_KEY = "PyreflyTypeChecker"
-    FILE_OPERATION_AUTHOR = ifileeditor.FileOperationAuthor(
-        id="PyreflyTypeChecker"
-    )
+    FILE_OPERATION_AUTHOR = ifileeditor.FileOperationAuthor(id="PyreflyTypeChecker")
 
     def __init__(
         self,
@@ -70,7 +69,9 @@ class PyreflyTypeCheckFilesHandler(
         self.command_runner = command_runner
         self.src_artifact_file_classifier = src_artifact_file_classifier
         self.extension_runner_info_provider = extension_runner_info_provider
-        self.project_info_provider: iprojectinfoprovider.IProjectInfoProvider = project_info_provider
+        self.project_info_provider: iprojectinfoprovider.IProjectInfoProvider = (
+            project_info_provider
+        )
         self.lsp_service: PyreflyLspService = lsp_service
 
         self.pyrefly_bin_path = Path(sys.executable).parent / "pyrefly"
@@ -82,9 +83,11 @@ class PyreflyTypeCheckFilesHandler(
             # The same format is used for initializationOptions.
             # pythonPath/extraPaths are already set up by PyreflyLspService itself;
             # only add the type-check-specific setting here.
-            self.lsp_service.update_settings({
-                "pyrefly": {"displayTypeErrors": "force-on"},
-            })
+            self.lsp_service.update_settings(
+                {
+                    "pyrefly": {"displayTypeErrors": "force-on"},
+                }
+            )
 
     async def run_on_single_file(
         self, file_uri: ResourceUri
@@ -92,9 +95,7 @@ class PyreflyTypeCheckFilesHandler(
         file_path = resource_uri_to_path(file_uri)
         messages: dict[ResourceUri, list[Diagnostic]] = {}
         try:
-            cached_messages = await self.cache.get_file_cache(
-                file_path, self.CACHE_KEY
-            )
+            cached_messages = await self.cache.get_file_cache(file_path, self.CACHE_KEY)
             messages[file_uri] = cached_messages
             return DiagnosticFilesRunResult(messages=messages)
         except icache.CacheMissException:
@@ -106,9 +107,13 @@ class PyreflyTypeCheckFilesHandler(
             file_version = await session.read_file_version(file_path)
 
         if self.config.use_cli:
-            type_check_messages = await self.run_pyrefly_type_check_on_single_file(file_path)
+            type_check_messages = await self.run_pyrefly_type_check_on_single_file(
+                file_path
+            )
         else:
-            root_uri = self.project_info_provider.get_current_project_dir_path().as_uri()
+            root_uri = (
+                self.project_info_provider.get_current_project_dir_path().as_uri()
+            )
             await self.lsp_service.ensure_started(root_uri)
 
             type_check_messages = await self.lsp_service.check_file(file_path)
@@ -179,14 +184,14 @@ class PyreflyTypeCheckFilesHandler(
             "--output-format=json",
             # path to python interpreter because pyrefly resolves .pth files only if
             # it is provided
-            f"--python-interpreter-path='{str(interpreter_path)}'",
+            f"--python-interpreter-path='{interpreter_path!s}'",
         ]
 
         if self.config.python_version is not None:
             cmd.append(f"--python-version='{self.config.python_version}'")
 
         for path in site_package_pathes:
-            cmd.append(f"--site-package-path={str(path)}")
+            cmd.append(f"--site-package-path={path!s}")
         cmd.append(str(file_path))
 
         cmd_str = " ".join(cmd)

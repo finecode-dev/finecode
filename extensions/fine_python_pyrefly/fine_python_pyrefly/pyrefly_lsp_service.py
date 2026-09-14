@@ -2,23 +2,27 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
-from typing import Any, override
+from typing import Any
 
-from finecode_extension_api import service
+if sys.version_info >= (3, 12):
+    from typing import override
+else:
+    from typing_extensions import override
+
+from fine_inspect_code.diagnostic_types import map_lsp_diagnostics
 from fine_lint.diagnostic_types import Diagnostic
 from fine_semantic_tokens.text_document_semantic_tokens_action import (
-    SEMANTIC_TOKEN_TYPES,
     SEMANTIC_TOKEN_MODIFIERS,
+    SEMANTIC_TOKEN_TYPES,
 )
-from finecode_extension_api.interfaces import (
-    ifileeditor,
-    ilspclient,
-    ilogger,
-    iextensionrunnerinfoprovider,
-)
+from finecode_extension_api import service
 from finecode_extension_api.contrib.lsp_service import LspService
-from fine_inspect_code.diagnostic_types import map_lsp_diagnostics
-
+from finecode_extension_api.interfaces import (
+    iextensionrunnerinfoprovider,
+    ifileeditor,
+    ilogger,
+    ilspclient,
+)
 
 _PYREFLY_CLIENT_CAPABILITIES: dict[str, Any] = {
     "textDocument": {
@@ -26,7 +30,10 @@ _PYREFLY_CLIENT_CAPABILITIES: dict[str, Any] = {
             "dynamicRegistration": False,
             "didSave": True,
         },
-        "hover": {"dynamicRegistration": False, "contentFormat": ["markdown", "plaintext"]},
+        "hover": {
+            "dynamicRegistration": False,
+            "contentFormat": ["markdown", "plaintext"],
+        },
         "publishDiagnostics": {"relatedInformation": True},
         "semanticTokens": {
             "dynamicRegistration": False,
@@ -146,9 +153,7 @@ class PyreflyLspService(service.DisposableService):
         timeout: float = 30.0,
     ) -> list[Diagnostic]:
         raw_diagnostics = await self._lsp_service.check_file(file_path, timeout)
-        return map_lsp_diagnostics(
-            raw_diagnostics, default_source="pyrefly"
-        )
+        return map_lsp_diagnostics(raw_diagnostics, default_source="pyrefly")
 
     @property
     def server_capabilities(self) -> dict[str, Any]:
@@ -185,7 +190,11 @@ class PyreflyLspService(service.DisposableService):
         timeout: float = 30.0,
     ) -> list[dict[str, Any]] | None:
         return await self._lsp_service.get_references(
-            file_path, content, position, include_declaration=include_declaration, timeout=timeout
+            file_path,
+            content,
+            position,
+            include_declaration=include_declaration,
+            timeout=timeout,
         )
 
     async def get_type_definition(

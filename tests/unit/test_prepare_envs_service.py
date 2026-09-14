@@ -1,4 +1,6 @@
+from finecode.wm_server import testing as wm_testing
 from finecode.wm_server.config.env_selection import resolve_env_selection
+from finecode.wm_server.runner import runner_client
 from finecode.wm_server.services import prepare_envs_service
 from finecode.wm_server.services.prepare_envs_service import build_create_envs_params
 
@@ -8,9 +10,7 @@ def _env(interpreter: str | None = None) -> dict:
 
 
 def _matrix_base(base: str, versions: list[str]) -> dict[str, dict]:
-    return {
-        f"{base}@cpython-{v}": _env(interpreter=f"cpython@{v}") for v in versions
-    }
+    return {f"{base}@cpython-{v}": _env(interpreter=f"cpython@{v}") for v in versions}
 
 
 class TestBuildCreateEnvsParams:
@@ -90,7 +90,9 @@ class TestBuildCreateEnvsParamsExcludesDevWorkspace:
         assert params["env_names"] == sorted({"dev_no_runtime", "docs"})
         assert "dev_workspace" not in params["env_names"]
 
-    def test_no_selection_and_no_dev_workspace_in_universe_omits_env_names(self) -> None:
+    def test_no_selection_and_no_dev_workspace_in_universe_omits_env_names(
+        self,
+    ) -> None:
         """Unaffected case: a project whose universe has no `dev_workspace` key
         keeps the original no-selection behavior of omitting `env_names`."""
         env_table = {"dev_no_runtime": _env(), "docs": _env()}
@@ -127,47 +129,44 @@ class TestBuildCreateEnvsParamsExcludesDevWorkspace:
         assert "dev_workspace" not in params.get("env_names", [])
 
 
-class TestResolveProjectConcurrency:
-    """Layer 1 of the prepare-envs concurrency bound (ADR-0055): how many
-    projects may be prepared in parallel. Override chain is CLI flag > env
-    var > machine-based default."""
+async def test_run_env_action_forwards_budget(monkeypatch, tmp_path) -> None:
+    """`_run_env_action` must hand its declared budget to the project dispatcher.
 
-    def test_prefers_cli_value(self, monkeypatch) -> None:
-        monkeypatch.setenv("FINECODE_WM_PREPARE_ENVS_MAX_CONCURRENT_PROJECTS", "9")
-        monkeypatch.setattr(
-            prepare_envs_service, "default_layered_concurrency", lambda: 3
+    Without this, prepare-envs' per-project fan-out would keep over-reserving
+    the work budget under the very load it exists to bound.
+    """
+    project = wm_testing.make_single_action_project(
+        dir_path=tmp_path,
+        action_name="create_envs",
+        action_source="fine_envs.CreateEnvsAction",
+    )
+    project.actions[0].canonical_source = "fine_envs.CreateEnvsAction"
+    ws_context = wm_testing.make_workspace_context(
+        project=project,
+        runner=wm_testing.make_running_runner(working_dir_path=tmp_path),
+    )
+
+    captured: dict = {}
+
+    async def _fake_run_action(self, **kwargs):
+        captured.update(kwargs)
+        return runner_client.RunActionResponse(
+            result_by_format={"string": ""}, return_code=0
         )
 
-        decision = prepare_envs_service.resolve_project_concurrency(5)
-        assert decision.value == 5
-        assert "flag" in decision.source
+    monkeypatch.setattr(
+        "finecode.wm_server.services.run_service.ProjectExecutor.run_action",
+        _fake_run_action,
+    )
 
-    def test_clamps_non_positive_cli_value_to_one(self, monkeypatch) -> None:
-        monkeypatch.setattr(
-            prepare_envs_service, "default_layered_concurrency", lambda: 3
-        )
+    budget = prepare_envs_service.project_fan_out_budget(4, 12)
+    error = await prepare_envs_service._run_env_action(
+        "fine_envs.CreateEnvsAction",
+        {},
+        project,
+        ws_context,
+        budget=budget,
+    )
 
-        assert prepare_envs_service.resolve_project_concurrency(0).value == 1
-        assert prepare_envs_service.resolve_project_concurrency(-4).value == 1
-
-    def test_falls_back_to_env_var_when_cli_unset(self, monkeypatch) -> None:
-        monkeypatch.setenv("FINECODE_WM_PREPARE_ENVS_MAX_CONCURRENT_PROJECTS", "6")
-        monkeypatch.setattr(
-            prepare_envs_service, "default_layered_concurrency", lambda: 3
-        )
-
-        decision = prepare_envs_service.resolve_project_concurrency(None)
-        assert decision.value == 6
-        assert "env var" in decision.source
-
-    def test_falls_back_to_default_when_nothing_set(self, monkeypatch) -> None:
-        monkeypatch.delenv(
-            "FINECODE_WM_PREPARE_ENVS_MAX_CONCURRENT_PROJECTS", raising=False
-        )
-        monkeypatch.setattr(
-            prepare_envs_service, "default_layered_concurrency", lambda: 3
-        )
-
-        decision = prepare_envs_service.resolve_project_concurrency(None)
-        assert decision.value == 3
-        assert "default" in decision.source
+    assert error is None
+    assert captured["budget"] is budget

@@ -4,6 +4,7 @@ import enum
 
 from finecode_extension_api import code_action
 from finecode_extension_api.resource_uri import ResourceUri
+
 from fine_format import format_files_action
 
 

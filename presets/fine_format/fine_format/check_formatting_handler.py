@@ -3,6 +3,7 @@ import dataclasses
 
 from finecode_extension_api import code_action
 from finecode_extension_api.interfaces import iprojectactionrunner
+
 from fine_format import check_formatting_action, format_action
 
 

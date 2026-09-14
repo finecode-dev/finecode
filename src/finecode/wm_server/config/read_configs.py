@@ -1,19 +1,20 @@
 # docs: docs/configuration.md
 import copy
+import dataclasses
 import os
 from importlib import metadata
 from pathlib import Path
-from typing import Any, NamedTuple
-
+from typing import Any, Literal
 
 import cattrs
-from finecode import user_messages
+from loguru import logger
+from packaging.utils import canonicalize_name
+from tomlkit import loads as toml_loads
+
 from finecode._converter import converter as _converter
 from finecode.wm_server import context, domain
 from finecode.wm_server.config import config_models, interpreter_matrix
-from finecode.wm_server.runner import runner_client
-from loguru import logger
-from tomlkit import loads as toml_loads
+import re
 
 
 def read_project_finecode_config(project_dir: Path) -> dict | None:
@@ -79,13 +80,18 @@ async def read_projects_in_dir(
     # Skipping them avoids traversing thousands of files in virtualenvs,
     # caches, and third-party package trees.
     _SKIP_DIRS = {
-        ".venv", ".venvs",
+        ".venv",
+        ".venvs",
         ".git",
         "node_modules",
         "__pycache__",
         ".tox",
-        "dist", "build",
-        ".mypy_cache", ".ruff_cache", ".pytest_cache",
+        "dist",
+        "build",
+        ".mypy_cache",
+        ".ruff_cache",
+        ".pytest_cache",
+        ".uv-cache",
     }
 
     logger.trace(f"Read directories in {dir_path}")
@@ -176,7 +182,9 @@ def _read_er_logging_config(raw: dict[str, Any]) -> config_models.ErLoggingConfi
     logging_raw = raw.get("logging", {})
     default_level = logging_raw.get("default_level", "INFO")
     log_groups = dict(logging_raw.get("log_groups", {}))
-    return config_models.ErLoggingConfig(default_level=default_level, log_groups=log_groups)
+    return config_models.ErLoggingConfig(
+        default_level=default_level, log_groups=log_groups
+    )
 
 
 def _resolve_er_logging_config(
@@ -193,15 +201,19 @@ def _resolve_er_logging_config(
 
     env_logging_raw = env_raw.get("logging", {})
     merged_level = env_logging_raw.get("default_level", fallback.default_level)
-    merged_groups = {**fallback.log_groups, **dict(env_logging_raw.get("log_groups", {}))}
-    merged = config_models.ErLoggingConfig(default_level=merged_level, log_groups=merged_groups)
+    merged_groups = {
+        **fallback.log_groups,
+        **dict(env_logging_raw.get("log_groups", {})),
+    }
+    merged = config_models.ErLoggingConfig(
+        default_level=merged_level, log_groups=merged_groups
+    )
     return _apply_er_env_var_overrides(merged, env_name)
 
 
 def _apply_er_env_var_overrides(
     config: config_models.ErLoggingConfig, env_name: str
 ) -> config_models.ErLoggingConfig:
-    import os
 
     def _env_key(name: str) -> str:
         return name.upper().replace("-", "_").replace(".", "_")
@@ -218,12 +230,12 @@ def _apply_er_env_var_overrides(
     for var, value in os.environ.items():
         prefix = f"FINECODE_ER_ENV_{env_key}_LOG_GROUP_"
         if var.startswith(prefix):
-            group_key = var[len(prefix):].lower().replace("_", ".")
+            group_key = var[len(prefix) :].lower().replace("_", ".")
             groups[group_key] = value
     for var, value in os.environ.items():
         prefix = "FINECODE_ER_LOG_GROUP_"
-        if var.startswith(prefix) and not var.startswith(f"FINECODE_ER_ENV_"):
-            group_key = var[len(prefix):].lower().replace("_", ".")
+        if var.startswith(prefix) and not var.startswith("FINECODE_ER_ENV_"):
+            group_key = var[len(prefix) :].lower().replace("_", ".")
             groups.setdefault(group_key, value)
 
     return config_models.ErLoggingConfig(default_level=level, log_groups=groups)
@@ -235,7 +247,6 @@ def read_wm_logging_config(workspace_root: Path) -> config_models.ErLoggingConfi
     Env vars FINECODE_WM_LOG_GROUP_<GROUP>=LEVEL override file values (uppercase
     group name with dots replaced by underscores, e.g. FINECODE_WM_LOG_GROUP_FINECODE_JSONRPC=DEBUG).
     """
-    import os
 
     log_groups: dict[str, str] = {}
 
@@ -244,14 +255,16 @@ def read_wm_logging_config(workspace_root: Path) -> config_models.ErLoggingConfi
         try:
             with open(ws_config_path, "rb") as f:
                 ws_config = toml_loads(f.read()).unwrap()
-            logging_raw = ws_config.get("workspace", {}).get("wm", {}).get("logging", {})
+            logging_raw = (
+                ws_config.get("workspace", {}).get("wm", {}).get("logging", {})
+            )
             log_groups = dict(logging_raw.get("log_groups", {}))
         except Exception:
             pass
 
     for var, value in os.environ.items():
         if var.startswith("FINECODE_WM_LOG_GROUP_"):
-            group_key = var[len("FINECODE_WM_LOG_GROUP_"):].lower().replace("_", ".")
+            group_key = var[len("FINECODE_WM_LOG_GROUP_") :].lower().replace("_", ".")
             log_groups[group_key] = value
 
     return config_models.ErLoggingConfig(log_groups=log_groups)
@@ -262,7 +275,6 @@ def read_wm_telemetry_config(workspace_root: Path) -> config_models.WmTelemetryC
 
     FINECODE_OTLP_ENDPOINT env var overrides the file value (highest priority).
     """
-    import os
 
     otlp_endpoint: str | None = None
 
@@ -271,7 +283,9 @@ def read_wm_telemetry_config(workspace_root: Path) -> config_models.WmTelemetryC
         try:
             with open(ws_config_path, "rb") as f:
                 ws_config = toml_loads(f.read()).unwrap()
-            telemetry_raw = ws_config.get("workspace", {}).get("wm", {}).get("telemetry", {})
+            telemetry_raw = (
+                ws_config.get("workspace", {}).get("wm", {}).get("telemetry", {})
+            )
             otlp_endpoint = telemetry_raw.get("otlp_endpoint", None)
         except Exception:
             pass
@@ -282,8 +296,7 @@ def read_wm_telemetry_config(workspace_root: Path) -> config_models.WmTelemetryC
 
 
 def read_wm_wal_config(workspace_root: Path) -> config_models.WmWalConfig:
-    """Read WM WAL config from [workspace.wm.wal] in finecode-workspace.toml.
-    """
+    """Read WM WAL config from [workspace.wm.wal] in finecode-workspace.toml."""
     enabled = False
 
     ws_config_path = workspace_root / "finecode-workspace.toml"
@@ -313,7 +326,7 @@ def read_env_configs(project_config: dict[str, Any]) -> dict[str, domain.EnvConf
 
     # add default configs for dependency-group envs not explicitly listed under er
     deps_groups = project_config.get("dependency-groups", {})
-    for group_name in deps_groups.keys():
+    for group_name in deps_groups:
         if group_name not in env_configs:
             logging_config = _resolve_er_logging_config(project_config, group_name)
             runner_config = domain.RunnerConfig(debug=False, logging=logging_config)
@@ -322,203 +335,216 @@ def read_env_configs(project_config: dict[str, Any]) -> dict[str, domain.EnvConf
     return env_configs
 
 
-async def read_project_config(
-    project: domain.Project,
-    ws_context: context.WorkspaceContext,
-    resolve_presets: bool = True,
-) -> None:
-    # this function requires running project extension runner to get configuration
-    # from it
-    if project.def_path.name == "pyproject.toml":
-        with open(project.def_path, "rb") as pyproject_file:
-            # TODO: handle error if toml is invalid
-            project_def = toml_loads(pyproject_file.read()).unwrap()
-        # TODO: validate that finecode is installed?
+@dataclasses.dataclass
+class ProjectConfigSources:
+    """Everything read from disk for a project, before any py-preset contribution is
+    merged in. ``preset_sources`` is what a caller needs to resolve py-presets via a
+    runner (see ``runner.preset_resolution``) *before* calling ``finish_project_config``.
+    Splitting the read this way is what lets the RPC-dependent half live in the runner
+    layer without config needing to know about runners at all.
+    """
 
-        finecode_toml_raw = read_project_finecode_config(project.def_path.parent)
-        if finecode_toml_raw is not None:
-            finecode_section = dict(finecode_toml_raw.get("finecode", {}))
-            if "workspace" in finecode_section or "workspace" in finecode_toml_raw:
-                raise config_models.ConfigurationError(
-                    f"The [workspace] table is not allowed in "
-                    f"{project.def_path.parent / 'finecode.toml'}. "
-                    f"Workspace configuration must live in finecode-workspace.toml."
-                )
-            if "tool" not in project_def:
-                project_def["tool"] = {}
-            project_def["tool"]["finecode"] = finecode_section
+    project_def: dict[str, Any]
+    user_config_raw: dict[str, Any] | None
+    user_config_path: Path
+    preset_sources: list[str]
 
-        project_config = {}
 
-        user_config_raw = read_project_user_config(project.def_path.parent)
-        user_config_path = project.def_path.parent / "finecode-user.toml"
+def read_project_config_sources(
+    project: domain.Project, resolve_presets: bool = True
+) -> ProjectConfigSources | None:
+    """Read pyproject.toml/finecode.toml/finecode-user.toml from disk and compute the
+    preset sources this project declares. Pure — no runner involved. Returns ``None``
+    for def_path types other than ``pyproject.toml`` (not supported yet).
 
-        # fine_envs is always loaded as a mandatory preset; user presets are loaded
-        # only when resolve_presets=True. Both require a dev_workspace runner.
-        finecode_raw_config = project_def.get("tool", {}).get("finecode", None)
-        preset_sources: list[str] = ["fine_envs"]
-        if finecode_raw_config and resolve_presets:
-            try:
-                user_presets = [
-                    _converter.structure(raw_preset, config_models.FinecodePresetDefinition)
-                    for raw_preset in finecode_raw_config.get("presets", [])
-                ]
-            except cattrs.ClassValidationError as exception:
-                raise config_models.ConfigurationError(str(exception))
-            preset_sources += [preset.source for preset in user_presets]
-
-        if user_config_raw and resolve_presets:
-            try:
-                user_file_preset_defs = [
-                    _converter.structure(raw, config_models.FinecodePresetDefinition)
-                    for raw in user_config_raw.get("presets", [])
-                ]
-            except cattrs.ClassValidationError as exception:
-                raise config_models.ConfigurationError(str(exception))
-            preset_sources += [p.source for p in user_file_preset_defs]
-
-        # TODO: can it be the case that there is no such runner? 
-        dev_workspace_runner = ws_context.ws_projects_extension_runners.get(
-            project.dir_path, {}
-        ).get("dev_workspace")
-        if dev_workspace_runner is not None:
-            new_config = await collect_config_from_py_presets(
-                presets_sources=preset_sources,
-                def_path=project.def_path,
-                runner=dev_workspace_runner,
-            )
-            if new_config is not None:
-                _merge_projects_configs(
-                    project_config, project.def_path, new_config, project.def_path
-                )
-
-        _merge_projects_configs(
-            project_config, project.def_path, project_def, project.def_path
-        )
-        # `_merge_projects_configs` merges only finecode config. Copy all other keys as
-        # is
-        for key, value in project_def.items():
-            if key != "tool":
-                project_config[key] = value
-        tool_raw_config = project_def.get("tool", None)
-        if tool_raw_config is not None:
-            if "tool" not in project_config:
-                project_config["tool"] = {}
-            project_tool_config = project_config["tool"]
-            for key, value in tool_raw_config.items():
-                if key != "finecode":
-                    project_tool_config[key] = value
-
-        if user_config_raw is not None:
-            # Exclude 'presets' (already resolved in preset_sources above) and
-            # 'dependency-groups' (handled separately below).
-            # Presets are excluded to avoid overwriting the project's presets list in
-            # the merged config — the else-branch in _merge_projects_configs assigns
-            # unknown keys directly, which would lose the project's preset entries.
-            user_finecode_section = {
-                k: v for k, v in user_config_raw.items()
-                if k not in ("dependency-groups", "presets")
-            }
-            wrapped_user: dict[str, Any] = {"tool": {"finecode": user_finecode_section}}
-            # config2 (user) overwrites config1 (project) for conflicting items — user wins
-            _merge_projects_configs(
-                project_config, project.def_path, wrapped_user, user_config_path
-            )
-
-            if "dependency-groups" in user_config_raw:
-                dep_groups: dict[str, list[Any]] = project_config.setdefault(
-                    "dependency-groups", {}
-                )
-                for group_name, packages in user_config_raw["dependency-groups"].items():
-                    if group_name not in dep_groups:
-                        dep_groups[group_name] = list(packages)
-                    else:
-                        for pkg in packages:
-                            if pkg not in dep_groups[group_name]:
-                                dep_groups[group_name].append(pkg)
-
-        # add runtime dependency group if it's not explicitly declared
-        add_runtime_dependency_group_if_new(project_config)
-
-        finecode_section = project_config.get("tool", {}).get("finecode", {})
-        actions = _structure_actions(finecode_section.get("action", {}))
-        services = _structure_services(finecode_section.get("service", []))
-
-        deps_groups: dict[str, list[Any]] = project_config.setdefault(
-            "dependency-groups", {}
-        )
-        merge_handlers_dependencies_into_groups(actions, deps_groups)
-        merge_services_dependencies_into_groups(services, deps_groups)
-        _deduplicate_deps_groups(deps_groups)
-        # ADR-0047: expand any interpreter-matrix matrix environment into concrete
-        # per-interpreter envs before the extension runner dependency is injected,
-        # so every concrete env's own dependency group receives it too.
-        resolve_interpreter_matrices(project_config)
-        # add extension runner after merging handlers dependencies into groups
-        # because env may be missing in dependency-groups and be used in handlers
-        add_extension_runner_to_dependencies(project_config)
-
-        ws_context.ws_projects_raw_configs[project.dir_path] = project_config
-    else:
+    Raises:
+        ConfigurationError: finecode.toml declares a [workspace] table, or a preset
+            entry does not match FinecodePresetDefinition.
+    """
+    if project.def_path.name != "pyproject.toml":
         logger.info(
             f"Project definition of type {project.def_path.name} is not supported yet"
         )
+        return None
+
+    with open(project.def_path, "rb") as pyproject_file:
+        # TODO: handle error if toml is invalid
+        project_def = toml_loads(pyproject_file.read()).unwrap()
+    # TODO: validate that finecode is installed?
+
+    finecode_toml_raw = read_project_finecode_config(project.def_path.parent)
+    if finecode_toml_raw is not None:
+        finecode_section = dict(finecode_toml_raw.get("finecode", {}))
+        if "workspace" in finecode_section or "workspace" in finecode_toml_raw:
+            raise config_models.ConfigurationError(
+                f"The [workspace] table is not allowed in "
+                f"{project.def_path.parent / 'finecode.toml'}. "
+                f"Workspace configuration must live in finecode-workspace.toml."
+            )
+        if "tool" not in project_def:
+            project_def["tool"] = {}
+        project_def["tool"]["finecode"] = finecode_section
+
+    user_config_raw = read_project_user_config(project.def_path.parent)
+    user_config_path = project.def_path.parent / "finecode-user.toml"
+
+    # fine_envs is always loaded as a mandatory preset; user presets are loaded
+    # only when resolve_presets=True. Both require a dev_workspace runner to
+    # actually resolve (see finish_project_config's py_presets_config parameter).
+    finecode_raw_config = project_def.get("tool", {}).get("finecode", None)
+    preset_sources: list[str] = ["fine_envs"]
+    if finecode_raw_config and resolve_presets:
+        try:
+            user_presets = [
+                _converter.structure(raw_preset, config_models.FinecodePresetDefinition)
+                for raw_preset in finecode_raw_config.get("presets", [])
+            ]
+        except cattrs.ClassValidationError as exception:
+            raise config_models.ConfigurationError(str(exception))
+        preset_sources += [preset.source for preset in user_presets]
+
+    if user_config_raw and resolve_presets:
+        try:
+            user_file_preset_defs = [
+                _converter.structure(raw, config_models.FinecodePresetDefinition)
+                for raw in user_config_raw.get("presets", [])
+            ]
+        except cattrs.ClassValidationError as exception:
+            raise config_models.ConfigurationError(str(exception))
+        preset_sources += [p.source for p in user_file_preset_defs]
+
+    return ProjectConfigSources(
+        project_def=project_def,
+        user_config_raw=user_config_raw,
+        user_config_path=user_config_path,
+        preset_sources=preset_sources,
+    )
 
 
-class PresetToProcess(NamedTuple):
-    source: str
-    project_def_path: Path
-    declared_by: str | None = None  # None means declared directly by the project
+def finish_project_config(
+    project: domain.Project,
+    ws_context: context.WorkspaceContext,
+    sources: ProjectConfigSources,
+    py_presets_config: dict[str, Any] | None,
+) -> None:
+    """Merge *sources* (and, if given, the config contributed by resolving its
+    py-presets through a runner) into the project's final config, and store it.
+    Pure — the runner round trip (if any) already happened before this is called.
 
+    Raises:
+        ConfigurationError: an action, handler, or service entry in the merged
+            config does not match its expected shape.
+    """
+    project_def = sources.project_def
+    user_config_raw = sources.user_config_raw
+    user_config_path = sources.user_config_path
 
-async def get_preset_project_path(
-    preset: PresetToProcess, def_path: Path, runner: runner_client.ExtensionRunnerInfo
-) -> Path:
-    logger.trace(f"Get preset project path: {preset.source}")
+    project_config: dict[str, Any] = {}
 
-    try:
-        resolve_path_result = await runner_client.resolve_package_path(
-            runner, preset.source
+    if py_presets_config is not None:
+        merge_projects_configs(
+            project_config, project.def_path, py_presets_config, project.def_path
         )
-    except runner_client.BaseRunnerRequestException as error:
-        error_message = error.message
-        lower_message = error_message.lower()
-        if "cannot find package" in lower_message or "no module named" in lower_message:
-            if preset.declared_by is not None:
-                description = (
-                    f"Preset '{preset.source}' is declared by preset '{preset.declared_by}' "
-                    f"(used in project {def_path.parent}) "
-                    f"but '{preset.source}' is not installed in the dev_workspace environment. "
-                    f"Add '{preset.source}' to the pip dependencies of '{preset.declared_by}' "
-                    f"in its pyproject.toml, then re-run 'prepare-envs'."
-                )
-            else:
-                description = (
-                    f"Preset '{preset.source}' is declared in project {def_path.parent} "
-                    f"but is not installed in the dev_workspace environment. "
-                    f"Add '{preset.source}' to the project's dev_workspace pip dependencies "
-                    f"in its pyproject.toml, then re-run 'prepare-envs'."
-                )
-            raise config_models.PresetPackageNotInstalledError(description)
 
-        await user_messages.error(f"Failed to get preset project path: {error_message}")
-        raise config_models.ConfigurationError(
-            "Failed to resolve preset package path "
-            f"for {preset.source} in project {def_path.parent}: {error_message}"
+    merge_projects_configs(
+        project_config, project.def_path, project_def, project.def_path
+    )
+    # `merge_projects_configs` merges only finecode config. Copy all other keys as
+    # is
+    for key, value in project_def.items():
+        if key != "tool":
+            project_config[key] = value
+    tool_raw_config = project_def.get("tool", None)
+    if tool_raw_config is not None:
+        if "tool" not in project_config:
+            project_config["tool"] = {}
+        project_tool_config = project_config["tool"]
+        for key, value in tool_raw_config.items():
+            if key != "finecode":
+                project_tool_config[key] = value
+
+    if user_config_raw is not None:
+        # Exclude 'presets' (already resolved in preset_sources above) and
+        # 'dependency-groups' (handled separately below).
+        # Presets are excluded to avoid overwriting the project's presets list in
+        # the merged config — the else-branch in merge_projects_configs assigns
+        # unknown keys directly, which would lose the project's preset entries.
+        user_finecode_section = {
+            k: v
+            for k, v in user_config_raw.items()
+            if k not in ("dependency-groups", "presets")
+        }
+        wrapped_user: dict[str, Any] = {"tool": {"finecode": user_finecode_section}}
+        # config2 (user) overwrites config1 (project) for conflicting items — user wins
+        merge_projects_configs(
+            project_config, project.def_path, wrapped_user, user_config_path
         )
-    try:
-        preset_project_path = Path(resolve_path_result["packagePath"])
-    except KeyError as exception:
-        raise config_models.ConfigurationError(
-            f"Preset source cannot be resolved — ER response missing 'packagePath': {preset.source}"
-        ) from exception
 
-    logger.trace(f"Got: {preset.source} -> {preset_project_path}")
-    return preset_project_path
+        if "dependency-groups" in user_config_raw:
+            dep_groups: dict[str, list[Any]] = project_config.setdefault(
+                "dependency-groups", {}
+            )
+            for group_name, packages in user_config_raw["dependency-groups"].items():
+                if group_name not in dep_groups:
+                    dep_groups[group_name] = list(packages)
+                else:
+                    for pkg in packages:
+                        if pkg not in dep_groups[group_name]:
+                            dep_groups[group_name].append(pkg)
+
+    # add runtime dependency group if it's not explicitly declared
+    add_runtime_dependency_group_if_new(project_config)
+
+    finecode_section = project_config.get("tool", {}).get("finecode", {})
+    actions = _structure_actions(finecode_section.get("action", {}))
+    services = _structure_services(finecode_section.get("service", []))
+
+    deps_groups: dict[str, list[Any]] = project_config.setdefault(
+        "dependency-groups", {}
+    )
+    merge_handlers_dependencies_into_groups(actions, deps_groups)
+    merge_services_dependencies_into_groups(services, deps_groups)
+    _apply_extra_selection_to_dependency_groups(
+        deps_groups, read_workspace_extra_selection(ws_context)
+    )
+    _deduplicate_deps_groups(deps_groups)
+    # ADR-0047: expand any interpreter-matrix matrix environment into concrete
+    # per-interpreter envs before the extension runner dependency is injected,
+    # so every concrete env's own dependency group receives it too.
+    resolve_interpreter_matrices(project_config)
+    # add extension runner after merging handlers dependencies into groups
+    # because env may be missing in dependency-groups and be used in handlers
+    add_extension_runner_to_dependencies(project_config)
+
+    ws_context.ws_projects_raw_configs[project.dir_path] = project_config
+
+
+def read_project_config(
+    project: domain.Project, ws_context: context.WorkspaceContext
+) -> None:
+    """Read and store a project's config, contributing nothing from its py-presets —
+    not even the mandatory ``fine_envs`` one, since every preset source needs a
+    dev_workspace runner to locate on disk. Callers that have (or can start) that
+    runner should use ``runner.preset_resolution.read_project_config_with_py_presets``
+    instead; it wraps this same sources/finish split around the runner round trip.
+
+    Takes no ``resolve_presets`` flag on purpose: with no runner to resolve against,
+    the declared preset sources are inert either way, so a flag here would suggest a
+    choice that does not exist. Synchronous for the same reason: the RPC round trip
+    was the only thing that ever needed awaiting.
+
+    Raises:
+        ConfigurationError: the project's config files are malformed — see
+            ``read_project_config_sources``.
+    """
+    sources = read_project_config_sources(project, resolve_presets=False)
+    if sources is None:
+        return
+    finish_project_config(project, ws_context, sources, py_presets_config=None)
 
 
 def read_preset_config(
-    config_path: Path, preset_id: str
+    config_path: Path, preset_id: str, selected_extras: tuple[str, ...] = ()
 ) -> tuple[dict[str, Any], config_models.PresetDefinition]:
     # preset_id is used only for logs to make them more useful
     logger.trace(f"Read preset config: {preset_id}")
@@ -547,10 +573,23 @@ def read_preset_config(
     except KeyError:
         presets = []
     try:
+        extra_gates = preset_toml["tool"]["finecode"]["extra"]
+    except KeyError:
+        extra_gates = {}
+
+    _validate_extra_gates(config_path, preset_id, extra_gates)
+
+    gated_presets: list[dict[str, Any]] = []
+    for extra_name in selected_extras:
+        gate = extra_gates.get(extra_name)
+        if gate is not None:
+            gated_presets.extend(gate.get("presets", []))
+
+    try:
         preset_config = config_models.PresetDefinition(
             extends=[
                 _converter.structure(raw_preset, config_models.FinecodePresetDefinition)
-                for raw_preset in presets
+                for raw_preset in presets + gated_presets
             ]
         )
     except cattrs.ClassValidationError as exception:
@@ -563,7 +602,7 @@ def read_preset_config(
         try:
             with open(preset_user_config_path, "rb") as f:
                 preset_user_raw = dict(toml_loads(f.read()).unwrap())
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             raise config_models.ConfigurationError(
                 f"Failed to parse {preset_user_config_path}: {e}"
             )
@@ -584,16 +623,19 @@ def read_preset_config(
                 "at preset level; declare it in your project-root finecode-user.toml instead."
             )
         # 'presets' is excluded here and appended to preset_config.extends below instead
-        # of going through the generic merge: _merge_projects_configs overwrites
+        # of going through the generic merge: merge_projects_configs overwrites
         # list-valued keys wholesale (they aren't one of its special-cased keys), which
         # would silently drop the preset's own `presets` entries.
         finecode_section = {
-            k: v for k, v in preset_user_raw.items()
+            k: v
+            for k, v in preset_user_raw.items()
             if k not in ("dependency-groups", "presets")
         }
         wrapped_user: dict[str, Any] = {"tool": {"finecode": finecode_section}}
         # config2 (user) overwrites config1 (preset) for conflicting items — user wins
-        _merge_projects_configs(preset_toml, config_path, wrapped_user, preset_user_config_path)
+        merge_projects_configs(
+            preset_toml, config_path, wrapped_user, preset_user_config_path
+        )
         if "presets" in preset_user_raw:
             try:
                 user_extends = [
@@ -612,54 +654,72 @@ def read_preset_config(
     return (preset_toml, preset_config)
 
 
-async def collect_config_from_py_presets(
-    presets_sources: list[str],
-    def_path: Path,
-    runner: runner_client.ExtensionRunnerInfo,
-) -> dict[str, Any] | None:
-    config: dict[str, Any] | None = None
-    processed_presets: set[str] = set()
-    presets_to_process: set[PresetToProcess] = set(
-        [
-            PresetToProcess(source=preset_source, project_def_path=def_path)
-            for preset_source in presets_sources
-        ]
+def _find_package_pyproject(config_path: Path) -> Path | None:
+    parents = (
+        config_path.parent,
+        config_path.parent.parent,
+        config_path.parent.parent.parent,
     )
-    while len(presets_to_process) > 0:
-        preset = presets_to_process.pop()
-        processed_presets.add(preset.source)
+    for parent in parents:
+        candidate = parent / "pyproject.toml"
+        if candidate.exists():
+            return candidate
+    return None
 
-        preset_project_path = await get_preset_project_path(
-            preset=preset, def_path=def_path, runner=runner
-        )
 
-        preset_toml_path = preset_project_path / "preset.toml"
-        preset_toml, preset_config = read_preset_config(preset_toml_path, preset.source)
-        if config is None:
-            # use merge instead of just assigning config, because merge not only merges
-            # configs, but also adapts relative pathes etc.
-            config = {}
-            _merge_projects_configs(config, def_path, preset_toml, preset_toml_path, is_from_preset=True)
-        else:
-            _merge_projects_configs(config, def_path, preset_toml, preset_toml_path, is_from_preset=True)
-        new_presets_sources = (
-            set([extend.source for extend in preset_config.extends]) - processed_presets
+def _validate_extra_gates(
+    config_path: Path,
+    preset_id: str,
+    extra_gates: dict[str, Any],
+) -> None:
+    """Check that each ``[tool.finecode.extra.*]`` gate is mirrored by an
+    entry in the same package's ``[project.optional-dependencies]``, and vice
+    versa.
+
+    The two tracked files must stay in sync: a gate without an extra would
+    select nothing, and an extra without a gate is dead config (unless the
+    package never uses the gate mechanism at all — no ``extra`` table means
+    nothing is checked). Validation runs against the preset's own
+    ``preset.toml`` / ``pyproject.toml``, never the merged config, because two
+    presets each declaring ``extra`` would otherwise clobber one another.
+    """
+    if not isinstance(extra_gates, dict):
+        raise config_models.ConfigurationError(
+            f"[tool.finecode.extra] in {preset_id} must be a TOML table."
         )
-        for new_preset_source in new_presets_sources:
-            presets_to_process.add(
-                PresetToProcess(
-                    source=new_preset_source,
-                    project_def_path=def_path,
-                    declared_by=preset.source,
-                )
+    if not extra_gates:
+        return
+
+    for extra_name, gate in extra_gates.items():
+        if not isinstance(gate, dict) or not isinstance(gate.get("presets"), list):
+            raise config_models.ConfigurationError(
+                f"Extra gate '{extra_name}' in {preset_id} must be a table with a "
+                f"'presets' list."
             )
 
-    return config
+    pyproject_path = _find_package_pyproject(config_path)
+    if pyproject_path is None:
+        return
+    with open(pyproject_path, "rb") as f:
+        pyproject_toml = toml_loads(f.read()).unwrap()
+    declared_extras = pyproject_toml.get("project", {}).get("optional-dependencies", {})
+
+    for extra_name in extra_gates:
+        if extra_name not in declared_extras:
+            raise config_models.ConfigurationError(
+                f"Extra gate '{extra_name}' in {preset_id} has no matching "
+                f"[project.optional-dependencies] entry in {pyproject_path}."
+            )
+    for extra_name in declared_extras:
+        if extra_name not in extra_gates:
+            raise config_models.ConfigurationError(
+                f"[project.optional-dependencies] entry '{extra_name}' in "
+                f"{pyproject_path} has no matching extra gate in {preset_id}."
+            )
 
 
 def _merge_override_specs(existing: list[str], new: list[str]) -> list[str]:
     """Merge two PEP 508 override spec lists; later list wins per canonical package name."""
-    import re
 
     def _canonical(spec: str) -> str:
         m = re.match(r"^([A-Za-z0-9]([A-Za-z0-9._-]*[A-Za-z0-9])?)", spec.strip())
@@ -725,7 +785,7 @@ def _deep_merge_dicts(target: dict[str, Any], source: dict[str, Any]) -> None:
             target[key] = value
 
 
-def _merge_projects_configs(
+def merge_projects_configs(
     config1: dict[str, Any],
     config1_filepath: Path,
     config2: dict[str, Any],
@@ -767,8 +827,13 @@ def _merge_projects_configs(
                     # Presets are processed in non-deterministic order, so a preset
                     # that adds handlers to an action declared by another preset may
                     # be merged before the declaring preset supplies the source.
-                    if "source" in action_info and "source" not in tool_finecode_config1[key][action_name]:
-                        tool_finecode_config1[key][action_name]["source"] = action_info["source"]
+                    if (
+                        "source" in action_info
+                        and "source" not in tool_finecode_config1[key][action_name]
+                    ):
+                        tool_finecode_config1[key][action_name]["source"] = action_info[
+                            "source"
+                        ]
 
                     if "config" in action_info:
                         if "config" not in tool_finecode_config1[key][action_name]:
@@ -928,10 +993,12 @@ def _merge_projects_configs(
                 if ext_name not in ext_config1:
                     ext_config1[ext_name] = dict(ext_data)
                 else:
-                    existing_overrides = ext_config1[ext_name].get("dependencies_override", [])
+                    existing_overrides = ext_config1[ext_name].get(
+                        "dependencies_override", []
+                    )
                     new_overrides = ext_data.get("dependencies_override", [])
-                    ext_config1[ext_name]["dependencies_override"] = _merge_override_specs(
-                        existing_overrides, new_overrides
+                    ext_config1[ext_name]["dependencies_override"] = (
+                        _merge_override_specs(existing_overrides, new_overrides)
                     )
         elif key in config1:
             tool_finecode_config1[key].update(value)
@@ -1080,6 +1147,10 @@ def merge_services_dependencies_into_groups(
     deps_groups: dict[str, list[Any]],
 ) -> None:
     for service in services:
+        # A config-only entry declares neither an implementation nor an env, so
+        # there is nothing to install for it (ADR-0070).
+        if service.env is None:
+            continue
         if service.env not in deps_groups:
             deps_groups[service.env] = []
         deps_groups[service.env] += service.dependencies
@@ -1088,12 +1159,45 @@ def merge_services_dependencies_into_groups(
 def _deduplicate_deps_groups(deps_groups: dict[str, list[Any]]) -> None:
     # dependency list can contain not only strings, but also dicts like
     # `{ 'include-group': 'runtime' }` which are not hashable, so use list-based dedup
-    for group_name in deps_groups.keys():
+    for group_name in deps_groups:  # noqa: PLC0206
         unique_deps: list[Any] = []
         for dep in deps_groups[group_name]:
             if dep not in unique_deps:
                 unique_deps.append(dep)
         deps_groups[group_name] = unique_deps
+
+
+def _rewrite_spec_with_extras(spec: str, selected_extras: list[str]) -> str:
+    name = get_dependency_name(spec)
+    rest = spec[len(name) :]
+    existing: list[str] = []
+    version_or_marker = rest
+    if rest.startswith("["):
+        closing = rest.index("]")
+        existing = sorted(
+            {extra.strip() for extra in rest[1:closing].split(",") if extra.strip()}
+        )
+        version_or_marker = rest[closing + 1 :]
+    merged = sorted(set(existing) | set(selected_extras))
+    return f"{name}[{','.join(merged)}]{version_or_marker}"
+
+
+def _apply_extra_selection_to_dependency_groups(
+    deps_groups: dict[str, list[Any]],
+    selection: dict[str, list[str]],
+) -> None:
+    if not selection:
+        return
+    for group_name, packages in deps_groups.items():
+        rewritten: list[Any] = []
+        for spec in packages:
+            if isinstance(spec, str):
+                name = get_dependency_name(spec)
+                selected = selection.get(canonicalize_name(name))
+                if selected:
+                    spec = _rewrite_spec_with_extras(spec, selected)
+            rewritten.append(spec)
+        deps_groups[group_name] = rewritten
 
 
 def resolve_interpreter_matrices(project_config: dict[str, Any]) -> None:
@@ -1153,8 +1257,7 @@ def resolve_interpreter_matrices(project_config: dict[str, Any]) -> None:
                         interpreter_matrix.parse_interpreter(value)
                         for value in env_table[env_name]["interpreters"]
                     ]
-                    if env_name in env_table
-                    and "interpreters" in env_table[env_name]
+                    if env_name in env_table and "interpreters" in env_table[env_name]
                     else None
                 ),
             )
@@ -1201,16 +1304,14 @@ def resolve_interpreter_matrices(project_config: dict[str, Any]) -> None:
     # being unique within one action's handler list (existing
     # convention; see domain.ActionHandler docstring). By this point in
     # read_project_config every action's "handlers" is already a plain
-    # list of dicts — _merge_projects_configs normalizes the dict-keyed
+    # list of dicts — merge_projects_configs normalizes the dict-keyed
     # [tool.finecode.action.X.handlers.<name>] authoring shorthand into
     # list form for every action it merges (including the project's own
     # pyproject.toml, which always passes through it), so no dict-keyed
     # form can reach this point.
     target_envs_by_handler: dict[tuple[str, str], list[str]] = {}
     for ref in expansion.handlers:
-        target_envs_by_handler.setdefault(
-            (ref.action, ref.name), []
-        ).append(ref.env)
+        target_envs_by_handler.setdefault((ref.action, ref.name), []).append(ref.env)
 
     for action_name, action_raw in actions_raw.items():
         if "handlers" not in action_raw:
@@ -1233,7 +1334,7 @@ def resolve_interpreter_matrices(project_config: dict[str, Any]) -> None:
     # no-mixing/set-equality rule — that pair of validations is scoped
     # to actions — but expansion itself is a property of the env, so it
     # applies here the same as for handlers). [[tool.finecode.service]]
-    # is always a plain list of dicts (see _merge_projects_configs's
+    # is always a plain list of dicts (see merge_projects_configs's
     # "service" branch, which merges by "interface" but never accepts a
     # dict-keyed shorthand), so no normalization concern applies here.
     if "service" in finecode_section:
@@ -1251,34 +1352,42 @@ def resolve_interpreter_matrices(project_config: dict[str, Any]) -> None:
         finecode_section["service"] = new_services_raw
 
 
-def resolve_workspace_editable_packages(
+def resolve_workspace_packages(
     ws_context: context.WorkspaceContext,
 ) -> dict[str, Path]:
-    """Resolve workspace editable packages from finecode-workspace.toml.
+    """Resolve workspace packages from finecode-workspace.toml.
 
     Returns the union of:
       - Every discovered project's [project].name → project directory,
-        when [workspace].all_workspace_packages_editable is True.
-      - Each [workspace].editable_packages entry, validated.
+        unless [workspace.workspace_packages].all_projects is False. The
+        default is True, so a workspace with no finecode-workspace.toml (or no
+        ``[workspace.workspace_packages]`` table) treats every project as a
+        workspace package.
+      - Each [workspace.workspace_packages].extra entry, validated.
+
+    Raises:
+        ConfigurationError: an ``extra`` entry is missing, malformed, or two
+            different paths resolve to the same package name.
     """
     if not ws_context.ws_dirs_paths:
         return {}
 
     ws_root = ws_context.ws_dirs_paths[0]
     ws_config_path = ws_root / "finecode-workspace.toml"
-    if not ws_config_path.exists():
-        return {}
-
-    with open(ws_config_path, "rb") as f:
-        ws_config = toml_loads(f.read()).unwrap()
+    if ws_config_path.exists():
+        with open(ws_config_path, "rb") as f:
+            ws_config = toml_loads(f.read()).unwrap()
+    else:
+        ws_config = {}
 
     workspace_table = ws_config.get("workspace", {})
-    all_editable: bool = workspace_table.get("all_workspace_packages_editable", False)
-    explicit_paths: list[str] = workspace_table.get("editable_packages", [])
+    packages_table = workspace_table.get("workspace_packages", {})
+    all_projects: bool = packages_table.get("all_projects", True)
+    explicit_paths: list[str] = packages_table.get("extra", [])
 
     result: dict[str, Path] = {}
 
-    if all_editable:
+    if all_projects:
         for project in ws_context.ws_projects.values():
             if project.name is None:
                 continue
@@ -1290,24 +1399,24 @@ def resolve_workspace_editable_packages(
             entry_path = (ws_root / entry_path).resolve()
         if not entry_path.exists():
             raise config_models.ConfigurationError(
-                f"[workspace].editable_packages entry '{raw_entry}' does not exist: {entry_path}"
+                f"[workspace.workspace_packages].extra entry '{raw_entry}' does not exist: {entry_path}"
             )
         pyproject_path = entry_path / "pyproject.toml"
         if not pyproject_path.exists():
             raise config_models.ConfigurationError(
-                f"[workspace].editable_packages entry '{raw_entry}' has no pyproject.toml: {entry_path}"
+                f"[workspace.workspace_packages].extra entry '{raw_entry}' has no pyproject.toml: {entry_path}"
             )
         with open(pyproject_path, "rb") as f:
             entry_toml = toml_loads(f.read()).unwrap()
         pkg_name = entry_toml.get("project", {}).get("name")
         if pkg_name is None:
             raise config_models.ConfigurationError(
-                f"[workspace].editable_packages entry '{raw_entry}' has no [project].name: {entry_path}"
+                f"[workspace.workspace_packages].extra entry '{raw_entry}' has no [project].name: {entry_path}"
             )
         if pkg_name in result:
             if result[pkg_name] != entry_path:
                 raise config_models.ConfigurationError(
-                    f"[workspace].editable_packages: package '{pkg_name}' resolves to two different paths: "
+                    f"[workspace.workspace_packages].extra: package '{pkg_name}' resolves to two different paths: "
                     f"'{result[pkg_name]}' and '{entry_path}'"
                 )
             # same name + same path → silent de-dup
@@ -1315,6 +1424,169 @@ def resolve_workspace_editable_packages(
             result[pkg_name] = entry_path
 
     return result
+
+
+def resolve_workspace_packages_install_mode(
+    ws_context: context.WorkspaceContext, dev_env: str
+) -> Literal["editable", "wheel"]:
+    """Resolve how workspace packages are installed for the active dev-env.
+
+    Precedence: an exact ``dev_env`` key in
+    ``[workspace.workspace_packages_install]``, then the ``ci`` bucket when
+    ``dev_env == "ci"`` (else the ``local`` bucket), then the bucket default:
+    ``"wheel"`` for ``ci`` and ``"editable"`` otherwise. The defaults are
+    active even with no ``finecode-workspace.toml``.
+
+    Raises:
+        ConfigurationError: a configured value is not ``"editable"`` or
+            ``"wheel"``.
+    """
+    bucket = "ci" if dev_env == "ci" else "local"
+    default: Literal["editable", "wheel"] = "wheel" if bucket == "ci" else "editable"
+
+    if not ws_context.ws_dirs_paths:
+        return default
+
+    ws_root = ws_context.ws_dirs_paths[0]
+    ws_config_path = ws_root / "finecode-workspace.toml"
+    if not ws_config_path.exists():
+        return default
+
+    with open(ws_config_path, "rb") as f:
+        ws_config = toml_loads(f.read()).unwrap()
+
+    workspace_table = ws_config.get("workspace", {})
+    install_table = workspace_table.get("workspace_packages_install", {})
+
+    for key, value in install_table.items():
+        if key == "exclude":
+            continue
+        if value not in ("editable", "wheel"):
+            raise config_models.ConfigurationError(
+                f"[workspace.workspace_packages_install].{key} must be 'editable' or 'wheel', got {value!r}"
+            )
+
+    for key in (dev_env, bucket):
+        if key in install_table:
+            return install_table[key]
+    return default
+
+
+def resolve_workspace_packages_install_exclude(
+    ws_context: context.WorkspaceContext,
+) -> list[str]:
+    """Return the packages the wheelhouse build must skip.
+
+    ``[workspace.workspace_packages_install].exclude`` keeps a package editable
+    in every env and omits it from the wheelhouse. It is the explicit escape
+    hatch for a package no builder can turn into a wheel.
+    """
+    if not ws_context.ws_dirs_paths:
+        return []
+
+    ws_root = ws_context.ws_dirs_paths[0]
+    ws_config_path = ws_root / "finecode-workspace.toml"
+    if not ws_config_path.exists():
+        return []
+
+    with open(ws_config_path, "rb") as f:
+        ws_config = toml_loads(f.read()).unwrap()
+
+    install_table = ws_config.get("workspace", {}).get("workspace_packages_install", {})
+    excluded = install_table.get("exclude", [])
+    if not isinstance(excluded, list) or not all(
+        isinstance(entry, str) for entry in excluded
+    ):
+        raise config_models.ConfigurationError(
+            "[workspace.workspace_packages_install].exclude must be a list of package names"
+        )
+    return list(excluded)
+
+
+def read_workspace_extra_selection(
+    ws_context: context.WorkspaceContext,
+) -> dict[str, list[str]]:
+    """Read and validate the gitignored ``finecode-workspace-user.toml``.
+
+    The file may contain only an ``extras`` table mapping package names to the
+    extras they select. Keys are canonicalized (PEP 503), and each selected
+    extra is checked against the package's declared
+    ``[project.optional-dependencies]`` when the package is workspace-resident;
+    selections for packages not in the workspace are left alone (they may be
+    installed from an index). The result is memoised on the workspace context.
+
+    Raises:
+        ConfigurationError: the file is malformed, contains a key other than
+            ``extras``, has a non-list extras value, or selects an extra a
+            workspace package does not declare.
+    """
+    if ws_context.ws_extra_selection:
+        return ws_context.ws_extra_selection
+    if not ws_context.ws_dirs_paths:
+        return {}
+
+    ws_root = ws_context.ws_dirs_paths[0]
+    selection_path = ws_root / "finecode-workspace-user.toml"
+    if not selection_path.exists():
+        return {}
+
+    try:
+        with open(selection_path, "rb") as f:
+            raw = dict(toml_loads(f.read()).unwrap())
+    except Exception as e:  # noqa: BLE001
+        raise config_models.ConfigurationError(
+            f"Failed to parse {selection_path}: {e}"
+        ) from e
+
+    for key in raw:
+        if key != "extras":
+            raise config_models.ConfigurationError(
+                f"Unknown key '{key}' in {selection_path}; only 'extras' is allowed."
+            )
+
+    extras_raw = raw.get("extras", {})
+    if not isinstance(extras_raw, dict):
+        raise config_models.ConfigurationError(
+            f"The 'extras' table in {selection_path} must be a TOML table."
+        )
+
+    selection: dict[str, list[str]] = {}
+    for package, extras in extras_raw.items():
+        if not isinstance(extras, list):
+            raise config_models.ConfigurationError(
+                f"extras for package '{package}' in {selection_path} must be a list."
+            )
+        selection[canonicalize_name(package)] = [str(extra) for extra in extras]
+
+    _validate_selection_against_declared_extras(ws_context, selection_path, selection)
+
+    ws_context.ws_extra_selection = selection
+    return selection
+
+
+def _validate_selection_against_declared_extras(
+    ws_context: context.WorkspaceContext,
+    selection_path: Path,
+    selection: dict[str, list[str]],
+) -> None:
+    projects_by_name = {
+        canonicalize_name(project.name): project
+        for project in ws_context.ws_projects.values()
+        if project.name is not None
+    }
+    for package, selected_extras in selection.items():
+        project = projects_by_name.get(package)
+        if project is None:
+            continue
+        with open(project.def_path, "rb") as f:
+            project_toml = toml_loads(f.read()).unwrap()
+        declared = project_toml.get("project", {}).get("optional-dependencies", {})
+        unknown = [extra for extra in selected_extras if extra not in declared]
+        if unknown:
+            raise config_models.ConfigurationError(
+                f"Unknown extra(s) {', '.join(unknown)} for package '{package}' in "
+                f"{selection_path}. Declared extras: {sorted(declared)}"
+            )
 
 
 def add_extension_runner_to_dependencies(project_config: dict[str, Any]) -> None:
@@ -1330,7 +1602,7 @@ def add_extension_runner_to_dependencies(project_config: dict[str, Any]) -> None
         # unavailable (e.g. uv + python -m finecode). Fall back to source version.
         try:
             from finecode._version import version as finecode_version
-        except Exception:
+        except Exception:  # noqa: BLE001
             # TODO: raise an error?
             logger.warning(
                 "Could not resolve finecode version from package metadata or source; "

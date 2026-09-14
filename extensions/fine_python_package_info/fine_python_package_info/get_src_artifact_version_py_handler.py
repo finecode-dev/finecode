@@ -1,7 +1,7 @@
 import dataclasses
 
-from finecode_extension_api import code_action
 from fine_src_artifacts import get_src_artifact_version_action
+from finecode_extension_api import code_action
 from finecode_extension_api.interfaces import ilogger, iprojectinfoprovider
 
 
@@ -30,25 +30,32 @@ class GetSrcArtifactVersionPyHandler(
         payload: get_src_artifact_version_action.GetSrcArtifactVersionRunPayload,
         run_context: get_src_artifact_version_action.GetSrcArtifactVersionRunContext,
     ) -> get_src_artifact_version_action.GetSrcArtifactVersionRunResult:
+        # Use current project if src_artifact_def_path is not provided
+        src_artifact_def_path = payload.src_artifact_def_path
+        if src_artifact_def_path is None:
+            src_artifact_def_path = (
+                self.project_info_provider.get_current_project_def_path()
+            )
+
         src_artifact_raw_def = await self.project_info_provider.get_project_raw_config(
-            project_def_path=payload.src_artifact_def_path
+            project_def_path=src_artifact_def_path
         )
         version = src_artifact_raw_def.get("project", {}).get("version", None)
 
         if version is None:
-            dynamic_fields = src_artifact_raw_def.get('project', {}).get('dynamic', [])
-            if 'version' in dynamic_fields:
+            dynamic_fields = src_artifact_raw_def.get("project", {}).get("dynamic", [])
+            if "version" in dynamic_fields:
                 raise code_action.ActionFailedException(
-                    f"Version is dynamic in {payload.src_artifact_def_path}, use the right handler for that"
+                    f"Version is dynamic in {src_artifact_def_path}, use the right handler for that"
                 )
             else:
                 raise code_action.ActionFailedException(
-                    f"Version not found in {payload.src_artifact_def_path}"
+                    f"Version not found in {src_artifact_def_path}"
                 )
 
         if not isinstance(version, str):
             raise code_action.ActionFailedException(
-                f"project.version in {payload.src_artifact_def_path} expected to be a string, but is {type(version)}"
+                f"project.version in {src_artifact_def_path} expected to be a string, but is {type(version)}"
             )
 
         return get_src_artifact_version_action.GetSrcArtifactVersionRunResult(

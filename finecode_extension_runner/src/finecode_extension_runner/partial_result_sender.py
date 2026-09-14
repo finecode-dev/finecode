@@ -1,8 +1,8 @@
 import asyncio
 import collections.abc
 
-from loguru import logger
 from finecode_extension_api import code_action
+from loguru import logger
 
 
 class PartialResultSender:
@@ -24,7 +24,9 @@ class PartialResultSender:
         value: code_action.RunActionResult,
         result_formats: list[str] | None = None,
     ) -> None:
-        logger.trace(f"PartialResultSender: schedule_sending for token={token}, value_type={type(value).__name__}")
+        logger.trace(
+            f"PartialResultSender: schedule_sending for token={token}, value_type={type(value).__name__}"
+        )
         if token not in self.results_scheduled_to_send_by_token:
             self.results_scheduled_to_send_by_token[token] = value
         else:
@@ -36,7 +38,9 @@ class PartialResultSender:
             self.scheduled_task = asyncio.create_task(self._wait_and_send())
 
     async def send_all_immediately(self) -> None:
-        logger.trace(f"PartialResultSender: send_all_immediately, pending_tokens={list(self.results_scheduled_to_send_by_token.keys())}")
+        logger.trace(
+            f"PartialResultSender: send_all_immediately, pending_tokens={list(self.results_scheduled_to_send_by_token.keys())}"
+        )
         if self.scheduled_task is not None:
             self.scheduled_task.cancel()
             self.scheduled_task = None

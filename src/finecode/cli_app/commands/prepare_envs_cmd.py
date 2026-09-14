@@ -2,11 +2,11 @@
 import pathlib
 
 import click
+from loguru import logger
 
+from finecode.cli_app.log_render import render_log_records, user_message_log_level
 from finecode.wm_client import ApiClient, ApiError
 from finecode.wm_server import wm_lifecycle
-from finecode.cli_app.log_render import render_log_records, user_message_log_level
-from loguru import logger
 
 
 class PrepareEnvsFailed(Exception):
@@ -23,8 +23,8 @@ async def prepare_envs(
     interpreter_names: list[str] | None = None,
     project_names: list[str] | None = None,
     dev_env: str = "cli",
+    workspace_packages_mode: str | None = None,
     verbose: bool = False,
-    max_concurrent_projects: int | None = None,
 ) -> None:
     """Prepare all virtual environments for a workspace.
 
@@ -65,8 +65,11 @@ async def prepare_envs(
 
         client = ApiClient()
         await client.connect("127.0.0.1", port)
+
         # Silence "unhandled notification" trace log — treeChanged is irrelevant in CLI mode.
-        async def _noop(_: object) -> None: pass
+        async def _noop(_: object) -> None:
+            pass
+
         client.on_notification("actions/treeChanged", _noop)
 
         async def _on_user_message(params: dict) -> None:
@@ -77,6 +80,7 @@ async def prepare_envs(
         client.on_notification("server/userMessage", _on_user_message)
 
         if verbose:
+
             async def _on_log_records(params: dict) -> None:
                 for line in render_log_records(params):
                     click.echo(line, err=True)
@@ -93,7 +97,7 @@ async def prepare_envs(
                 interpreter_names,
                 project_names,
                 dev_env,
-                max_concurrent_projects,
+                workspace_packages_mode,
             )
         finally:
             await client.close()
@@ -110,7 +114,7 @@ async def _run(
     interpreter_names: list[str] | None = None,
     project_names: list[str] | None = None,
     dev_env: str = "cli",
-    max_concurrent_projects: int | None = None,
+    workspace_packages_mode: str | None = None,
 ) -> None:
     try:
         await client.prepare_envs(
@@ -120,10 +124,10 @@ async def _run(
             interpreter_names=interpreter_names,
             project_names=project_names,
             dev_env=dev_env,
-            max_concurrent_projects=max_concurrent_projects,
+            workspace_packages_mode=workspace_packages_mode,
         )
     except ApiError as exc:
         raise PrepareEnvsFailed(str(exc)) from exc
 
 
-__all__ = ["prepare_envs", "PrepareEnvsFailed"]
+__all__ = ["PrepareEnvsFailed", "prepare_envs"]

@@ -43,8 +43,9 @@ import dataclasses
 import enum
 
 from finecode_extension_api import code_action, textstyler
-from fine_test.test_id import TestId
 from finecode_extension_api.resource_uri import ResourceUri
+
+from fine_test.test_id import TestId
 
 
 class TestOutcome(enum.StrEnum):
@@ -56,8 +57,7 @@ class TestOutcome(enum.StrEnum):
 
 @dataclasses.dataclass
 class TestCaseResult:
-    """Result for a single test case.
-    """
+    """Result for a single test case."""
 
     test_id: TestId
     """Unified, handler-agnostic identifier. Handlers convert to/from their native format (e.g. pytest node IDs) when listing and running tests."""
@@ -83,8 +83,8 @@ class TestCaseResult:
 
 @dataclasses.dataclass
 class RunTestsRunPayload(code_action.RunActionPayload):
-    """Payload for running tests.
-    """
+    """Payload for running tests."""
+
     file_paths: list[ResourceUri] = dataclasses.field(default_factory=list)
     """Test files or directories to run. Empty list means the handler falls back to its own handler-config default (e.g. `default_test_dirs` on the pytest handler) if such exists."""
     test_ids: list[TestId] = dataclasses.field(default_factory=list)
@@ -95,8 +95,8 @@ class RunTestsRunPayload(code_action.RunActionPayload):
 
 @dataclasses.dataclass
 class RunTestsRunResult(code_action.RunActionResult):
-    """Result of running tests.
-    """
+    """Result of running tests."""
+
     test_results: list[TestCaseResult]
     """List of results for each test case."""
 
@@ -178,10 +178,14 @@ class RunTestsRunResult(code_action.RunActionResult):
                 text.append("\n")
 
         # Skipped test names
-        skipped_results = [t for t in self.test_results if t.outcome == TestOutcome.SKIPPED]
+        skipped_results = [
+            t for t in self.test_results if t.outcome == TestOutcome.SKIPPED
+        ]
         for result in skipped_results:
             name = result.display_name or str(result.test_id)
-            text.append_styled("\nSKIPPED ", foreground=textstyler.Color.YELLOW, bold=True)
+            text.append_styled(
+                "\nSKIPPED ", foreground=textstyler.Color.YELLOW, bold=True
+            )
             text.append_styled(name, bold=True)
             if result.file_path is not None:
                 location = result.file_path

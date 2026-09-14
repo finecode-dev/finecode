@@ -21,16 +21,14 @@ is_valid_venv() {
         return 1
     fi
 
-    # Requested check first; fall back to a guaranteed CLI entrypoint check.
-    if "$VENV_PYTHON" -m finecode version >/dev/null 2>&1; then
-        return 0
-    fi
-
-    if "$VENV_PYTHON" -m finecode version >/dev/null 2>&1; then
-        return 0
-    fi
-
-    "$VENV_PYTHON" -m finecode --help >/dev/null 2>&1
+    # `version` starts the WM server and asks it to report back, rather than
+    # just resolving a CLI entrypoint (`--help` proves nothing: click
+    # resolves it without invoking any command body) -- so a broken editable
+    # install that only breaks once the server actually starts (e.g. a
+    # package importable at the top level but missing a submodule the server
+    # needs) fails here, instead of surviving into prepare-envs's own 30s
+    # dedicated-server startup timeout.
+    "$VENV_PYTHON" -m finecode version >/dev/null 2>&1
 }
 
 recreate_venv() {
@@ -48,7 +46,12 @@ recreate_venv() {
 
     # FINECODE_LOG_LEVEL is set by CI (INFO normally, DEBUG on a debug re-run); it is
     # unset in the devcontainer, where it falls back to INFO.
+    #
+    # The elapsed line is what makes the wheel-mode win visible in the job log:
+    # a cold all-editable install measured ~2h; wheel mode should be minutes.
+    PREPARE_ENVS_START=$(date +%s)
     "$VENV_PYTHON" -m finecode prepare-envs --log-level="${FINECODE_LOG_LEVEL:-INFO}"
+    echo "prepare-envs elapsed: $(($(date +%s) - PREPARE_ENVS_START))s"
 }
 
 if [ -d "$VENV_DIR" ] && is_valid_venv; then

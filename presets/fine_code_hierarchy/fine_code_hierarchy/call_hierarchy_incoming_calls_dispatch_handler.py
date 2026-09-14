@@ -3,11 +3,12 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 
-from finecode_extension_api import code_action
 from fine_src_artifacts import (
     group_src_artifact_files_by_lang_action,
 )
+from finecode_extension_api import code_action
 from finecode_extension_api.interfaces import ilogger, iprojectactionrunner
+
 from fine_code_hierarchy.call_hierarchy_incoming_calls_action import (
     CallHierarchyIncomingCallsAction,
     CallHierarchyIncomingCallsPayload,
@@ -15,7 +16,9 @@ from fine_code_hierarchy.call_hierarchy_incoming_calls_action import (
 
 
 @dataclasses.dataclass
-class CallHierarchyIncomingCallsDispatchHandlerConfig(code_action.ActionHandlerConfig): ...
+class CallHierarchyIncomingCallsDispatchHandlerConfig(
+    code_action.ActionHandlerConfig
+): ...
 
 
 class CallHierarchyIncomingCallsDispatchHandler(
@@ -70,7 +73,9 @@ class CallHierarchyIncomingCallsDispatchHandler(
             return
 
         files_by_lang_result = await self.action_runner.run_action(
-            action_type=iprojectactionrunner.ActionRef.from_type(group_src_artifact_files_by_lang_action.GroupSrcArtifactFilesByLangAction),
+            action_type=iprojectactionrunner.ActionRef.from_type(
+                group_src_artifact_files_by_lang_action.GroupSrcArtifactFilesByLangAction
+            ),
             payload=group_src_artifact_files_by_lang_action.GroupSrcArtifactFilesByLangRunPayload(
                 file_paths=[payload.item.uri],
                 langs=list(subactions_by_lang.keys()),

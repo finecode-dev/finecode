@@ -1,7 +1,8 @@
 import asyncio
+import collections.abc
 import threading
 import typing
-import collections.abc
+
 from loguru import logger
 
 
@@ -26,7 +27,7 @@ class AsyncIOThread:
             threading.Event().wait(0.01)
 
         self._running = True
-        logger.debug(f"IO Thread started")
+        logger.debug("IO Thread started")
 
     def stop(self, timeout: float = 5.0) -> None:
         if not self._running:
@@ -53,15 +54,15 @@ class AsyncIOThread:
             self._loop = asyncio.new_event_loop()
             asyncio.set_event_loop(self._loop)
 
-            logger.debug(f"IO Thread event loop started")
+            logger.debug("IO Thread event loop started")
             self._loop.run_forever()
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             logger.error(f"Error in IO Thread event loop: {e}")
         finally:
             if self._loop and not self._loop.is_closed():
                 self._loop.close()
             self._loop = None
-            logger.debug(f"IO Thread event loop stopped")
+            logger.debug("IO Thread event loop stopped")
 
 
 async def stop_loop_with_timeout(timeout: float) -> None:

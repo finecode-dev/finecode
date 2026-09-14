@@ -3,7 +3,8 @@ from __future__ import annotations
 import pathlib
 from unittest import mock
 
-from finecode.wm_server import domain, testing as wm_testing
+from finecode.wm_server import domain
+from finecode.wm_server import testing as wm_testing
 from finecode.wm_server.runner import runner_manager
 from finecode.wm_server.services.run_service import proxy_utils
 
@@ -39,7 +40,9 @@ def _make_action(
     return action
 
 
-def _make_project(dir_path: pathlib.Path, actions: list[domain.Action]) -> domain.CollectedProject:
+def _make_project(
+    dir_path: pathlib.Path, actions: list[domain.Action]
+) -> domain.CollectedProject:
     return domain.CollectedProject(
         name="test_project",
         dir_path=dir_path,
@@ -79,11 +82,15 @@ async def test_find_subactions_for_parent_returns_already_resolved_matches(
     project = _make_project(tmp_path, [python_subaction, unrelated_action])
     ws_context = wm_testing.make_workspace_context(
         project=project,
-        runner=wm_testing.make_running_runner(working_dir_path=tmp_path, env_name="dev_no_runtime"),
+        runner=wm_testing.make_running_runner(
+            working_dir_path=tmp_path, env_name="dev_no_runtime"
+        ),
         env_name="dev_no_runtime",
     )
 
-    result = await proxy_utils.find_subactions_for_parent(_PARENT_SOURCE, project, ws_context)
+    result = await proxy_utils.find_subactions_for_parent(
+        _PARENT_SOURCE, project, ws_context
+    )
 
     assert result == [python_subaction]
 
@@ -103,7 +110,9 @@ async def test_find_subactions_for_parent_resolves_unresolved_actions_on_demand(
     project = _make_project(tmp_path, [python_subaction])
     ws_context = wm_testing.make_workspace_context(
         project=project,
-        runner=wm_testing.make_running_runner(working_dir_path=tmp_path, env_name="dev_workspace"),
+        runner=wm_testing.make_running_runner(
+            working_dir_path=tmp_path, env_name="dev_workspace"
+        ),
         env_name="dev_workspace",
     )
 
@@ -116,8 +125,12 @@ async def test_find_subactions_for_parent_resolves_unresolved_actions_on_demand(
             working_dir_path=project_def.dir_path, env_name=env_name
         )
 
-    with mock.patch.object(runner_manager, "start_runner", side_effect=_fake_start_runner):
-        result = await proxy_utils.find_subactions_for_parent(_PARENT_SOURCE, project, ws_context)
+    with mock.patch.object(
+        runner_manager, "start_runner", side_effect=_fake_start_runner
+    ):
+        result = await proxy_utils.find_subactions_for_parent(
+            _PARENT_SOURCE, project, ws_context
+        )
 
     assert result == [python_subaction]
 
@@ -135,15 +148,21 @@ async def test_find_subactions_for_parent_skips_actions_that_cannot_be_resolved(
     project = _make_project(tmp_path, [broken_action])
     ws_context = wm_testing.make_workspace_context(
         project=project,
-        runner=wm_testing.make_running_runner(working_dir_path=tmp_path, env_name="dev_workspace"),
+        runner=wm_testing.make_running_runner(
+            working_dir_path=tmp_path, env_name="dev_workspace"
+        ),
         env_name="dev_workspace",
     )
 
     async def _failing_start_runner(**_):
         raise runner_manager.RunnerFailedToStart("boom")
 
-    with mock.patch.object(runner_manager, "start_runner", side_effect=_failing_start_runner):
-        result = await proxy_utils.find_subactions_for_parent(_PARENT_SOURCE, project, ws_context)
+    with mock.patch.object(
+        runner_manager, "start_runner", side_effect=_failing_start_runner
+    ):
+        result = await proxy_utils.find_subactions_for_parent(
+            _PARENT_SOURCE, project, ws_context
+        )
 
     assert result == []
 
@@ -163,10 +182,14 @@ async def test_find_subactions_for_parent_excludes_matches_without_a_language(
     project = _make_project(tmp_path, [action_without_language])
     ws_context = wm_testing.make_workspace_context(
         project=project,
-        runner=wm_testing.make_running_runner(working_dir_path=tmp_path, env_name="dev_no_runtime"),
+        runner=wm_testing.make_running_runner(
+            working_dir_path=tmp_path, env_name="dev_no_runtime"
+        ),
         env_name="dev_no_runtime",
     )
 
-    result = await proxy_utils.find_subactions_for_parent(_PARENT_SOURCE, project, ws_context)
+    result = await proxy_utils.find_subactions_for_parent(
+        _PARENT_SOURCE, project, ws_context
+    )
 
     assert result == []

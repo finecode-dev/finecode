@@ -1,10 +1,10 @@
 # docs: docs/cli.md
 import pathlib
 
+from finecode_extension_api.resource_uri import path_to_resource_uri
 from loguru import logger
 
 from finecode.wm_client import ApiClient, ApiError
-from finecode_extension_api.resource_uri import path_to_resource_uri
 from finecode.wm_server import wm_lifecycle
 
 
@@ -14,7 +14,11 @@ class DumpFailed(Exception):
 
 
 async def dump_config(
-    workdir_path: pathlib.Path, project_name: str, own_server: bool = True, log_level: str = "INFO", dev_env: str = "cli"
+    workdir_path: pathlib.Path,
+    project_name: str,
+    own_server: bool = True,
+    log_level: str = "INFO",
+    dev_env: str = "cli",
 ):
     port_file = None
     try:
@@ -33,24 +37,29 @@ async def dump_config(
 
         client = ApiClient()
         await client.connect("127.0.0.1", port)
+
         # Silence "unhandled notification" trace log — treeChanged is irrelevant in CLI mode.
-        async def _noop(_: object) -> None: pass
+        async def _noop(_: object) -> None:
+            pass
+
         client.on_notification("actions/treeChanged", _noop)
         try:
             # add_dir only returns newly discovered projects; on a shared server
             # the workspace may already be initialized, so use list_projects for lookup.
             await client.add_dir(workdir_path)
             projects = await client.list_projects()
-            project = next(
-                (p for p in projects if p["name"] == project_name), None
-            )
+            project = next((p for p in projects if p["name"] == project_name), None)
             if project is None:
-                raise DumpFailed(f"Project '{project_name}' not found. Projects: {projects}")
+                raise DumpFailed(
+                    f"Project '{project_name}' not found. Projects: {projects}"
+                )
 
             project_path = project["path"]
             project_dir_path = pathlib.Path(project_path)
             source_file_path = project_dir_path / "pyproject.toml"
-            target_file_path = project_dir_path / "finecode_config_dump" / "pyproject.toml"
+            target_file_path = (
+                project_dir_path / "finecode_config_dump" / "pyproject.toml"
+            )
 
             try:
                 project_raw_config = await client.get_project_raw_config(project_path)
@@ -58,13 +67,9 @@ async def dump_config(
                     action_source="fine_envs.DumpConfigAction",
                     project=project_path,
                     params={
-                        "source_file_path": str(
-                            path_to_resource_uri(source_file_path)
-                        ),
+                        "source_file_path": str(path_to_resource_uri(source_file_path)),
                         "project_raw_config": project_raw_config,
-                        "target_file_path": str(
-                            path_to_resource_uri(target_file_path)
-                        ),
+                        "target_file_path": str(path_to_resource_uri(target_file_path)),
                     },
                     options={
                         "resultFormats": ["string"],

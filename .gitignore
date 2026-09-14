@@ -11,30 +11,38 @@ src/finecode/_version.py
 src/finecode.egg-info
 
 .venvs
+.uv-cache
 finecode_config_dump/
 build/
 .omc/
 finecode-user.toml
+finecode-workspace-user.toml
 # docs build
 site/
 
+# Private packages, cloned into the public checkout
+/finecode_internal_experiments/
+
 presets/*
+!presets/fine_agent
 !presets/fine_audit_code
 !presets/fine_check_imports
 !presets/fine_code_hierarchy
+!presets/fine_dep_graph
 !presets/fine_dist_artifacts
 !presets/fine_docs
 !presets/fine_docs_markdown
 !presets/fine_envs
 !presets/fine_format
+!presets/fine_git
 !presets/fine_git_hooks
 !presets/fine_inlay_hints
 !presets/fine_inspect_code
 !presets/fine_lint
 !presets/fine_logs
-!presets/fine_precommit
 !presets/fine_python_check_imports
 !presets/fine_python_code_hierarchy
+!presets/fine_python_envs
 !presets/fine_python_format
 !presets/fine_python_inlay_hints
 !presets/fine_python_lint
@@ -44,9 +52,11 @@ presets/*
 !presets/fine_python_symbol_info
 !presets/fine_python_test
 !presets/fine_python_type_check
+!presets/fine_release
 !presets/fine_semantic_tokens
 !presets/fine_src_artifacts
 !presets/fine_symbol_info
+!presets/fine_system_setup
 !presets/fine_test
 !presets/fine_toml_recommended
 !presets/fine_type_check

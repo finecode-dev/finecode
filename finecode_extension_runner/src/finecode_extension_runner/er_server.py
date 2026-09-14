@@ -18,6 +18,7 @@ import atexit
 import contextlib
 import dataclasses
 import functools
+import importlib
 import io
 import json
 import pathlib
@@ -25,19 +26,37 @@ import sys
 import threading
 import typing
 
+import finecode_jsonrpc as finecode_jsonrpc_module
 from cattrs import Converter
 from cattrs.gen import make_dict_structure_fn, make_dict_unstructure_fn, override
+from finecode_extension_api import code_action
+from finecode_extension_api import textstyler as _textstyler
+from finecode_extension_api.interfaces import (
+    ifileeditor,
+    iprojectinfoprovider,
+)
 from loguru import logger
 
-import finecode_jsonrpc as finecode_jsonrpc_module
-from finecode_extension_api import code_action, textstyler as _textstyler
-from finecode_extension_api.interfaces import ifileeditor, iprojectactionrunner, iprojectinfoprovider
-from finecode_extension_runner import context, er_errors, er_telemetry, er_wal, global_state, logs, schemas, services
-from finecode_extension_runner.di import bootstrap as di_bootstrap
+from finecode_extension_runner import (
+    context,
+    er_errors,
+    er_telemetry,
+    er_wal,
+    global_state,
+    logs,
+    process_slots,
+    run_context,
+    schemas,
+    services,
+)
 from finecode_extension_runner._converter import converter as _converter
 from finecode_extension_runner._services import merge_results as merge_results_service
 from finecode_extension_runner._services import run_action as run_action_service
-from finecode_extension_runner.impls import project_action_runner as project_action_runner_module
+from finecode_extension_runner.concurrency import machine_subprocess_budget
+from finecode_extension_runner.di import bootstrap as di_bootstrap
+from finecode_extension_runner.impls import (
+    project_action_runner as project_action_runner_module,
+)
 
 # ---------------------------------------------------------------------------
 # Protocol types
@@ -114,12 +133,27 @@ class DidCloseTextDocumentParams:
 @dataclasses.dataclass
 class DidChangeTextDocumentParams:
     text_document: TextDocumentId
-    content_changes: list[TextDocumentContentChangePartial | TextDocumentContentChangeWhole]
+    content_changes: list[
+        TextDocumentContentChangePartial | TextDocumentContentChangeWhole
+    ]
 
 
 # JSON-RPC error code signalling that the WM should reinstall the env and restart the ER.
 # Value is in the implementation-defined server error range (-32000 to -32099).
 _ENV_REINSTALL_NEEDED_ERROR_CODE = -32001
+
+# Appended to a WM-timeout error. The combined budget bounds ER startup and
+# prepare-envs' per-project env work, but most other action runs escape it, so a
+# timeout is not evidence that a wide run was throttled (ADR-0094).
+_WM_STARVATION_HINT = (
+    "This usually means the WM's event loop was starved of CPU by many "
+    "extension runners starting or running subprocesses at once. Lowering "
+    "FINECODE_MAX_CONCURRENT_PROCESSES bounds ER startup and prepare-envs' "
+    "per-project env work, so the combined budget leaves at least one core "
+    "free; most other action runs are still granted a slot when the budget is "
+    "exhausted, so a wide `run` is not bounded by it "
+    "(see docs/guides/wm-server-internals.md#process-budget)."
+)
 
 # Converter for the protocol types — handles camelCase ↔ snake_case.
 _protocol_converter = Converter()
@@ -150,18 +184,24 @@ for _cls, _renames in [
 
 _protocol_converter.register_unstructure_hook(
     TextEdit,
-    make_dict_unstructure_fn(TextEdit, _protocol_converter, new_text=override(rename="newText")),
+    make_dict_unstructure_fn(
+        TextEdit, _protocol_converter, new_text=override(rename="newText")
+    ),
 )
 _protocol_converter.register_unstructure_hook(
     TextDocumentEdit,
     make_dict_unstructure_fn(
-        TextDocumentEdit, _protocol_converter, text_document=override(rename="textDocument")
+        TextDocumentEdit,
+        _protocol_converter,
+        text_document=override(rename="textDocument"),
     ),
 )
 _protocol_converter.register_unstructure_hook(
     WorkspaceEdit,
     make_dict_unstructure_fn(
-        WorkspaceEdit, _protocol_converter, document_changes=override(rename="documentChanges")
+        WorkspaceEdit,
+        _protocol_converter,
+        document_changes=override(rename="documentChanges"),
     ),
 )
 
@@ -169,6 +209,20 @@ _protocol_converter.register_unstructure_hook(
 # ---------------------------------------------------------------------------
 # ErServer
 # ---------------------------------------------------------------------------
+
+
+async def _wait_for_any(*events: asyncio.Event) -> None:
+    """Return as soon as any of *events* is set.
+
+    The losing waiters are cancelled and awaited, so no task outlives the call.
+    """
+    waiters = [asyncio.create_task(event.wait()) for event in events]
+    try:
+        await asyncio.wait(waiters, return_when=asyncio.FIRST_COMPLETED)
+    finally:
+        for waiter in waiters:
+            waiter.cancel()
+        await asyncio.gather(*waiters, return_exceptions=True)
 
 
 class ErServer:
@@ -179,10 +233,18 @@ class ErServer:
     """
 
     def __init__(self) -> None:
-        self._session = finecode_jsonrpc_module.JsonRpcServerSession(tracing=er_telemetry.JsonRpcTracingHooks())
+        self._session = finecode_jsonrpc_module.JsonRpcServerSession(
+            tracing=er_telemetry.JsonRpcTracingHooks()
+        )
         self._finecode_async_tasks: list[asyncio.Task] = []
         self._finecode_exit_stack = contextlib.AsyncExitStack()
         self._finecode_file_editor_session: ifileeditor.IFileEditorProviderSession
+        # Held explicitly rather than parked in `_finecode_exit_stack`: a config
+        # update replaces the session, and an exit stack cannot release one entry
+        # out of order.
+        self._finecode_file_editor_session_cm: (
+            contextlib.AbstractAsyncContextManager | None
+        ) = None
         self._finecode_file_operation_author = ifileeditor.FileOperationAuthor(
             id="FineCode_Extension_Runner_Server"
         )
@@ -219,10 +281,16 @@ class ErServer:
     def send_log_records_notification(self, records: list[dict]) -> None:
         """Send ``er/logRecords`` notification (thread-safe, fire-and-forget)."""
         self._session._transport.send(  # type: ignore[union-attr]
-            {"jsonrpc": "2.0", "method": "er/logRecords", "params": {"records": records}}
+            {
+                "jsonrpc": "2.0",
+                "method": "er/logRecords",
+                "params": {"records": records},
+            }
         )
 
-    async def workspace_apply_edit_async(self, params: ApplyWorkspaceEditParams) -> dict:
+    async def workspace_apply_edit_async(
+        self, params: ApplyWorkspaceEditParams
+    ) -> dict:
         """Send ``workspace/applyEdit`` request to the WM and return result."""
         return await self._session.send_request(
             "workspace/applyEdit", _protocol_converter.unstructure(params)
@@ -256,8 +324,7 @@ class ErServer:
             stdout_buf=stdout_buf or sys.stdout.buffer,
         )
         # Block until the transport read loop finishes
-        while not transport._stop_event.is_set():
-            await asyncio.sleep(0.05)
+        await transport._stop_event.wait()
         await self._finecode_exit_stack.aclose()
         logger.debug("ER server stdio loop finished")
 
@@ -285,17 +352,14 @@ class ErServer:
             self._session.attach(transport)
             await transport.start()
             # Wait until transport is done or exit was requested
-            while not transport._stop_event.is_set() and not self._async_exit_event.is_set():
-                await asyncio.sleep(0.05)
+            await _wait_for_any(transport._stop_event, self._async_exit_event)
             self.shutdown()
             writer.close()
             if self._tcp_server is not None:
                 self._tcp_server.close()
 
         self._tcp_server = await asyncio.start_server(_handle_connection, host, port)
-        addrs = ", ".join(
-            str(sock.getsockname()) for sock in self._tcp_server.sockets
-        )
+        addrs = ", ".join(str(sock.getsockname()) for sock in self._tcp_server.sockets)
         logger.info(f"Serving on {addrs}")
 
         try:
@@ -352,7 +416,6 @@ def convert_path_keys(
     return obj
 
 
-
 # ---------------------------------------------------------------------------
 # Handler implementations
 # ---------------------------------------------------------------------------
@@ -386,6 +449,14 @@ async def _on_shutdown(server: ErServer, _params: dict | None) -> None:
         if not task.done():
             task.cancel()
     server._finecode_async_tasks = []
+
+    session_cm = server._finecode_file_editor_session_cm
+    if session_cm is not None:
+        server._finecode_file_editor_session_cm = None
+        try:
+            await session_cm.__aexit__(None, None, None)
+        except Exception as exception:
+            logger.error(f"Failed to close file editor session: {exception}")
 
     logger.info("Shutdown end")
     server.shutdown()
@@ -471,7 +542,8 @@ async def get_project_raw_config(
         )
     except TimeoutError as exc:
         raise er_errors.WmCommunicationError(
-            f"WM did not respond to getRawConfig for '{project_def_path}' within 10s"
+            f"WM did not respond to getRawConfig for '{project_def_path}' within 10s. "
+            + _WM_STARVATION_HINT
         ) from exc
     except finecode_jsonrpc_module.JsonRpcError as exc:
         raise er_errors.WmCommunicationError(
@@ -480,10 +552,10 @@ async def get_project_raw_config(
     return raw_config["config"]
 
 
-async def get_workspace_editable_packages(
+async def get_workspace_packages(
     server: ErServer,
-) -> dict[str, pathlib.Path]:
-    """Fetch workspace editable packages from WM.
+) -> dict[str, iprojectinfoprovider.WorkspacePackage]:
+    """Fetch workspace packages from WM.
 
     Raises:
         WmCommunicationError: WM did not respond within 10s, or returned an
@@ -491,18 +563,81 @@ async def get_workspace_editable_packages(
     """
     try:
         result = await asyncio.wait_for(
-            server.send_request_to_wm("workspace/getWorkspaceEditablePackages", params={}),
+            server.send_request_to_wm("workspace/getWorkspacePackages", params={}),
             10,
         )
     except TimeoutError as exc:
         raise er_errors.WmCommunicationError(
-            "WM did not respond to getWorkspaceEditablePackages within 10s"
+            "WM did not respond to getWorkspacePackages within 10s. "
+            + _WM_STARVATION_HINT
         ) from exc
     except finecode_jsonrpc_module.JsonRpcError as exc:
         raise er_errors.WmCommunicationError(
-            f"WM returned error for getWorkspaceEditablePackages: {exc.rpc_message}"
+            f"WM returned error for getWorkspacePackages: {exc.rpc_message}"
         ) from exc
-    return {name: pathlib.Path(posix) for name, posix in result.get("packages", {}).items()}
+    return {
+        name: iprojectinfoprovider.WorkspacePackage(
+            dir=pathlib.Path(entry["dir"]),
+            wheel=(
+                pathlib.Path(entry["wheel"]) if entry.get("wheel") is not None else None
+            ),
+            editable=entry.get("editable", True),
+        )
+        for name, entry in result.get("packages", {}).items()
+    }
+
+
+async def get_workspace_extra_selection(
+    server: ErServer,
+) -> dict[str, list[str]]:
+    """Fetch the workspace's extra selection from WM.
+
+    Raises:
+        WmCommunicationError: WM did not respond within 10s, or returned an
+            error response.
+    """
+    try:
+        result = await asyncio.wait_for(
+            server.send_request_to_wm("workspace/getExtraSelection", params={}),
+            10,
+        )
+    except TimeoutError as exc:
+        raise er_errors.WmCommunicationError(
+            "WM did not respond to getExtraSelection within 10s. " + _WM_STARVATION_HINT
+        ) from exc
+    except finecode_jsonrpc_module.JsonRpcError as exc:
+        raise er_errors.WmCommunicationError(
+            f"WM returned error for getExtraSelection: {exc.rpc_message}"
+        ) from exc
+    return dict(result.get("selection", {}))
+
+
+async def _retire_runner_context(
+    server: ErServer, previous_context: context.RunnerContext | None
+) -> None:
+    """Release everything the outgoing RunnerContext owned.
+
+    Order matters: the file-change forwarder task uses the editor session, and
+    the session comes from the registry being disposed.
+    """
+    for task in server._finecode_async_tasks:
+        if not task.done():
+            task.cancel()
+    server._finecode_async_tasks = []
+
+    session_cm = server._finecode_file_editor_session_cm
+    if session_cm is not None:
+        server._finecode_file_editor_session_cm = None
+        try:
+            await session_cm.__aexit__(None, None, None)
+        except Exception as exception:
+            logger.error(f"Failed to close previous file editor session: {exception}")
+
+    if previous_context is None:
+        return
+
+    services.shutdown_all_action_handlers(previous_context)
+    previous_context.di_registry.dispose_all()
 
 
 async def update_config(server: ErServer, params: dict | None) -> dict:
@@ -530,7 +665,7 @@ async def update_config(server: ErServer, params: dict | None) -> dict:
                             name=handler["name"],
                             source=handler["source"],
                             config=handler["config"],
-                            env=handler["env"]
+                            env=handler["env"],
                         )
                         for handler in action["handlers"]
                     ],
@@ -543,11 +678,12 @@ async def update_config(server: ErServer, params: dict | None) -> dict:
             services=[
                 schemas.ServiceDeclaration(
                     interface=svc["interface"],
-                    source=svc["source"],
+                    source=svc.get("source"),
                     config=svc.get("config"),
                 )
                 for svc in config.get("services", [])
             ],
+            service_config_overrides=config.get("service_config_overrides") or {},
             handlers_to_initialize=config.get("handlers_to_initialize"),
         )
 
@@ -572,22 +708,37 @@ async def update_config(server: ErServer, params: dict | None) -> dict:
         response, runner_context = await services.update_config(
             request=request,
             project_raw_config_getter=functools.partial(get_project_raw_config, server),
-            workspace_editable_packages_getter=functools.partial(get_workspace_editable_packages, server),
+            workspace_packages_getter=functools.partial(get_workspace_packages, server),
+            workspace_extra_selection_getter=functools.partial(
+                get_workspace_extra_selection, server
+            ),
             send_request_to_wm=_send_request_to_wm,
             send_user_message_notification=server.send_user_message_notification,
         )
         runner_context.wal_writer = server._wal_writer
+        previous_context = server._runner_context
         server._runner_context = runner_context
 
-        file_editor = await runner_context.di_registry.get_instance(ifileeditor.IFileEditor)
-        server._finecode_file_editor_session = (
-            await server._finecode_exit_stack.enter_async_context(
-                file_editor.session(author=server._finecode_file_operation_author)
-            )
+        # `update_config` builds a whole new RunnerContext, DI registry included,
+        # so everything the outgoing one owns has to be retired here. It is not
+        # called only at startup any more -- a service-config override pushed to
+        # a running runner lands on this path (ADR-0070) -- and without this the
+        # previous registry's services (LSP server subprocesses among them) stay
+        # alive with nothing referencing them, and its file-change forwarder
+        # keeps running, duplicating every edit sent to the WM.
+        await _retire_runner_context(server, previous_context)
+
+        file_editor = await runner_context.di_registry.get_instance(
+            ifileeditor.IFileEditor
         )
+        session_cm = file_editor.session(author=server._finecode_file_operation_author)
+        server._finecode_file_editor_session = await session_cm.__aenter__()
+        server._finecode_file_editor_session_cm = session_cm
 
         async def send_changed_files_to_wm() -> None:
-            async with server._finecode_file_editor_session.subscribe_to_changes_of_opened_files() as file_change_events:
+            async with (
+                server._finecode_file_editor_session.subscribe_to_changes_of_opened_files() as file_change_events
+            ):
                 async for file_change_event in file_change_events:
                     if (
                         file_change_event.author
@@ -637,6 +788,59 @@ async def update_logging(server: ErServer, params: dict | None) -> dict:
     return {}
 
 
+async def update_process_budget(server: ErServer, params: dict | None) -> dict:
+    """Handler for ``finecodeRunner/updateProcessBudget``. Resizes the ER's
+    shared process-slot gate.
+
+    Process-level only -- does NOT rebuild RunnerContext (contrast
+    update_config). See ADR-0090.
+    """
+    p = params or {}
+    target = p.get("target")
+    if not isinstance(target, int):
+        raise ValueError("updateProcessBudget requires an integer 'target'")
+    await process_slots.get_process_slots().set_target(target)
+    return {}
+
+
+async def _lease_process_budget(
+    server: ErServer, *, requested: int, nested: bool, run_id: str
+) -> str | None:
+    """Ask the WM for a work-slot lease, returning the lease id to release.
+
+    A failed lease degrades to the ER's own machine budget rather than
+    refusing the run: the WM-leased gate is a throttle, never a gate that can
+    refuse work (ADR-0067/ADR-0090).
+    """
+    try:
+        raw = await server.send_request_to_wm(
+            "finecode/leaseProcessBudget",
+            {"requested": requested, "nested": nested, "runId": run_id},
+        )
+    except finecode_jsonrpc_module.JsonRpcError as exc:
+        logger.warning(
+            f"Process budget lease failed; falling back to the machine budget: {exc}"
+        )
+        await process_slots.get_process_slots().set_target(machine_subprocess_budget())
+        return None
+    lease_id = raw.get("leaseId")
+    if not isinstance(lease_id, str):
+        logger.warning("Process budget lease response had no leaseId; ignoring it")
+        await process_slots.get_process_slots().set_target(machine_subprocess_budget())
+        return None
+    return lease_id
+
+
+async def _release_process_budget(server: ErServer, lease_id: str) -> None:
+    try:
+        await server.send_request_to_wm(
+            "finecode/releaseProcessBudget", {"leaseId": lease_id}
+        )
+    except finecode_jsonrpc_module.JsonRpcError as exc:
+        # Non-fatal: the WM reclaims a dead ER's leases on teardown anyway.
+        logger.warning(f"Process budget release failed: {exc}")
+
+
 async def run_action(server: ErServer, params: dict | None) -> dict:
     """Handler for ``actions/run``."""
     assert params is not None
@@ -645,9 +849,9 @@ async def run_action(server: ErServer, params: dict | None) -> dict:
     options: dict | None = params.get("options")
 
     logger.trace(f"Run action: {action_name}")
-    wal_run_id = (options or {}).get("walRunId")
+    wal_run_id = (options or {}).get("runId")
     if not isinstance(wal_run_id, str) or wal_run_id.strip() == "":
-        return {"error": "Missing required wal_run_id in run options"}
+        return {"error": "Missing required runId in run options"}
 
     meta = (options or {}).get("meta") or {}
     trigger = meta.get("trigger", "unknown")
@@ -675,28 +879,27 @@ async def run_action(server: ErServer, params: dict | None) -> dict:
     )
     status: str = "success"
 
+    lease_id = await _lease_process_budget(
+        server,
+        requested=machine_subprocess_budget(),
+        nested=options_schema.meta.orchestration_depth > 0,
+        run_id=wal_run_id,
+    )
     try:
-        response = await services.run_action_raw(
-            request=request, options=options_schema, runner_context=server._runner_context
-        )
-    except Exception as exception:
-        if isinstance(exception, services.StopWithResponse):
-            status = "stopped"
-            response = exception.response
-            er_wal.emit_run_event(
-                server._wal_writer,
-                event_type=er_wal.ErWalEventType.RUN_FAILED,
-                wal_run_id=wal_run_id,
-                action_name=action_name,
-                project_path=project_path,
-                trigger=trigger,
-                dev_env=dev_env,
-                payload={"error": "stopped"},
-            )
-        else:
-            if isinstance(exception, services.ActionCancelledException):
-                error_msg = exception.message
-                logger.debug(f"Run action cancelled: {error_msg}")
+        try:
+            # Everything this run starts is marked as belonging to it, so a
+            # back-channel call made deep inside a handler can name the run it
+            # speaks for without being handed it explicitly (ADR-0082 rule 1).
+            with run_context.run(wal_run_id):
+                response = await services.run_action_raw(
+                    request=request,
+                    options=options_schema,
+                    runner_context=server._runner_context,
+                )
+        except Exception as exception:
+            if isinstance(exception, services.StopWithResponse):
+                status = "stopped"
+                response = exception.response
                 er_wal.emit_run_event(
                     server._wal_writer,
                     event_type=er_wal.ErWalEventType.RUN_FAILED,
@@ -705,52 +908,69 @@ async def run_action(server: ErServer, params: dict | None) -> dict:
                     project_path=project_path,
                     trigger=trigger,
                     dev_env=dev_env,
-                    payload={"error": f"cancelled: {error_msg}"},
+                    payload={"error": "stopped"},
                 )
-                raise finecode_jsonrpc_module.JsonRpcHandlerError(
-                    finecode_jsonrpc_module.REQUEST_CANCELLED, error_msg
-                ) from exception
-            elif isinstance(exception, services.ActionFailedException):
-                logger.error(f"Run action failed: {exception.message}")
-                error_msg = exception.message
             else:
-                logger.error("Unhandled exception in action run:")
-                logger.exception(exception)
-                error_msg = f"{type(exception)}: {str(exception)}"
-            er_wal.emit_run_event(
-                server._wal_writer,
-                event_type=er_wal.ErWalEventType.RUN_FAILED,
-                wal_run_id=wal_run_id,
-                action_name=action_name,
-                project_path=project_path,
-                trigger=trigger,
-                dev_env=dev_env,
-                payload={"error": error_msg},
-            )
-            return {"error": error_msg}
+                if isinstance(exception, services.ActionCancelledException):
+                    error_msg = exception.message
+                    logger.debug(f"Run action cancelled: {error_msg}")
+                    er_wal.emit_run_event(
+                        server._wal_writer,
+                        event_type=er_wal.ErWalEventType.RUN_FAILED,
+                        wal_run_id=wal_run_id,
+                        action_name=action_name,
+                        project_path=project_path,
+                        trigger=trigger,
+                        dev_env=dev_env,
+                        payload={"error": f"cancelled: {error_msg}"},
+                    )
+                    raise finecode_jsonrpc_module.JsonRpcHandlerError(
+                        finecode_jsonrpc_module.REQUEST_CANCELLED, error_msg
+                    ) from exception
+                elif isinstance(exception, services.ActionFailedException):
+                    logger.error(f"Run action failed: {exception.message}")
+                    error_msg = exception.message
+                else:
+                    logger.error("Unhandled exception in action run:")
+                    logger.exception(exception)
+                    error_msg = f"{type(exception)}: {exception!s}"
+                er_wal.emit_run_event(
+                    server._wal_writer,
+                    event_type=er_wal.ErWalEventType.RUN_FAILED,
+                    wal_run_id=wal_run_id,
+                    action_name=action_name,
+                    project_path=project_path,
+                    trigger=trigger,
+                    dev_env=dev_env,
+                    payload={"error": error_msg},
+                )
+                return {"error": error_msg}
 
-    result_by_format = response.to_dict()["result_by_format"]
-    if not result_by_format and options_schema.partial_result_token is not None:
-        status = "streamed"
-    converted_result_by_format = {
-        fmt: convert_path_keys(result) if isinstance(result, dict) else result
-        for fmt, result in result_by_format.items()
-    }
-    er_wal.emit_run_event(
-        server._wal_writer,
-        event_type=er_wal.ErWalEventType.RUN_COMPLETED,
-        wal_run_id=wal_run_id,
-        action_name=action_name,
-        project_path=project_path,
-        trigger=trigger,
-        dev_env=dev_env,
-        payload={"status": status, "return_code": response.return_code},
-    )
-    return {
-        "status": status,
-        "resultByFormat": converted_result_by_format,
-        "returnCode": response.return_code,
-    }
+        result_by_format = response.to_dict()["result_by_format"]
+        if not result_by_format and options_schema.partial_result_token is not None:
+            status = "streamed"
+        converted_result_by_format = {
+            fmt: convert_path_keys(result) if isinstance(result, dict) else result
+            for fmt, result in result_by_format.items()
+        }
+        er_wal.emit_run_event(
+            server._wal_writer,
+            event_type=er_wal.ErWalEventType.RUN_COMPLETED,
+            wal_run_id=wal_run_id,
+            action_name=action_name,
+            project_path=project_path,
+            trigger=trigger,
+            dev_env=dev_env,
+            payload={"status": status, "return_code": response.return_code},
+        )
+        return {
+            "status": status,
+            "resultByFormat": converted_result_by_format,
+            "returnCode": response.return_code,
+        }
+    finally:
+        if lease_id is not None:
+            await _release_process_budget(server, lease_id)
 
 
 async def run_handlers(server: ErServer, params: dict | None) -> dict:
@@ -761,7 +981,7 @@ async def run_handlers(server: ErServer, params: dict | None) -> dict:
     action_params: dict = params.get("params") or {}
     previous_result: dict | None = params.get("previousResult")
     previous_context: dict | None = params.get("previousContext")
-    caller_kwargs: dict | None = params.get("callerKwargs")   # NEW
+    caller_kwargs: dict | None = params.get("callerKwargs")  # NEW
     options: dict | None = params.get("options")
 
     logger.trace(
@@ -769,9 +989,9 @@ async def run_handlers(server: ErServer, params: dict | None) -> dict:
         f"has_previous_result={previous_result is not None}"
     )
 
-    wal_run_id = (options or {}).get("walRunId")
+    wal_run_id = (options or {}).get("runId")
     if not isinstance(wal_run_id, str) or wal_run_id.strip() == "":
-        return {"error": "Missing required wal_run_id in run options"}
+        return {"error": "Missing required runId in run options"}
 
     meta = (options or {}).get("meta") or {}
     trigger = meta.get("trigger", "unknown")
@@ -803,14 +1023,44 @@ async def run_handlers(server: ErServer, params: dict | None) -> dict:
     )
     status: str = "success"
 
+    lease_id = await _lease_process_budget(
+        server,
+        requested=machine_subprocess_budget(),
+        nested=options_schema.meta.orchestration_depth > 0,
+        run_id=wal_run_id,
+    )
     try:
-        response = await services.run_handlers_raw(
-            request=request, options=options_schema, runner_context=server._runner_context
-        )
-    except Exception as exception:
-        if isinstance(exception, services.ActionCancelledException):
-            error_msg = exception.message
-            logger.debug(f"Run handlers cancelled: {error_msg}")
+        try:
+            with run_context.run(wal_run_id):
+                response = await services.run_handlers_raw(
+                    request=request,
+                    options=options_schema,
+                    runner_context=server._runner_context,
+                )
+        except Exception as exception:
+            if isinstance(exception, services.ActionCancelledException):
+                error_msg = exception.message
+                logger.debug(f"Run handlers cancelled: {error_msg}")
+                er_wal.emit_run_event(
+                    server._wal_writer,
+                    event_type=er_wal.ErWalEventType.RUN_FAILED,
+                    wal_run_id=wal_run_id,
+                    action_name=action_name,
+                    project_path=project_path,
+                    trigger=trigger,
+                    dev_env=dev_env,
+                    payload={"error": f"cancelled: {error_msg}"},
+                )
+                raise finecode_jsonrpc_module.JsonRpcHandlerError(
+                    finecode_jsonrpc_module.REQUEST_CANCELLED, error_msg
+                ) from exception
+            elif isinstance(exception, services.ActionFailedException):
+                logger.error(f"Run handlers failed: {exception.message}")
+                error_msg = exception.message
+            else:
+                logger.error("Unhandled exception in run_handlers:")
+                logger.exception(exception)
+                error_msg = f"{type(exception)}: {exception!s}"
             er_wal.emit_run_event(
                 server._wal_writer,
                 event_type=er_wal.ErWalEventType.RUN_FAILED,
@@ -819,54 +1069,37 @@ async def run_handlers(server: ErServer, params: dict | None) -> dict:
                 project_path=project_path,
                 trigger=trigger,
                 dev_env=dev_env,
-                payload={"error": f"cancelled: {error_msg}"},
+                payload={"error": error_msg},
             )
-            raise finecode_jsonrpc_module.JsonRpcHandlerError(
-                finecode_jsonrpc_module.REQUEST_CANCELLED, error_msg
-            ) from exception
-        elif isinstance(exception, services.ActionFailedException):
-            logger.error(f"Run handlers failed: {exception.message}")
-            error_msg = exception.message
-        else:
-            logger.error("Unhandled exception in run_handlers:")
-            logger.exception(exception)
-            error_msg = f"{type(exception)}: {str(exception)}"
+            return {"error": error_msg}
+
+        result_by_format = response.result_by_format
+        if not result_by_format and options_schema.partial_result_token is not None:
+            status = "streamed"
+        converted_result_by_format = {
+            fmt: convert_path_keys(result) if isinstance(result, dict) else result
+            for fmt, result in result_by_format.items()
+        }
         er_wal.emit_run_event(
             server._wal_writer,
-            event_type=er_wal.ErWalEventType.RUN_FAILED,
+            event_type=er_wal.ErWalEventType.RUN_COMPLETED,
             wal_run_id=wal_run_id,
             action_name=action_name,
             project_path=project_path,
             trigger=trigger,
             dev_env=dev_env,
-            payload={"error": error_msg},
+            payload={"status": status, "return_code": response.return_code},
         )
-        return {"error": error_msg}
-
-    result_by_format = response.result_by_format
-    if not result_by_format and options_schema.partial_result_token is not None:
-        status = "streamed"
-    converted_result_by_format = {
-        fmt: convert_path_keys(result) if isinstance(result, dict) else result
-        for fmt, result in result_by_format.items()
-    }
-    er_wal.emit_run_event(
-        server._wal_writer,
-        event_type=er_wal.ErWalEventType.RUN_COMPLETED,
-        wal_run_id=wal_run_id,
-        action_name=action_name,
-        project_path=project_path,
-        trigger=trigger,
-        dev_env=dev_env,
-        payload={"status": status, "return_code": response.return_code},
-    )
-    return {
-        "status": status,
-        "result": convert_path_keys(response.result) if response.result else {},
-        "resultByFormat": converted_result_by_format,
-        "returnCode": response.return_code,
-        "context": response.context,
-    }
+        return {
+            "status": status,
+            "result": convert_path_keys(response.result) if response.result else {},
+            "resultByFormat": converted_result_by_format,
+            "returnCode": response.return_code,
+            "context": response.context,
+        }
+    finally:
+        if lease_id is not None:
+            await _release_process_budget(server, lease_id)
 
 
 async def reload_action(server: ErServer, params: dict | None) -> dict:
@@ -904,7 +1137,9 @@ async def merge_results_cmd(server: ErServer, params: dict | None) -> dict:
         return {"error": "Extension runner not initialized"}
     try:
         merged = await merge_results_service.merge_results(
-            action_name=action_name, results=results, runner_context=server._runner_context
+            action_name=action_name,
+            results=results,
+            runner_context=server._runner_context,
         )
         return {"merged": merged}
     except Exception as exception:
@@ -927,9 +1162,9 @@ async def resolve_source(_server: ErServer, params: dict | None) -> dict:
     last_dot = source.rfind(".")
     if last_dot == -1:
         raise ValueError(f"Invalid source path (no module separator): {source!r}")
-    import importlib
+
     module_path = source[:last_dot]
-    attr_name = source[last_dot + 1:]
+    attr_name = source[last_dot + 1 :]
     try:
         mod = importlib.import_module(module_path)
         cls = getattr(mod, attr_name)
@@ -962,12 +1197,16 @@ def create_er_server(wal_writer: er_wal.ErWalWriter | None = None) -> ErServer:
     server._wal_writer = wal_writer
     session = server._session
 
-    logs.set_forward_sender(lambda records: server.send_log_records_notification(records))
+    logs.set_forward_sender(
+        lambda records: server.send_log_records_notification(records)
+    )
 
     def _wrap(handler):
         """Wrap a handler that takes (server, params) for use with the session."""
+
         async def _wrapped(params: dict | None) -> typing.Any:
             return await handler(server, params)
+
         return _wrapped
 
     # Lifecycle (requests)
@@ -990,14 +1229,16 @@ def create_er_server(wal_writer: er_wal.ErWalWriter | None = None) -> ErServer:
         token = params.get("token")
         value = params.get("value")
         if token is None or value is None:
-            logger.debug(f"$/progress from WM: missing token or value")
+            logger.debug("$/progress from WM: missing token or value")
             return
         try:
             value_dict = json.loads(value)
         except (json.JSONDecodeError, TypeError) as exc:
             logger.warning(f"$/progress from WM: failed to decode value: {exc}")
             return
-        logger.trace(f"$/progress from WM: token={token}, preview={str(value_dict)[:200]}")
+        logger.trace(
+            f"$/progress from WM: token={token}, preview={str(value_dict)[:200]}"
+        )
         project_action_runner_module.dispatch_partial_result_from_wm(token, value_dict)
 
     session.on_notification("$/progress", _on_progress_from_wm)
@@ -1005,6 +1246,9 @@ def create_er_server(wal_writer: er_wal.ErWalWriter | None = None) -> ErServer:
     # ER-specific commands (direct JSON-RPC methods, previously workspace/executeCommand)
     session.on_request("finecodeRunner/updateConfig", _wrap(update_config))
     session.on_request("finecodeRunner/updateLogging", _wrap(update_logging))
+    session.on_request(
+        "finecodeRunner/updateProcessBudget", _wrap(update_process_budget)
+    )
     session.on_request("finecodeRunner/resolveActionMeta", _wrap(resolve_action_meta))
     session.on_request("actions/run", _wrap(run_action))
     session.on_request("actions/runHandlers", _wrap(run_handlers))

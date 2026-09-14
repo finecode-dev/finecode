@@ -9,12 +9,15 @@ from __future__ import annotations
 
 import asyncio
 import pathlib
+
 from loguru import logger
 
 from finecode.wm_server import context, domain
 
 
-def _project_action_tree(project: domain.Project | None, ws_context: context.WorkspaceContext) -> list[dict]:
+def _project_action_tree(
+    project: domain.Project | None, ws_context: context.WorkspaceContext
+) -> list[dict]:
     """Return action/env nodes for a single project.
 
     ``project`` may be None when constructing a node for a directory without a
@@ -33,7 +36,9 @@ def _project_action_tree(project: domain.Project | None, ws_context: context.Wor
             node_id = f"{project.dir_path.as_posix()}::{action.source}"
             handlers_nodes: list[dict] = []
             for handler in action.handlers:
-                handler_node_id = f"{project.dir_path.as_posix()}::{action.source}::{handler.name}"
+                handler_node_id = (
+                    f"{project.dir_path.as_posix()}::{action.source}::{handler.name}"
+                )
                 handlers_nodes.append(
                     {
                         "nodeId": handler_node_id,
@@ -113,7 +118,9 @@ def _build_tree(ws_context: context.WorkspaceContext) -> list[dict]:
     all_projects_paths_set = set(all_projects_paths)
 
     for ws_dir in all_ws_dirs:
-        ws_dir_projects = [p for p in all_projects_paths_set if p.is_relative_to(ws_dir)]
+        ws_dir_projects = [
+            p for p in all_projects_paths_set if p.is_relative_to(ws_dir)
+        ]
         projects_by_ws_dir[ws_dir] = ws_dir_projects
         all_projects_paths_set -= set(ws_dir_projects)
 
@@ -134,7 +141,9 @@ def _build_tree(ws_context: context.WorkspaceContext) -> list[dict]:
             dir_node_type = 0  # DIRECTORY
             status = ""
 
-        actions_nodes = _project_action_tree(ws_context.ws_projects.get(ws_dir), ws_context)
+        actions_nodes = _project_action_tree(
+            ws_context.ws_projects.get(ws_dir), ws_context
+        )
         node = {
             "nodeId": ws_dir.as_posix(),
             "name": ws_dir.name,

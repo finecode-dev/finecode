@@ -1,25 +1,34 @@
-import json
 import collections.abc
+import contextlib
 import hashlib
 import importlib
 import inspect
+import json
 import sys
 import types
 import typing
 from pathlib import Path
 
-from loguru import logger
 from finecode_extension_api import service
+from finecode_extension_api.interfaces import iprojectinfoprovider
+from loguru import logger
 
-from finecode_extension_runner import context, domain, global_state, schemas, run_utils, schema_utils
-from finecode_extension_runner._services.run_action import (
+from finecode_extension_runner import (
+    context,
+    domain,
+    global_state,
+    run_utils,
+    schema_utils,
+    schemas,
+)
+from finecode_extension_runner._services.run_action import (  # noqa: F401 (re-export); `services` is the public facade over the private `_services` package:; er_server and tests reach these as `services.<name>`, which the linter; cannot see from here. Removing them breaks er_server's run_action and; run_handlers dispatch at runtime.
     ActionCancelledException,
     ActionFailedException,
     StopWithResponse,
-    run_action_raw,
-    run_handlers_raw,
     create_action_exec_info,
     ensure_handler_instantiated,
+    run_action_raw,
+    run_handlers_raw,
 )
 from finecode_extension_runner.di import bootstrap as di_bootstrap
 
@@ -43,10 +52,18 @@ async def update_config(
     project_raw_config_getter: typing.Callable[
         [str], collections.abc.Awaitable[dict[str, typing.Any]]
     ],
-    workspace_editable_packages_getter: typing.Callable[
-        [], collections.abc.Awaitable[dict[str, Path]]
-    ] | None = None,
-    send_request_to_wm: typing.Callable[[str, dict], collections.abc.Awaitable[typing.Any]] | None = None,
+    workspace_packages_getter: typing.Callable[
+        [], collections.abc.Awaitable[dict[str, iprojectinfoprovider.WorkspacePackage]]
+    ]
+    | None = None,
+    workspace_extra_selection_getter: typing.Callable[
+        [], collections.abc.Awaitable[dict[str, list[str]]]
+    ]
+    | None = None,
+    send_request_to_wm: typing.Callable[
+        [str, dict], collections.abc.Awaitable[typing.Any]
+    ]
+    | None = None,
     send_user_message_notification: typing.Callable[[str, str], None] | None = None,
 ) -> tuple[schemas.UpdateConfigResponse, context.RunnerContext]:
     project_dir_path = Path(request.working_dir)
@@ -119,22 +136,22 @@ async def update_config(
         handler.source.split(".")[0]
         for action in actions.values()
         for handler in action.handlers
-    } | {
-        svc.source.split(".")[0] for svc in request.services
-    }
+    } | {svc.source.split(".")[0] for svc in request.services if svc.source is not None}
 
     di_bootstrap.bootstrap(
         registry=runner_context.di_registry,
         runner_context=runner_context,
         project_def_path_getter=project_def_path_getter,
         project_raw_config_getter=project_raw_config_getter,
-        workspace_editable_packages_getter=workspace_editable_packages_getter,
+        workspace_packages_getter=workspace_packages_getter,
+        workspace_extra_selection_getter=workspace_extra_selection_getter,
         cache_dir_path_getter=cache_dir_path_getter,
         current_project_raw_config_version_getter=current_project_raw_config_version_getter,
         actions_getter=actions_getter,
         current_env_name_getter=current_env_name_getter,
         handler_packages=handler_packages,
         service_declarations=request.services,
+        service_config_overrides=request.service_config_overrides,
         send_request_to_wm=send_request_to_wm,
         send_user_message_notification=send_user_message_notification,
     )
@@ -160,10 +177,8 @@ def _file_loc(cls: type, project_dir: Path | None) -> str | None:
 
     path = Path(source_file)
     if project_dir is not None:
-        try:
+        with contextlib.suppress(ValueError):
             path = path.relative_to(project_dir)
-        except ValueError:
-            pass
     return f"{path}:{lineno}"
 
 
@@ -184,11 +199,17 @@ async def resolve_action_meta(runner_context: context.RunnerContext) -> dict[str
           for language-agnostic actions (from ``Action.LANGUAGE``).
         - ``fileLoc``: ``"<path>:<lineno>"`` of the action class's source, or
           ``None`` when it could not be resolved.
-    - ``handlerLocations``: mapping of handler source → ``fileLoc`` for every
-      handler registered in this env (``None`` when it could not be
-      resolved).
+    - ``handlers``: mapping of config source → handler meta dict containing:
+        - ``canonicalSource``: fully-qualified import path of the handler class
+          (may differ from the config source when the source is a re-exported
+          alias, which is the common case — handlers are usually declared in
+          config via their package's ``__init__.py`` re-export).
+        - ``fileLoc``: ``"<path>:<lineno>"`` of the handler class's source, or
+          ``None`` when it could not be resolved.
 
-    Actions that fail to import are omitted from ``actions``.
+    Actions and handlers that fail to import are omitted from ``actions`` and
+    ``handlers`` respectively (import failure = cannot run = no canonical to
+    report; ADR-0021, extended to handlers by ADR-0054).
     """
     from finecode_extension_api.code_action import Action, HandlerExecution
 
@@ -206,7 +227,8 @@ async def resolve_action_meta(runner_context: context.RunnerContext) -> dict[str
             parent = getattr(cls, "PARENT_ACTION", None)
             resolved[action.source] = {
                 "canonical_source": f"{cls.__module__}.{cls.__qualname__}",
-                "runs_concurrently": cls.HANDLER_EXECUTION == HandlerExecution.CONCURRENT,
+                "runs_concurrently": cls.HANDLER_EXECUTION
+                == HandlerExecution.CONCURRENT,
                 "scope": cls.SCOPE.value,
                 "parentActionSource": (
                     f"{parent.__module__}.{parent.__qualname__}"
@@ -216,21 +238,34 @@ async def resolve_action_meta(runner_context: context.RunnerContext) -> dict[str
                 "language": getattr(cls, "LANGUAGE", None),
                 "fileLoc": _file_loc(cls, project_dir),
             }
-        except Exception as exception:
-            logger.warning(f'Failed to import action {action.source}: {exception}')
+        # Importing an action executes its module's top-level code, so the
+        # reachable exception set is open and not enumerable here.
+        except Exception as exception:  # noqa: BLE001
+            logger.warning(f"Failed to import action {action.source}: {exception}")
 
-    handler_locations: dict[str, str | None] = {}
+    handler_meta: dict[str, dict] = {}
     for action in actions.values():
         for handler in action.handlers:
-            if handler.source in handler_locations:
+            if handler.source in handler_meta:
                 continue
             try:
-                handler_cls = run_utils.import_module_member_by_source_str(handler.source)
-                handler_locations[handler.source] = _file_loc(handler_cls, project_dir)
-            except Exception as exception:
-                logger.warning(f'Failed to import handler {handler.source}: {exception}')
+                handler_cls = run_utils.import_module_member_by_source_str(
+                    handler.source
+                )
+                handler_meta[handler.source] = {
+                    "canonicalSource": (
+                        f"{handler_cls.__module__}.{handler_cls.__qualname__}"
+                    ),
+                    "fileLoc": _file_loc(handler_cls, project_dir),
+                }
+            # Importing a handler executes its module's top-level code, so the
+            # reachable exception set is open and not enumerable here.
+            except Exception as exception:  # noqa: BLE001
+                logger.warning(
+                    f"Failed to import handler {handler.source}: {exception}"
+                )
 
-    return {"actions": resolved, "handlerLocations": handler_locations}
+    return {"actions": resolved, "handlers": handler_meta}
 
 
 async def initialize_handlers(
@@ -266,9 +301,7 @@ async def initialize_handlers(
         if action_cache.exec_info is None:
             action_cache.exec_info = create_action_exec_info(action_def)
 
-        handlers_to_init = [
-            h for h in action_def.handlers if h.name in handler_names
-        ]
+        handlers_to_init = [h for h in action_def.handlers if h.name in handler_names]
         for handler in handlers_to_init:
             if handler.name in action_cache.handler_cache_by_name:
                 handler_cache = action_cache.handler_cache_by_name[handler.name]
@@ -289,7 +322,9 @@ async def initialize_handlers(
                     f"Eagerly initialized handler '{handler.name}' "
                     f"for action '{action_name}'"
                 )
-            except Exception as e:
+            # Instantiation imports extension code and runs the handler-supplied
+            # on_initialize callable; the reachable exception set is open.
+            except Exception as e:  # noqa: BLE001
                 logger.error(
                     f"Failed to eagerly initialize handler '{handler.name}' "
                     f"for action '{action_name}': {e}"
@@ -302,9 +337,7 @@ def reload_action(action_name: str, runner_context: context.RunnerContext) -> No
     try:
         action_obj = project_def.actions[action_name]
     except KeyError:
-        available_actions_str = ",".join(
-            [action_name for action_name in project_def.actions]
-        )
+        available_actions_str = ",".join(list(project_def.actions))
         logger.warning(
             f"Action {action_name} not found."
             f" Available actions: {available_actions_str}"
@@ -341,14 +374,11 @@ def reload_action(action_name: str, runner_context: context.RunnerContext) -> No
     for source_to_remove in sources_to_remove:
         source_package = source_to_remove.split(".")[0]
 
-        loaded_package_modules = dict(
-            [
-                (key, value)
-                for key, value in sys.modules.items()
-                if key.startswith(source_package)
-                and isinstance(value, types.ModuleType)
-            ]
-        )
+        loaded_package_modules = {
+            key: value
+            for key, value in sys.modules.items()
+            if key.startswith(source_package) and isinstance(value, types.ModuleType)
+        }
 
         # delete references to these loaded modules from sys.modules
         for key in loaded_package_modules:
@@ -386,7 +416,8 @@ def shutdown_action_handler(
         logger.trace(f"Shutdown {action_handler_name} action handler")
         try:
             exec_info.lifecycle.on_shutdown_callable()
-        except Exception as e:
+        # The callable is supplied by extension code and can raise arbitrarily.
+        except Exception as e:  # noqa: BLE001
             logger.error(f"Failed to shutdown action {action_handler_name}: {e}")
     exec_info.status = domain.ActionHandlerExecInfoStatus.SHUTDOWN
 
@@ -399,9 +430,15 @@ def shutdown_action_handler(
                     try:
                         used_service.dispose()
                         logger.trace(f"Disposed service: {used_service}")
-                    except Exception as exception:
+                    # dispose() is extension-supplied code and can raise arbitrarily.
+                    except Exception as exception:  # noqa: BLE001
                         logger.error(f"Failed to dispose service: {used_service}")
                         logger.exception(exception)
+                    # Drop it from the DI cache too, or the next handler to ask
+                    # for this interface is handed the object just disposed.
+                    # The factory stays registered, so it is simply rebuilt.
+                    runner_context.di_registry.evict_instance(used_service)
+                del runner_context.running_services[used_service]
 
 
 def shutdown_all_action_handlers(runner_context: context.RunnerContext | None) -> None:
@@ -432,7 +469,8 @@ def exit_action_handler(
         logger.trace(f"Exit {action_handler_name} action handler")
         try:
             exec_info.lifecycle.on_exit_callable()
-        except Exception as e:
+        # The callable is supplied by extension code and can raise arbitrarily.
+        except Exception as e:  # noqa: BLE001
             logger.error(f"Failed to exit action {action_handler_name}: {e}")
 
 
@@ -452,7 +490,9 @@ def exit_all_action_handlers(runner_context: context.RunnerContext | None) -> No
             action_cache.handler_cache_by_name = {}
 
 
-def get_payload_schemas(runner_context: context.RunnerContext) -> dict[str, dict | None]:
+def get_payload_schemas(
+    runner_context: context.RunnerContext,
+) -> dict[str, dict | None]:
     """Return a payload schema for every action currently known to the runner.
 
     Called by the WM via the ``actions/getPayloadSchemas`` command to populate
@@ -474,8 +514,12 @@ def get_payload_schemas(runner_context: context.RunnerContext) -> dict[str, dict
                 if description:
                     schema["description"] = description
                 result[action_name] = schema
-        except Exception as exception:
-            logger.debug(f"Could not extract payload schema for action '{action_name}': {exception}")
+        # Importing an action executes its module's top-level code, so the
+        # reachable exception set is open and not enumerable here.
+        except Exception as exception:  # noqa: BLE001
+            logger.debug(
+                f"Could not extract payload schema for action '{action_name}': {exception}"
+            )
             result[action_name] = None
 
     return result

@@ -8,7 +8,6 @@ import sys
 import tempfile
 from pathlib import Path
 
-from finecode_extension_api import code_action
 from fine_test.run_tests_action import (
     RunTestsAction,
     RunTestsRunContext,
@@ -18,6 +17,7 @@ from fine_test.run_tests_action import (
     TestOutcome,
 )
 from fine_test.test_id import TestId
+from finecode_extension_api import code_action
 from finecode_extension_api.interfaces import (
     icommandrunner,
     ilogger,
@@ -83,7 +83,9 @@ class PytestRunTestsHandler(
                 )
             elif self.config.default_test_dirs:
                 cmd_parts.extend(
-                    d for d in self.config.default_test_dirs if (project_dir / d).exists()
+                    d
+                    for d in self.config.default_test_dirs
+                    if (project_dir / d).exists()
                 )
 
             if payload.markers:
@@ -118,7 +120,9 @@ class PytestRunTestsHandler(
                     3: "internal error in pytest",
                     4: "command-line usage error — check addopts config",
                 }
-                reason = descriptions.get(exit_code, f"unexpected exit code {exit_code}")
+                reason = descriptions.get(
+                    exit_code, f"unexpected exit code {exit_code}"
+                )
                 raise code_action.ActionFailedException(
                     f"pytest exited with code {exit_code}: {reason}.\nOutput:\n{stderr or stdout}"
                 )
@@ -253,7 +257,9 @@ def _parse_nodeid(nodeid: str, project_dir: Path) -> TestId:
         return TestId(file_path=file_uri, test_name=test_name, variant=variant)
     # len >= 3: file::Class::method[variant]
     test_name, variant = _split_variant(parts[-1])
-    return TestId(file_path=file_uri, class_name=parts[1], test_name=test_name, variant=variant)
+    return TestId(
+        file_path=file_uri, class_name=parts[1], test_name=test_name, variant=variant
+    )
 
 
 def _split_variant(name: str) -> tuple[str, str | None]:

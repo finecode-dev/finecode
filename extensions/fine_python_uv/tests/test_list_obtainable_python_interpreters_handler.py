@@ -2,19 +2,20 @@ from __future__ import annotations
 
 import json
 import pathlib
+from collections.abc import AsyncIterator
 from typing import Any
 
 import pytest
+from fine_python_lang.list_obtainable_python_interpreters_action import (
+    ListObtainablePythonInterpretersAction,
+    ListObtainablePythonInterpretersRunPayload,
+)
 from finecode_extension_api.interfaces import icommandrunner, ilogger
 from finecode_extension_runner._services.run_action import (
     ActionFailedException as ActionRunFailed,
 )
 from finecode_extension_runner.testing import NoOpLogger, run_handler
 
-from fine_python_lang.list_obtainable_python_interpreters_action import (
-    ListObtainablePythonInterpretersAction,
-    ListObtainablePythonInterpretersRunPayload,
-)
 from fine_python_uv.list_obtainable_python_interpreters_handler import (
     UvListObtainablePythonInterpretersHandler,
 )
@@ -76,6 +77,14 @@ class _FakeProcess:
 
     def close_stdin(self) -> None:
         pass
+
+    async def stdout_lines(self) -> AsyncIterator[str]:
+        for line in self.get_output().splitlines():
+            yield line
+
+    async def stderr_lines(self) -> AsyncIterator[str]:
+        for line in self.get_error_output().splitlines():
+            yield line
 
     async def wait_for_end(self, timeout: float | None = None) -> None:
         pass

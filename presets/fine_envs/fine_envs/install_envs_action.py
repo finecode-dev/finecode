@@ -8,8 +8,9 @@ else:
     from typing_extensions import override
 
 from finecode_extension_api import code_action, textstyler
-from fine_envs.create_envs_action import EnvInfo
 from finecode_extension_api.resource_uri import ResourceUri
+
+from fine_envs.create_envs_action import EnvInfo
 
 
 @dataclasses.dataclass
@@ -27,12 +28,14 @@ class InstallEnvsRunContext(code_action.RunActionContext[InstallEnvsRunPayload])
         initial_payload: InstallEnvsRunPayload,
         meta: code_action.RunActionMeta,
         info_provider: code_action.RunContextInfoProvider,
+        progress_sender: code_action.ProgressSender = code_action._NOOP_PROGRESS_SENDER,
     ) -> None:
         super().__init__(
             run_id=run_id,
             initial_payload=initial_payload,
             meta=meta,
             info_provider=info_provider,
+            progress_sender=progress_sender,
         )
 
         self.envs: list[EnvInfo] | None = None

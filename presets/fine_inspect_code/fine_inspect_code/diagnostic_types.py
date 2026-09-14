@@ -53,6 +53,21 @@ class Diagnostic:
     code_description: str | None = None
     source: str | None = None
     severity: DiagnosticSeverity | None = None
+    fixable: bool | None = None
+    """Whether the reporting tool offers an automatic fix for this diagnostic.
+
+    ``None`` means unknown — the tool does not say, which is not the same as saying
+    there is no fix.  Only set this to ``False`` when the tool reports fixability and
+    reports none for this diagnostic; otherwise leave it at ``None``, so that a reader
+    can tell "no fix" apart from "no information".
+
+    Any fix counts, safe or not: whether a fix may be applied unattended is a property
+    of the fix (``LintFix.applicability``), which ``apply_lint_fixes`` decides on when
+    it has the fix in hand.  Narrowing this flag to safe fixes would hide from the
+    reader the fixes that ``apply_lint_fixes --include-unsafe`` does apply.
+
+    The fix itself is not carried here: it is computed on demand by
+    ``get_lint_fixes``.  This flag only says whether asking is worth it."""
 
 
 @dataclasses.dataclass
@@ -75,10 +90,15 @@ class DiagnosticFilesRunPayloadIterator(collections.abc.AsyncIterator[ResourceUr
         return self
 
     async def __anext__(self) -> ResourceUri:
-        if len(self.diagnostic_files_run_payload.file_paths) <= self.current_file_path_index:
+        if (
+            len(self.diagnostic_files_run_payload.file_paths)
+            <= self.current_file_path_index
+        ):
             raise StopAsyncIteration()
         self.current_file_path_index += 1
-        return self.diagnostic_files_run_payload.file_paths[self.current_file_path_index - 1]
+        return self.diagnostic_files_run_payload.file_paths[
+            self.current_file_path_index - 1
+        ]
 
 
 @dataclasses.dataclass
@@ -111,6 +131,13 @@ class DiagnosticFilesRunResult(code_action.RunActionResult):
                     if message.code is not None:
                         text.append_styled(
                             message.code, foreground=textstyler.Color.RED
+                        )
+                    # spelled out rather than marked with a symbol: the output has no
+                    # footer to explain a legend in, and a partial result is rendered on
+                    # its own, so a symbol would arrive without one
+                    if message.fixable:
+                        text.append_styled(
+                            " [fixable]", foreground=textstyler.Color.BRIGHT_BLACK
                         )
                     text.append(f" {message.message}{source_str}\n")
             else:

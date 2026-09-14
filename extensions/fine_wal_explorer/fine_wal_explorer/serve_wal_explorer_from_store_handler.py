@@ -10,11 +10,10 @@ import socket
 import sys
 import threading
 import urllib.parse
-from typing import Any, Callable, cast
+from collections.abc import Callable
+from typing import Any
 
 import duckdb
-from fine_wal_explorer import store_queries
-from finecode_extension_api import code_action
 from fine_wal_events.ingest_wal_to_store_action import (
     IngestWalToStoreAction,
     IngestWalToStoreRunPayload,
@@ -26,6 +25,7 @@ from fine_wal_events.serve_wal_explorer_from_store_action import (
     ServeWalExplorerFromStoreRunPayload,
     ServeWalExplorerFromStoreRunResult,
 )
+from finecode_extension_api import code_action
 from finecode_extension_api.interfaces import (
     ilogger,
     iprojectactionrunner,
@@ -33,10 +33,11 @@ from finecode_extension_api.interfaces import (
 )
 from finecode_extension_api.interfaces.iprojectactionrunner import ActionRef
 from finecode_extension_api.resource_uri import (
-    ResourceUri,
     path_to_resource_uri,
     resource_uri_to_path,
 )
+
+from fine_wal_explorer import store_queries
 
 SCHEMA_VERSION = 1
 _REQUIRED_TABLES = frozenset({"wal_events"})
@@ -206,7 +207,7 @@ class _WalExplorerHTTPHandler(http.server.BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def log_message(self, format: str, *args: Any) -> None:  # noqa: A002
+    def log_message(self, format: str, *args: Any) -> None:
         self._logger.debug("HTTP %s" % (format % args))
 
     def _handle_health(self) -> dict[str, Any]:

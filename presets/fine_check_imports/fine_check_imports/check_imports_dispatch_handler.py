@@ -1,10 +1,15 @@
 import dataclasses
 
-from finecode_extension_api import code_action
-from fine_check_imports import check_imports_action
 from fine_src_artifacts import get_src_artifact_language_action
-from finecode_extension_api.interfaces import ilogger, iprojectactionrunner, iprojectinfoprovider
+from finecode_extension_api import code_action
+from finecode_extension_api.interfaces import (
+    ilogger,
+    iprojectactionrunner,
+    iprojectinfoprovider,
+)
 from finecode_extension_api.resource_uri import path_to_resource_uri
+
+from fine_check_imports import check_imports_action
 
 
 @dataclasses.dataclass
@@ -67,7 +72,9 @@ class CheckImportsDispatchHandler(
             )
             return check_imports_action.CheckImportsRunResult(messages={})
         subaction = subactions_by_lang[language]
-        resolved_payload = dataclasses.replace(payload, src_artifact_def_path=src_artifact_def_path)
+        resolved_payload = dataclasses.replace(
+            payload, src_artifact_def_path=src_artifact_def_path
+        )
         return await self.action_runner.run_action(
             action_type=subaction,
             payload=resolved_payload,

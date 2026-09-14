@@ -16,7 +16,9 @@ def _make_venv(venv_dir_path: pathlib.Path, *, recorded_path: pathlib.Path) -> N
     bin_dir = venv_dir_path / "bin"
     bin_dir.mkdir(parents=True)
     (bin_dir / "python").write_text("#!/usr/bin/env python3\n")
-    (bin_dir / "activate").write_text(f"VIRTUAL_ENV='{recorded_path}'\nexport VIRTUAL_ENV\n")
+    (bin_dir / "activate").write_text(
+        f"VIRTUAL_ENV='{recorded_path}'\nexport VIRTUAL_ENV\n"
+    )
 
 
 def test_get_python_cmd_returns_path_when_venv_was_not_relocated(

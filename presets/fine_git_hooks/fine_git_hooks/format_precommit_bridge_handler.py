@@ -1,13 +1,19 @@
-import asyncio
 import dataclasses
 
-from finecode_extension_api import code_action
-from fine_git_hooks import precommit_action
 from fine_format import FormatTarget, check_formatting_action
-from finecode_extension_api.interfaces import iworkspaceactionrunner, iworkspaceinfoprovider, ilogger
-from finecode_extension_api.interfaces.iworkspaceinfoprovider import actionable_project_paths
+from finecode_extension_api import code_action
+from finecode_extension_api.interfaces import (
+    ilogger,
+    iworkspaceactionrunner,
+    iworkspaceinfoprovider,
+)
+from finecode_extension_api.interfaces.iworkspaceinfoprovider import (
+    actionable_project_paths,
+)
 from finecode_extension_api.resource_uri import path_to_resource_uri
 from finecode_extension_api.workspace_utils import group_files_by_project
+
+from fine_git_hooks import precommit_action
 
 
 @dataclasses.dataclass
@@ -44,8 +50,12 @@ class FormatPrecommitBridgeHandler(
             self.logger.info("No staged files - skipping format check.")
             return precommit_action.PrecommitRunResult()
 
-        project_paths = actionable_project_paths(await self.workspace_info_provider.get_workspace_projects())
-        files_by_project = group_files_by_project(run_context.staged_files, project_paths)
+        project_paths = actionable_project_paths(
+            await self.workspace_info_provider.get_workspace_projects()
+        )
+        files_by_project = group_files_by_project(
+            run_context.staged_files, project_paths
+        )
 
         if not files_by_project:
             self.logger.warning(
@@ -53,26 +63,21 @@ class FormatPrecommitBridgeHandler(
             )
             return precommit_action.PrecommitRunResult()
 
-        async with asyncio.TaskGroup() as tg:
-            tasks = [
-                tg.create_task(
-                    self.workspace_action_runner.run_action_in_projects(
-                        action_type=check_formatting_action.CheckFormattingAction,
-                        payload=check_formatting_action.CheckFormattingRunPayload(
-                            target=FormatTarget.FILES,
-                            file_paths=[path_to_resource_uri(p) for p in project_files],
-                        ),
-                        meta=run_context.meta,
-                        project_paths=[project_path],
-                    )
+        results = await self.workspace_action_runner.run_action_per_project(
+            action_type=check_formatting_action.CheckFormattingAction,
+            payload_by_project={
+                project_path: check_formatting_action.CheckFormattingRunPayload(
+                    target=FormatTarget.FILES,
+                    file_paths=[path_to_resource_uri(p) for p in project_files],
                 )
                 for project_path, project_files in files_by_project.items()
-            ]
+            },
+            meta=run_context.meta,
+        )
 
         check_result = check_formatting_action.CheckFormattingRunResult()
-        for task in tasks:
-            for project_result in task.result().values():
-                check_result.update(project_result)
+        for project_result in results.values():
+            check_result.update(project_result)
 
         if check_result.files_needing_format:
             self.logger.info(

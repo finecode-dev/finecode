@@ -1,10 +1,16 @@
 import dataclasses
 from pathlib import Path
 
-from finecode_extension_api import code_action
 from fine_envs import create_env_action
 from fine_envs.create_envs_action import CreateEnvsRunResult
-from finecode_extension_api.interfaces import icommandrunner, ifilemanager, ilogger, iprojectactionrunner, iprojectinfoprovider
+from finecode_extension_api import code_action
+from finecode_extension_api.interfaces import (
+    icommandrunner,
+    ifilemanager,
+    ilogger,
+    iprojectactionrunner,
+    iprojectinfoprovider,
+)
 from finecode_extension_api.resource_uri import resource_uri_to_path
 
 from ._uv_common import dump_project_config, get_uv_executable
@@ -83,7 +89,7 @@ class UvCreateEnvHandler(
 
         if payload.recreate and venv_dir_path.exists():
             self.logger.debug(f"Remove virtualenv dir {venv_dir_path}")
-            await self.file_manager.remove_dir(venv_dir_path)
+            await self.file_manager.remove_dir(venv_dir_path, tolerant=True)
 
         venv_valid = await self._is_valid_virtualenv(venv_dir_path)
         if not venv_valid:
@@ -109,9 +115,11 @@ class UvCreateEnvHandler(
             if process.get_exit_code() != 0:
                 error_output = process.get_error_output() or process.get_output()
                 return CreateEnvsRunResult(
-                    errors=[f"Failed to create virtualenv {venv_dir_path}:\n{error_output}"]
+                    errors=[
+                        f"Failed to create virtualenv {venv_dir_path}:\n{error_output}"
+                    ]
                 )
-        else:
-            self.logger.info(f"Virtualenv in {env_info.name} exists already")
+            return CreateEnvsRunResult(errors=[], created=True)
 
-        return CreateEnvsRunResult(errors=[])
+        self.logger.info(f"Virtualenv in {env_info.name} exists already")
+        return CreateEnvsRunResult(errors=[], created=False)

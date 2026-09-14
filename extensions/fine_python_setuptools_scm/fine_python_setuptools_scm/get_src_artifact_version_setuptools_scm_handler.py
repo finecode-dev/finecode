@@ -1,11 +1,10 @@
 import dataclasses
 
+from fine_src_artifacts import get_src_artifact_version_action
+from finecode_extension_api import code_action
+from finecode_extension_api.interfaces import ilogger, iprojectinfoprovider
 from setuptools_scm import Configuration
 from setuptools_scm._get_version import _get_version
-
-from finecode_extension_api import code_action
-from fine_src_artifacts import get_src_artifact_version_action
-from finecode_extension_api.interfaces import iprojectinfoprovider, ilogger
 
 
 @dataclasses.dataclass
@@ -24,7 +23,7 @@ class GetSrcArtifactVersionSetuptoolsScmHandler(
         self,
         config: GetSrcArtifactVersionSetuptoolsScmHandlerConfig,
         project_info_provider: iprojectinfoprovider.IProjectInfoProvider,
-        logger: ilogger.ILogger
+        logger: ilogger.ILogger,
     ) -> None:
         self.config = config
         self.project_info_provider = project_info_provider
@@ -35,12 +34,15 @@ class GetSrcArtifactVersionSetuptoolsScmHandler(
         payload: get_src_artifact_version_action.GetSrcArtifactVersionRunPayload,
         run_context: get_src_artifact_version_action.GetSrcArtifactVersionRunContext,
     ) -> get_src_artifact_version_action.GetSrcArtifactVersionRunResult:
+        # Use current project if src_artifact_def_path is not provided
         src_artifact_def_path = payload.src_artifact_def_path
-
-        src_artifact_raw_def = (
-            await self.project_info_provider.get_project_raw_config(
-                project_def_path=src_artifact_def_path
+        if src_artifact_def_path is None:
+            src_artifact_def_path = (
+                self.project_info_provider.get_current_project_def_path()
             )
+
+        src_artifact_raw_def = await self.project_info_provider.get_project_raw_config(
+            project_def_path=src_artifact_def_path
         )
 
         # Check that version is dynamic
@@ -57,10 +59,7 @@ class GetSrcArtifactVersionSetuptoolsScmHandler(
         try:
             # could be optimized by providing config from project_info_provider instead
             # of reading file each time
-            config = Configuration.from_file(
-                pyproject,
-                root=None
-            )
+            config = Configuration.from_file(pyproject, root=None)
         except (LookupError, FileNotFoundError) as ex:
             # no pyproject.toml OR no [tool.setuptools_scm]
             self.logger.warning(
@@ -70,9 +69,7 @@ class GetSrcArtifactVersionSetuptoolsScmHandler(
             )
             config = Configuration(root=src_artifact_def_path.parent.as_posix())
 
-        version = _get_version(
-            config
-        )
+        version = _get_version(config)
         if version is None:
             raise code_action.ActionFailedException("ERROR: no version found")
 

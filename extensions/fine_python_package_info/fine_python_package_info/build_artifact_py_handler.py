@@ -1,12 +1,17 @@
 import dataclasses
 
-from finecode_extension_api import code_action
+from fine_python_lang import build_python_artifact_action
 from fine_src_artifacts import build_artifact_action
+from finecode_extension_api import code_action
 from finecode_extension_api.interfaces import (
     icommandrunner,
     iextensionrunnerinfoprovider,
     ilogger,
     iprojectinfoprovider,
+)
+from finecode_extension_api.resource_uri import (
+    path_to_resource_uri,
+    resource_uri_to_path,
 )
 
 
@@ -16,7 +21,7 @@ class BuildArtifactPyHandlerConfig(code_action.ActionHandlerConfig): ...
 
 class BuildArtifactPyHandler(
     code_action.ActionHandler[
-        build_artifact_action.BuildArtifactAction,
+        build_python_artifact_action.BuildPythonArtifactAction,
         BuildArtifactPyHandlerConfig,
     ]
 ):
@@ -36,18 +41,17 @@ class BuildArtifactPyHandler(
 
     async def run(
         self,
-        payload: build_artifact_action.BuildArtifactRunPayload,
-        run_context: build_artifact_action.BuildArtifactRunContext,
+        payload: build_python_artifact_action.BuildPythonArtifactRunPayload,
+        run_context: build_python_artifact_action.BuildPythonArtifactRunContext,
     ) -> build_artifact_action.BuildArtifactRunResult:
         # Use current project if src_artifact_def_path is not provided
-        src_artifact_def_path = payload.src_artifact_def_path
-        if src_artifact_def_path is None:
-            src_artifact_def_path = (
-                self.project_info_provider.get_current_project_def_path()
-            )
+        if payload.src_artifact_def_path is None:
+            project_def_path = self.project_info_provider.get_current_project_def_path()
+        else:
+            project_def_path = resource_uri_to_path(payload.src_artifact_def_path)
 
         # Get the project directory (parent of pyproject.toml)
-        project_dir = src_artifact_def_path.parent
+        project_dir = project_def_path.parent
 
         self.logger.info(f"Building artifact in {project_dir}")
 
@@ -58,8 +62,20 @@ class BuildArtifactPyHandler(
         )
 
         # Run python -m build
+        build_args = ""
+        if payload.distributions is not None:
+            if "sdist" in payload.distributions:
+                build_args += " --sdist"
+            if "wheel" in payload.distributions:
+                build_args += " --wheel"
+        if payload.output_dir is not None:
+            dist_dir = resource_uri_to_path(payload.output_dir)
+            build_args += f' --outdir "{dist_dir}"'
+        else:
+            dist_dir = project_dir / "dist"
+
         process = await self.command_runner.run(
-            cmd=f"{python_path} -m build",
+            cmd=f"{python_path} -m build{build_args}",
             cwd=project_dir,
         )
         await process.wait_for_end()
@@ -73,7 +89,6 @@ class BuildArtifactPyHandler(
 
         # Parse the build output to get the produced file names
         # Example line: "Successfully built pkg-1.0.tar.gz and pkg-1.0-py3-none-any.whl"
-        dist_dir = project_dir / "dist"
         build_output_paths = []
 
         output = process.get_output()
@@ -91,6 +106,8 @@ class BuildArtifactPyHandler(
         self.logger.info(f"Build completed. Output: {build_output_paths}")
 
         return build_artifact_action.BuildArtifactRunResult(
-            src_artifact_def_path=src_artifact_def_path,
-            build_output_paths=build_output_paths,
+            src_artifact_def_path=path_to_resource_uri(project_def_path),
+            build_output_paths=[
+                path_to_resource_uri(path) for path in build_output_paths
+            ],
         )

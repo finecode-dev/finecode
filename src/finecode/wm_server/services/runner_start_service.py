@@ -30,6 +30,7 @@ Cascade prevention
 All projects run to completion and ``_auto_prepare_and_retry`` sees the full set of
 broken environments in a single pass.
 """
+
 from __future__ import annotations
 
 import pathlib
@@ -39,7 +40,7 @@ from loguru import logger
 
 import finecode_jsonrpc as _jsonrpc_client
 from finecode.wm_server import context, domain
-from finecode.wm_server.runner import runner_manager
+from finecode.wm_server.runner import runner_manager, wm_bridge
 
 if TYPE_CHECKING:
     from finecode.wm_server.runner import runner_client
@@ -60,27 +61,34 @@ async def _auto_prepare_and_retry(
     On success the projects are fully initialized and the function returns normally.
     On any failure it re-raises ``exc``.
     """
-    from finecode.wm_server import wm_server as _wm
     from finecode.wm_server.runner import runner_client as rc
 
     def _notify(message: str, level: str = "ERROR") -> None:
-        _wm._notify_all_clients("server/userMessage", {"message": message, "type": level})
+        wm_bridge.handlers().notify_all_clients(
+            "server/userMessage", {"message": message, "type": level}
+        )
 
     def _runner_status(p: domain.Project) -> rc.RunnerStatus | None:
-        r = ws_context.ws_projects_extension_runners.get(p.dir_path, {}).get("dev_workspace")
+        r = ws_context.ws_projects_extension_runners.get(p.dir_path, {}).get(
+            "dev_workspace"
+        )
         return r.status if r is not None else None
 
-    no_venv_projects = [p for p in projects if _runner_status(p) == rc.RunnerStatus.NO_VENV]
-    failed_projects = [p for p in projects if _runner_status(p) == rc.RunnerStatus.FAILED]
+    no_venv_projects = [
+        p for p in projects if _runner_status(p) == rc.RunnerStatus.NO_VENV
+    ]
+    failed_projects = [
+        p for p in projects if _runner_status(p) == rc.RunnerStatus.FAILED
+    ]
     # Projects whose tasks were cancelled before save_runner_in_context ran have no runner
     # entry in context at all (_runner_status returns None).  Their venv may or may not
     # exist; install_env_for_project is idempotent and handles both cases.
     # Only CONFIG_VALID projects are expected to have a runner; others (e.g. NO_FINECODE)
     # are intentionally skipped by start_runners_with_presets and must not be auto-repaired.
     no_runner_projects = [
-        p for p in projects
-        if _runner_status(p) is None
-        and p.status == domain.ProjectStatus.CONFIG_VALID
+        p
+        for p in projects
+        if _runner_status(p) is None and p.status == domain.ProjectStatus.CONFIG_VALID
     ]
     affected_projects = no_venv_projects + failed_projects + no_runner_projects
 
@@ -89,7 +97,9 @@ async def _auto_prepare_and_retry(
         + ", ".join(f"{p.name}={_runner_status(p)}" for p in projects)
     )
 
-    initializing_projects = [p for p in projects if _runner_status(p) == rc.RunnerStatus.INITIALIZING]
+    initializing_projects = [
+        p for p in projects if _runner_status(p) == rc.RunnerStatus.INITIALIZING
+    ]
     if initializing_projects:
         logger.warning(
             "Projects with runners stuck in INITIALIZING state (will not be auto-repaired): "
@@ -104,22 +114,26 @@ async def _auto_prepare_and_retry(
         raise exc
 
     affected_names = ", ".join(p.name for p in affected_projects)
-    logger.info(f"Environment not prepared for: {affected_names}. Running prepare-envs automatically.")
+    logger.info(
+        f"Environment not prepared for: {affected_names}. Running prepare-envs automatically."
+    )
     _notify(
         f"Environment not prepared for: {affected_names}. Running prepare-envs automatically...",
         level="INFO",
     )
 
     from finecode.wm_server.services.prepare_envs_service import (
-        install_env_for_project,
         PrepareEnvsFailed,
+        install_env_for_project,
     )
 
     for project in affected_projects:
         try:
             await install_env_for_project(project, "dev_workspace", ws_context)
         except PrepareEnvsFailed as prep_exc:
-            logger.error(f"Auto install_env failed for {project.name}: {prep_exc.message}")
+            logger.error(
+                f"Auto install_env failed for {project.name}: {prep_exc.message}"
+            )
             _notify(f"Auto prepare failed for {project.name}: {prep_exc.message}")
             raise runner_manager.RunnerFailedToStart(
                 f"Auto prepare-envs failed for '{project.name}': {prep_exc.message}"
@@ -180,7 +194,6 @@ async def start_runners_with_auto_prepare(
     On ``RunnerConfigurationError`` (missing venv or package) it runs the relevant
     ``fine_envs`` actions automatically and retries before surfacing the error.
     """
-    from finecode.wm_server.runner import runner_manager
 
     try:
         await runner_manager.start_runners_with_presets(
@@ -219,7 +232,9 @@ async def repair_no_venv_env(
     Raises ``prepare_envs_service.PrepareEnvsFailed`` if installation fails;
     propagates whatever the subsequent restart raises otherwise.
     """
-    from finecode.wm_server.services.prepare_envs_service import install_env_for_project
+    from finecode.wm_server.services.prepare_envs_service import (
+        install_env_for_project,
+    )
 
     logger.info(
         f"Environment '{env_name}' not prepared for {project.name}. "
@@ -272,7 +287,9 @@ async def get_or_start_runner_with_auto_prepare(
         if runner is None or runner.status != rc.RunnerStatus.NO_VENV:
             raise
 
-        from finecode.wm_server.services.prepare_envs_service import PrepareEnvsFailed
+        from finecode.wm_server.services.prepare_envs_service import (
+            PrepareEnvsFailed,
+        )
 
         try:
             await repair_no_venv_env(project_def, env_name, ws_context)
@@ -305,10 +322,10 @@ async def get_or_start_runners_with_presets(
     Returns the ``ExtensionRunnerInfo`` for the dev_workspace runner.
     Raises ``RunnerFailedToStart`` if the runner cannot reach RUNNING status.
     """
-    from finecode.wm_server.runner import runner_client, runner_manager
 
     has_dev_workspace_runner = (
-        "dev_workspace" in ws_context.ws_projects_extension_runners.get(project_dir_path, {})
+        "dev_workspace"
+        in ws_context.ws_projects_extension_runners.get(project_dir_path, {})
     )
     if not has_dev_workspace_runner:
         project = ws_context.ws_projects[project_dir_path]
@@ -325,7 +342,9 @@ async def get_or_start_runners_with_presets(
     elif dev_workspace_runner.status == runner_client.RunnerStatus.REPAIRING:
         if dev_workspace_runner.repair_complete_event is not None:
             await dev_workspace_runner.repair_complete_event.wait()
-        dev_workspace_runner = ws_context.ws_projects_extension_runners[project_dir_path]["dev_workspace"]
+        dev_workspace_runner = ws_context.ws_projects_extension_runners[
+            project_dir_path
+        ]["dev_workspace"]
         return dev_workspace_runner
     else:
         raise runner_manager.RunnerFailedToStart(

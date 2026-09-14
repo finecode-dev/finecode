@@ -9,8 +9,9 @@ if sys.version_info >= (3, 12):
 else:
     from typing_extensions import override
 
-from finecode_extension_api import code_action, textstyler
 from finecode_extension_api.resource_uri import ResourceUri
+
+from finecode_extension_api import code_action, textstyler
 
 
 @dataclasses.dataclass

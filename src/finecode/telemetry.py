@@ -1,6 +1,10 @@
 import contextlib
+import socket
 import time
 from pathlib import Path
+from urllib.parse import urlparse
+import importlib.metadata
+import logging
 
 # Metric instruments — populated by init_meter_provider(); None when OTel is disabled.
 _action_duration_hist = None
@@ -8,21 +12,84 @@ _action_errors_counter = None
 _er_startup_hist = None
 _er_active_counter = None
 
+# Endpoints already probed for the one-time reachability heads-up, so the three
+# init_* functions log at most once per endpoint.
+_probed_endpoints: set[str] = set()
 
-def init_otel_logging(service_name: str, workspace_path: Path | None = None, endpoint: str | None = None) -> None:
+
+def _validate_endpoint(endpoint: str) -> tuple[str, int]:
+    """Parse the OTLP endpoint into (host, port), raising on a malformed value.
+
+    ``otlp_endpoint`` is explicit configuration, so a value we cannot parse is a
+    developer error worth surfacing loudly rather than papering over with defaults.
+    """
+    parsed = urlparse(endpoint if "://" in endpoint else f"//{endpoint}")
+    if not parsed.hostname or not parsed.port:
+        raise ValueError(
+            f"Invalid otlp_endpoint {endpoint!r}: expected host and port, "
+            f"e.g. http://otel-lgtm:4317"
+        )
+    return parsed.hostname, parsed.port
+
+
+def _silence_otel_export_logs() -> None:
+    """Raise the OTel exporter logger threshold to ERROR.
+
+    A collector that is absent at startup — or that goes down mid-session —
+    otherwise produces a stream of gRPC export-retry warnings for the process
+    lifetime. The exporters buffer and retry regardless, so suppressing the retry
+    churn (while still surfacing genuine ERROR-level export failures) is safe.
+    """
+
+    logging.getLogger("opentelemetry.exporter").setLevel(logging.ERROR)
+
+
+def _probe_endpoint_once(endpoint: str, host: str, port: int) -> None:
+    """Log a one-time heads-up if the endpoint is not reachable at startup.
+
+    This does NOT gate exporter setup: the OTLP batch processors buffer and retry,
+    so a collector started after the WM (e.g. via ``scripts/observability.sh up`` or a
+    ``COMPOSE_PROFILES=otel`` stack that comes up alongside the container) is picked
+    up automatically. The probe only tells the developer whether signals are flowing
+    yet — useful when verifying an observability setup.
+    """
+    if endpoint in _probed_endpoints:
+        return
+    _probed_endpoints.add(endpoint)
+
+    try:
+        with socket.create_connection((host, port), timeout=1.0):
+            return
+    except OSError:
+        pass
+
+    from loguru import logger
+
+    logger.warning(
+        f"OTLP endpoint {endpoint} is not reachable yet; exporters will connect once "
+        f"it is up (e.g. scripts/observability.sh up). WAL events are recorded regardless."
+    )
+
+
+def init_otel_logging(
+    service_name: str, workspace_path: Path | None = None, endpoint: str | None = None
+) -> None:
     if not endpoint:
         return
 
-    import importlib.metadata
+    host, port = _validate_endpoint(endpoint)
+    _silence_otel_export_logs()
+    _probe_endpoint_once(endpoint, host, port)
 
+    from finecode_extension_runner.logs import filter_logs
     from loguru import logger
     from opentelemetry._logs.severity import SeverityNumber
-    from opentelemetry.exporter.otlp.proto.grpc._log_exporter import OTLPLogExporter
+    from opentelemetry.exporter.otlp.proto.grpc._log_exporter import (
+        OTLPLogExporter,
+    )
     from opentelemetry.sdk._logs import LoggerProvider
     from opentelemetry.sdk._logs.export import BatchLogRecordProcessor
     from opentelemetry.sdk.resources import Resource
-
-    from finecode_extension_runner.logs import filter_logs
 
     try:
         version = importlib.metadata.version("finecode")
@@ -81,14 +148,20 @@ def init_otel_logging(service_name: str, workspace_path: Path | None = None, end
     logger.add(_otel_sink, level="TRACE", filter=filter_logs)
 
 
-def init_tracer_provider(service_name: str, workspace_path: Path | None = None, endpoint: str | None = None) -> None:
+def init_tracer_provider(
+    service_name: str, workspace_path: Path | None = None, endpoint: str | None = None
+) -> None:
     if not endpoint:
         return
 
-    import importlib.metadata
+    host, port = _validate_endpoint(endpoint)
+    _silence_otel_export_logs()
+    _probe_endpoint_once(endpoint, host, port)
 
     from opentelemetry import trace
-    from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
+    from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import (
+        OTLPSpanExporter,
+    )
     from opentelemetry.sdk.resources import Resource
     from opentelemetry.sdk.trace import TracerProvider
     from opentelemetry.sdk.trace.export import BatchSpanProcessor
@@ -113,18 +186,30 @@ def init_tracer_provider(service_name: str, workspace_path: Path | None = None, 
     trace.set_tracer_provider(provider)
 
 
-def init_meter_provider(service_name: str, workspace_path: Path | None = None, endpoint: str | None = None) -> None:
-    global _action_duration_hist, _action_errors_counter, _er_startup_hist, _er_active_counter
+def init_meter_provider(
+    service_name: str, workspace_path: Path | None = None, endpoint: str | None = None
+) -> None:
+    global \
+        _action_duration_hist, \
+        _action_errors_counter, \
+        _er_startup_hist, \
+        _er_active_counter
 
     if not endpoint:
         return
 
-    import importlib.metadata
+    host, port = _validate_endpoint(endpoint)
+    _silence_otel_export_logs()
+    _probe_endpoint_once(endpoint, host, port)
 
     from opentelemetry import metrics
-    from opentelemetry.exporter.otlp.proto.grpc.metric_exporter import OTLPMetricExporter
+    from opentelemetry.exporter.otlp.proto.grpc.metric_exporter import (
+        OTLPMetricExporter,
+    )
     from opentelemetry.sdk.metrics import MeterProvider
-    from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
+    from opentelemetry.sdk.metrics.export import (
+        PeriodicExportingMetricReader,
+    )
     from opentelemetry.sdk.resources import Resource
 
     try:
@@ -193,9 +278,7 @@ def er_startup_metrics(env_name: str):
         yield
     finally:
         if _er_startup_hist is not None:
-            _er_startup_hist.record(
-                time.perf_counter() - start, {"env.name": env_name}
-            )
+            _er_startup_hist.record(time.perf_counter() - start, {"env.name": env_name})
 
 
 def er_active_inc(env_name: str) -> None:
@@ -270,7 +353,11 @@ def er_dispatch_span(env_name: str, runner_id: str, action_name: str):
     tracer = trace.get_tracer("finecode.wm")
     with tracer.start_as_current_span(
         "action.er_dispatch",
-        attributes={"env.name": env_name, "runner.id": runner_id, "action.name": action_name},
+        attributes={
+            "env.name": env_name,
+            "runner.id": runner_id,
+            "action.name": action_name,
+        },
         record_exception=True,
         set_status_on_exception=True,
     ) as span:
@@ -296,7 +383,9 @@ def _jsonrpc_server_span(method: str, traceparent: str | None):
     from opentelemetry import propagate, trace
 
     tracer = trace.get_tracer("finecode.jsonrpc")
-    parent_ctx = propagate.extract({"traceparent": traceparent}) if traceparent else None
+    parent_ctx = (
+        propagate.extract({"traceparent": traceparent}) if traceparent else None
+    )
     with tracer.start_as_current_span(
         f"jsonrpc.server/{method}",
         context=parent_ctx,
@@ -326,12 +415,14 @@ class JsonRpcTracingHooks:
 
     def notification_sent(self, method: str) -> None:
         from opentelemetry import trace
+
         span = trace.get_current_span()
         if span.is_recording():
             span.add_event("jsonrpc.notification.sent", {"rpc.method": method})
 
     def notification_received(self, method: str, traceparent: str | None) -> None:
         from opentelemetry import trace
+
         span = trace.get_current_span()
         if span.is_recording():
             span.add_event("jsonrpc.notification.received", {"rpc.method": method})
@@ -339,6 +430,7 @@ class JsonRpcTracingHooks:
 
 def add_span_event(name: str, attributes: dict | None = None) -> None:
     from opentelemetry import trace
+
     span = trace.get_current_span()
     if span.is_recording():
         span.add_event(name, attributes or {})
@@ -384,7 +476,8 @@ def attach_incoming_traceparent(params: dict):
     if not incoming:
         yield
         return
-    from opentelemetry import context as otel_context, propagate
+    from opentelemetry import context as otel_context
+    from opentelemetry import propagate
 
     parent_ctx = propagate.extract({"traceparent": incoming})
     token = otel_context.attach(parent_ctx)

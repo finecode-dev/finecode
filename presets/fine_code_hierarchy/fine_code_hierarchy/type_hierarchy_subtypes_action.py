@@ -3,6 +3,7 @@ from __future__ import annotations
 import dataclasses
 
 from finecode_extension_api import code_action
+
 from fine_code_hierarchy.text_document_prepare_type_hierarchy_action import (
     TypeHierarchyItem,
 )

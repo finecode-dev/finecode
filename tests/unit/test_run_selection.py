@@ -3,6 +3,7 @@
 `prepare_envs_service`'s cross-project validation, but tolerates a selector
 that matches at least one in-scope project rather than requiring all of
 them)."""
+
 from __future__ import annotations
 
 import pathlib
@@ -15,16 +16,16 @@ from finecode.wm_server.services.run_service.run_selection import validate_run_s
 
 
 def _matrix_env_table(base: str, versions: list[str]) -> dict[str, dict]:
-    return {
-        f"{base}@cpython-{v}": {"interpreter": f"cpython@{v}"} for v in versions
-    }
+    return {f"{base}@cpython-{v}": {"interpreter": f"cpython@{v}"} for v in versions}
 
 
 def _raw_config(env_table: dict[str, dict]) -> dict:
     return {"tool": {"finecode": {"env": env_table}}}
 
 
-def _fake_ws_context(raw_configs_by_path: dict[pathlib.Path, dict]) -> types.SimpleNamespace:
+def _fake_ws_context(
+    raw_configs_by_path: dict[pathlib.Path, dict],
+) -> types.SimpleNamespace:
     return types.SimpleNamespace(ws_projects_raw_configs=raw_configs_by_path)
 
 
@@ -57,7 +58,9 @@ class TestValidateRunSelectors:
                 ws_context=ws_context,
             )
 
-    def test_selector_known_in_at_least_one_of_several_projects_does_not_raise(self) -> None:
+    def test_selector_known_in_at_least_one_of_several_projects_does_not_raise(
+        self,
+    ) -> None:
         """A selector valid for one project but absent in a sibling project
         must not fail the whole run (multi-project nuance)."""
         project_a = pathlib.Path("/ws/project_a")

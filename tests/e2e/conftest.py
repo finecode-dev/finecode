@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import os
 import shutil
 import signal
@@ -13,7 +14,6 @@ import time
 from pathlib import Path
 
 import pytest
-
 
 # ---------------------------------------------------------------------------
 # Process helpers
@@ -60,7 +60,7 @@ def start_server(args: list[str], cwd: Path) -> subprocess.Popen:
     failure) via a background thread so the pipe buffer never blocks the child.
     """
     proc = subprocess.Popen(
-        [sys.executable, "-m", "finecode"] + args,
+        [sys.executable, "-m", "finecode", *args],
         cwd=cwd,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.PIPE,
@@ -88,10 +88,8 @@ def sigint_group(proc: subprocess.Popen) -> None:
     if sys.platform == "win32":
         os.kill(proc.pid, signal.CTRL_C_EVENT)
     else:
-        try:
+        with contextlib.suppress(ProcessLookupError):
             os.killpg(proc.pid, signal.SIGINT)
-        except ProcessLookupError:
-            pass
 
 
 def kill_group(proc: subprocess.Popen) -> None:
@@ -106,6 +104,7 @@ def kill_group(proc: subprocess.Popen) -> None:
     if sys.platform == "win32":
         try:
             import psutil
+
             parent = psutil.Process(proc.pid)
             for child in parent.children(recursive=True):
                 try:
@@ -113,7 +112,7 @@ def kill_group(proc: subprocess.Popen) -> None:
                 except psutil.NoSuchProcess:
                     pass
             parent.kill()
-        except Exception:
+        except Exception:  # noqa: BLE001
             proc.kill()
     else:
         try:
@@ -140,11 +139,7 @@ def wm_shared_port_file() -> Path:
 def workspace_dir(tmp_path: Path) -> Path:
     """Minimal FineCode workspace with an empty pyproject.toml."""
     (tmp_path / "pyproject.toml").write_text(
-        '[project]\n'
-        'name = "test-project"\n'
-        'version = "0.1.0"\n'
-        '\n'
-        '[tool.finecode]\n'
+        '[project]\nname = "test-project"\nversion = "0.1.0"\n\n[tool.finecode]\n'
     )
     return tmp_path
 
@@ -171,23 +166,16 @@ def _repair_copied_venv_path(venv_dir: Path, old_venv_dir: Path) -> None:
     activate_path.write_text(content.replace(str(old_venv_dir), str(venv_dir)))
 
 
-@pytest.fixture
-def workspace_dir_with_er(tmp_path: Path) -> Path:
-    """Workspace with a dev_workspace env copied from the current Python venv.
-
-    Copying (rather than symlinking) gives each test an isolated venv the WM
-    can write into (e.g. cache files) without conflicting with parallel tests.
-    ``finecode_extension_runner`` is already installed in the active venv, so
-    the WM can start a real ER immediately without running prepare-envs.
-    """
+def _build_workspace_with_er_venv(tmp_path: Path) -> Path:
+    """Shared setup for ``workspace_dir_with_er`` and its stuck-ER variant."""
     (tmp_path / "pyproject.toml").write_text(
-        '[project]\n'
+        "[project]\n"
         'name = "test-project"\n'
         'version = "0.1.0"\n'
-        '\n'
-        '[dependency-groups]\n'
+        "\n"
+        "[dependency-groups]\n"
         'dev_workspace = ["finecode"]\n'
-        '\n'
+        "\n"
         "[tool.finecode]\n\n"
         "[[tool.finecode.actions]]\n"
         'name = "test_action"\n\n'
@@ -202,3 +190,47 @@ def workspace_dir_with_er(tmp_path: Path) -> Path:
     shutil.copytree(current_venv, new_venv_dir, symlinks=True)
     _repair_copied_venv_path(new_venv_dir, current_venv)
     return tmp_path
+
+
+@pytest.fixture
+def workspace_dir_with_er(tmp_path: Path) -> Path:
+    """Workspace with a dev_workspace env copied from the current Python venv.
+
+    Copying (rather than symlinking) gives each test an isolated venv the WM
+    can write into (e.g. cache files) without conflicting with parallel tests.
+    ``finecode_extension_runner`` is already installed in the active venv, so
+    the WM can start a real ER immediately without running prepare-envs.
+    """
+    return _build_workspace_with_er_venv(tmp_path)
+
+
+@pytest.fixture
+def workspace_dir_with_stuck_er(tmp_path: Path) -> Path:
+    """Like ``workspace_dir_with_er``, but the dev_workspace ER never reports
+    its port — it hangs right after being spawned and is never reachable over
+    RPC, simulating a start attempt that stalls (e.g. under severe resource
+    contention) rather than one that fails outright.
+
+    Replaces the copied venv's ``bin/python`` with a wrapper that intercepts
+    only the exact ``-m finecode_extension_runner.cli start ...`` invocation
+    (what the WM actually runs to launch an ER, see ``finecode_cmd``) and
+    hangs instead of running it; any other invocation still delegates to the
+    real interpreter, so the venv otherwise behaves normally.
+    """
+    workspace_dir = _build_workspace_with_er_venv(tmp_path)
+    python_path = workspace_dir / ".venvs" / "dev_workspace" / "bin" / "python"
+    real_python = python_path.resolve()
+    python_path.unlink()
+    python_path.write_text(
+        "#!/bin/sh\n"
+        'case "$*" in\n'
+        '  *"finecode_extension_runner.cli start"*)\n'
+        "    exec sleep 3600\n"
+        "    ;;\n"
+        "  *)\n"
+        f'    exec "{real_python}" "$@"\n'
+        "    ;;\n"
+        "esac\n"
+    )
+    python_path.chmod(0o755)
+    return workspace_dir

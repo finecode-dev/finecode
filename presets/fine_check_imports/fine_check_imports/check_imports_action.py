@@ -1,8 +1,8 @@
 # docs: docs/reference/actions.md
 import dataclasses
 
-from finecode_extension_api import code_action
 from fine_inspect_code.diagnostic_types import DiagnosticFilesRunResult
+from finecode_extension_api import code_action
 from finecode_extension_api.resource_uri import ResourceUri
 
 
@@ -22,7 +22,9 @@ class CheckImportsRunContext(
 
 
 class CheckImportsAction(
-    code_action.Action[CheckImportsRunPayload, CheckImportsRunContext, CheckImportsRunResult]
+    code_action.Action[
+        CheckImportsRunPayload, CheckImportsRunContext, CheckImportsRunResult
+    ]
 ):
     """Check a project's import graph against configured architectural contracts.
 

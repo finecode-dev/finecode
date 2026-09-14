@@ -59,9 +59,20 @@ The absence of extra payload fields on the subaction is NOT a reason to omit it.
 
 ## R-108: Action declares its execution scope
 
-An action MUST declare `SCOPE = ActionScope.WORKSPACE` when it needs to reason about all workspace projects together (e.g. de-duplicating results across projects, or orchestrating per-project sub-actions from a single entry point). All other actions use the default `ActionScope.PROJECT`.
+An action MUST declare `SCOPE = ActionScope.WORKSPACE` when it needs a workspace-level view of its inputs or outputs. Concretely, that means at least one of the following holds:
 
-A workspace-scoped action runs exactly once per invocation, hosted in the workspace root project. Its handler is responsible for any per-project fan-out. See [ADR-0035](../adr/0035-action-declares-execution-scope-project-or-workspace.md).
+- **(a) Cross-project output aggregation** — the action combines, de-duplicates, or cross-references results from multiple projects into a single answer (e.g. a workspace-wide test count, or dependency cross-referencing).
+- **(b) Cross-project input routing** — the action accepts a workspace-level input (such as a flat `file_paths` list whose members belong to different projects) that must be split and routed to the owning projects before per-project work can start.
+- **(c) Single-entry-point orchestration** — one invocation must fan out to *different* child actions per project (e.g. `inspect_code` routing to both lint and type_check), not just replicate a single action across projects.
+- **(d) Exactly-once effect** — the action's effect is not per-project, so repeating it per project would be *wrong*, not merely wasteful. An action that posts a comment to an issue tracker, or otherwise acts once on an external resource named in its payload, produces N duplicate writes under per-project dispatch.
+
+All other actions use the default `ActionScope.PROJECT`.
+
+Trigger (d) is narrower than it first reads, and is the easiest to over-claim. The test is whether per-project repetition is *incorrect*, not whether it is redundant: `create_git_tag` and `publish_artifact` repeat per project and that is exactly right, because each project owns a tag and an artifact. Reach for (d) only when a second execution would corrupt or duplicate a single external effect.
+
+Running in multiple projects is NOT by itself a reason to be workspace-scoped. The WM already dispatches a `PROJECT` action once per project that declares it, collecting independent per-project results (which stay project-scoped, per R-302). Reserve `WORKSPACE` for the cases above, where a per-project fan-out of a single action is insufficient. Triggers (b) and (c) are input/orchestration concerns and are independent of (a): an action may be legitimately workspace-scoped even when it performs no cross-project result merging — `inspect_code`/`audit_code` send each project's diagnostics as independent partial results yet are workspace-scoped for (b) and (c).
+
+A workspace-scoped action runs exactly once per invocation, hosted in the workspace root project. Its handler is responsible for any per-project fan-out, and MUST delegate per-project data collection to a project-scoped action rather than reading project files directly (R-109). See [ADR-0035](../adr/0035-action-declares-execution-scope-project-or-workspace.md).
 
 ## R-109: Workspace handlers must not perform per-project data collection directly
 
@@ -195,9 +206,11 @@ Dispatch handlers are responsible for this guarantee across the whole payload: i
 ## R-308: Handlers callable via `run_action_in_projects` must always send a result
 
 A handler for action A that can be invoked by other handlers via
-`workspace_action_runner.run_action_in_projects(A, ...)` MUST always send at least one
+`workspace_action_runner.run_action_in_projects(A, ...)` or
+`workspace_action_runner.run_action_per_project(A, ...)` MUST always send at least one
 result through `partial_result_sender` before returning — even when the result is empty
-(e.g. `messages={}`).
+(e.g. `messages={}`). The two methods differ only in payload shape (one payload everywhere
+vs. a complete payload per project); the result contract is identical.
 
 Sending nothing produces a `null` JSON result that the caller cannot deserialize into the
 expected type. The error surfaces as a cryptic structural failure ("required field
@@ -250,11 +263,21 @@ When a workspace or bridge handler fans out over a set of targets (projects,
 files, or other items) derived from the payload, it MUST emit a `WARNING` if
 the fan-out produces zero targets while the payload requested specific items.
 
-Zero targets with specific input is always a diagnosable condition: either the
-items do not belong to any known project, the input identifiers are in an
-unexpected form, or the project list is stale. A silent no-op leaves the caller
-unable to distinguish "processed and found nothing" from "never ran". The
-warning MUST include the problematic input values.
+Zero targets with specific input is diagnosable when the caller explicitly asked
+for those items: either the items do not belong to any known project, the input
+identifiers are in an unexpected form, or the project list is stale. A silent
+no-op leaves the caller unable to distinguish "processed and found nothing" from
+"never ran". The warning MUST include the problematic input values.
+
+This only holds for `RunActionMeta.trigger == RunActionTrigger.USER`. Editors
+routinely invoke actions with `trigger=SYSTEM` for every open buffer without
+checking whether the action or the target project actually applies (e.g. LSP
+`textDocument/diagnostic` firing for a file outside any known project) — for
+those calls, zero targets is expected, not diagnosable, and MUST NOT surface as
+a user-facing warning. Handlers MUST check `run_context.meta.trigger` and only
+call `user_messenger.warning(...)` when it is `USER`; for other triggers, log
+the same message at `DEBUG` instead so it stays diagnosable in the ER logs
+without prompting the user.
 
 Emit the warning through the injected
 `iuser_messenger.IUserMessenger` (`self.user_messenger.warning(...)`) so the

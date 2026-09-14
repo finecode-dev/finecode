@@ -10,6 +10,10 @@ source = "fine_src_artifacts.GetSrcArtifactLanguageAction"
 source = "fine_src_artifacts.GetSrcArtifactRegistriesAction"
 # no default handlers — registered by language extensions
 
+[tool.finecode.action.get_src_artifact_toolchain_range]
+source = "fine_src_artifacts.GetSrcArtifactToolchainRangeAction"
+# no default handlers — registered by language extensions
+
 [tool.finecode.action.get_src_artifact_version]
 source = "fine_src_artifacts.GetSrcArtifactVersionAction"
 # no default handlers — registered by language extensions
