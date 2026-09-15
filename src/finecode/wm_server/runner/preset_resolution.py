@@ -103,7 +103,7 @@ async def get_preset_project_path(
         raise config_models.ConfigurationError(
             "Failed to resolve preset package path "
             f"for {preset.source} in project {def_path.parent}: {error_message}"
-        )
+        ) from error
     try:
         preset_project_path = Path(resolve_path_result["packagePath"])
     except KeyError as exception:

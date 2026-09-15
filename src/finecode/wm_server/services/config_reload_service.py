@@ -14,6 +14,7 @@ import pathlib
 
 from loguru import logger
 
+import finecode_jsonrpc as jsonrpc_client
 from finecode.wm_server import context, domain, errors
 from finecode.wm_server.config import read_configs
 from finecode.wm_server.runner import runner_manager
@@ -142,10 +143,19 @@ async def _reload_project_config(
             await runner_manager.restart_extension_runners(
                 runner_working_dir_path=project_dir, ws_context=ws_context
             )
-        except (errors.WmError, runner_manager.RunnerFailedToStart) as exception:
+        except (
+            errors.WmError,
+            runner_manager.RunnerFailedToStart,
+            jsonrpc_client.BaseRunnerRequestException,
+        ) as exception:
             logger.warning(
                 f"Configuration recovery failed for {project_dir}: {exception}"
             )
+            # A runner whose channel is provably dead must not survive as an
+            # orphan just because the recovery failed before reaching the
+            # replace step. Healthy runners are left running, so a failure for
+            # a config reason still leaves the old configuration in effect.
+            await runner_manager.reap_failed_channel_runners(project_dir, ws_context)
             failed_env, failed_status = _worst_runner(project_dir, ws_context)
             return _failure(
                 project_dir,

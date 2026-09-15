@@ -738,38 +738,56 @@ async def stop_extension_runner(
         runner_client.RunnerStatus.RUNNING,
         runner_client.RunnerStatus.REPAIRING,
     ):
+        # A `BaseRunnerRequestException` means the shutdown RPC itself did not
+        # come back — a timeout or a dead channel. There is no live RPC channel
+        # to ask cooperatively, which is exactly the precondition
+        # `force_kill()` documents, so it is force-killed directly rather than
+        # sent an `exit` that cannot be answered. Any other failure is not
+        # evidence the channel is dead, so it keeps the graceful path.
+        channel_dead = False
         try:
             await _internal_client_api.shutdown(client=runner.client)
+        except jsonrpc_client.BaseRunnerRequestException as error:
+            channel_dead = True
+            logger.warning(
+                f"Extension runner {runner.readable_id} did not answer shutdown"
+                f" ({error}); force-killing it"
+            )
         except Exception as e:
             logger.error(f"Failed to shutdown {runner.readable_id}:")
             logger.exception(e)
 
-        await _internal_client_api.exit(client=runner.client)
+        if channel_dead:
+            runner.client.force_kill()
+        else:
+            await _internal_client_api.exit(client=runner.client)
 
-        # `exit` only sends a notification; the OS process (and anything it is
-        # still flushing, e.g. WAL files) may keep running briefly after this.
-        # Wait for it to actually terminate so callers can safely remove its
-        # venv/state directories right after this returns. The timeout is
-        # passed into the thread itself (rather than wrapping an unbounded
-        # `.wait()` in `asyncio.wait_for`) so a slow-to-stop runner doesn't
-        # leak a blocked thread from the default executor.
-        # Deliberately no force-kill fallback here: the ER already received
-        # `exit` and may legitimately still be tearing down its own spawned
-        # subprocesses (e.g. a package-manager invocation). Killing it mid
-        # cleanup risks orphaning exactly the children a slower-but-graceful
-        # exit would have reaped itself. `force_kill()` is only used where no
-        # exit RPC was ever sent (start-attempt failures, `_start_runner`'s
-        # abandon path (any exit before `RUNNING`), INITIALIZING runners
-        # swept on WM shutdown — see `_start_extension_runner_process` and
-        # `shutdown_service.on_shutdown`), never as a timeout fallback here.
-        stopped = await asyncio.to_thread(
-            runner.client.server_process_stopped.wait, _STOP_TIMEOUT_SEC
-        )
-        if not stopped:
-            logger.warning(
-                f"Extension runner {runner.readable_id} did not stop within"
-                f" {_STOP_TIMEOUT_SEC}s of exit"
+            # `exit` only sends a notification; the OS process (and anything it is
+            # still flushing, e.g. WAL files) may keep running briefly after this.
+            # Wait for it to actually terminate so callers can safely remove its
+            # venv/state directories right after this returns. The timeout is
+            # passed into the thread itself (rather than wrapping an unbounded
+            # `.wait()` in `asyncio.wait_for`) so a slow-to-stop runner doesn't
+            # leak a blocked thread from the default executor.
+            # Deliberately no force-kill fallback here: the ER already received
+            # `exit` and may legitimately still be tearing down its own spawned
+            # subprocesses (e.g. a package-manager invocation). Killing it mid
+            # cleanup risks orphaning exactly the children a slower-but-graceful
+            # exit would have reaped itself. `force_kill()` is only used where
+            # there is no live RPC channel to ask cooperatively — a start-attempt
+            # failure, `_start_runner`'s abandon path (any exit before `RUNNING`),
+            # an INITIALIZING runner swept on WM shutdown, or a `shutdown` RPC
+            # that went unanswered (the `channel_dead` branch above) — see
+            # `_start_extension_runner_process` and `shutdown_service.on_shutdown`,
+            # never as a timeout fallback here.
+            stopped = await asyncio.to_thread(
+                runner.client.server_process_stopped.wait, _STOP_TIMEOUT_SEC
             )
+            if not stopped:
+                logger.warning(
+                    f"Extension runner {runner.readable_id} did not stop within"
+                    f" {_STOP_TIMEOUT_SEC}s of exit"
+                )
 
         logger.trace(f"Stopped extension runner {runner.readable_id}")
     else:
@@ -780,6 +798,30 @@ async def stop_extension_runner(
     # graceful one may not have released every run that was mid-flight when the
     # exit arrived — the budget must not leak slots permanently (ADR-0090).
     await ws_context.process_budget.reclaim_for_runner(runner.readable_id)
+
+
+async def reap_failed_channel_runners(
+    project_dir: Path, ws_context: context.WorkspaceContext
+) -> list[str]:
+    """Force-kill runners of *project_dir* whose RPC channel already failed.
+
+    A runner whose channel is dead cannot be stopped cooperatively; the
+    recovery-failure path uses this so it does not survive as an orphan. The
+    process watcher still owns the EXITED transition (`on_exit`).
+    """
+    reaped: list[str] = []
+    runners_by_env = ws_context.ws_projects_extension_runners.get(project_dir, {})
+    for env_name, runner in runners_by_env.items():
+        if runner.client is None or not runner.client.channel_failed:
+            continue
+        logger.warning(
+            f"Reaping extension runner {runner.readable_id}: its RPC channel"
+            " failed during configuration recovery"
+        )
+        runner.client.force_kill()
+        await ws_context.process_budget.reclaim_for_runner(runner.readable_id)
+        reaped.append(env_name)
+    return reaped
 
 
 async def start_runners_with_presets(

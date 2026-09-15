@@ -223,6 +223,19 @@ declare the capability at `client/initialize` is never sent one, so the common
 non-interactive case costs a typed "nobody could be asked" rather than a
 timeout.  See ADR-0082.
 
+#### Runner-client waits hold no thread
+
+`JsonRpcClient` waits for its server process to stop through `LoopAwareEvent`
+(`finecode_jsonrpc._loop_event`), whose `wait_async` registers a future on the
+running loop.  The synchronous `threading.Event` API stays for callers that need
+it.  This matters because the previous `asyncio.to_thread(event.wait)` pinned a
+worker of the default executor for the client's whole life.  Python's default pool
+has a fixed size (12 on a machine with 8 CPUs under 3.14, `min(32, cpu+4)`); a
+dozen or more connected ERs — including leaked ones that never exit — exhaust it,
+so every other `asyncio.to_thread` on the same loop queues behind processes that
+may never stop.  Two waits per client (main loop and IO loop) made that exhaust
+twice as fast.  See ADR-0097.
+
 ### `config/` — config reading and domain object construction
 
 | Module | Responsibility |
@@ -307,6 +320,16 @@ and the project silently loses every preset contribution. See ADR-0073.
 If the re-read fails, the configuration that was already in effect is put back — a
 failed recovery leaves the project with the old configuration, never with none.
 
+Every control-plane RPC the re-read issues is bounded (`_SHUTDOWN_TIMEOUT_SEC` 10s,
+`_ER_CONTROL_RPC_TIMEOUT_SEC` 30s, `_ER_UPDATE_CONFIG_TIMEOUT_SEC` 60s), so a runner
+that stops answering makes the recovery fail visibly instead of parking it. The first
+timeout also latches `JsonRpcClient.channel_failed`, so the remaining preset lookups
+fail immediately rather than each burning another timeout. On the failure branch,
+`runner_manager.reap_failed_channel_runners` force-kills and reclaims the budget of any
+runner whose channel is latched dead — a recovery that could not reach the replace step
+must not leave a dead runner behind. Healthy runners are untouched: a failure for a
+config reason still leaves the old configuration in effect.
+
 ### ER restart recovery
 
 When an ER crashes or is restarted:
@@ -319,8 +342,8 @@ When an ER crashes or is restarted:
 
 ### ER process termination
 
-An ER OS process is stopped one of two ways, depending on whether it was ever
-sent an exit request:
+An ER OS process is stopped one of three ways, depending on whether it still
+has a live RPC channel:
 
 - **Graceful** (`runner_manager.stop_extension_runner`, called for
   `RUNNING`/`REPAIRING` runners): sends `shutdown` then `exit` over the RPC
@@ -335,19 +358,48 @@ sent an exit request:
   synchronously inside the WM's own event loop, so a sequential sweep would
   block the whole server for `N × _STOP_TIMEOUT_SEC` in a workspace with many
   runners, which is indistinguishable from a hang to anyone watching.
+- **Unanswered `shutdown`** (`stop_extension_runner`): if the `shutdown`
+  request itself comes back as a `BaseRunnerRequestException` (a
+  `ResponseTimeout` or `ServerStoppedError`), the channel cannot be used to
+  stop the runner cooperatively. This path logs a warning and calls
+  `force_kill()` directly, skipping the `exit` notification and the
+  `_STOP_TIMEOUT_SEC` wait. This is distinct from the graceful bullet above: a
+  runner that *answered* `shutdown` has the `exit` request in hand and keeps the
+  full timeout; one whose channel failed has no cooperative stop to wait for.
 - **Force-kill** (`JsonRpcClient.force_kill()` — POSIX: `os.killpg` on the
   process group, since ERs are spawned with `start_new_session=True`;
-  Windows: `taskkill /F /T`): used only where no exit RPC was ever sent, so
-  there is no in-progress graceful cleanup to interrupt:
+  Windows: `taskkill /F /T`): used only where there is no live RPC channel to
+  ask cooperatively:
   - `_start_extension_runner_process` calls it on any start-attempt failure
     (port handshake timeout, debug-port timeout, connect failure) — the OS
     process may already be spawned even though the ER never became reachable.
+  - `runner_manager._start_runner`'s abandon path (`_abandon_start`) calls it
+    whenever a start attempt ends before the runner reached `RUNNING` — by
+    failure, timeout or cancellation, at any step. Such a runner was never
+    sent `shutdown`/`exit`, so there is no graceful cleanup to interrupt. The
+    same path marks an `INITIALIZING` runner `FAILED`, releases its
+    `initialized_event` and reclaims its budget (ADR-0097).
+  - `stop_extension_runner` on an unanswered `shutdown` (the bullet above).
   - `shutdown_service.on_shutdown` calls it on any runner still
     `INITIALIZING` when the WM itself shuts down — this covers a shutdown
     racing with an in-flight start attempt that hasn't hit its own timeout
     yet. `runner.client` is attached immediately after construction (before
     `start()` is even called) specifically so this sweep always has a handle,
     regardless of how far the start attempt got.
+  - `runner_manager.reap_failed_channel_runners`, called from
+    `_reload_project_config`'s failure branch, force-kills every runner of the
+    project whose `client.channel_failed` latch is set. A recovery can fail
+    before it reaches the replace step (the config re-read asks the running ER
+    first); without the reap, a runner whose channel died there would survive
+    as an orphan holding its budget. Healthy runners are left running, so a
+    recovery that failed for a config reason still leaves the old configuration
+    in effect.
+
+`JsonRpcClient.channel_failed` is a one-way latch set when a bounded RPC times
+out or the inbound queue closes; once set, every later `send_request` fails
+immediately with `ServerStoppedError` instead of waiting out another timeout. It
+is what keeps a preset-heavy recovery to a single timeout, and what the
+recovery-failure reap keys on.
 
 ### Combined subprocess-concurrency budget
 
@@ -388,6 +440,15 @@ The cap is sized once, when `WorkspaceContext` is constructed, as half of the co
 above — there is no dedicated env var for it. There is no CLI flag either, since this cap isn't
 scoped to one command's request — it protects the WM server's whole lifetime and every client that
 triggers ER starts against it. The resolved cap is logged at INFO once, at construction.
+
+Two diagnostics accompany a start. A start whose spawn-to-connected time is at or above
+`SLOW_START_WARN_SEC` (10 s) is logged at WARNING by `_start_extension_runner_process`, carrying
+`spawn_to_output_ms`, `spawn_to_port_ms` and `spawn_to_connected_ms` plus the host's memory/IO
+pressure; a faster start is logged at DEBUG with the same fields. When the port handshake itself
+times out, the `ServerFailedToStart` message names the timeline (when it was spawned, whether the
+server produced any output, when its port line arrived) and a snapshot of the spawned process
+group at the deadline (`finecode_jsonrpc._proc_snapshot`), followed by the stdout/stderr tails.
+The failing-start log line also carries host pressure. See ADR-0097.
 
 ### Process budget
 
@@ -510,6 +571,10 @@ the evidence a reader needs to attribute it:
   was runnable but the OS gave the CPU to other processes; CPU near zero with many
   voluntary switches means the loop was blocked waiting, typically on synchronous I/O.
 - **How contended the host was**: `load_1m` against `cpu_count` (affinity-aware).
+- **The host's memory and IO pressure**: `mem_available_mb`, `swap_used_mb` and the PSI
+  `psi_memory_full_avg10` / `psi_io_full_avg10` / `psi_cpu_some_avg10` averages (read by
+  `wm_server/host_pressure.py`).  A swap-bound or page-cache-thrashing host stalls every process
+  on it, and that context is what separates the WM's own slowness from external pressure.
 - **How much work was queued on the loop**: `ready_callbacks`, the stdlib loop's ready
   queue length — a flood of short callbacks lags the loop without any single long one.
 - **What the WM was doing**: `runners_starting` (ERs `INITIALIZING` or `REPAIRING`),

@@ -9,7 +9,9 @@ from finecode.wm_server.runner.runner_client import BaseRunnerRequestException
 
 
 class _FakeClient:
-    async def send_request(self, method: str, params: object) -> dict:
+    async def send_request(
+        self, method: str, params: object, timeout: float | None = None
+    ) -> dict:
         raise BaseRunnerRequestException("cannot find package 'fine_lint_fix'")
 
 

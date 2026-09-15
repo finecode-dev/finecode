@@ -41,6 +41,9 @@ class FakeErClient:
         # exercising stop/exit flows must set it explicitly to simulate the
         # process terminating.
         self.server_process_stopped = threading.Event()
+        # Mirrors ``JsonRpcClient.channel_failed``: set when the fake channel is
+        # known dead, so recovery-path code can key the reap on it.
+        self.channel_failed = False
         # Mirrors ``JsonRpcClient.force_kill()``: tests assert on this rather
         # than a real process, since there is no OS process behind a fake.
         self.force_kill_called = False

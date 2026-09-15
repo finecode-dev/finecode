@@ -4,11 +4,14 @@ are not intended to be used in higher layers.
 """
 
 import pathlib
+import typing
 
 from loguru import logger
 
 from finecode.wm_server.runner import _internal_client_types
 from finecode_jsonrpc import client as jsonrpc_client
+
+_SHUTDOWN_TIMEOUT_SEC: typing.Final = 10
 
 
 async def initialize(
@@ -72,7 +75,10 @@ async def shutdown(
     client: jsonrpc_client.JsonRpcClient,
 ) -> None:
     logger.debug(f"Send shutdown to server {client.readable_id}")
-    await client.send_request(method=_internal_client_types.SHUTDOWN)
+    await client.send_request(
+        method=_internal_client_types.SHUTDOWN,
+        timeout=_SHUTDOWN_TIMEOUT_SEC,
+    )
 
 
 async def exit(client: jsonrpc_client.JsonRpcClient) -> None:

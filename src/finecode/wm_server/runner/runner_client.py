@@ -34,6 +34,14 @@ Range = _internal_client_types.Range
 Position = _internal_client_types.Position
 
 
+# Control-plane RPCs are never legitimately long, so a dead channel must fail
+# them within a bound instead of parking forever. ``update_config`` gets the
+# larger bound because it rebuilds the ER's RunnerContext (imports handlers)
+# right after a cold start; the others introspect already-imported modules.
+_ER_UPDATE_CONFIG_TIMEOUT_SEC: typing.Final = 60
+_ER_CONTROL_RPC_TIMEOUT_SEC: typing.Final = 30
+
+
 class ActionRunFailed(jsonrpc_client.BaseRunnerRequestException): ...
 
 
@@ -324,6 +332,7 @@ async def reload_action(runner: ExtensionRunnerInfo, action_name: str) -> bool:
     await runner.client.send_request(
         method=_internal_client_types.ER_RELOAD_ACTION,
         params=_internal_client_types.ErReloadActionParams(action_name=action_name),
+        timeout=_ER_CONTROL_RPC_TIMEOUT_SEC,
     )
     return True
 
@@ -357,7 +366,7 @@ async def resolve_action_meta(runner: ExtensionRunnerInfo) -> dict[str, dict]:
     """Ask the ER to resolve action meta info (canonical source + execution mode)."""
     response = await runner.client.send_request(
         method=_internal_client_types.ER_RESOLVE_ACTION_META,
-        timeout=None,
+        timeout=_ER_CONTROL_RPC_TIMEOUT_SEC,
     )
     return response.result
 
@@ -376,7 +385,7 @@ async def get_payload_schemas(
 
     response = await runner.client.send_request(
         method=_internal_client_types.ER_GET_PAYLOAD_SCHEMAS,
-        timeout=None,
+        timeout=_ER_CONTROL_RPC_TIMEOUT_SEC,
     )
     return response.result
 
@@ -393,6 +402,7 @@ async def resolve_package_path(
         params=_internal_client_types.ErResolvePackagePathParams(
             package_name=package_name
         ),
+        timeout=_ER_CONTROL_RPC_TIMEOUT_SEC,
     )
     return {"packagePath": response.result.package_path}
 
@@ -450,6 +460,7 @@ async def update_config(
             project_def_path=project_def_path.as_posix(),
             config=config.to_dict(),
         ),
+        timeout=_ER_UPDATE_CONFIG_TIMEOUT_SEC,
     )
 
 
@@ -464,6 +475,7 @@ async def update_logging(
         params=_internal_client_types.ErUpdateLoggingParams(
             forward=forward, forward_level=forward_level
         ),
+        timeout=_ER_CONTROL_RPC_TIMEOUT_SEC,
     )
 
 
@@ -476,6 +488,7 @@ async def update_process_budget(runner: ExtensionRunnerInfo, target: int) -> Non
     await runner.client.send_request(
         method=_internal_client_types.ER_UPDATE_PROCESS_BUDGET,
         params=_internal_client_types.ErUpdateProcessBudgetParams(target=target),
+        timeout=_ER_CONTROL_RPC_TIMEOUT_SEC,
     )
 
 

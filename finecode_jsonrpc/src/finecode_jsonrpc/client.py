@@ -195,6 +195,12 @@ class JsonRpcClient:
         request_cancelled_code: int = error_codes.DEFAULT_REQUEST_CANCELLED,
     ) -> None:
         self.server_process_stopped: typing.Final = LoopAwareEvent()
+        # One-way latch: set by the first send_request timeout or by the inbound
+        # queue closing. Once a channel that should answer within its timeout
+        # has not, every later request fails immediately instead of waiting out
+        # another timeout, and the recovery path can key on this to reap a
+        # provably-dead runner.
+        self.channel_failed: bool = False
         # Set as soon as the OS process is spawned (before the port handshake),
         # so a start attempt that later times out still has a handle to kill.
         self.pid: int | None = None
@@ -375,6 +381,23 @@ class JsonRpcClient:
             )
         )
 
+    def _fail_pending_requests(self, reason: str) -> None:
+        """Fail every in-flight request future because its channel can no longer answer.
+
+        Called when the inbound queue closes or the server process exits. It is
+        a request-liveness signal only: ``server_process_stopped`` and
+        ``server_exit_callback`` stay owned by the process watcher, because a
+        closed socket can precede the OS process exiting.
+        """
+        self.channel_failed = True
+        for msg_id, fut in list(self._sync_request_futures.items()) + list(
+            self._async_request_futures.items()
+        ):
+            if not fut.done():
+                fut.set_exception(ServerStoppedError(reason))
+                self._expected_result_type_by_msg_id.pop(msg_id, None)
+                logger.debug(f"Cancelled pending request '{msg_id}': {reason}")
+
     async def _server_process_stop_handler(self):
         """Cleanup handler that runs when the server process managed by the client exits"""
         logger.trace(f"Server process stopped handler {self.readable_id}")
@@ -382,15 +405,9 @@ class JsonRpcClient:
 
         logger.debug(f"Server process {self.readable_id} stopped")
 
-        # Cancel any pending requests
-        for id_, fut in list(self._sync_request_futures.items()) + list(
-            self._async_request_futures.items()
-        ):
-            if not fut.done():
-                fut.set_exception(
-                    ServerStoppedError("Server was stopped before getting the response")
-                )
-                logger.debug(f"Cancelled pending request '{id_}': server was stopped")
+        self._fail_pending_requests(
+            "Server was stopped before getting the response"
+        )
 
         if self.server_exit_callback is not None:
             await self.server_exit_callback()
@@ -519,6 +536,10 @@ class JsonRpcClient:
         params: typing.Any | None = None,
         # timeout: float | None = None
     ) -> concurrent.futures.Future[typing.Any]:
+        if self.channel_failed:
+            raise ServerStoppedError(
+                f"Channel to {self.readable_id} already failed; refusing to send"
+            )
         try:
             request_params_type = self.message_types[method][1]
         except KeyError as error:
@@ -582,6 +603,10 @@ class JsonRpcClient:
         params: typing.Any | None = None,
         timeout: float | None = None,
     ) -> typing.Any:
+        if self.channel_failed:
+            raise ServerStoppedError(
+                f"Channel to {self.readable_id} already failed; refusing to wait"
+            )
         try:
             request_params_type = self.message_types[method][1]
         except KeyError as error:
@@ -642,12 +667,16 @@ class JsonRpcClient:
                 logger.debug(f"Got response on {method} from {self.readable_id}")
                 return response
             except TimeoutError as error:
+                self.channel_failed = True
                 raise ResponseTimeout(
                     f"Timeout {timeout}s for response on {method} to"
                     f" runner {self.readable_id}"
                 ) from error
             except asyncio.CancelledError as error:
                 raise RequestCancelledError(request_id=msg_id) from error
+            finally:
+                self._async_request_futures.pop(msg_id, None)
+                self._expected_result_type_by_msg_id.pop(msg_id, None)
 
     async def process_incoming_messages(self) -> None:
         logger.debug(f"Start processing messages from server {self.readable_id}")
@@ -657,6 +686,7 @@ class JsonRpcClient:
                 if raw_message == QUEUE_END:
                     # TODO: this message doesn't come, task is always cancelled
                     logger.info("Queue with messages from server was closed")
+                    self._fail_pending_requests("inbound queue closed")
                     self.in_message_queue.async_q.task_done()
                     self.in_message_queue.async_q.shutdown()
                     break
@@ -803,6 +833,7 @@ class JsonRpcClient:
                     return
 
                 result_type = self._expected_result_type_by_msg_id[message_id]
+                self._expected_result_type_by_msg_id.pop(message_id, None)
                 try:
                     response = _converter.structure(message, result_type)
                 except cattrs.ClassValidationError as error:
