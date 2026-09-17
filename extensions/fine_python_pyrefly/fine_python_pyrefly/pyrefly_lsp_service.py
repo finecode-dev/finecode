@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import collections.abc
 import sys
 from pathlib import Path
 from typing import Any
@@ -60,6 +61,10 @@ _PYREFLY_CLIENT_CAPABILITIES: dict[str, Any] = {
     "workspace": {
         "workspaceFolders": True,
         "configuration": True,
+        "didChangeWatchedFiles": {
+            "dynamicRegistration": True,
+            "relativePatternSupport": False,
+        },
     },
 }
 
@@ -146,6 +151,11 @@ class PyreflyLspService(service.DisposableService):
 
     async def ensure_started(self, root_uri: str) -> None:
         await self._lsp_service.ensure_started(root_uri)
+
+    async def sync_watched_files(
+        self, file_paths: collections.abc.Sequence[Path], recheck_timeout: float
+    ) -> set[Path]:
+        return await self._lsp_service.sync_watched_files(file_paths, recheck_timeout)
 
     async def check_file(
         self,

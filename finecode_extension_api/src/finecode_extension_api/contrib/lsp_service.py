@@ -6,6 +6,7 @@ import contextlib
 import enum
 import sys
 import threading
+import time
 from pathlib import Path
 from typing import Any
 
@@ -16,6 +17,7 @@ else:
 
 from finecode_extension_api import service
 from finecode_extension_api.interfaces import ifileeditor, ilogger, ilspclient
+from finecode_extension_api.resource_uri import resource_uri_to_path
 
 # JSON-RPC "RequestCancelled" code
 _REQUEST_CANCELLED_CODE = -32800
@@ -166,6 +168,9 @@ class LspService(service.DisposableService):
         self._settings: dict[str, Any] = {}
         # server capabilities populated once after the initialize handshake
         self._server_capabilities: dict[str, Any] = {}
+        # session root, recorded on start; paths outside it are never named in
+        # a watched-file sweep
+        self._root_path: Path | None = None
         # whether the server asked to be told about workspace file changes via
         # client/registerCapability; gate `workspace/didChangeWatchedFiles`.
         self._registered_watched_files = False
@@ -199,6 +204,7 @@ class LspService(service.DisposableService):
         self._document_version.clear()
         self._uri_locks.clear()
         self._server_capabilities = {}
+        self._root_path = None
         self._registered_watched_files = False
 
     async def ensure_started(
@@ -226,6 +232,7 @@ class LspService(service.DisposableService):
         )
         await session.__aenter__()
         self._session = session
+        self._root_path = resource_uri_to_path(root_uri)
         self._server_capabilities = session.server_capabilities
         self._session.on_notification(
             "textDocument/publishDiagnostics",
@@ -671,6 +678,107 @@ class LspService(service.DisposableService):
         with self._diagnostics_interest(uri) as event:
             async with self._document_open(file_path, uri, content) as synced:
                 return await self._collect_diagnostics(uri, event, synced, timeout)
+
+    async def sync_watched_files(
+        self, file_paths: collections.abc.Sequence[Path], recheck_timeout: float
+    ) -> set[Path]:
+        """Tell a watched-files server these paths may have changed on disk, then
+        wait for its recheck to land. Returns the paths that no longer exist."""
+        assert self._session is not None, "LspService not started"
+
+        changed: list[tuple[str, _FileChangeType]] = []
+        deleted: list[tuple[str, _FileChangeType]] = []
+        barrier_uris: list[str] = []
+        missing: set[Path] = set()
+        for file_path in file_paths:
+            uri = file_path.as_uri()
+            in_root = self._root_path is not None and file_path.is_relative_to(
+                self._root_path
+            )
+            if not file_path.exists():
+                missing.add(file_path)
+                if in_root:
+                    deleted.append((uri, _FileChangeType.DELETED))
+            elif not in_root:
+                # Outside the session root the server has no reason to hold the
+                # file; it is neither notified nor waited on.
+                continue
+            elif uri in self._open_documents:
+                # The server's buffer for an open document is authoritative, so
+                # it is not notified; the recheck triggered by the rest of the
+                # batch republishes it, and that republish is what the wait
+                # below is for.
+                barrier_uris.append(uri)
+            else:
+                changed.append((uri, _FileChangeType.CHANGED))
+
+        entries = [*changed, *deleted]
+        if not entries or not self._registered_watched_files:
+            async with self._request_slot():
+                for file_path in missing:
+                    await self._forget_deleted(file_path.as_uri())
+            if not self._registered_watched_files:
+                self._logger.debug(
+                    "watched-file sweep skipped: server did not register for them"
+                )
+            else:
+                self._logger.debug("watched-file sweep skipped: nothing to notify")
+            return missing
+
+        self._logger.debug(
+            "watched-file sweep over "
+            f"{len(file_paths)} run paths: {len(changed)} type-2, "
+            f"{len(deleted)} type-3, {len(barrier_uris)} open run documents, "
+            f"{len(missing)} missing"
+        )
+
+        with contextlib.ExitStack() as stack:
+            # Registered before the notification goes out, per the waiter's
+            # rule: the publish cannot land in the gap between the send and the
+            # registration. A pull-capable server has no pushed republish to
+            # wait for, so it takes the no-signal branch whatever the barrier
+            # set contains.
+            events = (
+                []
+                if self._supports_pull_diagnostics
+                else [
+                    stack.enter_context(self._diagnostics_waiter(uri))
+                    for uri in barrier_uris
+                ]
+            )
+            async with self._request_slot():
+                for file_path in missing:
+                    await self._forget_deleted(file_path.as_uri())
+                await self._send_watched_file_changes(entries)
+
+            # The wait deliberately holds no slot: it is a server-side recheck
+            # on a background queue, and the recheck's first publish can answer
+            # an immediately following sync from the pre-recheck state. Waiting
+            # for the recheck to land is what stops that stale-first publish
+            # from winning.
+            started = time.monotonic()
+            if events:
+                all_republished = await asyncio.to_thread(
+                    _wait_all, events, recheck_timeout
+                )
+                elapsed_ms = (time.monotonic() - started) * 1000
+                if all_republished:
+                    self._logger.debug(
+                        f"all {len(events)} open run documents republished "
+                        f"in {elapsed_ms:.0f} ms"
+                    )
+                else:
+                    overdue = sum(1 for event in events if not event.is_set())
+                    self._logger.warning(
+                        f"ceiling hit: {overdue} of {len(events)} open run "
+                        f"documents did not republish within {recheck_timeout} s"
+                    )
+            else:
+                await asyncio.sleep(recheck_timeout)
+                self._logger.debug(
+                    f"no open run documents, slept {time.monotonic() - started:.2f} s"
+                )
+        return missing
 
     async def get_code_actions(
         self,
@@ -1171,40 +1279,8 @@ class LspService(service.DisposableService):
             return
 
         elif isinstance(event, ifileeditor.FileDeleteEvent):
-            # A recursive delete names a directory; the affected documents are
-            # the directory itself and every uri beneath it. Prefix matching
-            # covers both without the event having to say which kind of delete
-            # it was -- a file delete simply has no uri beneath it.
             deleted_uri = event.file_path.as_uri()
-            prefix = deleted_uri + "/"
-            affected_open = [
-                uri
-                for uri in self._open_documents
-                if uri == deleted_uri or uri.startswith(prefix)
-            ]
-            for uri in affected_open:
-                async with self._get_uri_lock(uri):
-                    # A held lease outranks a delete for the same reason it
-                    # outranks a close: an in-flight request must not be
-                    # answered against a document the server no longer holds.
-                    # The cached version is dropped unconditionally -- whatever
-                    # the server was last told about this path is now about a
-                    # file that no longer exists.
-                    if uri not in self._open_documents:
-                        continue
-                    if uri not in self._document_leases:
-                        await self._session.send_notification(
-                            "textDocument/didClose",
-                            {"textDocument": {"uri": uri}},
-                        )
-                        self._open_documents.discard(uri)
-                    self._file_versions.pop(uri, None)
-            for uri in [
-                uri
-                for uri in self._file_versions
-                if uri == deleted_uri or uri.startswith(prefix)
-            ]:
-                self._file_versions.pop(uri, None)
+            await self._forget_deleted(deleted_uri)
             await self._send_watched_file_change(deleted_uri, _FileChangeType.DELETED)
 
         elif isinstance(event, ifileeditor.FileRenameEvent):
@@ -1230,21 +1306,77 @@ class LspService(service.DisposableService):
             await self._send_watched_file_change(old_uri, _FileChangeType.DELETED)
             await self._send_watched_file_change(new_uri, _FileChangeType.CREATED)
 
-    async def _send_watched_file_change(
-        self, uri: str, change_type: _FileChangeType
+    async def _forget_deleted(self, deleted_uri: str) -> None:
+        """Drop the server-side state for a path deleted on disk.
+
+        A recursive delete names a directory; the affected documents are the
+        directory itself and every uri beneath it. Prefix matching covers both
+        without the event having to say which kind of delete it was -- a file
+        delete simply has no uri beneath it.
+        """
+        prefix = deleted_uri + "/"
+        affected_open = [
+            uri
+            for uri in self._open_documents
+            if uri == deleted_uri or uri.startswith(prefix)
+        ]
+        for uri in affected_open:
+            async with self._get_uri_lock(uri):
+                # A held lease outranks a delete for the same reason it
+                # outranks a close: an in-flight request must not be
+                # answered against a document the server no longer holds.
+                # The cached version is dropped unconditionally -- whatever
+                # the server was last told about this path is now about a
+                # file that no longer exists.
+                if uri not in self._open_documents:
+                    continue
+                if uri not in self._document_leases:
+                    await self._session.send_notification(
+                        "textDocument/didClose",
+                        {"textDocument": {"uri": uri}},
+                    )
+                    self._open_documents.discard(uri)
+                self._file_versions.pop(uri, None)
+        for uri in [
+            uri
+            for uri in self._file_versions
+            if uri == deleted_uri or uri.startswith(prefix)
+        ]:
+            self._file_versions.pop(uri, None)
+
+    async def _send_watched_file_changes(
+        self, changes: list[tuple[str, _FileChangeType]]
     ) -> None:
-        """Notify a server that registered for watched files of a change.
+        """Send one watched-file notification carrying a batch of changes.
 
         A server that never registered must not receive
         ``workspace/didChangeWatchedFiles``: sending a notification the client
-        did not declare support for is a protocol violation.
+        did not declare support for is a protocol violation. A batch is one
+        notification, whichever of its entries survive classification.
         """
+        if not changes:
+            return
         if not self._registered_watched_files:
+            self._logger.debug(
+                f"dropped {len(changes)} watched-file changes: "
+                "server did not register for them"
+            )
             return
         await self._session.send_notification(
             "workspace/didChangeWatchedFiles",
-            {"changes": [{"uri": uri, "type": change_type.value}]},
+            {
+                "changes": [
+                    {"uri": uri, "type": change_type.value}
+                    for uri, change_type in changes
+                ]
+            },
         )
+
+    async def _send_watched_file_change(
+        self, uri: str, change_type: _FileChangeType
+    ) -> None:
+        """Notify a server that registered for watched files of a change."""
+        await self._send_watched_file_changes([(uri, change_type)])
 
     def _next_version(self, uri: str) -> int:
         version = self._document_version.get(uri, 0) + 1
@@ -1300,6 +1432,22 @@ class LspService(service.DisposableService):
         # runs on this loop between the awaits of whoever is waiting.
         for event in list(self._diagnostics.get(uri, ())):
             event.set()
+
+
+def _wait_all(events: list[threading.Event], timeout: float) -> bool:
+    """Wait for every event in *events* against one shared deadline.
+
+    Returns True if all were set within *timeout*, False if the budget ran
+    out. One call waits on the whole set on a single executor worker rather
+    than one worker per event, which is what keeps a run with many open
+    documents from occupying every worker in the default executor.
+    """
+    deadline = time.monotonic() + timeout
+    for event in events:
+        remaining = deadline - time.monotonic()
+        if not event.wait(max(0.0, remaining)):
+            return False
+    return True
 
 
 def _lsp_ranges_touch(a: dict[str, Any], b: dict[str, Any]) -> bool:

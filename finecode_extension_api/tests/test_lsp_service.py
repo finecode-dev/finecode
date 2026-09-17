@@ -3,12 +3,13 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import dataclasses
+import time
 from pathlib import Path
 from typing import Any, AsyncIterator
 
 import pytest
 
-from finecode_extension_api.contrib.lsp_service import LspService
+from finecode_extension_api.contrib.lsp_service import LspService, _FileChangeType
 from finecode_extension_api.interfaces import ifileeditor, ilspclient
 
 
@@ -38,6 +39,10 @@ class _FakeLspSession:
         # Called with the uri whenever a document is synced, standing in for a
         # server that publishes diagnostics after each open or change.
         self.on_document_synced: Any = None
+        # Called with (method, params) for every notification after it is
+        # recorded — the generalisation of on_document_synced for notifications
+        # that are not document syncs.
+        self.on_notification_sent: Any = None
         # When set, send_notification blocks until this event fires, letting a
         # test force two concurrent syncs to interleave at a specific point.
         self.release_send: asyncio.Event | None = None
@@ -88,7 +93,9 @@ class _FakeLspSession:
             await self.release_send.wait()
         self.notifications.append(_SentNotification(method, params))
         self.traffic.append(method)
-        if self.on_document_synced is not None and method in (
+        if self.on_notification_sent is not None:
+            await self.on_notification_sent(method, params)
+        elif self.on_document_synced is not None and method in (
             "textDocument/didOpen",
             "textDocument/didChange",
         ):
@@ -176,6 +183,7 @@ class _FakeFileEditor:
     def __init__(self, file_path: Path, content: str) -> None:
         self.file_path = file_path
         self.content = content
+        self.opened_files: list[Path] = [file_path]
         self.events: asyncio.Queue[ifileeditor.FileEvent] = asyncio.Queue()
 
     @contextlib.asynccontextmanager
@@ -183,7 +191,7 @@ class _FakeFileEditor:
         yield _FakeFileEditorSession(self.content, self.events)
 
     def get_opened_files(self) -> list[Path]:
-        return [self.file_path]
+        return self.opened_files
 
 
 class _NullLogger:
@@ -236,6 +244,52 @@ async def _running_service(
         yield service, session, file_editor
     finally:
         await service._async_dispose()
+
+
+class _PyreflyLikeController:
+    """Mutable server state for the pyrefly-like fake: what the server
+    believes now and what it will believe once its pending recheck lands."""
+
+    def __init__(self) -> None:
+        self.current: list[dict[str, Any]] = []
+        self.next: list[dict[str, Any]] = []
+        self.pending = False
+
+
+def _pyrefly_like(
+    service: LspService, session: _FakeLspSession, *, recheck_delay: float
+) -> _PyreflyLikeController:
+    """Model a watcher that rechecks on a background queue (F49's shape).
+
+    A watched-file notification marks a recheck pending; once it lands after
+    *recheck_delay* the server replaces its beliefs with the next state and
+    republishes every document it holds open. A document sync while the
+    recheck is pending is answered from the pre-recheck beliefs -- the
+    stale-first publish an immediate sync gets.
+    """
+    controller = _PyreflyLikeController()
+
+    async def _finish_recheck() -> None:
+        await asyncio.sleep(recheck_delay)
+        controller.current = controller.next
+        controller.pending = False
+        for uri in list(service._open_documents):
+            await service._handle_diagnostics(
+                {"uri": uri, "diagnostics": controller.current}
+            )
+
+    async def on_notification_sent(method: str, params: dict[str, Any] | None) -> None:
+        if method == "workspace/didChangeWatchedFiles":
+            controller.pending = True
+            asyncio.create_task(_finish_recheck())
+        elif method in ("textDocument/didOpen", "textDocument/didChange"):
+            uri = (params or {}).get("textDocument", {}).get("uri", "")
+            await service._handle_diagnostics(
+                {"uri": uri, "diagnostics": controller.current}
+            )
+
+    session.on_notification_sent = on_notification_sent
+    return controller
 
 
 async def test_repeated_lsp_feature_calls_on_unchanged_file_do_not_resync(
@@ -1117,6 +1171,31 @@ async def test_watched_file_notifications_require_registration(
         ]
 
 
+async def test_unregistered_service_drops_a_nonempty_watched_file_batch(
+    tmp_path: Path,
+) -> None:
+    """A batched watched-file notification must be withheld too when the server
+    never registered for them -- the batch is one notification, and the
+    protocol violation is the same as for a single change."""
+    subject = tmp_path / "subject.py"
+    first = tmp_path / "first.py"
+    second = tmp_path / "second.py"
+
+    async with _running_service(subject, "x = 1\n") as (service, session, _):
+        await service._send_watched_file_changes(
+            [
+                (first.as_uri(), _FileChangeType.CHANGED),
+                (second.as_uri(), _FileChangeType.CHANGED),
+            ]
+        )
+
+        assert not [
+            n
+            for n in session.notifications
+            if n.method == "workspace/didChangeWatchedFiles"
+        ]
+
+
 async def test_watched_file_create_and_delete_after_registration(
     tmp_path: Path,
 ) -> None:
@@ -1232,3 +1311,433 @@ async def test_deleting_an_open_document_still_notifies_watchers(
             if n.method == "workspace/didChangeWatchedFiles"
         ]
         assert [c["type"] for n in watched for c in n.params["changes"]] == [3]
+
+
+_STALE = [
+    {
+        "range": {
+            "start": {"line": 0, "character": 0},
+            "end": {"line": 0, "character": 0},
+        },
+        "message": "stale error",
+    }
+]
+_FRESH: list[dict[str, Any]] = []
+
+
+async def test_watched_file_sweep_sends_one_batched_notification_per_run(
+    tmp_path: Path,
+) -> None:
+    """A sweep over several in-root, closed files must reach a registered
+    server as exactly one watched-file notification naming every one of them
+    as Changed.
+
+    The server rechecks once per workspace/didChangeWatchedFiles, so batching
+    the whole run into one notification is what keeps one run from triggering
+    as many rechecks as it has files.
+    """
+    root = tmp_path / "root"
+    root.mkdir()
+    subject = root / "subject.py"
+    files = [root / f"f{i}.py" for i in range(3)]
+    for file_path in files:
+        file_path.write_text("x = 1\n")
+
+    async with _running_service(subject, "x = 1\n") as (service, session, _):
+        await service._handle_register_capability(
+            {"registrations": [{"method": "workspace/didChangeWatchedFiles"}]}
+        )
+
+        missing = await service.sync_watched_files(files, recheck_timeout=0.01)
+
+        assert missing == set()
+        watched = [
+            n
+            for n in session.notifications
+            if n.method == "workspace/didChangeWatchedFiles"
+        ]
+        assert len(watched) == 1
+        assert [(c["uri"], c["type"]) for c in watched[0].params["changes"]] == [
+            (file_path.as_uri(), 2) for file_path in files
+        ]
+
+
+async def test_watched_file_sweep_with_no_paths_sends_nothing(
+    tmp_path: Path,
+) -> None:
+    """An empty sweep must not send a notification or wait out the recheck
+    timeout -- there is nothing to recheck."""
+    subject = tmp_path / "subject.py"
+
+    async with _running_service(subject, "x = 1\n") as (service, session, _):
+        await service._handle_register_capability(
+            {"registrations": [{"method": "workspace/didChangeWatchedFiles"}]}
+        )
+
+        started = time.monotonic()
+        missing = await service.sync_watched_files([], recheck_timeout=5)
+        elapsed = time.monotonic() - started
+
+        assert missing == set()
+        assert elapsed < 0.1
+        assert not [
+            n
+            for n in session.notifications
+            if n.method == "workspace/didChangeWatchedFiles"
+        ]
+
+
+async def test_watched_file_sweep_skips_out_of_root_and_waits_on_open_documents(
+    tmp_path: Path,
+) -> None:
+    """A sweep must neither notify nor wait on a path outside the session root,
+    and an open run document must be waited on for its recheck republish
+    rather than notified.
+
+    The out-of-root path is the run's business, not the server's; an open
+    document's buffer is the server's authoritative copy, so the recheck the
+    rest of the batch triggers is what refreshes it.
+    """
+    root = tmp_path / "root"
+    root.mkdir()
+    closed = root / "closed.py"
+    closed.write_text("x = 1\n")
+    open_path = root / "open.py"
+    open_path.write_text("y = 2\n")
+    out_of_root = tmp_path / "outside.py"
+    out_of_root.write_text("z = 3\n")
+    subject = root / "subject.py"
+
+    async with _running_service(subject, "x = 1\n") as (service, session, _):
+        await service._handle_register_capability(
+            {"registrations": [{"method": "workspace/didChangeWatchedFiles"}]}
+        )
+        open_uri = open_path.as_uri()
+        await service._sync_document(open_uri, "y = 2\n")
+        assert open_uri in service._open_documents
+        _pyrefly_like(service, session, recheck_delay=0.05)
+
+        started = time.monotonic()
+        missing = await service.sync_watched_files(
+            [out_of_root, open_path, closed], recheck_timeout=5
+        )
+        elapsed = time.monotonic() - started
+
+        watched = [
+            n
+            for n in session.notifications
+            if n.method == "workspace/didChangeWatchedFiles"
+        ]
+        assert len(watched) == 1
+        assert [(c["uri"], c["type"]) for c in watched[0].params["changes"]] == [
+            (closed.as_uri(), 2)
+        ]
+        assert missing == set()
+        # Waited on the open document's republish, well before the ceiling; had
+        # the out-of-root path joined the barrier its never-set waiter would
+        # have held the sweep until the ceiling instead.
+        assert elapsed >= 0.04
+        assert elapsed < 1
+        # The sweep deregistered every waiter it registered.
+        assert open_uri not in service._diagnostics
+
+
+async def test_watched_file_sweep_forgets_missing_paths(
+    tmp_path: Path,
+) -> None:
+    """A run path that no longer exists must be closed in the server, reported
+    to a watching server as Deleted when in root, and returned by the sweep so
+    the caller does not schedule it for a check."""
+    root = tmp_path / "root"
+    root.mkdir()
+    subject = root / "subject.py"
+    missing_open = root / "gone.py"
+    missing_out = tmp_path / "gone_outside.py"
+    missing_open_uri = missing_open.as_uri()
+
+    async with _running_service(subject, "x = 1\n") as (service, session, _):
+        await service._handle_register_capability(
+            {"registrations": [{"method": "workspace/didChangeWatchedFiles"}]}
+        )
+        await service._sync_document(missing_open_uri, "x = 1\n")
+        assert missing_open_uri in service._open_documents
+        assert missing_open_uri in service._file_versions
+
+        missing = await service.sync_watched_files(
+            [missing_open, missing_out], recheck_timeout=0.01
+        )
+
+        assert missing == {missing_open, missing_out}
+        watched = [
+            n
+            for n in session.notifications
+            if n.method == "workspace/didChangeWatchedFiles"
+        ]
+        # The in-root missing path is a Deleted; the out-of-root one is not named.
+        assert [
+            (c["uri"], c["type"]) for n in watched for c in n.params["changes"]
+        ] == [(missing_open_uri, 3)]
+        assert (
+            session.notification_count("textDocument/didClose", missing_open_uri) == 1
+        )
+        assert missing_open_uri not in service._open_documents
+        assert missing_open_uri not in service._file_versions
+
+
+async def test_watched_file_sweep_waits_for_every_open_document_to_republish(
+    tmp_path: Path,
+) -> None:
+    """The sweep must return only once the last open run document has
+    republished, not when the first one does -- an early republish is no
+    evidence about the others.
+
+    Documents republish at their own pace on the server's background recheck
+    queue; answering a run from the first arrival would hand it the state of
+    whichever document happened to be rechecked first.
+    """
+    root = tmp_path / "root"
+    root.mkdir()
+    subject = root / "subject.py"
+    first = root / "first.py"
+    first.write_text("a = 1\n")
+    second = root / "second.py"
+    second.write_text("b = 2\n")
+    driver = root / "driver.py"
+    driver.write_text("c = 3\n")
+
+    async with _running_service(subject, "x = 1\n") as (service, session, _):
+        await service._handle_register_capability(
+            {"registrations": [{"method": "workspace/didChangeWatchedFiles"}]}
+        )
+        first_uri = first.as_uri()
+        second_uri = second.as_uri()
+        await service._sync_document(first_uri, "a = 1\n")
+        await service._sync_document(second_uri, "b = 2\n")
+        assert {first_uri, second_uri} <= service._open_documents
+
+        async def republish(uri: str, delay: float) -> None:
+            await asyncio.sleep(delay)
+            await service._handle_diagnostics({"uri": uri, "diagnostics": []})
+
+        async def on_notification_sent(
+            method: str, params: dict[str, Any] | None
+        ) -> None:
+            if method != "workspace/didChangeWatchedFiles":
+                return
+            asyncio.create_task(republish(first_uri, 0.02))
+            asyncio.create_task(republish(second_uri, 0.08))
+
+        session.on_notification_sent = on_notification_sent
+
+        started = time.monotonic()
+        missing = await service.sync_watched_files(
+            [first, second, driver], recheck_timeout=5
+        )
+        elapsed = time.monotonic() - started
+
+        assert missing == set()
+        assert elapsed >= 0.08  # after the second republish
+        assert elapsed < 1  # well before the ceiling
+
+
+async def test_watched_file_sweep_hits_the_ceiling_but_leaves_no_waiter_behind(
+    tmp_path: Path,
+) -> None:
+    """An open run document that never republishes must bound the sweep to the
+    recheck timeout, and the waiters registered for it must be deregistered
+    even then -- nothing may keep waiting past its run."""
+    root = tmp_path / "root"
+    root.mkdir()
+    subject = root / "subject.py"
+    open_path = root / "open.py"
+    open_path.write_text("y = 2\n")
+    driver = root / "driver.py"
+    driver.write_text("d = 3\n")
+    open_uri = open_path.as_uri()
+
+    async with _running_service(subject, "x = 1\n") as (service, session, _):
+        await service._handle_register_capability(
+            {"registrations": [{"method": "workspace/didChangeWatchedFiles"}]}
+        )
+        await service._sync_document(open_uri, "y = 2\n")
+        assert open_uri in service._open_documents
+
+        started = time.monotonic()
+        missing = await service.sync_watched_files(
+            [open_path, driver], recheck_timeout=0.2
+        )
+        elapsed = time.monotonic() - started
+
+        assert missing == set()
+        assert 0.15 <= elapsed < 1
+        assert open_uri not in service._diagnostics
+
+
+async def test_watched_file_sweep_with_no_open_documents_sleeps_the_ceiling(
+    tmp_path: Path,
+) -> None:
+    """With no run document open the recheck has no republish to wait for, so
+    the sweep covers it with a fixed wait -- a sync sent before that wait
+    elapses is answered from the pre-recheck state."""
+    subject = tmp_path / "subject.py"
+    closed = tmp_path / "closed.py"
+    closed.write_text("x = 1\n")
+
+    async with _running_service(subject, "x = 1\n") as (service, session, _):
+        await service._handle_register_capability(
+            {"registrations": [{"method": "workspace/didChangeWatchedFiles"}]}
+        )
+
+        started = time.monotonic()
+        missing = await service.sync_watched_files([closed], recheck_timeout=0.2)
+        elapsed = time.monotonic() - started
+
+        assert missing == set()
+        assert 0.15 <= elapsed < 1
+
+
+async def test_unregistered_service_skips_the_batch_and_the_wait(
+    tmp_path: Path,
+) -> None:
+    """An unregistered server must receive nothing, and the sweep must not wait
+    for a recheck it never triggered."""
+    subject = tmp_path / "subject.py"
+    closed = tmp_path / "closed.py"
+    closed.write_text("x = 1\n")
+
+    async with _running_service(subject, "x = 1\n") as (service, session, _):
+        started = time.monotonic()
+        missing = await service.sync_watched_files([closed], recheck_timeout=0.2)
+        elapsed = time.monotonic() - started
+
+        assert missing == set()
+        assert elapsed < 0.15
+        assert not [
+            n
+            for n in session.notifications
+            if n.method == "workspace/didChangeWatchedFiles"
+        ]
+
+
+async def test_sweep_then_check_reports_fresh_diagnostics_for_an_open_document(
+    tmp_path: Path,
+) -> None:
+    """A check of an unchanged, still-open document must reflect edits made on
+    disk between runs once the sweep has run.
+
+    The editor holds the document open, so its check takes the dedup path --
+    ``_await_diagnostics`` returns the store without waiting. That store is the
+    pre-edit answer until the sweep's recheck republishes the open document,
+    which is what makes the second check fresh.
+    """
+    caller = tmp_path / "caller.py"
+    caller.write_text("from target import T\n")
+    target = tmp_path / "target.py"
+    target.write_text("class T: ...\n")
+
+    async with _running_service(caller, "from target import T\n") as (
+        service,
+        session,
+        _,
+    ):
+        await service._handle_register_capability(
+            {"registrations": [{"method": "workspace/didChangeWatchedFiles"}]}
+        )
+        controller = _pyrefly_like(service, session, recheck_delay=0.05)
+
+        controller.current = _STALE
+        assert await service.check_file(caller) == _STALE  # prime: opens it
+
+        controller.next = _FRESH
+        # Control: no sweep between the runs -- the dedup path returns the
+        # pre-edit answer.
+        assert await service.check_file(caller) == _STALE
+
+        # Fix: the sweep's recheck republishes the open document.
+        missing = await service.sync_watched_files([target, caller], recheck_timeout=5)
+        assert missing == set()
+        assert await service.check_file(caller) == _FRESH
+
+
+async def test_immediate_sync_after_notification_gets_the_pre_recheck_answer(
+    tmp_path: Path,
+) -> None:
+    """A sync sent before the recheck lands is answered from the pre-recheck
+    state, one sent after it gets the post-recheck answer.
+
+    With no open run documents the sweep can only cover the recheck with a
+    fixed wait; a zero wait pins the stale-first publish, a wait that covers
+    the recheck delay pins the correct one.
+    """
+    target = tmp_path / "target.py"
+    target.write_text("class T: ...\n")
+    subject = tmp_path / "subject.py"
+
+    async with _running_service(subject, "x = 1\n") as (service, session, _):
+        await service._handle_register_capability(
+            {"registrations": [{"method": "workspace/didChangeWatchedFiles"}]}
+        )
+        controller = _pyrefly_like(service, session, recheck_delay=0.1)
+        controller.current = _STALE
+        controller.next = _FRESH
+
+        # Control: the sweep returns immediately, the check races the recheck.
+        await service.sync_watched_files([target], recheck_timeout=0)
+        assert await service.check_file(target) == _STALE
+
+        # Fix: the sweep's wait covers the recheck.
+        await service.sync_watched_files([target], recheck_timeout=0.3)
+        assert await service.check_file(target) == _FRESH
+
+
+async def test_watched_file_sweep_and_concurrent_check_survive_a_capped_service(
+    tmp_path: Path,
+) -> None:
+    """With a concurrency limit of 1, a sweep waiting on a recheck must not
+    hold the request slot, or a concurrent check of another file would
+    deadlock against it."""
+    root = tmp_path / "root"
+    root.mkdir()
+    subject = root / "subject.py"
+    open_path = root / "open.py"
+    open_path.write_text("y = 2\n")
+    closed = root / "closed.py"
+    closed.write_text("z = 3\n")
+    third = root / "third.py"
+    third.write_text("t = 4\n")
+
+    async with _running_service(subject, "x = 1\n", max_concurrent_requests=1) as (
+        service,
+        session,
+        _,
+    ):
+        await service._handle_register_capability(
+            {"registrations": [{"method": "workspace/didChangeWatchedFiles"}]}
+        )
+        open_uri = open_path.as_uri()
+        await service._sync_document(open_uri, "y = 2\n")
+        controller = _pyrefly_like(service, session, recheck_delay=0.15)
+        # Non-empty beliefs so the check's sync is answered immediately rather
+        # than paying the empty-settle wait.
+        controller.current = _STALE
+        controller.next = _FRESH
+
+        check_done = asyncio.Event()
+
+        async def checked() -> None:
+            await service.check_file(third, timeout=5)
+            check_done.set()
+
+        sweep_task = asyncio.create_task(
+            service.sync_watched_files([open_path, closed], recheck_timeout=5)
+        )
+        await asyncio.sleep(0.05)  # let the sweep take the slot and start waiting
+        check_task = asyncio.create_task(checked())
+
+        await asyncio.wait_for(check_done.wait(), timeout=1)
+        # The check finished while the sweep was still waiting on its recheck:
+        # a sweep that held the slot across the wait would have serialized the
+        # check behind it.
+        assert not sweep_task.done()
+        await asyncio.wait_for(asyncio.shield(check_task), timeout=1)
+        await asyncio.wait_for(sweep_task, timeout=2)

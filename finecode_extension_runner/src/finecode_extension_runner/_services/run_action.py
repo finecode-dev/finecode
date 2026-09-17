@@ -36,7 +36,22 @@ from finecode_extension_runner.di import resolver as di_resolver
 from finecode_extension_runner.di.registry import Registry, ServiceNotFoundError
 
 last_run_id: int = 0
-partial_result_sender: partial_result_sender_module.PartialResultSender
+
+
+def _unwired_partial_result_send(*_args: typing.Any) -> None:
+    raise RuntimeError(
+        "Partial result sender is not wired: call set_partial_result_sender() "
+        "before running an action with a partial_result_token"
+    )
+
+
+# Bound at import so token-less runs (the test harness, nested calls) can pass it
+# through without the ER server having wired a transport; only an actual send fails.
+partial_result_sender: partial_result_sender_module.PartialResultSender = (
+    partial_result_sender_module.PartialResultSender(
+        sender=_unwired_partial_result_send, wait_time_ms=300
+    )
+)
 handler_config_merger = deepmerge.Merger(
     [(list, ["override"]), (dict, ["merge"]), (set, ["override"])],
     #  all other types:
