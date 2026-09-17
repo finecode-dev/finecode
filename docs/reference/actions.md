@@ -2,6 +2,15 @@
 
 Built-in actions live in their respective presets. Use the short form `<preset_package>.<ClassName>` as the `source` when declaring actions in `pyproject.toml` or `preset.toml`.
 
+**Unhandled inputs.** Every action result carries a `coverage` list. A dispatch
+handler that finds no subaction for an input records a miss against it
+(`NO_SUBACTIONS`, `NO_LANGUAGE_DETECTED`, or `NO_SUBACTION_FOR_LANGUAGE` with
+the detected language as detail — R-310, ADR-0098). A caller distinguishes
+"no handler covered this input" from "a handler ran and found nothing" by
+reading `result.unhandled`; the CLI printout ends with a grouped, counted
+`unhandled:` block when any miss reached the run. "Not handled" is an
+answer, not an error.
+
 ---
 
 ## `lint`

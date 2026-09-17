@@ -2,6 +2,7 @@ import dataclasses
 
 from fine_src_artifacts import group_src_artifact_files_by_lang_action
 from finecode_extension_api import code_action
+from finecode_extension_api.code_action import CoverageStatus, ItemCoverage
 from finecode_extension_api.interfaces import ilogger, iprojectactionrunner
 
 from fine_format import format_file_action
@@ -45,7 +46,13 @@ class FormatFileDispatchHandler(
                 "FormatFileDispatchHandler: no language subactions registered"
             )
             return format_file_action.FormatFileRunResult(
-                changed=False, code=run_context.file_info.file_content
+                changed=False,
+                code=run_context.file_info.file_content,
+                coverage=[
+                    ItemCoverage(
+                        status=CoverageStatus.NO_SUBACTIONS, item=payload.file_path
+                    )
+                ],
             )
 
         files_by_lang_result = await self.action_runner.run_action(
@@ -70,7 +77,14 @@ class FormatFileDispatchHandler(
                 f"FormatFileDispatchHandler: no language subaction for {payload.file_path}"
             )
             return format_file_action.FormatFileRunResult(
-                changed=False, code=run_context.file_info.file_content
+                changed=False,
+                code=run_context.file_info.file_content,
+                coverage=[
+                    ItemCoverage(
+                        status=CoverageStatus.NO_LANGUAGE_DETECTED,
+                        item=payload.file_path,
+                    )
+                ],
             )
 
         result: format_file_action.FormatFileRunResult = (

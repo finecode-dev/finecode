@@ -7,10 +7,16 @@ from fine_src_artifacts import (
     group_src_artifact_files_by_lang_action,
 )
 from finecode_extension_api import code_action
+from finecode_extension_api.code_action import (
+    CoverageStatus,
+    ItemCoverage,
+    unmatched_coverage,
+)
 from finecode_extension_api.interfaces import ilogger, iprojectactionrunner
 
 from fine_symbol_info.text_document_hover_action import (
     HoverPayload,
+    HoverResult,
     TextDocumentHoverAction,
 )
 
@@ -66,6 +72,15 @@ class HoverDispatchHandler(
 
         if not subactions_by_lang:
             self.logger.debug("HoverDispatchHandler: no language subactions registered")
+            await run_context.partial_result_sender.send(
+                HoverResult(
+                    coverage=[
+                        ItemCoverage(
+                            status=CoverageStatus.NO_SUBACTIONS, item=payload.uri
+                        )
+                    ]
+                )
+            )
             return
 
         files_by_lang_result = await self.action_runner.run_action(
@@ -78,6 +93,17 @@ class HoverDispatchHandler(
             ),
             meta=run_context.meta,
         )
+
+        coverage = unmatched_coverage(
+            [payload.uri],
+            files_by_lang_result.files_by_lang,
+            subactions_by_lang.keys(),
+        )
+        if coverage:
+            await run_context.partial_result_sender.send(
+                HoverResult(coverage=coverage)
+            )
+            return
 
         async with asyncio.TaskGroup() as tg:
             for lang, file_uris in files_by_lang_result.files_by_lang.items():

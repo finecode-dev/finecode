@@ -203,6 +203,8 @@ Items silently absent from partial results leave callers in a stale state they c
 
 Dispatch handlers are responsible for this guarantee across the whole payload: if a subaction does not handle some items (e.g. files of an unsupported language), the dispatch handler MUST send an explicit empty-or-no-op partial result for those items before returning. This mirrors the pattern for non-streaming handlers, where returning a result implicitly covers all inputs.
 
+The coverage miss those items carry is part of the same send — see R-310. Coverage is added to the explicit empty send, never a replacement for it.
+
 ## R-308: Handlers callable via `run_action_in_projects` must always send a result
 
 A handler for action A that can be invoked by other handlers via
@@ -223,6 +225,15 @@ contribute partial results to a parent action: a bridge handler that determines 
 nothing to orchestrate may return without sending, because contributing zero to the parent
 action's accumulated result is semantically correct.
 
+The LSP-facing language dispatch handlers (the ``text_document_*`` family R-310 governs)
+used to rely on exactly that permission to send nothing when no subaction covered the
+document. Under R-310 they MUST instead send one coverage-only partial — an instance of the
+action's own ``RESULT_TYPE`` with empty domain data, never a bare ``RunActionResult`` — so
+the "no provider for this language" answer reaches the caller instead of vanishing. The
+exemption above remains for bridges contributing to a parent action's accumulated result; it
+no longer covers a category-D dispatcher's "nothing to orchestrate", which R-310 now
+answers with coverage.
+
 ## R-309: Bridge handlers must skip fan-out when inputs are empty
 
 A handler that fans out to sub-actions (per-project, per-file, or otherwise) MUST return
@@ -238,6 +249,43 @@ and propagates the empty input into leaf handlers, where it triggers R-308 viola
 Note: empty `file_paths` with `target=FILES` means "no files were requested", which is
 distinct from "I processed files and found no issues". The correct response is to do
 nothing (early return), not to send an empty result.
+
+## R-310: Dispatched inputs no subaction covered are recorded as coverage
+
+A dispatch handler that routes by language MUST record a coverage miss for every input no
+registered subaction covered. The result it returns, or the partial it sends, carries
+``ItemCoverage`` entries naming the input and the reason: ``NO_SUBACTIONS`` when the action
+has no subactions registered at all, ``NO_LANGUAGE_DETECTED`` when the language cannot be
+determined, ``NO_SUBACTION_FOR_LANGUAGE`` (detected language as ``detail``) when the language
+is known but no subaction serves it. The entries live on the ``coverage`` list every
+``RunActionResult`` inherits; a caller distinguishes "no handler covered this input" from "a
+handler ran and found nothing" by reading ``unhandled`` — coverage entries whose status ranks
+below ``ABSORBED`` (ADR-0098).
+
+The merge happens at two framework choke points an author cannot bypass: a join installed
+into every ``update()`` by ``RunActionResult.__init_subclass__`` covers same-action merges
+(sequential handlers, the partial-result coalescing buffer, ``actions/mergeResults``), and
+the run-scoped coverage sink (``finecode_extension_runner.coverage_sink``) carries a
+sub-action's coverage across a bridge that builds a fresh result object. The join is
+commutative: miss reasons are totally ordered, ties resolve by lexicographically-minimum
+detail. Nothing emits ``HANDLED`` (D-4); it exists so the join stays sound if a catch-all
+handler is ever registered beside a dispatcher. A bridge that genuinely handled the
+degradation itself suppresses its own miss with ``coverage_sink.absorb_coverage(...)``, which
+records ``ABSORBED`` (D-10) — never by deleting the miss from a result it keeps.
+
+Actions whose output is not optional and whose input is a single whole-call target (e.g.
+``build_artifact``, ``lock_dependencies``, ``sync_toolchains``, ``list_obtainable_toolchains``)
+keep raising ``ActionNotFound`` instead — there is no per-item miss to express (ADR-0098).
+
+Project-routing dispatchers (``apply_lint_fixes`` routing files to owning
+projects) are in scope under the same rule, with the file URI as the item: a
+file matching no known project has no routing target, so the dispatcher
+records a miss (``NO_LANGUAGE_DETECTED`` — the owning-project routing key could
+not be determined) on the explicit empty send R-307 already requires, instead
+of an indistinguishable ``applied_counts=0``. Env-routing dispatchers
+(``create_envs``, ``install_envs``) are in scope by the same reading but
+dispatch every env in the run's discovered set and have no branch with an
+uncovered input, so there is nothing for them to record.
 
 ## Handler Observability
 
@@ -279,6 +327,12 @@ call `user_messenger.warning(...)` when it is `USER`; for other triggers, log
 the same message at `DEBUG` instead so it stays diagnosable in the ER logs
 without prompting the user.
 
+The specific-input warning this rule requires is *derivable* from coverage
+(R-310): an unhandled input under a `USER` trigger is exactly the
+requested-versus-swept distinction the warning exists to surface. The
+user-facing warning built from coverage is the first planned application of
+the mechanism, currently out of scope (ADR-0098, follow-up).
+
 Emit the warning through the injected
 `iuser_messenger.IUserMessenger` (`self.user_messenger.warning(...)`) so the
 message reaches the CLI and IDE, not only the ER logs. See
@@ -310,3 +364,4 @@ Before merging a new action, verify:
 12. If the handler fans out over projects or files: emit a WARNING when specific inputs match no targets (R-505).
 13. If the handler is a leaf callable via `run_action_in_projects`: it sends at least one result in all code paths, including the "nothing to process" path (R-308).
 14. If the handler is a bridge that fans out: it returns early without creating tasks when inputs are empty, rather than propagating empty inputs downstream (R-309).
+15. If the handler is a dispatch handler: inputs no subaction covered carry a coverage miss on the result it returns or the partial it sends (R-310); an action whose output is not optional and whose input is a single whole-call target keeps raising `ActionNotFound` instead.

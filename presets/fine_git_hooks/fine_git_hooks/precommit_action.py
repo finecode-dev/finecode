@@ -79,7 +79,10 @@ class PrecommitRunContext(code_action.RunActionContext[PrecommitRunPayload]):
         self.staged_files: list[Path] | None = None
         """Populated by discovery handler. None means discovery has not run yet.
         [] means discovery ran and found no staged files — bridge handlers must treat this as a no-op.
-        Bridge handlers must raise if this is None (i.e. discovery handler was not registered or ran after them)."""
+        Bridge handlers must raise if this is None (i.e. discovery handler was not registered or ran after them).
+        An empty list is the legitimate "ran and found nothing" answer; results
+distinguish it from "no handler covered this input" via the ``coverage``
+field (R-310/ADR-0098)."""
 
 
 class PrecommitAction(

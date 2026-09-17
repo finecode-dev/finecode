@@ -18,6 +18,7 @@ from loguru import logger
 
 from finecode_extension_runner import (
     context,
+    coverage_sink,
     domain,
     er_errors,
     er_telemetry,
@@ -486,6 +487,11 @@ async def run_action(
             + " See ER logs for more details"
         ) from exception
 
+    # Bind the run's coverage sink at run-loop entry. Per run — a nested
+    # sub-action run binds its own sink, so attribution survives and no run
+    # claims a sibling's misses. The unhandled-result type check below runs
+    # after the fold, so a coverage-only result is still recognised.
+    _sink_token = coverage_sink.bind()
     try:
         send_partial_results = partial_result_token is not None
         logger.trace(
@@ -783,6 +789,13 @@ async def run_action(
                 if send_partial_results and tracking_sender.has_sent:
                     await partial_result_sender.send_all_immediately()
     finally:
+        # Fold the run's sink into the result before the sink is unbound,
+        # through merge_coverage (never a list concat), so the sink union is the
+        # same merge rule as the update() join. On the exception path the
+        # partial result is discarded anyway; folding it is harmless.
+        if isinstance(action_result, code_action.RunActionResult):
+            coverage_sink.fold_into(action_result)
+        coverage_sink.unbind(_sink_token)
         if context_out is not None and isinstance(
             run_context_instance, code_action.RunActionContext
         ):
@@ -965,10 +978,21 @@ def action_result_to_run_action_response(
                 result_by_format["json"] = _converter.unstructure(action_result)
             elif asked_result_format == "string":
                 result_text = action_result.to_text()
+                # Append the bounded unhandled block around to_text() at the
+                # ER sites that hold the typed result. Omitted when clean.
+                unhandled_block = coverage_sink.render_unhandled_block(
+                    action_result.unhandled
+                )
                 if isinstance(result_text, textstyler.StyledText):
+                    if unhandled_block:
+                        result_text.append(unhandled_block)
                     result_by_format["styled_text_json"] = result_text.to_json()
                 else:
-                    result_by_format["string"] = result_text
+                    result_by_format["string"] = (
+                        result_text + unhandled_block
+                        if unhandled_block
+                        else result_text
+                    )
             else:
                 raise ActionFailedException(
                     f"Unsupported result format: {asked_result_format}"
@@ -1619,6 +1643,10 @@ async def run_subresult_coros_concurrently(
                 action_subresult.update(coro_result)
 
     if partial_result_queue is not None:
+        if action_subresult is not None:
+            # Queue side (scheduler path): each per-part result is a
+            # separate serialization point with no final object behind it.
+            coverage_sink.fold_into(action_subresult)
         await partial_result_queue.put(action_subresult)
         return None
     elif send_partial_results:
@@ -1693,6 +1721,10 @@ async def run_subresult_coros_sequentially(
                 action_subresult.update(coro_result)
 
     if partial_result_queue is not None:
+        if action_subresult is not None:
+            # Queue side (scheduler path): each per-part result is a
+            # separate serialization point with no final object behind it.
+            coverage_sink.fold_into(action_subresult)
         await partial_result_queue.put(action_subresult)
         return None
     elif send_partial_results:

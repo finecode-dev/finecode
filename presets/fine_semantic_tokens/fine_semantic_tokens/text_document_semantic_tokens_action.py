@@ -92,7 +92,9 @@ class SemanticTokensResult(code_action.RunActionResult):
 
     tokens: list[SemanticToken] = dataclasses.field(default_factory=list)
     """Semantic tokens at absolute positions. Empty list means the handler
-    ran and found no tokens."""
+    ran and found no tokens — the legitimate empty answer, distinct from "no
+    handler covered this input", which the ``coverage`` field reports
+    (R-310/ADR-0098)."""
 
     def update(self, other: code_action.RunActionResult) -> None:
         if not isinstance(other, SemanticTokensResult):

@@ -4,6 +4,8 @@ import collections.abc
 from finecode_extension_api import code_action
 from loguru import logger
 
+from finecode_extension_runner import coverage_sink
+
 
 class PartialResultSender:
     # send partial results not more often than every `wait_time_ms` ms. Only the
@@ -27,6 +29,11 @@ class PartialResultSender:
         logger.trace(
             f"PartialResultSender: schedule_sending for token={token}, value_type={type(value).__name__}"
         )
+        # Streamed side: fold the run's sink into this partial before it is
+        # serialized. A streamed partial is sent mid-run, so the end-of-run
+        # fold alone would never reach it — a bridge that sends a fresh result
+        # (inspect_code's per-project blocks) would silently drop the miss.
+        coverage_sink.fold_into(value)
         if token not in self.results_scheduled_to_send_by_token:
             self.results_scheduled_to_send_by_token[token] = value
         else:

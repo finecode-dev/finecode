@@ -12,6 +12,7 @@ from finecode_extension_api.interfaces import iprojectactionrunner
 from loguru import logger
 
 from finecode_extension_runner import (
+    coverage_sink,
     domain,
     er_errors,
     er_telemetry,
@@ -251,6 +252,9 @@ class ProjectActionRunnerImpl(iprojectactionrunner.IProjectActionRunner):
                 raise iprojectactionrunner.ActionRunFailed(
                     f"Action '{action_def.name}' returned no result"
                 )
+            # The sub-run folded its own sink into *result*; carry
+            # its coverage into this (calling) run's sink.
+            coverage_sink.deposit_from(result)
             return result  # type: ignore[return-value]
 
         if action_def is not None:
@@ -298,7 +302,11 @@ class ProjectActionRunnerImpl(iprojectactionrunner.IProjectActionRunner):
             raise iprojectactionrunner.ActionRunFailed(
                 f"Action '{action_type.source}' returned no final result payload"
             )
-        return self._build_result(action_type, raw_final_result)
+        result = self._build_result(action_type, raw_final_result)
+        # WM round-trip return point: coverage arrived inside the
+        # serialized result; pick it up for the calling run's sink.
+        coverage_sink.deposit_from(result)
+        return result
 
     async def run_action_iter(
         self,
@@ -332,7 +340,11 @@ class ProjectActionRunnerImpl(iprojectactionrunner.IProjectActionRunner):
                 item = await queue.get()
                 if item is _SENTINEL:
                     break
-                yield item  # type: ignore[misc]
+                result = typing.cast(ResultT, item)
+                # Per yield: there is no final result object on
+                # this path, so each partial carries its own coverage forward.
+                coverage_sink.deposit_from(result)
+                yield result  # type: ignore[misc]
             await task
             return
 
@@ -412,7 +424,12 @@ class ProjectActionRunnerImpl(iprojectactionrunner.IProjectActionRunner):
                     break
                 else:
                     # Non-tuple item: partial payload from dispatch_partial_result_from_wm.
-                    yield self._build_result(action_type, item)
+                    result = self._build_result(action_type, item)
+                    # Per yield (WM streaming path): each partial's
+                    # coverage was serialized inside the partial payload; carry
+                    # it into the calling run's sink.
+                    coverage_sink.deposit_from(result)
+                    yield result
         finally:
             _wm_partial_result_queues.pop(token, None)
             if not wm_task.done():

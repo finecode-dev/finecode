@@ -39,6 +39,7 @@ from loguru import logger
 
 from finecode_extension_runner import (
     context,
+    coverage_sink,
     er_errors,
     er_telemetry,
     er_wal,
@@ -1279,10 +1280,19 @@ def create_er_server(wal_writer: er_wal.ErWalWriter | None = None) -> ErServer:
             result_by_format["json"] = dataclasses.asdict(partial_result)
         if "string" in _formats:
             text = partial_result.to_text()
+            # The streamed-partial twin of the final-result render in
+            # action_result_to_run_action_response — bounded, omitted when clean.
+            unhandled_block = coverage_sink.render_unhandled_block(
+                partial_result.unhandled
+            )
             if isinstance(text, _textstyler.StyledText):
+                if unhandled_block:
+                    text.append(unhandled_block)
                 result_by_format["styled_text_json"] = text.to_json()
             else:
-                result_by_format["string"] = text
+                result_by_format["string"] = (
+                    text + unhandled_block if unhandled_block else text
+                )
         partial_result_json = json.dumps(result_by_format)
         logger.trace(
             f"send_partial_result: token={token}, formats={_formats}, "

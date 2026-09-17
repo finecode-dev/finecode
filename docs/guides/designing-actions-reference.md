@@ -786,6 +786,20 @@ class FormatFileDispatchHandler(code_action.ActionHandler[FormatFileAction, ...]
 
 For collection-level dispatch (e.g. `LintFilesDispatchHandler`), the handler groups items by language and dispatches each group to the matching language subaction concurrently — see [Two patterns for sending partial results](#two-patterns-for-sending-partial-results).
 
+**Unhandled inputs are an answer.** A dispatch handler computes which inputs no
+subaction covered and MUST record that on the result it returns or the partial
+it sends: an `ItemCoverage` entry per input on the result's `coverage` list
+(R-310, ADR-0098). `NO_SUBACTIONS` when the action has none,
+`NO_LANGUAGE_DETECTED` when the language is undeterminable, and
+`NO_SUBACTION_FOR_LANGUAGE` with the detected language as `detail` when the
+language is known but unserved. The caller reads `result.unhandled` — the
+entries whose status ranks below `ABSORBED`. The miss survives every merge
+(the join is installed into `update()` by the base class) and every bridge
+that builds a fresh result object from selected fields (the run-scoped
+coverage sink carries it). An author cannot bypass either choke point; a
+bridge that genuinely handled the degradation suppresses its own miss with
+`coverage_sink.absorb_coverage(...)`.
+
 ### Iterate bridge handler
 
 A handler on a collection action that splits the payload into individual items and delegates each to an item action. This changes the granularity from collection to item:

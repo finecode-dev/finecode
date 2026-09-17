@@ -2,6 +2,7 @@ import dataclasses
 
 from fine_src_artifacts import group_src_artifact_files_by_lang_action
 from finecode_extension_api import code_action
+from finecode_extension_api.code_action import CoverageStatus, ItemCoverage
 from finecode_extension_api.interfaces import ilogger, iprojectactionrunner
 
 from fine_lint import get_lint_fixes_action
@@ -47,7 +48,14 @@ class GetLintFixesFilesDispatchHandler(
             )
             await run_context.partial_result_sender.send(
                 get_lint_fixes_action.GetLintFixesRunResult(
-                    file_version=payload.file_version or "", fixes=[]
+                    file_version=payload.file_version or "",
+                    fixes=[],
+                    coverage=[
+                        ItemCoverage(
+                            status=CoverageStatus.NO_SUBACTIONS,
+                            item=payload.file_path,
+                        )
+                    ],
                 )
             )
             return
@@ -77,9 +85,19 @@ class GetLintFixesFilesDispatchHandler(
                 f"GetLintFixesFilesDispatchHandler: no subaction for file "
                 f"{payload.file_path} (detected lang: {file_lang!r})"
             )
+            if file_lang is None:
+                status = CoverageStatus.NO_LANGUAGE_DETECTED
+                detail = ""
+            else:
+                status = CoverageStatus.NO_SUBACTION_FOR_LANGUAGE
+                detail = file_lang
             await run_context.partial_result_sender.send(
                 get_lint_fixes_action.GetLintFixesRunResult(
-                    file_version=payload.file_version or "", fixes=[]
+                    file_version=payload.file_version or "",
+                    fixes=[],
+                    coverage=[
+                        ItemCoverage(status=status, item=payload.file_path, detail=detail)
+                    ],
                 )
             )
             return

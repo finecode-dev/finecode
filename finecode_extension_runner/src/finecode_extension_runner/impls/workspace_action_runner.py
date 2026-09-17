@@ -13,7 +13,11 @@ from finecode_extension_api.interfaces import (
     iworkspaceactionrunner,
 )
 
-from finecode_extension_runner import er_telemetry, run_context
+from finecode_extension_runner import (
+    coverage_sink,
+    er_telemetry,
+    run_context,
+)
 from finecode_extension_runner._converter import converter as _converter
 
 PayloadT = typing.TypeVar("PayloadT", bound=code_action.RunActionPayload)
@@ -69,7 +73,13 @@ class WorkspaceActionRunnerImpl(iworkspaceactionrunner.IWorkspaceActionRunner):
             raise iprojectactionrunner.ActionRunFailed(
                 f"Running '{action_type.__name__}' in [{project_str}] failed: {e}"
             ) from e
-        return self._decode_results(action_type, raw)
+        results = self._decode_results(action_type, raw)
+        # Workspace fan-out return point: every per-project result
+        # arrived with its coverage serialized inside it; carry it into the
+        # calling run's sink.
+        for result in results.values():
+            coverage_sink.deposit_from(result)
+        return results
 
     async def run_action_per_project(
         self,
@@ -109,7 +119,12 @@ class WorkspaceActionRunnerImpl(iworkspaceactionrunner.IWorkspaceActionRunner):
             raise iprojectactionrunner.ActionRunFailed(
                 f"Running '{action_type.__name__}' in [{project_str}] failed: {e}"
             ) from e
-        return self._decode_results(action_type, raw)
+        results = self._decode_results(action_type, raw)
+        # Workspace per-project return point: same pick-up as
+        # run_action_in_projects — coverage rode inside the serialized results.
+        for result in results.values():
+            coverage_sink.deposit_from(result)
+        return results
 
     def _decode_results(
         self,

@@ -6,6 +6,7 @@ import pathlib
 
 from fine_src_artifacts import list_src_artifact_files_by_lang_action
 from finecode_extension_api import code_action
+from finecode_extension_api.code_action import CoverageStatus, ItemCoverage
 from finecode_extension_api.interfaces import (
     ilogger,
     iuser_messenger,
@@ -154,6 +155,21 @@ class ApplyLintFixesDispatchHandler(
                     # System-triggered calls routinely include files outside any
                     # known project -- expected, not diagnosable (R-505).
                     self.logger.debug(message)
+                # R-310: a file matching no project has no routing target, so
+                # record a miss instead of returning silently (this also closes
+                # the R-307 gap for files no partial covered).
+                await run_context.partial_result_sender.send(
+                    ApplyLintFixesRunResult(
+                        applied_counts=dict.fromkeys(payload.file_paths, 0),
+                        coverage=[
+                            ItemCoverage(
+                                status=CoverageStatus.NO_LANGUAGE_DETECTED,
+                                item=uri,
+                            )
+                            for uri in payload.file_paths
+                        ],
+                    )
+                )
                 return
 
             # R-307: every requested file must be covered by at least one
@@ -167,7 +183,14 @@ class ApplyLintFixesDispatchHandler(
             if unmatched_uris:
                 await run_context.partial_result_sender.send(
                     ApplyLintFixesRunResult(
-                        applied_counts=dict.fromkeys(unmatched_uris, 0)
+                        applied_counts=dict.fromkeys(unmatched_uris, 0),
+                        coverage=[
+                            ItemCoverage(
+                                status=CoverageStatus.NO_LANGUAGE_DETECTED,
+                                item=uri,
+                            )
+                            for uri in unmatched_uris
+                        ],
                     )
                 )
         else:

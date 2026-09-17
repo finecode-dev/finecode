@@ -7,11 +7,17 @@ from fine_src_artifacts import (
     group_src_artifact_files_by_lang_action,
 )
 from finecode_extension_api import code_action
+from finecode_extension_api.code_action import (
+    CoverageStatus,
+    ItemCoverage,
+    unmatched_coverage,
+)
 from finecode_extension_api.interfaces import ilogger, iprojectactionrunner
 
 from fine_code_hierarchy.call_hierarchy_incoming_calls_action import (
     CallHierarchyIncomingCallsAction,
     CallHierarchyIncomingCallsPayload,
+    CallHierarchyIncomingCallsResult,
 )
 
 
@@ -70,6 +76,15 @@ class CallHierarchyIncomingCallsDispatchHandler(
             self.logger.debug(
                 "CallHierarchyIncomingCallsDispatchHandler: no language subactions registered"
             )
+            await run_context.partial_result_sender.send(
+                CallHierarchyIncomingCallsResult(
+                    coverage=[
+                        ItemCoverage(
+                            status=CoverageStatus.NO_SUBACTIONS, item=payload.item.uri
+                        )
+                    ]
+                )
+            )
             return
 
         files_by_lang_result = await self.action_runner.run_action(
@@ -82,6 +97,17 @@ class CallHierarchyIncomingCallsDispatchHandler(
             ),
             meta=run_context.meta,
         )
+
+        coverage = unmatched_coverage(
+            [payload.item.uri],
+            files_by_lang_result.files_by_lang,
+            subactions_by_lang.keys(),
+        )
+        if coverage:
+            await run_context.partial_result_sender.send(
+                CallHierarchyIncomingCallsResult(coverage=coverage)
+            )
+            return
 
         async with asyncio.TaskGroup() as tg:
             for lang, file_uris in files_by_lang_result.files_by_lang.items():

@@ -5,10 +5,13 @@ import collections.abc
 import contextlib
 import dataclasses
 import enum
+import functools
+import itertools
 import typing
 from typing import ClassVar, Generic, Protocol, TypeVar
 
 from finecode_extension_api import partialresultscheduler, textstyler
+from finecode_extension_api.resource_uri import ResourceUri
 
 
 @dataclasses.dataclass
@@ -81,8 +84,155 @@ class RunReturnCode(enum.IntEnum):
     ERROR = 1
 
 
+class CoverageStatus(enum.StrEnum):
+    NO_SUBACTIONS = "no_subactions"
+    NO_LANGUAGE_DETECTED = "no_language_detected"
+    NO_SUBACTION_FOR_LANGUAGE = "no_subaction_for_language"
+    ABSORBED = "absorbed"
+    """A bridge handled the degradation itself and suppressed this miss (D-10).
+    Outranks every miss, so the join suppresses it wherever the two meet —
+    including across nesting and serialization."""
+    HANDLED = "handled"
+    """Retracts a sibling handler's miss. **No code in FineCode emits this**
+    (D-4); it exists so the join stays sound if a catch-all handler is ever
+    registered beside a dispatcher."""
+
+
+_COVERAGE_RANK = {
+    CoverageStatus.NO_SUBACTIONS: 1,
+    CoverageStatus.NO_LANGUAGE_DETECTED: 2,
+    CoverageStatus.NO_SUBACTION_FOR_LANGUAGE: 3,
+    CoverageStatus.ABSORBED: 4,
+    CoverageStatus.HANDLED: 5,
+}  # Named "coverage" rather than "miss": it ranks two non-misses.
+
+
+@dataclasses.dataclass(frozen=True)
+class ItemCoverage:
+    status: CoverageStatus
+    item: ResourceUri | None = None
+    """The input this is about. ``None`` means the call as a whole. Typed
+    absence, not a sentinel (ADR-0088)."""
+    detail: str = ""
+    """Diagnosis: the detected language, the parent action name. Ties on
+    ``status`` resolve by lexicographic minimum of this field, so the join
+    stays total."""
+
+
+def merge_coverage(
+    *lists: collections.abc.Iterable[ItemCoverage],
+) -> list[ItemCoverage]:
+    """Join several coverage lists into one, rank-maximum entry per item.
+
+    Deduplication is by ``item``; a duplicate ``(item, status, detail)``
+    triple collapses to one entry. This is the *only* merge rule coverage
+    has: the join installed into ``update()``, the sink union, and the
+    recursive ``unhandled`` read all go through it. It is what keeps a
+    per-yield deposit O(misses) rather than O(partials x misses).
+    """
+    best_by_item: dict[ResourceUri | None, ItemCoverage] = {}
+    for entry in itertools.chain.from_iterable(lists):
+        current = best_by_item.get(entry.item)
+        if current is None:
+            best_by_item[entry.item] = entry
+            continue
+        rank = _COVERAGE_RANK[entry.status]
+        current_rank = _COVERAGE_RANK[current.status]
+        if rank > current_rank or (
+            rank == current_rank and entry.detail < current.detail
+        ):
+            best_by_item[entry.item] = entry
+    return list(best_by_item.values())
+
+
+def unmatched_coverage(
+    file_uris: collections.abc.Iterable[ResourceUri],
+    files_by_lang: collections.abc.Mapping[
+        str, collections.abc.Sequence[ResourceUri]
+    ],
+    registered_langs: collections.abc.Iterable[str],
+) -> list[ItemCoverage]:
+    """Miss entries for the *file_uris* no registered language subaction covered.
+
+    The classification needs the grouping action's buckets: a file in a
+    recognised bucket with no registered subaction is
+    ``NO_SUBACTION_FOR_LANGUAGE`` (the bucket name is the diagnosis), a file
+    in no bucket at all is ``NO_LANGUAGE_DETECTED``. Relies on the grouping
+    handlers treating ``langs`` as advisory so an unregistered language still
+    appears in its own bucket.
+    """
+    registered = set(registered_langs)
+    lang_by_file: dict[ResourceUri, str] = {
+        file_uri: lang
+        for lang, file_uris in files_by_lang.items()
+        for file_uri in file_uris
+    }
+    coverage: list[ItemCoverage] = []
+    for uri in file_uris:
+        detected = lang_by_file.get(uri)
+        if detected is None:
+            coverage.append(
+                ItemCoverage(status=CoverageStatus.NO_LANGUAGE_DETECTED, item=uri)
+            )
+        elif detected not in registered:
+            coverage.append(
+                ItemCoverage(
+                    status=CoverageStatus.NO_SUBACTION_FOR_LANGUAGE,
+                    item=uri,
+                    detail=detected,
+                )
+            )
+    return coverage
+
+
+def _with_coverage_join(
+    update: typing.Callable[..., typing.Any],
+) -> typing.Callable[..., typing.Any]:
+    """Wrap an author's ``update()`` so the coverage join runs before it does.
+
+    Installed by ``RunActionResult.__init_subclass__``. The join running
+    *before* the author's body is what makes it survive a type-mismatch early
+    return: an author can no longer discard a type-mismatched result's
+    coverage wholesale, because coverage is type-independent metadata about
+    dispatch, not domain data.
+    """
+
+    @functools.wraps(update)
+    def wrapped(
+        self: RunActionResult, other: RunActionResult
+    ) -> typing.Any:
+        self.coverage = merge_coverage(self.coverage, other.coverage)
+        return update(self, other)
+
+    wrapped.__coverage_joined__ = True  # type: ignore[attr-defined]
+    return wrapped
+
+
 @dataclasses.dataclass
 class RunActionResult:
+    coverage: list[ItemCoverage] = dataclasses.field(
+        default_factory=list, kw_only=True
+    )
+
+    def __init_subclass__(cls, **kwargs) -> None:
+        """Wrap a subclass's own ``update()`` so every merge joins coverage.
+
+        Fires inside ``type.__new__``, i.e. when the class body completes —
+        before ``@dataclasses.dataclass`` is applied to the subclass. That is
+        benign: the dataclass decorator generates ``__init__``/``__repr__``/
+        ``__eq__`` and never ``update``.
+
+        ``cls.__dict__.get("update")`` is evaluated once, at class creation:
+        a class that gains an ``update`` afterwards (monkeypatching) is never
+        wrapped. A subclass that defines no ``update()`` of its own inherits
+        the wrapped one from its parent and still joins, without double
+        wrapping (the ``__coverage_joined__`` marker makes re-wrapping a no-op).
+        """
+        super().__init_subclass__(**kwargs)
+        own = cls.__dict__.get("update")
+        if own is not None and not getattr(own, "__coverage_joined__", False):
+            cls.update = _with_coverage_join(own)  # type: ignore[method-assign]
+
     def update(self, other: RunActionResult) -> None:
         """Merge ``other`` into ``self``.
 
@@ -94,12 +244,63 @@ class RunActionResult:
         """
         raise NotImplementedError()
 
+    @property
+    def unhandled(self) -> list[ItemCoverage]:
+        """Entries whose status ranks **below ABSORBED** — i.e. live misses only.
+
+        Not "everything that is not HANDLED": suppressing an absorbed miss by
+        *replacing* it with an ``ABSORBED`` entry under the rank-max join
+        means a not-HANDLED predicate would resurface exactly what absorption
+        removed, so ``ABSORBED`` is never a rendered reason.
+
+        Joins across nested results on read, so it is not O(1).
+        """
+        merged = _collect_coverage(self, set())
+        return [
+            entry
+            for entry in merged
+            if _COVERAGE_RANK[entry.status]
+            < _COVERAGE_RANK[CoverageStatus.ABSORBED]
+        ]
+
     def to_text(self) -> str | textstyler.StyledText:
         return str(self)
 
     @property
     def return_code(self) -> RunReturnCode:
         return RunReturnCode.SUCCESS
+
+
+def _iter_nested_results(value: typing.Any) -> collections.abc.Iterator[RunActionResult]:
+    """Yield every ``RunActionResult`` reachable through ``value``'s fields."""
+    if isinstance(value, RunActionResult):
+        yield value
+    elif isinstance(value, (list, tuple)):
+        for element in value:
+            yield from _iter_nested_results(element)
+    elif isinstance(value, dict):
+        for element in value.values():
+            yield from _iter_nested_results(element)
+
+
+def _collect_coverage(
+    result: RunActionResult, seen: set[int]
+) -> list[ItemCoverage]:
+    """Join ``result``'s own coverage with every nested result's.
+
+    Joins across nesting levels via ``merge_coverage`` rather than
+    concatenating — otherwise the rank-max never runs across levels and
+    absorption could not suppress a miss recorded deeper in the tree. The
+    ``seen`` set keeps the walk from re-reading the same object twice.
+    """
+    if id(result) in seen:
+        return []
+    seen.add(id(result))
+    merged: list[ItemCoverage] = list(result.coverage)
+    for field in dataclasses.fields(result):
+        for nested in _iter_nested_results(getattr(result, field.name)):
+            merged = merge_coverage(merged, _collect_coverage(nested, seen))
+    return merged
 
 
 RunPayloadType = TypeVar("RunPayloadType", bound=RunActionPayload, covariant=True)

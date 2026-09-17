@@ -153,18 +153,27 @@ async def test_files_outside_every_project_warn_a_user_run(
 ) -> None:
     """Asking to fix specific files that belong to no known project must tell
     the user why nothing happened -- otherwise a stale project list or a typoed
-    path looks identical to "already clean"."""
+    path looks identical to "already clean".
+
+    The same send also records the coverage miss: the files are not "applied
+    with zero fixes", they were never handed to any project (R-310).
+    """
     project = tmp_path / "pkg"
+    outside_uri = path_to_resource_uri(tmp_path / "elsewhere" / "mod.py")
     sender, action_runner, user_messenger = await _run(
-        ApplyLintFixesRunPayload(
-            target=LintTarget.FILES,
-            file_paths=[path_to_resource_uri(tmp_path / "elsewhere" / "mod.py")],
-        ),
+        ApplyLintFixesRunPayload(target=LintTarget.FILES, file_paths=[outside_uri]),
         known_project_paths=[project],
     )
 
     assert action_runner.calls == []
-    assert sender.results == []
+    assert len(sender.results) == 1
+    assert sender.results[0].unhandled == [
+        code_action.ItemCoverage(
+            status=code_action.CoverageStatus.NO_LANGUAGE_DETECTED,
+            item=outside_uri,
+        )
+    ]
+    assert sender.results[0].applied_counts == {outside_uri: 0}
     assert len(user_messenger.warnings) == 1
     assert "elsewhere" in user_messenger.warnings[0]
 
@@ -212,3 +221,38 @@ async def test_files_matching_a_project_are_forwarded_to_its_pass_loop(
     assert user_messenger.warnings == []
     assert len(sender.results) == 1
     assert sender.results[0].applied_counts == {file_uri: 1}
+    assert sender.results[0].unhandled == []
+
+
+async def test_partially_unmatched_batch_records_misses_for_the_unmatched_files(
+    tmp_path: pathlib.Path,
+) -> None:
+    """When some files match a project and others do not, the unmatched files
+    keep the R-307 explicit-zero send AND carry the coverage miss naming them
+    -- without ever reaching a project's pass loop (R-310)."""
+    project = tmp_path / "pkg"
+    inside_uri = path_to_resource_uri(project / "mod.py")
+    outside_uri = path_to_resource_uri(tmp_path / "elsewhere" / "mod.py")
+    canned_result = ApplyLintFixesFilesRunResult(
+        applied_counts={inside_uri: 1},
+        status=ConvergenceStatus.CONVERGED,
+        passes=1,
+    )
+    sender, action_runner, _ = await _run(
+        ApplyLintFixesRunPayload(
+            target=LintTarget.FILES,
+            file_paths=[inside_uri, outside_uri],
+        ),
+        known_project_paths=[project],
+        results_by_action={ApplyLintFixesFilesAction: {project: canned_result}},
+    )
+
+    assert (ApplyLintFixesFilesAction, [project]) in action_runner.calls
+    by_counts = [r for r in sender.results if r.applied_counts == {outside_uri: 0}]
+    assert len(by_counts) == 1
+    assert by_counts[0].unhandled == [
+        code_action.ItemCoverage(
+            status=code_action.CoverageStatus.NO_LANGUAGE_DETECTED,
+            item=outside_uri,
+        )
+    ]

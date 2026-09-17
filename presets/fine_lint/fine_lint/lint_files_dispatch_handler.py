@@ -3,6 +3,7 @@ import dataclasses
 
 from fine_src_artifacts import group_src_artifact_files_by_lang_action
 from finecode_extension_api import code_action
+from finecode_extension_api.code_action import CoverageStatus, ItemCoverage
 from finecode_extension_api.interfaces import ilogger, iprojectactionrunner
 from finecode_extension_api.resource_uri import ResourceUri
 
@@ -67,7 +68,13 @@ class LintFilesDispatchHandler(
             if payload.file_paths:
                 await run_context.partial_result_sender.send(
                     lint_files_action.LintFilesRunResult(
-                        messages={uri: [] for uri in payload.file_paths}
+                        messages={uri: [] for uri in payload.file_paths},
+                        coverage=[
+                            ItemCoverage(
+                                status=CoverageStatus.NO_SUBACTIONS, item=uri
+                            )
+                            for uri in payload.file_paths
+                        ],
                     )
                 )
             return
@@ -94,11 +101,35 @@ class LintFilesDispatchHandler(
             if lang in subactions_by_lang:
                 matched_files.update(file_uris)
 
+        # The grouping handlers return one bucket per language they recognise,
+        # regardless of the ``langs`` filter (advisory — pinned by a test in
+        # fine_toml_lang/fine_python_lang). Inverting the buckets per file is
+        # what makes coverage attributable: a file in a recognised bucket with
+        # no registered subaction is NO_SUBACTION_FOR_LANGUAGE (and the bucket
+        # name is the diagnosis), a file in no bucket at all is
+        # NO_LANGUAGE_DETECTED.
+        lang_by_file: dict[ResourceUri, str] = {
+            file_uri: lang
+            for lang, file_uris in files_by_lang.items()
+            for file_uri in file_uris
+        }
         unmatched = [f for f in payload.file_paths if f not in matched_files]
         if unmatched:
             await run_context.partial_result_sender.send(
                 lint_files_action.LintFilesRunResult(
-                    messages={uri: [] for uri in unmatched}
+                    messages={uri: [] for uri in unmatched},
+                    coverage=[
+                        ItemCoverage(
+                            status=(
+                                CoverageStatus.NO_SUBACTION_FOR_LANGUAGE
+                                if (detected := lang_by_file.get(uri)) is not None
+                                else CoverageStatus.NO_LANGUAGE_DETECTED
+                            ),
+                            item=uri,
+                            detail=detected or "",
+                        )
+                        for uri in unmatched
+                    ],
                 )
             )
 

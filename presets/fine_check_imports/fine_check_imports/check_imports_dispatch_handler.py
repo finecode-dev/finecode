@@ -2,6 +2,7 @@ import dataclasses
 
 from fine_src_artifacts import get_src_artifact_language_action
 from finecode_extension_api import code_action
+from finecode_extension_api.code_action import CoverageStatus, ItemCoverage
 from finecode_extension_api.interfaces import (
     ilogger,
     iprojectactionrunner,
@@ -70,7 +71,16 @@ class CheckImportsDispatchHandler(
             self.logger.debug(
                 f"No check_imports action registered for language '{language}' — skipping."
             )
-            return check_imports_action.CheckImportsRunResult(messages={})
+            return check_imports_action.CheckImportsRunResult(
+                messages={},
+                coverage=[
+                    ItemCoverage(
+                        status=CoverageStatus.NO_SUBACTION_FOR_LANGUAGE,
+                        item=src_artifact_def_path,
+                        detail=language,
+                    )
+                ],
+            )
         subaction = subactions_by_lang[language]
         resolved_payload = dataclasses.replace(
             payload, src_artifact_def_path=src_artifact_def_path
