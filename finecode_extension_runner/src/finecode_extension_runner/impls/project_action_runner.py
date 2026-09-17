@@ -20,6 +20,7 @@ from finecode_extension_runner import (
     run_utils,
 )
 from finecode_extension_runner._converter import converter as _converter
+from finecode_extension_runner._services.run_action import _serialize_caller_kwargs
 
 PayloadT = typing.TypeVar("PayloadT", bound=code_action.RunActionPayload)
 ResultT = typing.TypeVar("ResultT", bound=code_action.RunActionResult)

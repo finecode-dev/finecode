@@ -68,7 +68,7 @@ class FormatFileDispatchHandler(
 
         lang_subaction = None
         for lang, files in files_by_lang_result.files_by_lang.items():
-            if files:
+            if files and lang in subactions_by_lang:
                 lang_subaction = subactions_by_lang[lang]
                 break
 
@@ -79,12 +79,11 @@ class FormatFileDispatchHandler(
             return format_file_action.FormatFileRunResult(
                 changed=False,
                 code=run_context.file_info.file_content,
-                coverage=[
-                    ItemCoverage(
-                        status=CoverageStatus.NO_LANGUAGE_DETECTED,
-                        item=payload.file_path,
-                    )
-                ],
+                coverage=code_action.unmatched_coverage(
+                    [payload.file_path],
+                    files_by_lang_result.files_by_lang,
+                    subactions_by_lang.keys(),
+                ),
             )
 
         result: format_file_action.FormatFileRunResult = (

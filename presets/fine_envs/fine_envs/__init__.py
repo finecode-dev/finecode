@@ -5,6 +5,7 @@ from fine_envs.create_envs_action import CreateEnvsAction
 from fine_envs.create_envs_discover_envs_handler import CreateEnvsDiscoverEnvsHandler
 from fine_envs.create_envs_dispatch_handler import CreateEnvsDispatchHandler
 from fine_envs.dump_config_action import DumpConfigAction
+from fine_envs.dump_config_format_handler import DumpConfigFormatHandler
 from fine_envs.dump_config_handler import DumpConfigHandler
 from fine_envs.dump_config_save_handler import DumpConfigSaveHandler
 from fine_envs.install_deps_in_env_action import InstallDepsInEnvAction
@@ -37,6 +38,7 @@ __all__ = [
     "CreateEnvsDiscoverEnvsHandler",
     "CreateEnvsDispatchHandler",
     "DumpConfigAction",
+    "DumpConfigFormatHandler",
     "DumpConfigHandler",
     "DumpConfigSaveHandler",
     "InstallDepsInEnvAction",

@@ -236,10 +236,15 @@ See [Preparing Environments](guides/preparing-environments.md) for a full explan
 Dump the fully resolved configuration for a project to disk, useful for debugging preset and config merging.
 
 ```
-python -m finecode dump-config --project=<name> [--log-level=<level>] [--debug]
+python -m finecode dump-config --shared-server --project=<name> [--log-level=<level>] [--debug]
 ```
 
-Output is written to `<cwd>/finecode_config_dump/`.
+Output is written to `<cwd>/finecode_config_dump/`. The dump is written through
+the project's configured formatter when one covers the target file; without
+one it falls back to an unformatted dump, and the action result's `unhandled`
+names the target file (see the *Unhandled inputs* note in
+[Built-in Actions](reference/actions.md)). If the formatter fails, the command
+fails; disable the `dump_config_format` handler to dump unformatted.
 
 | Option | Description |
 |---|---|

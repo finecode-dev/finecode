@@ -114,6 +114,24 @@ async def test_no_language_match_reports_a_miss() -> None:
     ]
 
 
+async def test_unregistered_language_bucket_reports_no_subaction_for_language() -> None:
+    """A file the grouping put in a bucket whose language has no registered
+    subaction is NO_SUBACTION_FOR_LANGUAGE — the bucket name is the diagnosis,
+    not a dispatcher crash or a silent "unchanged"."""
+    result = await _run(
+        subactions_by_lang={"python": typing.cast(typing.Any, object())},
+        files_by_lang={"python": [], "toml": [_FILE_URI]},
+    )
+    assert result.changed is False
+    assert result.unhandled == [
+        ItemCoverage(
+            status=CoverageStatus.NO_SUBACTION_FOR_LANGUAGE,
+            item=_FILE_URI,
+            detail="toml",
+        )
+    ]
+
+
 async def test_successful_dispatch_is_clean() -> None:
     """A dispatched-and-formatted file is the legitimate empty answer: no
     coverage entries at all — nothing emits HANDLED."""

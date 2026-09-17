@@ -1,11 +1,11 @@
 import pathlib
 import types
 
+import pytest
+
 from fine_envs import dump_config_action
-from fine_envs.dump_config_save_handler import (
-    DumpConfigSaveHandler,
-    _attribution_comment,
-)
+from fine_envs.dump_config_save_handler import DumpConfigSaveHandler
+from finecode_extension_api import code_action
 from finecode_extension_api.resource_uri import path_to_resource_uri
 
 
@@ -44,74 +44,50 @@ class _FakeSessionCM:
         return None
 
 
-class _FakeProjectInfoProvider:
-    def __init__(self, selection: dict[str, list[str]]) -> None:
-        self._selection = selection
-
-    async def get_workspace_extra_selection(self) -> dict[str, list[str]]:
-        return self._selection
-
-
-async def test_save_handler_uses_provider_selection_for_attribution(
-    tmp_path: pathlib.Path,
-) -> None:
-    selection = {"finecode-dev-common-preset": ["lint_fix"]}
-    raw_config = {
-        "dependency-groups": {
-            "runtime": ["finecode_dev_common_preset[lint_fix]~=0.3.0a0"]
-        }
-    }
-    session = _FakeSession()
-    handler = DumpConfigSaveHandler(
-        file_manager=_FakeFileManager(),
-        file_editor=_FakeFileEditor(session),
-        project_info_provider=_FakeProjectInfoProvider(selection),
-    )
-    payload = dump_config_action.DumpConfigRunPayload(
+def _payload(tmp_path: pathlib.Path) -> dump_config_action.DumpConfigRunPayload:
+    return dump_config_action.DumpConfigRunPayload(
         source_file_path=path_to_resource_uri(tmp_path / "pyproject.toml"),
-        project_raw_config=raw_config,
+        project_raw_config={},
         target_file_path=path_to_resource_uri(
             tmp_path / "finecode_config_dump" / "pyproject.toml"
         ),
     )
-    run_context = types.SimpleNamespace(raw_config_dump=raw_config)
-
-    await handler.run(payload, run_context)
-
-    assert session.saved
-    saved_content = session.saved[0][1]
-    assert saved_content.startswith("# Dependency specs rewritten by")
-    assert "finecode-workspace-user.toml" in saved_content
 
 
-def test_attribution_comment_names_selection_file_and_extra() -> None:
-    """A rewritten spec is attributed to the selection file and its extra."""
-    selection = {"finecode-dev-common-preset": ["lint_fix"]}
-    raw_config = {
-        "dependency-groups": {
-            "runtime": ["finecode_dev_common_preset[lint_fix]~=0.3.0a0"]
-        }
-    }
+async def test_save_handler_writes_prepared_content_once(
+    tmp_path: pathlib.Path,
+) -> None:
+    """The save handler writes exactly the content earlier handlers prepared
+    and saves the file once — the dump has no unformatted window and no second
+    write.
+    """
+    session = _FakeSession()
+    handler = DumpConfigSaveHandler(
+        file_manager=_FakeFileManager(), file_editor=_FakeFileEditor(session)
+    )
+    run_context = types.SimpleNamespace(
+        raw_config_dump={}, config_dump_content="formatted dump"
+    )
 
-    comment = _attribution_comment(selection, raw_config)
+    await handler.run(_payload(tmp_path), run_context)
 
-    assert "finecode-workspace-user.toml" in comment
-    assert "lint_fix" in comment
-    assert "finecode_dev_common_preset[lint_fix]~=0.3.0a0" in comment
-
-
-def test_attribution_comment_empty_selection_is_empty() -> None:
-    raw_config = {
-        "dependency-groups": {
-            "runtime": ["finecode_dev_common_preset[lint_fix]~=0.3.0a0"]
-        }
-    }
-
-    assert _attribution_comment({}, raw_config) == ""
+    assert session.saved == [
+        (tmp_path / "finecode_config_dump" / "pyproject.toml", "formatted dump")
+    ]
 
 
-def test_attribution_comment_no_matching_spec_is_empty() -> None:
-    selection = {"finecode-dev-common-preset": ["lint_fix"]}
-    raw_config = {"dependency-groups": {"runtime": ["other~=1.0"]}}
+async def test_save_handler_without_rendered_content_fails(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Without the dump_config handler having rendered the dump there is nothing
+    to write; failing names the missing handler instead of writing nothing."""
+    session = _FakeSession()
+    handler = DumpConfigSaveHandler(
+        file_manager=_FakeFileManager(), file_editor=_FakeFileEditor(session)
+    )
+    run_context = types.SimpleNamespace(raw_config_dump={}, config_dump_content=None)
 
-    assert _attribution_comment(selection, raw_config) == ""
+    with pytest.raises(code_action.ActionFailedException):
+        await handler.run(_payload(tmp_path), run_context)
+
+    assert session.saved == []

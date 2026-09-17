@@ -40,9 +40,11 @@ class DumpConfigRunContext(code_action.RunActionContext[DumpConfigRunPayload]):
         )
 
         self.raw_config_dump: dict[str, typing.Any] = {}
+        self.config_dump_content: str | None = None
 
     async def init(self) -> None:
         self.raw_config_dump = self.initial_payload.project_raw_config
+        self.config_dump_content = None
 
 
 @dataclasses.dataclass

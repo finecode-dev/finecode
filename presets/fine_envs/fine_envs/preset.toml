@@ -86,6 +86,12 @@ env = "dev_workspace"
 dependencies = ["fine_envs~=0.1.0a0"]
 
 [[tool.finecode.action.dump_config.handlers]]
+name = "dump_config_format"
+source = "fine_envs.DumpConfigFormatHandler"
+env = "dev_workspace"
+dependencies = ["fine_envs[format]~=0.1.0a0"]
+
+[[tool.finecode.action.dump_config.handlers]]
 name = "dump_config_save"
 source = "fine_envs.DumpConfigSaveHandler"
 env = "dev_workspace"

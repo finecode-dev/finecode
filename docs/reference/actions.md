@@ -980,6 +980,15 @@ Dump the resolved configuration for a source artifact that includes FineCode con
 
 - **Source:** `fine_envs.DumpConfigAction`
 
+Handlers run in order: `dump_config` renders the dump, `dump_config_format`
+runs the rendered content through `format_file` for the target file, and
+`dump_config_save` writes the result once. When no formatter covers the target
+file — no `format_file` action, no subactions, or none for the file's language
+— the dump is still written unformatted, and the result's `unhandled` names the
+target file, per the *Unhandled inputs* note at the top of this page. A
+formatter that fails fails the run; disable the `dump_config_format` handler to
+write the dump unformatted.
+
 Also available as `python -m finecode dump-config`.
 
 ---
