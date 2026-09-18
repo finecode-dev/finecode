@@ -19,11 +19,6 @@ import re
 import typing
 
 import pytest
-
-from finecode.wm_server import context
-from finecode.wm_server.errors import FactsNotExtractedError, InternalError
-from finecode.wm_server.services import knowledge_service
-from finecode_knowledge import query as q
 from finecode_knowledge.fact_file import write_facts
 from finecode_knowledge.model.bands import Band
 from finecode_knowledge.model.entity_type import EntityType
@@ -43,6 +38,11 @@ from finecode_knowledge.query.serialize import (
     result_from_json,
 )
 from finecode_knowledge.query.snapshot import SnapshotError, registry_to_json
+
+from finecode.wm_server import context
+from finecode.wm_server.errors import FactsNotExtractedError, InternalError
+from finecode.wm_server.services import knowledge_service
+from finecode_knowledge import query as q
 
 # --- a schema of the test's own, so nothing here depends on FineCode's --------
 

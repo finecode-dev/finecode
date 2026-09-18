@@ -42,9 +42,7 @@ def test_clean_result_renders_nothing() -> None:
 
 
 def test_miss_is_named_with_its_reason() -> None:
-    block = render_unhandled_block(
-        [_entry(CoverageStatus.NO_SUBACTIONS, "input.py")]
-    )
+    block = render_unhandled_block([_entry(CoverageStatus.NO_SUBACTIONS, "input.py")])
     assert block.startswith("unhandled:\n")
     assert "no_subactions (1):" in block
     assert "file:///input.py" in block
@@ -66,7 +64,10 @@ def test_long_miss_list_is_capped() -> None:
     """The per-item enumeration is bounded; the overflow is reported as a
     count so the operator still knows the scale."""
     block = render_unhandled_block(
-        [_entry(CoverageStatus.NO_SUBACTION_FOR_LANGUAGE, f"f{i}.toml") for i in range(25)]
+        [
+            _entry(CoverageStatus.NO_SUBACTION_FOR_LANGUAGE, f"f{i}.toml")
+            for i in range(25)
+        ]
     )
     assert "no_subaction_for_language (25):" in block
     assert "... and 15 more" in block
@@ -81,7 +82,10 @@ def test_response_render_appends_block_after_styled_text() -> None:
     mechanism invisible at the CLI for those actions."""
     result = _StyledResult(
         coverage=[
-            ItemCoverage(status=CoverageStatus.NO_LANGUAGE_DETECTED, item=ResourceUri("file:///x.md"))
+            ItemCoverage(
+                status=CoverageStatus.NO_LANGUAGE_DETECTED,
+                item=ResourceUri("file:///x.md"),
+            )
         ]
     )
     response = action_result_to_run_action_response(result, ["string"])

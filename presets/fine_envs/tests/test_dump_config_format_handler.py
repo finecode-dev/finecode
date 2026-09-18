@@ -3,7 +3,7 @@ import types
 import typing
 
 import pytest
-
+from fine_format import format_file_action
 from finecode_extension_api import code_action
 from finecode_extension_api.code_action import CoverageStatus, ItemCoverage
 from finecode_extension_api.interfaces import iprojectactionrunner
@@ -12,7 +12,6 @@ from finecode_extension_api.resource_uri import (
     resource_uri_to_path,
 )
 from finecode_extension_runner import coverage_sink
-from fine_format import format_file_action
 
 from fine_envs import dump_config_action
 from fine_envs.dump_config_format_handler import DumpConfigFormatHandler

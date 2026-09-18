@@ -405,9 +405,7 @@ class JsonRpcClient:
 
         logger.debug(f"Server process {self.readable_id} stopped")
 
-        self._fail_pending_requests(
-            "Server was stopped before getting the response"
-        )
+        self._fail_pending_requests("Server was stopped before getting the response")
 
         if self.server_exit_callback is not None:
             await self.server_exit_callback()

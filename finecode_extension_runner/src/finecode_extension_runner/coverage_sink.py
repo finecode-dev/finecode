@@ -101,12 +101,13 @@ def render_unhandled_block(
     ):
         lines.append(f"  {status.value} ({len(entries)}):")
         rendered_items = sorted(str(entry.item) for entry in entries)
-        for item in rendered_items[: _UNHANDLED_BLOCK_MAX_ITEMS_PER_REASON]:
+        for item in rendered_items[:_UNHANDLED_BLOCK_MAX_ITEMS_PER_REASON]:
             lines.append(f"    {item}")
         overflow = len(rendered_items) - _UNHANDLED_BLOCK_MAX_ITEMS_PER_REASON
         if overflow > 0:
             lines.append(f"    ... and {overflow} more")
     return "\n".join(lines) + "\n"
+
 
 _SINK: contextvars.ContextVar[CoverageSink | None] = contextvars.ContextVar(
     "finecode_coverage_sink", default=None

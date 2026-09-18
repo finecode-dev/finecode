@@ -8,9 +8,10 @@ import sys
 import typing
 
 from finecode_extension_api.interfaces import iprocessexecutor
+from loguru import logger
+
 from finecode_extension_runner.concurrency import machine_subprocess_budget
 from finecode_extension_runner.process_slots import ProcessSlots, get_process_slots
-from loguru import logger
 
 P = typing.ParamSpec("P")
 T = typing.TypeVar("T")

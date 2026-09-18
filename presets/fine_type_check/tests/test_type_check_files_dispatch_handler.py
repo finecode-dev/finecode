@@ -20,7 +20,9 @@ from finecode_extension_api.code_action import CoverageStatus, ItemCoverage
 from finecode_extension_api.interfaces import iprojectactionrunner
 from finecode_extension_api.resource_uri import path_to_resource_uri
 
-from fine_type_check.type_check_files_dispatch_handler import TypeCheckFilesDispatchHandler
+from fine_type_check.type_check_files_dispatch_handler import (
+    TypeCheckFilesDispatchHandler,
+)
 
 _PY_URI = path_to_resource_uri(pathlib.Path("/tmp/subject.py"))
 _TOML_URI = path_to_resource_uri(pathlib.Path("/tmp/config.toml"))

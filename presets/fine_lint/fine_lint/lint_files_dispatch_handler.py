@@ -70,9 +70,7 @@ class LintFilesDispatchHandler(
                     lint_files_action.LintFilesRunResult(
                         messages={uri: [] for uri in payload.file_paths},
                         coverage=[
-                            ItemCoverage(
-                                status=CoverageStatus.NO_SUBACTIONS, item=uri
-                            )
+                            ItemCoverage(status=CoverageStatus.NO_SUBACTIONS, item=uri)
                             for uri in payload.file_paths
                         ],
                     )

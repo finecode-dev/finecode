@@ -42,11 +42,6 @@ import pathlib
 import time
 import typing
 
-from loguru import logger
-
-from finecode.wm_server import context, domain
-from finecode.wm_server.errors import FactsNotExtractedError, InternalError
-from finecode.wm_server.runner import knowledge_bridge
 from finecode_knowledge.fact_file import read_facts, write_facts
 from finecode_knowledge.memo.table import MemoTable
 from finecode_knowledge.memo.walk import MemoWalk
@@ -64,6 +59,11 @@ from finecode_knowledge.query.interpret import InterpreterBackend
 from finecode_knowledge.query.records import records_to_json, refs_from_json
 from finecode_knowledge.query.serialize import query_from_json, result_to_json
 from finecode_knowledge.query.snapshot import registry_from_json
+from loguru import logger
+
+from finecode.wm_server import context, domain
+from finecode.wm_server.errors import FactsNotExtractedError, InternalError
+from finecode.wm_server.runner import knowledge_bridge
 
 if typing.TYPE_CHECKING:
     from collections.abc import Iterable

@@ -15,16 +15,16 @@ from fine_inspect_code.diagnostic_types import DiagnosticFilesRunResult
 from fine_src_artifacts.list_src_artifact_files_by_lang_action import (
     ListSrcArtifactFilesByLangAction,
 )
-from fine_type_check.type_check_action import TypeCheckRunPayload, TypeCheckTarget
-from fine_type_check.type_check_files_action import TypeCheckFilesAction
-from fine_type_check.type_check_handler import TypeCheckHandler, TypeCheckHandlerConfig
+from finecode_extension_api import code_action
 from finecode_extension_api.interfaces.iworkspaceinfoprovider import (
     ProjectConfigStatus,
     WorkspaceProject,
 )
 from finecode_extension_api.resource_uri import path_to_resource_uri
 
-from finecode_extension_api import code_action
+from fine_type_check.type_check_action import TypeCheckRunPayload, TypeCheckTarget
+from fine_type_check.type_check_files_action import TypeCheckFilesAction
+from fine_type_check.type_check_handler import TypeCheckHandler, TypeCheckHandlerConfig
 
 
 class _FakeWorkspaceInfoProvider:

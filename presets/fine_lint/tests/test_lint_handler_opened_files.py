@@ -11,22 +11,22 @@ from __future__ import annotations
 import pathlib
 import typing
 
-from fine_lint.lint_action import LintRunPayload, LintTarget
-from fine_lint.lint_files_action import (
-    LintFilesAction,
-    LintFilesRunResult,
-)
-from fine_lint.lint_handler import LintHandler, LintHandlerConfig
 from fine_src_artifacts.list_src_artifact_files_by_lang_action import (
     ListSrcArtifactFilesByLangAction,
 )
+from finecode_extension_api import code_action
 from finecode_extension_api.interfaces.iworkspaceinfoprovider import (
     ProjectConfigStatus,
     WorkspaceProject,
 )
 from finecode_extension_api.resource_uri import path_to_resource_uri
 
-from finecode_extension_api import code_action
+from fine_lint.lint_action import LintRunPayload, LintTarget
+from fine_lint.lint_files_action import (
+    LintFilesAction,
+    LintFilesRunResult,
+)
+from fine_lint.lint_handler import LintHandler, LintHandlerConfig
 
 
 class _FakeWorkspaceInfoProvider:

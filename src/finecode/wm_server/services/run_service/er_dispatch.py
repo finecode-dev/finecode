@@ -32,7 +32,6 @@ from finecode.wm_server.services.run_service.proxy_utils import (
 )
 from finecode.wm_server.services.run_service.workspace_executor import WorkspaceExecutor
 
-
 _NEAREST_PROJECTS_IN_HINT = 3
 
 

@@ -15,6 +15,9 @@ import itertools
 import json
 
 import pytest
+from fine_inspect_code.diagnostic_types import DiagnosticFilesRunResult
+from finecode_extension_runner._converter import converter
+
 from finecode_extension_api import code_action
 from finecode_extension_api.code_action import (
     CoverageStatus,
@@ -22,8 +25,6 @@ from finecode_extension_api.code_action import (
     merge_coverage,
 )
 from finecode_extension_api.resource_uri import ResourceUri
-from fine_inspect_code.diagnostic_types import DiagnosticFilesRunResult
-from finecode_extension_runner._converter import converter
 
 _ITEMS = [ResourceUri("file:///a.py"), ResourceUri("file:///b.toml")]
 _MISS_STATUSES = [
@@ -43,7 +44,9 @@ _RANK = {
 }
 
 
-def _cov(status: CoverageStatus, item: ResourceUri | None, detail: str = "") -> ItemCoverage:
+def _cov(
+    status: CoverageStatus, item: ResourceUri | None, detail: str = ""
+) -> ItemCoverage:
     return ItemCoverage(status=status, item=item, detail=detail)
 
 
@@ -77,9 +80,7 @@ class _NoOwnUpdateResult(_EarlyReturnResult):
 
 @dataclasses.dataclass
 class _ParentResult(code_action.RunActionResult):
-    messages: dict[ResourceUri, list[str]] = dataclasses.field(
-        default_factory=dict
-    )
+    messages: dict[ResourceUri, list[str]] = dataclasses.field(default_factory=dict)
 
 
 @dataclasses.dataclass
@@ -154,7 +155,9 @@ def test_join_is_idempotent_and_associative() -> None:
     does not matter — dedupe only collapses duplicates, it never loses a
     distinct entry."""
 
-    def entries_for(*tuples: tuple[CoverageStatus, ResourceUri, str]) -> list[ItemCoverage]:
+    def entries_for(
+        *tuples: tuple[CoverageStatus, ResourceUri, str],
+    ) -> list[ItemCoverage]:
         return [_cov(s, i, d) for s, i, d in tuples]
 
     for status, item, detail in _FULL_DOMAIN:

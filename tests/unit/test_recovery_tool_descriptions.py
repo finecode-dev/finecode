@@ -9,10 +9,11 @@ nothing for the change that was actually made.
 
 from __future__ import annotations
 
+import inspect
+
 import pytest
 
 from finecode.mcp_server import server
-import inspect
 
 # Each recovery tool, the operation that covers what it does not, a change class
 # it must claim, and whether it is the rung that picks up a configuration edit.

@@ -96,7 +96,9 @@ class GetLintFixesFilesDispatchHandler(
                     file_version=payload.file_version or "",
                     fixes=[],
                     coverage=[
-                        ItemCoverage(status=status, item=payload.file_path, detail=detail)
+                        ItemCoverage(
+                            status=status, item=payload.file_path, detail=detail
+                        )
                     ],
                 )
             )

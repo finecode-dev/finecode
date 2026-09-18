@@ -2,6 +2,7 @@
 import copy
 import dataclasses
 import os
+import re
 from importlib import metadata
 from pathlib import Path
 from typing import Any, Literal
@@ -14,7 +15,6 @@ from tomlkit import loads as toml_loads
 from finecode._converter import converter as _converter
 from finecode.wm_server import context, domain
 from finecode.wm_server.config import config_models, interpreter_matrix
-import re
 
 
 def read_project_finecode_config(project_dir: Path) -> dict | None:

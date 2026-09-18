@@ -2,10 +2,9 @@ import pathlib
 import tomllib
 from collections.abc import Iterable
 
+from finecode_extension_api import code_action
 from finecode_extension_api.interfaces import iprojectinfoprovider
 from packaging.utils import canonicalize_name
-
-from finecode_extension_api import code_action
 
 
 def make_dep(

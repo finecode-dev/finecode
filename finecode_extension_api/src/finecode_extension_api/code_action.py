@@ -147,9 +147,7 @@ def merge_coverage(
 
 def unmatched_coverage(
     file_uris: collections.abc.Iterable[ResourceUri],
-    files_by_lang: collections.abc.Mapping[
-        str, collections.abc.Sequence[ResourceUri]
-    ],
+    files_by_lang: collections.abc.Mapping[str, collections.abc.Sequence[ResourceUri]],
     registered_langs: collections.abc.Iterable[str],
 ) -> list[ItemCoverage]:
     """Miss entries for the *file_uris* no registered language subaction covered.
@@ -198,9 +196,7 @@ def _with_coverage_join(
     """
 
     @functools.wraps(update)
-    def wrapped(
-        self: RunActionResult, other: RunActionResult
-    ) -> typing.Any:
+    def wrapped(self: RunActionResult, other: RunActionResult) -> typing.Any:
         self.coverage = merge_coverage(self.coverage, other.coverage)
         return update(self, other)
 
@@ -210,9 +206,7 @@ def _with_coverage_join(
 
 @dataclasses.dataclass
 class RunActionResult:
-    coverage: list[ItemCoverage] = dataclasses.field(
-        default_factory=list, kw_only=True
-    )
+    coverage: list[ItemCoverage] = dataclasses.field(default_factory=list, kw_only=True)
 
     def __init_subclass__(cls, **kwargs) -> None:
         """Wrap a subclass's own ``update()`` so every merge joins coverage.
@@ -259,8 +253,7 @@ class RunActionResult:
         return [
             entry
             for entry in merged
-            if _COVERAGE_RANK[entry.status]
-            < _COVERAGE_RANK[CoverageStatus.ABSORBED]
+            if _COVERAGE_RANK[entry.status] < _COVERAGE_RANK[CoverageStatus.ABSORBED]
         ]
 
     def to_text(self) -> str | textstyler.StyledText:
@@ -271,7 +264,9 @@ class RunActionResult:
         return RunReturnCode.SUCCESS
 
 
-def _iter_nested_results(value: typing.Any) -> collections.abc.Iterator[RunActionResult]:
+def _iter_nested_results(
+    value: typing.Any,
+) -> collections.abc.Iterator[RunActionResult]:
     """Yield every ``RunActionResult`` reachable through ``value``'s fields."""
     if isinstance(value, RunActionResult):
         yield value
@@ -283,9 +278,7 @@ def _iter_nested_results(value: typing.Any) -> collections.abc.Iterator[RunActio
             yield from _iter_nested_results(element)
 
 
-def _collect_coverage(
-    result: RunActionResult, seen: set[int]
-) -> list[ItemCoverage]:
+def _collect_coverage(result: RunActionResult, seen: set[int]) -> list[ItemCoverage]:
     """Join ``result``'s own coverage with every nested result's.
 
     Joins across nesting levels via ``merge_coverage`` rather than

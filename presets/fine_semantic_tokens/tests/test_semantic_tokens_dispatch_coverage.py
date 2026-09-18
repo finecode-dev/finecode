@@ -10,12 +10,12 @@ from __future__ import annotations
 import pathlib
 import typing
 
+from fine_src_artifacts import group_src_artifact_files_by_lang_action
 from finecode_extension_api import code_action
 from finecode_extension_api.code_action import CoverageStatus, ItemCoverage
 from finecode_extension_api.interfaces import iprojectactionrunner
 from finecode_extension_api.resource_uri import path_to_resource_uri
 
-from fine_src_artifacts import group_src_artifact_files_by_lang_action
 from fine_semantic_tokens import text_document_semantic_tokens_action
 from fine_semantic_tokens.semantic_tokens_dispatch_handler import (
     SemanticTokensDispatchHandler,
@@ -89,9 +89,7 @@ class _FakeActionRunner:
 async def _run(
     subactions_by_lang: dict[str, iprojectactionrunner.ActionRef],
     files_by_lang: dict[str, list],
-    subaction_partials: list[
-        text_document_semantic_tokens_action.SemanticTokensResult
-    ]
+    subaction_partials: list[text_document_semantic_tokens_action.SemanticTokensResult]
     | None = None,
 ) -> list[code_action.RunActionResult]:
     handler = SemanticTokensDispatchHandler(
@@ -116,9 +114,7 @@ async def test_uncovered_language_sends_one_empty_partial_naming_the_document() 
     )
     assert len(results) == 1
     result = results[0]
-    assert isinstance(
-        result, text_document_semantic_tokens_action.SemanticTokensResult
-    )
+    assert isinstance(result, text_document_semantic_tokens_action.SemanticTokensResult)
     assert result.tokens == []
     assert result.unhandled == [
         ItemCoverage(
@@ -142,7 +138,9 @@ async def test_covered_document_sends_no_coverage_only_partial() -> None:
     results = await _run(
         subactions_by_lang={"python": typing.cast(typing.Any, object())},
         files_by_lang={"python": [_URI]},
-        subaction_partials=[text_document_semantic_tokens_action.SemanticTokensResult(coverage=[])],
+        subaction_partials=[
+            text_document_semantic_tokens_action.SemanticTokensResult(coverage=[])
+        ],
     )
     assert len(results) == 1
     assert results[0].tokens == []

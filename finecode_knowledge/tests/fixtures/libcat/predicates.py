@@ -8,10 +8,9 @@ the ``libcat`` *package* is what fully populates the registry.
 
 from __future__ import annotations
 
-from libcat.schema import LIBCAT_SCHEMA, Author, Book, BookFields, Rel, Shelf
-
 from finecode_knowledge import query as q
 from finecode_knowledge.query.predicate import DerivedPredicate
+from libcat.schema import LIBCAT_SCHEMA, Author, Book, BookFields, Rel, Shelf
 
 __all__ = ["borrowed_titled", "cited_or_written", "reachable_shelf", "shelves_a_book"]
 

@@ -11,6 +11,9 @@ from __future__ import annotations
 import pathlib
 import typing
 
+from fine_src_artifacts.get_src_artifact_language_action import (
+    GetSrcArtifactLanguageRunResult,
+)
 from finecode_extension_api import code_action
 from finecode_extension_api.code_action import CoverageStatus, ItemCoverage
 from finecode_extension_api.interfaces import iprojectactionrunner
@@ -20,9 +23,8 @@ from fine_check_imports.check_imports_action import (
     CheckImportsRunPayload,
     CheckImportsRunResult,
 )
-from fine_check_imports.check_imports_dispatch_handler import CheckImportsDispatchHandler
-from fine_src_artifacts.get_src_artifact_language_action import (
-    GetSrcArtifactLanguageRunResult,
+from fine_check_imports.check_imports_dispatch_handler import (
+    CheckImportsDispatchHandler,
 )
 
 _SRC_URI = path_to_resource_uri(pathlib.Path("/tmp/pyproject.toml"))

@@ -27,11 +27,6 @@ import time
 import typing
 
 import pytest
-
-from finecode.wm_server import context, domain
-from finecode.wm_server.runner import runner_client
-from finecode.wm_server.services import knowledge_service, run_service
-from finecode_knowledge import query as q
 from finecode_knowledge.fact_file import write_facts
 from finecode_knowledge.model.bands import Band
 from finecode_knowledge.model.entity_type import EntityType
@@ -46,6 +41,11 @@ from finecode_knowledge.model.verify import Verdict
 from finecode_knowledge.model.wire import fact_to_json
 from finecode_knowledge.query.serialize import query_to_json, result_from_json
 from finecode_knowledge.query.snapshot import registry_to_json
+
+from finecode.wm_server import context, domain
+from finecode.wm_server.runner import runner_client
+from finecode.wm_server.services import knowledge_service, run_service
+from finecode_knowledge import query as q
 
 
 class WidgetFields:

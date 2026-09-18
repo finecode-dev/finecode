@@ -43,7 +43,9 @@ class _UnresponsiveErClient:
         self, method: str, params: object = None, timeout: float | None = None
     ) -> object:
         self.sent_requests.append((method, params))
-        raise finecode_jsonrpc.ResponseTimeout(f"No response on '{method}' within {timeout}s")
+        raise finecode_jsonrpc.ResponseTimeout(
+            f"No response on '{method}' within {timeout}s"
+        )
 
     def notify(self, method: str, params: object = None) -> None:
         self.sent_requests.append((method, params))

@@ -1,15 +1,15 @@
 import pathlib
 
 import pytest
+from finecode_extension_api import code_action
+from finecode_extension_api.interfaces import iprojectinfoprovider
+
 from fine_envs.dependency_config_utils import (
     collect_transitive_editable_deps,
     make_dep,
     resolve_install_project,
     workspace_package_ref,
 )
-from finecode_extension_api.interfaces import iprojectinfoprovider
-
-from finecode_extension_api import code_action
 
 
 def _pkg(

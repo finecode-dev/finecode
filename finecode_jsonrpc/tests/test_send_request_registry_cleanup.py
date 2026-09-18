@@ -39,6 +39,4 @@ async def test_timed_out_request_cleans_registry_and_drops_late_response() -> No
 
     # A response for the finished request must be dropped, not raised out of
     # the message loop.
-    await client.handle_message(
-        {"jsonrpc": "2.0", "id": stale_id, "result": "late"}
-    )
+    await client.handle_message({"jsonrpc": "2.0", "id": stale_id, "result": "late"})

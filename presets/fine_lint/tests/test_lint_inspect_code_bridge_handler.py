@@ -15,15 +15,15 @@ from fine_inspect_code.inspect_code_action import (
     InspectCodeRunPayload,
     InspectCodeTarget,
 )
-from fine_lint.lint_action import LintAction, LintRunPayload, LintRunResult
-from fine_lint.lint_inspect_code_bridge_handler import LintInspectCodeBridgeHandler
+from finecode_extension_api import code_action
 from finecode_extension_api.interfaces.iworkspaceinfoprovider import (
     ProjectConfigStatus,
     WorkspaceProject,
 )
 from finecode_extension_api.resource_uri import path_to_resource_uri
 
-from finecode_extension_api import code_action
+from fine_lint.lint_action import LintAction, LintRunPayload, LintRunResult
+from fine_lint.lint_inspect_code_bridge_handler import LintInspectCodeBridgeHandler
 
 
 class _FakeWorkspaceInfoProvider:

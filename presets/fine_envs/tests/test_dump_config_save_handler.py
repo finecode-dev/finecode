@@ -2,11 +2,11 @@ import pathlib
 import types
 
 import pytest
+from finecode_extension_api import code_action
+from finecode_extension_api.resource_uri import path_to_resource_uri
 
 from fine_envs import dump_config_action
 from fine_envs.dump_config_save_handler import DumpConfigSaveHandler
-from finecode_extension_api import code_action
-from finecode_extension_api.resource_uri import path_to_resource_uri
 
 
 class _FakeFileManager:

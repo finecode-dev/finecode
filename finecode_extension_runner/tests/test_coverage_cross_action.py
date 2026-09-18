@@ -43,9 +43,7 @@ class _SubResult(code_action.RunActionResult):
 @dataclasses.dataclass
 class _ParentResult(code_action.RunActionResult):
     values: dict[str, list[str]] = dataclasses.field(default_factory=dict)
-    nested: list[code_action.RunActionResult] = dataclasses.field(
-        default_factory=list
-    )
+    nested: list[code_action.RunActionResult] = dataclasses.field(default_factory=list)
 
 
 class _SubAction(code_action.Action):
@@ -144,9 +142,7 @@ class _TaskGroupBridgeHandler(
         self._runner = runner
 
     async def _run_child(self) -> None:
-        await self._runner.run_action(
-            _sub_ref(), _SubPayload(items=[_ITEM_B]), _meta()
-        )
+        await self._runner.run_action(_sub_ref(), _SubPayload(items=[_ITEM_B]), _meta())
 
     async def run(
         self,
@@ -230,9 +226,7 @@ class _TwoTransportHandler(
         payload: code_action.RunActionPayload,
         run_context: _ParentAction.RUN_CONTEXT_TYPE,
     ) -> _ParentResult:
-        await self._runner.run_action(
-            _sub_ref(), _SubPayload(items=[_ITEM_A]), _meta()
-        )
+        await self._runner.run_action(_sub_ref(), _SubPayload(items=[_ITEM_A]), _meta())
         # Second transport: per-project dispatch with its own coveraged result.
         await self._ws_runner.run_action_per_project(
             _SubAction,

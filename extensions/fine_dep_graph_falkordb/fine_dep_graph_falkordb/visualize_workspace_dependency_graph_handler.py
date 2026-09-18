@@ -1,3 +1,5 @@
+import re
+
 from fine_dep_graph.visualize_workspace_dependency_graph_action import (
     VisualizeWorkspaceDependencyGraphAction,
     VisualizeWorkspaceDependencyGraphRunContext,
@@ -11,7 +13,6 @@ from fine_dep_graph_falkordb.ifalkordb_client_provider import (
     FalkorDBNotInitializedError,
     IFalkorDBClientProvider,
 )
-import re
 
 
 def _generate_mermaid(

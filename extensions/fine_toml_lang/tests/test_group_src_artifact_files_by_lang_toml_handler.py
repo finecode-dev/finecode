@@ -37,9 +37,7 @@ async def test_langs_filter_is_advisory_for_the_toml_handler(
     toml_uri = path_to_resource_uri(tmp_path / "config.toml")
     result = await run_handler(
         GroupSrcArtifactFilesByLangTomlHandler,
-        GroupSrcArtifactFilesByLangRunPayload(
-            file_paths=[toml_uri], langs=["python"]
-        ),
+        GroupSrcArtifactFilesByLangRunPayload(file_paths=[toml_uri], langs=["python"]),
         action_cls=GroupSrcArtifactFilesByLangAction,
         project_dir=pathlib.Path(tmp_path),
     )

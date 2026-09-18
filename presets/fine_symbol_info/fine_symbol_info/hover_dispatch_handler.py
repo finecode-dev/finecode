@@ -100,9 +100,7 @@ class HoverDispatchHandler(
             subactions_by_lang.keys(),
         )
         if coverage:
-            await run_context.partial_result_sender.send(
-                HoverResult(coverage=coverage)
-            )
+            await run_context.partial_result_sender.send(HoverResult(coverage=coverage))
             return
 
         async with asyncio.TaskGroup() as tg:

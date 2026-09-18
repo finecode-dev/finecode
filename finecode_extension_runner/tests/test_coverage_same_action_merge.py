@@ -44,16 +44,16 @@ class _AddContext(code_action.RunActionContext[code_action.RunActionPayload]):
 
 
 class _AddAction(
-    code_action.Action[
-        code_action.RunActionPayload, _AddContext, _MergeRunResult
-    ]
+    code_action.Action[code_action.RunActionPayload, _AddContext, _MergeRunResult]
 ):
     PAYLOAD_TYPE = code_action.RunActionPayload
     RUN_CONTEXT_TYPE = _AddContext
     RESULT_TYPE = _MergeRunResult
 
 
-class _MissHandler(code_action.ActionHandler[_AddAction, code_action.ActionHandlerConfig]):
+class _MissHandler(
+    code_action.ActionHandler[_AddAction, code_action.ActionHandlerConfig]
+):
     """The dispatch step: reports that no subaction covered the input."""
 
     async def run(
@@ -64,9 +64,7 @@ class _MissHandler(code_action.ActionHandler[_AddAction, code_action.ActionHandl
         return _MergeRunResult(
             values={},
             coverage=[
-                ItemCoverage(
-                    status=CoverageStatus.NO_SUBACTIONS, item=_MISS_URI
-                )
+                ItemCoverage(status=CoverageStatus.NO_SUBACTIONS, item=_MISS_URI)
             ],
         )
 
@@ -229,9 +227,7 @@ async def test_current_result_aliasing_survives_the_merge(tmp_path: Path) -> Non
             ],
         }
     }
-    async with handler_test_session(
-        project_dir=tmp_path, actions=actions
-    ) as session:
+    async with handler_test_session(project_dir=tmp_path, actions=actions) as session:
         result = await session.run_action(_ACTION_NAME)
     assert isinstance(result, _MergeRunResult)
     assert _AddContext.observed_current_result_ids == [id(result)]

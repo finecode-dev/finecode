@@ -5,17 +5,17 @@ from __future__ import annotations
 import pathlib
 import typing
 
+from fine_src_artifacts import group_src_artifact_files_by_lang_action
 from finecode_extension_api import code_action, common_types
 from finecode_extension_api.code_action import CoverageStatus, ItemCoverage
 from finecode_extension_api.interfaces import iprojectactionrunner
 from finecode_extension_api.resource_uri import path_to_resource_uri
 
+from fine_inlay_hints.inlay_hint_dispatch_handler import InlayHintDispatchHandler
 from fine_inlay_hints.text_document_inlay_hint import (
     InlayHintPayload,
     InlayHintResult,
 )
-from fine_inlay_hints.inlay_hint_dispatch_handler import InlayHintDispatchHandler
-from fine_src_artifacts import group_src_artifact_files_by_lang_action
 
 _URI = path_to_resource_uri(pathlib.Path("/tmp/doc.rs"))
 _RANGE = common_types.Range(

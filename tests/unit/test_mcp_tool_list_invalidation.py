@@ -11,10 +11,11 @@ session driving a real extension runner; it lives in ``tests/e2e/``.
 
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 
 from finecode.mcp_server import server
-import asyncio
 
 
 class _RecordingSession:

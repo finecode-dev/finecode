@@ -1,10 +1,10 @@
 import contextlib
+import importlib.metadata
+import logging
 import socket
 import time
 from pathlib import Path
 from urllib.parse import urlparse
-import importlib.metadata
-import logging
 
 # Metric instruments — populated by init_meter_provider(); None when OTel is disabled.
 _action_duration_hist = None
