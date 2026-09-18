@@ -26,13 +26,15 @@ from typing import Any
 
 from loguru import logger
 
+from finecode_jsonrpc import error_codes
 from finecode_jsonrpc.jsonrpc_client import JsonRpcError
 from finecode_jsonrpc.tracing import ITracingHooks
 
-# JSON-RPC error codes
-_METHOD_NOT_FOUND = -32601
-_INTERNAL_ERROR = -32603
-REQUEST_CANCELLED = -32800
+# JSON-RPC error codes. Defined in `error_codes`, re-exported here because
+# callers across the codebase compare against `REQUEST_CANCELLED` by this name.
+_METHOD_NOT_FOUND = error_codes.METHOD_NOT_FOUND
+_INTERNAL_ERROR = error_codes.INTERNAL_ERROR
+REQUEST_CANCELLED = error_codes.DEFAULT_REQUEST_CANCELLED
 
 
 class JsonRpcHandlerError(Exception):
@@ -104,6 +106,10 @@ class JsonRpcServerSession:
 
         # Tasks currently executing incoming requests, keyed by request id
         self._active_request_tasks: dict[int | str, asyncio.Task[None]] = {}
+        # Strong references for _execute_request tasks between create_task()
+        # and their first scheduling, so they cannot be garbage-collected
+        # before _execute_request registers them in _active_request_tasks.
+        self._pending_request_tasks: set[asyncio.Task[None]] = set()
 
         # Register built-in cancel handler
         self._notification_handlers["$/cancelRequest"] = self._builtin_cancel_request
@@ -211,10 +217,12 @@ class JsonRpcServerSession:
             # This is load-bearing for $/cancelRequest: _builtin_cancel_request
             # cancels the task by request id. If you ever refactor this to an
             # inline `await handler(params)`, cancellation will silently stop working.
-            asyncio.create_task(
+            task = asyncio.create_task(
                 self._execute_request(message),
                 name=f"er_request|{message['method']}|{message['id']}",
             )
+            self._pending_request_tasks.add(task)
+            task.add_done_callback(self._pending_request_tasks.discard)
         elif has_method and not has_id:
             # Incoming notification from client
             await self._handle_incoming_notification(message)
@@ -245,25 +253,31 @@ class JsonRpcServerSession:
 
         if handler is None:
             logger.warning(f"No handler for request '{method}'")
-            self._send_response(msg_id, None, _METHOD_NOT_FOUND, f"Method not found: {method}")
+            self._send_response(
+                msg_id, None, _METHOD_NOT_FOUND, f"Method not found: {method}"
+            )
             return
 
         task = asyncio.current_task()
         assert task is not None
         self._active_request_tasks[msg_id] = task
 
-        span_ctx = self._tracing.server_span(method, traceparent) if self._tracing else contextlib.nullcontext()
+        span_ctx = (
+            self._tracing.server_span(method, traceparent)
+            if self._tracing
+            else contextlib.nullcontext()
+        )
         with span_ctx:
             try:
                 result = await handler(message.get("params"))
-                self._transport.send(
-                    {"jsonrpc": "2.0", "id": msg_id, "result": result}
-                )
+                self._transport.send({"jsonrpc": "2.0", "id": msg_id, "result": result})
             except asyncio.CancelledError:
-                self._send_response(msg_id, None, REQUEST_CANCELLED, "Request cancelled")
+                self._send_response(
+                    msg_id, None, REQUEST_CANCELLED, "Request cancelled"
+                )
             except JsonRpcHandlerError as exc:
                 self._send_response(msg_id, None, exc.code, exc.message)
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001
                 logger.exception(f"Error handling request '{method}': {exc}")
                 self._send_response(msg_id, None, _INTERNAL_ERROR, str(exc))
             finally:
@@ -297,7 +311,7 @@ class JsonRpcServerSession:
         if handler is not None:
             try:
                 await handler(message.get("params"))
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001
                 logger.exception(f"Error handling notification '{method}': {exc}")
 
     async def _builtin_cancel_request(self, params: dict[str, Any] | None) -> None:

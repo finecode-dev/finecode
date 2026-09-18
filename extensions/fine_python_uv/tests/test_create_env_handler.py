@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import pathlib
+from collections.abc import AsyncIterator
 from typing import Any
 
 from fine_envs import create_env_action, create_envs_action
@@ -32,6 +33,14 @@ class _FakeProcess:
 
     def close_stdin(self) -> None:
         pass
+
+    async def stdout_lines(self) -> AsyncIterator[str]:
+        for line in self.get_output().splitlines():
+            yield line
+
+    async def stderr_lines(self) -> AsyncIterator[str]:
+        for line in self.get_error_output().splitlines():
+            yield line
 
     async def wait_for_end(self, timeout: float | None = None) -> None:
         pass
@@ -76,7 +85,9 @@ class _FakeFileManager:
     ) -> None:
         pass
 
-    async def remove_dir(self, dir_path: pathlib.Path) -> None:
+    async def remove_dir(
+        self, dir_path: pathlib.Path, *, tolerant: bool = False
+    ) -> None:
         pass
 
 
@@ -118,7 +129,9 @@ class _FakeProjectInfoProvider:
     async def get_current_project_package_name(self) -> str:
         raise NotImplementedError
 
-    async def get_project_raw_config(self, project_def_path: pathlib.Path) -> dict[str, Any]:
+    async def get_project_raw_config(
+        self, project_def_path: pathlib.Path
+    ) -> dict[str, Any]:
         return {}
 
     async def get_current_project_raw_config(self) -> dict[str, Any]:
@@ -127,7 +140,9 @@ class _FakeProjectInfoProvider:
     def get_current_project_raw_config_version(self) -> int:
         raise NotImplementedError
 
-    async def get_workspace_editable_packages(self) -> dict[str, pathlib.Path]:
+    async def get_workspace_packages(
+        self,
+    ) -> dict[str, iprojectinfoprovider.WorkspacePackage]:
         raise NotImplementedError
 
 

@@ -1,9 +1,9 @@
-from finecode_extension_api import code_action
 from fine_code_hierarchy.type_hierarchy_subtypes_action import (
     TypeHierarchySubtypesAction,
     TypeHierarchySubtypesPayload,
     TypeHierarchySubtypesResult,
 )
+from finecode_extension_api import code_action
 
 
 class TypeHierarchySubtypesPythonAction(code_action.Action):

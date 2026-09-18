@@ -22,7 +22,9 @@ async def test_run_action_raises_action_run_cancelled_on_er_cancellation(
     runner = wm_testing.make_running_runner(working_dir_path=tmp_path, client=client)
 
     with pytest.raises(runner_client.ActionRunCancelled) as exc_info:
-        await runner_client.run_action(runner=runner, action_name="test_action", params={})
+        await runner_client.run_action(
+            runner=runner, action_name="test_action", params={}
+        )
 
     assert "cancelled by pyrefly" in exc_info.value.message
 
@@ -40,7 +42,9 @@ async def test_run_action_unrelated_error_code_propagates_unwrapped(
     runner = wm_testing.make_running_runner(working_dir_path=tmp_path, client=client)
 
     with pytest.raises(type(original)) as exc_info:
-        await runner_client.run_action(runner=runner, action_name="test_action", params={})
+        await runner_client.run_action(
+            runner=runner, action_name="test_action", params={}
+        )
 
     assert exc_info.value is original
 

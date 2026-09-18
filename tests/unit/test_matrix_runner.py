@@ -73,7 +73,9 @@ def test_combine_variant_responses_ors_return_code() -> None:
     assert combined.return_code == 1
 
 
-async def test_run_matrix_action_invokes_run_variant_once_per_interpreter_with_filtered_handlers() -> None:
+async def test_run_matrix_action_invokes_run_variant_once_per_interpreter_with_filtered_handlers() -> (
+    None
+):
     action = _make_matrix_action(interpreters=["cpython@3.11", "cpython@3.12"])
 
     calls: list[dict[str, typing.Any]] = []
@@ -126,7 +128,9 @@ async def test_run_matrix_action_isolates_variant_failure() -> None:
 
     async def flaky_run_variant(**kwargs: typing.Any) -> RunActionResponse:
         variant_action: domain.Action = kwargs["action"]
-        if any(handler.interpreter == "cpython@3.12" for handler in variant_action.handlers):
+        if any(
+            handler.interpreter == "cpython@3.12" for handler in variant_action.handlers
+        ):
             raise RuntimeError("boom on 3.12")
         return RunActionResponse(result_by_format={"json": {"ok": True}}, return_code=0)
 
@@ -154,7 +158,9 @@ async def test_run_matrix_action_isolates_variant_failure() -> None:
     assert "error" in result_json["cpython@3.12"]
 
 
-async def test_run_matrix_action_with_selected_interpreters_runs_only_that_variant() -> None:
+async def test_run_matrix_action_with_selected_interpreters_runs_only_that_variant() -> (
+    None
+):
     action = _make_matrix_action(interpreters=["cpython@3.11", "cpython@3.12"])
 
     calls: list[dict[str, typing.Any]] = []
@@ -184,7 +190,9 @@ async def test_run_matrix_action_with_selected_interpreters_runs_only_that_varia
 
     assert len(calls) == 1
     called_action: domain.Action = calls[0]["action"]
-    assert {handler.interpreter for handler in called_action.handlers} == {"cpython@3.11"}
+    assert {handler.interpreter for handler in called_action.handlers} == {
+        "cpython@3.11"
+    }
     assert set(response.result_by_format["json"].keys()) == {"cpython@3.11"}
 
 

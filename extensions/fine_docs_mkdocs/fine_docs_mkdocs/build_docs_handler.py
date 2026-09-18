@@ -5,15 +5,22 @@ import shlex
 import sys
 from pathlib import Path
 
-from finecode_extension_api import code_action
 from fine_docs.build_docs_action import (
     BuildDocsAction,
     BuildDocsRunContext,
     BuildDocsRunPayload,
     BuildDocsRunResult,
 )
-from finecode_extension_api.interfaces import icommandrunner, ilogger, iprojectinfoprovider
-from finecode_extension_api.resource_uri import path_to_resource_uri, resource_uri_to_path
+from finecode_extension_api import code_action
+from finecode_extension_api.interfaces import (
+    icommandrunner,
+    ilogger,
+    iprojectinfoprovider,
+)
+from finecode_extension_api.resource_uri import (
+    path_to_resource_uri,
+    resource_uri_to_path,
+)
 
 
 @dataclasses.dataclass

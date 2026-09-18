@@ -12,7 +12,9 @@ from finecode.wm_server.config.env_selection import (
 )
 
 
-def _env(interpreter: str | None = None, default_interpreters: dict | None = None) -> dict:
+def _env(
+    interpreter: str | None = None, default_interpreters: dict | None = None
+) -> dict:
     entry: dict = {}
     if interpreter is not None:
         entry["interpreter"] = interpreter
@@ -120,9 +122,7 @@ class TestEnvSelector:
         to all children; a sibling matrix base not named by `--env` keeps its
         own config-default subset (not excluded, not widened)."""
         env_table = {
-            **_matrix_base(
-                "testing", ["3.11", "3.12", "3.13"], {"local": "newest"}
-            ),
+            **_matrix_base("testing", ["3.11", "3.12", "3.13"], {"local": "newest"}),
             **_matrix_base("stubs", ["3.11", "3.12"], {"local": "oldest"}),
         }
 
@@ -187,7 +187,9 @@ class TestConfigDefault:
         assert selection.active is True
         assert selection.selected_env_names == {"testing@cpython-3.13"}
 
-    def test_default_all_for_ci_dev_env_selects_everything_and_is_inactive(self) -> None:
+    def test_default_all_for_ci_dev_env_selects_everything_and_is_inactive(
+        self,
+    ) -> None:
         env_table = _matrix_base(
             "testing", ["3.11", "3.12", "3.13"], {"local": "newest", "ci": "all"}
         )
@@ -266,13 +268,17 @@ class TestConfigDefault:
 
 
 class TestMatrixChildNames:
-    def test_matrix_child_names_includes_all_children_regardless_of_selection(self) -> None:
+    def test_matrix_child_names_includes_all_children_regardless_of_selection(
+        self,
+    ) -> None:
         env_table = {
             **_matrix_base("testing", ["3.11", "3.12"]),
             "dev_no_runtime": _env(),
         }
 
-        selection = resolve_env_selection(env_table, ["testing@cpython-3.11"], [], "cli")
+        selection = resolve_env_selection(
+            env_table, ["testing@cpython-3.11"], [], "cli"
+        )
 
         assert selection.matrix_child_names == {
             "testing@cpython-3.11",
@@ -393,9 +399,7 @@ class TestResolveSelectedInterpreters:
         assert result == {"cpython@3.11"}
 
     def test_config_default_newest_returns_max_version_canonical(self) -> None:
-        env_table = _matrix_base(
-            "testing", ["3.11", "3.12", "3.13"], {"cli": "newest"}
-        )
+        env_table = _matrix_base("testing", ["3.11", "3.12", "3.13"], {"cli": "newest"})
 
         result = resolve_selected_interpreters(env_table, [], [], "cli")
 
@@ -427,9 +431,7 @@ class TestResolveSelectedInterpreters:
         selector — those simply contribute nothing outside a base's axis, per
         `resolve_env_selection`) naming an interpreter outside the declared
         axis is rejected, propagating through the wrapper."""
-        env_table = _matrix_base(
-            "testing", ["3.11", "3.12"], {"cli": ["cpython@3.14"]}
-        )
+        env_table = _matrix_base("testing", ["3.11", "3.12"], {"cli": ["cpython@3.14"]})
 
         with pytest.raises(EnvSelectionError):
             resolve_selected_interpreters(env_table, [], [], "cli")

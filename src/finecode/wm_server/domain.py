@@ -50,8 +50,6 @@ from pathlib import Path
 
 import ordered_set
 
-from finecode.wm_server.config.config_models import ErLoggingConfig
-
 
 class ActionScope(StrEnum):
     """Dispatch scope declared by an Action.
@@ -109,9 +107,17 @@ class ActionHandler:
     Attributes:
         name: Human-readable identifier, unique within an action's handler
             list (e.g. ``"ruff"``).
-        source: Source path identifying the handler implementation.
-            For Python handlers this is the fully-qualified class path
-            (e.g. ``"fine_python_ruff.RuffLintFilesHandler"``).
+        source: Source path identifying the handler implementation, as written
+            in the definition file.  This is a config-facing alias and is
+            usually a package-level re-export (e.g.
+            ``"fine_python_ruff.RuffLintFilesHandler"``), not the module the
+            class is actually defined in — see ``canonical_source``.
+        canonical_source: Fully-qualified class path of the handler
+            (``cls.__module__ + "." + cls.__qualname__``), resolved by the ER
+            that hosts this handler.  ``None`` until that ER has started, or
+            permanently if the class cannot be imported there.  This is
+            identity metadata, not a dispatch key: the WM still reaches a
+            handler by traversing its action's handler list (ADR-0054).
         config: Handler-specific configuration dict merged from the
             definition file.  Empty dict if none was provided.
         env: Execution environment name the handler runs in (e.g.
@@ -140,7 +146,8 @@ class ActionHandler:
         self.env: str = env
         self.dependencies: list[str] = dependencies
         self.interpreter: str | None = interpreter
-        # None until the ER that hosts this handler resolves it.
+        # Both None until the ER that hosts this handler resolves them.
+        self.canonical_source: str | None = None
         self.file_loc: str | None = None
 
     def __str__(self) -> str:
@@ -174,20 +181,28 @@ class ServiceDeclaration:
             ``"finecode_extension_api.interfaces.ihttpclient.IHttpClient"``).
         source: Source path of the implementation.
             For Python services this is the fully-qualified class path
-            (e.g. ``"finecode_httpclient.HttpClient"``).
+            (e.g. ``"finecode_httpclient.HttpClient"``).  ``None`` when the
+            entry only carries config and the binding comes from an
+            implementation package's activator (ADR-0070).
         env: Execution environment name the service implementation runs in.
+            ``None`` for a config-only entry, which installs nothing and so
+            belongs to no particular env.
         dependencies: Dependencies to install into ``env`` for this service.
         config: Service-specific configuration dict merged from the
             definition file, injected into the implementation's constructor
             the same way handler ``config`` params are. ``None`` if none was
             provided.
+
+    The config-override alias is deliberately absent: it is derived from
+    ``interface`` by the Extension Runner, which is the only layer that can see
+    activator-registered bindings as well as declared ones (ADR-0070).
     """
 
     def __init__(
         self,
         interface: str,
-        source: str,
-        env: str,
+        source: str | None,
+        env: str | None,
         dependencies: list[str],
         config: dict[str, typing.Any] | None = None,
     ):
@@ -391,7 +406,11 @@ class CollectedProject(Project):
         for action in self.actions:
             action_envs = [handler.env for handler in action.handlers]
             all_envs_set |= ordered_set.OrderedSet(action_envs)
-        all_envs_set |= ordered_set.OrderedSet([svc.env for svc in self.services])
+        # A config-only service entry has no env (ADR-0070): it installs nothing
+        # and binds nothing, so it must not conjure an environment.
+        all_envs_set |= ordered_set.OrderedSet(
+            [svc.env for svc in self.services if svc.env is not None]
+        )
         return list(all_envs_set)
 
 
@@ -440,6 +459,12 @@ class ProjectStatus(Enum):
     CONFIG_VALID = auto()
 
 
+@dataclasses.dataclass
+class ErLoggingConfig:
+    default_level: str = "INFO"
+    log_groups: dict[str, str] = dataclasses.field(default_factory=dict)
+
+
 class RunnerConfig:
     """Runtime configuration passed to an Extension Runner at startup.
 
@@ -451,7 +476,9 @@ class RunnerConfig:
 
     def __init__(self, debug: bool, logging: ErLoggingConfig | None = None) -> None:
         self.debug = debug
-        self.logging: ErLoggingConfig = logging if logging is not None else ErLoggingConfig()
+        self.logging: ErLoggingConfig = (
+            logging if logging is not None else ErLoggingConfig()
+        )
 
     def __str__(self) -> str:
         return f"RunnerConfig(debug={self.debug})"
@@ -568,8 +595,62 @@ class TextDocumentInfo:
         return f'TextDocumentInfo(uri="{self.uri}", version="{self.version}")'
 
 
+@dataclasses.dataclass(frozen=True)
+class RunBudget:
+    """How the process budget treats every lease this run's ERs ask for (ADR-0094).
+
+    Declared at dispatch, never inferred from the action — the same action run
+    from elsewhere keeps the ER's own request.
+
+    Attributes:
+        waits: ``True`` — the lease waits for a free slot (non-nested);
+            ``False`` — it never waits, getting at least one slot even when the
+            budget is exhausted (nested); ``None`` — the ER's own nesting flag
+            decides, which is today's behaviour.
+        max_slots: Upper bound on the slots the lease asks for; ``None`` keeps
+            the ER's request.
+    """
+
+    waits: bool | None = None
+    max_slots: int | None = None
+
+
+@dataclasses.dataclass(frozen=True)
+class InFlightRun:
+    """An action run the WM has dispatched and not yet seen an outcome for.
+
+    Recovery replaces a project's runners and so kills whatever they are
+    executing; knowing what is in flight is what lets it refuse instead
+    (ADR-0079). Identified by the same run id the WAL records the run under, so
+    an entry that outlives its run can be traced to a stream that has no
+    terminal record for it.
+
+    Attributes:
+        run_id: Run identifier, shared with the WAL's ``wal_run_id``.
+        action_name: Config alias of the action being run.
+        project_path: Absolute path of the project the run was dispatched to.
+        started_at: Unix timestamp of when the run was accepted.
+        cancellable: True for a run the WM started on its own behalf whose
+            result is re-derivable and which no caller awaits, so recovery may
+            cancel it rather than be refused by work its caller never asked
+            for (ADR-0080). Declared at dispatch, never inferred from the
+            action: the same action a user invokes is an ordinary blocking
+            run. False, the default, keeps ADR-0079's refusal.
+        budget: How the process budget treats this run's ER leases (ADR-0094),
+            declared at dispatch. The default leaves the ER's own request
+            untouched.
+    """
+
+    run_id: str
+    action_name: str
+    project_path: Path
+    started_at: float
+    cancellable: bool = False
+    budget: RunBudget = RunBudget()
+
+
 # Raw JSON object carrying a partial-result value in the WM protocol.
-type PartialResultRawValue = dict[str, typing.Any]
+PartialResultRawValue: typing.TypeAlias = dict[str, typing.Any]
 
 
 class PartialResult(typing.NamedTuple):
@@ -589,7 +670,7 @@ class PartialResult(typing.NamedTuple):
 
 # Raw JSON object carrying a progress value in the WM protocol.
 # The ``"type"`` field is one of ``"begin"``, ``"report"``, or ``"end"``.
-type ProgressRawValue = dict[str, typing.Any]
+ProgressRawValue: typing.TypeAlias = dict[str, typing.Any]
 
 
 class ProgressNotification(typing.NamedTuple):
@@ -608,15 +689,16 @@ class ProgressNotification(typing.NamedTuple):
 
 
 __all__ = [
-    "ActionsDict",
     "Action",
-    "ServiceDeclaration",
-    "Project",
+    "ActionsDict",
     "CollectedProject",
-    "ResolvedProject",
-    "TextDocumentInfo",
-    "RunnerConfig",
     "EnvConfig",
-    "ExtensionRunnerStatus",
     "ExtensionRunner",
+    "ExtensionRunnerStatus",
+    "InFlightRun",
+    "Project",
+    "ResolvedProject",
+    "RunnerConfig",
+    "ServiceDeclaration",
+    "TextDocumentInfo",
 ]

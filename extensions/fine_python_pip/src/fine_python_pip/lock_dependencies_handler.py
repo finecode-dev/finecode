@@ -1,7 +1,7 @@
 import pathlib
 
-from finecode_extension_api import code_action
 from fine_src_artifacts import lock_dependencies_action
+from finecode_extension_api import code_action
 from finecode_extension_api.interfaces import icommandrunner, ilogger
 
 
@@ -30,10 +30,7 @@ class PipLockDependenciesHandler(
         output_path = payload.output_path
         project_dir_path = src_artifact_def_path.parent
 
-        cmd = (
-            f"pip lock"
-            f" -o {output_path}"
-        )
+        cmd = f"pip lock -o {output_path}"
 
         process = await self.command_runner.run(cmd, cwd=project_dir_path)
         await process.wait_for_end()

@@ -1,9 +1,11 @@
 import dataclasses
 
-from finecode_extension_api import code_action
 from fine_src_artifacts import group_src_artifact_files_by_lang_action
-from fine_format import format_file_action
+from finecode_extension_api import code_action
+from finecode_extension_api.code_action import CoverageStatus, ItemCoverage
 from finecode_extension_api.interfaces import ilogger, iprojectactionrunner
+
+from fine_format import format_file_action
 
 
 @dataclasses.dataclass
@@ -40,13 +42,23 @@ class FormatFileDispatchHandler(
         )
 
         if not subactions_by_lang:
-            self.logger.debug("FormatFileDispatchHandler: no language subactions registered")
+            self.logger.debug(
+                "FormatFileDispatchHandler: no language subactions registered"
+            )
             return format_file_action.FormatFileRunResult(
-                changed=False, code=run_context.file_info.file_content
+                changed=False,
+                code=run_context.file_info.file_content,
+                coverage=[
+                    ItemCoverage(
+                        status=CoverageStatus.NO_SUBACTIONS, item=payload.file_path
+                    )
+                ],
             )
 
         files_by_lang_result = await self.action_runner.run_action(
-            action_type=iprojectactionrunner.ActionRef.from_type(group_src_artifact_files_by_lang_action.GroupSrcArtifactFilesByLangAction),
+            action_type=iprojectactionrunner.ActionRef.from_type(
+                group_src_artifact_files_by_lang_action.GroupSrcArtifactFilesByLangAction
+            ),
             payload=group_src_artifact_files_by_lang_action.GroupSrcArtifactFilesByLangRunPayload(
                 file_paths=[payload.file_path],
                 langs=list(subactions_by_lang.keys()),
@@ -56,7 +68,7 @@ class FormatFileDispatchHandler(
 
         lang_subaction = None
         for lang, files in files_by_lang_result.files_by_lang.items():
-            if files:
+            if files and lang in subactions_by_lang:
                 lang_subaction = subactions_by_lang[lang]
                 break
 
@@ -65,20 +77,28 @@ class FormatFileDispatchHandler(
                 f"FormatFileDispatchHandler: no language subaction for {payload.file_path}"
             )
             return format_file_action.FormatFileRunResult(
-                changed=False, code=run_context.file_info.file_content
+                changed=False,
+                code=run_context.file_info.file_content,
+                coverage=code_action.unmatched_coverage(
+                    [payload.file_path],
+                    files_by_lang_result.files_by_lang,
+                    subactions_by_lang.keys(),
+                ),
             )
 
-        result: format_file_action.FormatFileRunResult = await self.action_runner.run_action(
-            action_type=lang_subaction,
-            payload=format_file_action.FormatFileRunPayload(
-                file_path=payload.file_path,
-                save=payload.save,
-            ),
-            meta=run_context.meta,
-            caller_kwargs=format_file_action.FormatFileCallerRunContextKwargs(
-                file_editor_session=run_context.file_editor_session,
-                file_info=run_context.file_info,
-            ),
+        result: format_file_action.FormatFileRunResult = (
+            await self.action_runner.run_action(
+                action_type=lang_subaction,
+                payload=format_file_action.FormatFileRunPayload(
+                    file_path=payload.file_path,
+                    save=payload.save,
+                ),
+                meta=run_context.meta,
+                caller_kwargs=format_file_action.FormatFileCallerRunContextKwargs(
+                    file_editor_session=run_context.file_editor_session,
+                    file_info=run_context.file_info,
+                ),
+            )
         )
 
         # bridge: update context so the downstream handlers see the formatted content

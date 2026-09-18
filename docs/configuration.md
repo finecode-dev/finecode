@@ -143,6 +143,11 @@ env = "dev_no_runtime"
 config.max_concurrent_processes = 4
 ```
 
+`config.max_concurrent_processes` is an optional per-ER *ceiling* on top of the
+machine-wide process budget (ADR-0090); when unset, the shared budget is the
+only bound. Put machine-specific values in a gitignored `finecode-user.toml`
+rather than a committed `pyproject.toml`.
+
 ### Configuring Extension Runner logging
 
 Each Extension Runner is a separate subprocess. Its log level and per-group overrides are configured under `[tool.finecode.er]`. The WM reads this at startup and delivers the resolved config to the ER — the ER never reads config files directly.
@@ -214,7 +219,7 @@ There are two optional locations, following a **uniform sibling rule**: every pr
 | `{project-root}/finecode-user.toml` | Personal project-level preferences; merged into that project's resolved config above project config |
 | `{preset-dir}/finecode-user.toml` | Merged into that preset's config at read time; sits at preset priority |
 
-`finecode-workspace.toml` does not get a sibling — workspace-scoped settings are shared by definition.
+`finecode-workspace.toml` does not get a `finecode-user.toml` sibling — *shared* workspace-scoped settings are shared by definition. It does have one separate gitignored sibling, `finecode-workspace-user.toml`, which does not author settings but selects among tracked extras (see below).
 
 ### Schema
 
@@ -296,13 +301,26 @@ Project-level user config wins over all file-based shared config. Preset-level u
 
 ### gitignore convention
 
-Add `finecode-user.toml` to your `.gitignore`:
+Add both user files to your `.gitignore`:
 
 ```
 finecode-user.toml
+finecode-workspace-user.toml
 ```
 
-The file is gitignored by convention; FineCode does not enforce this. If the file is absent, all behavior is a safe no-op.
+Both files are gitignored by convention; FineCode does not enforce this. If either is absent, all behavior is a safe no-op.
+
+### finecode-workspace-user.toml (extras selection)
+
+`finecode-workspace-user.toml` sits at the workspace root and selects per-capability extras of workspace packages for the whole workspace. It is gitignored and deliberately narrow: `extras` is the only permitted top-level key, and its value is a table of `package = ["extra", ...]`.
+
+```toml
+extras = { finecode_dev_common_preset = ["lint_fix"] }
+```
+
+Each named extra must be declared twice in tracked config: in the package's `[project.optional-dependencies]` and in its `[tool.finecode.extra.<name>]` gate. The file only *selects* among those tracked options — it cannot declare a dependency spec. Packages not named in tracked config are untouched.
+
+Nothing creates this file; a developer with the private clones but no file simply gets a working checkout with the private layer off. Enabling an extra therefore requires two switches: the clones present on disk, and the selection present in this file.
 
 ### Example
 
@@ -351,25 +369,38 @@ For developers without a `finecode-user.toml`, the action runs with no handlers 
 
 Workspace-level configuration lives in `finecode-workspace.toml` at the workspace root, under the `[workspace]` table.
 
-### Workspace editable packages
+### Workspace packages
 
-In a monorepo, local packages should be installed as editable installs. Declare them once in `finecode-workspace.toml`:
+In a monorepo, local packages can be installed from their source (editable) or from wheels built from that source. Declare the *set* once in `finecode-workspace.toml`:
 
 ```toml
-[workspace]
-# When true, every project discovered in this workspace is automatically
-# installed as an editable install when it appears as a dependency.
-all_workspace_packages_editable = true
+[workspace.workspace_packages]
+# Defaults to true, so this table is optional: with no finecode-workspace.toml
+# every discovered project is a workspace package.
+all_projects = true
 
-# Optional: explicit paths to treat as editable installs — useful for
+# Optional: explicit paths to treat as workspace packages — useful for
 # vendored forks outside normal project discovery. Paths are relative to
 # the workspace root.
-editable_packages = [
+extra = [
     "./vendored_forks/some_lib",
 ]
 ```
 
-Any dependency whose package name matches a workspace editable package is automatically rewritten to an editable install from its declared path, across every env in every project. The resolved set is the union of every discovered project (when `all_workspace_packages_editable` is `true`) and every explicit `editable_packages` entry.
+How workspace packages are installed is selected separately, per dev-env. Both entries are the defaults, so this table is optional too:
+
+```toml
+[workspace.workspace_packages_install]
+local = "editable"   # default for dev-envs other than ci
+ci    = "wheel"      # default for ci
+exclude = ["pkg-a"]  # keep these editable and out of the wheelhouse
+```
+
+`editable` rewrites a matching dependency to an editable install from its declared path. `wheel` installs a wheel built from the checkout by `build_python_artifact` into `<workspace-root>/.venvs/dev_workspace/cache/wheelhouse`; each package is built by its own project's builder. The mode is resolved by exact dev-env key, then the `local`/`ci` bucket, then `editable` (non-ci) / `wheel` (ci); `prepare-envs --workspace-packages=wheel|editable` overrides it.
+
+Any dependency whose package name matches a workspace package is rewritten accordingly, across every env in every project. The resolved set is the union of every discovered project (unless `all_projects = false`) and every explicit `extra` entry.
+
+In wheel mode a workspace package with no wheel in the wheelhouse is an **error** naming the package and pointing at `prepare-envs` — never a silent editable fallback. Only the packages in `exclude` install editable in wheel mode.
 
 ### WM telemetry
 
@@ -381,6 +412,15 @@ otlp_endpoint = "http://localhost:4317"
 ```
 
 The `FINECODE_OTLP_ENDPOINT` environment variable overrides this value (higher priority).
+
+The endpoint must include an explicit host **and** port; a malformed value fails fast at
+startup. It does **not** need to be reachable when FineCode starts: exporters buffer and
+retry, so a backend brought up later is picked up without a restart. An unreachable
+endpoint produces a single startup heads-up rather than an error stream.
+
+Point this at any OTLP-compatible backend. For guidance on running one locally —
+including a ready-to-run single-container option — see the
+[Observability guide](guides/observability.md).
 
 ### WM logging
 
@@ -415,7 +455,12 @@ FINECODE_CONFIG_<ACTION>__<HANDLER>__<PARAM>=<json_value>
 ```
 
 - `<ACTION>`, `<HANDLER>`, `<PARAM>` are **uppercase**, separated by double underscores (`__`)
-- Values are parsed as **JSON** (use `"true"`, `123`, `"string"`, `["a","b"]`, etc.)
+- Values are parsed as **JSON** (`true`, `123`, `["a","b"]`, …). A value that is not
+  valid JSON is taken as a plain string, so string values need no explicit JSON
+  quoting — the same rule as `--config.*` CLI args and
+  `FINECODE_SERVICE_CONFIG_*`. The consequence is that a malformed JSON literal
+  (e.g. a dropped `]`) is not rejected here; it reaches the handler as a string
+  and fails there instead.
 
 **Examples:**
 
@@ -428,6 +473,9 @@ FINECODE_CONFIG_LINT__RUFF__LINE_LENGTH=120 python -m finecode run lint
 
 # Pass a JSON array
 FINECODE_CONFIG_LINT__RUFF__EXTEND_SELECT='["B","I"]' python -m finecode run lint
+
+# Plain strings need no quoting
+FINECODE_CONFIG_LINT__RUFF__TARGET_VERSION=py312 python -m finecode run lint
 ```
 
 To disable env var config entirely:
@@ -435,6 +483,109 @@ To disable env var config entirely:
 ```bash
 python -m finecode run --no-env-config lint
 ```
+
+## Service config environment variables
+
+Override service config (`[[tool.finecode.service]]` `config.*`) at runtime without
+modifying files — the same idea as handler config env vars above, but for services.
+This is the only non-VCS home for a service config value that must not be written to
+disk, such as a credential consumed by `IRepositoryCredentialsProvider`.
+
+**Format:**
+
+```
+FINECODE_SERVICE_CONFIG_<SERVICE_NAME>__<PARAM_PATH>=<value>
+```
+
+- `<SERVICE_NAME>` is the service's `name` — see "Service names" below.
+- `<PARAM_PATH>` may itself contain further `__`-separated segments; each segment
+  becomes one level of nesting in the resulting config. This is different from the
+  handler format, which cannot nest past one param name: handler env vars have an
+  *optional* handler segment in the middle (`ACTION__HANDLER__PARAM` vs.
+  `ACTION__PARAM`), so a second `__` is already claimed by that ambiguity. Services
+  have no such segment, so nesting the remainder is unambiguous.
+- `<SERVICE_NAME>` and each `<PARAM_PATH>` segment are lowercased; identifiers may
+  not themselves contain `__` — doing so is indistinguishable from an intended
+  nesting boundary and is always parsed as one.
+- Values are parsed as **JSON**, and a value that fails to parse as JSON falls back
+  to the **raw string** — same as handler config env vars and `--config.*` CLI args.
+  Without this fallback, setting a secret token would require quoting it as a JSON
+  string (`…__TOKEN='"ghp_…"'`) — a quoting trap on the field people set most.
+- The override is **deep-merged** into the service's `config`, not replaced: setting
+  one nested key leaves sibling keys untouched.
+
+**Example:**
+
+```bash
+FINECODE_SERVICE_CONFIG_REPOSITORY_CREDENTIALS_PROVIDER__CREDENTIALS_BY_REPOSITORY__TESTPYPI__PASSWORD=pypi-… \
+  python -m finecode run publish_artifact
+```
+
+This reaches only the `testpypi` entry's `password` — every other repository and
+every other field of `testpypi` (e.g. its `username`) is left as declared in
+`pyproject.toml`.
+
+Also disabled by `--no-env-config`.
+
+### Service names
+
+A service declaration's identity is its `interface` — the dotted class path, which
+is also what merges declarations across config layers. An interface path cannot be
+written readably in an environment variable (dots would collapse to underscores and
+collide with the `__` nesting separator), so overrides address a declaration by a
+short **name** instead.
+
+The name is always **derived** from the interface's final segment (the class name
+for Python interfaces): a leading `I` followed by an uppercase letter is stripped,
+and the result is snake-cased. There is no `name` field to declare — the derivation
+is the only source, so a declaration and an environment can never disagree about it.
+
+```
+IHttpClient                        -> http_client
+IRepositoryCredentialsProvider     -> repository_credentials_provider
+IForgeCredentialsProvider          -> forge_credentials_provider
+```
+
+Two interfaces deriving the same name (`pkg_a.IHttpClient` and `pkg_b.IHttpClient`)
+are fine on their own. It is an error only when an override actually addresses that
+name, reported against the variable and naming both candidate interfaces — at which
+point rename one of the interfaces.
+
+An override that matches no service is reported too, rather than silently doing
+nothing.
+
+### Configuring a service you did not declare
+
+Overrides address a service **binding**, not a declaration. A service bound by its
+implementation package's activator — the recommended way to ship a reusable
+service — is configurable exactly like a declared one, with nothing to declare
+first.
+
+The same holds in TOML: `source` and `env` are optional, so an entry carrying only
+`interface` and `config` attaches config to whatever binding already exists,
+without restating (and pinning) the implementation.
+
+```toml
+# Configure the activator-provided IHttpClient without rebinding it.
+[[tool.finecode.service]]
+interface = "finecode_extension_api.interfaces.ihttpclient.IHttpClient"
+config.timeout = 30
+```
+
+Supply `source` when you actually mean to *replace* the implementation; that is
+what a full declaration is for.
+
+Because activator bindings exist only inside an Extension Runner, overrides are
+matched there rather than in the Workspace Manager. A misspelled or ambiguous
+override name is therefore reported when a runner starts, not at config collection.
+
+### Where service config env vars are read
+
+The **CLI** reads them and sends them to the WM, the same way it does handler
+config env vars — so they apply to `finecode run` and are disabled by
+`--no-env-config`. LSP and MCP sessions do not read them today; nothing in the WM
+prevents it, and a client can supply the same overrides through
+`workspace/setConfigOverrides` whenever that is needed.
 
 ## CLI config flags
 

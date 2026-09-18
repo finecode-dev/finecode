@@ -1,5 +1,9 @@
 [tool.finecode]
-presets = [{ source = "fine_inspect_code" }, { source = "fine_audit_code" }, { source = "fine_src_artifacts" }]
+presets = [
+  { source = "fine_inspect_code" },
+  { source = "fine_audit_code" },
+  { source = "fine_src_artifacts" }
+]
 
 [tool.finecode.action.check_imports]
 source = "fine_check_imports.CheckImportsAction"

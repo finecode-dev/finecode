@@ -3,6 +3,10 @@ services:
     image: mcr.microsoft.com/devcontainers/python:3.14
     init: true
     user: vscode
+    # py-spy needs ptrace/process_vm_readv; Docker's default seccomp profile
+    # allows them only with SYS_PTRACE. The devcontainer is dev-only; CI does
+    # not use this compose file.
+    cap_add: [SYS_PTRACE]
     working_dir: /workspaces/finecode
     command: sleep infinity
     environment:
@@ -11,6 +15,9 @@ services:
       # both COMPOSE_PROFILES=otel and FINECODE_OTLP_ENDPOINT in .env — the ready
       # collector URL is provided there, so developers never compose it themselves.
       - FINECODE_OTLP_ENDPOINT=${FINECODE_OTLP_ENDPOINT:-}
+      # Read only by .devcontainer/start-wm-server.sh; passed through here so the
+      # value set in .env is visible to processes inside the container.
+      - FINECODE_WM_AUTOSTART=${FINECODE_WM_AUTOSTART:-}
       # uv's default cache (~/.cache/uv) lives on the container's overlay
       # filesystem, a different device than this bind-mounted workspace. uv
       # dedupes installs by hardlinking from its cache into each venv, but

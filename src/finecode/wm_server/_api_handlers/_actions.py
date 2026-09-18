@@ -1,4 +1,5 @@
 """Action run and management API handlers."""
+
 from __future__ import annotations
 
 import asyncio
@@ -6,9 +7,9 @@ import pathlib
 
 from loguru import logger
 
+import finecode_jsonrpc as jsonrpc_client
 from finecode import telemetry
 from finecode.wm_server import context, domain
-from finecode.wm_server.services.run_service.exceptions import ActionNotFoundError
 from finecode.wm_server._api_handlers._helpers import (
     _apply_config_overrides_to_projects,
     _build_batch_result,
@@ -17,8 +18,12 @@ from finecode.wm_server._api_handlers._helpers import (
     _parse_run_batch_params,
     _resolve_actions_by_project,
     find_action_by_source,
+    project_exposes_action,
 )
-from finecode.wm_server.services.action_tree import _handle_get_tree  # noqa: F401 (re-export)
+from finecode.wm_server.services.action_tree import (  # noqa: F401 (re-export)
+    _handle_get_tree,
+)
+from finecode.wm_server.services.run_service.exceptions import ActionNotFoundError
 
 
 async def _handle_run_action(
@@ -70,6 +75,10 @@ async def _handle_run_action(
                 result_formats=parsed.result_formats,
                 initialize_all_handlers=True,
                 selected_interpreters=selected_interpreters,
+                # Plain request/response: this handler never receives the
+                # caller's writer, so there is no connection to put a question
+                # to. Elicitation is available on the streamed paths only.
+                origin=None,
             )
             return {
                 "resultByFormat": result.result_by_format,
@@ -84,35 +93,108 @@ async def _handle_run_action(
 async def _handle_actions_reload(
     params: dict | None, ws_context: context.WorkspaceContext
 ) -> dict:
-    """Reload an action's handlers in all relevant extension runners.
+    """Reload an action's handlers in every extension runner of each target project.
 
-    Params: ``{"actionNodeId": "project_path::action_source"}``
-    Result: ``{}``
+    A runner the action could not be reloaded in is reported in ``failed``, not
+    raised: the remaining runners are still attempted, and the record of the
+    projects already reloaded survives.  ``reloaded`` names only the
+    environments the reload actually reached, so the two lists together account
+    for every runner attempted.
+
+    Params: ``{"action": "import.path.Alias", "project": "/abs/path"}`` — ``project``
+    omitted means every project exposing that action (ADR-0078).
+    Result: ``{"reloaded": [{"project", "envs": [...]}],
+    "failed": [{"project", "env", "error"}]}``
+
+    Raises:
+        ValueError: ``action`` is missing, the named project is unknown, or the
+            target is narrowed by a parameter an action is not addressed by.
+        ActionNotFoundError: no target project has that action.
     """
     from finecode.wm_server.runner import runner_client
 
     params = params or {}
-    action_node_id = params.get("actionNodeId", "")
-    parts = action_node_id.split("::")
-    if len(parts) < 2:
-        raise ValueError(f"Invalid action_node_id: {action_node_id!r}")
+    action_source = params.get("action")
+    project_path_param = params.get("project")
 
-    project_path = pathlib.Path(parts[0])
-    action_source = parts[1]
+    if "env" in params:
+        raise ValueError(
+            "'env' does not narrow an action reload — an action is reloaded in "
+            "every environment of a project, since its handlers may bind to any "
+            "of them."
+        )
+    if not action_source:
+        raise ValueError("'action' is required")
 
-    project = ws_context.ws_projects.get(project_path)
-    if not isinstance(project, domain.CollectedProject):
-        raise ValueError(f"Project '{project_path}' not found or not initialized")
+    if project_path_param is not None:
+        project_path = pathlib.Path(project_path_param)
+        project = ws_context.ws_projects.get(project_path)
+        if not isinstance(project, domain.CollectedProject):
+            raise ValueError(f"Project '{project_path}' not found or not initialized")
+        target_projects = [project]
+    else:
+        target_projects = [
+            project
+            for project in ws_context.ws_projects.values()
+            if isinstance(project, domain.CollectedProject)
+            and project_exposes_action(project, action_source)
+        ]
+        if not target_projects:
+            raise ActionNotFoundError(
+                f"No project in the workspace exposes an action with source "
+                f"'{action_source}'"
+            )
 
-    action = await find_action_by_source(project.actions, action_source, project, ws_context)
-    if action is None:
-        raise ActionNotFoundError(f"Action with source '{action_source}' not found in project '{project_path}'")
+    reloaded: list[dict] = []
+    failed: list[dict] = []
+    for project in target_projects:
+        action = await find_action_by_source(
+            project.actions, action_source, project, ws_context
+        )
+        if action is None:
+            # Only reachable when the caller named the project: the
+            # workspace-wide path selects projects by the same predicate.
+            raise ActionNotFoundError(
+                f"Action with source '{action_source}' not found in project "
+                f"'{project.dir_path}'"
+            )
 
-    runners_by_env = ws_context.ws_projects_extension_runners.get(project_path, {})
-    for runner in runners_by_env.values():
-        await runner_client.reload_action(runner, action.name)
+        runners_by_env = ws_context.ws_projects_extension_runners.get(
+            project.dir_path, {}
+        )
+        reached_envs: list[str] = []
+        for env_name, runner in runners_by_env.items():
+            try:
+                reached = await runner_client.reload_action(runner, action.name)
+            except jsonrpc_client.BaseRunnerRequestException as exception:
+                logger.warning(
+                    f"Reload of '{action.name}' did not reach runner "
+                    f"'{runner.readable_id}': {exception.message}"
+                )
+                failed.append(
+                    {
+                        "project": str(project.dir_path),
+                        "env": env_name,
+                        "error": exception.message,
+                    }
+                )
+                continue
 
-    return {}
+            if not reached:
+                failed.append(
+                    {
+                        "project": str(project.dir_path),
+                        "env": env_name,
+                        "error": f"runner is {runner.status.name}, nothing was reloaded in it",
+                    }
+                )
+                continue
+
+            reached_envs.append(env_name)
+
+        reloaded.append({"project": str(project.dir_path), "envs": reached_envs})
+
+    return {"reloaded": reloaded, "failed": failed}
 
 
 async def _handle_run_batch(
@@ -143,15 +225,15 @@ async def _handle_run_batch(
         if not parsed.action_sources:
             raise ValueError("actionSources list is required and must be non-empty")
 
-        logger.debug(f"runBatch: actionSources={parsed.action_sources} projects={parsed.project_names} formats={parsed.result_format_strs}")
+        logger.debug(
+            f"runBatch: actionSources={parsed.action_sources} projects={parsed.project_names} formats={parsed.result_format_strs}"
+        )
 
         actions_by_project, name_to_source = await _resolve_actions_by_project(
             parsed.project_names, parsed.action_sources, ws_context
         )
 
-        await run_service.start_required_environments(
-            actions_by_project, ws_context
-        )
+        await run_service.start_required_environments(actions_by_project, ws_context)
 
         workspace_executor = run_service.WorkspaceExecutor(ws_context)
         result_by_project = await workspace_executor.run_actions_in_projects(
@@ -162,22 +244,17 @@ async def _handle_run_batch(
             concurrently=parsed.concurrently,
             result_formats=parsed.result_formats,
             payload_overrides_by_project=parsed.params_by_project,
+            # No writer here either — see `_handle_run_action` above.
+            origin=None,
         )
 
-        results, overall_return_code = _build_batch_result(result_by_project, name_to_source)
-        logger.debug(f"runBatch: done, projects_count={len(results)} returnCode={overall_return_code}")
+        results, overall_return_code = _build_batch_result(
+            result_by_project, name_to_source
+        )
+        logger.debug(
+            f"runBatch: done, projects_count={len(results)} returnCode={overall_return_code}"
+        )
         return {"results": results, "returnCode": overall_return_code}
-
-
-async def _handle_server_reset(
-    _params: dict | None, _ws_context: context.WorkspaceContext
-) -> dict:
-    """Reset the server state.
-
-    Result: ``{}``
-    """
-    logger.info("FineCode API: server reset requested")
-    return {}
 
 
 async def _handle_set_config_overrides(
@@ -189,6 +266,10 @@ async def _handle_set_config_overrides(
     they are applied to all subsequent action runs. These overrides survive across
     multiple requests and do not require runners to be stopped first.
 
+    ``serviceOverrides`` is the service-config counterpart (optional, keyed by
+    service name rather than action/handler name); it is stored and applied the
+    same way.
+
     If extension runners are already running they receive a config-update push
     immediately; their initialized handlers are dropped and will be re-initialized
     with the new config on the next run.
@@ -198,8 +279,10 @@ async def _handle_set_config_overrides(
 
     params = params or {}
     overrides: dict = params.get("overrides", {})
+    service_overrides: dict = params.get("serviceOverrides", {})
 
     ws_context.handler_config_overrides = overrides
+    ws_context.service_config_overrides = service_overrides
 
     # Apply to all existing project domain objects so that project.action_handler_configs
     # reflects the new overrides
@@ -208,11 +291,17 @@ async def _handle_set_config_overrides(
     if all_projects and action_names:
         _apply_config_overrides_to_projects(all_projects, action_names, overrides)
 
+    # Service overrides need no application here: they are forwarded verbatim to
+    # each runner, which matches them against its own bindings (ADR-0070).
+
     # Push the updated config to any already-running runners so they drop their
     # initialized handlers and pick up the new config on the next invocation.
     try:
         async with asyncio.TaskGroup() as tg:
-            for project_path, runners_by_env in ws_context.ws_projects_extension_runners.items():
+            for (
+                project_path,
+                runners_by_env,
+            ) in ws_context.ws_projects_extension_runners.items():
                 project = ws_context.ws_projects.get(project_path)
                 if project is None or not isinstance(project, domain.CollectedProject):
                     continue
@@ -262,11 +351,18 @@ async def _handle_get_payload_schemas(
             "Ensure the project is initialized before requesting schemas."
         )
 
+    # Bind the narrowed type for the nested probe below: pyrefly widens a
+    # closure variable back to its declared type, so the isinstance narrowing
+    # above does not reach inside ``_probe_handler_envs``.
+    collected_project: domain.CollectedProject = project
+
     # Resolve each requested source to an action and its name (for schema cache lookup).
     source_to_name: dict[str, str] = {}
     action_names: list[str] = []
     for source in action_sources:
-        action = await find_action_by_source(project.actions, source, project, ws_context)
+        action = await find_action_by_source(
+            project.actions, source, project, ws_context
+        )
         if action is not None:
             source_to_name[source] = action.name
             if action.name not in action_names:
@@ -276,37 +372,68 @@ async def _handle_get_payload_schemas(
     missing = [name for name in action_names if name not in cache]
 
     if missing:
-        runners_by_env = ws_context.ws_projects_extension_runners.get(project.dir_path, {})
+        runners_by_env = ws_context.ws_projects_extension_runners.get(
+            project.dir_path, {}
+        )
 
         # Phase 1: query dev_workspace runner (covers all finecode_extension_api actions)
         dev_runner = runners_by_env.get("dev_workspace")
-        if dev_runner is not None and dev_runner.status == runner_client.RunnerStatus.RUNNING:
+        if (
+            dev_runner is not None
+            and dev_runner.status == runner_client.RunnerStatus.RUNNING
+        ):
             try:
                 schemas = await runner_client.get_payload_schemas(dev_runner)
                 cache.update(schemas)
             except Exception as exc:
-                logger.debug(f"Failed to get payload schemas from dev_workspace runner: {exc}")
+                logger.debug(
+                    f"Failed to get payload schemas from dev_workspace runner: {exc}"
+                )
 
         # Phase 2: for actions still None, try the handler env runners
-        still_missing = [name for name in missing if cache.get(name) is None]
-        for action_name in still_missing:
-            action = next((a for a in project.actions if a.name == action_name), None)
-            if action is None:
-                continue
-            envs_to_try = {h.env for h in action.handlers if h.env and h.env != "dev_workspace"}
-            for env_name in envs_to_try:
-                runner = runners_by_env.get(env_name)
-                if runner is None or runner.status != runner_client.RunnerStatus.RUNNING:
+        async def _probe_handler_envs(names: list[str]) -> None:
+            for action_name in names:
+                action = next(
+                    (a for a in collected_project.actions if a.name == action_name),
+                    None,
+                )
+                if action is None:
                     continue
-                try:
-                    schemas = await runner_client.get_payload_schemas(runner)
-                    if schemas.get(action_name) is not None:
-                        cache[action_name] = schemas[action_name]
-                        break
-                except Exception as exc:
-                    logger.debug(
-                        f"Failed to get payload schemas from runner '{env_name}': {exc}"
-                    )
+                envs_to_try = {
+                    h.env for h in action.handlers if h.env and h.env != "dev_workspace"
+                }
+                for env_name in envs_to_try:
+                    runner = runners_by_env.get(env_name)
+                    if (
+                        runner is None
+                        or runner.status != runner_client.RunnerStatus.RUNNING
+                    ):
+                        continue
+                    try:
+                        schemas = await runner_client.get_payload_schemas(runner)
+                        if schemas.get(action_name) is not None:
+                            cache[action_name] = schemas[action_name]
+                            break
+                    except Exception as exc:
+                        logger.debug(
+                            f"Failed to get payload schemas from runner '{env_name}': {exc}"
+                        )
+
+        still_missing = [name for name in missing if cache.get(name) is None]
+        await _probe_handler_envs(still_missing)
+
+        # A caller that cannot proceed without the schema may ask the WM to start
+        # the handler envs first; the run's own gate starts the same envs a moment
+        # later, so this only moves that start earlier. Off by default so MCP's
+        # startup tool listing never starts every handler env.
+        start_runners = params.get("startRunners", False)
+        if start_runners and still_missing:
+            from finecode.wm_server.services import run_service
+
+            await run_service.start_required_environments(
+                {project.dir_path: still_missing}, ws_context
+            )
+            await _probe_handler_envs(still_missing)
 
     # Re-key schemas by the requested source rather than internal action name.
     result_schemas: dict[str, dict | None] = {}

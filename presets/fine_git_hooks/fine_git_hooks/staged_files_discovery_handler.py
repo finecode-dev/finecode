@@ -2,8 +2,13 @@ import dataclasses
 from pathlib import Path
 
 from finecode_extension_api import code_action
+from finecode_extension_api.interfaces import (
+    icommandrunner,
+    ilogger,
+    iprojectinfoprovider,
+)
+
 from fine_git_hooks import precommit_action
-from finecode_extension_api.interfaces import icommandrunner, ilogger, iprojectinfoprovider
 
 
 @dataclasses.dataclass
@@ -50,7 +55,9 @@ class StagedFilesDiscoveryHandler(
             )
 
         repo_root = await self._get_repo_root()
-        project_dir = self.project_info_provider.get_current_project_dir_path().resolve()
+        project_dir = (
+            self.project_info_provider.get_current_project_dir_path().resolve()
+        )
         if project_dir != repo_root.resolve():
             run_context.staged_files = []
             self.logger.info(

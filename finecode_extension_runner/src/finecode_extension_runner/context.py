@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+
+from finecode_extension_api import service
+
 from finecode_extension_runner import domain, er_wal
 from finecode_extension_runner.di.registry import Registry
-from finecode_extension_api import service
 
 
 @dataclass

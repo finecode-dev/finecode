@@ -11,10 +11,13 @@ import click
 from loguru import logger
 
 from finecode import logger_utils, user_messages
-from finecode.wm_server.errors import ConfigurationError, WmError
+from finecode.wm_server.errors import WmError
 
+if typing.TYPE_CHECKING:
+    from finecode.cli_app import utils
 
 FINECODE_CONFIG_ENV_PREFIX = "FINECODE_CONFIG_"
+FINECODE_SERVICE_CONFIG_ENV_PREFIX = "FINECODE_SERVICE_CONFIG_"
 _VALID_DEV_ENVS = {"ide", "cli", "ai", "ci", "git_hook"}
 
 
@@ -31,6 +34,7 @@ def detect_dev_env() -> str:
         return "ci"
     return "cli"
 
+
 # TODO: unify possibilities of CLI options and env vars
 def parse_handler_config_from_env() -> dict[str, dict[str, dict[str, str]]]:
     """
@@ -41,6 +45,12 @@ def parse_handler_config_from_env() -> dict[str, dict[str, dict[str, str]]]:
       -> action-level config for all handlers of action
     - FINECODE_CONFIG_<ACTION>__<HANDLER>__<PARAM>=value
       -> handler-specific config
+
+    Values are parsed as JSON; a value that fails to parse as JSON falls back to
+    the raw string, so a bare string value needs no explicit JSON quoting
+    (``...__PROFILE=strict`` rather than ``...__PROFILE='"strict"'``). This
+    matches ``parse_handler_config_from_cli`` and
+    ``parse_service_config_from_env``.
 
     Returns nested dict: {action_name: {handler_name_or_empty: {param: value}}}
     Empty string key "" means action-level (applies to all handlers).
@@ -82,12 +92,74 @@ def parse_handler_config_from_env() -> dict[str, dict[str, dict[str, str]]]:
 
         try:
             parsed_value = json.loads(env_value)
-        except json.JSONDecodeError as e:
-            raise ConfigurationError(
-                f"Failed to parse JSON value for env var '{env_name}': {env_value!r}"
-            ) from e
+        except json.JSONDecodeError:
+            # fallback for literal string, all other types can be parsed by json.loads
+            parsed_value = env_value
 
         config_overrides[action_name][handler_name][param_name] = parsed_value
+
+    return config_overrides
+
+
+def parse_service_config_from_env() -> dict[str, dict[str, typing.Any]]:
+    """
+    Parse service config overrides from environment variables.
+
+    Format:
+    - FINECODE_SERVICE_CONFIG_<SERVICE_NAME>__<PARAM_PATH>=value
+      -> service config, where <PARAM_PATH> may itself contain further
+      "__"-separated segments; each segment becomes one level of nesting in
+      the resulting dict.
+
+    Unlike the handler format (see ``parse_handler_config_from_env``), there is
+    no optional handler segment in the middle: services have no such segment,
+    so nesting the remainder after the service name is unambiguous. (For
+    handlers, ``ACTION__A__B`` is ambiguous between ``(action, handler A, param
+    B)`` and ``(action, param path A.B)``; the handler parser resolves this by
+    treating segment 2 as the handler name and flattening the rest.) Identifiers
+    (service names and path segments) may not themselves contain "__" -- doing
+    so is indistinguishable from an intentional nesting boundary and will be
+    parsed as one.
+
+    Values are parsed as JSON; a value that fails to parse as JSON falls back to
+    the raw string, the same as ``parse_handler_config_from_env`` and
+    ``parse_handler_config_from_cli``. Without this fallback, setting a secret
+    token would require quoting it as a JSON string (``...__TOKEN='"ghp_..."'``),
+    a quoting trap on the field people set most.
+
+    Returns nested dict: {service_name: {nested param path as a dict}}.
+    """
+    config_overrides: dict[str, dict[str, typing.Any]] = {}
+
+    for env_name, env_value in os.environ.items():
+        if not env_name.startswith(FINECODE_SERVICE_CONFIG_ENV_PREFIX):
+            continue
+
+        # Remove prefix and split by double underscore
+        config_key = env_name[len(FINECODE_SERVICE_CONFIG_ENV_PREFIX) :]
+        parts = config_key.split("__")
+
+        if len(parts) < 2:
+            logger.warning(
+                f"Invalid service config env var format: {env_name}. "
+                f"Expected FINECODE_SERVICE_CONFIG_<SERVICE_NAME>__<PARAM_PATH>"
+            )
+            continue
+
+        service_name = parts[0].lower()
+        param_path = [part.lower() for part in parts[1:]]
+
+        try:
+            parsed_value = json.loads(env_value)
+        except json.JSONDecodeError:
+            # fallback for literal string, all other types can be parsed by json.loads
+            parsed_value = env_value
+
+        service_overrides = config_overrides.setdefault(service_name, {})
+        node = service_overrides
+        for segment in param_path[:-1]:
+            node = node.setdefault(segment, {})
+        node[param_path[-1]] = parsed_value
 
     return config_overrides
 
@@ -187,6 +259,13 @@ async def show_user_message(message: str, message_type: str) -> None:
 
 
 def deserialize_action_payload(raw_payload: dict[str, str]) -> dict[str, typing.Any]:
+    """Parse raw ``--field=value`` strings into payload values.
+
+    Resource fields are left exactly as the user typed them.  Making them
+    absolute needs each action's payload schema to say which fields are
+    resources, and no schema is reachable until the WM is up — see
+    ``run_cmd._resolve_payload``, which does it there.
+    """
     deserialized_payload = {}
     for key, value in raw_payload.items():
         try:
@@ -206,7 +285,93 @@ def deserialize_action_payload(raw_payload: dict[str, str]) -> dict[str, typing.
     return deserialized_payload
 
 
-@click.command(context_settings=dict(ignore_unknown_options=True, allow_extra_args=True))
+RUN_RESULTS_FILE_VERSION = 1
+
+
+def _write_run_results_file(
+    results_file: pathlib.Path,
+    result: "utils.RunActionsResult | None",
+    payload: dict[str, typing.Any],
+    projects_requested: list[str] | None,
+    return_code: int,
+) -> None:
+    """Write this run's results, and what the run *was*, to a file of its own.
+
+    Distinct from the shared `cache/finecode/results/<action>.json` in two ways
+    that matter to any reader deciding what a result describes:
+
+    * It is not merged. The shared file is read-modify-written on every run, so
+      it accumulates entries for projects the run in hand never touched, and a
+      reader cannot tell those apart from the current ones.
+    * It records each action's declared `scope`. A workspace-scoped action runs
+      once and files its result under the project that *hosted* it, whatever set
+      of projects it was pointed at, so the key is not a project identity and a
+      reader must take project membership from the file URIs in the result
+      instead. Nothing in the result itself says which case applies; `scope`
+      does.
+
+    `projects_requested`, `project_paths_requested` and `payload` record the
+    request rather than the outcome, which is what distinguishes "ran and found
+    nothing" from "was dispatched to nothing at all".
+
+    Called on every path out of the run, including the ones where the run
+    produced nothing at all (*result* is ``None``). A run that fails must still
+    replace the file: the previous run's document is complete and well-formed,
+    carries the same version and shape, and says nothing about being stale, so a
+    reader that finds it left behind reports the wrong run's outcome as this
+    one's.
+
+    The document goes through a temporary file in the same directory and is
+    `os.replace`d into place, so a concurrent reader sees either the whole old
+    document or the whole new one, never a half-written one.
+    """
+    scope_by_source = (
+        result.scope_by_action_source if result is not None else None
+    ) or {}
+    result_by_project = result.result_by_project if result is not None else {}
+    actions: dict[str, typing.Any] = {}
+    for project_path, result_by_action in result_by_project.items():
+        for action_source, action_result in result_by_action.items():
+            entry = actions.setdefault(
+                action_source,
+                {"scope": scope_by_source.get(action_source), "results": {}},
+            )
+            entry["results"][str(project_path)] = {
+                # Per action *and* per project, because the document's single
+                # top-level `return_code` cannot say which of them failed.
+                "return_code": action_result.return_code,
+                # `None` rather than an abort: a fully streamed matrixed action
+                # merges to no json payload at all, and failing the whole file
+                # over that would throw away a run that already succeeded.
+                "result": action_result.result_by_format.get("json"),
+            }
+
+    document = {
+        "finecode_results_version": RUN_RESULTS_FILE_VERSION,
+        "return_code": return_code,
+        "projects_requested": projects_requested,
+        # The names above are what the user typed; these are what they resolved
+        # to, and only these can be joined against the keys under `results`.
+        # `None` when the run never got as far as resolving them.
+        "project_paths_requested": (
+            result.project_paths_requested if result is not None else None
+        ),
+        "payload": payload,
+        "actions": actions,
+    }
+    results_file.parent.mkdir(parents=True, exist_ok=True)
+    tmp_file = results_file.with_name(f"{results_file.name}.{os.getpid()}.tmp")
+    try:
+        tmp_file.write_text(json.dumps(document, indent=2))
+        os.replace(tmp_file, results_file)
+    except OSError:
+        tmp_file.unlink(missing_ok=True)
+        raise
+
+
+@click.command(
+    context_settings=dict(ignore_unknown_options=True, allow_extra_args=True)
+)
 @click.pass_context
 def run(ctx) -> None:
     from finecode.cli_app.commands import run_cmd
@@ -220,6 +385,7 @@ def run(ctx) -> None:
     log_level: str = "INFO"
     no_env_config: bool = False
     save_results: bool = True
+    results_file: pathlib.Path | None = None
     map_payload_fields: set[str] = set()
     shared_server: bool = False
     dev_env: str = detect_dev_env()
@@ -253,6 +419,23 @@ def run(ctx) -> None:
             no_env_config = True
         elif arg == "--no-save-results":
             save_results = False
+        elif arg.startswith("--results-file"):
+            # Matched on the bare prefix so that a missing or empty value is
+            # rejected here rather than silently consumed by the arg loop and
+            # discovered as an IsADirectoryError after the run has finished.
+            raw_results_file = arg.removeprefix("--results-file=").strip()
+            if not arg.startswith("--results-file=") or not raw_results_file:
+                click.echo(
+                    "--results-file requires a path: --results-file=<path>", err=True
+                )
+                sys.exit(1)
+            results_file = pathlib.Path(raw_results_file).expanduser()
+            if results_file.is_dir():
+                click.echo(
+                    f"Provided --results-file '{raw_results_file}' is a directory",
+                    err=True,
+                )
+                sys.exit(1)
         elif arg.startswith("--map-payload-fields"):
             fields = arg.removeprefix("--map-payload-fields=")
             map_payload_fields = {f.replace("-", "_") for f in fields.split(",")}
@@ -282,9 +465,12 @@ def run(ctx) -> None:
     verbose = verbose or dev_env == "ci"
 
     from finecode.wm_server.config import read_configs
+
     wm_telemetry = read_configs.read_wm_telemetry_config(workdir_path)
     logger_utils.init_logger(
-        log_name="cli", log_level=log_level, stdout=True,
+        log_name="cli",
+        log_level=log_level,
+        stdout=True,
         workspace_path=workdir_path,
         otlp_endpoint=wm_telemetry.otlp_endpoint,
     )
@@ -299,14 +485,12 @@ def run(ctx) -> None:
             err=True,
         )
 
-    # Parse handler config from env vars
+    # Parse handler and service config from env vars
     handler_config_overrides: dict[str, dict[str, dict[str, str]]] = {}
+    service_config_overrides: dict[str, dict[str, typing.Any]] = {}
     if not no_env_config:
-        try:
-            handler_config_overrides = parse_handler_config_from_env()
-        except ConfigurationError as exception:
-            click.echo(exception.message, err=True)
-            sys.exit(1)
+        handler_config_overrides = parse_handler_config_from_env()
+        service_config_overrides = parse_service_config_from_env()
 
     # actions
     for arg in args[processed_args_count:]:
@@ -347,7 +531,9 @@ def run(ctx) -> None:
 
     # Parse CLI config overrides and merge with env overrides
     if config_args:
-        cli_config_overrides = parse_handler_config_from_cli(config_args, actions_to_run)
+        cli_config_overrides = parse_handler_config_from_cli(
+            config_args, actions_to_run
+        )
         if cli_config_overrides:
             logger.trace(f"Handler config overrides from CLI: {cli_config_overrides}")
             handler_config_overrides = merge_config_overrides(
@@ -357,6 +543,7 @@ def run(ctx) -> None:
     user_messages._notification_sender = show_user_message
 
     deserialized_payload = deserialize_action_payload(action_payload)
+    result: utils.RunActionsResult | None = None
     try:
         result = asyncio.run(
             run_cmd.run_actions(
@@ -364,10 +551,15 @@ def run(ctx) -> None:
                 projects,
                 actions_to_run,
                 deserialized_payload,
-                concurrently,
-                handler_config_overrides,
-                save_results,
-                map_payload_fields,
+                raw_action_payload=action_payload,
+                concurrently=concurrently,
+                handler_config_overrides=handler_config_overrides,
+                service_config_overrides=service_config_overrides,
+                # `--results-file` needs the structured data too, so it implies
+                # the json result format even under `--no-save-results` -- that
+                # flag suppresses the shared cache, not this run's own record.
+                save_results=save_results or results_file is not None,
+                map_payload_fields=map_payload_fields,
                 own_server=not shared_server,
                 log_level=log_level,
                 dev_env=dev_env,
@@ -377,52 +569,154 @@ def run(ctx) -> None:
                 interpreter_selectors=interpreter_selectors,
             )
         )
-
+    except run_cmd.RunFailed as exception:
+        click.echo(exception.args[0], err=True)
+        exit_code = 1
+    except WmError as exception:
+        click.echo(str(exception), err=True)
+        exit_code = 1
+    except Exception as exception:
+        logger.exception(exception)
+        click.echo("Unexpected error, see logs in file for more details", err=True)
+        exit_code = 2
+    else:
         # if partial results were printed, final result is empty
         if result.output != "":
             click.echo(result.output)
 
-        if result.return_code == 0:
+        exit_code = result.return_code
+        if exit_code == 0:
             logger.info("Done.")
         else:
-            logger.info(f"Done (exit code {result.return_code}).")
+            logger.info(f"Done (exit code {exit_code}).")
 
-        if save_results:
-            results_dir = pathlib.Path(sys.executable).parent.parent / "cache" / "finecode" / "results"
+    # Before the shared cache below, and outside the `else`: this file was asked
+    # for explicitly, so neither a failed run nor a best-effort cache write may
+    # decide whether it gets written.
+    if results_file is not None:
+        try:
+            resolved_payload = (
+                result.resolved_payload
+                if result is not None and result.resolved_payload is not None
+                else deserialized_payload
+            )
+            _write_run_results_file(
+                results_file,
+                result,
+                resolved_payload,
+                projects,
+                return_code=exit_code,
+            )
+        except OSError as exception:
+            click.echo(
+                f"Could not write results file '{results_file}': {exception}", err=True
+            )
+            # The run's own outcome is already reported; this is a second,
+            # independent failure and must not pass as success.
+            exit_code = exit_code or 1
+        else:
+            # stderr: stdout on this path carries the action result blocks.
+            click.echo(f"Results written to {results_file}", err=True)
+
+    if result is not None and save_results:
+        try:
+            results_dir = (
+                pathlib.Path(sys.executable).parent.parent
+                / "cache"
+                / "finecode"
+                / "results"
+            )
             results_dir.mkdir(parents=True, exist_ok=True)
             for project_path, result_by_action in result.result_by_project.items():
                 for action_name, action_result in result_by_action.items():
+                    json_payload = action_result.result_by_format.get("json")
+                    if json_payload is None:
+                        # No json result to cache (a fully streamed matrixed
+                        # action merges to none). Leave whatever the cache holds
+                        # for this project alone rather than failing the command.
+                        continue
                     output_file = results_dir / f"{action_name}.json"
                     json_result: dict[str, typing.Any] = {}
                     if output_file.exists():
                         json_result = json.loads(output_file.read_text())
-                    json_result[str(project_path)] = action_result.json()
+                    json_result[str(project_path)] = json_payload
                     output_file.write_text(json.dumps(json_result, indent=2))
-        sys.exit(result.return_code)
-    except run_cmd.RunFailed as exception:
-        click.echo(exception.args[0], err=True)
-        sys.exit(1)
-    except WmError as exception:
-        click.echo(str(exception), err=True)
-        sys.exit(1)
-    except Exception as exception:
-        logger.exception(exception)
-        click.echo("Unexpected error, see logs in file for more details", err=True)
-        sys.exit(2)
+        except Exception as exception:
+            logger.exception(exception)
+            click.echo("Unexpected error, see logs in file for more details", err=True)
+            exit_code = exit_code or 2
+
+    sys.exit(exit_code)
 
 
 @click.command()
-@click.option("--log-level", "log_level", default="INFO", type=click.Choice(["TRACE", "DEBUG", "INFO", "WARNING", "ERROR"], case_sensitive=False), show_default=True)
+@click.option(
+    "--log-level",
+    "log_level",
+    default="INFO",
+    type=click.Choice(
+        ["TRACE", "DEBUG", "INFO", "WARNING", "ERROR"], case_sensitive=False
+    ),
+    show_default=True,
+)
 @click.option("--debug", "debug", is_flag=True, default=False)
 @click.option("--recreate", "recreate", is_flag=True, default=False)
 @click.option("--shared-server", "shared_server", is_flag=True, default=False)
-@click.option("--dev-env", "dev_env", default=None, type=click.Choice(sorted(_VALID_DEV_ENVS)), help="Override detected dev environment")
-@click.option("--env", "env_names", multiple=True, metavar="ENV_NAME", help="Limit to specific environment(s). Can be specified multiple times.")
-@click.option("--interpreter", "interpreter_names", multiple=True, metavar="IMPL@VERSION", help="Limit to specific interpreter(s) of matrix environments. Repeatable; version-only form means cpython.")
-@click.option("--project", "project_names", multiple=True, metavar="PROJECT_NAME", help="Limit to specific project(s). Can be specified multiple times.")
-@click.option("--verbose", "-v", "verbose", is_flag=True, default=False, help="Stream WM/ER diagnostic logs to stderr over the protocol. Auto-enabled in CI.")
-@click.option("--max-concurrent-projects", "max_concurrent_projects", default=None, type=int, help="Cap on concurrent projects during prepare-envs. Defaults to a machine-based value (see docs/guides/preparing-environments.md).")
-def prepare_envs(log_level: str, debug: bool, recreate: bool, shared_server: bool, dev_env: str | None, env_names: tuple[str, ...], interpreter_names: tuple[str, ...], project_names: tuple[str, ...], verbose: bool, max_concurrent_projects: int | None) -> None:
+@click.option(
+    "--dev-env",
+    "dev_env",
+    default=None,
+    type=click.Choice(sorted(_VALID_DEV_ENVS)),
+    help="Override detected dev environment",
+)
+@click.option(
+    "--workspace-packages",
+    "workspace_packages_mode",
+    default=None,
+    type=click.Choice(["editable", "wheel"]),
+    help="Override how workspace packages are installed in every env.",
+)
+@click.option(
+    "--env",
+    "env_names",
+    multiple=True,
+    metavar="ENV_NAME",
+    help="Limit to specific environment(s). Can be specified multiple times.",
+)
+@click.option(
+    "--interpreter",
+    "interpreter_names",
+    multiple=True,
+    metavar="IMPL@VERSION",
+    help="Limit to specific interpreter(s) of matrix environments. Repeatable; version-only form means cpython.",
+)
+@click.option(
+    "--project",
+    "project_names",
+    multiple=True,
+    metavar="PROJECT_NAME",
+    help="Limit to specific project(s). Can be specified multiple times.",
+)
+@click.option(
+    "--verbose",
+    "-v",
+    "verbose",
+    is_flag=True,
+    default=False,
+    help="Stream WM/ER diagnostic logs to stderr over the protocol. Auto-enabled in CI.",
+)
+def prepare_envs(
+    log_level: str,
+    debug: bool,
+    recreate: bool,
+    shared_server: bool,
+    dev_env: str | None,
+    workspace_packages_mode: str | None,
+    env_names: tuple[str, ...],
+    interpreter_names: tuple[str, ...],
+    project_names: tuple[str, ...],
+    verbose: bool,
+) -> None:
     """
     `prepare-envs` should be called from workspace/project root directory.
     """
@@ -441,10 +735,13 @@ def prepare_envs(log_level: str, debug: bool, recreate: bool, shared_server: boo
             logger.info(e)
 
     from finecode.wm_server.config import read_configs
+
     _cwd = pathlib.Path(os.getcwd())
     wm_telemetry = read_configs.read_wm_telemetry_config(_cwd)
     logger_utils.init_logger(
-        log_name="cli", log_level=log_level, stdout=True,
+        log_name="cli",
+        log_level=log_level,
+        stdout=True,
         workspace_path=_cwd,
         otlp_endpoint=wm_telemetry.otlp_endpoint,
     )
@@ -458,11 +755,13 @@ def prepare_envs(log_level: str, debug: bool, recreate: bool, shared_server: boo
                 own_server=not shared_server,
                 log_level=log_level,
                 env_names=list(env_names) if env_names else None,
-                interpreter_names=list(interpreter_names) if interpreter_names else None,
+                interpreter_names=list(interpreter_names)
+                if interpreter_names
+                else None,
                 project_names=list(project_names) if project_names else None,
                 dev_env=dev_env or detect_dev_env(),
+                workspace_packages_mode=workspace_packages_mode,
                 verbose=verbose,
-                max_concurrent_projects=max_concurrent_projects,
             )
         )
     except prepare_envs_cmd.PrepareEnvsFailed as exception:
@@ -475,11 +774,21 @@ def prepare_envs(log_level: str, debug: bool, recreate: bool, shared_server: boo
 
 
 @click.command()
-@click.option("--recreate", is_flag=True, default=False,
-              help="Delete and recreate dev_workspace if it already exists.")
-@click.option("--log-level", "log_level", default="INFO",
-              type=click.Choice(["TRACE", "DEBUG", "INFO", "WARNING", "ERROR"],
-              case_sensitive=False), show_default=True)
+@click.option(
+    "--recreate",
+    is_flag=True,
+    default=False,
+    help="Delete and recreate dev_workspace if it already exists.",
+)
+@click.option(
+    "--log-level",
+    "log_level",
+    default="INFO",
+    type=click.Choice(
+        ["TRACE", "DEBUG", "INFO", "WARNING", "ERROR"], case_sensitive=False
+    ),
+    show_default=True,
+)
 def bootstrap(recreate: bool, log_level: str) -> None:
     """Create the dev_workspace environment for the workspace root.
 
@@ -487,15 +796,16 @@ def bootstrap(recreate: bool, log_level: str) -> None:
     Can be run via ``pipx run finecode bootstrap`` or ``uvx finecode bootstrap``
     without a pre-existing virtualenv.
     """
-    import asyncio
 
     from finecode.cli_app.commands import bootstrap_cmd
-
     from finecode.wm_server.config import read_configs
+
     _cwd = pathlib.Path(os.getcwd())
     wm_telemetry = read_configs.read_wm_telemetry_config(_cwd)
     logger_utils.init_logger(
-        log_name="cli", log_level=log_level, stdout=True,
+        log_name="cli",
+        log_level=log_level,
+        stdout=True,
         workspace_path=_cwd,
         otlp_endpoint=wm_telemetry.otlp_endpoint,
     )
@@ -519,12 +829,32 @@ def bootstrap(recreate: bool, log_level: str) -> None:
 
 
 @click.command()
-@click.option("--log-level", "log_level", default="INFO", type=click.Choice(["TRACE", "DEBUG", "INFO", "WARNING", "ERROR"], case_sensitive=False), show_default=True)
+@click.option(
+    "--log-level",
+    "log_level",
+    default="INFO",
+    type=click.Choice(
+        ["TRACE", "DEBUG", "INFO", "WARNING", "ERROR"], case_sensitive=False
+    ),
+    show_default=True,
+)
 @click.option("--debug", "debug", is_flag=True, default=False)
 @click.option("--project", "project", type=str)
 @click.option("--shared-server", "shared_server", is_flag=True, default=False)
-@click.option("--dev-env", "dev_env", default=None, type=click.Choice(sorted(_VALID_DEV_ENVS)), help="Override detected dev environment")
-def dump_config(log_level: str, debug: bool, project: str | None, shared_server: bool, dev_env: str | None):
+@click.option(
+    "--dev-env",
+    "dev_env",
+    default=None,
+    type=click.Choice(sorted(_VALID_DEV_ENVS)),
+    help="Override detected dev environment",
+)
+def dump_config(
+    log_level: str,
+    debug: bool,
+    project: str | None,
+    shared_server: bool,
+    dev_env: str | None,
+):
     from finecode.cli_app.commands import dump_config_cmd
 
     if debug is True:
@@ -541,10 +871,13 @@ def dump_config(log_level: str, debug: bool, project: str | None, shared_server:
         return
 
     from finecode.wm_server.config import read_configs
+
     _cwd = pathlib.Path(os.getcwd())
     wm_telemetry = read_configs.read_wm_telemetry_config(_cwd)
     logger_utils.init_logger(
-        log_name="cli", log_level=log_level, stdout=True,
+        log_name="cli",
+        log_level=log_level,
+        stdout=True,
         workspace_path=_cwd,
         otlp_endpoint=wm_telemetry.otlp_endpoint,
     )
@@ -563,3 +896,207 @@ def dump_config(log_level: str, debug: bool, project: str | None, shared_server:
     except dump_config_cmd.DumpFailed as exception:
         click.echo(exception.message, err=True)
         sys.exit(1)
+
+
+_LOG_LEVEL_OPTION = click.option(
+    "--log-level",
+    "log_level",
+    default="INFO",
+    type=click.Choice(
+        ["TRACE", "DEBUG", "INFO", "WARNING", "ERROR"], case_sensitive=False
+    ),
+    show_default=True,
+)
+
+
+def _run_recovery(coro_factory, log_level: str) -> None:
+    """Run a recovery command, reporting its failure the way the CLI reports others."""
+    from finecode.cli_app.commands import recover_cmd
+
+    _cwd = pathlib.Path(os.getcwd())
+    logger_utils.init_logger(
+        log_name="cli", log_level=log_level, stdout=True, workspace_path=_cwd
+    )
+    user_messages._notification_sender = show_user_message
+    try:
+        asyncio.run(coro_factory(_cwd))
+    except recover_cmd.RecoveryFailed as exception:
+        click.echo(exception.message, err=True)
+        sys.exit(1)
+    except WmError as exception:
+        click.echo(str(exception), err=True)
+        sys.exit(1)
+    except Exception as exception:
+        logger.exception(exception)
+        click.echo("Unexpected error, see logs in file for more details", err=True)
+        sys.exit(2)
+
+
+@click.command()
+@_LOG_LEVEL_OPTION
+@click.option("--shared-server", "shared_server", is_flag=True, default=False)
+@click.option(
+    "--action", "action", required=True, help="Action name or source to reload."
+)
+@click.option(
+    "--project",
+    "project",
+    default=None,
+    help="Project path. Omit to reload the action in every project exposing it.",
+)
+def reload_action(
+    log_level: str, shared_server: bool, action: str, project: str | None
+):
+    """Re-import an action and its handlers in a running workspace."""
+    from finecode.cli_app.commands import recover_cmd
+
+    _run_recovery(
+        lambda cwd: recover_cmd.reload_action(
+            workdir_path=cwd,
+            action=action,
+            project=project,
+            own_server=not shared_server,
+        ),
+        log_level,
+    )
+
+
+@click.command()
+@_LOG_LEVEL_OPTION
+@click.option("--shared-server", "shared_server", is_flag=True, default=False)
+@click.option("--project", "project", default=None, help="Project path to restart.")
+@click.option(
+    "--all-projects",
+    "all_projects",
+    is_flag=True,
+    default=False,
+    help="Restart every project's runners. Supply this or --project, never both.",
+)
+@click.option("--env", "env", default=None, help="Restart only this environment.")
+@click.option(
+    "--kill-in-flight-runs",
+    "kill_in_flight_runs",
+    is_flag=True,
+    default=False,
+    help="Proceed even though an action is running in the target, killing it.",
+)
+def restart_runner(
+    log_level: str,
+    shared_server: bool,
+    project: str | None,
+    all_projects: bool,
+    env: str | None,
+    kill_in_flight_runs: bool,
+):
+    """Replace the extension runner processes of a project."""
+    from finecode.cli_app.commands import recover_cmd
+
+    _run_recovery(
+        lambda cwd: recover_cmd.restart_runner(
+            workdir_path=cwd,
+            project=project,
+            all_projects=all_projects,
+            env=env,
+            kill_in_flight_runs=kill_in_flight_runs,
+            own_server=not shared_server,
+        ),
+        log_level,
+    )
+
+
+@click.command()
+@_LOG_LEVEL_OPTION
+@click.option("--shared-server", "shared_server", is_flag=True, default=False)
+@click.option("--project", "project", default=None, help="Project path to recover.")
+@click.option(
+    "--all-projects",
+    "all_projects",
+    is_flag=True,
+    default=False,
+    help="Recover every project. Supply this or --project, never both.",
+)
+@click.option(
+    "--rescan",
+    "rescan",
+    is_flag=True,
+    default=False,
+    help="Walk the workspace directories again first, picking up new projects.",
+)
+@click.option(
+    "--kill-in-flight-runs",
+    "kill_in_flight_runs",
+    is_flag=True,
+    default=False,
+    help="Proceed even though an action is running in the target, killing it.",
+)
+def reload_config(
+    log_level: str,
+    shared_server: bool,
+    project: str | None,
+    all_projects: bool,
+    rescan: bool,
+    kill_in_flight_runs: bool,
+):
+    """Make the configuration on disk take effect in a running workspace."""
+    from finecode.cli_app.commands import recover_cmd
+
+    _run_recovery(
+        lambda cwd: recover_cmd.reload_config(
+            workdir_path=cwd,
+            project=project,
+            all_projects=all_projects,
+            rescan=rescan,
+            kill_in_flight_runs=kill_in_flight_runs,
+            own_server=not shared_server,
+        ),
+        log_level,
+    )
+
+
+@click.command()
+@_LOG_LEVEL_OPTION
+@click.option("--shared-server", "shared_server", is_flag=True, default=False)
+def restart_wm(log_level: str, shared_server: bool):
+    """Replace the workspace server process itself."""
+    from finecode.cli_app.commands import recover_cmd
+
+    _run_recovery(
+        lambda cwd: recover_cmd.restart_wm(
+            workdir_path=cwd, own_server=not shared_server
+        ),
+        log_level,
+    )
+
+
+@click.command()
+@_LOG_LEVEL_OPTION
+@click.option("--shared-server", "shared_server", is_flag=True, default=False)
+def version(log_level: str, shared_server: bool):
+    """Print the WM server's version.
+
+    Starts (or attaches to) the server and asks it directly, rather than
+    reading local package metadata — proving the server can actually
+    complete its startup path, not just that this process's own install is
+    intact.
+    """
+    from finecode.cli_app.commands import version_cmd
+
+    _cwd = pathlib.Path(os.getcwd())
+    logger_utils.init_logger(
+        log_name="cli", log_level=log_level, stdout=True, workspace_path=_cwd
+    )
+    user_messages._notification_sender = show_user_message
+
+    try:
+        reported_version = asyncio.run(
+            version_cmd.get_version(
+                workdir_path=_cwd,
+                own_server=not shared_server,
+                log_level=log_level,
+            )
+        )
+    except version_cmd.VersionCheckFailed as exception:
+        click.echo(exception.message, err=True)
+        sys.exit(1)
+
+    click.echo(reported_version)

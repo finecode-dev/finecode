@@ -2,13 +2,13 @@ from __future__ import annotations
 
 import dataclasses
 
-from finecode_extension_api import code_action
 from fine_lint.diagnostic_types import (
-    DiagnosticFilesRunPayload,
     DiagnosticFilesRunContext,
+    DiagnosticFilesRunPayload,
     DiagnosticFilesRunResult,
 )
 from fine_toml_lang.lint_toml_files_action import LintTomlFilesAction
+from finecode_extension_api import code_action
 from finecode_extension_api.interfaces import iprojectinfoprovider
 from finecode_extension_api.resource_uri import ResourceUri, resource_uri_to_path
 
@@ -40,9 +40,7 @@ class TombiLintTomlFilesHandler(
         root_uri = self.project_info_provider.get_current_project_dir_path().as_uri()
         await self.lsp_service.ensure_started(root_uri)
         lint_messages = await self.lsp_service.check_file(file_path)
-        return DiagnosticFilesRunResult(
-            messages={file_uri: lint_messages}
-        )
+        return DiagnosticFilesRunResult(messages={file_uri: lint_messages})
 
     async def run(
         self,

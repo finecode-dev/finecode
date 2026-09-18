@@ -5,7 +5,8 @@ from unittest import mock
 
 import pytest
 
-from finecode.wm_server import domain, testing as wm_testing
+from finecode.wm_server import domain
+from finecode.wm_server import testing as wm_testing
 from finecode.wm_server.runner import runner_manager
 from finecode.wm_server.services import runner_start_service
 from finecode.wm_server.services.run_service import proxy_utils
@@ -53,7 +54,9 @@ async def test_ensure_action_metadata_auto_repairs_a_no_venv_runner(
         action.canonical_source = f"resolved.{action.source}"
 
     with (
-        mock.patch.object(runner_manager, "start_runner", side_effect=_fake_start_runner),
+        mock.patch.object(
+            runner_manager, "start_runner", side_effect=_fake_start_runner
+        ),
         mock.patch.object(
             runner_start_service, "repair_no_venv_env", side_effect=_fake_repair
         ),
@@ -96,7 +99,9 @@ async def test_ensure_action_metadata_does_not_auto_repair_non_venv_failures(
         raise runner_manager.RunnerFailedToStart("process crashed")
 
     with (
-        mock.patch.object(runner_manager, "start_runner", side_effect=_fake_start_runner),
+        mock.patch.object(
+            runner_manager, "start_runner", side_effect=_fake_start_runner
+        ),
         mock.patch.object(runner_start_service, "repair_no_venv_env") as fake_repair,
     ):
         with pytest.raises(ActionNotResolvableError):

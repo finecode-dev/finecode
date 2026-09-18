@@ -6,8 +6,8 @@ from finecode.wm_server import domain
 from finecode.wm_server.context import WorkspaceContext
 from finecode.wm_server.errors import (
     ConfigurationError,
-    FileNotInWorkspaceError,
     FileHasNoActionError,
+    FileNotInWorkspaceError,
     StartingEnvironmentsFailed,
 )
 from finecode.wm_server.services import runner_start_service
@@ -110,7 +110,4 @@ def is_project(dir_path: Path) -> bool:
         return True
 
     requirements_path = dir_path / "requirements.txt"
-    if requirements_path.exists():
-        return True
-
-    return False
+    return bool(requirements_path.exists())

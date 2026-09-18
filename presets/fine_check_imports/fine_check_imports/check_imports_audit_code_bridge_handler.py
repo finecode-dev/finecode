@@ -2,17 +2,27 @@ import asyncio
 import dataclasses
 import pathlib
 
-from finecode_extension_api import code_action
 from fine_audit_code.audit_code_action import (
     AuditCodeAction,
-    AuditCodeRunPayload,
     AuditCodeRunContext,
+    AuditCodeRunPayload,
     AuditCodeRunResult,
 )
-from fine_check_imports.check_imports_action import CheckImportsAction, CheckImportsRunPayload
-from finecode_extension_api.interfaces import iworkspaceactionrunner, iworkspaceinfoprovider, ilogger
-from finecode_extension_api.interfaces.iworkspaceinfoprovider import actionable_project_paths
+from finecode_extension_api import code_action
+from finecode_extension_api.interfaces import (
+    ilogger,
+    iworkspaceactionrunner,
+    iworkspaceinfoprovider,
+)
+from finecode_extension_api.interfaces.iworkspaceinfoprovider import (
+    actionable_project_paths,
+)
 from finecode_extension_api.resource_uri import resource_uri_to_path
+
+from fine_check_imports.check_imports_action import (
+    CheckImportsAction,
+    CheckImportsRunPayload,
+)
 
 
 @dataclasses.dataclass
@@ -57,7 +67,9 @@ class CheckImportsAuditCodeBridgeHandler(
             project_paths=[project_path],
         )
         for proj_path, result in results.items():
-            await partial_result_sender.send(AuditCodeRunResult(messages=result.messages))
+            await partial_result_sender.send(
+                AuditCodeRunResult(messages=result.messages)
+            )
 
     async def run(
         self,
@@ -67,7 +79,9 @@ class CheckImportsAuditCodeBridgeHandler(
         if payload.project_paths is not None:
             project_paths = [resource_uri_to_path(uri) for uri in payload.project_paths]
         else:
-            project_paths = actionable_project_paths(await self.workspace_info_provider.get_workspace_projects())
+            project_paths = actionable_project_paths(
+                await self.workspace_info_provider.get_workspace_projects()
+            )
 
         async with asyncio.TaskGroup() as tg:
             for project_path in project_paths:

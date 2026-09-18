@@ -4,6 +4,7 @@ import dataclasses
 
 from finecode_extension_api import code_action, common_types
 from finecode_extension_api.resource_uri import ResourceUri
+
 from fine_symbol_info.types import Location
 
 
@@ -23,7 +24,9 @@ class ImplementationResult(code_action.RunActionResult):
 
 
 class TextDocumentImplementationAction(code_action.Action):
-    DESCRIPTION = "Find the implementation location(s) of the symbol at a document position."
+    DESCRIPTION = (
+        "Find the implementation location(s) of the symbol at a document position."
+    )
     PAYLOAD_TYPE = ImplementationPayload
     RESULT_TYPE = ImplementationResult
     # SEQUENTIAL (default)

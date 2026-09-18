@@ -7,7 +7,7 @@ from finecode_extension_api.resource_uri import ResourceUri
 
 @dataclasses.dataclass
 class GetSrcArtifactVersionRunPayload(code_action.RunActionPayload):
-    src_artifact_def_path: ResourceUri
+    src_artifact_def_path: ResourceUri | None = None
 
 
 class GetSrcArtifactVersionRunContext(

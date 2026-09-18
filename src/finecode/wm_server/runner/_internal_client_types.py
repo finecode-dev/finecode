@@ -6,11 +6,17 @@ LSP were reused where it was meaningful.
 
 from __future__ import annotations
 
-import dataclasses
 import collections.abc
+import dataclasses
 import enum
 import functools
+import sys
 import typing
+
+if sys.version_info >= (3, 12):
+    from typing import override
+else:
+    from typing_extensions import override
 
 EXIT = "exit"
 INITIALIZE = "initialize"
@@ -30,6 +36,7 @@ ER_RESOLVE_SOURCE = "actions/resolveSource"
 ER_RESOLVE_PACKAGE_PATH = "packages/resolvePath"
 ER_UPDATE_CONFIG = "finecodeRunner/updateConfig"
 ER_UPDATE_LOGGING = "finecodeRunner/updateLogging"
+ER_UPDATE_PROCESS_BUDGET = "finecodeRunner/updateProcessBudget"
 ER_RESOLVE_ACTION_META = "finecodeRunner/resolveActionMeta"
 ER_GET_INFO = "finecodeRunner/getInfo"
 WORKSPACE_APPLY_EDIT = "workspace/applyEdit"
@@ -37,12 +44,19 @@ ER_USER_MESSAGE = "er/userMessage"
 ER_LOG_RECORDS = "er/logRecords"
 
 PROJECT_RAW_CONFIG_GET = "projects/getRawConfig"
-WORKSPACE_EDITABLE_PACKAGES_GET = "workspace/getWorkspaceEditablePackages"
+WORKSPACE_PACKAGES_GET = "workspace/getWorkspacePackages"
+WORKSPACE_EXTRA_SELECTION_GET = "workspace/getExtraSelection"
 WORKSPACE_PROJECT_PATHS_GET = "workspace/getProjectPaths"
 RUN_ACTION_IN_PROJECT = "finecode/runActionInProject"
 RUN_ACTION_IN_WORKSPACE = "finecode/runActionInWorkspace"
+LEASE_PROCESS_BUDGET = "finecode/leaseProcessBudget"
+RELEASE_PROCESS_BUDGET = "finecode/releaseProcessBudget"
 GET_ACTIONS_FOR_PARENT = "finecode/getActionsForParent"
 LIST_WORKSPACE_ACTIONS = "finecode/listWorkspaceActions"
+ELICIT = "finecode/elicit"
+KNOWLEDGE_REGISTER_SCHEMA = "knowledge/registerSchema"
+KNOWLEDGE_QUERY = "knowledge/query"
+KNOWLEDGE_RECORDS = "knowledge/records"
 
 
 @dataclasses.dataclass
@@ -81,13 +95,13 @@ class InitializeParams:
     process_id: int | None = None
     """The process Id of the parent process that started
     the server.
-    
+
     Is `null` if the process has not been started by another process.
     If the parent process is not alive then the server should exit."""
 
     client_info: ClientInfo | None = None
     """Information about the client
-    
+
     @since 3.15.0"""
     # Since: 3.15.0
 
@@ -95,24 +109,24 @@ class InitializeParams:
     """The locale the client is currently showing the user interface
     in. This must not necessarily be the locale of the operating
     system.
-    
+
     Uses IETF language tags as the value's syntax
     (See https://en.wikipedia.org/wiki/IETF_language_tag)
-    
+
     @since 3.16.0"""
     # Since: 3.16.0
 
     root_path: str | None = None
     """The rootPath of the workspace. Is null
     if no folder is open.
-    
+
     @deprecated in favour of rootUri."""
 
     root_uri: str | None = None
     """The rootUri of the workspace. Is null if no
     folder is open. If both `rootPath` and `rootUri` are set
     `rootUri` wins.
-    
+
     @deprecated in favour of workspaceFolders."""
 
     initialization_options: LSPAny | None = None
@@ -126,11 +140,11 @@ class InitializeParams:
 
     workspace_folders: collections.abc.Sequence[WorkspaceFolder] | None = None
     """The workspace folders configured in the client when the server starts.
-    
+
     This property is only available if the client supports workspace folders.
     It can be `null` if the client supports workspace folders but none are
     configured.
-    
+
     @since 3.6.0"""
     # Since: 3.6.0
 
@@ -150,7 +164,7 @@ class InitializeResult(BaseResult):
 
     server_info: ServerInfo | None = None
     """Information about the server.
-    
+
     @since 3.15.0"""
     # Since: 3.15.0
 
@@ -184,25 +198,27 @@ class GeneralClientCapabilities:
     @since 3.16.0"""
 
     # Since: 3.16.0
-    
-    position_encodings: collections.abc.Sequence[PositionEncodingKind | str] | None = None
+
+    position_encodings: collections.abc.Sequence[PositionEncodingKind | str] | None = (
+        None
+    )
     """The position encodings supported by the client. Client and server
     have to agree on the same position encoding to ensure that offsets
     (e.g. character position in a line) are interpreted the same on both
     sides.
-    
+
     To keep the protocol backwards compatible the following applies: if
     the value 'utf-16' is missing from the array of position encodings
     servers can assume that the client supports UTF-16. UTF-16 is
     therefore a mandatory encoding.
-    
+
     If omitted it defaults to ['utf-16'].
-    
+
     Implementation considerations: since the conversion from one encoding
     into another requires the content of the file / line the conversion
     is best done where the file is read which is usually on the server
     side.
-    
+
     @since 3.17.0"""
     # Since: 3.17.0
 
@@ -219,7 +235,7 @@ class ClientCapabilities:
 
     # notebook_document: NotebookDocumentClientCapabilities | None = None
     """Capabilities specific to the notebook document support.
-    
+
     @since 3.17.0"""
     # Since: 3.17.0
 
@@ -228,7 +244,7 @@ class ClientCapabilities:
 
     general: GeneralClientCapabilities | None = None
     """General client capabilities.
-    
+
     @since 3.16.0"""
     # Since: 3.16.0
 
@@ -265,7 +281,7 @@ optional as well.
 
 
 @enum.unique
-class TraceValue(str, enum.Enum):
+class TraceValue(enum.StrEnum):
     Off = "off"
     """Turn tracing off."""
     Messages = "messages"
@@ -300,12 +316,12 @@ class PositionEncodingKind(str, enum.Enum):
     """Character offsets count UTF-8 code units (e.g. bytes)."""
     Utf16 = "utf-16"
     """Character offsets count UTF-16 code units.
-    
+
     This is the default and must always be supported
     by servers"""
     Utf32 = "utf-32"
     """Character offsets count UTF-32 code units.
-    
+
     Implementation note: these are the same as Unicode codepoints,
     so this `PositionEncodingKind` may also be used for an
     encoding-agnostic representation of character offsets."""
@@ -376,7 +392,7 @@ class WorkspaceFoldersServerCapabilities:
     change_notifications: str | bool | None = None
     """Whether the server wants to receive workspace folder
     change notifications.
-    
+
     If a string is provided the string is treated as an ID
     under which the notification is registered on the client
     side. The ID can be used to unregister for these events
@@ -429,7 +445,7 @@ class FileOperationPattern:
 
     matches: FileOperationPatternKind | None = None
     """Whether to match files or folders with this pattern.
-    
+
     Matches both if undefined."""
 
     options: FileOperationPatternOptions | None = None
@@ -533,13 +549,13 @@ class WorkspaceOptions:
 
     workspace_folders: WorkspaceFoldersServerCapabilities | None = None
     """The server supports workspace folder.
-    
+
     @since 3.6.0"""
     # Since: 3.6.0
 
     file_operations: FileOperationOptions | None = None
     """The server is interested in notifications/requests for operations on files.
-    
+
     @since 3.16.0"""
     # Since: 3.16.0
 
@@ -547,7 +563,7 @@ class WorkspaceOptions:
         TextDocumentContentOptions | TextDocumentContentRegistrationOptions | None
     ) = None
     """The server supports the `workspace/textDocumentContent` request.
-    
+
     @since 3.18.0
     @proposed"""
     # Since: 3.18.0
@@ -562,12 +578,12 @@ class ServerCapabilities:
     position_encoding: PositionEncodingKind | str | None = None
     """The position encoding the server picked from the encodings offered
     by the client via the client capability `general.positionEncodings`.
-    
+
     If the client didn't provide any position encodings the only valid
     value that a server can return is 'utf-16'.
-    
+
     If omitted it defaults to 'utf-16'.
-    
+
     @since 3.17.0"""
     # Since: 3.17.0
 
@@ -580,7 +596,7 @@ class ServerCapabilities:
     #     Union[NotebookDocumentSyncOptions, NotebookDocumentSyncRegistrationOptions]
     # ] = attrs.field(default=None)
     """Defines how notebook documents are synced.
-    
+
     @since 3.17.0"""
     # Since: 3.17.0
 
@@ -688,7 +704,7 @@ class ServerCapabilities:
     #     Union[bool, CallHierarchyOptions, CallHierarchyRegistrationOptions]
     # ] = attrs.field(default=None)
     """The server provides call hierarchy support.
-    
+
     @since 3.16.0"""
     # Since: 3.16.0
 
@@ -696,7 +712,7 @@ class ServerCapabilities:
     #     Union[bool, LinkedEditingRangeOptions, LinkedEditingRangeRegistrationOptions]
     # ] = attrs.field(default=None)
     """The server provides linked editing range support.
-    
+
     @since 3.16.0"""
     # Since: 3.16.0
 
@@ -704,7 +720,7 @@ class ServerCapabilities:
     #     Union[SemanticTokensOptions, SemanticTokensRegistrationOptions]
     # ] = attrs.field(default=None)
     """The server provides semantic tokens support.
-    
+
     @since 3.16.0"""
     # Since: 3.16.0
 
@@ -712,7 +728,7 @@ class ServerCapabilities:
     #     Union[bool, MonikerOptions, MonikerRegistrationOptions]
     # ] = attrs.field(default=None)
     """The server provides moniker support.
-    
+
     @since 3.16.0"""
     # Since: 3.16.0
 
@@ -720,7 +736,7 @@ class ServerCapabilities:
     #     Union[bool, TypeHierarchyOptions, TypeHierarchyRegistrationOptions]
     # ] = attrs.field(default=None)
     """The server provides type hierarchy support.
-    
+
     @since 3.17.0"""
     # Since: 3.17.0
 
@@ -728,7 +744,7 @@ class ServerCapabilities:
     #     Union[bool, InlineValueOptions, InlineValueRegistrationOptions]
     # ] = attrs.field(default=None)
     """The server provides inline values.
-    
+
     @since 3.17.0"""
     # Since: 3.17.0
 
@@ -736,7 +752,7 @@ class ServerCapabilities:
     #     Union[bool, InlayHintOptions, InlayHintRegistrationOptions]
     # ] = attrs.field(default=None)
     """The server provides inlay hints.
-    
+
     @since 3.17.0"""
     # Since: 3.17.0
 
@@ -744,7 +760,7 @@ class ServerCapabilities:
     #     Union[DiagnosticOptions, DiagnosticRegistrationOptions]
     # ] = attrs.field(default=None)
     """The server has support for pull model diagnostics.
-    
+
     @since 3.17.0"""
     # Since: 3.17.0
 
@@ -752,7 +768,7 @@ class ServerCapabilities:
     #     attrs.field(default=None)
     # )
     """Inline completion options used during static registration.
-    
+
     @since 3.18.0
     @proposed"""
     # Since: 3.18.0
@@ -960,7 +976,7 @@ class ApplyWorkspaceEditParams:
 
     metadata: WorkspaceEditMetadata | None = None
     """Additional data about the edit.
-    
+
     @since 3.18.0
     @proposed"""
     # Since: 3.18.0
@@ -1030,10 +1046,10 @@ class WorkspaceEdit:
     are either an array of `TextDocumentEdit`s to express changes to n different text documents
     where each text document edit addresses a specific version of a text document. Or it can contain
     above `TextDocumentEdit`s mixed with create, rename and delete file / folder operations.
-    
+
     Whether a client supports versioned document edits is expressed via
     `workspace.workspaceEdit.documentChanges` client capability.
-    
+
     If a client neither supports `documentChanges` nor `workspace.workspaceEdit.resourceOperations` then
     only plain `TextEdit`s using the `changes` property are supported."""
 
@@ -1042,9 +1058,9 @@ class WorkspaceEdit:
     ) = None
     """A map of change annotations that can be referenced in `AnnotatedTextEdit`s or create, rename and
     delete file / folder operations.
-    
+
     Whether clients honor this property depends on the client capability `workspace.changeAnnotationSupport`.
-    
+
     @since 3.16.0"""
     # Since: 3.16.0
 
@@ -1064,7 +1080,7 @@ class CreateFile:
 
     annotation_id: ChangeAnnotationIdentifier | None = None
     """An optional annotation identifier describing the operation.
-    
+
     @since 3.16.0"""
     # Since: 3.16.0
 
@@ -1101,7 +1117,7 @@ class RenameFile:
 
     annotation_id: ChangeAnnotationIdentifier | None = None
     """An optional annotation identifier describing the operation.
-    
+
     @since 3.16.0"""
     # Since: 3.16.0
 
@@ -1132,7 +1148,7 @@ class DeleteFile:
 
     annotation_id: ChangeAnnotationIdentifier | None = None
     """An optional annotation identifier describing the operation.
-    
+
     @since 3.16.0"""
     # Since: 3.16.0
 
@@ -1202,13 +1218,13 @@ class Range:
     end: Position
     """The range's end position."""
 
-    @typing.override
+    @override
     def __eq__(self, o: object) -> bool:
         if not isinstance(o, Range):
             return NotImplemented
         return (self.start == o.start) and (self.end == o.end)
 
-    @typing.override
+    @override
     def __repr__(self) -> str:
         return f"{self.start!r}-{self.end!r}"
 
@@ -1251,11 +1267,11 @@ class Position:
 
     character: int
     """Character offset on a line in a document (zero-based).
-    
+
     The meaning of this offset is determined by the negotiated
     `PositionEncodingKind`."""
 
-    @typing.override
+    @override
     def __eq__(self, o: object) -> bool:
         if not isinstance(o, Position):
             return NotImplemented
@@ -1266,7 +1282,7 @@ class Position:
             return NotImplemented
         return (self.line, self.character) > (o.line, o.character)
 
-    @typing.override
+    @override
     def __repr__(self) -> str:
         return f"{self.line}:{self.character}"
 
@@ -1312,10 +1328,10 @@ class TextDocumentEdit:
 
     edits: collections.abc.Sequence[TextEdit | AnnotatedTextEdit | SnippetTextEdit]
     """The edits to be applied.
-    
+
     @since 3.16.0 - support for AnnotatedTextEdit. This is guarded using a
     client capability.
-    
+
     @since 3.18.0 - support for SnippetTextEdit. This is guarded using a
     client capability."""
     # Since:
@@ -1410,7 +1426,7 @@ class GetProjectRawConfigResponse(BaseResponse):
 @dataclasses.dataclass
 class GetWorkspaceEditablePackagesRequest(BaseRequest):
     params: dict | None = None
-    method = WORKSPACE_EDITABLE_PACKAGES_GET
+    method = WORKSPACE_PACKAGES_GET
 
 
 @dataclasses.dataclass
@@ -1421,6 +1437,22 @@ class GetWorkspaceEditablePackagesResult(BaseResult):
 @dataclasses.dataclass
 class GetWorkspaceEditablePackagesResponse(BaseResponse):
     result: GetWorkspaceEditablePackagesResult
+
+
+@dataclasses.dataclass
+class GetWorkspaceExtraSelectionRequest(BaseRequest):
+    params: dict | None = None
+    method = WORKSPACE_EXTRA_SELECTION_GET
+
+
+@dataclasses.dataclass
+class GetWorkspaceExtraSelectionResult(BaseResult):
+    selection: dict[str, list[str]]
+
+
+@dataclasses.dataclass
+class GetWorkspaceExtraSelectionResponse(BaseResponse):
+    result: GetWorkspaceExtraSelectionResult
 
 
 @dataclasses.dataclass
@@ -1446,6 +1478,100 @@ class GetWorkspaceProjectPathsResponse(BaseResponse):
 
 
 @dataclasses.dataclass
+class RegisterKnowledgeSchemaParams:
+    """The ER's schema registry, as data.
+
+    ``snapshot`` is an opaque JSON document. It is not modelled
+    field-by-field here on purpose: its shape is the *engine's* contract and is
+    versioned inside the document (``v``), so restating it in the WM's transport
+    types would give one wire format two owners and let them drift.
+    """
+
+    snapshot: dict
+
+
+@dataclasses.dataclass
+class RegisterKnowledgeSchemaRequest(BaseRequest):
+    params: RegisterKnowledgeSchemaParams
+    method = KNOWLEDGE_REGISTER_SCHEMA
+
+
+@dataclasses.dataclass
+class RegisterKnowledgeSchemaResult(BaseResult):
+    accepted: bool
+
+
+@dataclasses.dataclass
+class RegisterKnowledgeSchemaResponse(BaseResponse):
+    result: RegisterKnowledgeSchemaResult
+
+
+@dataclasses.dataclass
+class KnowledgeQueryParams:
+    """One query out.
+
+    ``query`` is the engine's serialized ``Query`` and is opaque here for
+    the same reason the schema snapshot is. ``mode`` and ``limit`` are the
+    terminal's own arguments, which the ER cannot apply itself because it is not
+    the side that executes.
+    """
+
+    query: dict
+    mode: str = "verified"
+    limit: int | None = None
+
+
+@dataclasses.dataclass
+class KnowledgeQueryRequest(BaseRequest):
+    params: KnowledgeQueryParams
+    method = KNOWLEDGE_QUERY
+
+
+@dataclasses.dataclass
+class KnowledgeQueryResult(BaseResult):
+    """One result back: rows **and** the freshness verdict, always."""
+
+    rows: list[list[dict]]
+    freshness: dict
+
+
+@dataclasses.dataclass
+class KnowledgeQueryResponse(BaseResponse):
+    result: KnowledgeQueryResult
+
+
+@dataclasses.dataclass
+class KnowledgeRecordsParams:
+    """Whole entity records, for the one read a query cannot express.
+
+    A **list** of refs rather than one, so a projection over forty entities costs
+    one message rather than forty -- the same granularity argument ADR-0013 D1
+    makes for the query boundary, applied to the other read.
+    """
+
+    refs: list[dict]
+
+
+@dataclasses.dataclass
+class KnowledgeRecordsRequest(BaseRequest):
+    params: KnowledgeRecordsParams
+    method = KNOWLEDGE_RECORDS
+
+
+@dataclasses.dataclass
+class KnowledgeRecordsResult(BaseResult):
+    """One record per ref, **positionally**, plus the payload's own version."""
+
+    v: int
+    records: list[dict]
+
+
+@dataclasses.dataclass
+class KnowledgeRecordsResponse(BaseResponse):
+    result: KnowledgeRecordsResult
+
+
+@dataclasses.dataclass
 class RunActionInProjectMeta:
     trigger: str
     dev_env: str
@@ -1460,6 +1586,10 @@ class RunActionInProjectParams:
     partial_result_token: int | str | None = None
     caller_kwargs: dict | None = None
     traceparent: str | None = None
+    # The calling run. The nested run the WM starts from this inherits its
+    # originating client, so a question asked from inside it reaches the same
+    # person (ADR-0082 rule 1).
+    run_id: str | None = None
 
 
 @dataclasses.dataclass
@@ -1485,8 +1615,12 @@ class RunActionInWorkspaceParams:
     payload: dict
     meta: RunActionInProjectMeta
     project_paths: list[str] | None = None
+    payload_overrides_by_project: dict[str, dict] | None = None
     concurrently: bool = True
     traceparent: str | None = None
+    # See RunActionInProjectParams.run_id: every project this fans out into
+    # inherits the calling run's originating client.
+    run_id: str | None = None
 
 
 @dataclasses.dataclass
@@ -1503,6 +1637,106 @@ class RunActionInWorkspaceRequest(BaseRequest):
 @dataclasses.dataclass
 class RunActionInWorkspaceResponse(BaseResponse):
     result: RunActionInWorkspaceResult
+
+
+@dataclasses.dataclass
+class LeaseProcessBudgetParams:
+    requested: int
+    nested: bool = False
+    run_id: str | None = None
+
+
+@dataclasses.dataclass
+class LeaseProcessBudgetResult(BaseResult):
+    lease_id: str
+    granted: int
+
+
+@dataclasses.dataclass
+class LeaseProcessBudgetRequest(BaseRequest):
+    params: LeaseProcessBudgetParams
+    method = LEASE_PROCESS_BUDGET
+
+
+@dataclasses.dataclass
+class LeaseProcessBudgetResponse(BaseResponse):
+    result: LeaseProcessBudgetResult
+
+
+@dataclasses.dataclass
+class ReleaseProcessBudgetParams:
+    lease_id: str
+
+
+@dataclasses.dataclass
+class ReleaseProcessBudgetResult(BaseResult): ...
+
+
+@dataclasses.dataclass
+class ReleaseProcessBudgetRequest(BaseRequest):
+    params: ReleaseProcessBudgetParams
+    method = RELEASE_PROCESS_BUDGET
+
+
+@dataclasses.dataclass
+class ReleaseProcessBudgetResponse(BaseResponse):
+    result: ReleaseProcessBudgetResult
+
+
+# ---------------------------------------------------------------------------
+# finecode/elicit  (ER → WM → the run's originating client), ADR-0082
+# ---------------------------------------------------------------------------
+
+
+@dataclasses.dataclass
+class ElicitParams:
+    """One question, with the full set of answers it accepts.
+
+    ``options`` is closed on purpose: this mechanism carries a decision with a
+    small, enumerable answer, not a review of something substantial. ``default``
+    is what the asking handler would pick on its own and is a hint to the client
+    for pre-selection — the WM never applies it, because "the person chose the
+    default" and "nobody was asked" must stay distinguishable.
+    """
+
+    message: str
+    options: list[str]
+    default: str | None = None
+    timeout_sec: float = 300.0
+    run_id: str | None = None
+    """The run asking, as the WM handed it to the ER at dispatch.
+
+    The only thing the WM can address a question by: the project the asking
+    runner serves does not identify a run, and two clients may be running the
+    same project at the same moment. ``None`` — an ER that predates this field,
+    or a call made outside any run — is answered "nobody could be asked" rather
+    than guessed at.
+    """
+
+
+@dataclasses.dataclass
+class ElicitRequest(BaseRequest):
+    params: ElicitParams
+    method = ELICIT
+
+
+@dataclasses.dataclass
+class ElicitResult(BaseResult):
+    """The outcome, always — never an error response for "no answer".
+
+    ``outcome`` is one of ``"answered"``, ``"declined"`` (a person was asked and
+    refused or cancelled) or ``"unavailable"`` (nobody could be asked: no
+    originating client, no declared capability, a disconnect, or the deadline).
+    ``value`` is the chosen option and is set only when answered.
+    """
+
+    outcome: str
+    value: str | None = None
+
+
+@dataclasses.dataclass
+class ElicitResponse(BaseResponse):
+    result: ElicitResult
 
 
 @dataclasses.dataclass
@@ -1535,7 +1769,7 @@ class TextDocumentContentChangePartial:
 
     range_length: int | None
     """The optional length of the range that got replaced.
-    
+
     @deprecated use range instead."""
 
 
@@ -1549,7 +1783,9 @@ class TextDocumentContentChangeWholeDocument:
     """The new text of the whole document."""
 
 
-TextDocumentContentChangeEvent = TextDocumentContentChangePartial | TextDocumentContentChangeWholeDocument
+TextDocumentContentChangeEvent = (
+    TextDocumentContentChangePartial | TextDocumentContentChangeWholeDocument
+)
 """An event describing a change to a text document. If only a text is provided
 it is considered to be the full content of the document."""
 
@@ -1569,13 +1805,12 @@ class DidChangeTextDocumentParams:
     c2 (at array index 1) for a document in state S then c1 moves the document from
     S to S' and c2 from S' to S''. So c1 is computed on the state S and c2 is computed
     on the state S'.
-    
+
     To mirror the content of a document using change events use the following approach:
     - start with the same initial content
     - apply the 'textDocument/didChange' notifications in the order you receive them.
     - apply the `TextDocumentContentChangeEvent`s in a single notification in the order
       you receive them."""
-
 
 
 @dataclasses.dataclass
@@ -1825,6 +2060,25 @@ class ErUpdateLoggingResponse(BaseResponse):
 
 
 @dataclasses.dataclass
+class ErUpdateProcessBudgetParams:
+    target: int
+
+
+@dataclasses.dataclass
+class ErUpdateProcessBudgetRequest(BaseRequest):
+    params: ErUpdateProcessBudgetParams
+
+
+@dataclasses.dataclass
+class ErUpdateProcessBudgetResult(BaseResult): ...
+
+
+@dataclasses.dataclass
+class ErUpdateProcessBudgetResponse(BaseResponse):
+    result: ErUpdateProcessBudgetResult
+
+
+@dataclasses.dataclass
 class ErLogRecordsParams:
     records: list[dict]
 
@@ -1953,14 +2207,55 @@ METHOD_TO_TYPES: dict[
     PROGRESS: (ProgressNotification, ProgressParams, None, None),
     EXIT: (ExitNotification, None, None, None),
     ER_RUN_ACTION: (ErRunActionRequest, ErRunActionParams, ErRunActionResponse, None),
-    ER_RUN_HANDLERS: (ErRunHandlersRequest, ErRunHandlersParams, ErRunHandlersResponse, None),
-    ER_RELOAD_ACTION: (ErReloadActionRequest, ErReloadActionParams, ErReloadActionResponse, None),
-    ER_MERGE_RESULTS: (ErMergeResultsRequest, ErMergeResultsParams, ErMergeResultsResponse, None),
+    ER_RUN_HANDLERS: (
+        ErRunHandlersRequest,
+        ErRunHandlersParams,
+        ErRunHandlersResponse,
+        None,
+    ),
+    ER_RELOAD_ACTION: (
+        ErReloadActionRequest,
+        ErReloadActionParams,
+        ErReloadActionResponse,
+        None,
+    ),
+    ER_MERGE_RESULTS: (
+        ErMergeResultsRequest,
+        ErMergeResultsParams,
+        ErMergeResultsResponse,
+        None,
+    ),
     ER_GET_PAYLOAD_SCHEMAS: (None, None, ErGetPayloadSchemasResponse, None),
-    ER_RESOLVE_SOURCE: (ErResolveSourceRequest, ErResolveSourceParams, ErResolveSourceResponse, None),
-    ER_RESOLVE_PACKAGE_PATH: (ErResolvePackagePathRequest, ErResolvePackagePathParams, ErResolvePackagePathResponse, None),
-    ER_UPDATE_CONFIG: (ErUpdateConfigRequest, ErUpdateConfigParams, ErUpdateConfigResponse, None),
-    ER_UPDATE_LOGGING: (ErUpdateLoggingRequest, ErUpdateLoggingParams, ErUpdateLoggingResponse, None),
+    ER_RESOLVE_SOURCE: (
+        ErResolveSourceRequest,
+        ErResolveSourceParams,
+        ErResolveSourceResponse,
+        None,
+    ),
+    ER_RESOLVE_PACKAGE_PATH: (
+        ErResolvePackagePathRequest,
+        ErResolvePackagePathParams,
+        ErResolvePackagePathResponse,
+        None,
+    ),
+    ER_UPDATE_CONFIG: (
+        ErUpdateConfigRequest,
+        ErUpdateConfigParams,
+        ErUpdateConfigResponse,
+        None,
+    ),
+    ER_UPDATE_LOGGING: (
+        ErUpdateLoggingRequest,
+        ErUpdateLoggingParams,
+        ErUpdateLoggingResponse,
+        None,
+    ),
+    ER_UPDATE_PROCESS_BUDGET: (
+        ErUpdateProcessBudgetRequest,
+        ErUpdateProcessBudgetParams,
+        ErUpdateProcessBudgetResponse,
+        None,
+    ),
     ER_LOG_RECORDS: (ErLogRecordsNotification, ErLogRecordsParams, None, None),
     ER_USER_MESSAGE: (ErUserMessageNotification, ErUserMessageParams, None, None),
     ER_GET_INFO: (None, None, ErGetInfoResponse, None),
@@ -2006,19 +2301,71 @@ METHOD_TO_TYPES: dict[
         RunActionInWorkspaceResponse,
         RunActionInWorkspaceResult,
     ),
+    LEASE_PROCESS_BUDGET: (
+        LeaseProcessBudgetRequest,
+        LeaseProcessBudgetParams,
+        LeaseProcessBudgetResponse,
+        LeaseProcessBudgetResult,
+    ),
+    RELEASE_PROCESS_BUDGET: (
+        ReleaseProcessBudgetRequest,
+        ReleaseProcessBudgetParams,
+        ReleaseProcessBudgetResponse,
+        ReleaseProcessBudgetResult,
+    ),
     ER_RESOLVE_ACTION_META: (None, None, ErResolveActionMetaResponse, None),
-    GET_ACTIONS_FOR_PARENT: (GetActionsForParentRequest, GetActionsForParentParams, GetActionsForParentResponse, GetActionsForParentResult),
-    LIST_WORKSPACE_ACTIONS: (ListWorkspaceActionsRequest, None, ListWorkspaceActionsResponse, ListWorkspaceActionsResult),
-    WORKSPACE_EDITABLE_PACKAGES_GET: (
+    GET_ACTIONS_FOR_PARENT: (
+        GetActionsForParentRequest,
+        GetActionsForParentParams,
+        GetActionsForParentResponse,
+        GetActionsForParentResult,
+    ),
+    LIST_WORKSPACE_ACTIONS: (
+        ListWorkspaceActionsRequest,
+        None,
+        ListWorkspaceActionsResponse,
+        ListWorkspaceActionsResult,
+    ),
+    ELICIT: (
+        ElicitRequest,
+        ElicitParams,
+        ElicitResponse,
+        ElicitResult,
+    ),
+    WORKSPACE_PACKAGES_GET: (
         GetWorkspaceEditablePackagesRequest,
         None,
         GetWorkspaceEditablePackagesResponse,
         GetWorkspaceEditablePackagesResult,
+    ),
+    WORKSPACE_EXTRA_SELECTION_GET: (
+        GetWorkspaceExtraSelectionRequest,
+        None,
+        GetWorkspaceExtraSelectionResponse,
+        GetWorkspaceExtraSelectionResult,
     ),
     WORKSPACE_PROJECT_PATHS_GET: (
         GetWorkspaceProjectPathsRequest,
         None,
         GetWorkspaceProjectPathsResponse,
         GetWorkspaceProjectPathsResult,
+    ),
+    KNOWLEDGE_REGISTER_SCHEMA: (
+        RegisterKnowledgeSchemaRequest,
+        RegisterKnowledgeSchemaParams,
+        RegisterKnowledgeSchemaResponse,
+        RegisterKnowledgeSchemaResult,
+    ),
+    KNOWLEDGE_QUERY: (
+        KnowledgeQueryRequest,
+        KnowledgeQueryParams,
+        KnowledgeQueryResponse,
+        KnowledgeQueryResult,
+    ),
+    KNOWLEDGE_RECORDS: (
+        KnowledgeRecordsRequest,
+        KnowledgeRecordsParams,
+        KnowledgeRecordsResponse,
+        KnowledgeRecordsResult,
     ),
 }
