@@ -438,3 +438,129 @@ async def test_a_clean_file_is_answered_without_waiting_it_out(
 
     assert diagnostics == []
     assert elapsed < 0.5, f"a clean file took {elapsed:.2f}s; settle wait is back"
+
+
+_UNSORTED = "import sys\nimport os\n\nprint(os, sys)\n"
+_SORTED = "import os\nimport sys\n\nprint(os, sys)\n"
+
+
+def _write_subject(tmp_path: Path, ruff_lint_table: str) -> Path:
+    (tmp_path / "pyproject.toml").write_text(
+        '[project]\nname = "subject"\nversion = "0"\nrequires-python = ">=3.11"\n'
+        "\n[tool.ruff.lint]\n" + ruff_lint_table,
+        encoding="utf-8",
+    )
+    path = tmp_path / "subject.py"
+    path.write_text(_UNSORTED)
+    return path
+
+
+@contextlib.asynccontextmanager
+async def _ruff_service(project_dir: Path) -> AsyncIterator[RuffLspService]:
+    if not _RUFF_BIN.exists():
+        pytest.skip(f"no ruff binary at {_RUFF_BIN}")
+    lsp_service = RuffLspService(
+        lsp_client=typing.cast(typing.Any, _StdioLspClient()),
+        file_editor=typing.cast(typing.Any, _HeadlessFileEditor()),
+        logger=typing.cast(typing.Any, _NullLogger()),
+    )
+    await lsp_service.ensure_started(project_dir.as_uri(), _META)
+    try:
+        yield lsp_service
+    finally:
+        await lsp_service._lsp_service._async_dispose()
+
+
+async def test_organize_imports_sorts_a_file_in_one_call(tmp_path: Path) -> None:
+    """Import ordering is offered as its own edit, not only as a lint diagnostic.
+
+    Callers that want a fully formatted file have no other way to reach import
+    order: ruff's formatter never reorders imports by design, so a formatter that
+    does not compose this in leaves every unsorted file half-fixed on each save.
+    """
+    path = _write_subject(tmp_path, 'select = ["E", "F"]\n')
+
+    async with _ruff_service(tmp_path) as service:
+        organized = await service.organize_imports(path, _UNSORTED)
+
+    assert organized == _SORTED
+
+
+async def test_organize_imports_fires_against_an_explicit_non_i_selection(
+    tmp_path: Path,
+) -> None:
+    """The action must not depend on some other handler having contributed `I`.
+
+    The project here selects `["E", "F"]` explicitly — an affirmative choice that
+    *excludes* `I`, not merely an unconfigured project. A positive result therefore
+    proves `source.organizeImports` overrides this selection on its own, which is
+    stronger than "fires when nothing is configured" and is the property the
+    formatter composition relies on. Keep this selection explicit if the fixture
+    changes: an absent table would silently weaken what the test proves.
+    """
+    path = _write_subject(tmp_path, 'select = ["E", "F"]\n')
+
+    async with _ruff_service(tmp_path) as service:
+        organized = await service.organize_imports(path, _UNSORTED)
+
+    assert organized == _SORTED
+
+
+async def test_organize_imports_is_not_suppressed_by_an_i001_ignore(
+    tmp_path: Path,
+) -> None:
+    """A project-level `ignore = ["I001"]` does not opt out of this action.
+
+    Ruff's source action runs independently of the rule, so a project that
+    disabled I001 in its own config still has its imports reordered by any caller
+    that only formats. This is a known, accepted limitation of composing import
+    order into the formatter, not a guarantee the test enforces — it pins the
+    behavior so a future change that starts honoring the ignore is visible.
+    """
+    path = _write_subject(tmp_path, 'select = ["E", "F", "I"]\nignore = ["I001"]\n')
+
+    async with _ruff_service(tmp_path) as service:
+        organized = await service.organize_imports(path, _UNSORTED)
+
+    assert organized == _SORTED
+
+
+async def test_organize_imports_leaves_already_sorted_imports_alone(
+    service: RuffLspService, subject: Path
+) -> None:
+    """Already-canonical imports must come back byte-identical, not re-emitted."""
+    organized = await service.organize_imports(subject, _SORTED)
+
+    assert organized == _SORTED
+
+
+async def test_organize_imports_survives_a_prior_check(
+    service: RuffLspService, subject: Path
+) -> None:
+    """Linting the file first must not stop the organize request from answering.
+
+    Lint and format share one server per runner, and lint is what runs first in
+    practice. If the check left the document in a state the organize request
+    cannot use, formatting alone would silently stop sorting imports.
+    """
+    await service.check_file(subject)
+
+    organized = await service.organize_imports(subject, _UNSORTED)
+
+    assert organized == _SORTED
+
+
+async def test_organize_imports_leaves_unparseable_content_alone(
+    service: RuffLspService, subject: Path
+) -> None:
+    """A file with syntax errors has no import block to organize and must be a no-op.
+
+    Format-on-save runs on files mid-edit, so an invalid file is routine rather
+    than exceptional. Returning the input unchanged is the only answer that does
+    not discard the edits the user is in the middle of.
+    """
+    broken = "def f(:\n    pass\n"
+
+    organized = await service.organize_imports(subject, broken)
+
+    assert organized == broken

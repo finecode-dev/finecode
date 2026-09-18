@@ -1,5 +1,10 @@
-# note: ruff formatter cannot sort imports, only ruff linter with fixes:
-# https://docs.astral.sh/ruff/formatter/#sorting-imports
+# The ruff formatter deliberately does not sort imports (only ruff's `I001` rule
+# can: https://docs.astral.sh/ruff/formatter/#sorting-imports), so `run` asks ruff
+# to organize imports (its `source.organizeImports` action) and then formats the
+# result. Both steps stay in this one handler on purpose: ruff reads client settings
+# only during initialize, so a second handler ahead of this one could seal the
+# shared settings table on its own `ensure_started` before this handler's settings
+# provider had run, silently dropping the formatter's configuration.
 from __future__ import annotations
 
 import dataclasses
@@ -117,7 +122,33 @@ class RuffFormatFileHandler(
         file_content = run_context.file_info.file_content
         file_version = run_context.file_info.file_version
 
-        new_file_content = await self.lsp_service.format_file(file_path, file_content)
+        organized_content = await self.lsp_service.organize_imports(
+            file_path, file_content
+        )
+        new_file_content = await self.lsp_service.format_file(
+            file_path, organized_content
+        )
+        if organized_content != file_content or new_file_content != organized_content:
+            # The formatter's layout is the canonical final state, so imports are
+            # organized first. Re-apply organize to the formatted output to confirm
+            # the two steps agree: the formatter can reshape an import block's
+            # layout without reordering it, and if that reshape re-triggers
+            # organize the composition never reaches a fixed point. Skipped when
+            # neither step changed anything, where a third call can only repeat
+            # the no-op it already saw.
+            reorganized_content = await self.lsp_service.organize_imports(
+                file_path, new_file_content
+            )
+            if reorganized_content != new_file_content:
+                self.logger.warning(
+                    f"format_python_file: {file_path} does not converge with imports"
+                    " organized before formatting; returning the format-only result"
+                    " so the file has a stable fixed point."
+                )
+                new_file_content = await self.lsp_service.format_file(
+                    file_path, file_content
+                )
+
         file_changed = new_file_content != file_content
 
         # update for next handlers in the pipeline

@@ -196,7 +196,9 @@ Format a single Python file. Language-specific item-level subaction of `format_f
 
 **Payload fields:** same as `format_file`.
 
-Register Python formatting tools (ruff, isort, …) as handlers for this action. Handler order matters — they run sequentially as a pipeline.
+Register Python formatting tools as handlers for this action. Handler order matters — they run sequentially as a pipeline.
+
+The bundled `ruff` handler organizes imports (via ruff's `source.organizeImports`) before formatting, so import ordering is included in this action's output: a file with unsorted imports is fully fixed in one call. Import order remains owned by ruff's `I001` rule — the handler composes that action rather than adding a second sorter.
 
 ---
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import collections.abc
+import re
 import sys
 from pathlib import Path
 from typing import Any
@@ -13,6 +14,7 @@ else:
 
 from fine_inspect_code.diagnostic_types import map_lsp_diagnostics
 from fine_lint.diagnostic_types import Diagnostic
+from fine_lint.lint_fix import Position, Range
 from finecode_extension_api import code_action, service
 from finecode_extension_api.contrib.lsp_service import LspService, apply_text_edits
 from finecode_extension_api.interfaces import ifileeditor, ilogger, ilspclient
@@ -76,6 +78,47 @@ _RUFF_CLIENT_CAPABILITIES: dict[str, Any] = {
         "configuration": True,
     },
 }
+
+
+_MAX_CHARACTER = 2**31 - 1
+"""A character offset no line reaches, for ranges meant to run to end of line."""
+
+# LSP counts lines by \n, \r\n and \r only. `str.splitlines` also breaks on
+# several other control and Unicode separators (vertical tab, form feed, the C1
+# NEL, the Unicode line/paragraph separators), which would make a file
+# containing any of them look longer here than it does to the server -- and a
+# whole-document range built from that count stops short of the real last line,
+# hiding every diagnostic below the first such character.
+_LINE_TERMINATOR_RE = re.compile(r"\r\n|\r|\n")
+
+
+def _kind_matches(kind: str, preferred_kinds: set[str]) -> bool:
+    """Return True if *kind* is, or is a sub-kind of, any kind in *preferred_kinds*.
+
+    LSP kind matching is hierarchical: ``source.fixAll`` matches both
+    ``source.fixAll`` and ``source.fixAll.ruff``.
+    """
+    return any(kind == k or kind.startswith(k + ".") for k in preferred_kinds)
+
+
+def _whole_document_range(file_content: str) -> Range:
+    """A range spanning the entire document, for requests with no explicit range.
+
+    LSP servers only return code actions whose diagnostics overlap the requested
+    range, so this has to actually reach the last line rather than being a
+    zero-width placeholder at the start of the file.
+    """
+    # Always at least one element, empty content included -- an empty document
+    # still has a line 0 for a diagnostic to sit on.
+    lines = _LINE_TERMINATOR_RE.split(file_content)
+    return Range(
+        start=Position(line=0, character=0),
+        # Saturating rather than len(lines[-1]): LSP character offsets are UTF-16
+        # code units, so a last line with astral characters ends further along
+        # than its Python length. The spec requires servers to clamp an offset
+        # past the line end back to the line end.
+        end=Position(line=len(lines) - 1, character=_MAX_CHARACTER),
+    )
 
 
 def _deep_merge(target: dict[str, Any], source: dict[str, Any]) -> None:
@@ -233,6 +276,49 @@ class RuffLspService(service.DisposableService):
         raw_edits = await self._lsp_service.format_file(
             file_path, file_content, timeout=timeout
         )
+        if not raw_edits:
+            return file_content
+        return apply_text_edits(file_content, raw_edits)
+
+    async def organize_imports(self, file_path: Path, file_content: str) -> str:
+        """Sort/organize this file's imports via ruff's `source.organizeImports`.
+
+        Precondition: caller has already called `ensure_started` for this session, same
+        contract as `format_file` (neither method starts the server itself).
+        """
+        whole_doc = _whole_document_range(file_content)
+        range_dict = {
+            "start": {
+                "line": whole_doc.start.line,
+                "character": whole_doc.start.character,
+            },
+            "end": {
+                "line": whole_doc.end.line,
+                "character": whole_doc.end.character,
+            },
+        }
+        actions = await self.get_code_actions(
+            file_path,
+            file_content,
+            range_dict,
+            only=["source.organizeImports"],
+        )
+        matching = [
+            action
+            for action in (actions or [])
+            if isinstance(action, dict)
+            and _kind_matches(action.get("kind", ""), {"source.organizeImports"})
+        ]
+        if not matching:
+            return file_content
+        edit = matching[0].get("edit") or {}
+        changes = edit.get("changes") or {}
+        # Never assume the response keys the change by this file's URI: ruff's Rust
+        # `url` crate need not percent-encode identically to Python's `Path.as_uri`,
+        # and a mismatch would silently return the input unchanged. Take the single
+        # entry's value the way the lint-fix mapper does. The request only ever asks
+        # about one document, so there is at most one entry to take.
+        raw_edits = next(iter(changes.values()), []) if changes else []
         if not raw_edits:
             return file_content
         return apply_text_edits(file_content, raw_edits)
