@@ -35,6 +35,11 @@ def _record(scenario: dict, entry: dict) -> None:
 def main() -> int:
     scenario = json.loads(sys.argv[1])
 
+    if scenario.get("record_driver"):
+        # The CLI flags the handler assembled, gated so scenarios that inspect
+        # the whole record list keep its shape. Tests read this by key.
+        _record(scenario, {"argv": sys.argv[2:]})
+
     for step in scenario["steps"]:
         action = step["do"]
 

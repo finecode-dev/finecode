@@ -29,6 +29,7 @@ from fine_agent.run_agent_task_action import (
     RunAgentTaskRunPayload,
     RunAgentTaskRunResult,
 )
+from finecode_extension_api.interfaces import icommandrunner
 from finecode_extension_runner.testing import run_handler
 
 from fine_agent_claude_code import claude_code_agent_handler
@@ -51,10 +52,8 @@ class _FakeClaudeHandler(ClaudeCodeAgentHandler):
     is not something configuration should be able to do.
     """
 
-    def _build_command(self) -> str:
-        return shlex.join(
-            [sys.executable, str(_FAKE_CLAUDE), json.dumps(_ACTIVE_SCENARIO)]
-        )
+    def _executable(self) -> list[str]:
+        return [sys.executable, str(_FAKE_CLAUDE), json.dumps(_ACTIVE_SCENARIO)]
 
 
 async def _run(
@@ -62,15 +61,21 @@ async def _run(
     *,
     prompt: str = "do the thing",
     handler_config: dict[str, Any] | None = None,
+    profile: str | None = None,
+    output_schema: dict[str, Any] | None = None,
+    service_overrides: dict[Any, Any] | None = None,
 ) -> RunAgentTaskRunResult:
     global _ACTIVE_SCENARIO
     _ACTIVE_SCENARIO = scenario
     try:
         result = await run_handler(
             _FakeClaudeHandler,
-            RunAgentTaskRunPayload(prompt=prompt),
+            RunAgentTaskRunPayload(
+                prompt=prompt, profile=profile, output_schema=output_schema
+            ),
             action_cls=RunAgentTaskAction,
             handler_config=handler_config,
+            service_overrides=service_overrides,
         )
     finally:
         _ACTIVE_SCENARIO = {}
@@ -437,6 +442,175 @@ async def test_a_run_that_outlives_its_timeout_fails() -> None:
     assert "did not finish within" in result.error
 
 
+def _recorded_argv(record: pathlib.Path) -> list[str]:
+    return next(entry["argv"] for entry in _records(record) if "argv" in entry)
+
+
+def _flag_value(argv: list[str], flag: str) -> str | None:
+    return argv[argv.index(flag) + 1] if flag in argv else None
+
+
+def _settled_scenario(record: pathlib.Path) -> dict[str, Any]:
+    return {
+        "record_path": str(record),
+        "record_driver": True,
+        "steps": [
+            {"do": "read_prompt"},
+            {"do": "init"},
+            {"do": "emit", "frame": _result(text="done")},
+        ],
+    }
+
+
+async def test_profile_selects_its_model(tmp_path: pathlib.Path) -> None:
+    """A profile is the only way one task runs on a different model than
+    another, so its model must reach the command."""
+    record = tmp_path / "record.jsonl"
+    await _run(
+        _settled_scenario(record),
+        handler_config={"model": "M1", "profiles": {"p": {"model": "M2"}}},
+        profile="p",
+    )
+
+    assert _flag_value(_recorded_argv(record), "--model") == "M2"
+
+
+async def test_no_profile_uses_the_top_level_model(tmp_path: pathlib.Path) -> None:
+    """An existing caller that sends no profile must get exactly today's command."""
+    record = tmp_path / "record.jsonl"
+    await _run(
+        _settled_scenario(record),
+        handler_config={"model": "M1", "profiles": {"p": {"model": "M2"}}},
+    )
+
+    assert _flag_value(_recorded_argv(record), "--model") == "M1"
+
+
+class _RecordingCommandRunner:
+    def __init__(self) -> None:
+        self.run_calls = 0
+
+    async def run(self, *args: Any, **kwargs: Any) -> Any:
+        self.run_calls += 1
+        raise AssertionError("an unknown profile must not spawn a process")
+
+
+async def test_unknown_profile_fails_before_spawning() -> None:
+    """A typo in a profile name must fail with a message that names the profile
+    and the ones that exist, and must not pay for a model run to discover it."""
+    runner = _RecordingCommandRunner()
+    result = await _run(
+        {"steps": []},
+        handler_config={"profiles": {"b": {}, "a": {}}},
+        profile="nope",
+        service_overrides={icommandrunner.ICommandRunner: runner},
+    )
+
+    assert result.status is AgentRunStatus.FAILED
+    assert result.error == "unknown agent profile 'nope'; configured profiles: a, b"
+    assert runner.run_calls == 0
+
+
+async def test_profile_settle_timeout_overrides_the_top_level(
+    tmp_path: pathlib.Path,
+) -> None:
+    """A long top-level timeout must not keep a profile that asked for a short
+    one waiting: the profile decides how long its own run may take."""
+    result = await _run(
+        {
+            "steps": [
+                {"do": "read_prompt"},
+                {"do": "init"},
+                {"do": "sleep", "seconds": 300},
+            ]
+        },
+        handler_config={
+            "settle_timeout_sec": 900,
+            "profiles": {"p": {"settle_timeout_sec": 0.5}},
+        },
+        profile="p",
+    )
+
+    assert result.status is AgentRunStatus.FAILED
+    assert "0.5s" in (result.error or "")
+
+
+_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {"answer": {"type": "string"}},
+}
+
+
+def _schema_scenario(
+    record: pathlib.Path | None = None,
+    **result_extra: Any,
+) -> dict[str, Any]:
+    scenario: dict[str, Any] = {
+        "steps": [
+            {"do": "read_prompt"},
+            {"do": "init"},
+            {
+                "do": "emit",
+                "frame": _result(text=result_extra.pop("text", "done"), **result_extra),
+            },
+        ]
+    }
+    if record is not None:
+        scenario["record_path"] = str(record)
+        scenario["record_driver"] = True
+    return scenario
+
+
+async def test_output_schema_is_passed_as_compact_json_on_the_argv(
+    tmp_path: pathlib.Path,
+) -> None:
+    """The CLI takes the schema as a flag, and compact JSON is what it expects."""
+    record = tmp_path / "record.jsonl"
+    await _run(
+        _schema_scenario(record, structured_output={"answer": "42"}),
+        output_schema=_SCHEMA,
+    )
+
+    argv = _recorded_argv(record)
+    assert argv[argv.index("--json-schema") + 1] == json.dumps(_SCHEMA)
+
+
+async def test_structured_output_is_returned() -> None:
+    result = await _run(
+        _schema_scenario(structured_output={"answer": "42"}),
+        output_schema=_SCHEMA,
+    )
+
+    assert result.status is AgentRunStatus.SETTLED
+    assert result.structured_output == {"answer": "42"}
+
+
+async def test_settling_without_structured_output_is_a_failure() -> None:
+    """A settled run with no structured output must not hand the caller `None`
+    where it asked for a report."""
+    result = await _run(_schema_scenario(), output_schema=_SCHEMA)
+
+    assert result.status is AgentRunStatus.FAILED
+    assert result.error == "claude settled without structured output"
+    assert result.output == "done"
+
+
+async def test_structured_output_retry_exhaustion_is_a_failure() -> None:
+    """The CLI has its own subtype for failing to satisfy the schema, and it is
+    not a success just because the process exited cleanly."""
+    result = await _run(
+        _schema_scenario(
+            subtype="error_max_structured_output_retries",
+            is_error=True,
+            text="could not satisfy the schema",
+        ),
+        output_schema=_SCHEMA,
+    )
+
+    assert result.status is AgentRunStatus.FAILED
+    assert "error_max_structured_output_retries" in (result.error or "")
+
+
 def _handler_with(**config: Any) -> ClaudeCodeAgentHandler:
     handler = ClaudeCodeAgentHandler.__new__(ClaudeCodeAgentHandler)
     defaults: dict[str, Any] = {
@@ -451,15 +625,30 @@ def _handler_with(**config: Any) -> ClaudeCodeAgentHandler:
     return handler
 
 
+def _settings(**values: Any) -> claude_code_agent_handler._ClaudeRunSettings:
+    return claude_code_agent_handler._ClaudeRunSettings(
+        **{"model": None, "settle_timeout_sec": 900.0} | values
+    )
+
+
+def _cmd(**config: Any) -> list[str]:
+    """The real builder's argv for a config plus a resolved settings object.
+
+    A profile moves `model` out of the config, so it travels through settings
+    the way a run does.
+    """
+    config = dict(config)
+    settings = _settings(model=config.pop("model", None))
+    return shlex.split(ClaudeCodeAgentHandler._build_command(_handler_with(**config), settings))
+
+
 def test_build_command_always_asks_for_the_machine_readable_stream() -> None:
     """The real command builder, which the fake-CLI tests deliberately replace.
 
     `--verbose` is load-bearing rather than decorative: the CLI rejects
     `stream-json` output in print mode without it.
     """
-    command = ClaudeCodeAgentHandler._build_command(_handler_with())
-
-    assert command.split() == [
+    assert _cmd() == [
         "claude",
         "--print",
         "--output-format",
@@ -469,17 +658,13 @@ def test_build_command_always_asks_for_the_machine_readable_stream() -> None:
 
 
 def test_build_command_carries_configured_options() -> None:
-    command = ClaudeCodeAgentHandler._build_command(
-        _handler_with(
-            model="opus",
-            permission_mode="acceptEdits",
-            allowed_tools=["Read", "Bash(git *)"],
-            disallowed_tools=["WebFetch"],
-            max_budget_usd=1.5,
-        )
-    )
-
-    assert shlex.split(command)[5:] == [
+    assert _cmd(
+        model="opus",
+        permission_mode="acceptEdits",
+        allowed_tools=["Read", "Bash(git *)"],
+        disallowed_tools=["WebFetch"],
+        max_budget_usd=1.5,
+    )[5:] == [
         "--model",
         "opus",
         "--permission-mode",
@@ -506,10 +691,8 @@ def test_build_command_carries_configured_options() -> None:
     ],
 )
 def test_build_command_omits_unset_options(field: str, value: Any, flag: str) -> None:
-    assert flag in ClaudeCodeAgentHandler._build_command(
-        _handler_with(**{field: value})
-    )
-    assert flag not in ClaudeCodeAgentHandler._build_command(_handler_with())
+    assert flag in _cmd(**{field: value})
+    assert flag not in _cmd()
 
 
 def _is_gone(pid: int) -> bool:

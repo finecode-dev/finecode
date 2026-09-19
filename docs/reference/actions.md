@@ -882,9 +882,19 @@ second one. Nothing enforces this — the result merge degrades to last-writer-w
 | Field | Type | Description |
 |---|---|---|
 | `prompt` | `str` | The task, in natural language |
+| `profile` | `str \| None` | A named role for the run; `None` uses the handler's top-level settings |
+| `output_schema` | `dict \| None` | JSON Schema the final answer must satisfy |
 
-Which model runs the task is handler configuration, not payload, so the same task
-definition is portable across setups.
+`profile` selects a named bundle of handler config, so the same task definition
+remains portable across setups and a caller does not name a model (PRD-0005 R3).
+Each backend resolves `profile` before spawning anything: an unknown name is
+`FAILED` with `unknown agent profile '<name>'; configured profiles: …` and no
+process is started.
+
+`output_schema` selects structured output. The backend only *extracts* JSON; the
+decoded value is returned in `structured_output` and is not type-checked by the
+backend. Type validation is the caller's job, done by structuring the value into
+a dataclass.
 
 **Result fields:**
 
@@ -892,6 +902,7 @@ definition is portable across setups.
 |---|---|---|
 | `status` | `AgentRunStatus` | `settled`, `failed`, `aborted`, or `refused_interaction` |
 | `output` | `str` | The agent's final text |
+| `structured_output` | `Any` | Decoded JSON the final answer carried, when `output_schema` was requested; `None` otherwise |
 | `turns` | `int \| None` | Assistant turns taken, and a sign of looping; `None` where the backend has no turn concept |
 | `usage` | `AgentRunUsage \| None` | What the run consumed; `None` when the backend reported nothing |
 | `duration_sec` | `float \| None` | Wall-clock time, measured by the handler rather than reported by the backend |
@@ -973,6 +984,42 @@ way), while a run that **failed** with a denial recorded is `refused_interaction
 the run needed a decision this setup was configured not to make. The transcript is
 persisted; the handler logs the session id so `claude --resume <id>` can show what
 the agent actually did.
+
+### Profiles
+
+Both backends take a `profiles` map, keyed by the name a caller passes as
+`profile`. A field left unset on a profile inherits the handler's top-level value,
+so a profile only states what differs. Profiles are a map rather than a list so an
+override is expressible in an environment variable (S-205).
+
+```toml
+[tool.finecode.action.run_agent_task.handlers.pi_agent]
+config.model = "anthropic/claude-sonnet-5"
+config.settle_timeout_sec = 900
+config.profiles.my_task = { model = "anthropic/claude-opus-5:high", settle_timeout_sec = 3600 }
+```
+
+`PiAgentProfile` fields are `model`, `provider` and `settle_timeout_sec`.
+`ClaudeCodeAgentProfile` fields are `model` and `settle_timeout_sec`;
+`permission_mode`, `allowed_tools` and `max_budget_usd` remain top-level.
+
+### Structured output
+
+With `output_schema` set:
+
+- **Claude** receives `--json-schema <schema>` and reads `result.structured_output`
+  from the stream. A settled run that produced none is `FAILED` with `claude
+  settled without structured output`; the CLI's own
+  `error_max_structured_output_retries` subtype is a failure too.
+- **Pi** has no schema flag, so the backend appends a fixed instruction asking for
+  one fenced ```` ```json ```` block matching the schema and decodes the *last*
+  such block in the final text. No block is `FAILED` with `no fenced json block`;
+  a malformed block is `FAILED` with `invalid JSON in the final json block: …`.
+
+In every failure case the raw `output` is kept, and `structured_output` stays
+`None`. There is no repair turn: a run that cannot produce the requested shape
+fails at once. With `output_schema` unset the prompt is sent byte-for-byte
+unchanged and `structured_output` is `None`.
 
 ---
 

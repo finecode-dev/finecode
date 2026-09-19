@@ -13,6 +13,7 @@ from typing import Any
 import ordered_set
 from finecode_extension_api.interfaces import (  # idevenvinfoprovider,
     icache,
+    idataclasscodec,
     iextensionrunnerinfoprovider,
     ifileeditor,
     ifilemanager,
@@ -32,6 +33,7 @@ from finecode_extension_runner import context, domain, process_slots, service_co
 from finecode_extension_runner._services import run_action as run_action_service
 from finecode_extension_runner.di.registry import Registry
 from finecode_extension_runner.impls import (  # dev_env_info_provider,
+    dataclass_codec,
     extension_runner_info_provider,
     file_editor,
     file_manager,
@@ -139,6 +141,12 @@ def bootstrap(
     registry.register_instance(
         iuserprompt.IUserPrompt,
         user_prompt.UserPrompt(send_request_to_wm),
+    )
+    # Stateless and config-free, so an instance is correct rather than a factory
+    # (S-303 does not apply) and there is nothing to dispose.
+    registry.register_instance(
+        idataclasscodec.IDataclassCodec,
+        dataclass_codec.DataclassCodec(),
     )
     registry.register_instance(ifilemanager.IFileManager, file_manager_instance)
     registry.register_instance(ifileeditor.IFileEditor, file_editor_instance)

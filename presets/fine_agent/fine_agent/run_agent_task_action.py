@@ -165,8 +165,20 @@ class RunAgentTaskRunPayload(code_action.RunActionPayload):
     prompt: str
     """The task for the agent, in natural language.
 
-    Deliberately the only input. Which model runs it is handler config, not
-    payload, so the same task definition is portable across setups.
+    Which model runs it is handler config, not payload; `profile` selects a
+    named bundle of that config.
+    """
+    profile: str | None = None
+    """A named role for the run, or `None` for the handler's top-level settings.
+
+    What the name resolves to is handler config, so the same task definition is
+    portable across setups and a caller does not name a model (PRD-0005 R3).
+    """
+    output_schema: dict[str, typing.Any] | None = None
+    """JSON Schema the agent's final answer must satisfy, or `None` for free text.
+
+    The backend only *extracts* JSON against the schema; type validation is the
+    caller's job, done by structuring the decoded value into a dataclass.
     """
 
 
@@ -180,6 +192,14 @@ class RunAgentTaskRunResult(code_action.RunActionResult):
     as a successful empty run."""
     output: str = ""
     """The agent's final text."""
+    structured_output: typing.Any = None
+    """The decoded JSON value the agent ended with, when a schema was requested.
+
+    `None` when no schema was requested, or when the backend settled without
+    producing one (which is itself a failure the caller sees through `status`).
+    Typed `Any` rather than a recursive JSON alias so the lenient converter
+    passes it through the WM path.
+    """
     turns: int | None = None
     """Assistant turns the agent took, and a sign of looping.
 
@@ -217,6 +237,7 @@ class RunAgentTaskRunResult(code_action.RunActionResult):
 
         self.status = other.status
         self.output = other.output
+        self.structured_output = other.structured_output
         self.turns = other.turns
         self.usage = other.usage
         self.duration_sec = other.duration_sec
@@ -271,8 +292,13 @@ class RunAgentTaskAction(
     last-writer-wins if it is violated, which is a poor outcome, not a safe one.
 
     Handler contract:
+    - Resolve `profile` before spawning anything. An unknown profile is
+      `FAILED` with `unknown_profile_error(...)` and no process is started.
     - Set `status` on every path; `FAILED` is the default so an unpopulated
       result never reads as success.
+    - When `output_schema` is set, `SETTLED` implies `structured_output` is
+      populated; a settled run with no extracted JSON is `FAILED` with `output`
+      kept.
     - Populate `error` whenever `status` is not `SETTLED`.
     - Report execution narrative through progress, never the model's text
       (R-304) -- the text is result data and belongs in `output`.

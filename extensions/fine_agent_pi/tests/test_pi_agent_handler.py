@@ -15,18 +15,19 @@ import asyncio
 import json
 import os
 import pathlib
-import shlex
 import sys
 import time
 from typing import Any
 
 import pytest
+from fine_agent import backend_support
 from fine_agent.run_agent_task_action import (
     AgentRunStatus,
     RunAgentTaskAction,
     RunAgentTaskRunPayload,
     RunAgentTaskRunResult,
 )
+from finecode_extension_api.interfaces import icommandrunner
 from finecode_extension_runner.testing import run_handler
 
 from fine_agent_pi import pi_agent_handler
@@ -49,8 +50,8 @@ class _FakePiHandler(PiAgentHandler):
     is not something configuration should be able to do.
     """
 
-    def _build_command(self) -> str:
-        return shlex.join([sys.executable, str(_FAKE_PI), json.dumps(_ACTIVE_SCENARIO)])
+    def _executable(self) -> list[str]:
+        return [sys.executable, str(_FAKE_PI), json.dumps(_ACTIVE_SCENARIO)]
 
 
 async def _run(
@@ -58,15 +59,21 @@ async def _run(
     *,
     prompt: str = "do the thing",
     handler_config: dict[str, Any] | None = None,
+    profile: str | None = None,
+    output_schema: dict[str, Any] | None = None,
+    service_overrides: dict[Any, Any] | None = None,
 ) -> RunAgentTaskRunResult:
     global _ACTIVE_SCENARIO
     _ACTIVE_SCENARIO = scenario
     try:
         result = await run_handler(
             _FakePiHandler,
-            RunAgentTaskRunPayload(prompt=prompt),
+            RunAgentTaskRunPayload(
+                prompt=prompt, profile=profile, output_schema=output_schema
+            ),
             action_cls=RunAgentTaskAction,
             handler_config=handler_config,
+            service_overrides=service_overrides,
         )
     finally:
         _ACTIVE_SCENARIO = {}
@@ -690,11 +697,11 @@ async def test_a_rejected_stats_request_falls_back_rather_than_failing() -> None
 def test_build_command_carries_model_and_provider() -> None:
     """The real command builder, which the fake-pi tests deliberately replace."""
     handler = PiAgentHandler.__new__(PiAgentHandler)
-    handler.config = type(
-        "_Config", (), {"model": "deepseek-v4-flash", "provider": "deepseek"}
-    )()
+    settings = pi_agent_handler._PiRunSettings(
+        model="deepseek-v4-flash", provider="deepseek", settle_timeout_sec=900.0
+    )
 
-    command = PiAgentHandler._build_command(handler)
+    command = PiAgentHandler._build_command(handler, settings)
 
     assert command.split() == [
         "pi",
@@ -712,9 +719,137 @@ def test_build_command_carries_model_and_provider() -> None:
 def test_build_command_omits_unset_options(field: str) -> None:
     handler = PiAgentHandler.__new__(PiAgentHandler)
     values = {"model": "m", "provider": "p"} | {field: None}
-    handler.config = type("_Config", (), values)()
+    settings = pi_agent_handler._PiRunSettings(settle_timeout_sec=900.0, **values)
 
-    assert f"--{field}" not in PiAgentHandler._build_command(handler)
+    assert f"--{field}" not in PiAgentHandler._build_command(handler, settings)
+
+
+async def test_default_config_records_the_mode_flags_only(
+    tmp_path: pathlib.Path,
+) -> None:
+    """A run with no profile and no top-level model carries neither flag, so a
+    later test that sees a flag knows where it came from."""
+    record = tmp_path / "record.jsonl"
+    await _run(
+        {
+            "record_path": str(record),
+            "record_driver": True,
+            "steps": [
+                {"do": "await_prompt"},
+                {"do": "emit", "frame": {"type": "agent_settled"}},
+            ],
+        }
+    )
+
+    argv = next(entry["argv"] for entry in _records(record) if "argv" in entry)
+    assert argv == ["--mode", "rpc", "--no-session"]
+
+
+def _recorded_argv(record: pathlib.Path) -> list[str]:
+    return next(entry["argv"] for entry in _records(record) if "argv" in entry)
+
+
+def _flag_value(argv: list[str], flag: str) -> str | None:
+    return argv[argv.index(flag) + 1] if flag in argv else None
+
+
+def _settled_scenario(record: pathlib.Path) -> dict[str, Any]:
+    return {
+        "record_path": str(record),
+        "record_driver": True,
+        "steps": [
+            {"do": "await_prompt"},
+            {"do": "emit", "frame": {"type": "agent_settled"}},
+        ],
+    }
+
+
+async def test_profile_selects_its_model_and_provider(tmp_path: pathlib.Path) -> None:
+    """A profile is the only way one task runs on a different model than
+    another, so its fields must reach the command rather than living in config
+    that is merely parsed."""
+    record = tmp_path / "record.jsonl"
+    await _run(
+        _settled_scenario(record),
+        handler_config={
+            "model": "M1",
+            "provider": "P1",
+            "profiles": {"p": {"model": "M2", "provider": "P2"}},
+        },
+        profile="p",
+    )
+
+    argv = _recorded_argv(record)
+    assert _flag_value(argv, "--model") == "M2"
+    assert _flag_value(argv, "--provider") == "P2"
+
+
+async def test_no_profile_uses_the_top_level_values(tmp_path: pathlib.Path) -> None:
+    """An existing caller that sends no profile must get exactly today's command."""
+    record = tmp_path / "record.jsonl"
+    await _run(
+        _settled_scenario(record),
+        handler_config={
+            "model": "M1",
+            "provider": "P1",
+            "profiles": {"p": {"model": "M2", "provider": "P2"}},
+        },
+    )
+
+    argv = _recorded_argv(record)
+    assert _flag_value(argv, "--model") == "M1"
+    assert _flag_value(argv, "--provider") == "P1"
+
+
+class _RecordingCommandRunner:
+    def __init__(self) -> None:
+        self.run_calls = 0
+
+    async def run(self, *args: Any, **kwargs: Any) -> Any:
+        self.run_calls += 1
+        raise AssertionError("an unknown profile must not spawn a process")
+
+
+async def test_unknown_profile_fails_before_spawning() -> None:
+    """A typo in a profile name must fail with a message that names the profile
+    and the ones that exist, and must not pay for a model run to discover it."""
+    runner = _RecordingCommandRunner()
+    result = await _run(
+        {"steps": []},
+        handler_config={"profiles": {"b": {}, "a": {}}},
+        profile="nope",
+        service_overrides={icommandrunner.ICommandRunner: runner},
+    )
+
+    assert result.status is AgentRunStatus.FAILED
+    assert result.error == "unknown agent profile 'nope'; configured profiles: a, b"
+    assert runner.run_calls == 0
+
+
+async def test_profile_settle_timeout_overrides_the_top_level(
+    tmp_path: pathlib.Path,
+) -> None:
+    """A long top-level timeout must not keep a profile that asked for a short
+    one waiting: the profile decides how long its own run may take."""
+    record = tmp_path / "record.jsonl"
+    result = await _run(
+        {
+            "record_path": str(record),
+            "steps": [
+                {"do": "await_prompt"},
+                {"do": "emit", "frame": _text("thinking")},
+                {"do": "sleep", "seconds": 300},
+            ],
+        },
+        handler_config={
+            "settle_timeout_sec": 900,
+            "profiles": {"p": {"settle_timeout_sec": 0.5}},
+        },
+        profile="p",
+    )
+
+    assert result.status is AgentRunStatus.FAILED
+    assert "0.5s" in (result.error or "")
 
 
 async def test_confirm_policy_no_denies_rather_than_approving(
@@ -872,3 +1007,98 @@ async def test_a_wedged_run_is_torn_down_with_the_tree_it_spawned(
     pids = next(entry["pids"] for entry in _records(record) if "pids" in entry)
     assert await _wait_gone(pids["agent"]), "pi outlived its own timeout"
     assert await _wait_gone(pids["child"]), "pi's child was left running"
+
+
+_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {"answer": {"type": "string"}},
+}
+
+
+def _fenced(payload: str) -> str:
+    return f"```json\n{payload}\n```"
+
+
+async def test_output_schema_appends_the_instruction_to_the_prompt(
+    tmp_path: pathlib.Path,
+) -> None:
+    """The prompt is the only channel pi has for the schema, so the instruction
+    must reach pi byte for byte and carry the schema the caller asked for."""
+    record = tmp_path / "record.jsonl"
+    await _run(
+        _settled_scenario(record),
+        prompt="do the thing",
+        output_schema=_SCHEMA,
+    )
+
+    prompt = next(entry["prompt"] for entry in _records(record) if "prompt" in entry)
+    assert prompt == "do the thing" + backend_support.json_output_instruction(_SCHEMA)
+    assert json.dumps(_SCHEMA, indent=2) in prompt
+
+
+async def test_no_schema_sends_the_prompt_unchanged(tmp_path: pathlib.Path) -> None:
+    """A caller that asked for no structured output must send exactly the text
+    it wrote, with no instruction appended."""
+    record = tmp_path / "record.jsonl"
+    result = await _run(_settled_scenario(record), prompt="do the thing")
+
+    prompt = next(entry["prompt"] for entry in _records(record) if "prompt" in entry)
+    assert prompt == "do the thing"
+    assert result.structured_output is None
+
+
+async def test_the_last_fenced_block_is_the_structured_output() -> None:
+    """A model that shows intermediate JSON and then an answer puts the answer
+    last; reading the first block would return its own workings."""
+    result = await _run(
+        {
+            "steps": [
+                {"do": "await_prompt"},
+                {"do": "emit", "frame": _text("first\n" + _fenced('{"n": 1}') + "\n")},
+                {"do": "emit", "frame": _text("then\n" + _fenced('{"n": 2}') + "\n")},
+                {"do": "emit", "frame": {"type": "agent_settled"}},
+            ]
+        },
+        output_schema=_SCHEMA,
+    )
+
+    assert result.status is AgentRunStatus.SETTLED
+    assert result.structured_output == {"n": 2}
+
+
+async def test_missing_block_fails_and_keeps_the_raw_output() -> None:
+    """A settled run with no block is a failure with a named reason, and the
+    raw text stays available to whoever has to debug it."""
+    result = await _run(
+        {
+            "steps": [
+                {"do": "await_prompt"},
+                {"do": "emit", "frame": _text("no json here")},
+                {"do": "emit", "frame": {"type": "agent_settled"}},
+            ]
+        },
+        output_schema=_SCHEMA,
+    )
+
+    assert result.status is AgentRunStatus.FAILED
+    assert (result.error or "").startswith("no fenced json block")
+    assert result.output == "no json here"
+
+
+async def test_invalid_block_fails_and_keeps_the_raw_output() -> None:
+    result = await _run(
+        {
+            "steps": [
+                {"do": "await_prompt"},
+                {"do": "emit", "frame": _text(_fenced("{oops}"))},
+                {"do": "emit", "frame": {"type": "agent_settled"}},
+            ]
+        },
+        output_schema=_SCHEMA,
+    )
+
+    assert result.status is AgentRunStatus.FAILED
+    assert (result.error or "").startswith(
+        "invalid JSON in the final json block"
+    )
+    assert result.output == _fenced("{oops}")

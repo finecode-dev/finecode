@@ -40,6 +40,21 @@ handlers = [
 config.permission_mode = "acceptEdits"  # the CLI's default approves nothing
 ```
 
+A caller passes a named `profile` to run a task under a different model without
+editing the task definition. A field left unset on a profile inherits the
+top-level value:
+
+```toml
+[tool.finecode.action.run_agent_task.handlers.pi_agent]
+config.model = "anthropic/claude-sonnet-5"
+config.settle_timeout_sec = 900
+config.profiles.my_task = { model = "anthropic/claude-opus-5:high", settle_timeout_sec = 3600 }
+```
+
+An unknown profile is `FAILED` before any backend process is spawned. A caller
+can also pass `output_schema` to ask for structured output; the backend returns
+the decoded JSON in `structured_output` and the caller validates the type.
+
 **Exactly one handler.** Unlike most FineCode actions, this one gains nothing
 from merging several handlers' results: two agents independently attempting the
 same task would both write to the same files, and their answers cannot be

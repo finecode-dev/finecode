@@ -1,9 +1,11 @@
 import asyncio
 import contextlib
 import dataclasses
+import json
 import shlex
 import time
 
+from fine_agent import backend_support
 from fine_agent.run_agent_task_action import (
     AgentRunStatus,
     RunAgentTaskAction,
@@ -39,6 +41,15 @@ agent winding down.
 
 
 @dataclasses.dataclass
+class ClaudeCodeAgentProfile:
+    """Per-role overrides for one named agent run. A `None` field inherits the
+    handler's top-level value."""
+
+    model: str | None = None
+    settle_timeout_sec: float | None = None
+
+
+@dataclasses.dataclass
 class ClaudeCodeAgentHandlerConfig(code_action.ActionHandlerConfig):
     model: str | None = None
     """Model passed to `claude --model`, as an alias (`opus`, `sonnet`) or a
@@ -71,6 +82,26 @@ class ClaudeCodeAgentHandlerConfig(code_action.ActionHandlerConfig):
     settle_timeout_sec: float = 900.0
     """Ceiling on one agent run. An agent loop has no natural bound, so without
     this a wedged run holds an ER subprocess slot indefinitely."""
+    profiles: dict[str, ClaudeCodeAgentProfile] = dataclasses.field(
+        default_factory=dict
+    )
+    """Named runs, keyed by the `profile` a caller passes, so an override can be
+    expressed in an environment variable (S-205).
+
+    A field left `None` on a profile inherits the top-level value; a profile
+    therefore cannot ask for the CLI's own default for a field the top level
+    sets. `permission_mode`, `allowed_tools` and `max_budget_usd` stay top-level
+    in this slice -- a future knob must choose inherit-or-empty deliberately,
+    since inheriting a permission set can grant more than the profile intended.
+    """
+
+
+@dataclasses.dataclass(frozen=True)
+class _ClaudeRunSettings:
+    """The claude run knobs for one run, after a profile is resolved."""
+
+    model: str | None
+    settle_timeout_sec: float
 
 
 class ClaudeCodeAgentHandler(
@@ -116,7 +147,14 @@ class ClaudeCodeAgentHandler(
         payload: RunAgentTaskRunPayload,
         run_context: RunAgentTaskRunContext,
     ) -> RunAgentTaskRunResult:
-        command = self._build_command()
+        settings = self._resolve(payload.profile)
+        if isinstance(settings, str):
+            # Fail before spawning anything: an unknown profile is a
+            # configuration error, not a run that got partway.
+            return RunAgentTaskRunResult(
+                status=AgentRunStatus.FAILED, error=settings, duration_sec=0.0
+            )
+        command = self._build_command(settings, payload.output_schema)
         project_dir = self.project_info_provider.get_current_project_dir_path()
         self.logger.debug(f"Starting claude: {command} in {project_dir}")
 
@@ -132,7 +170,7 @@ class ClaudeCodeAgentHandler(
 
         try:
             result = await self._run_with_process(
-                payload, run_context, process, command
+                payload, run_context, process, command, settings
             )
         except BaseException:
             # Anything escaping the drive that the paths inside do not already
@@ -157,12 +195,13 @@ class ClaudeCodeAgentHandler(
         run_context: RunAgentTaskRunContext,
         process: icommandrunner.IAsyncProcess,
         command: str,
+        settings: _ClaudeRunSettings,
     ) -> RunAgentTaskRunResult:
         async with run_context.progress("Agent task", cancellable=True) as progress:
             try:
                 result = await asyncio.wait_for(
                     self._drive(process, payload.prompt, progress),
-                    timeout=self.config.settle_timeout_sec,
+                    timeout=settings.settle_timeout_sec,
                 )
             except asyncio.CancelledError:
                 # The caller withdrew. Nothing is returned on this path, so
@@ -176,11 +215,34 @@ class ClaudeCodeAgentHandler(
                     status=AgentRunStatus.FAILED,
                     error=(
                         "claude did not finish within "
-                        f"{self.config.settle_timeout_sec}s"
+                        f"{settings.settle_timeout_sec}s"
                     ),
                 )
 
-        return await self._finish(process, result, command)
+        return self._check_structured_output(
+            payload, await self._finish(process, result, command)
+        )
+
+    def _check_structured_output(
+        self,
+        payload: RunAgentTaskRunPayload,
+        result: RunAgentTaskRunResult,
+    ) -> RunAgentTaskRunResult:
+        """A settled run that was asked for structured output must have produced it.
+
+        The CLI can settle without calling the structured-output tool -- for
+        instance when the answer did not need it -- and reporting that as a
+        success would hand the caller `None` where it asked for a report.
+        """
+        if payload.output_schema is None or result.status is not AgentRunStatus.SETTLED:
+            return result
+        if result.structured_output is None:
+            return dataclasses.replace(
+                result,
+                status=AgentRunStatus.FAILED,
+                error="claude settled without structured output",
+            )
+        return result
 
     async def _drive(
         self,
@@ -260,6 +322,7 @@ class ClaudeCodeAgentHandler(
             turns=outcome.turns if outcome.turns is not None else turns or None,
             usage=outcome.usage,
             error=self._error(outcome),
+            structured_output=outcome.structured_output,
         )
 
     def _status(self, outcome: claude_code_stream.RunResult) -> AgentRunStatus:
@@ -365,13 +428,56 @@ class ClaudeCodeAgentHandler(
         with contextlib.suppress(Exception):
             await process.wait_for_end(timeout=_SIGNAL_GRACE_SEC)
 
-    def _build_command(self) -> str:
+    def _resolve(self, profile: str | None) -> _ClaudeRunSettings | str:
+        """The run settings for *profile*, or an error message to fail with.
+
+        `None` is the top-level settings, so an existing caller that sends no
+        profile gets exactly today's command.
+        """
+        if profile is None:
+            return _ClaudeRunSettings(
+                model=self.config.model,
+                settle_timeout_sec=self.config.settle_timeout_sec,
+            )
+        resolved = self.config.profiles.get(profile)
+        if resolved is None:
+            return backend_support.unknown_profile_error(
+                profile, self.config.profiles
+            )
+        return _ClaudeRunSettings(
+            model=resolved.model if resolved.model is not None else self.config.model,
+            settle_timeout_sec=(
+                resolved.settle_timeout_sec
+                if resolved.settle_timeout_sec is not None
+                else self.config.settle_timeout_sec
+            ),
+        )
+
+    def _executable(self) -> list[str]:
+        """The program and fixed arguments, before the mode and run flags.
+
+        A seam for tests: the fake swaps this rather than `_build_command`, so
+        the flags under test are still assembled by the production code.
+        """
+        return ["claude"]
+
+    def _build_command(
+        self,
+        settings: _ClaudeRunSettings,
+        output_schema: dict[str, object] | None = None,
+    ) -> str:
         # `--verbose` is not optional: the CLI rejects `stream-json` output in
         # print mode without it.
-        parts = ["claude", "--print", "--output-format", "stream-json", "--verbose"]
+        parts = [
+            *self._executable(),
+            "--print",
+            "--output-format",
+            "stream-json",
+            "--verbose",
+        ]
 
-        if self.config.model is not None:
-            parts += ["--model", self.config.model]
+        if settings.model is not None:
+            parts += ["--model", settings.model]
         if self.config.permission_mode is not None:
             parts += ["--permission-mode", self.config.permission_mode]
         if self.config.allowed_tools:
@@ -382,5 +488,9 @@ class ClaudeCodeAgentHandler(
             parts += ["--append-system-prompt", self.config.append_system_prompt]
         if self.config.max_budget_usd is not None:
             parts += ["--max-budget-usd", str(self.config.max_budget_usd)]
+        if output_schema is not None:
+            # A schema is a few KB, so it travels as an argv string rather than
+            # through a temp file that would need cleaning up on every path.
+            parts += ["--json-schema", json.dumps(output_schema)]
 
         return shlex.join(parts)

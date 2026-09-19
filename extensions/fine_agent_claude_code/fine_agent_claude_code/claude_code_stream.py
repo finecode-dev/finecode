@@ -67,6 +67,12 @@ class RunResult:
     granted it up front -- the two are indistinguishable here, and both are
     fine. A non-empty list on a failed run is the closest thing the CLI reports
     to "this needed a human"."""
+    structured_output: Any = None
+    """The data of the run's last structured-output call, or `None`.
+
+    Present only on a settled run whose requested schema the CLI actually
+    applied; a settled run without it is a failure the handler reports.
+    """
 
 
 def parse_frame(line: str) -> dict[str, Any] | None:
@@ -279,4 +285,7 @@ def parse_result(frame: dict[str, Any], model: str | None) -> RunResult:
         usage=result_usage(frame, model),
         error=None if settled else _failure_reason(frame),
         denied_tools=_denied_tools(frame),
+        # Only a settled run's answer is read: on a failed subtype the field is
+        # absent, and returning one would contradict the failure.
+        structured_output=frame.get("structured_output") if settled else None,
     )

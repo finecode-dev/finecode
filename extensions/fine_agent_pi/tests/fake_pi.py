@@ -9,6 +9,7 @@ Kept as a standalone script rather than a fixture because the thing under test
 is precisely the subprocess boundary.
 """
 
+import atexit
 import json
 import os
 import signal
@@ -44,6 +45,20 @@ def main() -> int:
     scenario = json.loads(sys.argv[1])
     exit_code = scenario.get("exit_code", 0)
 
+    # The driver-side facts (argv, prompt) are written on exit rather than when
+    # they are observed, and only when a scenario asks for them, so the records
+    # a scenario already inspects by position or by whole-list equality keep
+    # their shape. Tests read these by key.
+    driver_records: list[dict] = []
+    if scenario.get("record_driver"):
+        driver_records.append({"argv": sys.argv[2:]})
+
+    def _flush_driver_records() -> None:
+        for entry in driver_records:
+            _record(scenario, entry)
+
+    atexit.register(_flush_driver_records)
+
     for step in scenario["steps"]:
         action = step["do"]
 
@@ -52,6 +67,8 @@ def main() -> int:
             if frame is None or frame.get("type") != "prompt":
                 sys.stderr.write(f"expected a prompt, got {frame}\n")
                 return 90
+            if scenario.get("record_driver"):
+                driver_records.append({"prompt": frame["message"]})
 
         elif action == "emit":
             _emit(step["frame"])

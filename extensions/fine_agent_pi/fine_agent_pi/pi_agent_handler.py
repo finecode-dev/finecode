@@ -6,6 +6,7 @@ import time
 from collections.abc import AsyncIterator
 from typing import Any
 
+from fine_agent import backend_support
 from fine_agent.run_agent_task_action import (
     AgentRunStatus,
     AgentRunUsage,
@@ -54,6 +55,16 @@ _POLICY_CANCEL = "cancel"
 
 
 @dataclasses.dataclass
+class PiAgentProfile:
+    """Per-role overrides for one named agent run. A `None` field inherits the
+    handler's top-level value."""
+
+    model: str | None = None
+    provider: str | None = None
+    settle_timeout_sec: float | None = None
+
+
+@dataclasses.dataclass
 class PiAgentHandlerConfig(code_action.ActionHandlerConfig):
     model: str | None = None
     """Model pattern passed to `pi --model`. `None` leaves pi's own default.
@@ -83,6 +94,30 @@ class PiAgentHandlerConfig(code_action.ActionHandlerConfig):
     settle_timeout_sec: float = 900.0
     """Ceiling on one agent run. An agent loop has no natural bound, so without
     this a wedged run holds an ER subprocess slot indefinitely."""
+    profiles: dict[str, PiAgentProfile] = dataclasses.field(default_factory=dict)
+    """Named runs, keyed by the `profile` a caller passes, so an override can be
+    expressed in an environment variable (S-205).
+
+    A field left `None` on a profile inherits the top-level value; a profile
+    therefore cannot ask for pi's own default for a field the top level sets.
+    Later knobs (tools, ask-user policy, budget) must choose inherit-or-empty
+    deliberately per field -- inheriting a permission set can grant more than
+    the profile intended.
+    """
+
+
+@dataclasses.dataclass(frozen=True)
+class _PiRunSettings:
+    """The pi run knobs for one run, after a profile is resolved.
+
+    Separated from the config so `_build_command` and the timeout depend on the
+    run's resolved values rather than on whichever config object happened to be
+    in scope.
+    """
+
+    model: str | None
+    provider: str | None
+    settle_timeout_sec: float
 
 
 class PiAgentHandler(
@@ -125,7 +160,14 @@ class PiAgentHandler(
         payload: RunAgentTaskRunPayload,
         run_context: RunAgentTaskRunContext,
     ) -> RunAgentTaskRunResult:
-        command = self._build_command()
+        settings = self._resolve(payload.profile)
+        if isinstance(settings, str):
+            # Fail before spawning anything: an unknown profile is a
+            # configuration error, not a run that got partway.
+            return RunAgentTaskRunResult(
+                status=AgentRunStatus.FAILED, error=settings, duration_sec=0.0
+            )
+        command = self._build_command(settings)
         project_dir = self.project_info_provider.get_current_project_dir_path()
         self.logger.debug(f"Starting pi: {command} in {project_dir}")
 
@@ -141,7 +183,7 @@ class PiAgentHandler(
 
         try:
             result = await self._run_with_process(
-                payload, run_context, process, command
+                payload, run_context, process, command, settings
             )
         except BaseException:
             # Anything escaping the drive that the paths inside do not already
@@ -168,12 +210,19 @@ class PiAgentHandler(
         run_context: RunAgentTaskRunContext,
         process: icommandrunner.IAsyncProcess,
         command: str,
+        settings: _PiRunSettings,
     ) -> RunAgentTaskRunResult:
+        prompt = payload.prompt
+        if payload.output_schema is not None:
+            # Appended, not substituted: the task wording is the caller's, and
+            # the output instruction is the only thing the backend adds.
+            prompt += backend_support.json_output_instruction(payload.output_schema)
+
         async with run_context.progress("Agent task", cancellable=True) as progress:
             try:
                 result = await asyncio.wait_for(
-                    self._drive(process, payload.prompt, progress),
-                    timeout=self.config.settle_timeout_sec,
+                    self._drive(process, prompt, progress),
+                    timeout=settings.settle_timeout_sec,
                 )
             except asyncio.CancelledError:
                 # The caller withdrew. Tell pi before the process is torn down,
@@ -189,11 +238,36 @@ class PiAgentHandler(
                 return RunAgentTaskRunResult(
                     status=AgentRunStatus.FAILED,
                     error=(
-                        f"pi did not settle within {self.config.settle_timeout_sec}s"
+                        f"pi did not settle within {settings.settle_timeout_sec}s"
                     ),
                 )
 
-        return await self._finish(process, result, command)
+        return self._extract_structured_output(
+            payload, await self._finish(process, result, command)
+        )
+
+    def _extract_structured_output(
+        self,
+        payload: RunAgentTaskRunPayload,
+        result: RunAgentTaskRunResult,
+    ) -> RunAgentTaskRunResult:
+        """Decode the fenced JSON block a settled run was asked to end with.
+
+        Only a settled run is read: a failed one already has a more specific
+        error, and looking for JSON in a truncated answer would replace it with
+        a misleading "no block". `replace` keeps `usage`, `turns` and `output`
+        on both the success and the failure path, so a run that failed on its
+        answer still accounts for what it spent.
+        """
+        if payload.output_schema is None or result.status is not AgentRunStatus.SETTLED:
+            return result
+        try:
+            value = backend_support.extract_last_json_block(result.output)
+        except backend_support.StructuredOutputError as error:
+            return dataclasses.replace(
+                result, status=AgentRunStatus.FAILED, error=str(error)
+            )
+        return dataclasses.replace(result, structured_output=value)
 
     async def _drive(
         self,
@@ -563,10 +637,49 @@ class PiAgentHandler(
         with contextlib.suppress(Exception):
             await process.wait_for_end(timeout=_SIGNAL_GRACE_SEC)
 
-    def _build_command(self) -> str:
-        parts = ["pi", "--mode", "rpc", "--no-session"]
-        if self.config.model is not None:
-            parts += ["--model", self.config.model]
-        if self.config.provider is not None:
-            parts += ["--provider", self.config.provider]
+    def _resolve(self, profile: str | None) -> _PiRunSettings | str:
+        """The run settings for *profile*, or an error message to fail with.
+
+        `None` is the top-level settings, so an existing caller that sends no
+        profile gets exactly today's command.
+        """
+        if profile is None:
+            return _PiRunSettings(
+                model=self.config.model,
+                provider=self.config.provider,
+                settle_timeout_sec=self.config.settle_timeout_sec,
+            )
+        resolved = self.config.profiles.get(profile)
+        if resolved is None:
+            return backend_support.unknown_profile_error(
+                profile, self.config.profiles
+            )
+        return _PiRunSettings(
+            model=resolved.model if resolved.model is not None else self.config.model,
+            provider=(
+                resolved.provider
+                if resolved.provider is not None
+                else self.config.provider
+            ),
+            settle_timeout_sec=(
+                resolved.settle_timeout_sec
+                if resolved.settle_timeout_sec is not None
+                else self.config.settle_timeout_sec
+            ),
+        )
+
+    def _executable(self) -> list[str]:
+        """The program and fixed arguments, before the mode and run flags.
+
+        A seam for tests: the fake swaps this rather than `_build_command`, so
+        the flags under test are still assembled by the production code.
+        """
+        return ["pi"]
+
+    def _build_command(self, settings: _PiRunSettings) -> str:
+        parts = [*self._executable(), "--mode", "rpc", "--no-session"]
+        if settings.model is not None:
+            parts += ["--model", settings.model]
+        if settings.provider is not None:
+            parts += ["--provider", settings.provider]
         return shlex.join(parts)
