@@ -185,19 +185,34 @@ class _PartialResultAccumulator:
         ]
         | None = None,
         result_formats: list[str] | None = None,
+        observer: code_action.PartialResultSender | None = None,
     ) -> None:
         self._token = token
         self._send_func = send_func
         self.result_formats = result_formats
+        self._observer = observer
         self.has_sent = False
         self.accumulated: code_action.RunActionResult | None = None
 
     async def send(self, result: code_action.RunActionResult) -> None:
         self.has_sent = True
         if self.accumulated is None:
-            self.accumulated = result
+            # The coalescer also retains this object (schedule_sending stores it
+            # for the flush window), so keeping it here as well would merge
+            # every later send into one object twice. Copy on first send, with
+            # the same round-trip the async-generator path performs, so the two
+            # accumulators stay independent.
+            self.accumulated = typing.cast(
+                code_action.RunActionResult,
+                _converter.structure(_converter.unstructure(result), type(result)),
+            )
         else:
             self.accumulated.update(result)
+        if self._observer is not None:
+            # The observer sees the handler's original object, not the
+            # accumulation copy — the copies exist to keep the two accumulators
+            # independent, not to hide the handler's object from a test.
+            await self._observer.send(result)
         if self._send_func is not None:
             await self._send_func(self._token, result, self.result_formats)
 
@@ -387,6 +402,7 @@ async def run_action(
     traceparent: str | None = None,
     result_formats: list[str] | None = None,
     progress_sender: code_action.ProgressSender | None = None,
+    partial_result_observer: code_action.PartialResultSender | None = None,
 ) -> code_action.RunActionResult | None:
     # design decisions:
     # - keep payload unchanged between all subaction runs.
@@ -437,6 +453,9 @@ async def run_action(
             if partial_result_token is not None
             else None
         ),
+        # explicit injection bypasses the token/global-function forwarding below --
+        # used e.g. by the test session to observe handler sends directly.
+        observer=partial_result_observer,
         result_formats=result_formats,
     )
     context_sender: code_action.PartialResultSender = tracking_sender
@@ -804,6 +823,16 @@ async def run_action(
                 if send_partial_results and tracking_sender.has_sent:
                     await partial_result_sender.send_all_immediately()
     finally:
+        # A partial sent by a handler that then raised would otherwise wait out
+        # the 300 ms debounce and race the error response to the WM. Flush it
+        # here, guarded: the wired sender runs handler-authored serialization,
+        # and the unwired default raises by construction — a flush failure must
+        # never replace the exception already unwinding.
+        if send_partial_results and tracking_sender.has_sent:
+            try:
+                await partial_result_sender.send_all_immediately()
+            except Exception:
+                logger.exception("Flushing partial results on exit failed")
         # Fold the run's sink into the result before the sink is unbound,
         # through merge_coverage (never a list concat), so the sink union is the
         # same merge rule as the update() join. On the exception path the

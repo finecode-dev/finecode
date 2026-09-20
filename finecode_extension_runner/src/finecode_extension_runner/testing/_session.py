@@ -118,6 +118,7 @@ class Session:
         payload: code_action.RunActionPayload | None = None,
         *,
         caller_kwargs: code_action.CallerRunContextKwargs | None = None,
+        partial_result_token: int | str | None = None,
     ) -> code_action.RunActionResult | None:
         try:
             action_def = self._runner_context.project.actions[action_name]
@@ -134,9 +135,10 @@ class Session:
             payload=payload,
             meta=meta,
             runner_context=self._runner_context,
-            partial_result_token=None,
+            partial_result_token=partial_result_token,
             caller_kwargs=caller_kwargs,
             progress_sender=self.progress,
+            partial_result_observer=self.partial_results,
         )
 
     async def run_handlers(

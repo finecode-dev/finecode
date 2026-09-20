@@ -7,9 +7,10 @@ class CollectingPartialResultSender(code_action.PartialResultSender):
     """PartialResultSender that accumulates every sent result for test assertions.
 
     ``sender.events`` holds each ``RunActionResult`` passed to ``send()``.
-    In the default (non-streaming) ``Session.run_action()`` path no token is
-    used, so this list stays empty — the correct assertion for handlers that
-    don't stream partial results.
+    ``Session.run_action`` wires this sender as the run's partial-result
+    observer, so every object a handler passes to
+    ``run_context.partial_result_sender.send()`` lands here in order — the
+    identity copy a test asserts on, not an accumulated merge.
     """
 
     def __init__(self) -> None:
