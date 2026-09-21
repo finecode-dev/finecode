@@ -29,8 +29,10 @@ RENDERED = "rendered dump"
 class _FakeLogger:
     def __init__(self) -> None:
         self.warnings: list[str] = []
+        self.debugs: list[str] = []
 
-    def debug(self, message: str) -> None: ...
+    def debug(self, message: str) -> None:
+        self.debugs.append(message)
 
     def warning(self, message: str) -> None:
         self.warnings.append(message)
@@ -53,6 +55,7 @@ class _FakeActionRunner:
     ) -> None:
         self._result = result
         self._error = error
+        self.run_action_calls = 0
         self.captured_payload: format_file_action.FormatFileRunPayload | None = None
         self.captured_caller_kwargs: code_action.CallerRunContextKwargs | None = None
 
@@ -63,6 +66,7 @@ class _FakeActionRunner:
         meta: code_action.RunActionMeta,
         caller_kwargs: code_action.CallerRunContextKwargs | None = None,
     ) -> typing.Any:
+        self.run_action_calls += 1
         self.captured_payload = payload
         self.captured_caller_kwargs = caller_kwargs
         if self._error is not None:
@@ -243,8 +247,9 @@ async def test_action_not_found_records_a_miss_itself(
 
 async def test_failing_formatter_fails_the_dump(tmp_path: pathlib.Path) -> None:
     """A formatter that exists but fails is a broken setup, not a missing one:
-    the dump fails, and the message names the handler to disable for an
-    unformatted dump."""
+    the dump fails, and the message names the two ways to still write an
+    unformatted dump: ``format_output=false`` on the payload and disabling the
+    handler."""
     runner = _FakeActionRunner(
         error=iprojectactionrunner.ActionRunFailed("tombi crashed")
     )
@@ -253,7 +258,36 @@ async def test_failing_formatter_fails_the_dump(tmp_path: pathlib.Path) -> None:
         await _make_handler(runner).run(_payload(tmp_path), _new_run_context())
 
     assert "tombi crashed" in exc_info.value.message
+    assert "format_output=false" in exc_info.value.message
     assert "dump_config_format" in exc_info.value.message
+
+
+async def test_format_output_false_skips_formatting(
+    tmp_path: pathlib.Path,
+) -> None:
+    """``format_output=False`` means the dump is machine input, not something
+    a person reads: no ``format_file`` dispatch happens, the rendered content
+    is saved unchanged, the result carries no coverage, and nothing is logged
+    above DEBUG. A caller that asked for no formatting has no unhandled input
+    to be told about."""
+    runner = _FakeActionRunner(
+        result=format_file_action.FormatFileRunResult(
+            changed=True, code="formatted dump"
+        )
+    )
+    logger = _FakeLogger()
+    context = _new_run_context()
+    payload = _payload(tmp_path)
+    payload.format_output = False
+
+    result = await _make_handler(runner, logger=logger).run(payload, context)
+
+    assert runner.run_action_calls == 0
+    assert context.config_dump_content == RENDERED
+    assert result.coverage == []
+    assert result.config_dump == RAW_CONFIG
+    assert logger.warnings == []
+    assert logger.debugs
 
 
 async def test_cancelled_format_run_is_reraised(tmp_path: pathlib.Path) -> None:

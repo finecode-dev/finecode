@@ -239,16 +239,20 @@ Dump the fully resolved configuration for a project to disk, useful for debuggin
 python -m finecode dump-config --shared-server --project=<name> [--log-level=<level>] [--debug]
 ```
 
-Output is written to `<cwd>/finecode_config_dump/`. The dump is written through
-the project's configured formatter when one covers the target file; without
-one it falls back to an unformatted dump, and the action result's `unhandled`
-names the target file (see the *Unhandled inputs* note in
+Output is written to `<cwd>/finecode_config_dump/` — this command (and the
+MCP `dump_config` tool) is the only thing that writes that directory; env
+preparation never does. The dump is written through the project's configured
+formatter when one covers the target file; without one it falls back to an
+unformatted dump, and the action result's `unhandled` names the target file
+(see the *Unhandled inputs* note in
 [Built-in Actions](reference/actions.md)). If the formatter fails, the command
-fails; disable the `dump_config_format` handler to dump unformatted.
+fails; pass `--no-format`, or disable the `dump_config_format` handler, to
+dump unformatted.
 
 | Option | Description |
 |---|---|
 | `--project=<name>` | **(Required)** Project to dump config for (matched by `[project].name` from `pyproject.toml`) |
+| `--no-format` | Write the dump unformatted, bypassing the project's formatter |
 | `--log-level=<level>` | Set log level: `TRACE`, `DEBUG`, `INFO`, `WARNING`, `ERROR` (default: `INFO`) |
 | `--debug` | Wait for a debugpy client on port 5680 |
 | `--dev-env=<env>` | Override the detected dev environment. One of: `ai`, `ci`, `cli`, `ide`, `precommit` (default: auto-detected) |

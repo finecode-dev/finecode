@@ -105,7 +105,11 @@ _META_TOOLS: list[dict] = [
         "inputSchema": {
             "type": "object",
             "properties": {
-                "project": {"type": "string", "description": _PROJECT_ARG_DESCRIPTION}
+                "project": {"type": "string", "description": _PROJECT_ARG_DESCRIPTION},
+                "format": {
+                    "type": "boolean",
+                    "description": "Format the dump with the project's formatter (default true).",
+                },
             },
             "required": ["project"],
         },
@@ -754,20 +758,23 @@ async def _handle_call_tool(params: dict | None) -> dict:
             project = arguments["project"]
             project_path = pathlib.Path(project)
             raw_config = await _wm_client.get_project_raw_config(project)
+            params = {
+                "source_file_path": str(
+                    path_to_resource_uri(project_path / "pyproject.toml")
+                ),
+                "project_raw_config": raw_config,
+                "target_file_path": str(
+                    path_to_resource_uri(
+                        project_path / "finecode_config_dump" / "pyproject.toml"
+                    )
+                ),
+            }
+            if not arguments.get("format", True):
+                params["format_output"] = False
             result = await _wm_client.run_action(
                 action_source="fine_envs.DumpConfigAction",
                 project=project,
-                params={
-                    "source_file_path": str(
-                        path_to_resource_uri(project_path / "pyproject.toml")
-                    ),
-                    "project_raw_config": raw_config,
-                    "target_file_path": str(
-                        path_to_resource_uri(
-                            project_path / "finecode_config_dump" / "pyproject.toml"
-                        )
-                    ),
-                },
+                params=params,
                 options={"resultFormats": ["json"], "trigger": "user", "devEnv": "ai"},
             )
             return {"content": [{"type": "text", "text": json.dumps(result)}]}

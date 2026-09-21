@@ -1040,6 +1040,14 @@ write the dump unformatted.
 
 Also available as `python -m finecode dump-config`.
 
+The payload carries `format_output` (default `true`): with `true`, the
+rendered content goes through the project's formatter before saving as
+described above; with `false`, nothing is formatted — no `format_file`
+dispatch happens and the rendered content is written as-is. That is the
+machine-input mode used by the uv env handlers (which pass `format_output:
+false` and point the target file into a private temp directory instead of
+`finecode_config_dump/`), and the escape hatch when a formatter cannot run.
+
 ---
 
 ## `init_repository_provider`

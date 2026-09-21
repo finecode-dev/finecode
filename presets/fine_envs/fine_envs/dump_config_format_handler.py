@@ -31,7 +31,10 @@ class DumpConfigFormatHandler(
     dump in ``check_formatting`` either. The miss stays visible as coverage and
     is never absorbed, because the caller asked for a formatted dump. A
     formatter that fails does fail the dump; disable this handler to write the
-    dump unformatted.
+    dump unformatted. A caller that wants a raw dump (machine input, or the
+    formatter unavailable) passes ``format_output: False`` on the payload: no
+    ``format_file`` dispatch happens, the rendered content is saved unchanged
+    and the result carries no coverage.
     """
 
     def __init__(
@@ -51,6 +54,15 @@ class DumpConfigFormatHandler(
             raise code_action.ActionFailedException(
                 "dump_config_format: no rendered dump content; the dump_config"
                 " handler must run before this one"
+            )
+        if not payload.format_output:
+            # The caller asked for no formatting: nothing was dispatched, so
+            # there is nothing to miss, and no coverage entry to record (R-310
+            # guards inputs no subaction covered; the caller opted out of
+            # subactions entirely).
+            self.logger.debug("dump_config: formatting disabled by the caller")
+            return dump_config_action.DumpConfigRunResult(
+                config_dump=run_context.raw_config_dump
             )
         coverage: list[ItemCoverage] = []
         try:
@@ -85,8 +97,9 @@ class DumpConfigFormatHandler(
             )
         except iprojectactionrunner.ActionRunFailed as exc:
             raise code_action.ActionFailedException(
-                "Formatting the config dump failed (disable handler"
-                " 'dump_config_format' to write it unformatted):\n  - " + exc.message
+                "Formatting the config dump failed (pass format_output=false, or"
+                " disable handler 'dump_config_format', to write it unformatted):\n  - "
+                + exc.message
             ) from exc
         else:
             if result.unhandled:

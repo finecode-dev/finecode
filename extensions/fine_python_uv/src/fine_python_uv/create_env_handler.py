@@ -13,7 +13,7 @@ from finecode_extension_api.interfaces import (
 )
 from finecode_extension_api.resource_uri import resource_uri_to_path
 
-from ._uv_common import dump_project_config, get_uv_executable
+from ._uv_common import get_uv_executable, temp_project_config_dump
 
 
 @dataclasses.dataclass
@@ -95,31 +95,38 @@ class UvCreateEnvHandler(
         if not venv_valid:
             self.logger.info(f"Creating virtualenv {venv_dir_path}")
             project_def_path = resource_uri_to_path(env_info.project_def_path)
-            dump_dir = await dump_project_config(
+            async with temp_project_config_dump(
                 project_def_path=project_def_path,
                 action_runner=self.action_runner,
                 project_info_provider=self.project_info_provider,
                 logger=self.logger,
                 meta=run_context.meta,
-            )
-
-            uv_executable = get_uv_executable()
-            # venv can exist but be invalid, use '--clear' to recreate it
-            python_flag = (
-                f' --python "{env_info.interpreter}"' if env_info.interpreter else ""
-            )
-            cmd = f'"{uv_executable}" venv --clear{python_flag} "{venv_dir_path}"'
-            self.logger.debug(f"Running uv: {cmd}")
-            process = await self.command_runner.run(cmd, cwd=dump_dir)
-            await process.wait_for_end()
-            if process.get_exit_code() != 0:
-                error_output = process.get_error_output() or process.get_output()
-                return CreateEnvsRunResult(
-                    errors=[
-                        f"Failed to create virtualenv {venv_dir_path}:\n{error_output}"
-                    ]
+            ) as dump_dir:
+                uv_executable = get_uv_executable()
+                # venv can exist but be invalid, use '--clear' to recreate it
+                python_flag = (
+                    f' --python "{env_info.interpreter}"'
+                    if env_info.interpreter
+                    else ""
                 )
-            return CreateEnvsRunResult(errors=[], created=True)
+                cmd = f'"{uv_executable}" venv --clear{python_flag} "{venv_dir_path}"'
+                self.logger.debug(f"Running uv: {cmd}")
+                process = await self.command_runner.run(cmd, cwd=dump_dir)
+                await process.wait_for_end()
+                if process.get_exit_code() != 0:
+                    error_output = process.get_error_output() or process.get_output()
+                    return CreateEnvsRunResult(
+                        errors=[
+                            (
+                                f"Failed to create virtualenv {venv_dir_path}:\n"
+                                f"{error_output}\n"
+                                "The config uv ran with was a temporary dump of "
+                                f"{project_def_path}; run `python -m finecode dump-config` "
+                                "for that project to inspect it."
+                            )
+                        ]
+                    )
+                return CreateEnvsRunResult(errors=[], created=True)
 
         self.logger.info(f"Virtualenv in {env_info.name} exists already")
         return CreateEnvsRunResult(errors=[], created=False)

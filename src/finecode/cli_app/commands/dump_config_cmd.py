@@ -19,6 +19,8 @@ async def dump_config(
     own_server: bool = True,
     log_level: str = "INFO",
     dev_env: str = "cli",
+    *,
+    format_output: bool = True,
 ):
     port_file = None
     try:
@@ -63,14 +65,17 @@ async def dump_config(
 
             try:
                 project_raw_config = await client.get_project_raw_config(project_path)
+                params: dict[str, object] = {
+                    "source_file_path": str(path_to_resource_uri(source_file_path)),
+                    "project_raw_config": project_raw_config,
+                    "target_file_path": str(path_to_resource_uri(target_file_path)),
+                }
+                if not format_output:
+                    params["format_output"] = False
                 await client.run_action(
                     action_source="fine_envs.DumpConfigAction",
                     project=project_path,
-                    params={
-                        "source_file_path": str(path_to_resource_uri(source_file_path)),
-                        "project_raw_config": project_raw_config,
-                        "target_file_path": str(path_to_resource_uri(target_file_path)),
-                    },
+                    params=params,
                     options={
                         "resultFormats": ["string"],
                         "trigger": "user",

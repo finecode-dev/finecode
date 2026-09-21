@@ -1,4 +1,5 @@
 import dataclasses
+import pathlib
 
 from fine_envs import install_deps_in_env_action
 from finecode_extension_api import code_action
@@ -10,7 +11,7 @@ from finecode_extension_api.interfaces import (
 )
 from finecode_extension_api.resource_uri import resource_uri_to_path
 
-from ._uv_common import dump_project_config, get_uv_executable
+from ._uv_common import get_uv_executable, temp_project_config_dump
 
 
 @dataclasses.dataclass
@@ -50,25 +51,29 @@ class UvInstallDepsInEnvHandler(
         project_dir_path = resource_uri_to_path(payload.project_dir_path)
 
         project_def_path = project_dir_path / "pyproject.toml"
-        dump_dir = await dump_project_config(
+        async with temp_project_config_dump(
             project_def_path=project_def_path,
             action_runner=self.action_runner,
             project_info_provider=self.project_info_provider,
             logger=self.logger,
             meta=run_context.meta,
-        )
-
-        uv_executable = get_uv_executable()
-        cmd = self._construct_uv_install_cmd(
-            uv_executable=uv_executable,
-            venv_dir_path=venv_dir_path,
-            dependencies=dependencies,
-        )
-        error = await self._run_uv_cmd(cmd=cmd, env_name=env_name, cwd=dump_dir)
-        if error is not None:
-            errors = [error]
-        else:
-            errors = []
+        ) as dump_dir:
+            uv_executable = get_uv_executable()
+            cmd = self._construct_uv_install_cmd(
+                uv_executable=uv_executable,
+                venv_dir_path=venv_dir_path,
+                dependencies=dependencies,
+            )
+            error = await self._run_uv_cmd(
+                cmd=cmd,
+                env_name=env_name,
+                cwd=dump_dir,
+                project_dir_path=project_dir_path,
+            )
+            if error is not None:
+                errors = [error]
+            else:
+                errors = []
 
         return install_deps_in_env_action.InstallDepsInEnvRunResult(errors=errors)
 
@@ -104,7 +109,13 @@ class UvInstallDepsInEnvHandler(
         cmd = f'"{uv_executable}" --no-config pip install --python "{venv_dir_path}" {install_params}'
         return cmd
 
-    async def _run_uv_cmd(self, cmd: str, env_name: str, cwd) -> str | None:
+    async def _run_uv_cmd(
+        self,
+        cmd: str,
+        env_name: str,
+        cwd: pathlib.Path,
+        project_dir_path: pathlib.Path,
+    ) -> str | None:
         self.logger.debug(f"Running uv: {cmd}")
         process = await self.command_runner.run(cmd, cwd=cwd)
         await process.wait_for_end()
@@ -123,7 +134,12 @@ class UvInstallDepsInEnvHandler(
             else:
                 logs = process_stderr
 
-            error = f"Installation of dependencies in env {env_name} from {cwd} failed (cmd: {cmd}):\n{logs}"
+            error = (
+                f"Installation of dependencies in env {env_name} for project "
+                f"{project_dir_path} failed (cmd: {cmd}):\n{logs}\n"
+                "The config uv ran with was a temporary dump of the project; run "
+                "`python -m finecode dump-config` for that project to inspect it."
+            )
             self.logger.error(error)
             return error
 

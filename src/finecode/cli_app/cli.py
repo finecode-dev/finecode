@@ -842,6 +842,13 @@ def bootstrap(recreate: bool, log_level: str) -> None:
 @click.option("--project", "project", type=str)
 @click.option("--shared-server", "shared_server", is_flag=True, default=False)
 @click.option(
+    "--no-format",
+    "no_format",
+    is_flag=True,
+    default=False,
+    help="Write the dump unformatted, bypassing the project's formatter.",
+)
+@click.option(
     "--dev-env",
     "dev_env",
     default=None,
@@ -853,6 +860,7 @@ def dump_config(
     debug: bool,
     project: str | None,
     shared_server: bool,
+    no_format: bool,
     dev_env: str | None,
 ):
     from finecode.cli_app.commands import dump_config_cmd
@@ -891,6 +899,7 @@ def dump_config(
                 own_server=not shared_server,
                 log_level=log_level,
                 dev_env=dev_env or detect_dev_env(),
+                format_output=not no_format,
             )
         )
     except dump_config_cmd.DumpFailed as exception:
