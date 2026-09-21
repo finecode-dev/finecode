@@ -421,8 +421,8 @@ class JsonRpcClient:
         Use this when there is no live RPC channel to ask the server to stop
         cooperatively — the start attempt timed out before the port/handshake
         completed, or the graceful ``stop()`` path did not result in exit
-        within its timeout. A no-op if the process was never spawned or has
-        already exited.
+        within its timeout. A no-op if the process was never spawned, has
+        already exited, or its group has no member left that can be signalled.
 
         The process is started with ``start_new_session=True`` specifically so
         it (and any subprocess it spawns, e.g. a package manager invocation)
@@ -440,8 +440,17 @@ class JsonRpcClient:
                 check=False,
             )
         else:
-            with contextlib.suppress(ProcessLookupError):
+            try:
                 os.killpg(self.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            except PermissionError:
+                # macOS reports EPERM for a group whose only members are
+                # zombies; either way nothing left in it is ours to signal.
+                logger.debug(
+                    f"Process group {self.pid} of {self.readable_id} could not be"
+                    " signalled (EPERM)"
+                )
 
     def _send_data(self, data: str):
         header = (

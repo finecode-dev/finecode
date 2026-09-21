@@ -71,6 +71,29 @@ def test_force_kill_swallows_already_exited_process(
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="POSIX-only kill path")
+def test_force_kill_tolerates_a_group_it_may_not_signal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A force-kill must not fail on a group it is not permitted to signal.
+
+    macOS answers ``killpg`` with EPERM for a group whose only members are
+    unreaped zombies: the process is effectively gone, but the OS declines the
+    signal rather than reporting ESRCH. Raising here would replace the real
+    failure the caller is about to report (e.g. an ER start time-out) with this
+    EPERM, hiding the failure the operator needs to see.
+    """
+    client = _make_client()
+    client.pid = 4242
+
+    def _raise(pid: int, sig: int) -> None:
+        raise PermissionError()
+
+    monkeypatch.setattr("os.killpg", _raise)
+
+    client.force_kill()  # must not raise
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX-only kill path")
 async def test_force_kill_before_pid_is_known_still_kills(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

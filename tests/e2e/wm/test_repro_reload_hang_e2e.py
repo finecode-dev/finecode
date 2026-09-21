@@ -23,42 +23,10 @@ import signal
 import sys
 import time
 
+import psutil
 import pytest
 
 from tests.e2e.wm.test_recovery import wm_with_er  # noqa: F401  (pytest fixture)
-
-
-def _descendants(parent_pid: int) -> set[int]:
-    """All transitive child pids of *parent_pid*, read from /proc."""
-    children: dict[int, list[int]] = {}
-    for entry in os.listdir("/proc"):
-        if not entry.isdigit():
-            continue
-        pid = int(entry)
-        try:
-            status = pathlib.Path(f"/proc/{pid}/status").read_text()
-        except OSError:
-            continue
-        ppid = next(
-            (
-                int(line.split()[1])
-                for line in status.splitlines()
-                if line.startswith("PPid:")
-            ),
-            None,
-        )
-        if ppid is not None:
-            children.setdefault(ppid, []).append(pid)
-
-    out: set[int] = set()
-    stack = list(children.get(parent_pid, []))
-    while stack:
-        pid = stack.pop()
-        if pid in out:
-            continue
-        out.add(pid)
-        stack.extend(children.get(pid, []))
-    return out
 
 
 def _er_pids(parent_pid: int) -> list[int]:
@@ -70,14 +38,15 @@ def _er_pids(parent_pid: int) -> list[int]:
     so select the ``python`` process, not the ``sh`` wrapper.
     """
     found: list[int] = []
-    for pid in _descendants(parent_pid):
+    for child in psutil.Process(parent_pid).children(recursive=True):
         try:
-            cmdline = pathlib.Path(f"/proc/{pid}/cmdline").read_bytes()
-        except OSError:
+            cmdline = child.cmdline()
+        except psutil.Error:
             continue
-        first_arg = cmdline.split(b"\x00", 1)[0]
-        if b"finecode_extension_runner" in cmdline and b"/bin/sh" not in first_arg:
-            found.append(pid)
+        if not cmdline or "/bin/sh" in cmdline[0]:
+            continue
+        if any("finecode_extension_runner" in arg for arg in cmdline):
+            found.append(child.pid)
     return found
 
 
@@ -99,17 +68,18 @@ def _thaw(pids: list[int]) -> None:
 
 def _state(pid: int) -> str | None:
     try:
-        stat = pathlib.Path(f"/proc/{pid}/stat").read_text()
-    except OSError:
+        return psutil.Process(pid).status()
+    except psutil.ZombieProcess:  # subclass of NoSuchProcess: must come first
+        return psutil.STATUS_ZOMBIE
+    except psutil.NoSuchProcess:
         return None
-    return stat[stat.rfind(")") + 2 : stat.rfind(")") + 3]
 
 
 def _wait_until_pids_gone(pids: list[int], timeout: float = 5.0) -> None:
     """Wait for every pid to be gone or a zombie, so no orphan survives."""
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
-        if all(_state(pid) in (None, "Z") for pid in pids):
+        if all(_state(pid) in (None, psutil.STATUS_ZOMBIE) for pid in pids):
             return
         time.sleep(0.1)
     raise AssertionError(
@@ -145,8 +115,8 @@ async def _freeze_running_er(client, workspace_dir: pathlib.Path) -> list[int]:
     info = await client.get_info()
     frozen = _freeze_ers(info["pid"])
     await asyncio.sleep(0.25)
-    assert all(_state(pid) == "T" for pid in frozen), (
-        f"ER interpreter(s) {frozen} did not enter the stopped state (T); "
+    assert all(_state(pid) == psutil.STATUS_STOPPED for pid in frozen), (
+        f"ER interpreter(s) {frozen} did not enter the stopped state; "
         "the freeze would not actually block RPC"
     )
     assert [r["status"] for r in await client.list_runners()] == ["RUNNING"], (
@@ -156,7 +126,7 @@ async def _freeze_running_er(client, workspace_dir: pathlib.Path) -> list[int]:
     return frozen
 
 
-@pytest.mark.skipif(sys.platform == "win32", reason="uses SIGSTOP and /proc")
+@pytest.mark.skipif(sys.platform == "win32", reason="uses SIGSTOP")
 async def test_restart_runner_completes_when_the_er_is_frozen(wm_with_er) -> None:
     """Restarting a project whose ER stopped answering must complete and reap it."""
     client, workspace_dir = wm_with_er
@@ -171,7 +141,7 @@ async def test_restart_runner_completes_when_the_er_is_frozen(wm_with_er) -> Non
         _thaw(frozen)
 
 
-@pytest.mark.skipif(sys.platform == "win32", reason="uses SIGSTOP and /proc")
+@pytest.mark.skipif(sys.platform == "win32", reason="uses SIGSTOP")
 async def test_reload_config_completes_when_the_er_is_frozen(wm_with_er) -> None:
     """The reported operation: reload_config against a frozen ER must complete.
 

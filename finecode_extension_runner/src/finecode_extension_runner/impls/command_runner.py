@@ -348,7 +348,8 @@ class AsyncProcess(icommandrunner.IAsyncProcess):
         # the early return and the `ProcessLookupError` below are successes
         # rather than problems: an escalation ladder (terminate, wait, kill)
         # necessarily races the exit it is hoping for, and losing that race is
-        # the good outcome.
+        # the good outcome. A group that `is_alive()` reports as alive only
+        # because of EPERM cannot be signalled, and that is also not a failure.
         if not self.is_alive():
             return
 
@@ -357,7 +358,7 @@ class AsyncProcess(icommandrunner.IAsyncProcess):
                 os.killpg(self._process_group_id, sig)
             else:
                 self.async_subprocess.send_signal(sig)
-        except ProcessLookupError:
+        except (ProcessLookupError, PermissionError):
             return
 
 

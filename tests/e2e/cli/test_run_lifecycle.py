@@ -2,16 +2,14 @@
 
 from __future__ import annotations
 
+import contextlib
 import subprocess
 import sys
 import threading
 import time
 
+import psutil
 import pytest
-
-psutil = pytest.importorskip("psutil")
-
-import contextlib
 
 from tests.e2e.conftest import kill_group
 

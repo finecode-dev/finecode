@@ -150,3 +150,33 @@ async def test_signals_after_exit_are_a_no_op() -> None:
     assert not process.is_alive()
     process.terminate()
     process.kill()
+
+
+@pytest.mark.asyncio
+async def test_signalling_a_group_that_refuses_is_a_no_op(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A group that refuses the signal is not a teardown failure.
+
+    A group may contain a member the caller cannot signal (a setuid child, or
+    a zombie-only group on macOS), and that member is also one the teardown
+    could not have stopped by any means. An error here would surface to the
+    operator as a failed stop for a command that was already being torn down.
+    """
+    process = await _runner().run(
+        _python("import time; time.sleep(30)"), new_process_group=True
+    )
+
+    def fake(_pgid: int, sig: int) -> None:
+        if sig == 0:
+            return
+        raise PermissionError()
+
+    try:
+        monkeypatch.setattr(os, "killpg", fake)
+        process.terminate()
+        process.kill()
+    finally:
+        monkeypatch.undo()
+        process.kill()
+        await process.wait_for_end(timeout=5.0)

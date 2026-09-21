@@ -8,9 +8,8 @@ import subprocess
 import sys
 import time
 
+import psutil
 import pytest
-
-psutil = pytest.importorskip("psutil")
 
 from tests.e2e.conftest import (
     kill_group,

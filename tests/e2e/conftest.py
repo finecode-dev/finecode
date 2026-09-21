@@ -88,7 +88,7 @@ def sigint_group(proc: subprocess.Popen) -> None:
     if sys.platform == "win32":
         os.kill(proc.pid, signal.CTRL_C_EVENT)
     else:
-        with contextlib.suppress(ProcessLookupError):
+        with contextlib.suppress(ProcessLookupError, PermissionError):
             os.killpg(proc.pid, signal.SIGINT)
 
 
@@ -96,8 +96,10 @@ def kill_group(proc: subprocess.Popen) -> None:
     """Forcefully kill proc and all its descendants (test teardown).
 
     On Unix: kills the entire process group via ``os.killpg(SIGKILL)`` so
-    children that share the group (e.g. WM spawned inside an MCP session)
-    are also terminated.
+    children that share the group (e.g. WM spawned inside an MCP session) are
+    also terminated, and reaps *proc* so an unreaped zombie cannot keep the
+    group non-empty. macOS answers killpg on a zombie-only group with EPERM
+    rather than ESRCH, so that is tolerated like "no such group".
     On Windows: ``os.killpg`` is not available, so the process tree is walked
     with psutil and each member is force-killed individually.
     """
@@ -115,10 +117,12 @@ def kill_group(proc: subprocess.Popen) -> None:
         except Exception:  # noqa: BLE001
             proc.kill()
     else:
-        try:
+        with contextlib.suppress(ProcessLookupError, PermissionError):
             os.killpg(proc.pid, signal.SIGKILL)
-        except ProcessLookupError:
-            pass
+        # Reap proc: an unreaped zombie keeps the group non-empty, and macOS
+        # answers killpg on a zombie-only group with EPERM rather than ESRCH.
+        with contextlib.suppress(subprocess.TimeoutExpired):
+            proc.wait(timeout=5)
 
 
 def wm_shared_port_file() -> Path:

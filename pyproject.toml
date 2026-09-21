@@ -32,6 +32,8 @@ dynamic = ["version"]
 finecode = "finecode.cli:cli"
 
 [dependency-groups]
+# psutil is test-only, but `list_tests` collects in `dev`, and collection imports the
+# e2e modules that import psutil at top level (see `testing` below).
 dev = ["debugpy==1.8.*", "psutil==7.2.*"]
 dev_workspace = [
   "debugpy==1.8.*",
@@ -48,6 +50,8 @@ dev_workspace = [
   # always present and gets no ER injected.
   "py-spy==0.4.*",
 ]
+# e2e process-tree tests (tests/e2e/**) walk the WM's children with psutil.
+testing = ["psutil==7.2.*"]
 
 [build-system]
 requires = ["setuptools>=64", "setuptools-scm>=8"]
