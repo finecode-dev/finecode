@@ -112,14 +112,17 @@ async def test_override_with_extras_puts_extras_in_field_not_version(
     If the bracket group stayed in ``version_or_source`` the backend would emit
     a malformed requirement (or silently drop the extras).
     """
-    project_def = _make_project_def(["pyrefly~=1.0"])
+    override_version = "==2.0.*"
+    project_def = _make_project_def(["examplepkg~=1.0"])
 
-    deps = await _run_handler(tmp_path, project_def, override=["pyrefly[a]==1.2.*"])
+    deps = await _run_handler(
+        tmp_path, project_def, override=[f"examplepkg[a]{override_version}"]
+    )
 
     assert len(deps) == 1
-    assert deps[0].name == "pyrefly"
+    assert deps[0].name == "examplepkg"
     assert deps[0].extras == ["a"]
-    assert deps[0].version_or_source == "==1.2.*"
+    assert deps[0].version_or_source == override_version
 
 
 async def test_override_without_extras_replaces_existing_extras(
@@ -128,26 +131,32 @@ async def test_override_without_extras_replaces_existing_extras(
     """An override without a bracket group replaces, not merges, the extras the
     overridden spec carried.
     """
-    project_def = _make_project_def(["pyrefly[x]~=1.0"])
+    override_version = "==2.0.*"
+    project_def = _make_project_def(["examplepkg[x]~=1.0"])
 
-    deps = await _run_handler(tmp_path, project_def, override=["pyrefly==1.3.*"])
+    deps = await _run_handler(
+        tmp_path, project_def, override=[f"examplepkg{override_version}"]
+    )
 
     assert deps[0].extras == []
-    assert deps[0].version_or_source == "==1.2.*"
+    assert deps[0].version_or_source == override_version
 
 
 async def test_override_adding_new_dep_carries_extras_key(
     tmp_path: pathlib.Path,
 ) -> None:
     """The not-replaced override branch still produces a dep dict with extras."""
+    override_version = "==2.0.*"
     project_def = _make_project_def(["other~=1.0"])
 
-    deps = await _run_handler(tmp_path, project_def, override=["pyrefly[a]==1.2.*"])
+    deps = await _run_handler(
+        tmp_path, project_def, override=[f"examplepkg[a]{override_version}"]
+    )
 
     names = {dep.name for dep in deps}
-    assert names == {"other", "pyrefly"}
-    pyrefly = next(dep for dep in deps if dep.name == "pyrefly")
-    assert pyrefly.extras == ["a"]
+    assert names == {"other", "examplepkg"}
+    examplepkg = next(dep for dep in deps if dep.name == "examplepkg")
+    assert examplepkg.extras == ["a"]
 
 
 async def test_install_project_preserves_extras_on_replaced_entry(

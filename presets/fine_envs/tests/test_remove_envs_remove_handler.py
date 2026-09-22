@@ -3,6 +3,7 @@ import stat
 
 import pytest
 from finecode_extension_api import code_action
+from finecode_extension_api.interfaces import ifilemanager
 from finecode_extension_api.resource_uri import path_to_resource_uri
 from finecode_extension_runner.impls.file_manager import FileManager
 
@@ -21,7 +22,10 @@ class _FakeLogger:
 
 class _FailForNamesFileManager:
     """Wraps a real `FileManager`, forcing `remove_dir` to fail for the given
-    venv names so `remove_envs`'s per-env error handling can be exercised."""
+    venv names so `remove_envs`'s per-env error handling can be exercised.
+
+    The failing branch raises `RemoveDirError`, as a real `IFileManager` does
+    for a removal it cannot perform."""
 
     def __init__(self, failing_names: set[str]) -> None:
         self._real = FileManager(logger=_FakeLogger())
@@ -31,7 +35,7 @@ class _FailForNamesFileManager:
         self, dir_path: pathlib.Path, *, tolerant: bool = False
     ) -> None:
         if dir_path.name in self._failing_names:
-            raise PermissionError("device or resource busy")
+            raise ifilemanager.RemoveDirError("device or resource busy")
         await self._real.remove_dir(dir_path, tolerant=tolerant)
 
 

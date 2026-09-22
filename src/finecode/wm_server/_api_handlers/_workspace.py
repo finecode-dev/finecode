@@ -383,15 +383,21 @@ async def _handle_list_actions(
             if action.canonical_source is None:
                 from finecode.wm_server.services import run_service
 
-                try:
-                    await run_service.ensure_action_metadata(
-                        action, project, ws_context
+                if not action.handlers:
+                    logger.debug(
+                        f"actions/list: {action.source!r} in {project.dir_path} has no"
+                        " handlers; metadata left unresolved"
                     )
-                except Exception as exc:
-                    logger.warning(
-                        f"actions/list: could not resolve metadata for {action.source!r} "
-                        f"in {project.dir_path}: {exc}"
-                    )
+                else:
+                    try:
+                        await run_service.ensure_action_metadata(
+                            action, project, ws_context
+                        )
+                    except Exception as exc:
+                        logger.warning(
+                            f"actions/list: could not resolve metadata for {action.source!r} "
+                            f"in {project.dir_path}: {exc}"
+                        )
             actions.append(
                 {
                     "name": action.name,

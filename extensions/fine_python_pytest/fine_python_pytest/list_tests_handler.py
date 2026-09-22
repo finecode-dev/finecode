@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import dataclasses
 import shlex
 import sys
@@ -23,6 +24,8 @@ from finecode_extension_api.resource_uri import (
     path_to_resource_uri,
     resource_uri_to_path,
 )
+
+from fine_python_pytest._default_targets import resolve_default_targets
 
 
 @dataclasses.dataclass
@@ -56,6 +59,24 @@ class PytestListTestsHandler(
     ) -> ListTestsRunResult:
         project_dir = self.project_info_provider.get_current_project_dir_path()
 
+        # Skip pytest before any progress scope is created, when nothing could
+        # be collected.
+        targets: list[str] | None = None
+        if not payload.file_paths:
+            targets = await asyncio.to_thread(
+                resolve_default_targets,
+                project_dir,
+                self.config.default_test_dirs,
+                self.config.addopts,
+            )
+            if targets is None:
+                self.logger.debug(
+                    f"Skipping pytest in {project_dir}: none of default_test_dirs"
+                    f" {self.config.default_test_dirs} exists and nothing else pytest"
+                    " would collect was found."
+                )
+                return ListTestsRunResult(tests=[])
+
         cmd_parts = [
             self.pytest_bin,
             "--collect-only",
@@ -66,10 +87,9 @@ class PytestListTestsHandler(
             cmd_parts.extend(
                 str(resource_uri_to_path(uri)) for uri in payload.file_paths
             )
-        elif self.config.default_test_dirs:
-            cmd_parts.extend(
-                d for d in self.config.default_test_dirs if (project_dir / d).exists()
-            )
+        else:
+            assert targets is not None  # the skip path returned above
+            cmd_parts.extend(targets)
 
         cmd_parts.extend(self.config.addopts)
 

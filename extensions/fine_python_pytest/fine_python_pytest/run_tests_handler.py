@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import dataclasses
 import json
 import os
@@ -29,12 +30,16 @@ from finecode_extension_api.resource_uri import (
     resource_uri_to_path,
 )
 
+from fine_python_pytest._default_targets import resolve_default_targets
+
 
 @dataclasses.dataclass
 class PytestRunTestsHandlerConfig(code_action.ActionHandlerConfig):
     # Extra pytest CLI arguments forwarded verbatim (e.g. ["-x", "--timeout=30"])
     addopts: list[str] = dataclasses.field(default_factory=list)
-    # Paths passed to pytest when the payload gives none (relative to project_dir)
+    # Paths passed to pytest when the payload gives none (relative to project_dir).
+    # If none of these exists and nothing pytest would collect is found in the
+    # project, pytest is not run; set `[]` to always defer to pytest's own discovery.
     default_test_dirs: list[str] = dataclasses.field(default_factory=lambda: ["tests"])
 
 
@@ -61,6 +66,24 @@ class PytestRunTestsHandler(
     ) -> RunTestsRunResult:
         project_dir = self.project_info_provider.get_current_project_dir_path()
 
+        # Skip pytest before any temp file or progress scope is created, when
+        # nothing could be collected.
+        targets: list[str] | None = None
+        if not payload.test_ids and not payload.file_paths:
+            targets = await asyncio.to_thread(
+                resolve_default_targets,
+                project_dir,
+                self.config.default_test_dirs,
+                self.config.addopts,
+            )
+            if targets is None:
+                self.logger.debug(
+                    f"Skipping pytest in {project_dir}: none of default_test_dirs"
+                    f" {self.config.default_test_dirs} exists and nothing else pytest"
+                    " would collect was found."
+                )
+                return RunTestsRunResult(test_results=[])
+
         fd, report_path_str = tempfile.mkstemp(suffix=".json")
         os.close(fd)
         report_path = Path(report_path_str)
@@ -81,12 +104,9 @@ class PytestRunTestsHandler(
                 cmd_parts.extend(
                     str(resource_uri_to_path(uri)) for uri in payload.file_paths
                 )
-            elif self.config.default_test_dirs:
-                cmd_parts.extend(
-                    d
-                    for d in self.config.default_test_dirs
-                    if (project_dir / d).exists()
-                )
+            else:
+                assert targets is not None  # the skip path returned above
+                cmd_parts.extend(targets)
 
             if payload.markers:
                 cmd_parts.extend(["-m", " or ".join(payload.markers)])

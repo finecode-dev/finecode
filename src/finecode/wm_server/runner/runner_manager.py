@@ -824,6 +824,18 @@ async def reap_failed_channel_runners(
     return reaped
 
 
+def _warn_handlerless_actions(handlerless: dict[str, list[Path]]) -> None:
+    for source, project_dirs in sorted(handlerless.items()):
+        logger.warning(
+            f"Action {source!r} has no handlers configured in {len(project_dirs)}"
+            " project(s) — its metadata will not be resolved there."
+        )
+        logger.debug(
+            f"Projects with no handlers for {source!r}: "
+            + ", ".join(str(p) for p in project_dirs)
+        )
+
+
 async def start_runners_with_presets(
     projects: list[domain.Project],
     ws_context: context.WorkspaceContext,
@@ -927,48 +939,53 @@ async def start_runners_with_presets(
             f"See logs above for per-project details."
         )
 
-    for project in projects:
-        if project.status != domain.ProjectStatus.CONFIG_VALID:
-            continue
+    handlerless: dict[str, list[Path]] = {}
+    try:
+        for project in projects:
+            if project.status != domain.ProjectStatus.CONFIG_VALID:
+                continue
 
-        try:
-            await preset_resolution.read_project_config_with_py_presets(
-                project=project, ws_context=ws_context, resolve_presets=resolve_presets
-            )
-            collected = collect_actions.collect_project(
-                project_path=project.dir_path, ws_context=ws_context
-            )
-        except config_models.ConfigurationError as exception:
-            raise RunnerFailedToStart(
-                f"Reading project config with presets and collecting actions in {project.dir_path} failed: {exception.message}"
-            ) from exception
-
-        # Upgrade to ResolvedProject — presets are now resolved in the raw config
-        resolved = domain.ResolvedProject.from_collected(collected)
-        ws_context.ws_projects[project.dir_path] = resolved
-
-        for action in resolved.actions:
-            if not action.handlers:
-                logger.warning(
-                    f"Action {action.source!r} in {project.dir_path} has no handlers"
-                    " configured — its metadata will not be resolved."
+            try:
+                await preset_resolution.read_project_config_with_py_presets(
+                    project=project,
+                    ws_context=ws_context,
+                    resolve_presets=resolve_presets,
                 )
+                collected = collect_actions.collect_project(
+                    project_path=project.dir_path, ws_context=ws_context
+                )
+            except config_models.ConfigurationError as exception:
+                raise RunnerFailedToStart(
+                    f"Reading project config with presets and collecting actions in {project.dir_path} failed: {exception.message}"
+                ) from exception
 
-        # update config of dev_workspace runner, the new config contains resolved presets
-        dev_workspace_runner = ws_context.ws_projects_extension_runners[
-            project.dir_path
-        ]["dev_workspace"]
-        handlers_to_init = (
-            domain_helpers.collect_all_handlers_to_initialize(resolved, "dev_workspace")
-            if initialize_all_handlers
-            else None
-        )
-        await update_runner_config(
-            runner=dev_workspace_runner,
-            project=resolved,
-            handlers_to_initialize=handlers_to_init,
-            ws_context=ws_context,
-        )
+            # Upgrade to ResolvedProject — presets are now resolved in the raw config
+            resolved = domain.ResolvedProject.from_collected(collected)
+            ws_context.ws_projects[project.dir_path] = resolved
+
+            for action in resolved.actions:
+                if not action.handlers:
+                    handlerless.setdefault(action.source, []).append(project.dir_path)
+
+            # update config of dev_workspace runner, the new config contains resolved presets
+            dev_workspace_runner = ws_context.ws_projects_extension_runners[
+                project.dir_path
+            ]["dev_workspace"]
+            handlers_to_init = (
+                domain_helpers.collect_all_handlers_to_initialize(
+                    resolved, "dev_workspace"
+                )
+                if initialize_all_handlers
+                else None
+            )
+            await update_runner_config(
+                runner=dev_workspace_runner,
+                project=resolved,
+                handlers_to_initialize=handlers_to_init,
+                ws_context=ws_context,
+            )
+    finally:
+        _warn_handlerless_actions(handlerless)
 
 
 async def get_or_start_runners_with_presets(
