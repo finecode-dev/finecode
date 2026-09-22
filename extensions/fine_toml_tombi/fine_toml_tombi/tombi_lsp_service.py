@@ -38,9 +38,10 @@ _TOMBI_CLIENT_CAPABILITIES: dict[str, Any] = {
         },
     },
     "workspace": {
-        # workspaceFolders must stay False: LspService has no workspace/workspaceFolders
-        # request handler. Declaring True would tell tombi we support the pull-based
-        # request, but we pass folders once in initialize — no dynamic updates needed.
+        # tombi sends workspace/workspaceFolders from its `initialized` handling
+        # regardless of this flag, so the flag no longer decides whether the
+        # request arrives; LspService answers it with the folders passed in
+        # initialize. Kept False because the folders never change dynamically.
         "workspaceFolders": False,
         "configuration": True,
     },

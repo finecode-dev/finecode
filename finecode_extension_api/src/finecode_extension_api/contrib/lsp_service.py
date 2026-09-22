@@ -181,6 +181,9 @@ class LspService(service.DisposableService):
         # whether the server asked to be told about workspace file changes via
         # client/registerCapability; gate `workspace/didChangeWatchedFiles`.
         self._registered_watched_files = False
+        # folders sent in initialize; a server may ask for them again via
+        # `workspace/workspaceFolders`, so they are kept to answer that request
+        self._workspace_folders: list[dict[str, str]] = []
 
     @override
     async def init(self) -> None:
@@ -213,6 +216,7 @@ class LspService(service.DisposableService):
         self._server_capabilities = {}
         self._root_path = None
         self._registered_watched_files = False
+        self._workspace_folders = []
 
     async def ensure_started(
         self,
@@ -227,10 +231,11 @@ class LspService(service.DisposableService):
         self,
         root_uri: str,
     ) -> None:
+        workspace_folders = [{"uri": root_uri, "name": root_uri}]
         session = self._lsp_client.session(
             cmd=self._cmd,
             root_uri=root_uri,
-            workspace_folders=[{"uri": root_uri, "name": root_uri}],
+            workspace_folders=workspace_folders,
             initialization_options=(
                 {"settings": self._settings} if self._settings else None
             ),
@@ -241,6 +246,7 @@ class LspService(service.DisposableService):
         self._session = session
         self._root_path = resource_uri_to_path(root_uri)
         self._server_capabilities = session.server_capabilities
+        self._workspace_folders = workspace_folders
         self._session.on_notification(
             "textDocument/publishDiagnostics",
             self._handle_diagnostics,
@@ -266,6 +272,13 @@ class LspService(service.DisposableService):
         self._session.on_request(
             "workspace/inlayHint/refresh",
             self._handle_inlay_hint_refresh,
+        )
+        # Some servers (e.g. tombi) send workspace/workspaceFolders from their
+        # `initialized` handling regardless of the client capability, so this
+        # needs a handler even when `workspace.workspaceFolders` is false.
+        self._session.on_request(
+            "workspace/workspaceFolders",
+            self._handle_workspace_folders_request,
         )
 
         # some LSP servers read settings from didChangeConfiguration (e.g. pyrefly)
@@ -1417,6 +1430,16 @@ class LspService(service.DisposableService):
         and answering it keeps the server from seeing an unhandled method.
         """
         return
+
+    async def _handle_workspace_folders_request(
+        self, params: dict[str, Any] | None
+    ) -> list[dict[str, str]]:
+        """Handle the workspace/workspaceFolders pull request.
+
+        The folders are the fixed set this session was started with; there is
+        no dynamic change to report.
+        """
+        return self._workspace_folders
 
     async def _handle_configuration_request(
         self, params: dict[str, Any] | None

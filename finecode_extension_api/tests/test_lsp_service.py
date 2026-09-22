@@ -60,6 +60,9 @@ class _FakeLspSession:
         # What the server advertised in its initialize result. Declaring
         # `diagnosticProvider` here is what puts the service on the pull path.
         self.capabilities: dict[str, Any] = {}
+        # Handlers registered with on_request, keyed by method, so a test can
+        # invoke the client side of a server-to-client request directly.
+        self.request_handlers: dict[str, Any] = {}
 
     async def __aenter__(self) -> "_FakeLspSession":
         return self
@@ -106,7 +109,7 @@ class _FakeLspSession:
         pass
 
     def on_request(self, method: str, handler: Any) -> None:
-        pass
+        self.request_handlers[method] = handler
 
     @property
     def server_capabilities(self) -> dict[str, Any]:
@@ -1208,6 +1211,22 @@ async def test_unregistered_service_drops_a_nonempty_watched_file_batch(
             for n in session.notifications
             if n.method == "workspace/didChangeWatchedFiles"
         ]
+
+
+async def test_workspace_folders_request_is_answered_with_initial_folders(
+    tmp_path: Path,
+) -> None:
+    """Some servers (tombi) pull the workspace folders regardless of the
+    workspace.workspaceFolders capability. The request has to be answered with
+    the folder passed at initialize, not Method not found."""
+    subject = tmp_path / "subject.py"
+
+    async with _running_service(subject, "x = 1\n") as (_, session, _):
+        handler = session.request_handlers["workspace/workspaceFolders"]
+        result = await handler(None)
+
+        root_uri = subject.parent.as_uri()
+        assert result == [{"uri": root_uri, "name": root_uri}]
 
 
 async def test_watched_file_create_and_delete_after_registration(
