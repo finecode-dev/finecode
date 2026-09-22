@@ -1,4 +1,6 @@
 import pathlib
+import shlex
+import sys
 from typing import Any
 
 import pytest
@@ -166,9 +168,9 @@ def _run_payload(
     )
 
 
-def _handler() -> UvInstallDepsInEnvHandler:
+def _handler(editable_mode: str | None = None) -> UvInstallDepsInEnvHandler:
     return UvInstallDepsInEnvHandler(
-        config=UvInstallDepsInEnvHandlerConfig(),
+        config=UvInstallDepsInEnvHandlerConfig(editable_mode=editable_mode),
         command_runner=None,  # type: ignore[arg-type]
         logger=None,  # type: ignore[arg-type]
         action_runner=None,  # type: ignore[arg-type]
@@ -191,6 +193,40 @@ def _dep(
     )
 
 
+def _split_windows_cmdline(cmd: str) -> list[str]:
+    """Split `cmd` the way a Windows program's C runtime does: whitespace
+    outside double quotes separates arguments and the quotes are removed.
+    `'` is an ordinary character."""
+    args: list[str] = []
+    current: list[str] = []
+    in_quotes = False
+    for ch in cmd:
+        if ch == '"':
+            in_quotes = not in_quotes
+        elif ch.isspace() and not in_quotes:
+            if current:
+                args.append("".join(current))
+                current = []
+        else:
+            current.append(ch)
+    if current:
+        args.append("".join(current))
+    return args
+
+
+def _unquoted_spans(cmd: str) -> str:
+    """The text of `cmd` outside double quotes — where cmd.exe still treats
+    `<`, `>`, `&` and `|` as operators."""
+    parts: list[str] = []
+    in_quotes = False
+    for ch in cmd:
+        if ch == '"':
+            in_quotes = not in_quotes
+        elif not in_quotes:
+            parts.append(ch)
+    return "".join(parts)
+
+
 def test_uv_editable_dep_emits_extras() -> None:
     """An editable spec with extras renders the bracket group before the file URI."""
     cmd = _handler()._construct_uv_install_cmd(
@@ -210,6 +246,76 @@ def test_uv_non_editable_dep_emits_extras() -> None:
     )
 
     assert "'pkg[a]~=1.0'" in cmd
+
+
+def test_uv_cmd_tokenizes_on_windows(monkeypatch: pytest.MonkeyPatch) -> None:
+    """On Windows the shell is cmd.exe, where single quotes do not group a
+    requirement token and an unquoted `>` redirects output. Double-quoting each
+    requirement and the config setting keeps each one argument and keeps cmd's
+    metacharacters literal."""
+    monkeypatch.setattr(sys, "platform", "win32")
+    cmd = _handler(editable_mode="compat")._construct_uv_install_cmd(
+        uv_executable="uv",
+        venv_dir_path=pathlib.Path("/venv"),
+        dependencies=[
+            _dep("pkg", " @ file:///D:/a/pkg", editable=True, extras=["a"]),
+            _dep("other", ">=1.0"),
+        ],
+    )
+
+    argv = _split_windows_cmdline(cmd)
+
+    assert ["-C", "editable_mode=compat"] == argv[
+        argv.index("-C") : argv.index("-C") + 2
+    ]
+    assert ["-e", "pkg[a] @ file:///D:/a/pkg"] == argv[
+        argv.index("-e") : argv.index("-e") + 2
+    ]
+    assert "other>=1.0" in argv
+    assert not any("'" in token for token in argv)
+    assert not any(ch in _unquoted_spans(cmd) for ch in "<>&|")
+
+
+def test_uv_cmd_argv_unchanged_on_posix() -> None:
+    """On POSIX the argv delivered to uv is the same as the single-quoted form
+    produced before, so the Windows fix has no Linux/macOS regression surface."""
+    cmd = _handler(editable_mode="compat")._construct_uv_install_cmd(
+        uv_executable="uv",
+        venv_dir_path=pathlib.Path("/venv"),
+        dependencies=[
+            _dep("pkg", " @ file:///D:/a/pkg", editable=True, extras=["a"]),
+            _dep("other", ">=1.0"),
+        ],
+    )
+
+    argv = shlex.split(cmd)
+
+    assert ["-C", "editable_mode=compat"] == argv[
+        argv.index("-C") : argv.index("-C") + 2
+    ]
+    assert ["-e", "pkg[a] @ file:///D:/a/pkg"] == argv[
+        argv.index("-e") : argv.index("-e") + 2
+    ]
+    assert "other>=1.0" in argv
+
+
+def test_uv_marker_quotes_survive_windows(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A PEP 508 marker string quoted with `"` reaches the installer as one
+    argument on Windows: the double quote is swapped for the equivalent `'`
+    marker quote rather than escaped."""
+    monkeypatch.setattr(sys, "platform", "win32")
+    cmd = _handler()._construct_uv_install_cmd(
+        uv_executable="uv",
+        venv_dir_path=pathlib.Path("/venv"),
+        dependencies=[_dep("pkg", ' ; python_version < "3.12"')],
+    )
+
+    argv = _split_windows_cmdline(cmd)
+
+    marker_tokens = [token for token in argv if "python_version" in token]
+    assert marker_tokens == ["pkg ; python_version < '3.12'"]
 
 
 async def test_install_dumps_config_once_to_a_private_temp_dir(

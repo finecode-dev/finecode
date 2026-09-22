@@ -6,6 +6,7 @@ from finecode_extension_api.interfaces import iprojectinfoprovider
 
 from fine_envs.dependency_config_utils import (
     collect_transitive_editable_deps,
+    direct_reference,
     make_dep,
     resolve_install_project,
     workspace_package_ref,
@@ -43,7 +44,7 @@ def test_resolve_install_project_adds_editable_entry_for_project_dir(
     entry = result[0]
     assert entry["name"] == "my_project"
     assert entry["editable"] is True
-    assert entry["version_or_source"] == f" @ file://{tmp_path.as_posix()}"
+    assert entry["version_or_source"] == f" @ {tmp_path.as_uri()}"
 
 
 def test_resolve_install_project_replaces_named_requirement_for_same_distribution(
@@ -68,7 +69,7 @@ def test_resolve_install_project_replaces_named_requirement_for_same_distributio
     assert names == {"my_project", "other_dep"}
     my_project_entry = next(dep for dep in result if dep["name"] == "my_project")
     assert my_project_entry["editable"] is True
-    assert my_project_entry["version_or_source"] == f" @ file://{tmp_path.as_posix()}"
+    assert my_project_entry["version_or_source"] == f" @ {tmp_path.as_uri()}"
 
 
 def test_resolve_install_project_matches_by_canonical_name(
@@ -126,7 +127,7 @@ def test_install_project_entry_is_included_in_transitive_editable_walk(
     assert names == {"my_project", "my_project_dep"}
     dep_entry = next(d for d in dependencies if d["name"] == "my_project_dep")
     assert dep_entry["editable"] is True
-    assert dep_entry["version_or_source"] == f" @ file://{dep_dir.as_posix()}"
+    assert dep_entry["version_or_source"] == f" @ {dep_dir.as_uri()}"
 
 
 def test_transitive_walk_grows_extras_and_re_enqueues(
@@ -159,12 +160,12 @@ def test_transitive_walk_grows_extras_and_re_enqueues(
     dependencies = [
         make_dep(
             name="C",
-            version_or_source=f" @ file://{c_dir.as_posix()}",
+            version_or_source=f" @ {c_dir.as_uri()}",
             editable=True,
         ),
         make_dep(
             name="A",
-            version_or_source=f" @ file://{a_dir.as_posix()}",
+            version_or_source=f" @ {a_dir.as_uri()}",
             editable=True,
         ),
     ]
@@ -202,7 +203,7 @@ def test_transitive_walk_merges_extras_from_project_and_groups(
     dependencies = [
         make_dep(
             name="root",
-            version_or_source=f" @ file://{root_dir.as_posix()}",
+            version_or_source=f" @ {root_dir.as_uri()}",
             editable=True,
         )
     ]
@@ -229,7 +230,7 @@ def test_transitive_walk_installs_only_editable_packages_from_extra(
     dependencies = [
         make_dep(
             name="root",
-            version_or_source=f" @ file://{root_dir.as_posix()}",
+            version_or_source=f" @ {root_dir.as_uri()}",
             editable=True,
             extras=["x"],
         )
@@ -254,7 +255,7 @@ def test_workspace_package_ref_uses_wheel_when_present(
         "present", _pkg(tmp_path, wheel, editable=False)
     )
 
-    assert version_or_source == f" @ file://{wheel.as_posix()}"
+    assert version_or_source == f" @ {wheel.as_uri()}"
     assert editable is False
 
 
@@ -296,7 +297,7 @@ def test_transitive_walk_reads_source_but_emits_wheel(
     dependencies = [
         make_dep(
             name="root",
-            version_or_source=f" @ file://{root_wheel.as_posix()}",
+            version_or_source=f" @ {root_wheel.as_uri()}",
             editable=False,
         )
     ]
@@ -304,5 +305,24 @@ def test_transitive_walk_reads_source_but_emits_wheel(
     result = collect_transitive_editable_deps(dependencies, ws_workspace_packages)
 
     present = next(dep for dep in result if dep["name"] == "present")
-    assert present["version_or_source"] == f" @ file://{present_wheel.as_posix()}"
+    assert present["version_or_source"] == f" @ {present_wheel.as_uri()}"
     assert present["editable"] is False
+
+
+def test_direct_reference_uses_rfc_8089_form_for_absolute_path() -> None:
+    """An absolute path becomes ` @ file:///…`, the authority-less RFC 8089
+    form that `file://` + a drive-letter path would not be on Windows."""
+    assert direct_reference(pathlib.Path("/abs/pkg")) == " @ file:///abs/pkg"
+
+
+def test_direct_reference_percent_encodes_spaces() -> None:
+    """A path containing spaces becomes a percent-encoded URI so the installer
+    receives one token rather than several."""
+    assert direct_reference(pathlib.Path("/a dir/pkg")) == " @ file:///a%20dir/pkg"
+
+
+def test_direct_reference_rejects_relative_paths() -> None:
+    """A relative path raises rather than producing a URI the installer would
+    resolve against its own cwd."""
+    with pytest.raises(ValueError):
+        direct_reference(pathlib.Path("rel/pkg"))

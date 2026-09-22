@@ -1,5 +1,7 @@
 import dataclasses
 import pathlib
+import shlex
+import sys
 
 from fine_envs import install_deps_in_env_action
 from finecode_extension_api import code_action
@@ -11,6 +13,21 @@ from finecode_extension_api.resource_uri import resource_uri_to_path
 class PipInstallDepsInEnvHandlerConfig(code_action.ActionHandlerConfig):
     find_links: list[str] | None = None
     editable_mode: str | None = None
+
+
+def _quote_arg(arg: str) -> str:
+    """Quote one argument for the shell `ICommandRunner.run` spawns through.
+
+    On Windows that is cmd.exe, and the child splits its command line by MSVC
+    rules: `'` is not a quote there, and cmd treats an unquoted `>` in a
+    version spec as a redirect. Double quotes are honoured by both. The args
+    quoted here are PEP 508 requirements and config settings, where `"` can
+    only be a marker-string quote, so it is swapped for the equivalent `'`
+    rather than escaped (a `\\"` toggles cmd's own quote state).
+    """
+    if sys.platform == "win32":
+        return '"' + arg.replace('"', "'") + '"'
+    return shlex.quote(arg)
 
 
 class PipInstallDepsInEnvHandler(
@@ -66,7 +83,8 @@ class PipInstallDepsInEnvHandler(
 
         if self.config.editable_mode is not None:
             install_params += (
-                f"--config-settings editable_mode='{self.config.editable_mode}' "
+                f"--config-settings "
+                f"{_quote_arg(f'editable_mode={self.config.editable_mode}')} "
             )
 
         for dependency in dependencies:
@@ -81,17 +99,19 @@ class PipInstallDepsInEnvHandler(
                 # dependency is specified as '<name> @ file://' but pip CLI supports
                 # only 'file://'
                 start_idx_of_file_uri = dependency.version_or_source.index("file://")
-                # put in single quoutes to avoid problems in case of spaces in path
-                # because in CLI commands single dependencies are splitted by space
                 install_params += (
-                    f"'{dependency.version_or_source[start_idx_of_file_uri:]}"
-                    f"{extras_str}' "
+                    _quote_arg(
+                        f"{dependency.version_or_source[start_idx_of_file_uri:]}"
+                        f"{extras_str}"
+                    )
+                    + " "
                 )
             else:
-                # put in single quoutes to avoid problems in case of spaces in version,
-                # because in CLI commands single dependencies are splitted by space
                 install_params += (
-                    f"'{dependency.name}{extras_str}{dependency.version_or_source}' "
+                    _quote_arg(
+                        f"{dependency.name}{extras_str}{dependency.version_or_source}"
+                    )
+                    + " "
                 )
         cmd = f"{python_executable} -m pip --disable-pip-version-check install {install_params}"
         return cmd

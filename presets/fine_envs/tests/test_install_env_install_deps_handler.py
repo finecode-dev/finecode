@@ -178,7 +178,7 @@ async def test_install_project_preserves_extras_on_replaced_entry(
     assert deps[0].name == "my_project"
     assert deps[0].editable is True
     assert deps[0].extras == ["x"]
-    assert deps[0].version_or_source == f" @ file://{tmp_path.as_posix()}"
+    assert deps[0].version_or_source == f" @ {tmp_path.as_uri()}"
 
 
 async def test_workspace_package_installs_from_wheel_in_wheel_mode(
@@ -199,7 +199,7 @@ async def test_workspace_package_installs_from_wheel_in_wheel_mode(
         },
     )
 
-    assert deps[0].version_or_source == f" @ file://{wheel.as_posix()}"
+    assert deps[0].version_or_source == f" @ {wheel.as_uri()}"
     assert deps[0].editable is False
 
 
@@ -216,5 +216,5 @@ async def test_workspace_package_installs_editable_without_wheel(
         ws_packages={"my_project": iprojectinfoprovider.WorkspacePackage(dir=tmp_path)},
     )
 
-    assert deps[0].version_or_source == f" @ file://{tmp_path.as_posix()}"
+    assert deps[0].version_or_source == f" @ {tmp_path.as_uri()}"
     assert deps[0].editable is True

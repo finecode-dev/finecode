@@ -43,7 +43,7 @@ def split_dep_spec(dependency_str: str) -> tuple[str, list[str], str]:
 
     `pkg[a,b]~=1.0` -> (`pkg`, [`a`, `b`], `~=1.0`). A spec without extras
     yields an empty extras list and the whole remainder as the third element
-    (including any leading whitespace, e.g. ` @ file://...`).
+    (including any leading whitespace, e.g. ` @ file:///...`).
     """
     name = get_dependency_name(dependency_str)
     rest = dependency_str[len(name) :]
@@ -56,6 +56,17 @@ def split_dep_spec(dependency_str: str) -> tuple[str, list[str], str]:
         )
         version_or_source = rest[closing + 1 :]
     return name, extras, version_or_source
+
+
+def direct_reference(path: pathlib.Path) -> str:
+    """The PEP 508 direct-reference suffix (` @ file:///…`) for a local path.
+
+    `as_uri()` gives the RFC 8089 form on every OS (`file:///D:/…` on Windows,
+    where `file://` + `as_posix()` would put the drive in the URI authority)
+    and raises ValueError on a relative path instead of producing a URI that
+    installers resolve against their cwd.
+    """
+    return f" @ {path.as_uri()}"
 
 
 def workspace_package_ref(
@@ -73,14 +84,14 @@ def workspace_package_ref(
         ActionFailedException: a wheel was required but missing.
     """
     if package.editable:
-        return f" @ file://{package.dir.as_posix()}", True
+        return direct_reference(package.dir), True
     if package.wheel is None:
         raise code_action.ActionFailedException(
             f"Workspace package '{name}' has no built wheel in wheel mode. "
             "Run `finecode prepare-envs` to build the wheelhouse, or add it to "
             "[workspace.workspace_packages_install].exclude to install it editable."
         )
-    return f" @ file://{package.wheel.as_posix()}", False
+    return direct_reference(package.wheel), False
 
 
 def process_raw_deps(
@@ -238,7 +249,7 @@ def resolve_install_project(
     if package is not None:
         version_or_source, editable = workspace_package_ref(project_name, package)
     else:
-        version_or_source = f" @ file://{project_dir_path.as_posix()}"
+        version_or_source = direct_reference(project_dir_path)
         editable = True
     result.append(
         make_dep(
@@ -253,6 +264,7 @@ def resolve_install_project(
 
 __all__ = [
     "collect_transitive_editable_deps",
+    "direct_reference",
     "get_dependency_name",
     "make_dep",
     "merge_extras",

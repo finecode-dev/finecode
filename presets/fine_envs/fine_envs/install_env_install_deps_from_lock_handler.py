@@ -14,6 +14,7 @@ from finecode_extension_api.resource_uri import (
 )
 
 from fine_envs import (
+    dependency_config_utils,
     install_deps_in_env_action,
     install_env_action,
 )
@@ -104,7 +105,7 @@ def _parse_lock_file(
             raw_path = pathlib.Path(directory.get("path", ""))
             resolved_path = (lock_file_path.parent / raw_path).resolve()
             editable = directory.get("editable", False)
-            version_or_source = f" @ file://{resolved_path}"
+            version_or_source = dependency_config_utils.direct_reference(resolved_path)
 
         dependencies.append(
             install_deps_in_env_action.Dependency(

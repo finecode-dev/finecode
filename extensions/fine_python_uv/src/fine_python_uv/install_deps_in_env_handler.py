@@ -1,5 +1,7 @@
 import dataclasses
 import pathlib
+import shlex
+import sys
 
 from fine_envs import install_deps_in_env_action
 from finecode_extension_api import code_action
@@ -18,6 +20,21 @@ from ._uv_common import get_uv_executable, temp_project_config_dump
 class UvInstallDepsInEnvHandlerConfig(code_action.ActionHandlerConfig):
     find_links: list[str] | None = None
     editable_mode: str | None = None
+
+
+def _quote_arg(arg: str) -> str:
+    """Quote one argument for the shell `ICommandRunner.run` spawns through.
+
+    On Windows that is cmd.exe, and uv.exe splits its command line by MSVC
+    rules: `'` is not a quote there, and cmd treats an unquoted `>` in a
+    version spec as a redirect. Double quotes are honoured by both. The args
+    quoted here are PEP 508 requirements and config settings, where `"` can
+    only be a marker-string quote, so it is swapped for the equivalent `'`
+    rather than escaped (a `\\"` toggles cmd's own quote state).
+    """
+    if sys.platform == "win32":
+        return '"' + arg.replace('"', "'") + '"'
+    return shlex.quote(arg)
 
 
 class UvInstallDepsInEnvHandler(
@@ -90,7 +107,9 @@ class UvInstallDepsInEnvHandler(
                 install_params += f'--find-links="{link}" '
 
         if self.config.editable_mode is not None:
-            install_params += f"-C editable_mode='{self.config.editable_mode}' "
+            install_params += (
+                f"-C {_quote_arg(f'editable_mode={self.config.editable_mode}')} "
+            )
 
         for dependency in dependencies:
             if dependency.editable:
@@ -100,10 +119,11 @@ class UvInstallDepsInEnvHandler(
             if dependency.extras:
                 extras_str = "[" + ",".join(dependency.extras) + "]"
 
-            # uv supports the full PEP 508 'name @ file://...' syntax natively,
-            # so no stripping of the package name is needed (unlike pip CLI).
             install_params += (
-                f"'{dependency.name}{extras_str}{dependency.version_or_source}' "
+                _quote_arg(
+                    f"{dependency.name}{extras_str}{dependency.version_or_source}"
+                )
+                + " "
             )
 
         cmd = f'"{uv_executable}" --no-config pip install --python "{venv_dir_path}" {install_params}'
