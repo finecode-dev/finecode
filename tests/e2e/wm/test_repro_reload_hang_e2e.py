@@ -32,10 +32,10 @@ from tests.e2e.wm.test_recovery import wm_with_er  # noqa: F401  (pytest fixture
 def _er_pids(parent_pid: int) -> list[int]:
     """The *interpreter* pids that run an ER under *parent_pid* (the WM).
 
-    The WM launches an ER as ``/bin/sh -c "<venv>/bin/python -m
-    finecode_extension_runner.cli start ..."`` -- the shell is a direct child
-    and the real ER is its child. Stopping the shell leaves the ER serving RPC,
-    so select the ``python`` process, not the ``sh`` wrapper.
+    The WM launches the ER interpreter directly -- `python -m
+    finecode_extension_runner.cli start ...` -- with no shell wrapper. Its
+    children that mention ``finecode_extension_runner`` on their command line
+    are the ER interpreters (py-spy or a debugger might add another).
     """
     found: list[int] = []
     for child in psutil.Process(parent_pid).children(recursive=True):
@@ -43,7 +43,7 @@ def _er_pids(parent_pid: int) -> list[int]:
             cmdline = child.cmdline()
         except psutil.Error:
             continue
-        if not cmdline or "/bin/sh" in cmdline[0]:
+        if not cmdline:
             continue
         if any("finecode_extension_runner" in arg for arg in cmdline):
             found.append(child.pid)

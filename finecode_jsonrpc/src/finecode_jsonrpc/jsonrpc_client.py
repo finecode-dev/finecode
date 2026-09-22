@@ -18,7 +18,7 @@ class JsonRpcSessionImpl:
 
     def __init__(
         self,
-        cmd: str,
+        cmd: collections.abc.Sequence[str],
         cwd: Path | None,
         env: dict[str, str] | None,
         readable_id: str,
@@ -341,7 +341,7 @@ class JsonRpcClientImpl:
 
     def session(
         self,
-        cmd: str,
+        cmd: collections.abc.Sequence[str],
         cwd: Path | None = None,
         env: dict[str, str] | None = None,
         readable_id: str = "",

@@ -86,17 +86,24 @@ class LspService(service.DisposableService):
         file_editor: ifileeditor.IFileEditor,
         logger: ilogger.ILogger,
         *,
-        cmd: str,
+        cmd: collections.abc.Sequence[str],
         language_id: str,
         readable_id: str = "",
         client_capabilities: dict[str, Any] | None = None,
         max_concurrent_requests: int | None = None,
         empty_diagnostics_settle_sec: float = 1.0,
     ) -> None:
+        # A str satisfies Sequence[str], so the type checker cannot reject it —
+        # and tuple(cmd) would silently explode "ruff server" into characters.
+        # Fail here, at service construction, rather than at the first spawn.
+        if isinstance(cmd, str):
+            raise TypeError("cmd must be an argv sequence, not a str")
         self._lsp_client = lsp_client
         self._file_editor = file_editor
         self._logger = logger
-        self._cmd = cmd
+        # tuple() so a caller mutating its list afterwards cannot change a later
+        # restart's command.
+        self._cmd = tuple(cmd)
         self._language_id = language_id
         self._readable_id = readable_id
         self._client_capabilities = client_capabilities

@@ -235,7 +235,7 @@ async def _running_service(
         lsp_client=_FakeLspClient(session),
         file_editor=file_editor,  # type: ignore[arg-type]
         logger=_NullLogger(),  # type: ignore[arg-type]
-        cmd="fake-lsp-server",
+        cmd=["fake-lsp-server"],
         language_id="python",
         max_concurrent_requests=max_concurrent_requests,
     )
@@ -767,9 +767,23 @@ def test_concurrency_limit_below_one_is_rejected() -> None:
             lsp_client=_FakeLspClient(_FakeLspSession()),
             file_editor=file_editor,  # type: ignore[arg-type]
             logger=_NullLogger(),  # type: ignore[arg-type]
-            cmd="fake-lsp-server",
+            cmd=["fake-lsp-server"],
             language_id="python",
             max_concurrent_requests=0,
+        )
+
+
+def test_cmd_str_is_rejected() -> None:
+    """A str command would be exec'd character-by-character at spawn, long after
+    construction; reject it when the service is built."""
+    file_editor = _FakeFileEditor(Path("/nonexistent"), "")
+    with pytest.raises(TypeError, match="argv sequence"):
+        LspService(
+            lsp_client=_FakeLspClient(_FakeLspSession()),
+            file_editor=file_editor,  # type: ignore[arg-type]
+            logger=_NullLogger(),  # type: ignore[arg-type]
+            cmd="fake-lsp-server",
+            language_id="python",
         )
 
 

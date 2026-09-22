@@ -20,11 +20,10 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
-import shlex
 import sys
 import time
 import typing
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Sequence
 from pathlib import Path
 from typing import Any, Self
 
@@ -64,7 +63,7 @@ _META = code_action.RunActionMeta(
 class _StdioLspSession:
     """Speaks LSP to a subprocess: enough of ILspSession for LspService."""
 
-    def __init__(self, cmd: str, root_uri: str, **kwargs: Any) -> None:
+    def __init__(self, cmd: Sequence[str], root_uri: str, **kwargs: Any) -> None:
         self._cmd = cmd
         self._root_uri = root_uri
         self._client_capabilities = kwargs.get("client_capabilities") or {}
@@ -80,7 +79,7 @@ class _StdioLspSession:
 
     async def __aenter__(self) -> Self:
         self._process = await asyncio.create_subprocess_exec(
-            *shlex.split(self._cmd),
+            *self._cmd,
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.DEVNULL,

@@ -29,7 +29,7 @@ import cattrs
 import culsans
 from loguru import logger
 
-from finecode_jsonrpc import _io_thread, error_codes
+from finecode_jsonrpc import _io_thread, _spawn, error_codes
 from finecode_jsonrpc._converter import converter as _converter
 from finecode_jsonrpc._loop_event import LoopAwareEvent
 from finecode_jsonrpc._proc_snapshot import describe_process_group
@@ -253,7 +253,7 @@ class JsonRpcClient:
 
     async def start(
         self,
-        server_cmd: str,
+        server_cmd: _spawn.SpawnCommand,
         working_dir_path: Path,
         io_thread: _io_thread.AsyncIOThread,
         debug_port_future: concurrent.futures.Future[int] | None,
@@ -297,7 +297,7 @@ class JsonRpcClient:
 
     async def _start_server(
         self,
-        full_cmd: str,
+        full_cmd: _spawn.SpawnCommand,
         io_thread: _io_thread.AsyncIOThread,
         debug_port_future: concurrent.futures.Future[int] | None,
         cwd: Path,
@@ -424,9 +424,10 @@ class JsonRpcClient:
         within its timeout. A no-op if the process was never spawned, has
         already exited, or its group has no member left that can be signalled.
 
-        The process is started with ``start_new_session=True`` specifically so
-        it (and any subprocess it spawns, e.g. a package manager invocation)
-        can be reached as one process group here.
+        The process is started with ``start_new_session=True`` (POSIX) so it is
+        the leader of its own process group, and the pid recorded here is the
+        server itself rather than a ``/bin/sh`` wrapper, so the group kill below
+        and the recorded pid agree.
         """
         self._kill_requested = True
         if self.pid is None:
@@ -1094,7 +1095,7 @@ class JsonRpcClient:
 
 
 async def start_server(
-    cmd: str,
+    cmd: _spawn.SpawnCommand,
     communication_type: CommunicationType,
     out_message_queue: culsans.Queue[bytes],
     stop_event: LoopAwareEvent,
@@ -1115,46 +1116,24 @@ async def start_server(
 ]:
     logger.debug(f"Starting server process: {cmd}")
 
-    creationflags = 0
-    # start_new_session = True .. process has parent id of real parent, but is not
-    #                             ended if parent was ended
-    start_new_session = True
-    if sys.platform == "win32":
-        # use creationflags because `start_new_session` doesn't work on Windows
-        # subprocess.CREATE_NO_WINDOW .. no console window on Windows. TODO: test
-        creationflags = subprocess.DETACHED_PROCESS | subprocess.CREATE_NO_WINDOW
-        start_new_session = False
-
-    subprocess_kwargs = {
-        "creationflags": creationflags,
-        "start_new_session": start_new_session,
-        # explicit, so that the started server does not depend on the cwd/environ
-        # this process happens to have when the spawn reaches the io thread
-        "cwd": cwd,
-        "env": env,
-    }
-
-    # Start subprocess with appropriate stdio configuration
     if communication_type == CommunicationType.STDIO:
-        server = await asyncio.create_subprocess_shell(
-            cmd,
-            stdin=asyncio.subprocess.PIPE,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            # max length of line: in STDIO mode, the whole file can be sent as a single
-            # line, increase default limit 64 KBit to 10 MiB
-            limit=1024 * 1024 * 10,  # 10 MiB,
-            **subprocess_kwargs,
-        )
+        # max length of line: in STDIO mode, the whole file can be sent as a single
+        # line, increase default limit 64 KBit to 10 MiB
+        limit = 1024 * 1024 * 10  # 10 MiB
     elif communication_type == CommunicationType.TCP:
-        server = await asyncio.create_subprocess_shell(
-            cmd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            **subprocess_kwargs,
-        )
+        limit = None
     else:
         raise ValueError(f"Unsupported communication type: {communication_type}")
+
+    # cwd and env are explicit, so that the started server does not depend on the
+    # cwd/environ this process happens to have when the spawn reaches the io thread
+    server = await _spawn.spawn_process(
+        cmd,
+        stdin_pipe=communication_type == CommunicationType.STDIO,
+        cwd=cwd,
+        env=env,
+        limit=limit,
+    )
 
     if timeline is not None:
         timeline.spawned_at = time.monotonic()

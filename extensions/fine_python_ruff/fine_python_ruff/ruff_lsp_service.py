@@ -165,7 +165,7 @@ class RuffLspService(service.DisposableService):
             lsp_client=lsp_client,
             file_editor=file_editor,
             logger=logger,
-            cmd=f"{ruff_bin} server",
+            cmd=[str(ruff_bin), "server"],
             language_id="python",
             readable_id="ruff-lsp",
             client_capabilities=_RUFF_CLIENT_CAPABILITIES,

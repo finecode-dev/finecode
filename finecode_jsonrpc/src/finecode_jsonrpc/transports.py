@@ -5,12 +5,12 @@ import collections.abc
 import contextlib
 import json
 import re
-import subprocess  # needed for windows
-import sys
 import typing
 from pathlib import Path
 
 from loguru import logger
+
+from finecode_jsonrpc import _spawn
 
 CONTENT_LENGTH_PATTERN = re.compile(rb"^Content-Length: (\d+)\r\n$")
 CHARSET = "utf-8"
@@ -65,28 +65,18 @@ class StdioTransport:
 
     async def start(
         self,
-        cmd: str,
+        cmd: collections.abc.Sequence[str],
         cwd: Path | None = None,
         env: dict[str, str] | None = None,
     ) -> None:
         self._loop = asyncio.get_running_loop()
 
-        creationflags = 0
-        start_new_session = True
-        if sys.platform == "win32":
-            creationflags = subprocess.DETACHED_PROCESS | subprocess.CREATE_NO_WINDOW
-            start_new_session = False
-
-        self._process = await asyncio.create_subprocess_shell(
+        self._process = await _spawn.spawn_process(
             cmd,
-            stdin=asyncio.subprocess.PIPE,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
+            stdin_pipe=True,
             cwd=cwd,
             env=env,
             limit=1024 * 1024 * 10,  # 10 MiB
-            creationflags=creationflags,
-            start_new_session=start_new_session,
         )
 
         logger.debug(

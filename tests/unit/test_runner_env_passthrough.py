@@ -25,7 +25,7 @@ async def test_start_forwards_os_environ_and_drops_virtual_env(
     monkeypatch.setenv("VIRTUAL_ENV", "/tmp/some-venv")
 
     await client.start(
-        server_cmd="true",
+        server_cmd=["true"],
         working_dir_path=pathlib.Path("."),
         io_thread=None,  # never reached: _start_server is stubbed
         debug_port_future=None,

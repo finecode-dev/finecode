@@ -65,7 +65,7 @@ class TombiLspService(service.DisposableService):
             # against PyPI) while analyzing a pyproject.toml, on top of its local
             # schema cache. No action here consumes live dependency data, so the
             # lookups are latency for results nothing reads.
-            cmd=f"{tombi_bin} lsp --offline",
+            cmd=[str(tombi_bin), "lsp", "--offline"],
             language_id="toml",
             readable_id="tombi-lsp",
             client_capabilities=_TOMBI_CLIENT_CAPABILITIES,

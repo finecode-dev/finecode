@@ -84,7 +84,7 @@ class PyreflyLspService(service.DisposableService):
             lsp_client=lsp_client,
             file_editor=file_editor,
             logger=logger,
-            cmd=f"{pyrefly_bin} lsp",
+            cmd=[str(pyrefly_bin), "lsp"],
             language_id="python",
             readable_id="pyrefly-lsp",
             client_capabilities=_PYREFLY_CLIENT_CAPABILITIES,

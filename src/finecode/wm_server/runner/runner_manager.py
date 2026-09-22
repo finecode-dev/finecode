@@ -234,7 +234,6 @@ async def _start_extension_runner_process(
     else:
         debug_port_future = None
 
-    process_args_str: str = " ".join(process_args)
     client = jsonrpc_client.JsonRpcClient(
         message_types=_internal_client_types.METHOD_TO_TYPES,
         readable_id=runner.readable_id,
@@ -255,7 +254,17 @@ async def _start_extension_runner_process(
     async with ws_context.er_startup_semaphore:
         try:
             await client.start(
-                server_cmd=f"{python_cmd} -m finecode_extension_runner.cli start {process_args_str}",
+                # Path normalizes the forward-slash .as_posix() form from
+                # get_python_cmd / cmd_override to native separators (a no-op on
+                # POSIX, required on Windows where forward slashes break the
+                # console-script resolve). os.fspath gives back a str.
+                server_cmd=[
+                    os.fspath(Path(python_cmd)),
+                    "-m",
+                    "finecode_extension_runner.cli",
+                    "start",
+                    *process_args,
+                ],
                 working_dir_path=runner.working_dir_path,
                 io_thread=ws_context.runner_io_thread,
                 debug_port_future=debug_port_future,
