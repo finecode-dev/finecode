@@ -248,9 +248,7 @@ def _extract_field_descriptions(cls: type) -> dict[str, str]:
     return descriptions
 
 
-def _type_to_schema(
-    t: type, *, output: bool = False, path: str = "$"
-) -> FieldSchema:
+def _type_to_schema(t: type, *, output: bool = False, path: str = "$") -> FieldSchema:
     """Convert a single Python type annotation to a JSON Schema type object.
 
     With ``output=False`` every branch returns exactly what it always has; all
@@ -268,9 +266,7 @@ def _type_to_schema(
                 return {"anyOf": [inner, {"type": "null"}]}
             return inner
         if output:
-            raise OutputSchemaError(
-                f"no JSON Schema mapping for {t!r} at {path}"
-            )
+            raise OutputSchemaError(f"no JSON Schema mapping for {t!r} at {path}")
         return {}
 
     origin = typing.get_origin(t)

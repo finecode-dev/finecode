@@ -183,9 +183,7 @@ def test_structure_rejects_extra_top_level_key() -> None:
     model invent a field the handler never reads while the run reports success.
     """
     with pytest.raises(idataclasscodec.StructureError) as exc_info:
-        DataclassCodec().structure(
-            {"tasks": [], "deviations": [], "extra": 1}, _Report
-        )
+        DataclassCodec().structure({"tasks": [], "deviations": [], "extra": 1}, _Report)
 
     assert "extra fields found" in exc_info.value.message
     assert "$" in exc_info.value.message
@@ -237,9 +235,7 @@ def test_structure_rejects_unknown_enum_value() -> None:
 def test_structure_rejects_scalar_for_list() -> None:
     """A scalar for a list field must fail rather than iterate its characters."""
     with pytest.raises(idataclasscodec.StructureError) as exc_info:
-        DataclassCodec().structure(
-            {"tasks": [], "deviations": "not a list"}, _Report
-        )
+        DataclassCodec().structure({"tasks": [], "deviations": "not a list"}, _Report)
 
     assert "expected list" in exc_info.value.message
     assert "$.deviations" in exc_info.value.message

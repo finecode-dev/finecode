@@ -639,7 +639,9 @@ def _cmd(**config: Any) -> list[str]:
     """
     config = dict(config)
     settings = _settings(model=config.pop("model", None))
-    return shlex.split(ClaudeCodeAgentHandler._build_command(_handler_with(**config), settings))
+    return shlex.split(
+        ClaudeCodeAgentHandler._build_command(_handler_with(**config), settings)
+    )
 
 
 def test_build_command_always_asks_for_the_machine_readable_stream() -> None:

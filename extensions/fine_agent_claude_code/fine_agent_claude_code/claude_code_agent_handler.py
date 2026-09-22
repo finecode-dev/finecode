@@ -214,8 +214,7 @@ class ClaudeCodeAgentHandler(
                 return RunAgentTaskRunResult(
                     status=AgentRunStatus.FAILED,
                     error=(
-                        "claude did not finish within "
-                        f"{settings.settle_timeout_sec}s"
+                        f"claude did not finish within {settings.settle_timeout_sec}s"
                     ),
                 )
 
@@ -441,9 +440,7 @@ class ClaudeCodeAgentHandler(
             )
         resolved = self.config.profiles.get(profile)
         if resolved is None:
-            return backend_support.unknown_profile_error(
-                profile, self.config.profiles
-            )
+            return backend_support.unknown_profile_error(profile, self.config.profiles)
         return _ClaudeRunSettings(
             model=resolved.model if resolved.model is not None else self.config.model,
             settle_timeout_sec=(

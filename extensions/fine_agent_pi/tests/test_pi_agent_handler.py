@@ -1098,7 +1098,5 @@ async def test_invalid_block_fails_and_keeps_the_raw_output() -> None:
     )
 
     assert result.status is AgentRunStatus.FAILED
-    assert (result.error or "").startswith(
-        "invalid JSON in the final json block"
-    )
+    assert (result.error or "").startswith("invalid JSON in the final json block")
     assert result.output == _fenced("{oops}")

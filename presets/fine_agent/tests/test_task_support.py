@@ -49,7 +49,9 @@ def _meta() -> code_action.RunActionMeta:
 class _StubRunner:
     def __init__(self, result: RunAgentTaskRunResult) -> None:
         self.result = result
-        self.calls: list[tuple[str, RunAgentTaskRunPayload, code_action.RunActionMeta]] = []
+        self.calls: list[
+            tuple[str, RunAgentTaskRunPayload, code_action.RunActionMeta]
+        ] = []
 
     async def run_action(
         self,
@@ -63,9 +65,12 @@ class _StubRunner:
 
 
 def test_render_template_substitutes_every_slot() -> None:
-    assert task_support.render_template(
-        "plan {{plan_path}} ({{kind}})", {"plan_path": "a.md", "kind": "md"}
-    ) == "plan a.md (md)"
+    assert (
+        task_support.render_template(
+            "plan {{plan_path}} ({{kind}})", {"plan_path": "a.md", "kind": "md"}
+        )
+        == "plan a.md (md)"
+    )
 
 
 def test_render_template_names_every_unfilled_slot() -> None:

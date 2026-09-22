@@ -75,7 +75,9 @@ def argv_for(source: str) -> list[str]:
     return [sys.executable, "-c", source]
 
 
-async def check_tcp(cmd: _spawn.SpawnCommand, timeout: float) -> tuple[int | None, list[str]]:
+async def check_tcp(
+    cmd: _spawn.SpawnCommand, timeout: float
+) -> tuple[int | None, list[str]]:
     """Spawn a TCP server through ``JsonRpcClient`` and connect to it.
 
     Returns ``(client.pid, stdout_lines)``; the fake server prints its own pid

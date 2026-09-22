@@ -237,9 +237,7 @@ class PiAgentHandler(
                 await self._abort(process)
                 return RunAgentTaskRunResult(
                     status=AgentRunStatus.FAILED,
-                    error=(
-                        f"pi did not settle within {settings.settle_timeout_sec}s"
-                    ),
+                    error=(f"pi did not settle within {settings.settle_timeout_sec}s"),
                 )
 
         return self._extract_structured_output(
@@ -651,9 +649,7 @@ class PiAgentHandler(
             )
         resolved = self.config.profiles.get(profile)
         if resolved is None:
-            return backend_support.unknown_profile_error(
-                profile, self.config.profiles
-            )
+            return backend_support.unknown_profile_error(profile, self.config.profiles)
         return _PiRunSettings(
             model=resolved.model if resolved.model is not None else self.config.model,
             provider=(

@@ -36,10 +36,7 @@ def test_json_output_instruction_embeds_the_indented_schema() -> None:
 
 
 def test_extract_last_json_block_takes_the_final_block() -> None:
-    text = (
-        "first\n```json\n{\"n\": 1}\n```\n"
-        "then\n```json\n{\"n\": 2}\n```\n"
-    )
+    text = 'first\n```json\n{"n": 1}\n```\nthen\n```json\n{"n": 2}\n```\n'
 
     assert backend_support.extract_last_json_block(text) == {"n": 2}
 
