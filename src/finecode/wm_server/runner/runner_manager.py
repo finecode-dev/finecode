@@ -53,6 +53,133 @@ _ENV_REINSTALL_NEEDED_ERROR_CODE = -32001
 SLOW_START_WARN_SEC: typing.Final = 10.0
 
 
+# Back-channel methods an INITIALIZING runner can receive (ADR-0100). A
+# *yielding* method's handler can wait on a runner, the process budget,
+# knowledge extraction or a human; if the runner holding the startup slot
+# receives such a request, the slot is released before the handler runs so the
+# wait can be served by another task. A *neutral* method's handler awaits none
+# of those — it is a synchronous ws_context read, a local publish, or an RPC to
+# its own runner — so it passes through without yielding. An unclassified
+# registration fails open at runtime (yield + WARNING): a missed classification
+# widens the gate rather than crashing every start, and the classification
+# itself is asserted in the test suite (AC3). The ER's own `updateConfig` calls
+# only neutral methods, so the normal start path never yields (R-2).
+_STARTUP_SLOT_YIELDING_METHODS: typing.Final[frozenset[str]] = frozenset(
+    {
+        # ER→WM action dispatch: starts/queues another runner, leases budget.
+        _internal_client_types.RUN_ACTION_IN_PROJECT,
+        _internal_client_types.RUN_ACTION_IN_WORKSPACE,
+        _internal_client_types.LEASE_PROCESS_BUDGET,
+        # Subaction resolution starts the action's handler-env runner on demand.
+        _internal_client_types.GET_ACTIONS_FOR_PARENT,
+        # Knowledge extraction runs the DAG and awaits its I/O.
+        _internal_client_types.KNOWLEDGE_REGISTER_SCHEMA,
+        _internal_client_types.KNOWLEDGE_QUERY,
+        _internal_client_types.KNOWLEDGE_RECORDS,
+        # Waits on the editor connection / on a human.
+        _internal_client_types.WORKSPACE_APPLY_EDIT,
+        _internal_client_types.ELICIT,
+    }
+)
+_STARTUP_SLOT_NEUTRAL_METHODS: typing.Final[frozenset[str]] = frozenset(
+    {
+        # Synchronous ws_context read: awaits no runner start, event, lease or human.
+        _internal_client_types.PROJECT_RAW_CONFIG_GET,
+        # Synchronous ws_context read: awaits no runner start, event, lease or human.
+        _internal_client_types.WORKSPACE_PACKAGES_GET,
+        # Synchronous ws_context read: awaits no runner start, event, lease or human.
+        _internal_client_types.WORKSPACE_EXTRA_SELECTION_GET,
+        # Synchronous ws_context read: awaits no runner start, event, lease or human.
+        _internal_client_types.WORKSPACE_PROJECT_PATHS_GET,
+        # Synchronous ws_context read: awaits no runner start, event, lease or human.
+        _internal_client_types.LIST_WORKSPACE_ACTIONS,
+        # Releases a lease (no wait) and RPCs only its own runner.
+        _internal_client_types.RELEASE_PROCESS_BUDGET,
+        # Local publish (progress/partial-result): awaits nothing.
+        _internal_client_types.PROGRESS,
+        # Local notify to connected clients: fire-and-forget, awaits nothing.
+        _internal_client_types.ER_USER_MESSAGE,
+        # Feeds the local log-delivery pipeline: awaits nothing.
+        _internal_client_types.ER_LOG_RECORDS,
+    }
+)
+
+
+def _yield_startup_slot(
+    runner: runner_client.ExtensionRunnerInfo,
+    method: str,
+    *,
+    classified: bool,
+) -> None:
+    """Release *runner*'s startup slot once, if it still holds one (ADR-0100).
+
+    Called on entry of a yielding (or unclassified) back-channel handler while
+    the runner is starting. The release is idempotent and the handle is cleared
+    here, so the slot is yielded at most once per start — the context-manager
+    exit afterwards is a no-op. An unclassified method is the fail-open default:
+    it yields like a classified one and warns, because a missed classification
+    must widen the gate rather than deadlock a start.
+    """
+    if runner.startup_slot_release is None:
+        return
+    runner.startup_slot_release()
+    runner.startup_slot_release = None
+    if classified:
+        logger.debug(f"startup slot yielded by {runner.readable_id} on {method}")
+    else:
+        logger.warning(
+            "startup slot yielded by"
+            f" {runner.readable_id} on unclassified method {method}"
+        )
+
+
+class _StartupSlot:
+    """Async context manager over ``er_startup_semaphore`` with idempotent release.
+
+    The slot is held from just before the first ER RPC until the runner reaches
+    RUNNING (ADR-0100). ``release()`` may be called early by a back-channel
+    yield (see ``_yield_startup_slot``); it is idempotent, so that early call
+    and the context-manager exit cannot double-release the semaphore —
+    ``asyncio.Semaphore`` raises on an over-release, and a silent double release
+    would raise the effective cap.
+    """
+
+    def __init__(self, semaphore: asyncio.Semaphore) -> None:
+        self._semaphore = semaphore
+        self._released = False
+
+    async def __aenter__(self) -> typing.Self:
+        await self._semaphore.acquire()
+        self._released = False
+        return self
+
+    async def __aexit__(self, *exc: object) -> None:
+        self.release()
+
+    def release(self) -> None:
+        if not self._released:
+            self._released = True
+            self._semaphore.release()
+
+
+def _make_runner_client(
+    runner: runner_client.ExtensionRunnerInfo,
+) -> jsonrpc_client.JsonRpcClient:
+    """Build the JSON-RPC client for *runner*'s start attempt.
+
+    ``_start_runner`` attaches it before the startup slot is acquired (ADR-0097):
+    a shutdown sweep or abandon that force-kills a *queued* runner sets the kill
+    latch on this unspawned client, and ``_spawn_and_record`` honours it once the
+    process exists. A runner with ``client is None`` is invisible to that sweep,
+    so a start granted after the sweep would spawn an ER nothing kills.
+    """
+    return jsonrpc_client.JsonRpcClient(
+        message_types=_internal_client_types.METHOD_TO_TYPES,
+        readable_id=runner.readable_id,
+        tracing=telemetry.JsonRpcTracingHooks(),
+    )
+
+
 class EnvironmentOutOfDateError(RunnerFailedToStart):
     """The runner's environment no longer satisfies its configuration.
 
@@ -234,132 +361,127 @@ async def _start_extension_runner_process(
     else:
         debug_port_future = None
 
-    client = jsonrpc_client.JsonRpcClient(
-        message_types=_internal_client_types.METHOD_TO_TYPES,
-        readable_id=runner.readable_id,
-        tracing=telemetry.JsonRpcTracingHooks(),
-    )
-    # Attach before start() so a shutdown sweep racing with an in-flight start
-    # attempt (subprocess already spawned, port handshake not yet resolved)
-    # still has a handle to force-kill it — client.pid is only set once the
-    # process actually exists, so force_kill() is a safe no-op before that.
-    runner.client = client
+    client = runner.client
+    assert (
+        client is not None
+    )  # attached by `_start_runner` before the startup slot (ADR-0097)
 
-    # Held from spawn until the RPC channel is confirmed connected — bounds how
-    # many ERs are simultaneously mid-startup (CPU/memory-bursty: process spawn,
-    # interpreter init, imports), regardless of which caller triggered this
-    # start. Does NOT bound whatever the triggering action does afterward in
-    # this ER's own process — that's a separate, much more variable resource
-    # cost this cap deliberately leaves unconstrained. See ADR-0063.
-    async with ws_context.er_startup_semaphore:
+    try:
+        await client.start(
+            # Path normalizes the forward-slash .as_posix() form from
+            # get_python_cmd / cmd_override to native separators (a no-op on
+            # POSIX, required on Windows where forward slashes break the
+            # console-script resolve). os.fspath gives back a str.
+            server_cmd=[
+                os.fspath(Path(python_cmd)),
+                "-m",
+                "finecode_extension_runner.cli",
+                "start",
+                *process_args,
+            ],
+            working_dir_path=runner.working_dir_path,
+            io_thread=ws_context.runner_io_thread,
+            debug_port_future=debug_port_future,
+            connect=not start_with_debug,
+        )
+    except RunnerFailedToStart as exception:
+        pressure = host_pressure.read_host_pressure()
+        spawned_ago_ms = (
+            "none"
+            if client.startup_timeline.spawned_at is None
+            else round((time.monotonic() - client.startup_timeline.spawned_at) * 1000)
+        )
+        logger.bind(**pressure.fields()).error(
+            f"Runner {runner.readable_id} failed to start: {exception.message};"
+            f" spawned_ago_ms={spawned_ago_ms}; host: {pressure.describe()}"
+        )
+        # client.start() may have already spawned the OS process (e.g. it timed
+        # out waiting for the port handshake) — kill it now rather than leaving
+        # it running unmanaged, since no status/attempt will ever revisit it.
+        client.force_kill()
+        await ws_context.process_budget.reclaim_for_runner(runner.readable_id)
+        runner.status = runner_client.RunnerStatus.FAILED
+        runner.initialized_event.set()
+        raise
+
+    timeline = client.startup_timeline
+    if timeline.connected_at is not None and timeline.spawned_at is not None:
+        spawn_to_output_ms = (
+            None
+            if timeline.first_output_at is None
+            else round((timeline.first_output_at - timeline.spawned_at) * 1000)
+        )
+        spawn_to_port_ms = (
+            None
+            if timeline.port_line_at is None
+            else round((timeline.port_line_at - timeline.spawned_at) * 1000)
+        )
+        spawn_to_connected_ms = round(
+            (timeline.connected_at - timeline.spawned_at) * 1000
+        )
+        pressure = host_pressure.read_host_pressure()
+        start_log = logger.bind(
+            spawn_to_output_ms=spawn_to_output_ms,
+            spawn_to_port_ms=spawn_to_port_ms,
+            spawn_to_connected_ms=spawn_to_connected_ms,
+            **pressure.fields(),
+        )
+        start_message = (
+            f"Runner {runner.readable_id} start timeline:"
+            f" {timeline.describe(time.monotonic())};"
+            f" spawn_to_output_ms={spawn_to_output_ms if spawn_to_output_ms is not None else 'none'}"
+            f" spawn_to_port_ms={spawn_to_port_ms if spawn_to_port_ms is not None else 'none'}"
+            f" spawn_to_connected_ms={spawn_to_connected_ms};"
+            f" host: {pressure.describe()}"
+        )
+        if spawn_to_connected_ms >= SLOW_START_WARN_SEC * 1000:
+            start_log.warning(start_message)
+        else:
+            start_log.debug(start_message)
+
+    if start_with_debug:
+        assert debug_port_future is not None
+
+        # avoid blocking main thread?
+        debug_async_future = asyncio.wrap_future(future=debug_port_future)
         try:
-            await client.start(
-                # Path normalizes the forward-slash .as_posix() form from
-                # get_python_cmd / cmd_override to native separators (a no-op on
-                # POSIX, required on Windows where forward slashes break the
-                # console-script resolve). os.fspath gives back a str.
-                server_cmd=[
-                    os.fspath(Path(python_cmd)),
-                    "-m",
-                    "finecode_extension_runner.cli",
-                    "start",
-                    *process_args,
-                ],
-                working_dir_path=runner.working_dir_path,
-                io_thread=ws_context.runner_io_thread,
-                debug_port_future=debug_port_future,
-                connect=not start_with_debug,
-            )
-        except RunnerFailedToStart as exception:
-            pressure = host_pressure.read_host_pressure()
-            logger.bind(**pressure.fields()).error(
-                f"Runner {runner.readable_id} failed to start: {exception.message};"
-                f" host: {pressure.describe()}"
-            )
-            # client.start() may have already spawned the OS process (e.g. it timed
-            # out waiting for the port handshake) — kill it now rather than leaving
-            # it running unmanaged, since no status/attempt will ever revisit it.
+            await asyncio.wait_for(debug_async_future, timeout=30)
+        except TimeoutError as exception:
             client.force_kill()
             await ws_context.process_budget.reclaim_for_runner(runner.readable_id)
             runner.status = runner_client.RunnerStatus.FAILED
             runner.initialized_event.set()
-            raise
+            raise RunnerFailedToStart(
+                f"Failed to get debugger port in 30 seconds: {runner.readable_id}"
+            ) from exception
 
-        timeline = client.startup_timeline
-        if timeline.connected_at is not None and timeline.spawned_at is not None:
-            spawn_to_output_ms = (
-                None
-                if timeline.first_output_at is None
-                else round((timeline.first_output_at - timeline.spawned_at) * 1000)
+        debug_port = debug_async_future.result()
+        logger.info(f"debug port: {debug_port}")
+
+        if start_debug_session is not None:
+            debug_params = {
+                "name": "Python: WM",
+                "type": "debugpy",
+                "request": "attach",
+                "connect": {"host": "localhost", "port": debug_port},
+                "justMyCode": False,
+                # "logToFile": True,
+            }
+            await start_debug_session(debug_params)
+
+        try:
+            await client.connect_to_server(
+                io_thread=ws_context.runner_io_thread, timeout=None
             )
-            spawn_to_port_ms = (
-                None
-                if timeline.port_line_at is None
-                else round((timeline.port_line_at - timeline.spawned_at) * 1000)
+        except Exception as exception:  # TODO: analyze which can occur
+            logger.error(
+                f"Runner {runner.readable_id} failed to connect to server: {exception}"
             )
-            spawn_to_connected_ms = round(
-                (timeline.connected_at - timeline.spawned_at) * 1000
-            )
-            pressure = host_pressure.read_host_pressure()
-            start_log = logger.bind(
-                spawn_to_output_ms=spawn_to_output_ms,
-                spawn_to_port_ms=spawn_to_port_ms,
-                spawn_to_connected_ms=spawn_to_connected_ms,
-                **pressure.fields(),
-            )
-            start_message = (
-                f"Runner {runner.readable_id} start timeline:"
-                f" {timeline.describe(time.monotonic())};"
-                f" host: {pressure.describe()}"
-            )
-            if spawn_to_connected_ms >= SLOW_START_WARN_SEC * 1000:
-                start_log.warning(start_message)
-            else:
-                start_log.debug(start_message)
-
-        if start_with_debug:
-            assert debug_port_future is not None
-
-            # avoid blocking main thread?
-            debug_async_future = asyncio.wrap_future(future=debug_port_future)
-            try:
-                await asyncio.wait_for(debug_async_future, timeout=30)
-            except TimeoutError as exception:
-                client.force_kill()
-                await ws_context.process_budget.reclaim_for_runner(runner.readable_id)
-                runner.status = runner_client.RunnerStatus.FAILED
-                runner.initialized_event.set()
-                raise RunnerFailedToStart(
-                    f"Failed to get debugger port in 30 seconds: {runner.readable_id}"
-                ) from exception
-
-            debug_port = debug_async_future.result()
-            logger.info(f"debug port: {debug_port}")
-
-            if start_debug_session is not None:
-                debug_params = {
-                    "name": "Python: WM",
-                    "type": "debugpy",
-                    "request": "attach",
-                    "connect": {"host": "localhost", "port": debug_port},
-                    "justMyCode": False,
-                    # "logToFile": True,
-                }
-                await start_debug_session(debug_params)
-
-            try:
-                await client.connect_to_server(
-                    io_thread=ws_context.runner_io_thread, timeout=None
-                )
-            except Exception as exception:  # TODO: analyze which can occur
-                logger.error(
-                    f"Runner {runner.readable_id} failed to connect to server: {exception}"
-                )
-                client.force_kill()
-                await ws_context.process_budget.reclaim_for_runner(runner.readable_id)
-                runner.status = runner_client.RunnerStatus.FAILED
-                runner.initialized_event.set()
-                raise RunnerFailedToStart(str(exception)) from exception
+            client.force_kill()
+            await ws_context.process_budget.reclaim_for_runner(runner.readable_id)
+            runner.status = runner_client.RunnerStatus.FAILED
+            runner.initialized_event.set()
+            raise RunnerFailedToStart(str(exception)) from exception
 
     async def on_exit():
         logger.debug(f"Extension Runner {runner.readable_id} exited")
@@ -376,9 +498,28 @@ async def _start_extension_runner_process(
 
     runner.client.server_exit_callback = on_exit
 
-    runner.client.feature(
-        _internal_client_types.WORKSPACE_APPLY_EDIT, _apply_workspace_edit
-    )
+    def _register(method: str, handler: collections.abc.Callable) -> None:
+        """Register a back-channel handler, classified for the startup slot (ADR-0100).
+
+        A yielding method's handler can wait on another runner, the process
+        budget, knowledge extraction or a human; such requests only arrive from
+        an ER while it is starting (its own updateConfig, or the lazy env wave
+        of another run), so the started runner's slot must be yielded first or
+        the wait deadlocks on it. Neutral methods pass through unwrapped.
+        """
+        is_neutral = method in _STARTUP_SLOT_NEUTRAL_METHODS
+        is_yielding = method in _STARTUP_SLOT_YIELDING_METHODS
+
+        async def _wrapped(params) -> typing.Any:
+            if not is_neutral:
+                _yield_startup_slot(
+                    runner=runner, method=method, classified=is_yielding
+                )
+            return await handler(params)
+
+        client.feature(method, _wrapped)
+
+    _register(_internal_client_types.WORKSPACE_APPLY_EDIT, _apply_workspace_edit)
 
     async def on_progress(params: _internal_client_types.ProgressParams) -> None:
         logger.debug(
@@ -406,7 +547,7 @@ async def _start_extension_runner_process(
             )
             runner.partial_results.publish(partial_result)
 
-    runner.client.feature(_internal_client_types.PROGRESS, on_progress)
+    _register(_internal_client_types.PROGRESS, on_progress)
 
     async def on_er_user_message(params) -> None:
         # params arrives as a structured ErUserMessageParams from the real client
@@ -426,7 +567,7 @@ async def _start_extension_runner_process(
             },
         )
 
-    runner.client.feature(_internal_client_types.ER_USER_MESSAGE, on_er_user_message)
+    _register(_internal_client_types.ER_USER_MESSAGE, on_er_user_message)
 
     async def on_er_log_records(params) -> None:
         if params is None:
@@ -437,7 +578,7 @@ async def _start_extension_runner_process(
             params_dict = dataclasses.asdict(params)
         handle_er_log_records(runner, params_dict)
 
-    runner.client.feature(_internal_client_types.ER_LOG_RECORDS, on_er_log_records)
+    _register(_internal_client_types.ER_LOG_RECORDS, on_er_log_records)
 
     async def get_project_raw_config(
         params: _internal_client_types.GetProjectRawConfigParams,
@@ -457,7 +598,7 @@ async def _start_extension_runner_process(
             config=project_raw_config
         )
 
-    runner.client.feature(
+    _register(
         _internal_client_types.PROJECT_RAW_CONFIG_GET,
         get_project_raw_config,
     )
@@ -465,7 +606,7 @@ async def _start_extension_runner_process(
     async def get_workspace_packages(_params):
         return {"packages": ws_context.workspace_packages_wire()}
 
-    runner.client.feature(
+    _register(
         _internal_client_types.WORKSPACE_PACKAGES_GET,
         get_workspace_packages,
     )
@@ -473,7 +614,7 @@ async def _start_extension_runner_process(
     async def get_workspace_extra_selection(_params):
         return {"selection": read_configs.read_workspace_extra_selection(ws_context)}
 
-    runner.client.feature(
+    _register(
         _internal_client_types.WORKSPACE_EXTRA_SELECTION_GET,
         get_workspace_extra_selection,
     )
@@ -495,7 +636,7 @@ async def _start_extension_runner_process(
             ]
         }
 
-    runner.client.feature(
+    _register(
         _internal_client_types.WORKSPACE_PROJECT_PATHS_GET,
         get_workspace_project_paths,
     )
@@ -522,7 +663,7 @@ async def _start_extension_runner_process(
         accepted = await _knowledge_handlers().register_schema(params.snapshot)
         return _internal_client_types.RegisterKnowledgeSchemaResult(accepted=accepted)
 
-    runner.client.feature(
+    _register(
         _internal_client_types.KNOWLEDGE_REGISTER_SCHEMA,
         register_knowledge_schema,
     )
@@ -537,7 +678,7 @@ async def _start_extension_runner_process(
             rows=answered["rows"], freshness=answered["freshness"]
         )
 
-    runner.client.feature(
+    _register(
         _internal_client_types.KNOWLEDGE_QUERY,
         run_knowledge_query,
     )
@@ -550,7 +691,7 @@ async def _start_extension_runner_process(
             v=found["v"], records=found["records"]
         )
 
-    runner.client.feature(
+    _register(
         _internal_client_types.KNOWLEDGE_RECORDS,
         fetch_knowledge_records,
     )
@@ -575,7 +716,7 @@ async def _start_extension_runner_process(
             runner, params, ws_context
         )
 
-    runner.client.feature(
+    _register(
         _internal_client_types.RUN_ACTION_IN_PROJECT,
         handle_run_action_in_project,
     )
@@ -587,7 +728,7 @@ async def _start_extension_runner_process(
             runner, params, ws_context
         )
 
-    runner.client.feature(
+    _register(
         _internal_client_types.RUN_ACTION_IN_WORKSPACE,
         handle_run_action_in_workspace,
     )
@@ -613,7 +754,7 @@ async def _start_extension_runner_process(
             lease_id=lease.lease_id, granted=lease.granted
         )
 
-    runner.client.feature(
+    _register(
         _internal_client_types.LEASE_PROCESS_BUDGET,
         handle_lease_process_budget,
     )
@@ -627,7 +768,7 @@ async def _start_extension_runner_process(
         await runner_client.update_process_budget(runner=runner, target=target)
         return _internal_client_types.ReleaseProcessBudgetResult()
 
-    runner.client.feature(
+    _register(
         _internal_client_types.RELEASE_PROCESS_BUDGET,
         handle_release_process_budget,
     )
@@ -643,7 +784,7 @@ async def _start_extension_runner_process(
             runner, params, ws_context
         )
 
-    runner.client.feature(
+    _register(
         _internal_client_types.GET_ACTIONS_FOR_PARENT,
         handle_get_actions_for_parent,
     )
@@ -689,7 +830,7 @@ async def _start_extension_runner_process(
                 )
         return {"actions": actions}
 
-    runner.client.feature(
+    _register(
         _internal_client_types.LIST_WORKSPACE_ACTIONS,
         handle_list_workspace_actions,
     )
@@ -729,7 +870,7 @@ async def _start_extension_runner_process(
             value=answer.get("value"),
         )
 
-    runner.client.feature(
+    _register(
         _internal_client_types.ELICIT,
         handle_elicit,
     )
@@ -992,6 +1133,7 @@ async def start_runners_with_presets(
                 project=resolved,
                 handlers_to_initialize=handlers_to_init,
                 ws_context=ws_context,
+                pass_label="second",
             )
     finally:
         _warn_handlerless_actions(handlerless)
@@ -1034,6 +1176,14 @@ async def _abandon_start(
 ) -> None:
     """A start attempt that ended before RUNNING: leave no process and no waiter behind (ADR-0097)."""
     if runner.client is not None:
+        if runner.client.startup_timeline.connected_at is not None:
+            connected_to_abandon_ms = round(
+                (time.monotonic() - runner.client.startup_timeline.connected_at) * 1000
+            )
+            logger.debug(
+                f"Runner {runner.readable_id} abandoned:"
+                f" connected_to_abandon_ms={connected_to_abandon_ms}"
+            )
         runner.client.force_kill()
     if runner.status == runner_client.RunnerStatus.INITIALIZING:
         runner.status = runner_client.RunnerStatus.FAILED
@@ -1077,77 +1227,124 @@ async def _start_runner(
         client=None,
         cmd_override=cmd_override,
     )
+    # Attach before the startup slot: a shutdown sweep or abandon that
+    # force-kills a *queued* runner sets the kill latch on this client
+    # (`JsonRpcClient.force_kill`), which `_spawn_and_record` honours once the
+    # process exists. Attaching only inside `_start_extension_runner_process`
+    # would leave a queued runner with `client is None`, and the sweep skips
+    # those — the runner would spawn nothing kills it (ADR-0097).
+    runner.client = _make_runner_client(runner)
     save_runner_in_context(runner=runner, ws_context=ws_context)
     try:
-        try:
-            await _start_extension_runner_process(
-                runner=runner, ws_context=ws_context, debug=debug
-            )
-        except asyncio.CancelledError:
-            logger.warning(
-                f"Startup of runner '{runner.readable_id}' was cancelled — marking as FAILED"
-            )
-            runner.status = runner_client.RunnerStatus.FAILED
-            runner.initialized_event.set()
-            raise
-
-        try:
-            await _init_lsp_client(runner=runner, project=project_def)
-        except RunnerFailedToStart:
-            runner.status = runner_client.RunnerStatus.FAILED
-            await notify_project_changed(project_def)
-            runner.initialized_event.set()
-            raise
-
-        try:
-            runner_info = await _internal_client_api.get_runner_info(runner.client)
-            if runner_info.log_file_path is not None:
-                runner.log_file_path = Path(runner_info.log_file_path)
-                logger.debug(
-                    f"Runner {runner.readable_id} log file: {runner.log_file_path}"
-                )
-            else:
-                logger.debug(f"Runner {runner.readable_id} returned no log file path")
-        except Exception as e:
-            logger.warning(f"Failed to get runner info for {runner.readable_id}: {e}")
-
-        if (
-            project_def.dir_path not in ws_context.ws_projects_raw_configs
-            or not isinstance(project_def, domain.CollectedProject)
-        ):
+        # Held from spawn until the runner reaches RUNNING: process spawn,
+        # interpreter init and imports, initialize, get_runner_info, preset
+        # resolution and updateConfig all count as the startup burst
+        # (ADR-0063 counted the imports in, too). A back-channel method whose
+        # handler must wait on another runner, the process budget, knowledge
+        # extraction or a human yields the slot first — see `_register` and
+        # ADR-0100. The acquire sits inside this try so a cancellation while
+        # queued still reaches `_abandon_start` and leaves no INITIALIZING
+        # runner with a never-firing event (ADR-0097).
+        async with _StartupSlot(ws_context.er_startup_semaphore) as slot:
+            runner.startup_slot_release = slot.release
             try:
-                await preset_resolution.read_project_config_with_py_presets(
-                    project=project_def, ws_context=ws_context
-                )
-                collect_actions.collect_project(
-                    project_path=project_def.dir_path, ws_context=ws_context
-                )
-            except config_models.ConfigurationError as exception:
-                runner.status = runner_client.RunnerStatus.FAILED
-                runner.initialized_event.set()
-                await notify_project_changed(project_def)
-                raise RunnerFailedToStart(
-                    f"Found problem in configuration of {project_def.dir_path}: {exception.message}"
-                ) from exception
+                try:
+                    await _start_extension_runner_process(
+                        runner=runner, ws_context=ws_context, debug=debug
+                    )
+                except asyncio.CancelledError:
+                    logger.warning(
+                        f"Startup of runner '{runner.readable_id}' was cancelled — marking as FAILED"
+                    )
+                    runner.status = runner_client.RunnerStatus.FAILED
+                    runner.initialized_event.set()
+                    raise
 
-        # Re-fetch from context — may now be CollectedProject if collection just happened
-        current_project_def = ws_context.ws_projects[project_def.dir_path]
-        if isinstance(current_project_def, domain.CollectedProject):
-            # update runner config if project actions are already known, otherwise it will
-            # be done as separate step
-            await update_runner_config(
-                runner=runner,
-                project=current_project_def,
-                handlers_to_initialize=handlers_to_initialize,
-                ws_context=ws_context,
-            )
+                try:
+                    await _init_lsp_client(runner=runner, project=project_def)
+                except RunnerFailedToStart:
+                    runner.status = runner_client.RunnerStatus.FAILED
+                    await notify_project_changed(project_def)
+                    runner.initialized_event.set()
+                    raise
 
-        await _finish_runner_init(
-            runner=runner, project=project_def, ws_context=ws_context
-        )
+                try:
+                    runner_info = await _internal_client_api.get_runner_info(
+                        runner.client
+                    )
+                    if runner_info.log_file_path is not None:
+                        runner.log_file_path = Path(runner_info.log_file_path)
+                        logger.debug(
+                            f"Runner {runner.readable_id} log file: {runner.log_file_path}"
+                        )
+                    else:
+                        logger.debug(
+                            f"Runner {runner.readable_id} returned no log file path"
+                        )
+                except Exception as e:
+                    logger.warning(
+                        f"Failed to get runner info for {runner.readable_id}: {e}"
+                    )
+
+                if (
+                    project_def.dir_path not in ws_context.ws_projects_raw_configs
+                    or not isinstance(project_def, domain.CollectedProject)
+                ):
+                    try:
+                        await preset_resolution.read_project_config_with_py_presets(
+                            project=project_def, ws_context=ws_context
+                        )
+                        collect_actions.collect_project(
+                            project_path=project_def.dir_path,
+                            ws_context=ws_context,
+                        )
+                    except preset_resolution.DevWorkspaceRunnerNotConnectedError as exception:
+                        raise RunnerFailedToStart(str(exception)) from exception
+                    except config_models.ConfigurationError as exception:
+                        runner.status = runner_client.RunnerStatus.FAILED
+                        runner.initialized_event.set()
+                        await notify_project_changed(project_def)
+                        raise RunnerFailedToStart(
+                            f"Found problem in configuration of {project_def.dir_path}: {exception.message}"
+                        ) from exception
+
+                # Re-fetch from context — may now be CollectedProject if collection just happened
+                current_project_def = ws_context.ws_projects[project_def.dir_path]
+                if isinstance(current_project_def, domain.CollectedProject):
+                    # update runner config if project actions are already known, otherwise it will
+                    # be done as separate step
+                    await update_runner_config(
+                        runner=runner,
+                        project=current_project_def,
+                        handlers_to_initialize=handlers_to_initialize,
+                        ws_context=ws_context,
+                        pass_label="first",
+                    )
+
+                await _finish_runner_init(
+                    runner=runner, project=project_def, ws_context=ws_context
+                )
+            finally:
+                runner.startup_slot_release = None
     except BaseException:
         await _abandon_start(runner, ws_context)
         raise
+
+    if runner.client is not None:
+        timeline = runner.client.startup_timeline
+        if timeline.connected_at is not None and timeline.spawned_at is not None:
+            now = time.monotonic()
+            spawn_to_running_ms = round((now - timeline.spawned_at) * 1000)
+            connected_to_running_ms = round((now - timeline.connected_at) * 1000)
+            ready_message = (
+                f"Runner {runner.readable_id} ready:"
+                f" connected_to_running_ms={connected_to_running_ms}"
+                f" spawn_to_running_ms={spawn_to_running_ms}"
+            )
+            if spawn_to_running_ms >= SLOW_START_WARN_SEC * 1000:
+                logger.warning(ready_message)
+            else:
+                logger.debug(ready_message)
 
     runner.status = runner_client.RunnerStatus.RUNNING
     telemetry.er_active_inc(runner.env_name)
@@ -1270,6 +1467,11 @@ async def _init_lsp_client(
             client_workspace_dir=runner.working_dir_path,
         )
     except jsonrpc_client.BaseRunnerRequestException as exception:
+        logger.warning(
+            f"Runner {runner.readable_id} initialize failed"
+            f" slot_held={runner.startup_slot_release is not None}:"
+            f" {exception.message}"
+        )
         raise RunnerFailedToStart(
             f"Runner failed to initialize: {exception.message}"
         ) from exception
@@ -1324,6 +1526,8 @@ async def update_runner_config(
     project: domain.CollectedProject,
     handlers_to_initialize: dict[str, list[str]] | None,
     ws_context: context.WorkspaceContext,
+    *,
+    pass_label: str = "other",
 ) -> None:
     _default_env_config = domain.EnvConfig(
         runner_config=domain.RunnerConfig(debug=False)
@@ -1351,6 +1555,11 @@ async def update_runner_config(
         runner.status = runner_client.RunnerStatus.FAILED
         await notify_project_changed(project)
         runner.initialized_event.set()
+        logger.warning(
+            f"Runner {runner.readable_id} updateConfig failed pass={pass_label}"
+            f" slot_held={runner.startup_slot_release is not None}:"
+            f" {exception.message}"
+        )
         stale_env = (
             isinstance(exception, jsonrpc_client.ErrorOnRequest)
             and exception.error.code == _ENV_REINSTALL_NEEDED_ERROR_CODE

@@ -418,37 +418,65 @@ The total is `FINECODE_MAX_CONCURRENT_PROCESSES` if set, otherwise `machine_subp
 entry: it is a property of the machine, and it protects the WM server's whole lifetime. The
 resolved total and both derived caps are logged at INFO once, at construction. See ADR-0093.
 
+On a host whose split lands on `work_cap = 1` (e.g. 3 CPUs: startup 1 / work 1), ADR-0094's stall
+escape routinely runs one slot over budget while a test takes longer than the 30 s no-progress
+window — effective work concurrency ≈ 2, so startup + work reaches 3 > T. This is a known
+small-host overshoot of ADR-0093's invariant, caused by the escape itself, not a fault.
+
 ### ER startup concurrency
 
-`_start_extension_runner_process` holds `WorkspaceContext.er_startup_semaphore` from just before
-spawning the ER process until its RPC channel is confirmed connected, then releases it — bounding
-how many ERs may be mid-startup at once, across every trigger (workspace init fanning out across
-projects, a matrixed `run` fanning out across interpreter children, and `prepare-envs`' own
-runner-start step), since they all call through this one function. It does **not** bound the
-triggering action's execution afterward — that runs in the ER's own process, a separate and far
-more variable resource cost than the CPU/memory-bursty spawn+import window this cap targets.
+`_start_runner` holds `WorkspaceContext.er_startup_semaphore` from just before spawning the ER
+process until the runner reaches **RUNNING** — the whole start burst: process spawn, interpreter
+init and imports, the `initialize` RPC, `get_runner_info`, preset resolution and
+`updateConfig` (ADR-0063 already counted the import burst as part of startup; ADR-0100 widens the
+gate to the whole burst). This bounds how many ERs may be anywhere between spawn and RUNNING at
+once, across every trigger (workspace init fanning out across projects, a matrixed `run` fanning
+out across interpreter children, the lazy env wave inside `run_tests`, and `prepare-envs`' own
+runner-start step), since they all call through `_start_runner`. The slot is released before the
+first action dispatch: action execution stays outside the gate, a separate and far more variable
+resource cost than the burst this cap targets.
+
+An ER that starts while its runner is INITIALIZING can send a back-channel request that waits on
+another runner, the process budget, knowledge extraction or a human, and answering it requires
+the slot-holder's own slot — so such methods **yield** the slot on entry
+(`_yield_startup_slot`), letting the wait be served by another task. `_start_extension_runner_process`
+classifies every registered method into `_STARTUP_SLOT_YIELDING_METHODS` (run dispatch, lease,
+getActionsForParent, knowledge, applyEdit, elicit) or `_STARTUP_SLOT_NEUTRAL_METHODS` (synchronous
+ws_context reads, local publishes, requests to the runner itself); an unclassified method fails
+open at runtime (yields and warns), and the classification is asserted by the test suite. On the
+normal path nothing yields, because the ER's own `updateConfig` calls only neutral methods
+(ADR-0100).
 
 This is what fixes `Didn't get port in 30 seconds` failures on constrained machines: without it, a
 workspace-wide `run` can attempt far more concurrent ER spawns than the machine can schedule
 promptly, delaying some ERs' port handshake past the hardcoded 30s window in
-`finecode_jsonrpc.client._connect_to_server_io`. See ADR-0063 for the full rationale, including why
-this stays a *separate* budget from the process budget below: the WM starts runners lazily *inside*
-a fan-out, so a run holding process-budget slots must never have to wait on the same budget to
-start the very ER it is fanning out into — that would deadlock (ADR-0090).
+`finecode_jsonrpc.client._connect_to_server_io`. The spawn→RUNNING span also bounds the
+post-connect pool (`initialize` / `updateConfig`), which previously ran ungated and starved the gated
+spawns on small hosts (ADR-0100). See ADR-0063 for why the cap stays a *separate* budget from the
+process budget below: the WM starts runners lazily *inside* a fan-out, so a run holding
+process-budget slots must never have to wait on the same budget to start the very ER it is
+fanning out into — that would deadlock (ADR-0090).
 
 The cap is sized once, when `WorkspaceContext` is constructed, as half of the combined budget
 above — there is no dedicated env var for it. There is no CLI flag either, since this cap isn't
 scoped to one command's request — it protects the WM server's whole lifetime and every client that
 triggers ER starts against it. The resolved cap is logged at INFO once, at construction.
 
-Two diagnostics accompany a start. A start whose spawn-to-connected time is at or above
-`SLOW_START_WARN_SEC` (10 s) is logged at WARNING by `_start_extension_runner_process`, carrying
-`spawn_to_output_ms`, `spawn_to_port_ms` and `spawn_to_connected_ms` plus the host's memory/IO
-pressure; a faster start is logged at DEBUG with the same fields. When the port handshake itself
-times out, the `ServerFailedToStart` message names the timeline (when it was spawned, whether the
-server produced any output, when its port line arrived) and a snapshot of the spawned process
-group at the deadline (`finecode_jsonrpc._proc_snapshot`), followed by the stdout/stderr tails.
-The failing-start log line also carries host pressure. See ADR-0097.
+Several diagnostics accompany a start, all carrying their `*_ms` values in the message text. A
+start whose spawn-to-connected time is at or above `SLOW_START_WARN_SEC` (10 s) is logged at
+WARNING by `_start_extension_runner_process`, carrying `spawn_to_output_ms`, `spawn_to_port_ms`
+and `spawn_to_connected_ms` plus the host's memory/IO pressure; a faster start is logged at DEBUG
+with the same fields. When the port handshake itself times out, the `ServerFailedToStart` message
+names the timeline (when it was spawned, whether the server produced any output, when its port
+line arrived) and a snapshot of the spawned process group at the deadline
+(`finecode_jsonrpc._proc_snapshot`), followed by the stdout/stderr tails; the failing-start log
+line also carries `spawned_ago_ms` and host pressure. A start that reaches RUNNING logs
+`Runner <id> ready: connected_to_running_ms=… spawn_to_running_ms=…` (DEBUG, WARNING at
+≥ 10 s total); a start abandoned before RUNNING logs `Runner <id> abandoned:`
+`connected_to_abandon_ms=…` when its channel had connected. `initialize` / `updateConfig` failures
+get WARNING lines at their source (`initialize failed slot_held=…` / `updateConfig failed
+pass=first|second|other slot_held=…`) so the failure is countable in the log even when a catcher
+collapses or swallows it. See ADR-0097 and ADR-0100.
 
 ### Process budget
 

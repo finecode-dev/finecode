@@ -71,6 +71,12 @@ class ExtensionRunnerInfo(domain.ExtensionRunner):
     # Last (enabled, level) sent via finecodeRunner/updateLogging, to avoid
     # redundant RPCs (ADR-0049).
     log_forwarding: tuple[bool, str] | None = dataclasses.field(default=None)
+    # While a start holds `er_startup_semaphore` (spawn→RUNNING, ADR-0100), a
+    # yielding back-channel handler may call this once to release the slot
+    # (see `_yield_startup_slot`). None outside that window.
+    startup_slot_release: typing.Callable[[], None] | None = dataclasses.field(
+        default=None
+    )
 
 
 # Alias for backward compatibility — status enum now lives in domain

@@ -25,6 +25,11 @@ async def test_runner_server_cmd_is_argv(
         working_dir_path=tmp_path, env_name="test_env"
     )
     runner.cmd_override = "/srv/venvs/dev/bin/python"
+    # `_start_extension_runner_process` now uses `runner.client`, attached by
+    # `_start_runner` before the start; a real client keeps this test's
+    # class-level patches of `JsonRpcClient._start_server` / `connect_to_server`
+    # in the path.
+    runner.client = runner_manager._make_runner_client(runner)
     ws_context = context.WorkspaceContext(ws_dirs_paths=[tmp_path])
     ws_context.ws_projects[tmp_path] = domain.Project(
         name="t",

@@ -25,6 +25,11 @@ from finecode.wm_server.config import config_models, read_configs
 from finecode.wm_server.runner import runner_client
 
 
+class DevWorkspaceRunnerNotConnectedError(Exception):
+    """The project's dev_workspace runner exists but has no connected client, so
+    it cannot be asked to resolve preset package paths."""
+
+
 class PresetToProcess(NamedTuple):
     source: str
     project_def_path: Path
@@ -211,6 +216,8 @@ async def read_project_config_with_py_presets(
     that split exists to keep out of the config layer.
 
     Raises:
+        DevWorkspaceRunnerNotConnectedError: presets need resolving but the
+            dev_workspace runner is still queued or never got a client.
         PresetPackageNotInstalledError: a declared preset package is not installed
             in the dev_workspace environment.
         ConfigurationError: the project's config files are malformed, or a preset
@@ -224,6 +231,23 @@ async def read_project_config_with_py_presets(
     dev_workspace_runner = ws_context.ws_projects_extension_runners.get(
         project.dir_path, {}
     ).get("dev_workspace")
+
+    # Fail with a named error instead of an AttributeError inside
+    # `resolvePackagePath`, and never wait on the runner: the caller may hold a
+    # startup slot the runner is queued for. A connected-but-INITIALIZING runner
+    # passes, since resolvePackagePath is expected before RUNNING.
+    if (
+        dev_workspace_runner is not None
+        and sources.preset_sources
+        and (
+            dev_workspace_runner.client is None
+            or dev_workspace_runner.client.startup_timeline.connected_at is None
+        )
+    ):
+        raise DevWorkspaceRunnerNotConnectedError(
+            f"Cannot resolve py-presets for {project.dir_path}: its dev_workspace"
+            f" runner is {dev_workspace_runner.status} and has not connected yet"
+        )
 
     py_presets_config: dict[str, Any] | None = None
     if dev_workspace_runner is not None:

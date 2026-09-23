@@ -159,7 +159,7 @@ async def test_update_config_failure_kills_process_and_preserves_the_type(
     await _patch_successful_init(monkeypatch)
 
     async def _fail_update_config(
-        *, runner, project, handlers_to_initialize, ws_context
+        *, runner, project, handlers_to_initialize, ws_context, pass_label="other"
     ):
         raise runner_manager.EnvironmentOutOfDateError(
             "environment is stale", env_name=runner.env_name
@@ -213,9 +213,12 @@ async def test_no_venv_failure_keeps_no_venv_and_kills_nothing(
     tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A missing venv is repairable, and the auto-repair branch keys on the
-    NO_VENV status — the abandon path must not overwrite it. No client exists
-    to kill on that path, and the waiter must still be released."""
+    NO_VENV status — the abandon path must not overwrite it. The client is
+    attached before the start attempt (it must be, for the ADR-0097 kill
+    latch), but it is never spawned, so there is no process to kill and the
+    waiter must still be released."""
     ws_context, project = _make_context(tmp_path)
+    await _patch_start_environment(monkeypatch)
     monkeypatch.setattr(
         runner_manager.finecode_cmd,
         "get_python_cmd",
@@ -232,7 +235,8 @@ async def test_no_venv_failure_keeps_no_venv_and_kills_nothing(
         )
 
     runner = _runner_from_context(ws_context, project, "dev_no_runtime")
-    assert runner.client is None
+    assert runner.client is not None
+    assert not runner.client.start_entered.is_set()
     assert runner.status == domain.ExtensionRunnerStatus.NO_VENV
     assert runner.initialized_event.is_set()
 
@@ -250,7 +254,9 @@ async def _patch_successful_init(monkeypatch: pytest.MonkeyPatch) -> None:
     async def _get_runner_info(client):
         return _RunnerInfo()
 
-    async def _ok_update_config(*, runner, project, handlers_to_initialize, ws_context):
+    async def _ok_update_config(
+        *, runner, project, handlers_to_initialize, ws_context, pass_label="other"
+    ):
         return None
 
     async def _ok_finish(runner, project, ws_context):
