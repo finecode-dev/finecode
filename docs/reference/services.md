@@ -79,6 +79,40 @@ is not needed for the common case above. This is the ADR-0068 dividing line:
 an init action earns its keep by connecting and validating (ADR-0038); a pure
 config carrier with no I/O and nothing to validate is service config instead.
 
+## Commands are executed without a shell
+
+`ICommandRunner.run()`/`run_sync()` take an **argv vector**, never a shell
+command string:
+
+```python
+process = await self.command_runner.run(["git", "status", "--short"])
+```
+
+Each element is passed to the program as exactly one argument, on any OS: no
+shell parses the command line, so nothing has to be quoted or escaped, and an
+element a shell would reinterpret (spaces, `%`, `"`, `&`) arrives at the
+program verbatim. Consequences:
+
+- **No shell features** — no pipes, redirections, environment expansion or
+  `~`. A command that genuinely needs a shell runs `["bash", "-c", ...]`
+  explicitly and owns its quoting.
+- **`str()` every `Path`.** An argv element must be a `str`; a `Path` is
+  rejected (`TypeError`), so convert paths at the call site.
+- **A `str` is a `TypeError`** — a shell command line is the shape this API
+  removes, rejected at runtime by `check_argv` and statically by the type
+  checker.
+- **Windows shims must be launchable.** CreateProcess appends only `.exe` and
+  ignores `PATHEXT`, so a bare name like `npm` or `pi` (a `.cmd`/`.bat` shim)
+  is resolved through `PATHEXT`, and only `.exe`/`.com`/`.cmd`/`.bat` are
+  launchable. An argument a resolved batch file would reinterpret (`%`, `!`,
+  `^`, `&`, `|`, `<`, `>`, `(`, `)`, `"`, CR, LF) is **refused** with
+  `UnsafeBatchArgumentError` rather than escaped — refusing is safer than
+  handing the argument to cmd.exe unquoted.
+- **An unstartable program raises.** `run()` raises `OSError`
+  (`FileNotFoundError` for a missing program) instead of returning a nonzero
+  exit; a handler that cannot recover from a missing binary should catch it
+  and report a structured failure.
+
 ## Reading process output with `ICommandRunner`
 
 A process spawned by `ICommandRunner.run()` offers its output two ways, and each
@@ -87,7 +121,7 @@ stream chooses independently.
 **Buffered** — the default, and what most handlers want:
 
 ```python
-process = await self.command_runner.run(cmd)
+process = await self.command_runner.run(["pytest", "-q"])
 await process.wait_for_end()
 output = process.get_output()
 ```
@@ -96,7 +130,7 @@ output = process.get_output()
 running (a watch-mode tool, or a line-framed RPC protocol):
 
 ```python
-process = await self.command_runner.run(cmd)
+process = await self.command_runner.run(["npm", "watch"])
 async for line in process.stdout_lines():
     ...  # lines arrive as the child writes them, newline stripped
 ```
@@ -124,7 +158,7 @@ A handler that owns a long-lived child — an agent run, a watch-mode tool — h
 be able to end it, because its own timeout otherwise only stops the *waiting*:
 
 ```python
-process = await self.command_runner.run(cmd, new_process_group=True)
+process = await self.command_runner.run(["claude", "--print"], new_process_group=True)
 ...
 if process.is_alive():
     process.terminate()          # SIGTERM, returns immediately
@@ -136,12 +170,12 @@ if process.is_alive():
 
 Two things are easy to get wrong here:
 
-- **Ask `is_alive()`, not `get_exit_code()`.** Commands are spawned through a
-  shell, so the exit code belongs to the shell. A shell that forks rather than
-  execs exits the moment it is signalled — reporting a returncode that reads
-  exactly like a clean death — while the command it started, which may be
-  ignoring that signal, keeps running. `is_alive()` reports on the process group
-  when the process owns one, which is the question a teardown actually has.
+- **Ask `is_alive()`, not `get_exit_code()`.** The command may be a launcher
+  that forks rather than execs: it exits the moment it is signalled — reporting
+  a returncode that reads exactly like a clean death — while what it started,
+  which may be ignoring that signal, keeps running. `is_alive()` reports on the
+  process group when the process owns one, which is the question a teardown
+  actually has.
 - **`new_process_group=True` is what makes the signal reach the tree.** Without
   it the signal goes to the process alone, so anything the command spawned
   (an agent's tool calls) survives. It is off by default because it also detaches

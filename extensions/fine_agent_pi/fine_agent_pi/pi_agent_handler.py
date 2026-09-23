@@ -1,7 +1,6 @@
 import asyncio
 import contextlib
 import dataclasses
-import shlex
 import time
 from collections.abc import AsyncIterator
 from typing import Any
@@ -169,17 +168,28 @@ class PiAgentHandler(
             )
         command = self._build_command(settings)
         project_dir = self.project_info_provider.get_current_project_dir_path()
-        self.logger.debug(f"Starting pi: {command} in {project_dir}")
+        self.logger.debug(f"Starting pi: {command!r} in {project_dir}")
 
         started = time.monotonic()
-        process = await self.command_runner.run(
-            command,
-            cwd=project_dir,
-            # pi runs tools of its own, so tearing it down has to reach them
-            # too -- otherwise an abandoned run leaves a subtree editing the
-            # project after this handler has returned.
-            new_process_group=True,
-        )
+        try:
+            process = await self.command_runner.run(
+                command,
+                cwd=project_dir,
+                # pi runs tools of its own, so tearing it down has to reach them
+                # too -- otherwise an abandoned run leaves a subtree editing the
+                # project after this handler has returned.
+                new_process_group=True,
+            )
+        except (OSError, icommandrunner.CommandNotLaunchableError) as error:
+            # The program could not be started at all -- missing from PATH, or
+            # (on Windows) a shim refusing an argument cmd.exe would
+            # reinterpret. A settled-with-error result is still a structured
+            # one a caller can read.
+            return RunAgentTaskRunResult(
+                status=AgentRunStatus.FAILED,
+                error=backend_support.spawn_error(command[0], error),
+                duration_sec=0.0,
+            )
 
         try:
             result = await self._run_with_process(
@@ -209,7 +219,7 @@ class PiAgentHandler(
         payload: RunAgentTaskRunPayload,
         run_context: RunAgentTaskRunContext,
         process: icommandrunner.IAsyncProcess,
-        command: str,
+        command: list[str],
         settings: _PiRunSettings,
     ) -> RunAgentTaskRunResult:
         prompt = payload.prompt
@@ -563,7 +573,7 @@ class PiAgentHandler(
         self,
         process: icommandrunner.IAsyncProcess,
         result: RunAgentTaskRunResult,
-        command: str,
+        command: list[str],
     ) -> RunAgentTaskRunResult:
         with contextlib.suppress(TimeoutError):
             process.close_stdin()
@@ -592,7 +602,7 @@ class PiAgentHandler(
             # R-503: the handler's job is to produce output, so producing none
             # is diagnosable rather than merely uninteresting.
             self.user_messenger.warning(
-                f"Agent settled without output (exit {exit_code}). Command: {command}"
+                f"Agent settled without output (exit {exit_code}). Command: {command!r}"
             )
 
         return result
@@ -672,10 +682,10 @@ class PiAgentHandler(
         """
         return ["pi"]
 
-    def _build_command(self, settings: _PiRunSettings) -> str:
+    def _build_command(self, settings: _PiRunSettings) -> list[str]:
         parts = [*self._executable(), "--mode", "rpc", "--no-session"]
         if settings.model is not None:
             parts += ["--model", settings.model]
         if settings.provider is not None:
             parts += ["--provider", settings.provider]
-        return shlex.join(parts)
+        return parts

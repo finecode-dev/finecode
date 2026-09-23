@@ -1,6 +1,5 @@
 import dataclasses
 import pathlib
-import shlex
 
 from finecode_extension_api import code_action
 from finecode_extension_api.interfaces import (
@@ -42,7 +41,7 @@ class GitGetGitStatusHandler(
         self.logger = logger
 
     async def _run_git(
-        self, cmd: str, cwd: pathlib.Path | None
+        self, cmd: list[str], cwd: pathlib.Path | None
     ) -> tuple[int | None, str, str]:
         process = await self.command_runner.run(cmd, cwd=cwd)
         await process.wait_for_end()
@@ -100,7 +99,7 @@ class GitGetGitStatusHandler(
 
         try:
             toplevel_exit_code, toplevel_stdout, _ = await self._run_git(
-                shlex.join(["git", "rev-parse", "--show-toplevel"]), cwd=cwd
+                ["git", "rev-parse", "--show-toplevel"], cwd=cwd
             )
             if toplevel_exit_code != 0:
                 self.logger.debug(f"{cwd} is not a git repository")
@@ -145,7 +144,7 @@ class GitGetGitStatusHandler(
                 )
 
             status_exit_code, status_stdout, status_stderr = await self._run_git(
-                shlex.join(status_args), cwd=cwd
+                status_args, cwd=cwd
             )
             if status_exit_code != 0:
                 return GetGitStatusRunResult(

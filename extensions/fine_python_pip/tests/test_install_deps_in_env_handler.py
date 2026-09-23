@@ -1,6 +1,4 @@
 import pathlib
-import shlex
-import sys
 
 import pytest
 from fine_envs import install_deps_in_env_action
@@ -34,40 +32,6 @@ def _dep(
     )
 
 
-def _split_windows_cmdline(cmd: str) -> list[str]:
-    """Split `cmd` the way a Windows program's C runtime does: whitespace
-    outside double quotes separates arguments and the quotes are removed.
-    `'` is an ordinary character."""
-    args: list[str] = []
-    current: list[str] = []
-    in_quotes = False
-    for ch in cmd:
-        if ch == '"':
-            in_quotes = not in_quotes
-        elif ch.isspace() and not in_quotes:
-            if current:
-                args.append("".join(current))
-                current = []
-        else:
-            current.append(ch)
-    if current:
-        args.append("".join(current))
-    return args
-
-
-def _unquoted_spans(cmd: str) -> str:
-    """The text of `cmd` outside double quotes — where cmd.exe still treats
-    `<`, `>`, `&` and `|` as operators."""
-    parts: list[str] = []
-    in_quotes = False
-    for ch in cmd:
-        if ch == '"':
-            in_quotes = not in_quotes
-        elif not in_quotes:
-            parts.append(ch)
-    return "".join(parts)
-
-
 def test_pip_editable_dep_emits_extras() -> None:
     """An editable spec with extras appends the bracket group to the file URI."""
     cmd = _handler()._construct_pip_install_cmd(
@@ -84,71 +48,49 @@ def test_pip_non_editable_dep_emits_extras() -> None:
         dependencies=[_dep("pkg", "~=1.0", extras=["a"])],
     )
 
-    assert "'pkg[a]~=1.0'" in cmd
+    assert "pkg[a]~=1.0" in cmd
 
 
-def test_pip_cmd_tokenizes_on_windows(monkeypatch: pytest.MonkeyPatch) -> None:
-    """On Windows the shell is cmd.exe, where single quotes do not group a
-    requirement token and an unquoted `>` redirects output. Double-quoting each
-    requirement and the config setting keeps each one argument and keeps cmd's
-    metacharacters literal."""
-    monkeypatch.setattr(sys, "platform", "win32")
+def test_pip_cmd_argv_is_exact() -> None:
+    """Each requirement is one argv element and no token carries quoting.
+
+    The quoting this test used to assert (double-quoting requirements for
+    cmd.exe) went away with the argv API: no shell parses these arguments, so
+    on every platform pip receives exactly these tokens.
+    """
     cmd = _handler(editable_mode="compat")._construct_pip_install_cmd(
         python_executable=pathlib.Path("/venv/bin/python"),
         dependencies=[
             _dep("pkg", " @ file:///D:/a/pkg", editable=True, extras=["a"]),
             _dep("other", ">=1.0"),
+            _dep("pkg", ' ; python_version < "3.12"'),
         ],
     )
 
-    argv = _split_windows_cmdline(cmd)
-
-    assert ["--config-settings", "editable_mode=compat"] == argv[
-        argv.index("--config-settings") : argv.index("--config-settings") + 2
+    assert cmd == [
+        "/venv/bin/python",
+        "-m",
+        "pip",
+        "--disable-pip-version-check",
+        "install",
+        "--config-settings",
+        "editable_mode=compat",
+        "-e",
+        "file:///D:/a/pkg[a]",
+        "other>=1.0",
+        "pkg ; python_version < \"3.12\"",
     ]
-    assert ["-e", "file:///D:/a/pkg[a]"] == argv[
-        argv.index("-e") : argv.index("-e") + 2
-    ]
-    assert "other>=1.0" in argv
-    assert not any("'" in token for token in argv)
-    assert not any(ch in _unquoted_spans(cmd) for ch in "<>&|")
 
 
-def test_pip_cmd_argv_unchanged_on_posix() -> None:
-    """On POSIX the argv delivered to pip is the same as the single-quoted form
-    produced before, so the Windows fix has no Linux/macOS regression surface."""
-    cmd = _handler(editable_mode="compat")._construct_pip_install_cmd(
-        python_executable=pathlib.Path("/venv/bin/python"),
-        dependencies=[
-            _dep("pkg", " @ file:///D:/a/pkg", editable=True, extras=["a"]),
-            _dep("other", ">=1.0"),
-        ],
-    )
+def test_pip_marker_string_survives_verbatim() -> None:
+    """A PEP 508 marker string with double quotes reaches pip as one token.
 
-    argv = shlex.split(cmd)
-
-    assert ["--config-settings", "editable_mode=compat"] == argv[
-        argv.index("--config-settings") : argv.index("--config-settings") + 2
-    ]
-    assert ["-e", "file:///D:/a/pkg[a]"] == argv[
-        argv.index("-e") : argv.index("-e") + 2
-    ]
-    assert "other>=1.0" in argv
-
-
-def test_pip_marker_quotes_survive_windows(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """A PEP 508 marker string quoted with `"` reaches the installer as one
-    argument on Windows: the double quote is swapped for the equivalent `'`
-    marker quote rather than escaped."""
-    monkeypatch.setattr(sys, "platform", "win32")
+    Under exec the marker quotes need no escaping at all: pip (not a shell)
+    parses the marker, so `"` inside the requirement stays a marker quote.
+    """
     cmd = _handler()._construct_pip_install_cmd(
         python_executable=pathlib.Path("/venv/bin/python"),
         dependencies=[_dep("pkg", ' ; python_version < "3.12"')],
     )
 
-    argv = _split_windows_cmdline(cmd)
-
-    marker_tokens = [token for token in argv if "python_version" in token]
-    assert marker_tokens == ["pkg ; python_version < '3.12'"]
+    assert cmd[-1] == 'pkg ; python_version < "3.12"'

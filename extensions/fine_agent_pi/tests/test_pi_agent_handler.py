@@ -703,7 +703,7 @@ def test_build_command_carries_model_and_provider() -> None:
 
     command = PiAgentHandler._build_command(handler, settings)
 
-    assert command.split() == [
+    assert command == [
         "pi",
         "--mode",
         "rpc",
@@ -805,9 +805,69 @@ class _RecordingCommandRunner:
     def __init__(self) -> None:
         self.run_calls = 0
 
-    async def run(self, *args: Any, **kwargs: Any) -> Any:
+    async def run(
+        self,
+        cmd: icommandrunner.Argv,
+        cwd: pathlib.Path | None = None,
+        env: dict[str, str] | None = None,
+        new_process_group: bool = False,
+    ) -> Any:
+        icommandrunner.check_argv(cmd)
         self.run_calls += 1
         raise AssertionError("an unknown profile must not spawn a process")
+
+
+class _RaisingCommandRunner:
+    def __init__(self, error: Exception) -> None:
+        self._error = error
+
+    async def run(
+        self,
+        cmd: icommandrunner.Argv,
+        cwd: pathlib.Path | None = None,
+        env: dict[str, str] | None = None,
+        new_process_group: bool = False,
+    ) -> Any:
+        icommandrunner.check_argv(cmd)
+        raise self._error
+
+    def run_sync(
+        self,
+        cmd: icommandrunner.Argv,
+        cwd: pathlib.Path | None = None,
+        env: dict[str, str] | None = None,
+    ) -> Any:
+        raise NotImplementedError
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        FileNotFoundError(2, "No such file or directory"),
+        PermissionError(13, "Permission denied"),
+        icommandrunner.UnsafeBatchArgumentError(
+            "argument 1 cannot be passed safely to batch file pi.cmd"
+        ),
+        icommandrunner.UnlaunchableProgramError(
+            "pi resolves to pi.js, which CreateProcess cannot launch"
+        ),
+    ],
+)
+async def test_a_run_that_cannot_spawn_pi_is_a_structured_failure(
+    error: Exception,
+) -> None:
+    """An unstartable pi -- missing from PATH, or a Windows shim refusing an
+    argument -- is a structured `FAILED` result naming the program and the
+    spawner's reason, never an exception out of the action."""
+    result = await _run(
+        {"steps": []},
+        service_overrides={icommandrunner.ICommandRunner: _RaisingCommandRunner(error)},
+    )
+
+    assert result.status is AgentRunStatus.FAILED
+    assert sys.executable in result.error
+    assert getattr(error, "strerror", None) or str(error) in result.error
+    assert result.duration_sec == 0.0
 
 
 async def test_unknown_profile_fails_before_spawning() -> None:

@@ -1,10 +1,10 @@
 """`AsyncProcess` can stop what it started, including what that started.
 
-The trap these pin down is that a command is spawned through a shell, so the
-process the runner holds may be a wrapper rather than the command itself. A
-shell that forks rather than execs exits the moment it is signalled -- handing
-back a returncode that reads exactly like a clean death -- while the command it
-started keeps running. Anything deciding "is it gone yet?" from that exit code
+The trap these pin down is that the command the runner holds may be a launcher
+rather than the final worker: a launcher that forks rather than execs -- npm,
+a `.cmd` shim, a driver script -- exits the moment it is signalled, handing
+back a returncode that reads exactly like a clean death, while what it started
+keeps running. Anything deciding "is it gone yet?" from that exit code
 therefore stops escalating precisely when escalation was still needed.
 """
 
@@ -13,7 +13,6 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import os
-import shlex
 import sys
 
 import pytest
@@ -23,6 +22,15 @@ from finecode_extension_runner.impls.command_runner import (
     CommandRunnerConfig,
 )
 from finecode_extension_runner.process_slots import ProcessSlots
+
+
+# Process groups, `killpg`/`SIGKILL` and `os.kill(pid, 0)` (which is
+# `CTRL_C_EVENT` on Windows) are all POSIX-only.
+pytestmark = pytest.mark.skipif(
+    os.name != "posix",
+    reason="process groups and killpg are POSIX-only; os.kill(pid, 0) is "
+    "CTRL_C_EVENT on Windows",
+)
 
 
 class _NoopLogger:
@@ -54,9 +62,23 @@ _STUBBORN = (
 """A command that refuses SIGTERM and leaves a child behind, like an agent
 mid-tool-call. It reports both pids on stdout so a test can check them."""
 
+# A launcher that dies on SIGTERM but leaves a SIGTERM-ignoring child behind in
+# its own group -- the shape a forking wrapper takes. SIGTERM is blocked before
+# the fork so the child inherits the blocked disposition from birth (no race on
+# the child installing a handler); unblocking afterwards returns the signal to
+# the launcher alone.
+_LAUNCHER = (
+    "import os, signal, subprocess, sys, time\n"
+    "signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGTERM})\n"
+    "child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(300)'])\n"
+    "signal.pthread_sigmask(signal.SIG_UNBLOCK, {signal.SIGTERM})\n"
+    "print(os.getpid(), child.pid, flush=True)\n"
+    "time.sleep(300)\n"
+)
 
-def _python(script: str) -> str:
-    return f"{sys.executable} -c {shlex.quote(script)}"
+
+def _python(script: str) -> list[str]:
+    return [sys.executable, "-c", script]
 
 
 def _is_gone(pid: int) -> bool:
@@ -103,12 +125,13 @@ async def test_kill_reaches_a_command_that_ignores_sigterm_and_its_child() -> No
 
 
 @pytest.mark.asyncio
-async def test_is_alive_does_not_trust_the_shells_exit_code() -> None:
+async def test_is_alive_while_the_command_ignores_sigterm() -> None:
     """The regression this file exists for.
 
-    `get_exit_code()` reports the shell's fate, and signalling the group makes
-    the shell exit while the command that ignores the signal runs on. A teardown
-    that reads the exit code concludes "gone" and stops one rung too early.
+    `get_exit_code()` reports the command's own fate, and signalling the group
+    makes a process that ignores the signal sit still while a wrapper would
+    have exited. A teardown that reads the exit code concludes "gone" and
+    stops one rung too early.
     """
     process = await _runner().run(_python(_STUBBORN), new_process_group=True)
     lines = process.stdout_lines()
@@ -124,6 +147,42 @@ async def test_is_alive_does_not_trust_the_shells_exit_code() -> None:
         process.kill()
         await _wait_gone(agent_pid)
         await _wait_gone(child_pid)
+
+
+@pytest.mark.asyncio
+async def test_is_alive_tracks_the_group_after_a_forking_launcher_exits() -> None:
+    """A launcher that dies on SIGTERM must not read as "everything is gone".
+
+    A forking launcher (npm, a `.cmd` shim) exits as soon as it is signalled
+    while what it started keeps running in the same group: a teardown that
+    stops at the launcher's exit code orphans the work still running under it.
+    """
+    process = await _runner().run(_python(_LAUNCHER), new_process_group=True)
+    lines = process.stdout_lines()
+    launcher_pid, child_pid = (int(part) for part in (await lines.__anext__()).split())
+
+    process.terminate()
+
+    # `wait_for_end()` cannot return here: the child holds the inherited
+    # stdout pipe open, so the drain never sees EOF. Poll the exit code
+    # instead -- it is set the moment the launcher itself dies.
+    deadline = asyncio.get_running_loop().time() + 5.0
+    while (
+        process.get_exit_code() is None
+        and asyncio.get_running_loop().time() < deadline
+    ):
+        await asyncio.sleep(0.05)
+
+    assert process.get_exit_code() is not None
+    assert process.is_alive(), (
+        "the child that ignored SIGTERM is still a member of the launcher's "
+        "group, so the group outlives the launcher"
+    )
+
+    process.kill()
+    assert await _wait_gone(launcher_pid), "the launcher survived kill()"
+    assert await _wait_gone(child_pid), "the child survived kill()"
+    assert not process.is_alive()
 
 
 @pytest.mark.asyncio

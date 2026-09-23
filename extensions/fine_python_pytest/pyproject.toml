@@ -8,7 +8,7 @@ authors = [{ name = "Vladyslav Hnatiuk", email = "aders1234@gmail.com" }]
 # pytest changelog: https://docs.pytest.org/en/stable/changelog.html
 dependencies = [
   "fine_test~=0.1.0a0",
-  "finecode_extension_api~=0.4.0a0",
+  "finecode_extension_api~=0.5.0a0",
   "pytest>=8.0.0,<10.0.0",
   "pytest-asyncio>=0.24.0",
   "pytest-json-report>=1.5.0",

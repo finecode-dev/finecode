@@ -56,27 +56,28 @@ class _FakeProcess:
 
 
 class _FakeCommandRunner:
-    """Captures every command string and working directory it is asked to run,
+    """Captures every argv vector and working directory it is asked to run,
     instead of executing it."""
 
     def __init__(self, exit_code: int = 0) -> None:
         self.exit_code = exit_code
-        self.commands: list[str] = []
+        self.commands: list[list[str]] = []
         self.cwds: list[pathlib.Path | None] = []
 
     async def run(
         self,
-        cmd: str,
+        cmd: icommandrunner.Argv,
         cwd: pathlib.Path | None = None,
         env: dict[str, str] | None = None,
     ) -> _FakeProcess:
-        self.commands.append(cmd)
+        icommandrunner.check_argv(cmd)
+        self.commands.append(list(cmd))
         self.cwds.append(cwd)
         return _FakeProcess(exit_code=self.exit_code, output="")
 
     def run_sync(
         self,
-        cmd: str,
+        cmd: icommandrunner.Argv,
         cwd: pathlib.Path | None = None,
         env: dict[str, str] | None = None,
     ) -> _FakeProcess:
@@ -219,9 +220,10 @@ async def test_uv_venv_command_includes_python_flag_when_interpreter_is_set(
 
     assert result is not None
     assert result.errors == []
-    venv_commands = [cmd for cmd in command_runner.commands if " venv " in cmd]
+    venv_commands = [cmd for cmd in command_runner.commands if "venv" in cmd]
     assert len(venv_commands) == 1
-    assert '--python "cpython@3.11"' in venv_commands[0]
+    assert "--python" in venv_commands[0]
+    assert venv_commands[0][venv_commands[0].index("--python") + 1] == "cpython@3.11"
 
 
 async def test_uv_venv_command_omits_python_flag_when_interpreter_is_none(
@@ -248,7 +250,7 @@ async def test_uv_venv_command_omits_python_flag_when_interpreter_is_none(
 
     assert result is not None
     assert result.errors == []
-    venv_commands = [cmd for cmd in command_runner.commands if " venv " in cmd]
+    venv_commands = [cmd for cmd in command_runner.commands if "venv" in cmd]
     assert len(venv_commands) == 1
     assert "--python" not in venv_commands[0]
 
@@ -378,5 +380,5 @@ async def test_valid_venv_never_dumps_config(tmp_path: pathlib.Path) -> None:
     assert project_action_runner.recorded_payloads == []
     # Only the validity probe ran, never a `uv venv` command.
     assert command_runner.commands and not any(
-        " venv " in cmd for cmd in command_runner.commands
+        "venv" in cmd for cmd in command_runner.commands
     )

@@ -11,7 +11,6 @@ config sign reverts to spawning pytest.
 from __future__ import annotations
 
 import pathlib
-import shlex
 from collections.abc import AsyncIterator
 from typing import Any
 
@@ -243,7 +242,7 @@ async def test_run_handler_spawns_pytest_when_tests_dir_exists(
         )
 
     assert len(command_runner.commands) == 1
-    assert shlex.split(command_runner.commands[0])[-1] == "tests"
+    assert command_runner.commands[0][-1] == "tests"
 
 
 async def test_list_handler_skips_pytest_when_nothing_collectable(
@@ -273,7 +272,7 @@ async def test_list_handler_spawns_pytest_when_tests_dir_exists(
 
     assert result.tests == []
     assert len(command_runner.commands) == 1
-    assert shlex.split(command_runner.commands[0])[-1] == "tests"
+    assert command_runner.commands[0][-1] == "tests"
 
 
 async def test_run_handler_file_paths_never_skip(

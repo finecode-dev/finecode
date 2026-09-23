@@ -14,7 +14,6 @@ after output has already been produced.
 from __future__ import annotations
 
 import asyncio
-import shlex
 import sys
 from collections.abc import AsyncGenerator
 from typing import cast
@@ -49,10 +48,8 @@ def _runner() -> CommandRunner:
     )
 
 
-def _python(script: str) -> str:
-    # `shlex.quote`, not `repr`: `run()` goes through a shell, and `repr` would
-    # turn the newlines in these scripts into literal backslash-n.
-    return f"{sys.executable} -c {shlex.quote(script)}"
+def _python(script: str) -> list[str]:
+    return [sys.executable, "-c", script]
 
 
 async def test_lines_arrive_before_the_process_exits() -> None:

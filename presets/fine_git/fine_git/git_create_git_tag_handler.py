@@ -1,6 +1,5 @@
 import dataclasses
 import pathlib
-import shlex
 
 from finecode_extension_api import code_action
 from finecode_extension_api.interfaces import (
@@ -35,7 +34,7 @@ class GitCreateGitTagHandler(
         self.logger = logger
 
     async def _run_git(
-        self, cmd: str, cwd: pathlib.Path | None
+        self, cmd: list[str], cwd: pathlib.Path | None
     ) -> tuple[int | None, str, str]:
         process = await self.command_runner.run(cmd, cwd=cwd)
         await process.wait_for_end()
@@ -59,9 +58,13 @@ class GitCreateGitTagHandler(
         cwd = self.project_info_provider.get_current_project_dir_path()
 
         try:
-            check_cmd = shlex.join(
-                ["git", "rev-parse", "--verify", "--quiet", f"refs/tags/{payload.tag}"]
-            )
+            check_cmd = [
+                "git",
+                "rev-parse",
+                "--verify",
+                "--quiet",
+                f"refs/tags/{payload.tag}",
+            ]
             check_exit_code, _, _ = await self._run_git(check_cmd, cwd=cwd)
             tag_exists = check_exit_code == 0
 
@@ -78,9 +81,7 @@ class GitCreateGitTagHandler(
             if payload.ref is not None:
                 create_args.append(payload.ref)
 
-            create_exit_code, _, create_stderr = await self._run_git(
-                shlex.join(create_args), cwd=cwd
-            )
+            create_exit_code, _, create_stderr = await self._run_git(create_args, cwd=cwd)
 
             if create_exit_code == 0:
                 return CreateGitTagRunResult(tag=payload.tag, created=True, error=None)

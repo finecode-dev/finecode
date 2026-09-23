@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
-import shlex
 import sys
 from pathlib import Path
 
@@ -93,11 +92,10 @@ class PytestListTestsHandler(
 
         cmd_parts.extend(self.config.addopts)
 
-        cmd = shlex.join(cmd_parts)
-        self.logger.debug(f"Running pytest collect: {cmd}")
+        self.logger.debug(f"Running pytest collect: {cmd_parts!r}")
 
         async with run_context.progress("Discovering tests") as progress:
-            process = await self.command_runner.run(cmd, cwd=project_dir)
+            process = await self.command_runner.run(cmd_parts, cwd=project_dir)
             await progress.report("Collecting tests")
             await process.wait_for_end()
 

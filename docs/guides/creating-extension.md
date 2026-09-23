@@ -19,7 +19,7 @@ my_linter/
 name = "my_linter"
 version = "0.1.0"
 requires-python = ">=3.11"
-dependencies = ["finecode_extension_api~=0.4.0"]
+dependencies = ["finecode_extension_api~=0.5.0a0"]
 
 [build-system]
 requires = ["setuptools>=64"]
@@ -201,6 +201,7 @@ For handlers that spawn an external process, log the following at `DEBUG`:
 Emit a `WARNING` when the handler's primary job is to produce results but returns nothing:
 
 ```python
+cmd = ["my_tool", "--format", "json"]
 process = await self.command_runner.run(cmd, cwd=project_dir)
 await process.wait_for_end()
 

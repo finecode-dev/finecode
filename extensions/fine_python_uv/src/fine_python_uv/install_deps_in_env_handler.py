@@ -1,7 +1,5 @@
 import dataclasses
 import pathlib
-import shlex
-import sys
 
 from fine_envs import install_deps_in_env_action
 from finecode_extension_api import code_action
@@ -20,21 +18,6 @@ from ._uv_common import get_uv_executable, temp_project_config_dump
 class UvInstallDepsInEnvHandlerConfig(code_action.ActionHandlerConfig):
     find_links: list[str] | None = None
     editable_mode: str | None = None
-
-
-def _quote_arg(arg: str) -> str:
-    """Quote one argument for the shell `ICommandRunner.run` spawns through.
-
-    On Windows that is cmd.exe, and uv.exe splits its command line by MSVC
-    rules: `'` is not a quote there, and cmd treats an unquoted `>` in a
-    version spec as a redirect. Double quotes are honoured by both. The args
-    quoted here are PEP 508 requirements and config settings, where `"` can
-    only be a marker-string quote, so it is swapped for the equivalent `'`
-    rather than escaped (a `\\"` toggles cmd's own quote state).
-    """
-    if sys.platform == "win32":
-        return '"' + arg.replace('"', "'") + '"'
-    return shlex.quote(arg)
 
 
 class UvInstallDepsInEnvHandler(
@@ -96,47 +79,47 @@ class UvInstallDepsInEnvHandler(
 
     def _construct_uv_install_cmd(
         self,
-        uv_executable,
-        venv_dir_path,
+        uv_executable: pathlib.Path,
+        venv_dir_path: pathlib.Path,
         dependencies: list[install_deps_in_env_action.Dependency],
-    ) -> str:
-        install_params: str = ""
+    ) -> list[str]:
+        cmd: list[str] = [
+            str(uv_executable),
+            "--no-config",
+            "pip",
+            "install",
+            "--python",
+            str(venv_dir_path),
+        ]
 
         if self.config.find_links is not None:
             for link in self.config.find_links:
-                install_params += f'--find-links="{link}" '
+                cmd.append(f"--find-links={link}")
 
         if self.config.editable_mode is not None:
-            install_params += (
-                f"-C {_quote_arg(f'editable_mode={self.config.editable_mode}')} "
-            )
+            cmd.append("-C")
+            cmd.append(f"editable_mode={self.config.editable_mode}")
 
         for dependency in dependencies:
             if dependency.editable:
-                install_params += "-e "
+                cmd.append("-e")
 
             extras_str = ""
             if dependency.extras:
                 extras_str = "[" + ",".join(dependency.extras) + "]"
 
-            install_params += (
-                _quote_arg(
-                    f"{dependency.name}{extras_str}{dependency.version_or_source}"
-                )
-                + " "
-            )
+            cmd.append(f"{dependency.name}{extras_str}{dependency.version_or_source}")
 
-        cmd = f'"{uv_executable}" --no-config pip install --python "{venv_dir_path}" {install_params}'
         return cmd
 
     async def _run_uv_cmd(
         self,
-        cmd: str,
+        cmd: list[str],
         env_name: str,
         cwd: pathlib.Path,
         project_dir_path: pathlib.Path,
     ) -> str | None:
-        self.logger.debug(f"Running uv: {cmd}")
+        self.logger.debug(f"Running uv: {cmd!r}")
         process = await self.command_runner.run(cmd, cwd=cwd)
         await process.wait_for_end()
         process_stdout = process.get_output()
@@ -156,7 +139,7 @@ class UvInstallDepsInEnvHandler(
 
             error = (
                 f"Installation of dependencies in env {env_name} for project "
-                f"{project_dir_path} failed (cmd: {cmd}):\n{logs}\n"
+                f"{project_dir_path} failed (cmd: {cmd!r}):\n{logs}\n"
                 "The config uv ran with was a temporary dump of the project; run "
                 "`python -m finecode dump-config` for that project to inspect it."
             )

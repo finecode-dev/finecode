@@ -4,7 +4,6 @@ import asyncio
 import dataclasses
 import json
 import re
-import shlex
 import sys
 from pathlib import Path
 from typing import Any
@@ -217,11 +216,7 @@ class RuffGetLintFixesHandler(
         if self.config.preview:
             cmd.append("--preview")
 
-        # ICommandRunner.run takes one shell string, not argv: passing the list got as
-        # far as "cmd must be a string" at runtime, which is why the CLI path only ever
-        # worked against a stub. shlex.join rather than " ".join, so a ruff binary or a
-        # file under a path with a space survives the shell.
-        ruff_process = await self.command_runner.run(shlex.join(cmd))
+        ruff_process = await self.command_runner.run(cmd)
         ruff_process.write_to_stdin(file_content)
         ruff_process.close_stdin()
         await ruff_process.wait_for_end()

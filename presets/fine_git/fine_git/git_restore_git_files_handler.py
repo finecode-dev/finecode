@@ -1,6 +1,5 @@
 import dataclasses
 import pathlib
-import shlex
 
 from finecode_extension_api import code_action
 from finecode_extension_api.interfaces import (
@@ -52,7 +51,7 @@ class GitRestoreGitFilesHandler(
         self.logger = logger
 
     async def _run_git(
-        self, cmd: str, cwd: pathlib.Path | None
+        self, cmd: list[str], cwd: pathlib.Path | None
     ) -> tuple[int | None, str, str]:
         process = await self.command_runner.run(cmd, cwd=cwd)
         await process.wait_for_end()
@@ -102,7 +101,7 @@ class GitRestoreGitFilesHandler(
 
         try:
             toplevel_exit_code, toplevel_stdout, _ = await self._run_git(
-                shlex.join(["git", "rev-parse", "--show-toplevel"]), cwd=cwd
+                ["git", "rev-parse", "--show-toplevel"], cwd=cwd
             )
             if toplevel_exit_code != 0:
                 for uri in payload.paths:
@@ -140,7 +139,7 @@ class GitRestoreGitFilesHandler(
                 ]
                 status_args.extend(str(path) for path in uri_to_abs_path.values())
                 status_exit_code, status_stdout, status_stderr = await self._run_git(
-                    shlex.join(status_args), cwd=cwd
+                    status_args, cwd=cwd
                 )
                 if status_exit_code != 0:
                     # Reporting the failure rather than falling through: an
@@ -187,10 +186,9 @@ class GitRestoreGitFilesHandler(
                 restore_args.append("--")
                 restore_args.extend(str(path) for path in restorable.values())
 
-                restore_cmd = shlex.join(restore_args)
-                self.logger.debug(f"Restoring files: {restore_cmd}")
+                self.logger.debug(f"Restoring files: {restore_args!r}")
                 restore_exit_code, _, restore_stderr = await self._run_git(
-                    restore_cmd, cwd=cwd
+                    restore_args, cwd=cwd
                 )
 
                 if restore_exit_code != 0:

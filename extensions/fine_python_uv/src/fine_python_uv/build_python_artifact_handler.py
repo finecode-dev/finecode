@@ -65,7 +65,7 @@ class UvBuildPythonArtifactHandler(
             output_dir=output_dir,
             distributions=payload.distributions,
         )
-        self.logger.info(f"Building Python artifact in {project_dir} with: {cmd}")
+        self.logger.info(f"Building Python artifact in {project_dir} with: {cmd!r}")
 
         process = await self.command_runner.run(cmd=cmd, cwd=project_dir)
         await process.wait_for_end()
@@ -83,7 +83,7 @@ class UvBuildPythonArtifactHandler(
         )
         if not build_output_paths:
             raise code_action.ActionFailedException(
-                f"uv build succeeded but reported no output path (cmd: {cmd})"
+                f"uv build succeeded but reported no output path (cmd: {cmd!r})"
             )
 
         self.logger.info(f"Build completed. Output: {build_output_paths}")
@@ -100,15 +100,15 @@ class UvBuildPythonArtifactHandler(
         uv_executable: pathlib.Path,
         output_dir: pathlib.Path,
         distributions: list[typing.Literal["sdist", "wheel"]] | None,
-    ) -> str:
-        build_args = ""
+    ) -> list[str]:
+        cmd: list[str] = [str(uv_executable), "build"]
         if distributions is not None:
             if "sdist" in distributions and "wheel" not in distributions:
-                build_args += " --sdist"
+                cmd.append("--sdist")
             elif "wheel" in distributions and "sdist" not in distributions:
-                build_args += " --wheel"
-        build_args += f' --out-dir "{output_dir}"'
-        return f'"{uv_executable}" build{build_args}'
+                cmd.append("--wheel")
+        cmd.extend(["--out-dir", str(output_dir)])
+        return cmd
 
     def _parse_built_paths(self, output: str, cwd: pathlib.Path) -> list[pathlib.Path]:
         build_output_paths: list[pathlib.Path] = []

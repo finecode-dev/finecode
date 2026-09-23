@@ -78,16 +78,17 @@ class _FakeCommandRunner:
     """ICommandRunner-shaped fake whose processes always report no errors."""
 
     def __init__(self) -> None:
-        self.commands: list[str] = []
+        self.commands: list[list[str]] = []
 
     async def run(
         self,
-        cmd: str,
+        cmd: icommandrunner.Argv,
         _cwd: Path | None = None,
         _env: dict[str, str] | None = None,
         _new_process_group: bool = False,
     ) -> _FakePyreflyProcess:
-        self.commands.append(cmd)
+        icommandrunner.check_argv(cmd)
+        self.commands.append(list(cmd))
         return _FakePyreflyProcess()
 
 
@@ -213,8 +214,14 @@ async def test_cli_mode_skips_the_lsp_service_entirely(
 
     assert lsp.calls == []
     assert len(runner.commands) == 2
-    assert all("pyrefly check" in cmd for cmd in runner.commands)
-    assert [Path(cmd.rsplit(" ", 1)[1]) for cmd in runner.commands] == [a, b]
+    assert all(cmd[1] == "check" for cmd in runner.commands)
+    assert [Path(cmd[-1]) for cmd in runner.commands] == [a, b]
+    # the interpreter path reaches pyrefly as one verbatim token -- no shell
+    # quoting around it, so a path with spaces survives
+    assert all(
+        "--python-interpreter-path=/fake/venvs/source/bin/python" in cmd
+        for cmd in runner.commands
+    )
 
 
 async def test_run_sweeps_the_full_file_set_before_checking(

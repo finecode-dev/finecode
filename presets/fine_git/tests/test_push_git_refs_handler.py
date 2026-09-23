@@ -5,6 +5,7 @@ from collections.abc import AsyncIterator
 from pathlib import Path
 
 import pytest
+from finecode_extension_api.interfaces import icommandrunner
 from finecode_extension_api.interfaces.icommandrunner import ICommandRunner
 from finecode_extension_runner.testing import run_handler
 
@@ -51,12 +52,16 @@ class FakeCommandResult:
 class FakeCommandRunner:
     def __init__(self, results: list[FakeCommandResult]) -> None:
         self._results = list(results)
-        self.commands: list[str] = []
+        self.commands: list[list[str]] = []
 
     async def run(
-        self, cmd: str, cwd: Path | None = None, env: dict[str, str] | None = None
+        self,
+        cmd: icommandrunner.Argv,
+        cwd: Path | None = None,
+        env: dict[str, str] | None = None,
     ) -> FakeCommandResult:
-        self.commands.append(cmd)
+        icommandrunner.check_argv(cmd)
+        self.commands.append(list(cmd))
         return self._results.pop(0)
 
 

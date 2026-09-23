@@ -1,7 +1,6 @@
 import dataclasses
 import pathlib
 import re
-import shlex
 
 from finecode_extension_api import code_action
 from finecode_extension_api.interfaces import (
@@ -55,7 +54,7 @@ class GitGetGitDiffHandler(
         self.logger = logger
 
     async def _run_git(
-        self, cmd: str, cwd: pathlib.Path | None
+        self, cmd: list[str], cwd: pathlib.Path | None
     ) -> tuple[int | None, str, str]:
         process = await self.command_runner.run(cmd, cwd=cwd)
         await process.wait_for_end()
@@ -214,7 +213,7 @@ class GitGetGitDiffHandler(
 
         try:
             toplevel_exit_code, toplevel_stdout, _ = await self._run_git(
-                shlex.join(["git", "rev-parse", "--show-toplevel"]), cwd=cwd
+                ["git", "rev-parse", "--show-toplevel"], cwd=cwd
             )
             if toplevel_exit_code != 0:
                 self.logger.debug(f"{cwd} is not a git repository")
@@ -253,7 +252,7 @@ class GitGetGitDiffHandler(
                 )
 
             diff_exit_code, diff_stdout, diff_stderr = await self._run_git(
-                shlex.join(diff_args), cwd=cwd
+                diff_args, cwd=cwd
             )
             if diff_exit_code != 0:
                 return GetGitDiffRunResult(

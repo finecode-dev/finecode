@@ -1,7 +1,7 @@
 import dataclasses
-import shlex
 import shutil
 
+from fine_agent import backend_support
 from fine_system_setup.setup_system_action import (
     SetupSystemAction,
     SetupSystemRunContext,
@@ -51,12 +51,18 @@ class InstallPiHandler(
 
         # --ignore-scripts: pi needs no lifecycle scripts, so skipping them avoids
         # running arbitrary code from the dependency tree
-        cmd = shlex.join(["npm", "install", "-g", "--ignore-scripts", _NPM_PACKAGE])
+        cmd = ["npm", "install", "-g", "--ignore-scripts", _NPM_PACKAGE]
 
         async with run_context.progress("Installing pi", total=1) as progress:
-            self.logger.info(f"Running installer: {cmd}")
+            self.logger.info(f"Running installer: {cmd!r}")
             await progress.report("Running npm install")
-            process = await self.command_runner.run(cmd)
+            try:
+                process = await self.command_runner.run(cmd)
+            except (OSError, icommandrunner.CommandNotLaunchableError) as error:
+                self.logger.error(f"Install failed: {error}")
+                return SetupSystemRunResult(
+                    failed=[f"{_TOOL_NAME}: {backend_support.spawn_error(cmd[0], error)}"]
+                )
             await process.wait_for_end()
             await progress.advance(1)
 

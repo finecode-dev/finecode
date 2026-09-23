@@ -5,7 +5,7 @@ description = "FineCode preset providing generic git actions (no release semanti
 readme = "README.md"
 requires-python = ">=3.11"
 authors = [{ name = "Vladyslav Hnatiuk", email = "aders1234@gmail.com" }]
-dependencies = ["finecode_extension_api~=0.4.0a0"]
+dependencies = ["finecode_extension_api~=0.5.0a0"]
 
 [dependency-groups]
 dev_workspace = ["finecode~=0.4.0a0", "finecode_dev_common_preset~=0.3.0a0"]

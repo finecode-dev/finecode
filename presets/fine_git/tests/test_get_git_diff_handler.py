@@ -154,7 +154,8 @@ async def test_paths_none_scopes_diff_to_the_project_directory(
     )
 
     diff_cmd = command_runner.commands[1]
-    assert f"-- {tmp_path}" in diff_cmd
+    assert "--" in diff_cmd
+    assert str(tmp_path) in diff_cmd
 
 
 _MARKDOWN_RULE_SECTION = (

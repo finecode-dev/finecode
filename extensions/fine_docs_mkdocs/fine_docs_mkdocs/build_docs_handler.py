@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import dataclasses
-import shlex
 import sys
 from pathlib import Path
 
@@ -68,10 +67,9 @@ class MkdocsBuildDocsHandler(
         if self.config.strict:
             cmd_parts.append("--strict")
 
-        cmd = shlex.join(cmd_parts)
-        self.logger.debug(f"Running mkdocs build: {cmd}")
+        self.logger.debug(f"Running mkdocs build: {cmd_parts!r}")
 
-        process = await self.command_runner.run(cmd, cwd=project_dir)
+        process = await self.command_runner.run(cmd_parts, cwd=project_dir)
         await process.wait_for_end()
 
         exit_code = process.get_exit_code()

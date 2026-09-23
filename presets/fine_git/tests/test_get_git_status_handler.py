@@ -190,4 +190,5 @@ async def test_paths_none_scopes_status_to_the_project_directory(
     )
 
     status_cmd = command_runner.commands[1]
-    assert f"-- {tmp_path}" in status_cmd
+    assert "--" in status_cmd
+    assert str(tmp_path) in status_cmd

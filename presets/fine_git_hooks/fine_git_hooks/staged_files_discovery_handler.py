@@ -82,7 +82,7 @@ class StagedFilesDiscoveryHandler(
     async def _get_staged_files(self, repo_root: Path) -> list[Path]:
         """Run git diff --cached --name-only --diff-filter=ACMR and return absolute paths."""
         proc = await self.command_runner.run(
-            "git diff --cached --name-only --diff-filter=ACMR"
+            ["git", "diff", "--cached", "--name-only", "--diff-filter=ACMR"]
         )
         await proc.wait_for_end()
         exit_code = proc.get_exit_code()
@@ -99,7 +99,7 @@ class StagedFilesDiscoveryHandler(
         return paths
 
     async def _get_repo_root(self) -> Path:
-        proc = await self.command_runner.run("git rev-parse --show-toplevel")
+        proc = await self.command_runner.run(["git", "rev-parse", "--show-toplevel"])
         await proc.wait_for_end()
         exit_code = proc.get_exit_code()
         if exit_code != 0:

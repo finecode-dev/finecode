@@ -16,6 +16,7 @@ from typing import Any
 
 from fine_lint.get_lint_fixes_action import GetLintFixesRunPayload
 from fine_lint.lint_fix import FixApplicability
+from finecode_extension_api.interfaces import icommandrunner
 from finecode_extension_api.resource_uri import path_to_resource_uri
 from finecode_extension_runner.testing import NoOpLogger
 
@@ -63,13 +64,16 @@ class _StubProcess:
 class _StubCommandRunner:
     def __init__(self, output: str) -> None:
         self._output = output
-        self.commands: list[Any] = []
+        self.commands: list[list[str]] = []
 
-    async def run(self, cmd, cwd=None, env=None):
-        self.commands.append(cmd)
+    async def run(
+        self, cmd: icommandrunner.Argv, cwd=None, env=None
+    ):
+        icommandrunner.check_argv(cmd)
+        self.commands.append(list(cmd))
         return _StubProcess(self._output)
 
-    def run_sync(self, cmd, cwd=None, env=None):
+    def run_sync(self, cmd: icommandrunner.Argv, cwd=None, env=None):
         raise NotImplementedError
 
 
@@ -207,8 +211,8 @@ async def test_disabling_a_rule_for_a_line_is_never_applied_by_a_batch() -> None
 
 
 async def test_ruff_is_invoked_the_way_the_command_runner_accepts() -> None:
-    # ICommandRunner.run runs one shell string; handed a list it raises "cmd must be a
-    # string", which a stub runner accepting anything hides until a real run
+    # commands are passed as argv lists: no shell parses the ruff command line
+    # and quoting is the caller's responsibility nowhere
     handler = _make_handler(
         actions=[_code_action("Ruff (F401): Remove unused import", "F401", 0, 7, "")],
         violations=[_violation("F401", row=1, column=8, applicability="safe")],
@@ -218,7 +222,7 @@ async def test_ruff_is_invoked_the_way_the_command_runner_accepts() -> None:
         _FILE_PATH, _CONTENT, GetLintFixesRunPayload(file_path=_FILE_URI), meta=None
     )
 
-    assert [isinstance(cmd, str) for cmd in handler.command_runner.commands] == [True]  # type: ignore[attr-defined]
+    assert [isinstance(cmd, list) for cmd in handler.command_runner.commands] == [True]  # type: ignore[attr-defined]
 
 
 async def test_a_fix_ruff_check_does_not_report_is_not_assumed_safe() -> None:

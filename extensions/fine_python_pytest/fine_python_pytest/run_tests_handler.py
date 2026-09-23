@@ -4,7 +4,6 @@ import asyncio
 import dataclasses
 import json
 import os
-import shlex
 import sys
 import tempfile
 from pathlib import Path
@@ -113,11 +112,10 @@ class PytestRunTestsHandler(
 
             cmd_parts.extend(self.config.addopts)
 
-            cmd = shlex.join(cmd_parts)
-            self.logger.debug(f"Running pytest: {cmd}")
+            self.logger.debug(f"Running pytest: {cmd_parts!r}")
 
             async with run_context.progress("Running tests") as progress:
-                process = await self.command_runner.run(cmd, cwd=project_dir)
+                process = await self.command_runner.run(cmd_parts, cwd=project_dir)
                 await progress.report("Tests running")
                 await process.wait_for_end()
 
@@ -175,7 +173,7 @@ class PytestRunTestsHandler(
 
         if not test_results:
             self.logger.warning(
-                f"No tests discovered. cmd={cmd!r} exit_code={exit_code} summary={summary}"
+                f"No tests discovered. cmd={cmd_parts!r} exit_code={exit_code} summary={summary}"
             )
 
         return RunTestsRunResult(test_results=test_results)

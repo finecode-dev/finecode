@@ -63,11 +63,12 @@ class UvCreateEnvHandler(
         if venv_python is None:
             return False
 
-        check_cmd = (
-            f'"{venv_python}" -c '
-            '"import sys; raise SystemExit(0 if sys.prefix != sys.base_prefix else 1)"'
-        )
-        self.logger.debug(f"Checking virtualenv validity: {check_cmd}")
+        check_cmd = [
+            str(venv_python),
+            "-c",
+            "import sys; raise SystemExit(0 if sys.prefix != sys.base_prefix else 1)",
+        ]
+        self.logger.debug(f"Checking virtualenv validity: {check_cmd!r}")
         process = await self.command_runner.run(check_cmd)
         await process.wait_for_end()
         if process.get_exit_code() != 0:
@@ -104,13 +105,11 @@ class UvCreateEnvHandler(
             ) as dump_dir:
                 uv_executable = get_uv_executable()
                 # venv can exist but be invalid, use '--clear' to recreate it
-                python_flag = (
-                    f' --python "{env_info.interpreter}"'
-                    if env_info.interpreter
-                    else ""
-                )
-                cmd = f'"{uv_executable}" venv --clear{python_flag} "{venv_dir_path}"'
-                self.logger.debug(f"Running uv: {cmd}")
+                cmd: list[str] = [str(uv_executable), "venv", "--clear"]
+                if env_info.interpreter:
+                    cmd.extend(["--python", str(env_info.interpreter)])
+                cmd.append(str(venv_dir_path))
+                self.logger.debug(f"Running uv: {cmd!r}")
                 process = await self.command_runner.run(cmd, cwd=dump_dir)
                 await process.wait_for_end()
                 if process.get_exit_code() != 0:

@@ -91,24 +91,25 @@ class _FakeProcess:
 
 
 class _FakeCommandRunner:
-    """Returns a fixed process for `run`, and records the command it was given."""
+    """Returns a fixed process for `run`, and records the argv it was given."""
 
     def __init__(self, process: _FakeProcess) -> None:
         self._process = process
-        self.commands: list[str] = []
+        self.commands: list[list[str]] = []
 
     async def run(
         self,
-        cmd: str,
+        cmd: icommandrunner.Argv,
         cwd: pathlib.Path | None = None,
         env: dict[str, str] | None = None,
     ) -> _FakeProcess:
-        self.commands.append(cmd)
+        icommandrunner.check_argv(cmd)
+        self.commands.append(list(cmd))
         return self._process
 
     def run_sync(
         self,
-        cmd: str,
+        cmd: icommandrunner.Argv,
         cwd: pathlib.Path | None = None,
         env: dict[str, str] | None = None,
     ) -> _FakeProcess:
@@ -161,7 +162,8 @@ async def test_uses_only_downloads_not_installed_state() -> None:
     command = command_runner.commands[0]
     # the determinism guarantee: uv's manifest, not the machine's installed pythons
     assert "--only-downloads" in command
-    assert "--output-format json" in command
+    assert "--output-format" in command
+    assert command[command.index("--output-format") + 1] == "json"
 
 
 async def test_include_prereleases_admits_the_beta() -> None:

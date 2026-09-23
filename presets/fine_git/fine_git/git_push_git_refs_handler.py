@@ -1,5 +1,4 @@
 import dataclasses
-import shlex
 
 from finecode_extension_api import code_action
 from finecode_extension_api.interfaces import (
@@ -47,7 +46,7 @@ class GitPushGitRefsHandler(
             args.append(payload.remote)
             args += payload.refs
 
-            cmd = shlex.join(args)
+            cmd = args
             process = await self.command_runner.run(cmd, cwd=cwd)
             await process.wait_for_end()
 

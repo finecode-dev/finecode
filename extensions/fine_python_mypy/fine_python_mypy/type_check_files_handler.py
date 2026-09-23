@@ -274,18 +274,17 @@ class MypyTypeCheckFilesHandler(
         runner_python_executable = sys.executable
         file_paths_strs = [str(file_path) for file_path in file_paths]
         cmd_parts = [
-            f"{runner_python_executable}",
+            runner_python_executable,
             "-m",
             "mypy.dmypy",
-            f"--status-file='{status_file_path}'",
+            f"--status-file={status_file_path}",
             "run",
             "--",
             *self.DMYPY_ARGS,
             *file_paths_strs,
         ]
-        cmd = " ".join(cmd_parts)
         dmypy_run_process = await self.command_runner.run(
-            cmd=cmd,
+            cmd=cmd_parts,
             cwd=cwd,
             env=self.DMYPY_ENV_VARS,
         )
@@ -301,10 +300,13 @@ class MypyTypeCheckFilesHandler(
         status_file_path = self._get_status_file_path(dmypy_cwd=cwd)
         runner_python_executable = sys.executable
         dmypy_stop_process = self.command_runner.run_sync(
-            cmd=(
-                f"{runner_python_executable} -m mypy.dmypy"
-                f" --status-file='{status_file_path}' stop"
-            ),
+            cmd=[
+                runner_python_executable,
+                "-m",
+                "mypy.dmypy",
+                f"--status-file={status_file_path}",
+                "stop",
+            ],
             cwd=cwd,
             # env=self.DMYPY_ENV_VARS,
         )
@@ -316,10 +318,13 @@ class MypyTypeCheckFilesHandler(
         status_file_path = self._get_status_file_path(dmypy_cwd=cwd)
         runner_python_executable = sys.executable
         dmypy_kill_process = self.command_runner.run_sync(
-            cmd=(
-                f"{runner_python_executable} -m mypy.dmypy"
-                f" --status-file='{status_file_path}' kill"
-            ),
+            cmd=[
+                runner_python_executable,
+                "-m",
+                "mypy.dmypy",
+                f"--status-file={status_file_path}",
+                "kill",
+            ],
             cwd=cwd,
             # env=self.DMYPY_ENV_VARS,
         )

@@ -2,10 +2,11 @@ import asyncio
 import asyncio.subprocess
 import dataclasses
 import os
-import shlex
+import shutil
 import signal
 import subprocess
-from collections.abc import AsyncIterator
+import sys
+from collections.abc import AsyncIterator, Callable
 from pathlib import Path
 
 from finecode_extension_api.interfaces import icommandrunner, ilogger
@@ -31,6 +32,64 @@ _TERMINATE_SIGNAL = signal.SIGTERM
 _KILL_SIGNAL = getattr(signal, "SIGKILL", signal.SIGTERM)
 """`SIGKILL` does not exist off POSIX. Falling back to `SIGTERM` there keeps the
 escalation ladder callable everywhere; it just cannot promise as much."""
+
+_BATCH_SUFFIXES = (".cmd", ".bat")
+_LAUNCHABLE_SUFFIXES = (".exe", ".com", ".cmd", ".bat")
+_BATCH_UNSAFE = frozenset('"%^&|<>!()\r\n')
+_BATCH_UNSAFE_ALWAYS = frozenset('"%\r\n')
+
+
+def _prepare_argv(
+    cmd: icommandrunner.Argv,
+    env: dict[str, str] | None,
+    *,
+    platform: str,
+    which: Callable[..., str | None],
+) -> list[str]:
+    """Resolve a bare program name and refuse batch-target arguments cmd.exe
+    would reinterpret (Windows only).
+
+    CreateProcess appends only `.exe` and ignores `PATHEXT`, so a bare name
+    like `npm` or `pi` (a `.cmd` shim) is not found without resolution; and a
+    resolved `.cmd` is still run through cmd.exe, which expands and interprets
+    characters that `subprocess.list2cmdline` does not escape for it. Such
+    arguments are refused rather than escaped — a cmd.exe quoter would
+    reintroduce the shell-parsing hazard (ADR-0099). POSIX is untouched:
+    `execvpe` searches the environment's `PATH` directly.
+
+    Raises:
+        TypeError: `cmd` is not a list/tuple of `str`.
+        ValueError: `cmd` is empty.
+        UnsafeBatchArgumentError: a batch target would reinterpret an argument.
+        UnlaunchableProgramError: a resolved program cannot be launched.
+    """
+    icommandrunner.check_argv(cmd)
+    argv = list(cmd)
+    if platform != "win32":
+        return argv
+    program = argv[0]
+    if "\\" not in program and "/" not in program:
+        source = env if env is not None else os.environ
+        path = next((v for k, v in source.items() if k.upper() == "PATH"), None)
+        resolved = which(program, path=path)
+        if resolved is not None:
+            if not resolved.lower().endswith(_LAUNCHABLE_SUFFIXES):
+                raise icommandrunner.UnlaunchableProgramError(
+                    f"{program} resolves to {resolved}, which CreateProcess "
+                    f"cannot launch (expected one of {_LAUNCHABLE_SUFFIXES})"
+                )
+            argv[0] = program = resolved
+    if program.lower().endswith(_BATCH_SUFFIXES):
+        quoted = " " in program or "\t" in program  # list2cmdline quotes it
+        path_unsafe = _BATCH_UNSAFE_ALWAYS if quoted else _BATCH_UNSAFE
+        for index, arg in enumerate(argv):
+            unsafe = path_unsafe if index == 0 else _BATCH_UNSAFE
+            if unsafe.intersection(arg):
+                raise icommandrunner.UnsafeBatchArgumentError(
+                    f"argument {index} cannot be passed safely to batch file "
+                    f"{program}: {arg!r}"
+                )
+    return argv
 
 
 def _strip_eol(line: str) -> str:
@@ -244,9 +303,12 @@ class AsyncProcess(icommandrunner.IAsyncProcess):
         self.async_subprocess = async_subprocess
         self._owns_process_group = owns_process_group
         # Recorded now rather than looked up later. `start_new_session` makes
-        # the spawned shell the group leader, so the group id is its pid -- and
-        # `os.getpgid()` would stop answering the moment that leader exits,
-        # which is exactly when the surviving children still need signalling.
+        # the spawned process the group leader, so the group id is its pid --
+        # and `os.getpgid()` would stop answering the moment that leader
+        # exits, which is exactly when the surviving children still need
+        # signalling. The command may itself be a launcher that forks -- npm,
+        # a `.cmd` shim, a driver script -- so the group keeps existing while
+        # those live.
         self._process_group_id = async_subprocess.pid
 
         self._stdout = _LineStream(async_subprocess.stdout)
@@ -323,11 +385,11 @@ class AsyncProcess(icommandrunner.IAsyncProcess):
         if not self._owns_process_group:
             return self.async_subprocess.returncode is None
 
-        # The group, not the shell's exit code. A shell that forks rather than
-        # execs exits as soon as it is signalled, reporting a returncode, while
-        # the command it started -- which may be ignoring that signal -- keeps
-        # running in the same group. Asking the group is the only way to tell
-        # "gone" from "the wrapper is gone".
+        # The group, not the process's own exit code. The command may be a
+        # launcher that forks rather than execs: it exits as soon as it is
+        # signalled, reporting a returncode, while what it started -- which may
+        # be ignoring that signal -- keeps running in the same group. Asking
+        # the group is the only way to tell "gone" from "the wrapper is gone".
         try:
             os.killpg(self._process_group_id, 0)
         except ProcessLookupError:
@@ -449,12 +511,21 @@ class CommandRunner(icommandrunner.ICommandRunner):
 
     async def run(
         self,
-        cmd: str,
+        cmd: icommandrunner.Argv,
         cwd: Path | None = None,
         env: dict[str, str] | None = None,
         new_process_group: bool = False,
     ) -> icommandrunner.IAsyncProcess:
-        log_msg = f"Async subprocess run: {cmd}"
+        # Resolved before any slot is taken: a refusal must not hold a gate
+        # slot, and `check_argv` inside `_prepare_argv` makes an empty argv
+        # fail here rather than deeper in the spawn.
+        argv = _prepare_argv(
+            cmd,
+            env,
+            platform=sys.platform,
+            which=shutil.which,
+        )
+        log_msg = f"Async subprocess run: {argv!r}"
         if cwd is not None:
             log_msg += f" in {cwd}"
         self.logger.debug(log_msg)
@@ -469,9 +540,8 @@ class CommandRunner(icommandrunner.ICommandRunner):
             await self._local_cap.acquire()
         owns_process_group = new_process_group and _POSIX
         try:
-            # TODO: investigate why it works only with shell, not exec
-            async_subprocess = await asyncio.create_subprocess_shell(
-                cmd,
+            async_subprocess = await asyncio.create_subprocess_exec(
+                *argv,
                 stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
@@ -501,15 +571,23 @@ class CommandRunner(icommandrunner.ICommandRunner):
             await self._process_slots.release()
 
     def run_sync(
-        self, cmd: str, cwd: Path | None = None, env: dict[str, str] | None = None
+        self,
+        cmd: icommandrunner.Argv,
+        cwd: Path | None = None,
+        env: dict[str, str] | None = None,
     ) -> icommandrunner.ISyncProcess:
-        cmd_parts = shlex.split(cmd)
-        log_msg = f"Sync subprocess run: {cmd_parts}"
+        argv = _prepare_argv(
+            cmd,
+            env,
+            platform=sys.platform,
+            which=shutil.which,
+        )
+        log_msg = f"Sync subprocess run: {argv!r}"
         if cwd is not None:
             log_msg += f" {cwd}"
         self.logger.debug(log_msg)
         async_subprocess = subprocess.Popen(
-            cmd_parts,
+            argv,
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,

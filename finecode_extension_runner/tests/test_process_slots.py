@@ -8,6 +8,7 @@ must let waiters through when the target grows.
 from __future__ import annotations
 
 import asyncio
+import sys
 
 from finecode_extension_runner.impls.command_runner import (
     CommandRunner,
@@ -91,7 +92,7 @@ async def test_command_runner_and_process_executor_share_one_gate() -> None:
     )
     executor = ProcessExecutor(process_slots=gate)
 
-    proc = await runner.run("sleep 0.3")
+    proc = await runner.run([sys.executable, "-c", "import time; time.sleep(0.3)"])
 
     async def _submit() -> int:
         with executor.activate():
@@ -114,7 +115,7 @@ async def test_command_runner_releases_slot_when_process_exits() -> None:
         logger=_NoopLogger(), config=CommandRunnerConfig(), process_slots=gate
     )
 
-    proc = await runner.run("sleep 0.1")
+    proc = await runner.run([sys.executable, "-c", "import time; time.sleep(0.1)"])
     assert gate.in_flight == 1
 
     await proc.wait_for_end()

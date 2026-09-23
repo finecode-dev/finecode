@@ -7,6 +7,7 @@ from collections.abc import AsyncIterator
 from pathlib import Path
 
 from fine_lint.get_lint_fixes_action import GetLintFixesRunPayload
+from finecode_extension_api.interfaces import icommandrunner
 from finecode_extension_api.resource_uri import path_to_resource_uri
 from finecode_extension_runner.testing import NoOpLogger
 
@@ -55,11 +56,14 @@ class _StubCommandRunner:
 
     def __init__(self, output: str) -> None:
         self._output = output
+        self.commands: list[list[str]] = []
 
-    async def run(self, cmd, cwd=None, env=None):
+    async def run(self, cmd: icommandrunner.Argv, cwd=None, env=None):
+        icommandrunner.check_argv(cmd)
+        self.commands.append(list(cmd))
         return _StubProcess(self._output)
 
-    def run_sync(self, cmd, cwd=None, env=None):
+    def run_sync(self, cmd: icommandrunner.Argv, cwd=None, env=None):
         raise NotImplementedError
 
 

@@ -10,7 +10,7 @@ authors = [{ name = "Vladyslav Hnatiuk", email = "aders1234@gmail.com" }]
 # the minimal supported version of Python in 8.* is 3.9
 dependencies = [
   "fine_python_lang~=0.1.0a0",
-  "finecode_extension_api~=0.4.0a0",
+  "finecode_extension_api~=0.5.0a0",
   "isort (>=5.13, <9)"
 ]
 

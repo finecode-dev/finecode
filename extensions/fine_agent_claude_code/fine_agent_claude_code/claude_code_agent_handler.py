@@ -2,7 +2,6 @@ import asyncio
 import contextlib
 import dataclasses
 import json
-import shlex
 import time
 
 from fine_agent import backend_support
@@ -156,17 +155,28 @@ class ClaudeCodeAgentHandler(
             )
         command = self._build_command(settings, payload.output_schema)
         project_dir = self.project_info_provider.get_current_project_dir_path()
-        self.logger.debug(f"Starting claude: {command} in {project_dir}")
+        self.logger.debug(f"Starting claude: {command!r} in {project_dir}")
 
         started = time.monotonic()
-        process = await self.command_runner.run(
-            command,
-            cwd=project_dir,
-            # claude runs tools of its own, so tearing it down has to reach them
-            # too -- otherwise an abandoned run leaves a subtree editing the
-            # project after this handler has returned.
-            new_process_group=True,
-        )
+        try:
+            process = await self.command_runner.run(
+                command,
+                cwd=project_dir,
+                # claude runs tools of its own, so tearing it down has to reach them
+                # too -- otherwise an abandoned run leaves a subtree editing the
+                # project after this handler has returned.
+                new_process_group=True,
+            )
+        except (OSError, icommandrunner.CommandNotLaunchableError) as error:
+            # The program could not be started at all -- missing from PATH, or
+            # (on Windows) a shim refusing an argument cmd.exe would
+            # reinterpret. A settled-with-error result is still a structured
+            # one a caller can read.
+            return RunAgentTaskRunResult(
+                status=AgentRunStatus.FAILED,
+                error=backend_support.spawn_error(command[0], error),
+                duration_sec=0.0,
+            )
 
         try:
             result = await self._run_with_process(
@@ -194,7 +204,7 @@ class ClaudeCodeAgentHandler(
         payload: RunAgentTaskRunPayload,
         run_context: RunAgentTaskRunContext,
         process: icommandrunner.IAsyncProcess,
-        command: str,
+        command: list[str],
         settings: _ClaudeRunSettings,
     ) -> RunAgentTaskRunResult:
         async with run_context.progress("Agent task", cancellable=True) as progress:
@@ -356,7 +366,7 @@ class ClaudeCodeAgentHandler(
         self,
         process: icommandrunner.IAsyncProcess,
         result: RunAgentTaskRunResult,
-        command: str,
+        command: list[str],
     ) -> RunAgentTaskRunResult:
         with contextlib.suppress(TimeoutError):
             await process.wait_for_end(timeout=_EXIT_GRACE_SEC)
@@ -382,7 +392,7 @@ class ClaudeCodeAgentHandler(
             # R-503: the handler's job is to produce output, so producing none
             # is diagnosable rather than merely uninteresting.
             self.user_messenger.warning(
-                f"Agent settled without output (exit {exit_code}). Command: {command}"
+                f"Agent settled without output (exit {exit_code}). Command: {command!r}"
             )
 
         return result
@@ -462,7 +472,7 @@ class ClaudeCodeAgentHandler(
         self,
         settings: _ClaudeRunSettings,
         output_schema: dict[str, object] | None = None,
-    ) -> str:
+    ) -> list[str]:
         # `--verbose` is not optional: the CLI rejects `stream-json` output in
         # print mode without it.
         parts = [
@@ -490,4 +500,4 @@ class ClaudeCodeAgentHandler(
             # through a temp file that would need cleaning up on every path.
             parts += ["--json-schema", json.dumps(output_schema)]
 
-        return shlex.join(parts)
+        return parts

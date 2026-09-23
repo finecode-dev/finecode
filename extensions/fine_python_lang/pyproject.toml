@@ -16,7 +16,7 @@ dependencies = [
   "fine_src_artifacts~=0.1.0a0",
   "fine_symbol_info~=0.1.0a0",
   "fine_type_check~=0.1.0a0",
-  "finecode_extension_api~=0.4.0a0",
+  "finecode_extension_api~=0.5.0a0",
 ]
 
 [dependency-groups]

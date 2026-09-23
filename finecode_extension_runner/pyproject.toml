@@ -9,7 +9,7 @@ dependencies = [
   "click==8.1.*",
   "debugpy==1.8.*",
   "deepmerge==2.0.*",
-  "finecode_extension_api~=0.4.0a0",
+  "finecode_extension_api~=0.5.0a0",
   "loguru==0.7.*",
   "opentelemetry-exporter-otlp-proto-grpc==1.41.*",
   "opentelemetry-sdk==1.41.*",

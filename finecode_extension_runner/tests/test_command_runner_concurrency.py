@@ -14,6 +14,7 @@ noisy ER below the machine budget.
 from __future__ import annotations
 
 import asyncio
+import sys
 
 from finecode_extension_runner.impls.command_runner import (
     CommandRunner,
@@ -42,10 +43,10 @@ async def test_second_run_does_not_spawn_until_first_process_exits() -> None:
     )
     loop = asyncio.get_running_loop()
 
-    task1 = asyncio.create_task(runner.run("sleep 0.3"))
+    task1 = asyncio.create_task(runner.run([sys.executable, "-c", "import time; time.sleep(0.3)"]))
     # Give task1 a head start so it acquires the slot first.
     await asyncio.sleep(0.05)
-    task2 = asyncio.create_task(runner.run("sleep 0.01"))
+    task2 = asyncio.create_task(runner.run([sys.executable, "-c", "import time; time.sleep(0.01)"]))
 
     start1 = loop.time()
     proc1 = await task1
@@ -74,8 +75,8 @@ async def test_two_processes_run_concurrently_when_budget_allows_it() -> None:
     loop = asyncio.get_running_loop()
 
     start = loop.time()
-    proc1 = await runner.run("sleep 0.2")
-    proc2 = await runner.run("sleep 0.2")
+    proc1 = await runner.run([sys.executable, "-c", "import time; time.sleep(0.2)"])
+    proc2 = await runner.run([sys.executable, "-c", "import time; time.sleep(0.2)"])
     elapsed = loop.time() - start
 
     # Both spawn without waiting on each other.
@@ -106,9 +107,9 @@ async def test_configured_limit_still_caps_below_the_gate() -> None:
     )
     loop = asyncio.get_running_loop()
 
-    task1 = asyncio.create_task(runner.run("sleep 0.2"))
+    task1 = asyncio.create_task(runner.run([sys.executable, "-c", "import time; time.sleep(0.2)"]))
     await asyncio.sleep(0.05)
-    task2 = asyncio.create_task(runner.run("sleep 0.01"))
+    task2 = asyncio.create_task(runner.run([sys.executable, "-c", "import time; time.sleep(0.01)"]))
 
     start2 = loop.time()
     proc2 = await task2

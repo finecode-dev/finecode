@@ -54,10 +54,15 @@ class UvListObtainablePythonInterpretersHandler(
         run_context: list_obtainable_python_interpreters_action.ListObtainablePythonInterpretersRunContext,
     ) -> ListObtainableToolchainsRunResult:
         uv_executable = get_uv_executable()
-        command = (
-            f"{uv_executable} python list --only-downloads --all-versions"
-            " --output-format json"
-        )
+        command = [
+            str(uv_executable),
+            "python",
+            "list",
+            "--only-downloads",
+            "--all-versions",
+            "--output-format",
+            "json",
+        ]
         process = await self.command_runner.run(cmd=command)
         await process.wait_for_end()
 

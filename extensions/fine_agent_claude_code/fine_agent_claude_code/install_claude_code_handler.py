@@ -1,9 +1,9 @@
 import dataclasses
-import shlex
 import shutil
 import sys
 import tempfile
 
+from fine_agent import backend_support
 from fine_system_setup.setup_system_action import (
     SetupSystemAction,
     SetupSystemRunContext,
@@ -72,22 +72,29 @@ class InstallClaudeCodeHandler(
                 f.close()  # flush and release the file before the subprocess opens it
 
                 if sys.platform == "win32":
-                    cmd = shlex.join(
-                        [
-                            "powershell.exe",
-                            "-NoProfile",
-                            "-ExecutionPolicy",
-                            "Bypass",
-                            "-File",
-                            script_path,
+                    cmd = [
+                        "powershell.exe",
+                        "-NoProfile",
+                        "-ExecutionPolicy",
+                        "Bypass",
+                        "-File",
+                        script_path,
+                    ]
+                else:
+                    cmd = ["bash", script_path]
+
+                self.logger.info(f"Running installer: {cmd!r}")
+                await progress.advance(1, "Running installer")
+                try:
+                    process = await self.command_runner.run(cmd)
+                except (OSError, icommandrunner.CommandNotLaunchableError) as error:
+                    self.logger.error(f"Install failed: {error}")
+                    return SetupSystemRunResult(
+                        failed=[
+                            f"{_TOOL_NAME}: "
+                            f"{backend_support.spawn_error(cmd[0], error)}"
                         ]
                     )
-                else:
-                    cmd = shlex.join(["bash", script_path])
-
-                self.logger.info(f"Running installer: {cmd}")
-                await progress.advance(1, "Running installer")
-                process = await self.command_runner.run(cmd)
                 await process.wait_for_end()
             await progress.advance(1)
 

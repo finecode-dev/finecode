@@ -5,7 +5,7 @@ description = "HTTP client implementation for FineCode"
 readme = "README.md"
 requires-python = ">=3.11"
 authors = [{ name = "Vladyslav Hnatiuk", email = "aders1234@gmail.com" }]
-dependencies = ["finecode_extension_api~=0.4.0a0", "httpx==0.28.*"]
+dependencies = ["finecode_extension_api~=0.5.0a0", "httpx==0.28.*"]
 
 [project.entry-points."finecode.activator"]
 finecode_httpclient = "finecode_httpclient.activator:Activator"

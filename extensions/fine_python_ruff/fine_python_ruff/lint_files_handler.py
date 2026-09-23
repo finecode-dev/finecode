@@ -249,10 +249,7 @@ class RuffLintFilesHandler(
         if self.config.preview is True:
             cmd.append("--preview")
 
-        cmd_str = " ".join(cmd)
-        ruff_process = await self.command_runner.run(
-            cmd_str,
-        )
+        ruff_process = await self.command_runner.run(cmd)
 
         ruff_process.write_to_stdin(file_content)
         ruff_process.close_stdin()  # Signal EOF

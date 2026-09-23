@@ -12,6 +12,7 @@ from fine_system_setup.setup_system_action import (
     SetupSystemRunResult,
 )
 from finecode_extension_api import code_action
+from finecode_extension_api.interfaces import icommandrunner
 from finecode_extension_api.interfaces.icommandrunner import ICommandRunner
 from finecode_extension_runner.testing import run_handler
 
@@ -50,23 +51,61 @@ class _FakeCommandRunner:
 
     def __init__(self, responses: list[tuple[int, str, str]]) -> None:
         self._responses = list(responses)
-        self.calls: list[tuple[str, pathlib.Path | None, dict[str, str] | None]] = []
+        self.calls: list[
+            tuple[list[str], pathlib.Path | None, dict[str, str] | None]
+        ] = []
 
     async def run(
         self,
-        cmd: str,
+        cmd: icommandrunner.Argv,
         cwd: pathlib.Path | None = None,
         env: dict[str, str] | None = None,
         new_process_group: bool = False,
     ) -> _FakeProcess:
-        self.calls.append((cmd, cwd, env))
+        icommandrunner.check_argv(cmd)
+        self.calls.append((list(cmd), cwd, env))
         assert self._responses, f"no queued response for command: {cmd}"
         exit_code, stdout, stderr = self._responses.pop(0)
         return _FakeProcess(exit_code, stdout, stderr)
 
     def run_sync(
         self,
-        cmd: str,
+        cmd: icommandrunner.Argv,
+        cwd: pathlib.Path | None = None,
+        env: dict[str, str] | None = None,
+    ) -> _FakeProcess:
+        raise AssertionError("run_sync is not expected")
+
+
+class _InstallRefusingCommandRunner:
+    """Serves `pi list` responses but refuses any `pi install` with
+    `UnsafeBatchArgumentError`, as a `.cmd` shim would for an argument cmd.exe
+    would reinterpret."""
+
+    def __init__(self, responses: list[tuple[int, str, str]]) -> None:
+        self._responses = list(responses)
+        self.calls: list[list[str]] = []
+
+    async def run(
+        self,
+        cmd: icommandrunner.Argv,
+        cwd: pathlib.Path | None = None,
+        env: dict[str, str] | None = None,
+        new_process_group: bool = False,
+    ) -> _FakeProcess:
+        icommandrunner.check_argv(cmd)
+        self.calls.append(list(cmd))
+        if cmd[0:2] == ["pi", "install"] and cmd[2] == A:
+            raise icommandrunner.UnsafeBatchArgumentError(
+                "argument 2 cannot be passed safely to batch file pi.cmd"
+            )
+        assert self._responses, f"no queued response for command: {cmd}"
+        exit_code, stdout, stderr = self._responses.pop(0)
+        return _FakeProcess(exit_code, stdout, stderr)
+
+    def run_sync(
+        self,
+        cmd: icommandrunner.Argv,
         cwd: pathlib.Path | None = None,
         env: dict[str, str] | None = None,
     ) -> _FakeProcess:
@@ -144,7 +183,7 @@ def _listing(
     return "\n".join(lines)
 
 
-def _commands(runner: _FakeCommandRunner) -> list[str]:
+def _commands(runner: _FakeCommandRunner) -> list[list[str]]:
     return [cmd for cmd, _cwd, _env in runner.calls]
 
 
@@ -174,10 +213,10 @@ async def test_each_configured_package_is_installed_into_the_project_when_none_i
     assert result.skipped == []
     assert result.failed == []
     assert _commands(runner) == [
-        "pi list --approve",
-        f"pi install {A} -l --approve",
-        f"pi install {B} -l --approve",
-        "pi list --approve",
+        ["pi", "list", "--approve"],
+        ["pi", "install", A, "-l", "--approve"],
+        ["pi", "install", B, "-l", "--approve"],
+        ["pi", "list", "--approve"],
     ]
 
 
@@ -246,9 +285,35 @@ async def test_a_different_source_string_in_settings_is_reinstalled_to_the_confi
 
     assert result.installed == [f"pi package {A}"]
     install_commands = [
-        cmd for cmd in _commands(runner) if cmd.startswith("pi install")
+        cmd for cmd in _commands(runner) if cmd[0:2] == ["pi", "install"]
     ]
-    assert install_commands == [f"pi install {A} -l --approve"]
+    assert install_commands == [["pi", "install", A, "-l", "--approve"]]
+
+
+async def test_a_batch_shim_refusing_one_install_argument_fails_only_that_package(
+    pi_on_path: None, tmp_path: pathlib.Path
+) -> None:
+    """A Windows `.cmd` shim refusal is per-package, not per-run.
+
+    On Windows a resolved `pi.cmd` runs through cmd.exe, and arguments it would
+    reinterpret are refused structurally: that package lands in `failed` while
+    the others still install -- the same continuation policy as a nonzero exit.
+    """
+    runner = _InstallRefusingCommandRunner(
+        [
+            (0, "No packages installed.", ""),
+            (0, "", ""),
+            (0, _listing(tmp_path, B), ""),
+        ]
+    )
+
+    result = await _run(runner, [A, B], project_dir=tmp_path)
+
+    assert result.failed == [
+        f"pi package {A}: could not start pi: "
+        "argument 2 cannot be passed safely to batch file pi.cmd"
+    ]
+    assert result.installed == [f"pi package {B}"]
 
 
 @pytest.mark.asyncio
@@ -509,7 +574,7 @@ async def test_remote_prefixes_match_case_insensitively(
     result = await _run(runner, [src], project_dir=tmp_path)
 
     assert result.installed == [f"pi package {src}"]
-    assert f"pi install {src} -l --approve" in _commands(runner)
+    assert ["pi", "install", src, "-l", "--approve"] in _commands(runner)
 
 
 @pytest.mark.asyncio
@@ -604,8 +669,8 @@ async def test_duplicate_sources_install_once(
     result = await _run(runner, [A, A], project_dir=tmp_path)
 
     assert result.installed == [f"pi package {A}"]
-    assert [cmd for cmd in _commands(runner) if cmd.startswith("pi install")] == [
-        f"pi install {A} -l --approve"
+    assert [cmd for cmd in _commands(runner) if cmd[0:2] == ["pi", "install"]] == [
+        ["pi", "install", A, "-l", "--approve"]
     ]
 
 
@@ -780,6 +845,6 @@ async def test_two_specs_of_one_npm_package_fail_the_later_one(
     assert result.failed == [
         f"pi package npm:a@2.0.0: same package as {A}; configure one version per package"
     ]
-    assert [cmd for cmd in _commands(runner) if cmd.startswith("pi install")] == [
-        f"pi install {A} -l --approve"
+    assert [cmd for cmd in _commands(runner) if cmd[0:2] == ["pi", "install"]] == [
+        ["pi", "install", A, "-l", "--approve"]
     ]

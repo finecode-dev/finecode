@@ -62,20 +62,20 @@ class BuildArtifactPyHandler(
         )
 
         # Run python -m build
-        build_args = ""
+        cmd: list[str] = [str(python_path), "-m", "build"]
         if payload.distributions is not None:
             if "sdist" in payload.distributions:
-                build_args += " --sdist"
+                cmd.append("--sdist")
             if "wheel" in payload.distributions:
-                build_args += " --wheel"
+                cmd.append("--wheel")
         if payload.output_dir is not None:
             dist_dir = resource_uri_to_path(payload.output_dir)
-            build_args += f' --outdir "{dist_dir}"'
+            cmd.extend(["--outdir", str(dist_dir)])
         else:
             dist_dir = project_dir / "dist"
 
         process = await self.command_runner.run(
-            cmd=f"{python_path} -m build{build_args}",
+            cmd=cmd,
             cwd=project_dir,
         )
         await process.wait_for_end()

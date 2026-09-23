@@ -8,7 +8,7 @@ authors = [{ name = "Vladyslav Hnatiuk", email = "aders1234@gmail.com" }]
 dependencies = [
   "fine_lint~=0.1.0a0",
   "fine_python_src_artifacts~=0.1.0a0",
-  "finecode_extension_api~=0.4.0a0",
+  "finecode_extension_api~=0.5.0a0",
 ]
 
 [dependency-groups]
