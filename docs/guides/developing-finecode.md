@@ -580,6 +580,14 @@ The cap also has no remaining job now that the interpreter matrix exists. The se
 
 If a genuinely newer Python breaks a package, fix it when that version exists — do not pre-emptively cap. New packages must follow this: declare `requires-python = ">=<min>"` with no upper component.
 
+## Text file IO: explicit UTF-8
+
+Every text-mode `open`, `Path.read_text`, `Path.write_text` and `NamedTemporaryFile` passes `encoding="utf-8"`. This includes callables passed by reference rather than called inline, e.g. `asyncio.to_thread(p.write_text, s, encoding="utf-8")`.
+
+The default is `locale.getencoding()`, which on Windows is the ANSI code page (cp1252) and stays that way until Python 3.15 (PEP 686). FineCode supports 3.11+, so the locale default cannot be assumed to be UTF-8. Linux and macOS dev machines never see the failure — their UTF-8 locales hide it — but #46 and #47 were exactly that: Windows-only `UnicodeDecodeError`s on the source-file read path.
+
+To reproduce a non-UTF-8 locale locally, run with `LC_ALL=C PYTHONUTF8=0 PYTHONCOERCECLOCALE=0`. Enforcement is not automated yet: `PLW1514` (`unspecified-encoding`) is preview-only and misses method references passed as callables, so it cannot guard the convention on its own.
+
 ## JSON-RPC key naming convention
 
 All JSON-RPC channels in FineCode use **camelCase** for message keys:

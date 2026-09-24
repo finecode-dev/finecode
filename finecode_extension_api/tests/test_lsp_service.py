@@ -12,6 +12,11 @@ import pytest
 from finecode_extension_api.contrib.lsp_service import LspService, _FileChangeType
 from finecode_extension_api.interfaces import ifileeditor, ilspclient
 
+# Em dash, right double quote, é and 😀 — the right double quote (U+201D) and
+# the emoji are outside cp1252, so a locale-decoded (cp1252 on Windows) read
+# raises instead of rounding them into mojibake.
+_NON_ASCII = "x = '— ” é \U0001f600'"
+
 
 @dataclasses.dataclass
 class _SentNotification:
@@ -404,6 +409,26 @@ async def test_file_open_event_and_hover_race_do_not_double_sync(
         await hover_task
 
         assert session.sync_notification_count(file_path.as_uri()) == 1
+
+
+async def test_file_open_event_sends_utf8_file_content_in_did_open(
+    tmp_path: Path,
+) -> None:
+    """UTF-8 file content must reach the server's `textDocument/didOpen` even
+    where the default text encoding is the locale's, cp1252 on Windows."""
+    file_path = tmp_path / "subject.py"
+    file_path.write_bytes(_NON_ASCII.encode("utf-8"))
+
+    async with _running_service(file_path, _NON_ASCII) as (service, session, _):
+        await service._handle_file_event(
+            ifileeditor.FileOpenEvent(file_path=file_path)
+        )
+
+    did_open = [
+        n for n in session.notifications if n.method == "textDocument/didOpen"
+    ]
+    assert len(did_open) == 1
+    assert did_open[0].params["textDocument"]["text"] == _NON_ASCII
 
 
 class _FakeTransportError(Exception):

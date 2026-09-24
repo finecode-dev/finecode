@@ -10,6 +10,13 @@ from loguru import logger
 from finecode_extension_runner.impls.file_manager import FileManager
 
 
+# Em dash, right double quote, é and 😀 — no newline, so the byte assertions
+# below do not depend on Windows \n→\r\n translation. The right double quote
+# (U+201D) and 😀 are outside cp1252, so a cp1252 read raises instead of
+# mojibake, while — and é would round-trip as wrong-but-non-raising bytes.
+_NON_ASCII = "x = '— ” é \U0001f600'"
+
+
 def _make_dir_tree(root: pathlib.Path) -> pathlib.Path:
     nested = root / "sub"
     nested.mkdir(parents=True)
@@ -191,3 +198,26 @@ async def test_delete_file_on_a_directory_raises(
         await FileManager(logger=logger).delete_file(directory)
 
     assert directory.exists()
+
+
+async def test_get_content_decodes_utf8_regardless_of_locale(
+    tmp_path: pathlib.Path,
+) -> None:
+    """UTF-8 content must decode even where the default text encoding is the
+    locale's, cp1252 on Windows."""
+    path = tmp_path / "subject.py"
+    path.write_bytes(_NON_ASCII.encode("utf-8"))
+
+    assert await FileManager(logger=logger).get_content(path) == _NON_ASCII
+
+
+async def test_save_file_encodes_utf8_regardless_of_locale(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Content must be written as UTF-8 even where the default text encoding
+    is the locale's, cp1252 on Windows."""
+    path = tmp_path / "subject.py"
+
+    await FileManager(logger=logger).save_file(path, _NON_ASCII)
+
+    assert path.read_bytes() == _NON_ASCII.encode("utf-8")

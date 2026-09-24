@@ -68,7 +68,7 @@ class FileManager(ifilemanager.IFileManager):
 
     async def save_file(self, file_path: Path, file_content: str) -> None:
         self.logger.debug(f"Save file {file_path}")
-        await asyncio.to_thread(file_path.write_text, file_content)
+        await asyncio.to_thread(file_path.write_text, file_content, encoding="utf-8")
 
     async def create_dir(
         self, dir_path: Path, create_parents: bool = True, exist_ok: bool = True
@@ -137,7 +137,7 @@ class FileManager(ifilemanager.IFileManager):
     def read_content_file_from_fs(self, file_path: Path) -> str:
         # don't use this method directly, use `get_content` instead
         self.logger.debug(f"Read file: {file_path}")
-        with open(file_path) as f:
+        with open(file_path, encoding="utf-8") as f:
             file_content = f.read()
 
         return file_content

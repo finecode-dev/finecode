@@ -44,6 +44,9 @@ class IFileManager(Protocol):
     async def get_content(self, file_path: Path) -> str:
         """Return the content of ``file_path``.
 
+        The file is decoded as UTF-8; content that is not valid UTF-8 raises
+        ``UnicodeDecodeError``.
+
         Raises:
             FileNotFound: ``file_path`` does not exist.
         """
@@ -88,7 +91,9 @@ class IFileManager(Protocol):
         """
         ...
 
-    async def save_file(self, file_path: Path, file_content: str) -> None: ...
+    async def save_file(self, file_path: Path, file_content: str) -> None:
+        """Write ``file_content`` encoded as UTF-8."""
+        ...
 
     async def create_dir(
         self, dir_path: Path, create_parents: bool = True, exist_ok: bool = True

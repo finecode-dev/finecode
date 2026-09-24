@@ -1199,7 +1199,7 @@ class LspService(service.DisposableService):
             async with self._get_uri_lock(uri):
                 if uri not in self._open_documents:
                     try:
-                        content = event.file_path.read_text()
+                        content = event.file_path.read_text(encoding="utf-8")
                     except OSError:
                         return
                     lsp_version = self._next_version(uri)
