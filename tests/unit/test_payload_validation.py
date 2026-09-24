@@ -29,12 +29,17 @@ class _FakeClient:
     ) -> None:
         self._schemas: _Schemas = schemas if schemas is not None else {}
         self._error = error
-        self.calls: list[tuple[str, bool]] = []
+        self.calls: list[tuple[str, bool, dict | None]] = []
 
     async def get_payload_schemas(
-        self, project: str, action_sources: list[str], *, start_runners: bool = False
+        self,
+        project: str,
+        action_sources: list[str],
+        *,
+        start_runners: bool = False,
+        run_options: dict | None = None,
     ) -> _Schemas:
-        self.calls.append((project, start_runners))
+        self.calls.append((project, start_runners, run_options))
         if self._error is not None:
             raise self._error
         return self._schemas
@@ -149,7 +154,31 @@ async def test_schemas_are_requested_with_start_runners() -> None:
         map_payload_fields=None,
     )
 
-    assert client.calls == [("/ws", True)]
+    assert client.calls == [("/ws", True, None)]
+
+
+async def test_run_options_are_forwarded() -> None:
+    """The run's selection inputs reach the schema fetch unchanged, so the
+    fetch starts the same interpreter instances the run will select."""
+    client = _FakeClient(schemas={"src.Action": {"properties": {}}})
+    run_options = {
+        "devEnv": "cli",
+        "envSelectors": [],
+        "interpreterSelectors": ["3.14"],
+    }
+
+    await run_cmd._resolve_payload(
+        client=client,
+        action_payload={},
+        raw_action_payload={},
+        action_sources=["src.Action"],
+        schema_project="/ws",
+        base_dir=pathlib.Path("/ws"),
+        map_payload_fields=None,
+        run_options=run_options,
+    )
+
+    assert client.calls == [("/ws", True, run_options)]
 
 
 def test_choose_schema_project_prefers_an_explicit_project_path() -> None:

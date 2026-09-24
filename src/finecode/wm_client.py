@@ -16,6 +16,7 @@ import dataclasses
 import json
 import pathlib
 import random
+import typing
 
 from loguru import logger
 
@@ -447,6 +448,7 @@ class ApiClient:
         action_sources: list[str],
         *,
         start_runners: bool = False,
+        run_options: dict[str, typing.Any] | None = None,
     ) -> dict[str, schema_utils.PayloadSchema | None]:
         """Return payload schemas for the given actions in a project.
 
@@ -459,6 +461,11 @@ class ApiClient:
                 environments before probing so a schema that needs one is
                 available. Defaults to false so passive listing never starts
                 environments.
+            run_options: Selection inputs honoured only with
+                ``start_runners``: ``devEnv``, ``envSelectors`` and
+                ``interpreterSelectors`` — the same values the run itself
+                will use, so the fetch starts only the interpreter
+                instances the run will select.
 
         Returns:
             Mapping of action source → JSON Schema fragment, or ``None``
@@ -467,6 +474,8 @@ class ApiClient:
         params: dict = {"project": project, "actionSources": action_sources}
         if start_runners:
             params["startRunners"] = True
+            if run_options is not None:
+                params["runOptions"] = run_options
         result = await self.request(
             "actions/getPayloadSchemas",
             params,

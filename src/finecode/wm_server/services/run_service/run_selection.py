@@ -14,13 +14,15 @@ from __future__ import annotations
 import pathlib
 import typing
 
-from finecode.wm_server import context
+from finecode.wm_server import context, domain
 from finecode.wm_server.config import env_selection
+from finecode.wm_server.services.run_service import matrix_runner
 from finecode.wm_server.services.run_service.exceptions import ActionRunFailed
 
 __all__ = [
     "project_env_universe_from_raw",
     "selected_interpreters_for_project",
+    "selection_for_matrixed_actions",
     "validate_run_selectors",
 ]
 
@@ -68,6 +70,43 @@ def selected_interpreters_for_project(
     return env_selection.resolve_selected_interpreters(
         env_universe, env_selectors, interpreter_selectors, dev_env
     )
+
+
+def selection_for_matrixed_actions(
+    actions_by_project: dict[pathlib.Path, list[str]],
+    env_selectors: list[str],
+    interpreter_selectors: list[str],
+    dev_env: str,
+    ws_context: context.WorkspaceContext,
+) -> dict[pathlib.Path, set[str] | None]:
+    """Per-project interpreter selection, computed only where a listed action
+    is matrixed (``matrix_runner.is_matrixed`` on the collected project).
+    Projects without a matrixed action are left out of the dict.
+
+    Computing eagerly for every project would add a new failure to
+    non-matrixed runs: ``resolve_env_selection`` validates every declared
+    policy and raises ``EnvSelectionError``. Mirrors the dispatch, which
+    only computes the selection inside ``if is_matrixed``.
+
+    Raises:
+        env_selection.EnvSelectionError: same as
+            ``selected_interpreters_for_project``.
+    """
+    selection: dict[pathlib.Path, set[str] | None] = {}
+    for project_path, action_names in actions_by_project.items():
+        project = ws_context.ws_projects.get(project_path)
+        if not isinstance(project, domain.CollectedProject):
+            continue
+        if not any(
+            matrix_runner.is_matrixed(action)
+            for action in project.actions
+            if action.name in action_names
+        ):
+            continue
+        selection[project_path] = selected_interpreters_for_project(
+            project_path, env_selectors, interpreter_selectors, dev_env, ws_context
+        )
+    return selection
 
 
 def validate_run_selectors(

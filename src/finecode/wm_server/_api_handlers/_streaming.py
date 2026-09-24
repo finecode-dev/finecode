@@ -341,7 +341,22 @@ async def _handle_run_batch_with_partial_results(
                 f"{sorted({a for names in actions_by_project.values() for a in names})}"
             )
 
-        await run_service.start_required_environments(actions_by_project, ws_context)
+        try:
+            selection_by_project = run_selection.selection_for_matrixed_actions(
+                actions_by_project,
+                parsed.env_selectors,
+                parsed.interpreter_selectors,
+                parsed.dev_env.value,
+                ws_context,
+            )
+        except env_selection.EnvSelectionError as exc:
+            raise ActionRunFailed(str(exc)) from exc
+
+        await run_service.start_required_environments(
+            actions_by_project,
+            ws_context,
+            selected_interpreters_by_project=selection_by_project,
+        )
 
         payload_overrides = parsed.params_by_project or {}
         # Lock to prevent concurrent writes to the shared writer from project tasks.
@@ -377,18 +392,7 @@ async def _handle_run_batch_with_partial_results(
                 else None
             )
             if action_def is not None and matrix_runner.is_matrixed(action_def):
-                try:
-                    selected_interpreters = (
-                        run_selection.selected_interpreters_for_project(
-                            project_path,
-                            parsed.env_selectors,
-                            parsed.interpreter_selectors,
-                            parsed.dev_env.value,
-                            ws_context,
-                        )
-                    )
-                except env_selection.EnvSelectionError as exc:
-                    raise ActionRunFailed(str(exc)) from exc
+                selected_interpreters = selection_by_project.get(project_path)
 
                 async def _on_partial(
                     interpreter_canonical: str, result_by_format: dict

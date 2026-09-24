@@ -251,6 +251,9 @@ async def run_action_with_partial_results(
         {p.dir_path: [action_name] for p in projects},
         ws_context,
         initialize_all_handlers=True,
+        selected_interpreters_by_project={
+            p.dir_path: selected_interpreters for p in projects
+        },
     )
 
     requested_formats = result_formats or ["json"]

@@ -597,6 +597,8 @@ async def start_required_environments(
     ws_context: context.WorkspaceContext,
     initialize_handlers: bool = True,
     initialize_all_handlers: bool = False,
+    *,
+    selected_interpreters_by_project: dict[pathlib.Path, set[str] | None] | None = None,
 ) -> None:
     """Collect all required envs from actions that will be run and start them.
 
@@ -605,11 +607,25 @@ async def start_required_environments(
         initialize_all_handlers: Initialize all handlers in the environment,
             not just those for the specified actions. Takes precedence over
             initialize_handlers.
+        selected_interpreters_by_project: per-project interpreter selection
+            (canonical ``"<impl>@<version>"`` strings, as computed by the
+            dispatch). A matrixed handler whose interpreter is not in its
+            project's set is skipped — the dispatch only runs selected
+            variants, and the dispatch starts its own runners lazily, so a
+            skipped variant loses only the early start. Every non-matrix
+            handler env and every selected child is still started. A project
+            absent from the dict, mapped to ``None``, or a ``None`` dict
+            means no narrowing.
     """
     required_envs_by_project: dict[pathlib.Path, set[str]] = {}
     for project_dir_path, action_names in actions_by_projects.items():
         project = ws_context.ws_projects[project_dir_path]
         if isinstance(project, domain.CollectedProject):
+            selection: set[str] | None = (
+                selected_interpreters_by_project.get(project_dir_path)
+                if selected_interpreters_by_project is not None
+                else None
+            )
             project_required_envs = set()
             for action_name in action_names:
                 # find the action and collect envs from its handlers
@@ -618,6 +634,15 @@ async def start_required_environments(
                 )
                 if action is not None:
                     for handler in action.handlers:
+                        if (
+                            handler.interpreter is not None
+                            and selection is not None
+                            and interpreter_matrix.parse_interpreter(
+                                handler.interpreter
+                            ).canonical
+                            not in selection
+                        ):
+                            continue
                         project_required_envs.add(handler.env)
             required_envs_by_project[project_dir_path] = project_required_envs
 
@@ -656,6 +681,7 @@ async def start_required_environments(
                         project=project,
                         ws_context=ws_context,
                         handlers_to_initialize=handlers_to_init,
+                        repair_crashed=True,
                     ),
                 )
             )
@@ -696,6 +722,7 @@ async def _start_runner_or_update_config(
     project: domain.Project,
     ws_context: context.WorkspaceContext,
     handlers_to_initialize: dict[str, list[str]] | None,
+    repair_crashed: bool = False,
 ):
     runner_exist = env_name in existing_runners
     start_runner = True
@@ -723,26 +750,25 @@ async def _start_runner_or_update_config(
             failed_runner = ws_context.ws_projects_extension_runners.get(
                 project.dir_path, {}
             ).get(env_name)
-            if (
-                failed_runner is None
-                or failed_runner.status != runner_client.RunnerStatus.NO_VENV
+            if not runner_start_service.start_failure_is_repairable(
+                failed_runner, exception, include_crashed=repair_crashed
             ):
                 raise StartingEnvironmentsFailed(
                     f"Failed to start runner for env '{env_name}' in project '{project.name}': {exception.message}"
                 ) from exception
 
-            # Venv is missing — either it never existed, or get_python_cmd just wiped
-            # it after detecting a stale (relocated) venv. Either way, auto-repair the
-            # same way get_or_start_runner_with_auto_prepare does, instead of surfacing
-            # a bare startup failure that requires a manual `prepare-envs` run.
+            # Venv is missing, or the ER crashed before publishing its port
+            # (the latter only when the caller passes repair_crashed=True —
+            # a run that needs this env). Either way, auto-repair the same
+            # way get_or_start_runner_with_auto_prepare does, instead of
+            # surfacing a bare startup failure that requires a manual
+            # `prepare-envs` run.
             from finecode.wm_server.services.prepare_envs_service import (
                 PrepareEnvsFailed,
             )
 
             try:
-                await runner_start_service.repair_no_venv_env(
-                    project, env_name, ws_context
-                )
+                await runner_start_service.repair_env(project, env_name, ws_context)
             except PrepareEnvsFailed as prep_exc:
                 raise StartingEnvironmentsFailed(
                     f"Failed to start runner for env '{env_name}' in project '{project.name}': {prep_exc.message}"

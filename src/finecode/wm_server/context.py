@@ -210,6 +210,15 @@ class WorkspaceContext:
     # from inside that same Phase 2.
     env_install_locks: dict[Path, asyncio.Lock] = field(default_factory=dict)
 
+    # Per-env repair locks.  Guard per-env repair (install + restart) so two
+    # concurrent repairs of the same (project, env) never install into one
+    # venv at the same time.  Keyed per env and separate from
+    # env_install_locks: install_env_for_project takes env_install_locks[project]
+    # inside the repair, so sharing that dict would self-deadlock.
+    env_repair_locks: dict[tuple[Path, str], asyncio.Lock] = field(
+        default_factory=dict
+    )
+
     # Both budgets below are sized from ONE combined machine budget in
     # __post_init__ (ADR-0093): their sum stays at or below
     # machine_subprocess_budget(), so the WM's event loop keeps a free core.

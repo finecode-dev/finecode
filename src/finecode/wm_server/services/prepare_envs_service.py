@@ -902,11 +902,21 @@ async def install_env_for_project(
             )
         executor_project = resolved
 
-    env_spec = {
+    env_spec: dict[str, str] = {
         "name": env_name,
         "venv_dir_path": (project.dir_path / ".venvs" / env_name).as_uri(),
         "project_def_path": (project.dir_path / "pyproject.toml").as_uri(),
     }
+    interpreter = (
+        ws_context.ws_projects_raw_configs.get(project.dir_path, {})
+        .get("tool", {})
+        .get("finecode", {})
+        .get("env", {})
+        .get(env_name, {})
+        .get("interpreter")
+    )
+    if interpreter is not None:
+        env_spec["interpreter"] = interpreter
 
     # Create the venv if it does not exist yet (idempotent on existing venvs).
     error = await _run_env_action(

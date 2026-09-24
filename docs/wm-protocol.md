@@ -432,6 +432,15 @@ probes them again. The CLI sets it so payload values with a path type can be
 converted before dispatch; MCP leaves it off so listing tools never starts
 environments.
 
+`runOptions` (optional, honoured only with `startRunners`): the selection
+inputs the run itself will use — `devEnv`, `envSelectors` and
+`interpreterSelectors` (same shapes as the `actions/runBatch` run options).
+The fetch computes the same per-project interpreter selection as the run, so
+it starts only the interpreter instances the run will select. Selectors are
+never validated here: a selector valid in another in-scope project but not in
+the schema project must not fail the fetch; the run's own validation reports
+bad selectors a moment later.
+
 **Result:**
 
 ```json

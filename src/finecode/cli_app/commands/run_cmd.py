@@ -377,6 +377,13 @@ async def run_actions(
             schema_project = _choose_schema_project(
                 project_paths, all_actions, action_sources, workdir_path
             )
+            # The schema fetch and the run must select the same interpreter
+            # instances: one dict feeds both, so they cannot drift.
+            selection_options = {
+                "devEnv": dev_env,
+                "envSelectors": env_selectors or [],
+                "interpreterSelectors": interpreter_selectors or [],
+            }
             action_payload = await _resolve_payload(
                 client=client,
                 action_payload=action_payload,
@@ -385,6 +392,7 @@ async def run_actions(
                 schema_project=schema_project,
                 base_dir=workdir_path,
                 map_payload_fields=map_payload_fields,
+                run_options=selection_options,
             )
 
             # Workspace-scoped actions run once on the root project and stream all
@@ -420,7 +428,7 @@ async def run_actions(
                 "concurrently": concurrently,
                 "resultFormats": result_formats,
                 "trigger": "user",
-                "devEnv": dev_env,
+                **selection_options,
                 # Ask the WM to type-safely merge streamed partials per project/action
                 # and return the merged result, so the returned/saved data is complete
                 # even when one project streams many partials.
@@ -428,8 +436,6 @@ async def run_actions(
                 # PRD-0003 AC8: WM-only selectors restricting a matrixed
                 # action's fan-out to a subset of its declared interpreter axis.
                 # Never forwarded to an ER.
-                "envSelectors": env_selectors or [],
-                "interpreterSelectors": interpreter_selectors or [],
             }
 
             partial_result_token = str(uuid.uuid4())
@@ -619,6 +625,7 @@ async def _resolve_payload(
     schema_project: str,
     base_dir: pathlib.Path,
     map_payload_fields: set[str] | None,
+    run_options: dict[str, typing.Any] | None = None,
 ) -> dict[str, typing.Any]:
     """Build the final payload from the raw CLI strings and the payload schemas.
 
@@ -643,7 +650,7 @@ async def _resolve_payload(
     # action, so a path value can be converted before dispatch.
     try:
         schemas = await client.get_payload_schemas(
-            schema_project, action_sources, start_runners=True
+            schema_project, action_sources, start_runners=True, run_options=run_options
         )
     except ApiError as exc:
         raise RunFailed(

@@ -33,6 +33,7 @@ broken environments in a single pass.
 
 from __future__ import annotations
 
+import asyncio
 import pathlib
 from typing import TYPE_CHECKING
 
@@ -216,7 +217,50 @@ async def start_runners_with_auto_prepare(
         )
 
 
-async def repair_no_venv_env(
+def _crashed_before_port(exc: BaseException) -> bool:
+    """True when the ``__cause__`` chain contains a ``ServerExitedBeforePort``.
+
+    Follows ``__cause__`` only, not ``__context__``: the ``raise ... from`` at
+    the spawn site sets ``__cause__``, and following implicit context could
+    match an unrelated earlier ``ServerExitedBeforePort``. Bounded by a
+    seen-set against a cyclic chain.
+    """
+    seen: set[int] = set()
+    cause = exc.__cause__
+    while cause is not None and id(cause) not in seen:
+        seen.add(id(cause))
+        if isinstance(cause, _jsonrpc_client.ServerExitedBeforePort):
+            return True
+        cause = cause.__cause__
+    return False
+
+
+def start_failure_is_repairable(
+    runner: runner_client.ExtensionRunnerInfo | None,
+    exc: BaseException,
+    *,
+    include_crashed: bool,
+) -> bool:
+    """Whether a failed start of *runner* may be repaired (install + restart).
+
+    A missing venv is always repairable. A runner that crashed before
+    publishing its port is repairable only when *include_crashed* is set —
+    the gate and the dispatch start pass True, metadata resolution passes
+    False so it can never repair an env no run needs. Port timeouts and any
+other failure are never repaired.
+    """
+    if runner is None:
+        return False
+    if runner.status == domain.ExtensionRunnerStatus.NO_VENV:
+        return True
+    return (
+        include_crashed
+        and runner.status == domain.ExtensionRunnerStatus.FAILED
+        and _crashed_before_port(exc)
+    )
+
+
+async def repair_env(
     project: domain.Project,
     env_name: str,
     ws_context: context.WorkspaceContext,
@@ -225,9 +269,14 @@ async def repair_no_venv_env(
 
     Shared by every runner-start call site that needs to react to a
     ``NO_VENV`` runner (venv missing or just wiped because it was found stale
-    — see ``finecode_cmd.VenvRelocatedError``) by auto-running
-    ``create_envs`` + ``install_envs`` and restarting, instead of surfacing a
-    raw "runner failed to start" error to the caller.
+    — see ``finecode_cmd.VenvRelocatedError``) or to a runner that crashed
+    before publishing its port, by auto-running ``create_envs`` +
+    ``install_envs`` and restarting, instead of surfacing a raw "runner
+    failed to start" error to the caller.
+
+    Concurrent repairs of the same ``(project, env)`` are serialized: the
+    second caller finds the runner RUNNING inside the lock and returns
+    without reinstalling.
 
     Raises ``prepare_envs_service.PrepareEnvsFailed`` if installation fails;
     propagates whatever the subsequent restart raises otherwise.
@@ -236,20 +285,32 @@ async def repair_no_venv_env(
         install_env_for_project,
     )
 
-    logger.info(
-        f"Environment '{env_name}' not prepared for {project.name}. "
-        f"Running prepare-envs automatically."
+    repair_lock = ws_context.env_repair_locks.setdefault(
+        (project.dir_path, env_name), asyncio.Lock()
     )
-    await install_env_for_project(project, env_name, ws_context)
-    await runner_manager.restart_extension_runner(
-        runner_working_dir_path=project.dir_path,
-        env_name=env_name,
-        ws_context=ws_context,
-    )
-    logger.info(
-        f"Auto prepare-envs and runner restart succeeded for env '{env_name}' "
-        f"in {project.name}."
-    )
+    async with repair_lock:
+        current = ws_context.ws_projects_extension_runners.get(
+            project.dir_path, {}
+        ).get(env_name)
+        if (
+            current is not None
+            and current.status == domain.ExtensionRunnerStatus.RUNNING
+        ):
+            return
+        logger.info(
+            f"Environment '{env_name}' not prepared for {project.name}. "
+            f"Running prepare-envs automatically."
+        )
+        await install_env_for_project(project, env_name, ws_context)
+        await runner_manager.restart_extension_runner(
+            runner_working_dir_path=project.dir_path,
+            env_name=env_name,
+            ws_context=ws_context,
+        )
+        logger.info(
+            f"Auto prepare-envs and runner restart succeeded for env '{env_name}' "
+            f"in {project.name}."
+        )
 
 
 async def get_or_start_runner_with_auto_prepare(
@@ -263,14 +324,13 @@ async def get_or_start_runner_with_auto_prepare(
     """Start (or return running) runner for *env_name*, auto-preparing the env if missing.
 
     Wraps ``runner_manager.get_or_start_runner`` with the same signature.  On
-    ``RunnerFailedToStart`` where the runner's status is ``NO_VENV``, installs the env
-    via ``install_env_for_project`` and retries.
+    ``RunnerFailedToStart`` where the runner's status is ``NO_VENV``, or where
+    the runner crashed before publishing its port, installs the env via
+    ``install_env_for_project`` and retries.
 
     Raises ``RunnerFailedToStart`` if the runner cannot start even after auto-prepare,
     or if the failure is not env-related.
     """
-    from finecode.wm_server.runner import runner_client as rc
-
     try:
         return await runner_manager.get_or_start_runner(
             project_def=project_def,
@@ -284,7 +344,7 @@ async def get_or_start_runner_with_auto_prepare(
         runner = ws_context.ws_projects_extension_runners.get(
             project_def.dir_path, {}
         ).get(env_name)
-        if runner is None or runner.status != rc.RunnerStatus.NO_VENV:
+        if not start_failure_is_repairable(runner, exc, include_crashed=True):
             raise
 
         from finecode.wm_server.services.prepare_envs_service import (
@@ -292,7 +352,7 @@ async def get_or_start_runner_with_auto_prepare(
         )
 
         try:
-            await repair_no_venv_env(project_def, env_name, ws_context)
+            await repair_env(project_def, env_name, ws_context)
         except PrepareEnvsFailed as prep_exc:
             logger.error(
                 f"Auto prepare failed for env '{env_name}' in {project_def.name}: "

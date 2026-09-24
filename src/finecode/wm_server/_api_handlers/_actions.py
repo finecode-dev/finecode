@@ -39,19 +39,11 @@ async def _handle_run_action(
         parsed = await _parse_and_validate_run_action_params(raw_params, ws_context)
 
         try:
-            # Start required environments so that canonical_source is populated for all
-            # importable action classes (ADR-0021: canonical_source is the WM's internal
-            # identifier after runner initialization; only find_action_by_source at the
-            # external API boundary may match by config source alias).
-            await run_service.start_required_environments(
-                {parsed.project.dir_path: [parsed.action.name]},
-                ws_context,
-                initialize_all_handlers=True,
-            )
             # PRD-0003 AC8: resolve `--env`/`--interpreter` selectors
             # (+ config default) for this project, to restrict a matrixed
             # action's fan-out. `None` (no selectors, no narrowing default)
-            # runs the full declared axis, unchanged.
+            # runs the full declared axis, unchanged. Resolved before the
+            # gate so the gate starts only the children the dispatch runs.
             run_selection.validate_run_selectors(
                 parsed.options.get("envSelectors", []),
                 parsed.options.get("interpreterSelectors", []),
@@ -64,6 +56,18 @@ async def _handle_run_action(
                 parsed.options.get("interpreterSelectors", []),
                 parsed.dev_env.value,
                 ws_context,
+            )
+            # Start required environments so that canonical_source is populated for all
+            # importable action classes (ADR-0021: canonical_source is the WM's internal
+            # identifier after runner initialization; only find_action_by_source at the
+            # external API boundary may match by config source alias).
+            await run_service.start_required_environments(
+                {parsed.project.dir_path: [parsed.action.name]},
+                ws_context,
+                initialize_all_handlers=True,
+                selected_interpreters_by_project={
+                    parsed.project.dir_path: selected_interpreters
+                },
             )
             executor = run_service.ProjectExecutor(ws_context)
             result = await executor.run_action(
@@ -428,12 +432,36 @@ async def _handle_get_payload_schemas(
         # startup tool listing never starts every handler env.
         start_runners = params.get("startRunners", False)
         if start_runners and still_missing:
-            from finecode.wm_server.services import run_service
-
-            await run_service.start_required_environments(
-                {project.dir_path: still_missing}, ws_context
+            from finecode.wm_server.config import env_selection
+            from finecode.wm_server.config.interpreter_matrix import (
+                InvalidInterpreterError,
             )
-            await _probe_handler_envs(still_missing)
+            from finecode.wm_server.services import run_service
+            from finecode.wm_server.services.run_service import run_selection
+
+            run_options = params.get("runOptions") or {}
+            try:
+                selection = run_selection.selection_for_matrixed_actions(
+                    {project.dir_path: still_missing},
+                    run_options.get("envSelectors", []),
+                    run_options.get("interpreterSelectors", []),
+                    run_options.get("devEnv", "cli"),
+                    ws_context,
+                )
+            except (env_selection.EnvSelectionError, InvalidInterpreterError) as exc:
+                # Never validate selectors here: the run validates against
+                # every in-scope project and tolerates a selector valid in
+                # only one of them, while this fetch sees a single project.
+                # The run's own validation raises the real error a moment
+                # later; the schemas stay None until then.
+                logger.debug(f"Skipping runner start for schema fetch: {exc}")
+            else:
+                await run_service.start_required_environments(
+                    {project.dir_path: still_missing},
+                    ws_context,
+                    selected_interpreters_by_project=selection,
+                )
+                await _probe_handler_envs(still_missing)
 
     # Re-key schemas by the requested source rather than internal action name.
     result_schemas: dict[str, dict | None] = {}

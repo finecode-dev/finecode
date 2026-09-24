@@ -224,6 +224,15 @@ The ER signals the problem by returning error code `-32001` (`ENV_REINSTALL_NEED
 
 The WM catches this, runs `CreateEnvsAction` + `InstallEnvsAction` for the affected env, then restarts the ER.
 
+### Other triggers
+
+The same install-then-restart repair also runs when a runner the run needs fails to start:
+
+- `NO_VENV`: the venv is missing (or was just wiped as stale/relocated). Repaired wherever the failure surfaces — the run gate, the dispatch start, and metadata resolution.
+- Crash before the port: the ER process exited before publishing its port (`ServerExitedBeforePort` in the failure's `__cause__` chain). Repaired only for an env the run needs — the run gate and the dispatch start — never during metadata resolution, and never for unselected matrix children, which the gate does not start.
+
+Timeouts (the port wait expiring while the process is still alive) are load problems, not broken venvs, and are never repaired. Every repair runs at most once per start attempt: if the restart still fails, the error names the env and the project. Concurrent repairs of the same env are serialized so two callers never install into one venv at the same time.
+
 ### Runner routing
 
 The runner that executes `CreateEnvsAction` / `InstallEnvsAction` during auto-repair depends on which env is being fixed:

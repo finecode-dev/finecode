@@ -545,7 +545,10 @@ Triggered when `runner_manager.update_runner_config` receives error `-32001` fro
 sequence as `prepare-envs` — scoped to the affected env — then restarts the ER via
 `restart_extension_runner`.  The only difference from a manual run is which runner executes
 those actions; see [Automatic env repair](../guides/preparing-environments.md#automatic-env-repair)
-for the routing rules.
+for the routing rules. The same repair also covers two startup failures of an env
+the run needs: a missing venv (`NO_VENV`) and an ER that crashed before publishing
+its port. Timeouts and unselected matrix children are never repaired, and each
+repair runs at most once per start attempt.
 
 ---
 
