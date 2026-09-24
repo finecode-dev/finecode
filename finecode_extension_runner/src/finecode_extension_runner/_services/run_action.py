@@ -81,6 +81,10 @@ def _is_cancellation(exc: BaseException) -> bool:
     """True if *exc* signals a benign cancellation rather than a failure.
 
     Recognizes:
+      - ``asyncio.CancelledError`` — a task was cancelled. CPython's
+        ``asyncio.TaskGroup`` omits cancelled children from the group it
+        raises, so this only matters for groups built elsewhere; there a
+        CancelledError member must not be reported as a crash.
       - ilspclient.LspRequestCancelledError — a downstream LSP server
         cancelled a request.
       - code_action.ActionCancelledException — a handler cancelled
@@ -93,6 +97,7 @@ def _is_cancellation(exc: BaseException) -> bool:
     return isinstance(
         exc,
         (
+            asyncio.CancelledError,
             ilspclient.LspRequestCancelledError,
             code_action.ActionCancelledException,
             ActionCancelledException,
@@ -124,6 +129,44 @@ def _is_known_failure(exc: BaseException) -> bool:
     )
 
 
+def _flatten_exception_group(eg: BaseExceptionGroup) -> list[BaseException]:
+    """Flatten a (possibly nested) exception group down to its leaf exceptions.
+
+    A TaskGroup's exception group nests rather than merges: a task that itself
+    ran a TaskGroup (e.g. a dispatch handler's own ``asyncio.TaskGroup`` around
+    sub-action runs) contributes its group as one member of the outer group.
+    Classification and summarization want the leaves — the exceptions a human
+    can act on.
+
+    A leaf reachable through several nested groups is returned once (by
+    identity); distinct exceptions with equal text are all kept, so the
+    summary still shows how many tasks failed.
+    """
+    leaves: dict[int, BaseException] = {}
+
+    def _collect(group: BaseExceptionGroup) -> None:
+        for sub in group.exceptions:
+            if isinstance(sub, BaseExceptionGroup):
+                _collect(sub)
+            else:
+                leaves.setdefault(id(sub), sub)
+
+    _collect(eg)
+    return list(leaves.values())
+
+
+def _exception_summary(exc: BaseException) -> str:
+    """One-line description of *exc* in the classical ``Type: message`` form.
+
+    Falls back to ``repr`` when the exception carries no message text (an empty
+    ``str``), so the summary still names what was raised.
+    """
+    text = str(exc).strip()
+    if not text:
+        text = repr(exc)
+    return f"{type(exc).__name__}: {text}"
+
+
 def _classify_exception_group(eg: BaseExceptionGroup) -> tuple[bool, str]:
     """Classify every sub-exception of a TaskGroup's ExceptionGroup.
 
@@ -133,24 +176,35 @@ def _classify_exception_group(eg: BaseExceptionGroup) -> tuple[bool, str]:
     failure (``_is_known_failure``) is genuinely unexpected — this is the
     ER's one chance to log its full traceback, since callers only see the
     summarized message from here on.
+
+    The message names the underlying leaf exceptions in ``Type: message``
+    form (``_flatten_exception_group`` recurses through nested groups first).
+    An unexpected exception is not collapsed into the group's own summary —
+    ``str(eg)`` would hide it behind the opaque ``unhandled errors in a
+    TaskGroup (N sub-exception)`` text — because that message is what
+    propagates through every wrapper up to the caller and the streamed logs.
     """
     msgs: list[str] = []
     has_unknown = False
     all_cancelled = True
-    for sub in eg.exceptions:
+    for sub in _flatten_exception_group(eg):
         if _is_cancellation(sub):
             msgs.append(getattr(sub, "message", None) or str(sub))
         elif _is_known_failure(sub):
             msgs.append(sub.message)
             all_cancelled = False
         else:
+            msgs.append(_exception_summary(sub))
             has_unknown = True
             all_cancelled = False
+    # Empty entries are message-less cancellations (``str(CancelledError())``
+    # is "") — noise next to the messages that do say something.
+    summary = "; ".join(m for m in msgs if m)
     if has_unknown:
         logger.error("Unhandled exception in action handler:")
         logger.exception(eg)
-        return False, str(eg)
-    return all_cancelled, "; ".join(msgs)
+        return False, summary
+    return all_cancelled, summary
 
 
 class StopWithResponse(Exception):
