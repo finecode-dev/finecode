@@ -32,7 +32,7 @@ from loguru import logger
 from finecode_jsonrpc import _io_thread, _spawn, error_codes
 from finecode_jsonrpc._converter import converter as _converter
 from finecode_jsonrpc._loop_event import LoopAwareEvent
-from finecode_jsonrpc._proc_snapshot import describe_process_group
+from finecode_jsonrpc._proc_snapshot import describe_spawned_processes
 from finecode_jsonrpc.tracing import ITracingHooks
 
 
@@ -1016,15 +1016,15 @@ class JsonRpcClient:
                 for task in self._async_tasks_in_io_thread:
                     task.cancel()
 
-                process_group_snapshot = (
-                    describe_process_group(self.pid)
+                process_snapshot = (
+                    describe_spawned_processes(self.pid)
                     if self.pid is not None
-                    else "process group snapshot unavailable"
+                    else "process snapshot unavailable: server pid unknown"
                 )
                 raise ServerFailedToStart(
                     f"Didn't get port in {timeout} seconds"
                     f"\nStartup timeline: {self.startup_timeline.describe(time.monotonic())}"
-                    f"\nServer process group at timeout:\n{process_group_snapshot}"
+                    f"\nServer processes at timeout:\n{process_snapshot}"
                     f"{self._stdout_tail()}{self._stderr_tail()}"
                 ) from exception
 

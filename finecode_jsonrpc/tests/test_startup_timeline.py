@@ -9,9 +9,14 @@ and a bare timeout cannot distinguish them.
 from __future__ import annotations
 
 import asyncio
+import sys
 import threading
 import time
+from pathlib import Path
 
+import pytest
+
+from finecode_jsonrpc import _io_thread
 from finecode_jsonrpc import client as jc
 
 
@@ -66,3 +71,31 @@ def test_describe_reports_the_milestones_with_their_durations() -> None:
     assert "spawned 30.0s ago" in described
     assert "first output after 0.4s" in described
     assert "port line after 29.8s" in described
+
+
+async def test_port_timeout_message_carries_the_process_snapshot() -> None:
+    """A port-timeout failure names the still-running spawned server by its
+    processes, on every platform, so the diagnostic can distinguish "working,
+    slowly" from "already exited" on macOS and Windows as well as Linux."""
+    io_thread = _io_thread.AsyncIOThread()
+    io_thread.start()
+    client = jc.JsonRpcClient(message_types={}, readable_id="timeout-test")
+    try:
+        await client.start(
+            server_cmd=[sys.executable, "-c", "import time; time.sleep(30)"],
+            working_dir_path=Path.cwd(),
+            io_thread=io_thread,
+            debug_port_future=None,
+            connect=False,
+        )
+        with pytest.raises(jc.ServerFailedToStart) as raised:
+            await client.connect_to_server(io_thread=io_thread, timeout=0.5)
+    finally:
+        client.force_kill()
+        io_thread.stop(timeout=5.0)
+
+    label = "\nServer processes at timeout:\n"
+    assert label in raised.value.message
+    snapshot = raised.value.message.split(label, 1)[1]
+    # The snapshot lists the still-living spawned python as its first line.
+    assert snapshot.startswith(f"{client.pid} ")

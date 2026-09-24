@@ -468,9 +468,14 @@ WARNING by `_start_extension_runner_process`, carrying `spawn_to_output_ms`, `sp
 and `spawn_to_connected_ms` plus the host's memory/IO pressure; a faster start is logged at DEBUG
 with the same fields. When the port handshake itself times out, the `ServerFailedToStart` message
 names the timeline (when it was spawned, whether the server produced any output, when its port
-line arrived) and a snapshot of the spawned process group at the deadline
+line arrived) and a snapshot of the spawned server's processes at the deadline
 (`finecode_jsonrpc._proc_snapshot`), followed by the stdout/stderr tails; the failing-start log
-line also carries `spawned_ago_ms` and host pressure. A start that reaches RUNNING logs
+line also carries `spawned_ago_ms` and host pressure. The snapshot is per-platform: on POSIX the
+server is spawned with `start_new_session=True`, so its pid is its process group and every member
+is listed (including children reparented after their parent exited); on Windows there is no process
+group, so the process tree rooted at the spawned pid is listed by parent pid, with no `state=`
+(psutil reports `running` for nearly every Windows process — see issue 43 for the Job Object
+replacement that would make the membership a spawn-side record). A start that reaches RUNNING logs
 `Runner <id> ready: connected_to_running_ms=… spawn_to_running_ms=…` (DEBUG, WARNING at
 ≥ 10 s total); a start abandoned before RUNNING logs `Runner <id> abandoned:`
 `connected_to_abandon_ms=…` when its channel had connected. `initialize` / `updateConfig` failures

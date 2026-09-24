@@ -32,8 +32,9 @@ dynamic = ["version"]
 finecode = "finecode.cli:cli"
 
 [dependency-groups]
-# psutil is test-only, but `list_tests` collects in `dev`, and collection imports the
-# e2e modules that import psutil at top level (see `testing` below).
+# `finecode_jsonrpc` now depends on psutil directly (startup process snapshots), and the e2e
+# tests also import psutil at top level; `list_tests` collects in `dev`, so this entry exists
+# because a module that imports a package declares it (see `testing` below).
 dev = ["debugpy==1.8.*", "psutil==7.2.*"]
 dev_workspace = [
   "debugpy==1.8.*",
