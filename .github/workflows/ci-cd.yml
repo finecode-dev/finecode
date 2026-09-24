@@ -254,6 +254,18 @@ jobs:
           path: ${{ runner.temp }}/uv-cache
           key: ${{ steps.uv_cache.outputs.cache-primary-key }}
 
+      - name: Upload FineCode logs
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        uses: actions/upload-artifact@v6
+        with:
+          name: finecode-logs-${{ matrix.name }}
+          path: |
+            .venvs/*/logs
+            **/.venvs/*/logs
+          if-no-files-found: warn
+          retention-days: 14
+
   audit-private:
     name: Audit (private layer)
     runs-on: ubuntu-26.04
@@ -440,3 +452,15 @@ jobs:
         with:
           path: ${{ runner.temp }}/uv-cache
           key: ${{ steps.uv_cache.outputs.cache-primary-key }}
+
+      - name: Upload FineCode logs
+        if: ${{ !cancelled() && env.HAS_PRIVATE_CLONE_APP == 'true' }}
+        continue-on-error: true
+        uses: actions/upload-artifact@v6
+        with:
+          name: finecode-logs-audit-private
+          path: |
+            .venvs/*/logs
+            **/.venvs/*/logs
+          if-no-files-found: warn
+          retention-days: 14
