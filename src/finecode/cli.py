@@ -9,6 +9,7 @@ from finecode.cli_app.cli import (
     restart_runner,
     restart_wm,
     run,
+    stop_wm,
     version,
 )
 from finecode.lsp_server.cli import start_lsp
@@ -31,6 +32,7 @@ cli.add_command(reload_action)
 cli.add_command(restart_runner)
 cli.add_command(reload_config)
 cli.add_command(restart_wm)
+cli.add_command(stop_wm)
 cli.add_command(version)
 
 

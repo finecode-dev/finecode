@@ -153,6 +153,19 @@ async def wait_until_ready(timeout: float = 30) -> int:
     )
 
 
+async def wait_until_stopped(timeout: float = 30) -> None:
+    """Wait until no WM server is listening. Returns None."""
+    deadline = asyncio.get_event_loop().time() + timeout
+    while asyncio.get_event_loop().time() < deadline:
+        # In a thread: `running_port` probes with a synchronous connect that
+        # takes its full timeout when the port is filtered rather than refused.
+        port = await asyncio.to_thread(running_port)
+        if port is None:
+            return
+        await asyncio.sleep(STARTUP_READY_POLL_INTERVAL_SECONDS)
+    raise TimeoutError(f"FineCode WM server did not stop within {timeout}s")
+
+
 def start_own_server(
     workdir: pathlib.Path,
     log_level: str = "INFO",

@@ -1080,6 +1080,19 @@ def restart_wm(log_level: str, shared_server: bool):
 @click.command()
 @_LOG_LEVEL_OPTION
 @click.option("--shared-server", "shared_server", is_flag=True, default=False)
+def stop_wm(log_level: str, shared_server: bool):
+    """Stop the shared workspace server."""
+    from finecode.cli_app.commands import recover_cmd
+
+    _run_recovery(
+        lambda cwd: recover_cmd.stop_wm(workdir_path=cwd, own_server=not shared_server),
+        log_level,
+    )
+
+
+@click.command()
+@_LOG_LEVEL_OPTION
+@click.option("--shared-server", "shared_server", is_flag=True, default=False)
 def version(log_level: str, shared_server: bool):
     """Print the WM server's version.
 

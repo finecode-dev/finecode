@@ -272,8 +272,9 @@ narrowest one that covers what you edited, because nothing detects staleness for
 | `restart-runner` | any code a runner imported, and stuck or crashed runners | configuration |
 | `reload-config` | `pyproject.toml`, `finecode.toml` and presets — and, since it replaces runners, all code too | FineCode's own source |
 | `restart-wm` | everything, including FineCode's own source | — |
+| `stop-wm` | nothing — it stops the workspace | restart — pair with `start-wm-server --detach --keep-alive` |
 
-**All four require `--shared-server`.** Without it each command would start a
+**All five require `--shared-server`.** Without it each command would start a
 workspace server of its own, recover that, and exit — leaving the workspace an editor
 or agent is actually using untouched while reporting success. They exit with status 1
 and name the mode as the reason.
@@ -299,6 +300,9 @@ python -m finecode reload-config --shared-server --all-projects --rescan
 
 # after editing FineCode itself
 python -m finecode restart-wm --shared-server
+
+# stop the shared workspace server
+python -m finecode stop-wm --shared-server
 ```
 
 ## Dev environment detection
@@ -440,6 +444,9 @@ whatever owns that lifetime — a container start script, a systemd unit, a supe
 ```bash
 python -m finecode start-wm-server --detach --keep-alive
 ```
+
+Its counterpart is `python -m finecode stop-wm --shared-server`, which shuts that
+server back down.
 
 Keep-alive has no environment variable and is never inherited: it is passed
 explicitly by whoever starts the server, so the dedicated per-command servers cannot

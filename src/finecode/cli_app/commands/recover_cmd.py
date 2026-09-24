@@ -1,5 +1,6 @@
 # docs: docs/cli.md
-"""Recovery commands: make a running workspace pick up what changed on disk.
+"""Recovery and stop commands: make a running workspace pick up what changed on disk,
+or stop the workspace.
 
 Every one of them requires ``--shared-server``. Recovery only means something to
 a workspace someone else is already using: starting a private server, recovering
@@ -176,3 +177,34 @@ async def restart_wm(workdir_path: pathlib.Path, own_server: bool = True) -> Non
             "otherClientsDisconnected": other_clients,
         }
     )
+
+
+async def stop_wm(
+    workdir_path: pathlib.Path, own_server: bool = True, timeout: float = 30
+) -> None:
+    require_shared_server(own_server, "stop-wm")
+    previous_port = await asyncio.to_thread(wm_lifecycle.running_port)
+    if previous_port is None:
+        raise RecoveryFailed(
+            "No FineCode workspace server is running, so there is nothing to stop. "
+            "Start one — an editor with the FineCode LSP, the MCP server, or "
+            "'python -m finecode start-wm-server' — and run this again."
+        )
+    client = await _connected_client(workdir_path)
+    try:
+        try:
+            await client.shutdown()
+        except (ConnectionError, OSError) as exception:
+            # Same as replace_running_server (wm_lifecycle.py):
+            # the server may close the socket before its response is read;
+            # it is stopping either way, which the wait below verifies.
+            logger.debug(f"WM server closed the connection on shutdown: {exception}")
+    finally:
+        await client.close()
+    try:
+        await wm_lifecycle.wait_until_stopped(timeout=timeout)
+    except TimeoutError as exception:
+        raise RecoveryFailed(
+            f"FineCode WM server on port {previous_port} did not stop within {timeout}s"
+        ) from exception
+    _report({"stopped": True, "port": previous_port})

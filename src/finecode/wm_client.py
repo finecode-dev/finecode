@@ -379,6 +379,10 @@ class ApiClient:
         """Unsubscribe this connection from WM diagnostic logs."""
         await self.request("server/unsubscribeLogs", {})
 
+    async def shutdown(self) -> dict:
+        """Ask the WM server to shut down."""
+        return await self.request("server/shutdown")
+
     # -- Workspace methods --------------------------------------------------
 
     async def list_projects(self) -> list[dict]:
