@@ -350,7 +350,9 @@ class InstallPiPackagesHandler(
         if installed_sources:
             check_cmd = ["pi", "list", "--approve"]
             try:
-                check_process = await self.command_runner.run(check_cmd, cwd=cwd, env=env)
+                check_process = await self.command_runner.run(
+                    check_cmd, cwd=cwd, env=env
+                )
             except (OSError, icommandrunner.CommandNotLaunchableError) as error:
                 self.logger.warning(backend_support.spawn_error(check_cmd[0], error))
                 return SetupSystemRunResult(failed=failed)

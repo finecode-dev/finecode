@@ -215,9 +215,7 @@ class WorkspaceContext:
     # venv at the same time.  Keyed per env and separate from
     # env_install_locks: install_env_for_project takes env_install_locks[project]
     # inside the repair, so sharing that dict would self-deadlock.
-    env_repair_locks: dict[tuple[Path, str], asyncio.Lock] = field(
-        default_factory=dict
-    )
+    env_repair_locks: dict[tuple[Path, str], asyncio.Lock] = field(default_factory=dict)
 
     # Both budgets below are sized from ONE combined machine budget in
     # __post_init__ (ADR-0093): their sum stays at or below

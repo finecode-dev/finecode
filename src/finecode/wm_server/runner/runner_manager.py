@@ -1298,7 +1298,9 @@ async def _start_runner(
                             project_path=project_def.dir_path,
                             ws_context=ws_context,
                         )
-                    except preset_resolution.DevWorkspaceRunnerNotConnectedError as exception:
+                    except (
+                        preset_resolution.DevWorkspaceRunnerNotConnectedError
+                    ) as exception:
                         raise RunnerFailedToStart(str(exception)) from exception
                     except config_models.ConfigurationError as exception:
                         runner.status = runner_client.RunnerStatus.FAILED

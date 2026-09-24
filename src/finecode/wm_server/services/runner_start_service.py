@@ -243,11 +243,11 @@ def start_failure_is_repairable(
 ) -> bool:
     """Whether a failed start of *runner* may be repaired (install + restart).
 
-    A missing venv is always repairable. A runner that crashed before
-    publishing its port is repairable only when *include_crashed* is set —
-    the gate and the dispatch start pass True, metadata resolution passes
-    False so it can never repair an env no run needs. Port timeouts and any
-other failure are never repaired.
+        A missing venv is always repairable. A runner that crashed before
+        publishing its port is repairable only when *include_crashed* is set —
+        the gate and the dispatch start pass True, metadata resolution passes
+        False so it can never repair an env no run needs. Port timeouts and any
+    other failure are never repaired.
     """
     if runner is None:
         return False

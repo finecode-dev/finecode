@@ -81,7 +81,9 @@ class GitCreateGitTagHandler(
             if payload.ref is not None:
                 create_args.append(payload.ref)
 
-            create_exit_code, _, create_stderr = await self._run_git(create_args, cwd=cwd)
+            create_exit_code, _, create_stderr = await self._run_git(
+                create_args, cwd=cwd
+            )
 
             if create_exit_code == 0:
                 return CreateGitTagRunResult(tag=payload.tag, created=True, error=None)

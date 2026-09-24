@@ -23,7 +23,6 @@ from finecode_extension_runner.impls.command_runner import (
 )
 from finecode_extension_runner.process_slots import ProcessSlots
 
-
 # Process groups, `killpg`/`SIGKILL` and `os.kill(pid, 0)` (which is
 # `CTRL_C_EVENT` on Windows) are all POSIX-only.
 pytestmark = pytest.mark.skipif(
@@ -168,8 +167,7 @@ async def test_is_alive_tracks_the_group_after_a_forking_launcher_exits() -> Non
     # instead -- it is set the moment the launcher itself dies.
     deadline = asyncio.get_running_loop().time() + 5.0
     while (
-        process.get_exit_code() is None
-        and asyncio.get_running_loop().time() < deadline
+        process.get_exit_code() is None and asyncio.get_running_loop().time() < deadline
     ):
         await asyncio.sleep(0.05)
 

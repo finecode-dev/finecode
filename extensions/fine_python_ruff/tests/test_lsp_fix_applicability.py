@@ -66,9 +66,7 @@ class _StubCommandRunner:
         self._output = output
         self.commands: list[list[str]] = []
 
-    async def run(
-        self, cmd: icommandrunner.Argv, cwd=None, env=None
-    ):
+    async def run(self, cmd: icommandrunner.Argv, cwd=None, env=None):
         icommandrunner.check_argv(cmd)
         self.commands.append(list(cmd))
         return _StubProcess(self._output)

@@ -420,13 +420,9 @@ async def test_file_open_event_sends_utf8_file_content_in_did_open(
     file_path.write_bytes(_NON_ASCII.encode("utf-8"))
 
     async with _running_service(file_path, _NON_ASCII) as (service, session, _):
-        await service._handle_file_event(
-            ifileeditor.FileOpenEvent(file_path=file_path)
-        )
+        await service._handle_file_event(ifileeditor.FileOpenEvent(file_path=file_path))
 
-    did_open = [
-        n for n in session.notifications if n.method == "textDocument/didOpen"
-    ]
+    did_open = [n for n in session.notifications if n.method == "textDocument/didOpen"]
     assert len(did_open) == 1
     assert did_open[0].params["textDocument"]["text"] == _NON_ASCII
 

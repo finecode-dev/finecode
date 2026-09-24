@@ -78,7 +78,7 @@ def test_pip_cmd_argv_is_exact() -> None:
         "-e",
         "file:///D:/a/pkg[a]",
         "other>=1.0",
-        "pkg ; python_version < \"3.12\"",
+        'pkg ; python_version < "3.12"',
     ]
 
 

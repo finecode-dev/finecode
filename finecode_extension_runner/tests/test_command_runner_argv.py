@@ -16,13 +16,12 @@ import sys
 from pathlib import Path
 
 import pytest
-
 from finecode_extension_api.interfaces import icommandrunner
 
 from finecode_extension_runner.impls.command_runner import (
-    _prepare_argv,
     CommandRunner,
     CommandRunnerConfig,
+    _prepare_argv,
 )
 from finecode_extension_runner.process_slots import ProcessSlots
 
@@ -77,7 +76,12 @@ argument — each must land at the program as exactly one argv element."""
 async def test_arguments_arrive_verbatim() -> None:
     """The point of exec: nothing reinterpreted, nothing quoted away."""
     process = await _runner().run(
-        [sys.executable, "-c", "import json,sys; print(json.dumps(sys.argv[1:]))", *_ARGS]
+        [
+            sys.executable,
+            "-c",
+            "import json,sys; print(json.dumps(sys.argv[1:]))",
+            *_ARGS,
+        ]
     )
     await process.wait_for_end()
 
@@ -86,7 +90,12 @@ async def test_arguments_arrive_verbatim() -> None:
 
 def test_run_sync_arguments_arrive_verbatim() -> None:
     process = _runner().run_sync(
-        [sys.executable, "-c", "import json,sys; print(json.dumps(sys.argv[1:]))", *_ARGS]
+        [
+            sys.executable,
+            "-c",
+            "import json,sys; print(json.dumps(sys.argv[1:]))",
+            *_ARGS,
+        ]
     )
     process.wait_for_end()
 

@@ -123,8 +123,7 @@ def _g2_violations(tree: ast.AST, rel_path: str) -> list[str]:
     return [
         f"{_dotted_name(node.func)}: quoting is never the caller's problem"
         for node in ast.walk(tree)
-        if isinstance(node, ast.Call)
-        and _dotted_name(node.func) in _G2_SHLEX_CALLS
+        if isinstance(node, ast.Call) and _dotted_name(node.func) in _G2_SHLEX_CALLS
     ]
 
 

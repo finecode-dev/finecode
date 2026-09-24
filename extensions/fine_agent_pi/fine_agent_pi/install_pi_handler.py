@@ -61,7 +61,9 @@ class InstallPiHandler(
             except (OSError, icommandrunner.CommandNotLaunchableError) as error:
                 self.logger.error(f"Install failed: {error}")
                 return SetupSystemRunResult(
-                    failed=[f"{_TOOL_NAME}: {backend_support.spawn_error(cmd[0], error)}"]
+                    failed=[
+                        f"{_TOOL_NAME}: {backend_support.spawn_error(cmd[0], error)}"
+                    ]
                 )
             await process.wait_for_end()
             await progress.advance(1)

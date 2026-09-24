@@ -9,7 +9,6 @@ from loguru import logger
 
 from finecode_extension_runner.impls.file_manager import FileManager
 
-
 # Em dash, right double quote, é and 😀 — no newline, so the byte assertions
 # below do not depend on Windows \n→\r\n translation. The right double quote
 # (U+201D) and 😀 are outside cp1252, so a cp1252 read raises instead of

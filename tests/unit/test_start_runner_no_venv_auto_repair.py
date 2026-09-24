@@ -60,9 +60,7 @@ async def test_ensure_action_metadata_auto_repairs_a_no_venv_runner(
         mock.patch.object(
             runner_manager, "start_runner", side_effect=_fake_start_runner
         ),
-        mock.patch.object(
-            runner_start_service, "repair_env", side_effect=_fake_repair
-        ),
+        mock.patch.object(runner_start_service, "repair_env", side_effect=_fake_repair),
     ):
         await proxy_utils.ensure_action_metadata(action, project, ws_context)
 
@@ -229,13 +227,11 @@ async def test_concurrent_repairs_install_once(tmp_path: pathlib.Path) -> None:
         installs.append(env_name)
         await asyncio.sleep(0.05)
 
-    async def _fake_restart(
-        *, runner_working_dir_path, env_name, ws_context
-    ) -> None:
-        ws_context.ws_projects_extension_runners[runner_working_dir_path][
-            env_name
-        ] = wm_testing.make_running_runner(
-            working_dir_path=runner_working_dir_path, env_name=env_name
+    async def _fake_restart(*, runner_working_dir_path, env_name, ws_context) -> None:
+        ws_context.ws_projects_extension_runners[runner_working_dir_path][env_name] = (
+            wm_testing.make_running_runner(
+                working_dir_path=runner_working_dir_path, env_name=env_name
+            )
         )
 
     with (
@@ -319,9 +315,7 @@ async def test_get_or_start_repairs_crashed_env_once_then_retries(
     )
     calls: list[str] = []
 
-    async def _fake_get_or_start_runner(
-        *, project_def, env_name, ws_context, **_
-    ):
+    async def _fake_get_or_start_runner(*, project_def, env_name, ws_context, **_):
         calls.append(env_name)
         if len(calls) == 1:
             runners_by_env = ws_context.ws_projects_extension_runners.setdefault(
@@ -335,9 +329,7 @@ async def test_get_or_start_repairs_crashed_env_once_then_retries(
             try:
                 raise finecode_jsonrpc.ServerExitedBeforePort(1)
             except finecode_jsonrpc.ServerExitedBeforePort as cause:
-                raise runner_manager.RunnerFailedToStart(
-                    "process exited"
-                ) from cause
+                raise runner_manager.RunnerFailedToStart("process exited") from cause
         return wm_testing.make_running_runner(
             working_dir_path=project_def.dir_path, env_name=env_name
         )
