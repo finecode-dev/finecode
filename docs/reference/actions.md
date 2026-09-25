@@ -332,6 +332,7 @@ Get the current version of a source artifact.
 - **Source:** `fine_src_artifacts.GetSrcArtifactVersionAction`
 
 Default handler in this repo: `fine_python_setuptools_scm.GetSrcArtifactVersionSetuptoolsScmHandler`
+In this repo it is followed by `fine_python_setuptools_scm.FormatSetuptoolsScmVersionFileHandler`, which formats the written `[tool.setuptools_scm] version_file` with the project's `format_file` formatter; disable that handler to leave the file as setuptools_scm writes it.
 
 ---
 

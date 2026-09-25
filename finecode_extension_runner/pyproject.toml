@@ -47,6 +47,9 @@ handlers = [
   { name = "get_src_artifact_version_setuptools_scm", source = "fine_python_setuptools_scm.GetSrcArtifactVersionSetuptoolsScmHandler", env = "dev_no_runtime", dependencies = [
     "fine_python_setuptools_scm~=0.1.0a1",
   ] },
+  { name = "get_src_artifact_version_setuptools_scm_format", source = "fine_python_setuptools_scm.FormatSetuptoolsScmVersionFileHandler", env = "dev_no_runtime", dependencies = [
+    "fine_python_setuptools_scm~=0.1.0a1",
+  ] },
 ]
 
 [tool.importlinter]

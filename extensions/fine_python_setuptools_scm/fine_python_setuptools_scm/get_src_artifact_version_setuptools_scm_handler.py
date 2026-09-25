@@ -3,8 +3,9 @@ import dataclasses
 from fine_src_artifacts import get_src_artifact_version_action
 from finecode_extension_api import code_action
 from finecode_extension_api.interfaces import ilogger, iprojectinfoprovider
-from setuptools_scm import Configuration
 from setuptools_scm._get_version import _get_version
+
+from ._scm_config import load_configuration, resolve_def_path
 
 
 @dataclasses.dataclass
@@ -35,11 +36,9 @@ class GetSrcArtifactVersionSetuptoolsScmHandler(
         run_context: get_src_artifact_version_action.GetSrcArtifactVersionRunContext,
     ) -> get_src_artifact_version_action.GetSrcArtifactVersionRunResult:
         # Use current project if src_artifact_def_path is not provided
-        src_artifact_def_path = payload.src_artifact_def_path
-        if src_artifact_def_path is None:
-            src_artifact_def_path = (
-                self.project_info_provider.get_current_project_def_path()
-            )
+        src_artifact_def_path = resolve_def_path(
+            payload.src_artifact_def_path, self.project_info_provider
+        )
 
         src_artifact_raw_def = await self.project_info_provider.get_project_raw_config(
             project_def_path=src_artifact_def_path
@@ -54,22 +53,9 @@ class GetSrcArtifactVersionSetuptoolsScmHandler(
             )
 
         # from setuptools_scm._cli:main
-        pyproject = src_artifact_def_path.as_posix()
+        config = load_configuration(src_artifact_def_path, self.logger)
 
-        try:
-            # could be optimized by providing config from project_info_provider instead
-            # of reading file each time
-            config = Configuration.from_file(pyproject, root=None)
-        except (LookupError, FileNotFoundError) as ex:
-            # no pyproject.toml OR no [tool.setuptools_scm]
-            self.logger.warning(
-                f"Warning: could not use {pyproject},"
-                " using default configuration.\n"
-                f" Reason: {ex}."
-            )
-            config = Configuration(root=src_artifact_def_path.parent.as_posix())
-
-        version = _get_version(config)
+        version = _get_version(config, force_write_version_files=True)
         if version is None:
             raise code_action.ActionFailedException("ERROR: no version found")
 
