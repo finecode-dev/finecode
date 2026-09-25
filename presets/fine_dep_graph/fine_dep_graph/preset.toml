@@ -1,0 +1,80 @@
+[tool.finecode.action.init_falkordb]
+source = "fine_dep_graph_falkordb.InitFalkorDBAction"
+
+[[tool.finecode.action.init_falkordb.handlers]]
+name = "init_falkordb"
+source = "fine_dep_graph_falkordb.InitFalkorDBHandler"
+env = "dep_graph"
+dependencies = ["fine_dep_graph_falkordb~=0.1.0a0"]
+
+[tool.finecode.action.collect_project_dependency_info]
+source = "fine_dep_graph.CollectProjectDependencyInfoAction"
+
+[[tool.finecode.action.collect_project_dependency_info.handlers]]
+name = "pyproject_package_info"
+source = "fine_dep_graph.PyprojectPackageInfoHandler"
+env = "dep_graph"
+dependencies = ["fine_dep_graph~=0.1.0a0"]
+
+[[tool.finecode.action.collect_project_dependency_info.handlers]]
+name = "finecode_presets_info"
+source = "fine_dep_graph.FineCodePresetsInfoHandler"
+env = "dep_graph"
+dependencies = ["fine_dep_graph~=0.1.0a0"]
+
+[tool.finecode.action.seed_workspace_dependency_graph]
+source = "fine_dep_graph.SeedWorkspaceDependencyGraphAction"
+
+[[tool.finecode.action.seed_workspace_dependency_graph.handlers]]
+name = "init_falkordb_bridge"
+source = "fine_dep_graph_falkordb.InitFalkorDBBridgeHandler"
+env = "dep_graph"
+dependencies = ["fine_dep_graph_falkordb~=0.1.0a0"]
+
+[[tool.finecode.action.seed_workspace_dependency_graph.handlers]]
+name = "seed_workspace_dependency_graph"
+source = "fine_dep_graph_falkordb.SeedWorkspaceDependencyGraphHandler"
+env = "dep_graph"
+dependencies = ["fine_dep_graph_falkordb~=0.1.0a0"]
+
+[tool.finecode.action.detect_workspace_dependency_cycles]
+source = "fine_dep_graph.DetectWorkspaceDependencyCyclesAction"
+
+[[tool.finecode.action.detect_workspace_dependency_cycles.handlers]]
+name = "detect_workspace_dependency_cycles"
+source = "fine_dep_graph_falkordb.DetectWorkspaceDependencyCyclesHandler"
+env = "dep_graph"
+dependencies = ["fine_dep_graph_falkordb~=0.1.0a0"]
+
+[tool.finecode.action.get_package_dependents]
+source = "fine_dep_graph.GetPackageDependentsAction"
+
+[[tool.finecode.action.get_package_dependents.handlers]]
+name = "get_package_dependents"
+source = "fine_dep_graph_falkordb.GetPackageDependentsHandler"
+env = "dep_graph"
+dependencies = ["fine_dep_graph_falkordb~=0.1.0a0"]
+
+[tool.finecode.action.get_package_transitive_deps]
+source = "fine_dep_graph.GetPackageTransitiveDepsAction"
+
+[[tool.finecode.action.get_package_transitive_deps.handlers]]
+name = "get_package_transitive_deps"
+source = "fine_dep_graph_falkordb.GetPackageTransitiveDepsHandler"
+env = "dep_graph"
+dependencies = ["fine_dep_graph_falkordb~=0.1.0a0"]
+
+[tool.finecode.action.visualize_workspace_dependency_graph]
+source = "fine_dep_graph.VisualizeWorkspaceDependencyGraphAction"
+
+[[tool.finecode.action.visualize_workspace_dependency_graph.handlers]]
+name = "init_falkordb_bridge"
+source = "fine_dep_graph_falkordb.InitFalkorDBVisualizeBridgeHandler"
+env = "dep_graph"
+dependencies = ["fine_dep_graph_falkordb~=0.1.0a0"]
+
+[[tool.finecode.action.visualize_workspace_dependency_graph.handlers]]
+name = "visualize_workspace_dependency_graph"
+source = "fine_dep_graph_falkordb.VisualizeWorkspaceDependencyGraphHandler"
+env = "dep_graph"
+dependencies = ["fine_dep_graph_falkordb~=0.1.0a0"]

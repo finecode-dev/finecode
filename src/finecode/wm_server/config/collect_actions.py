@@ -4,9 +4,9 @@ from typing import Any
 
 import cattrs
 
-import finecode.wm_server.config.config_models as config_models
 from finecode._converter import converter as _converter
 from finecode.wm_server import context, domain
+from finecode.wm_server.config import config_models
 from finecode.wm_server.config.read_configs import read_env_configs
 
 
@@ -67,10 +67,18 @@ def collect_project(
 def _collect_services_in_config(
     config: dict[str, Any],
 ) -> list[domain.ServiceDeclaration]:
+    """Collect service entries as declared, without resolving override aliases.
+
+    Alias derivation and override matching happen in the Extension Runner
+    (ADR-0070): activator-registered bindings exist only there, so the WM cannot
+    tell an unknown alias from one belonging to a binding it never sees.
+    """
     services: list[domain.ServiceDeclaration] = []
     for service_def_raw in config["tool"]["finecode"].get("service", []):
         try:
-            service_def = _converter.structure(service_def_raw, config_models.ServiceDefinition)
+            service_def = _converter.structure(
+                service_def_raw, config_models.ServiceDefinition
+            )
         except cattrs.ClassValidationError as exception:
             raise config_models.ConfigurationError(str(exception)) from exception
 
@@ -109,14 +117,16 @@ def _collect_actions_in_config(
     presets_resolved: bool = True,
 ) -> list[domain.Action]:
     actions: list[domain.Action] = []
-    env_table: dict[str, Any] = config.get("tool", {}).get("finecode", {}).get(
-        "env", {}
+    env_table: dict[str, Any] = (
+        config.get("tool", {}).get("finecode", {}).get("env", {})
     )
     for action_name, action_def_raw in (
         config["tool"]["finecode"].get("action", {}).items()
     ):
         try:
-            action_def = _converter.structure(action_def_raw, config_models.ActionDefinition)
+            action_def = _converter.structure(
+                action_def_raw, config_models.ActionDefinition
+            )
         except cattrs.ClassValidationError as exception:
             raise config_models.ConfigurationError(str(exception)) from exception
 

@@ -6,17 +6,26 @@ from loguru import logger
 
 
 @click.command()
-@click.option("--log-level", "log_level", default="INFO", type=click.Choice(["TRACE", "DEBUG", "INFO", "WARNING", "ERROR"], case_sensitive=False), show_default=True)
-@click.option("--debug", "debug", is_flag=True, default=False)
 @click.option(
-    "--socket", "tcp", default=None, type=int, help="start a TCP server"
+    "--log-level",
+    "log_level",
+    default="INFO",
+    type=click.Choice(
+        ["TRACE", "DEBUG", "INFO", "WARNING", "ERROR"], case_sensitive=False
+    ),
+    show_default=True,
 )
+@click.option("--debug", "debug", is_flag=True, default=False)
+@click.option("--socket", "tcp", default=None, type=int, help="start a TCP server")
 @click.option(
     "--stdio", "stdio", is_flag=True, default=False, help="Use stdio communication"
 )
 @click.option(
-    "--tcp", "tcp_auto", is_flag=True, default=False,
-    help="Start TCP server on a random free port; prints 'port:<N>' to stdout for client discovery"
+    "--tcp",
+    "tcp_auto",
+    is_flag=True,
+    default=False,
+    help="Start TCP server on a random free port; prints 'port:<N>' to stdout for client discovery",
 )
 @click.option("--host", "host", default=None, help="Host for TCP and WS server")
 @click.option(
@@ -56,5 +65,7 @@ def start_lsp(
         raise ValueError("Specify either --tcp, --tcp-auto or --stdio")
 
     asyncio.run(
-        wm_lsp_server.start(comm_type=comm_type, host=host, port=port, log_level=log_level)
+        wm_lsp_server.start(
+            comm_type=comm_type, host=host, port=port, log_level=log_level
+        )
     )

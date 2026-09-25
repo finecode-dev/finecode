@@ -6,7 +6,6 @@ No I/O — kept separate from run_cmd.py so it is trivially unit-testable.
 
 from __future__ import annotations
 
-
 _USER_MESSAGE_LOG_LEVEL = {
     "ERROR": "ERROR",
     "WARNING": "WARNING",

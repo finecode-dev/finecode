@@ -2,8 +2,9 @@ import asyncio
 import dataclasses
 
 from finecode_extension_api import code_action
-from fine_envs import create_env_action, create_envs_action
 from finecode_extension_api.interfaces import ilogger, iprojectactionrunner
+
+from fine_envs import create_env_action, create_envs_action
 
 
 @dataclasses.dataclass
@@ -18,7 +19,9 @@ class CreateEnvsDispatchHandler(
     """Dispatch a create_env call per environment concurrently."""
 
     def __init__(
-        self, action_runner: iprojectactionrunner.IProjectActionRunner, logger: ilogger.ILogger
+        self,
+        action_runner: iprojectactionrunner.IProjectActionRunner,
+        logger: ilogger.ILogger,
     ) -> None:
         self.action_runner = action_runner
         self.logger = logger
@@ -34,17 +37,24 @@ class CreateEnvsDispatchHandler(
             )
 
         tasks: list[asyncio.Task[create_envs_action.CreateEnvsRunResult]] = []
-        async with run_context.progress("Creating environments", total=len(run_context.envs)) as progress:
+        async with run_context.progress(
+            "Creating environments", total=len(run_context.envs)
+        ) as progress:
+
             async def _create_and_advance(env):
                 result = await self.action_runner.run_action(
-                    action_type=iprojectactionrunner.ActionRef.from_type(create_env_action.CreateEnvAction),
+                    action_type=iprojectactionrunner.ActionRef.from_type(
+                        create_env_action.CreateEnvAction
+                    ),
                     payload=create_env_action.CreateEnvRunPayload(
                         env=env,
                         recreate=payload.recreate,
                     ),
                     meta=run_context.meta,
                 )
-                await progress.advance(message=f"Created {env.name}")
+                label = create_envs_action.env_label(env)
+                verb = "Created" if result.created else "Already exists"
+                await progress.advance(message=f"{verb}: {label}")
                 return result
 
             try:

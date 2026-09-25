@@ -1,14 +1,13 @@
 import pathlib
 import re
 
-from loguru import logger
-
 from fine_type_check.diagnostic_types import (
     Diagnostic,
     DiagnosticSeverity,
     Position,
     Range,
 )
+from loguru import logger
 
 # reuse output parsing from vscode-mypy (as much as possible, it was adapted for this
 # use case)
@@ -39,12 +38,11 @@ def absolute_path(file_path: str) -> str:
 def _get_severity(
     code: str, code_type: str, severity: dict[str, str]
 ) -> DiagnosticSeverity:
-    value = severity.get(code, None) or severity.get(code_type, "error")
+    value = severity.get(code) or severity.get(code_type, "error")
     try:
         return DiagnosticSeverity[value.upper()]
     except ValueError:
         logger.debug(f"Severity {value.upper()} doesn't exist in DiagnosticSeverity")
-        pass
 
     return DiagnosticSeverity.INFO
 
@@ -117,7 +115,7 @@ def parse_output_using_regex(
             range=Range(start=start, end=end),
             message=message,
             severity=_get_severity(code or "", data["type"], severity),
-            code=code if code else NOTE_CODE if see_href else None,
+            code=code or (NOTE_CODE if see_href else None),
             code_description=href,
             source="mypy",
         )

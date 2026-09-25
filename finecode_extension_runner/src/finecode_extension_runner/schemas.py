@@ -30,7 +30,9 @@ class Action(BaseSchema):
 @dataclass
 class ServiceDeclaration(BaseSchema):
     interface: str
-    source: str
+    # `None` for a config-only entry, which carries config for a binding an
+    # activator owns and registers nothing itself (ADR-0070).
+    source: str | None = None
     config: dict[str, Any] | None = None
 
 
@@ -42,6 +44,9 @@ class UpdateConfigRequest(BaseSchema):
     actions: dict[str, Action]
     action_handler_configs: dict[str, dict[str, Any]]
     services: list[ServiceDeclaration] = field(default_factory=list)
+    # Service config overrides keyed by derived alias, forwarded verbatim by the
+    # WM and matched against bindings here (ADR-0070).
+    service_config_overrides: dict[str, dict[str, Any]] = field(default_factory=dict)
     # If provided, eagerly instantiate these handlers after config update.
     # Keys are action names, values are lists of handler names within that action.
     # None means no eager initialization (lazy, on first use).
@@ -60,12 +65,14 @@ class RunActionRequest(BaseSchema):
 
 @dataclass
 class RunActionOptions(BaseSchema):
-    wal_run_id: str
+    run_id: str
     meta: code_action.RunActionMeta
     partial_result_token: int | str | None = None
     progress_token: int | str | None = None
-    result_formats: list[Literal["json"] | Literal["string"]] = field(default_factory=lambda: ["json"])
-    caller_kwargs: dict | None = None   # NEW
+    result_formats: list[Literal["json", "string"]] = field(
+        default_factory=lambda: ["json"]
+    )
+    caller_kwargs: dict | None = None  # NEW
     traceparent: str | None = None
 
 
@@ -83,7 +90,7 @@ class RunHandlersRequest(BaseSchema):
     params: dict[str, Any] = field(default_factory=dict)
     previous_result: dict[str, Any] | None = None
     previous_context: dict[str, Any] | None = None
-    caller_kwargs: dict | None = None   # NEW
+    caller_kwargs: dict | None = None  # NEW
 
 
 @dataclass

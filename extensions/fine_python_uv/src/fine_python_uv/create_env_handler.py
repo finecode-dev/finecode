@@ -1,13 +1,19 @@
 import dataclasses
 from pathlib import Path
 
-from finecode_extension_api import code_action
 from fine_envs import create_env_action
 from fine_envs.create_envs_action import CreateEnvsRunResult
-from finecode_extension_api.interfaces import icommandrunner, ifilemanager, ilogger, iprojectactionrunner, iprojectinfoprovider
+from finecode_extension_api import code_action
+from finecode_extension_api.interfaces import (
+    icommandrunner,
+    ifilemanager,
+    ilogger,
+    iprojectactionrunner,
+    iprojectinfoprovider,
+)
 from finecode_extension_api.resource_uri import resource_uri_to_path
 
-from ._uv_common import dump_project_config, get_uv_executable
+from ._uv_common import get_uv_executable, temp_project_config_dump
 
 
 @dataclasses.dataclass
@@ -57,11 +63,12 @@ class UvCreateEnvHandler(
         if venv_python is None:
             return False
 
-        check_cmd = (
-            f'"{venv_python}" -c '
-            '"import sys; raise SystemExit(0 if sys.prefix != sys.base_prefix else 1)"'
-        )
-        self.logger.debug(f"Checking virtualenv validity: {check_cmd}")
+        check_cmd = [
+            str(venv_python),
+            "-c",
+            "import sys; raise SystemExit(0 if sys.prefix != sys.base_prefix else 1)",
+        ]
+        self.logger.debug(f"Checking virtualenv validity: {check_cmd!r}")
         process = await self.command_runner.run(check_cmd)
         await process.wait_for_end()
         if process.get_exit_code() != 0:
@@ -83,35 +90,42 @@ class UvCreateEnvHandler(
 
         if payload.recreate and venv_dir_path.exists():
             self.logger.debug(f"Remove virtualenv dir {venv_dir_path}")
-            await self.file_manager.remove_dir(venv_dir_path)
+            await self.file_manager.remove_dir(venv_dir_path, tolerant=True)
 
         venv_valid = await self._is_valid_virtualenv(venv_dir_path)
         if not venv_valid:
             self.logger.info(f"Creating virtualenv {venv_dir_path}")
             project_def_path = resource_uri_to_path(env_info.project_def_path)
-            dump_dir = await dump_project_config(
+            async with temp_project_config_dump(
                 project_def_path=project_def_path,
                 action_runner=self.action_runner,
                 project_info_provider=self.project_info_provider,
                 logger=self.logger,
                 meta=run_context.meta,
-            )
+            ) as dump_dir:
+                uv_executable = get_uv_executable()
+                # venv can exist but be invalid, use '--clear' to recreate it
+                cmd: list[str] = [str(uv_executable), "venv", "--clear"]
+                if env_info.interpreter:
+                    cmd.extend(["--python", str(env_info.interpreter)])
+                cmd.append(str(venv_dir_path))
+                self.logger.debug(f"Running uv: {cmd!r}")
+                process = await self.command_runner.run(cmd, cwd=dump_dir)
+                await process.wait_for_end()
+                if process.get_exit_code() != 0:
+                    error_output = process.get_error_output() or process.get_output()
+                    return CreateEnvsRunResult(
+                        errors=[
+                            (
+                                f"Failed to create virtualenv {venv_dir_path}:\n"
+                                f"{error_output}\n"
+                                "The config uv ran with was a temporary dump of "
+                                f"{project_def_path}; run `python -m finecode dump-config` "
+                                "for that project to inspect it."
+                            )
+                        ]
+                    )
+                return CreateEnvsRunResult(errors=[], created=True)
 
-            uv_executable = get_uv_executable()
-            # venv can exist but be invalid, use '--clear' to recreate it
-            python_flag = (
-                f' --python "{env_info.interpreter}"' if env_info.interpreter else ""
-            )
-            cmd = f'"{uv_executable}" venv --clear{python_flag} "{venv_dir_path}"'
-            self.logger.debug(f"Running uv: {cmd}")
-            process = await self.command_runner.run(cmd, cwd=dump_dir)
-            await process.wait_for_end()
-            if process.get_exit_code() != 0:
-                error_output = process.get_error_output() or process.get_output()
-                return CreateEnvsRunResult(
-                    errors=[f"Failed to create virtualenv {venv_dir_path}:\n{error_output}"]
-                )
-        else:
-            self.logger.info(f"Virtualenv in {env_info.name} exists already")
-
-        return CreateEnvsRunResult(errors=[])
+        self.logger.info(f"Virtualenv in {env_info.name} exists already")
+        return CreateEnvsRunResult(errors=[], created=False)

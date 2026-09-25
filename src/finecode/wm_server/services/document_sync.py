@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import pathlib
+
 from loguru import logger
 
 from finecode.wm_server import context, domain
@@ -37,7 +38,9 @@ async def handle_documents_opened(
         and file_path.is_relative_to(project_path)
     ]
 
-    document_info = domain.TextDocumentInfo(uri=uri, version=str(version or ""), text=text)
+    document_info = domain.TextDocumentInfo(
+        uri=uri, version=str(version or ""), text=text
+    )
     ws_context.opened_documents[uri] = document_info
     try:
         async with asyncio.TaskGroup() as tg:

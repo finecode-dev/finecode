@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
+import contextlib
 import subprocess
 import sys
 import threading
 import time
 
+import psutil
 import pytest
-
-psutil = pytest.importorskip("psutil")
 
 from tests.e2e.conftest import kill_group
 
@@ -48,8 +48,7 @@ def test_wm_exits_after_cli_run_completes(workspace_dir_with_er):
             try:
                 children = parent.children(recursive=False)
                 wm_procs = [
-                    c for c in children
-                    if "start-wm-server" in " ".join(c.cmdline())
+                    c for c in children if "start-wm-server" in " ".join(c.cmdline())
                 ]
                 if wm_procs:
                     wm_pid = wm_procs[0].pid
@@ -87,7 +86,5 @@ def test_wm_exits_after_cli_run_completes(workspace_dir_with_er):
     finally:
         kill_group(proc)
         if wm_pid is not None:
-            try:
+            with contextlib.suppress(psutil.NoSuchProcess):
                 psutil.Process(wm_pid).kill()
-            except psutil.NoSuchProcess:
-                pass

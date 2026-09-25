@@ -1,11 +1,10 @@
 from __future__ import annotations
 
+import asyncio
 import dataclasses
-import shlex
 import sys
 from pathlib import Path
 
-from finecode_extension_api import code_action
 from fine_test.list_tests_action import (
     ListTestsAction,
     ListTestsRunContext,
@@ -14,6 +13,7 @@ from fine_test.list_tests_action import (
     TestItem,
 )
 from fine_test.test_id import TestId
+from finecode_extension_api import code_action
 from finecode_extension_api.interfaces import (
     icommandrunner,
     ilogger,
@@ -23,6 +23,8 @@ from finecode_extension_api.resource_uri import (
     path_to_resource_uri,
     resource_uri_to_path,
 )
+
+from fine_python_pytest._default_targets import resolve_default_targets
 
 
 @dataclasses.dataclass
@@ -56,6 +58,24 @@ class PytestListTestsHandler(
     ) -> ListTestsRunResult:
         project_dir = self.project_info_provider.get_current_project_dir_path()
 
+        # Skip pytest before any progress scope is created, when nothing could
+        # be collected.
+        targets: list[str] | None = None
+        if not payload.file_paths:
+            targets = await asyncio.to_thread(
+                resolve_default_targets,
+                project_dir,
+                self.config.default_test_dirs,
+                self.config.addopts,
+            )
+            if targets is None:
+                self.logger.debug(
+                    f"Skipping pytest in {project_dir}: none of default_test_dirs"
+                    f" {self.config.default_test_dirs} exists and nothing else pytest"
+                    " would collect was found."
+                )
+                return ListTestsRunResult(tests=[])
+
         cmd_parts = [
             self.pytest_bin,
             "--collect-only",
@@ -66,18 +86,16 @@ class PytestListTestsHandler(
             cmd_parts.extend(
                 str(resource_uri_to_path(uri)) for uri in payload.file_paths
             )
-        elif self.config.default_test_dirs:
-            cmd_parts.extend(
-                d for d in self.config.default_test_dirs if (project_dir / d).exists()
-            )
+        else:
+            assert targets is not None  # the skip path returned above
+            cmd_parts.extend(targets)
 
         cmd_parts.extend(self.config.addopts)
 
-        cmd = shlex.join(cmd_parts)
-        self.logger.debug(f"Running pytest collect: {cmd}")
+        self.logger.debug(f"Running pytest collect: {cmd_parts!r}")
 
         async with run_context.progress("Discovering tests") as progress:
-            process = await self.command_runner.run(cmd, cwd=project_dir)
+            process = await self.command_runner.run(cmd_parts, cwd=project_dir)
             await progress.report("Collecting tests")
             await process.wait_for_end()
 
@@ -139,7 +157,9 @@ def _build_tree(node_ids: list[str], project_dir: Path) -> list[TestItem]:
             test_name, variant = _split_variant(parts[1])
             file_node.children.append(
                 TestItem(
-                    test_id=TestId(file_path=file_uri, test_name=test_name, variant=variant),
+                    test_id=TestId(
+                        file_path=file_uri, test_name=test_name, variant=variant
+                    ),
                     display_name=parts[1],
                     file_path=file_uri,
                 )

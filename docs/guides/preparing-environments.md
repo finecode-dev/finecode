@@ -50,27 +50,42 @@ Even so, explicit `[dependency-groups]` entries are still preferred when you wan
 
 Environments that need the project's runtime dependencies reference the project itself by name — for example `dev = ["finecode", ...]`. This pulls `[project.dependencies]` transitively through the project package and keeps the runtime dependency list in exactly one place. Do not re-list the project's runtime deps inside the group.
 
-### Workspace editable packages
+### Workspace packages
 
-In a workspace, local packages can be installed as editable installs. PEP 508 requirement strings cannot express editable installs from a local path, so FineCode provides a workspace-level mechanism in `finecode-workspace.toml` at the workspace root:
+In a workspace, local packages can be installed as editable installs, or from wheels built from the checkout. PEP 508 requirement strings cannot express editable installs from a local path, so FineCode provides a workspace-level mechanism in `finecode-workspace.toml` at the workspace root:
 
 ```toml
-[workspace]
-# When true, every project discovered in this workspace is automatically
-# installed as an editable install when it appears as a dependency.
-all_workspace_packages_editable = true
+[workspace.workspace_packages]
+# Defaults to true, so this table is optional: with no finecode-workspace.toml
+# every discovered project is a workspace package.
+all_projects = true
 
-# Optional: explicit paths to treat as editable installs — useful for
+# Optional: explicit paths to treat as workspace packages — useful for
 # vendored forks outside normal project discovery. Paths are relative to
 # the workspace root.
-editable_packages = [
+extra = [
     "./vendored_forks/some_lib",
 ]
 ```
 
-Any dependency whose package name matches a workspace editable package is automatically rewritten to an editable install from its declared path, across every env in every project. No per-env supplement tables are needed.
+How they are installed is selected separately, per dev-env (exact key, then the `local`/`ci` bucket, then the bucket default — `editable` for non-`ci`, `wheel` for `ci`; the CLI flag wins). Both entries are the defaults, so this table is optional:
 
-The resolved editable-packages set is the union of every discovered project (when `all_workspace_packages_editable` is `true`) and every explicit `editable_packages` entry.
+```toml
+[workspace.workspace_packages_install]
+local = "editable"
+ci    = "wheel"
+exclude = ["pkg-a"]
+```
+
+- `editable` rewrites a matching dependency to an editable install from its declared path, across every env in every project. No per-env supplement tables are needed.
+- `wheel` builds one wheel per package with `build_python_artifact` into `<workspace-root>/.venvs/dev_workspace/cache/wheelhouse` and installs it as a direct `name @ file:///…whl` reference, so every env resolves the package to the artifact built from the checkout — never a PyPI release. Each package is built by **its own project's** builder, so a project's handler override and config apply.
+- `exclude` keeps the named packages editable in every env and omits them from the wheelhouse — the escape hatch for a package no builder can turn into a wheel.
+
+In wheel mode, a workspace package that has no wheel in the wheelhouse is an **error** naming the package and pointing at `prepare-envs`; it is never silently installed editable. Only packages listed in `exclude` install editable in wheel mode.
+
+`prepare-envs --workspace-packages=wheel|editable` overrides the config for a single run. Wheel mode builds a workspace-wide wheelhouse, so it cannot be combined with `--project`: run `prepare-envs --workspace-packages=wheel` at the workspace root, or use the default editable mode for a `--project` run.
+
+The resolved workspace-packages set is the union of every discovered project (unless `all_projects = false`) and every explicit `extra` entry.
 
 ### Installing the project under test
 
@@ -147,7 +162,7 @@ After the root `dev_workspace` exists, FineCode can start its runner. `prepare-e
 
 In a multi-project workspace, subproject `dev_workspace` envs follow the same raw-then-merged pattern, but you do not run `bootstrap` for them manually. `prepare-envs` creates their raw `dev_workspace` envs automatically before starting their runners, then runs the preset-resolved install after those runners are available.
 
-Editable installs are only relevant for packages that are local to your workspace and that you want FineCode to install from source. If you enable workspace editable packages in `finecode-workspace.toml`, those local packages are rewritten to editable installs automatically (see [Workspace editable packages](#workspace-editable-packages)). Published FineCode packages such as `finecode` and `finecode_extension_runner` remain ordinary dependency requirements unless you are developing FineCode itself in a local checkout.
+Workspace packages are only relevant for packages that are local to your workspace. When you declare them in `finecode-workspace.toml`, those local packages are rewritten to editable installs or to wheels built from source, depending on the selected mode (see [Workspace packages](#workspace-packages)). Published FineCode packages such as `finecode` and `finecode_extension_runner` remain ordinary dependency requirements unless you are developing FineCode itself in a local checkout.
 
 ### Workspace root bootstrap (one-time)
 
@@ -209,6 +224,15 @@ The ER signals the problem by returning error code `-32001` (`ENV_REINSTALL_NEED
 
 The WM catches this, runs `CreateEnvsAction` + `InstallEnvsAction` for the affected env, then restarts the ER.
 
+### Other triggers
+
+The same install-then-restart repair also runs when a runner the run needs fails to start:
+
+- `NO_VENV`: the venv is missing (or was just wiped as stale/relocated). Repaired wherever the failure surfaces — the run gate, the dispatch start, and metadata resolution.
+- Crash before the port: the ER process exited before publishing its port (`ServerExitedBeforePort` in the failure's `__cause__` chain). Repaired only for an env the run needs — the run gate and the dispatch start — never during metadata resolution, and never for unselected matrix children, which the gate does not start.
+
+Timeouts (the port wait expiring while the process is still alive) are load problems, not broken venvs, and are never repaired. Every repair runs at most once per start attempt: if the restart still fails, the error names the env and the project. Concurrent repairs of the same env are serialized so two callers never install into one venv at the same time.
+
 ### Runner routing
 
 The runner that executes `CreateEnvsAction` / `InstallEnvsAction` during auto-repair depends on which env is being fixed:
@@ -248,6 +272,59 @@ python -m finecode prepare-envs --recreate
 
 Deletes all existing virtualenvs and rebuilds them from scratch. Use this when a venv becomes corrupted or when you want a clean slate after dependency changes.
 
+`--recreate` rebuilds the envs *discovery found* — it does not remove envs that are no longer declared. See [Orphaned environments](#orphaned-environments) below.
+
+### Orphaned environments
+
+An environment is **orphaned** when its `.venvs/` directory still exists but the project's resolved configuration no longer declares it. Nothing references it: no handler names it, no Extension Runner will ever start in it, and neither `prepare-envs` nor `prepare-envs --recreate` touches it, because both only act on envs that discovery found. It simply stays on disk.
+
+This is not an edge case — it is the normal result of ordinary configuration changes:
+
+- **renaming an env**, or dropping one from `[dependency-groups]`;
+- **a preset change** that stops contributing an env;
+- **converting a single-interpreter env to a matrix** (ADR-0047). This one is easy to miss, because it does not look like a removal. After expansion the matrix base name is gone from the configuration a handler sees — only the concrete children remain:
+
+  ```toml
+  [tool.finecode.env.testing]
+  interpreters = ["3.11", "3.12", "3.13"]
+  ```
+
+  → declares `testing@cpython-3.11`, `testing@cpython-3.12`, `testing@cpython-3.13`. The `.venvs/testing` directory created before the matrix existed is now orphaned. A matrix env's children are each a full virtualenv, so the leftover base is easily hundreds of megabytes per project.
+
+Orphan-ness is resolved **per project**: the same env name can be orphaned in one project and legitimately declared in another that has no matrix.
+
+Check first with [`list_envs`](../reference/actions.md#list_envs):
+
+```bash
+python -m finecode run list_envs
+```
+
+```text
+/workspaces/myrepo
+  dev_workspace         declared  created
+  testing@cpython-3.11  declared  created
+  testing@cpython-3.14  declared  MISSING
+  testing               ORPHANED  created
+```
+
+`MISSING` is not an orphan — it is a declared env whose venv has not been created yet (for example a matrix child excluded by [`default_interpreters`](#default-interpreter-subset)). Only `ORPHANED` rows are safe to delete.
+
+Then remove them with [`remove_envs`](../reference/actions.md#remove_envs), which defaults to exactly the orphaned set:
+
+```bash
+python -m finecode run remove_envs
+```
+
+To remove a specific env instead, name it — a still-declared env requires `force`, and the env FineCode itself is running in is never removable:
+
+```bash
+python -m finecode run remove_envs --env-names='["stale_env"]'
+python -m finecode run remove_envs --env-names='["dev_no_runtime"]' --force=true
+python -m finecode prepare-envs   # recreate what you forced away
+```
+
+Removal is deliberately tolerant of damage — a half-created venv or one whose files lost write permission is exactly what you want gone — and a single undeletable env is reported without aborting the rest.
+
 ### Filtering by project
 
 ```bash
@@ -268,32 +345,90 @@ For an ordinary, non-matrix env, this restricts the `install_envs` step (step 5)
 
 Useful when you've added a new handler in one env and want to update only that env without reinstalling everything.
 
+#### Matrix environments
+
+For a matrix environment (ADR-0047 — one declaring an `interpreters` axis), the rule above changes: naming a concrete matrix child — or its base name, which expands to all of its children — restricts **both** `create_envs` and `install_envs` to the selected children (PRD-0003 AC8). Unselected children of that matrix are not created at all, since there is no point creating a venv for an interpreter nobody asked for in this run.
+
+```bash
+# Select every child of the "testing" matrix env.
+python -m finecode prepare-envs --env=testing
+
+# Select only the cpython@3.11 child.
+python -m finecode prepare-envs --env=testing@cpython-3.11
+```
+
+A matrix base named by `--env` is always expanded to *all* of its children, ignoring that base's own `default_interpreters` policy (see below) — `--env` is more specific than a config default. A sibling matrix base *not* named by `--env` is unaffected by this and keeps applying its own config default (or its full axis, if it has none).
+
+### Filtering by interpreter
+
+```bash
+python -m finecode prepare-envs --interpreter=3.11
+python -m finecode prepare-envs --interpreter=pypy@3.11
+```
+
+Restricts every matrix environment's interpreter axis to the named interpreter(s), the same way for both `create_envs` and `install_envs`. `--interpreter` is repeatable to select more than one interpreter. Values may be the canonical `<impl>@<version>` form or a bare version, which is shorthand for `cpython@<version>`.
+
+`--interpreter` can be combined with `--env`: the effective selection is the intersection of the two — e.g. `--env=testing --interpreter=3.12` selects only `testing`'s `cpython@3.12` child. An `--interpreter` value that doesn't exist in a given matrix env's axis simply contributes nothing for that env (it is not an error by itself — see below for when a selector *is* rejected).
+
+Non-matrix envs are unaffected by `--interpreter`; they are always created, and installed unless excluded by `--env`.
+
+### Default interpreter subset
+
+A matrix environment can declare a default interpreter subset per dev-env, so that a plain `prepare-envs` run (no `--env`/`--interpreter`) still narrows the axis automatically:
+
+```toml
+[tool.finecode.env.testing]
+interpreters = ["3.11", "3.12", "3.13"]
+
+[tool.finecode.env.testing.default_interpreters]
+local = "newest"
+ci    = "all"
+```
+
+Each key is either an exact dev-env (`ide`/`cli`/`ai`/`git_hook`/`ci`) or one of the two buckets `local`/`ci` (see lookup below — `local` is a bucket name, not a dev-env); each value is a policy:
+
+- `"all"` — the full interpreter axis (this is also the implicit default when `default_interpreters` is absent — R7).
+- `"newest"` / `"oldest"` — the interpreter(s) at the maximum/minimum declared version. If two implementations share that version (e.g. `cpython@3.13` and `pypy@3.13`), both are selected — a shared version is never arbitrarily dropped.
+- An explicit list of interpreter strings (canonical or version-only shorthand), e.g. `["cpython@3.11", "cpython@3.13"]`.
+
+Lookup for the active dev-env `D` (see [dev environment detection](../cli.md#dev-environment-detection) — `ide`/`cli`/`ai`/`git_hook`/`ci`) tries, in order: the exact key `D`, then the bucket key (`"ci"` if `D == "ci"`, otherwise `"local"`), then falls back to `"all"`. In the example above, `local = "newest"` covers `ide`/`cli`/`ai`/`git_hook`, while `ci = "all"` covers `ci` — a common pattern where local development only needs the newest interpreter, but CI verifies every interpreter in the matrix.
+
+An explicit `--interpreter` selector always overrides the config default outright, for every matrix base. A config default (or its explicit-list policy) that names an interpreter outside the env's declared axis is rejected at resolution time with a clear error.
+
+### `run` uses the same selection
+
+`python -m finecode run` accepts the same `--env`/`--interpreter` selectors, with identical semantics (ADR-0050), to restrict which interpreter variants of a matrixed action actually execute — see [CLI reference — `run`](../cli.md#run). The config-declared `default_interpreters` policy applies there too: a plain `run` (no selectors) executes only the dev-env's default subset of a matrix (e.g. just the newest interpreter locally), while `ci` runs the full axis by default, exactly mirroring `prepare-envs`. Selection is resolved once per project (via `env_selection.resolve_selected_interpreters`) and passed down to whichever fan-out site handles the request — `matrix_runner` (non-streaming) or `matrix_streaming` (CLI / IDE streaming) — so both paths filter identically.
+
+---
+
 ## Bounding concurrency
 
-`prepare-envs` fans work out at two independent points, and each spawns real OS processes:
+`prepare-envs` fans work out across projects and across envs, and each fan-out ultimately spawns
+real OS processes. All of them draw from one machine-wide budget (ADR-0090): the WM leases
+subprocess *work slots* to each ER for the duration of an action run, and every spawn inside that
+ER — `CommandRunner` subprocesses (e.g. `uv install`) and `ProcessExecutor` pool workers alike —
+draws from the ER's leased gate. The work budget is the work half of the combined
+subprocess-concurrency budget: one machine-bound total, split into an ER-startup cap and this work
+cap so their sum always leaves a core free for the WM's event loop
+([Combined subprocess-concurrency budget](wm-server-internals.md#combined-subprocess-concurrency-budget),
+ADR-0093). See [Process budget](wm-server-internals.md#process-budget) for the mechanics.
 
-1. **Across projects** — `create_envs`/`install_envs` run concurrently for every project in the workspace, each on its own Extension Runner (ER) process.
-2. **Across envs, within one ER** — `install_envs` installs every env of a project concurrently, each running a package-manager subprocess (e.g. `uv install`). Interpreter-matrix envs (ADR-0047) make this worse, since one matrix env can expand into many concurrent children.
+A nested run (one asked for by another run's fan-out) is always granted at least one slot, so it
+can always make progress; the whole machine is never over-subscribed in the common, non-nested
+case.
 
-On a resource-constrained machine these two fan-outs compose multiplicatively — N projects × M envs concurrent subprocesses — and can starve the WM's own event loop. Both fan-outs are bounded to avoid this (ADR-0055).
+`prepare-envs` closes the gap for its own big fan-out: steps 5 and 6 give each project's
+`create_envs` / `install_envs` run a budget that waits and asks for `max(1, W // N)` slots
+(`W` = the work cap, `N` = the number of in-scope projects). With more projects than slots every
+project takes one, so about `W` projects build envs at once; with no more projects than slots a
+single project still gets the whole work cap. Step 3's batched `dev_workspace` bootstrap and
+auto-repair keep the ER's full request, because they run *inside* other dispatches and must not
+wait on slots their ancestors hold.
 
-### Layer 1 — concurrent projects
+### Optional per-ER ceiling
 
-```bash
-python -m finecode prepare-envs --max-concurrent-projects=2
-```
-
-Or via environment variable:
-
-```bash
-export FINECODE_WM_PREPARE_ENVS_MAX_CONCURRENT_PROJECTS=2
-```
-
-Priority: `--max-concurrent-projects` > the env var > the default formula (below). This is a **machine-bound** setting — it has no `finecode-workspace.toml` equivalent, because that file is shared/committed and a number tuned for one developer's machine would be wrong on everyone else's.
-
-### Layer 2 — concurrent subprocesses per ER
-
-Every subprocess spawned inside an ER (via `CommandRunner`, e.g. `uv install`) goes through a shared cap, configured as service config on `ICommandRunner` (ADR-0056):
+A project that wants to pin one noisy ER below the machine budget can still set a local ceiling as
+service config on `ICommandRunner` (ADR-0056):
 
 ```toml
 [[tool.finecode.service]]
@@ -303,33 +438,24 @@ env = "dev_no_runtime"
 config.max_concurrent_processes = 4
 ```
 
-Since this is also a machine-bound tuning value rather than a project setting, put it in a gitignored `finecode-user.toml` instead of a committed `pyproject.toml` — see [`finecode-user.toml`](../configuration.md#finecode-usertoml).
+This is an *additional* ceiling on top of the shared gate, not a replacement for it, and defaults
+to unset. Since it is a machine-bound tuning value rather than a project setting, put it in a
+gitignored `finecode-user.toml` instead of a committed `pyproject.toml` — see
+[`finecode-user.toml`](../configuration.md#finecode-usertoml).
 
-### The default formula
+### A separate budget: ER startup concurrency
 
-When a layer's own cap is left unset, both layers default from the same formula:
+The process budget above bounds subprocess *work*. A related but independent cap bounds how many
+Extension Runner *processes* may be starting at once, regardless of which command triggered the
+starts — including `prepare-envs`' own "start runners in each `dev_workspace`" step, workspace
+init, and a matrixed `run`. It is deliberately separate: the WM starts runners lazily *inside* a
+fan-out, so a run holding process-budget slots must never block on the same budget to start the ER
+it is fanning out into (ADR-0063, ADR-0090).
 
-1. Start from the machine's usable CPU budget: `len(os.sched_getaffinity(0))` (respects container CPU quotas/pinning, unlike `os.cpu_count()`), minus one core of headroom so the WM keeps a guaranteed scheduling slot even under full subprocess load.
-2. Split that budget between the two layers via its square root, rather than handing each layer the full budget independently. The two layers compose multiplicatively in the worst case, so giving each the full budget would let their product overshoot the machine's real capacity by up to a squared factor (e.g. a 7-subprocess budget → 49 concurrent subprocesses if both layers used 7). The square-root split keeps the worst-case product close to the actual machine budget:
-
-   | Machine budget | Per-layer default | Worst-case product |
-   | --- | --- | --- |
-   | 1 | 1 | 1 |
-   | 3 | 2 | 4 |
-   | 7 | 3 | 9 |
-   | 15 | 4 | 16 |
-
-A configured value of `0` or less at either layer is treated as `1` — a zero-sized concurrency limit would deadlock the affected step forever, not disable it.
-
-### A third, separate cap: ER startup concurrency
-
-The two layers above bound `create_envs`/`install_envs` specifically. A related but independent cap
-bounds how many Extension Runner *processes* may be starting at once, regardless of which command
-triggered the starts — including `prepare-envs`' own "start runners in each `dev_workspace`" step,
-workspace init, and a matrixed `run`. It uses the same machine-budget formula but not the sqrt-split
-(a single flat axis, not two composing layers), and is configured separately via
-`FINECODE_WM_MAX_CONCURRENT_ER_STARTS`. See [ER startup concurrency](wm-server-internals.md#er-startup-concurrency)
-(ADR-0063) for the full picture.
+It is sized as the other half of the combined budget — set `FINECODE_MAX_CONCURRENT_PROCESSES` to
+size the total and both halves move together. There is no separate ER-startup knob. See
+[Combined subprocess-concurrency budget](wm-server-internals.md#combined-subprocess-concurrency-budget)
+(ADR-0093).
 
 ---
 
@@ -337,7 +463,7 @@ workspace init, and a matrixed `run`. It uses the same machine-budget formula bu
 
 The built-in `create_envs`/`install_envs` handlers (`fine_python_uv`) shell out to `uv`. `uv` avoids re-copying package files into every venv by hardlinking (or CoW-cloning) them out of its local cache directly into each venv's `site-packages` — this is what keeps N venvs from each consuming the full size of every shared dependency.
 
-Hardlinks and CoW clones only work within a single filesystem. If your devcontainer (or any container setup) puts `uv`'s cache (`~/.cache/uv` by default) on a different filesystem than the venvs it populates, `uv` silently falls back to full copies for every package in every venv — no warning, no error. This is easy to hit by accident: a `docker-compose.yml`/`devcontainer.json` that bind-mounts the project as one volume (e.g. `.:/workspaces/myproject`) leaves the container's home directory — where `uv`'s default cache lives — on the container's own root/overlay filesystem, a different device from the bind-mounted workspace.
+Hardlinks and CoW clones only work within a single filesystem. If your devcontainer (or any container setup) puts `uv`'s cache (`~/.cache/uv` by default) on a different filesystem than the venvs it populates, `uv` prints `Failed to hardlink files; falling back to full copy. This may lead to degraded performance.` and continues with full copies for every package in every venv. This is easy to hit by accident: a `docker-compose.yml`/`devcontainer.json` that bind-mounts the project as one volume (e.g. `.:/workspaces/myproject`) leaves the container's home directory — where `uv`'s default cache lives — on the container's own root/overlay filesystem, a different device from the bind-mounted workspace.
 
 **Symptom:** every env (including matrix children like `testing@cpython-3.11`) grows by the full size of every sizeable dependency instead of sharing one cached copy. `uv` itself is a good example if `fine_python_uv` is present in an env — its own PyPI package bundles a ~60MB binary. Across a workspace with many projects × many envs, this adds up to tens of GB of pure duplication.
 
@@ -353,11 +479,18 @@ environment:
 .uv-cache
 ```
 
+CI does the same, into a per-job scratch directory that `actions/cache` carries across runs: `UV_CACHE_DIR=$RUNNER_TEMP/uv-cache` in the three `prepare-envs` jobs (`build`, `audit-private`, `deploy`). `RUNNER_TEMP` is on the workspace volume and is wiped between jobs, so the cache is restored only when the venvs cache misses (a hit means nothing installs) and saved only after a successful install. Before saving, the workspace packages are removed with `uv cache clean <names>` followed by `uv cache prune`, so the persisted entry holds only third-party PyPI artifacts; the `audit-private` job uses a separate key prefix so a public run can never restore an entry containing private-package sources. The cache key carries a `YYYY-MM` generation prefix, which starts a fresh chain each month and bounds the wheels of superseded versions that plain `prune` never removes.
+
 **Verifying it worked:** check the link count on a file that should be shared, not its apparent size. `du -sh` on a single venv directory reports the file's full logical size regardless of hardlinking — it has no visibility into the fact that the same blocks are also claimed by the cache directory outside its traversal.
 
 ```bash
+# Linux:
 stat -c '%h' path/to/venv/bin/uv   # >1 means hardlinked; 1 means it was copied
+# Windows:
+fsutil hardlink list path\to\venv\Scripts\uv.exe   # more than one path listed means hardlinked
 ```
+
+On macOS, APFS uses copy-on-write clones rather than hardlinks, so the link count stays `1` even when sharing works. The signal there is the *absence* of the `Failed to hardlink files; falling back to full copy` warning, not the link count.
 
 ---
 

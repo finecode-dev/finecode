@@ -1,0 +1,6 @@
+# The action slot only. No handler is registered here on purpose: this preset
+# names the capability, and a backend extension (fine_agent_pi, ...) supplies
+# the one handler that implements it. Including this preset alone leaves a
+# no-op slot rather than committing a project to an AI backend.
+[tool.finecode.action.run_agent_task]
+source = "fine_agent.RunAgentTaskAction"

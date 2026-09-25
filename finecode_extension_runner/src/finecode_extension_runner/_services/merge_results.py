@@ -1,8 +1,8 @@
 import dataclasses
 
+from finecode_extension_api import code_action
 from loguru import logger
 
-from finecode_extension_api import code_action
 from finecode_extension_runner import context, run_utils
 from finecode_extension_runner._converter import converter as _converter
 
@@ -47,5 +47,7 @@ async def merge_results(
     if merged is None:
         return {}
 
-    logger.trace(f"merge_results: merged {len(non_empty)} results for action '{action_name}'")
+    logger.trace(
+        f"merge_results: merged {len(non_empty)} results for action '{action_name}'"
+    )
     return dataclasses.asdict(merged)

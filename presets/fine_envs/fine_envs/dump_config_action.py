@@ -21,6 +21,9 @@ class DumpConfigRunPayload(code_action.RunActionPayload):
     source_file_path: ResourceUri
     project_raw_config: dict[str, typing.Any]
     target_file_path: ResourceUri
+    format_output: bool = True
+    """Format the dump with the project's formatter before saving. Disable when the dump is
+    machine input rather than something a person reads, or the formatter is unavailable."""
 
 
 class DumpConfigRunContext(code_action.RunActionContext[DumpConfigRunPayload]):
@@ -39,9 +42,11 @@ class DumpConfigRunContext(code_action.RunActionContext[DumpConfigRunPayload]):
         )
 
         self.raw_config_dump: dict[str, typing.Any] = {}
+        self.config_dump_content: str | None = None
 
     async def init(self) -> None:
         self.raw_config_dump = self.initial_payload.project_raw_config
+        self.config_dump_content = None
 
 
 @dataclasses.dataclass

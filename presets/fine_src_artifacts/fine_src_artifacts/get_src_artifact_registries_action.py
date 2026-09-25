@@ -7,8 +7,9 @@ from finecode_extension_api.resource_uri import ResourceUri
 
 @dataclasses.dataclass
 class Registry:
-    url: str
     name: str
+    index_url: str
+    upload_url: str
 
 
 @dataclasses.dataclass
@@ -37,7 +38,10 @@ class GetSrcArtifactRegistriesRunResult(code_action.RunActionResult):
 
         lines: list[str] = []
         for registry in self.registries:
-            lines.append(f"{registry.name}: {registry.url}")
+            lines.append(
+                f"{registry.name}: index {registry.index_url},"
+                f" upload {registry.upload_url}"
+            )
         return "\n".join(lines)
 
     @property

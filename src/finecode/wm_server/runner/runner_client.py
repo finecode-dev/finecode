@@ -7,27 +7,39 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import enum
-import typing
 import pathlib
+import typing
 from typing import Any
 
 from loguru import logger
 
-import finecode.wm_server.domain as domain
-from finecode.wm_server.config.config_models import ErLoggingConfig
-from finecode.wm_server.runner import _internal_client_types, _internal_client_api
-from finecode.wm_server.utils.iterable_subscribe import IterableSubscribe
 import finecode_jsonrpc as jsonrpc_client
-
+from finecode.wm_server import domain
+from finecode.wm_server.domain import ErLoggingConfig
+from finecode.wm_server.runner import _internal_client_api, _internal_client_types
+from finecode.wm_server.utils.iterable_subscribe import IterableSubscribe
+from finecode_extension_runner import schema_utils
 
 # reexport
 BaseRunnerRequestException = jsonrpc_client.BaseRunnerRequestException
 DidChangeTextDocumentParams = _internal_client_types.DidChangeTextDocumentParams
 VersionedTextDocumentIdentifier = _internal_client_types.VersionedTextDocumentIdentifier
-TextDocumentContentChangeWholeDocument = _internal_client_types.TextDocumentContentChangeWholeDocument
-TextDocumentContentChangePartial = _internal_client_types.TextDocumentContentChangePartial
+TextDocumentContentChangeWholeDocument = (
+    _internal_client_types.TextDocumentContentChangeWholeDocument
+)
+TextDocumentContentChangePartial = (
+    _internal_client_types.TextDocumentContentChangePartial
+)
 Range = _internal_client_types.Range
 Position = _internal_client_types.Position
+
+
+# Control-plane RPCs are never legitimately long, so a dead channel must fail
+# them within a bound instead of parking forever. ``update_config`` gets the
+# larger bound because it rebuilds the ER's RunnerContext (imports handlers)
+# right after a cold start; the others introspect already-imported modules.
+_ER_UPDATE_CONFIG_TIMEOUT_SEC: typing.Final = 60
+_ER_CONTROL_RPC_TIMEOUT_SEC: typing.Final = 30
 
 
 class ActionRunFailed(jsonrpc_client.BaseRunnerRequestException): ...
@@ -59,6 +71,12 @@ class ExtensionRunnerInfo(domain.ExtensionRunner):
     # Last (enabled, level) sent via finecodeRunner/updateLogging, to avoid
     # redundant RPCs (ADR-0049).
     log_forwarding: tuple[bool, str] | None = dataclasses.field(default=None)
+    # While a start holds `er_startup_semaphore` (spawn→RUNNING, ADR-0100), a
+    # yielding back-channel handler may call this once to release the slot
+    # (see `_yield_startup_slot`). None outside that window.
+    startup_slot_release: typing.Callable[[], None] | None = dataclasses.field(
+        default=None
+    )
 
 
 # Alias for backward compatibility — status enum now lives in domain
@@ -66,7 +84,7 @@ RunnerStatus = domain.ExtensionRunnerStatus
 
 
 # JSON object or text
-type RunActionRawResult = dict[str, Any] | str
+RunActionRawResult: typing.TypeAlias = dict[str, Any] | str
 
 
 @dataclasses.dataclass
@@ -82,7 +100,9 @@ class RunActionResponse:
         return result
 
     def text(self) -> str:
-        result = self.result_by_format.get("styled_text_json") or self.result_by_format.get("string")
+        result = self.result_by_format.get(
+            "styled_text_json"
+        ) or self.result_by_format.get("string")
         if result is None:
             raise ActionRunFailed("Expected text result format but it was not returned")
         return result
@@ -98,6 +118,7 @@ class RunHandlersResponse:
     ``context`` is the serialized STATE_TYPE dict for context chaining
     (pass as ``previous_context`` to the next segment's run_handlers call).
     """
+
     raw_result: dict
     result_by_format: dict[str, RunActionRawResult]
     return_code: int
@@ -111,7 +132,9 @@ class RunHandlersResponse:
         return result
 
     def text(self) -> str:
-        result = self.result_by_format.get("styled_text_json") or self.result_by_format.get("string")
+        result = self.result_by_format.get(
+            "styled_text_json"
+        ) or self.result_by_format.get("string")
         if result is None:
             raise ActionRunFailed("Expected text result format but it was not returned")
         return result
@@ -123,17 +146,17 @@ class RunResultFormat(enum.Enum):
 
 
 class RunActionTrigger(enum.StrEnum):
-    USER = 'user'
-    SYSTEM = 'system'
-    UNKNOWN = 'unknown'
+    USER = "user"
+    SYSTEM = "system"
+    UNKNOWN = "unknown"
 
 
 class DevEnv(enum.StrEnum):
-    IDE = 'ide'
-    CLI = 'cli'
-    AI = 'ai'
-    GIT_HOOK = 'git_hook'
-    CI = 'ci'
+    IDE = "ide"
+    CLI = "cli"
+    AI = "ai"
+    GIT_HOOK = "git_hook"
+    CI = "ci"
 
 
 async def run_action(
@@ -165,8 +188,7 @@ async def run_action(
         )
     except jsonrpc_client.ServerStoppedError as exc:
         raise ActionRunFailed(
-            "Runner stopped during execution — it may have been restarted."
-            " Try again."
+            "Runner stopped during execution — it may have been restarted. Try again."
         ) from exc
     except jsonrpc_client.RequestCancelledError as error:
         logger.trace(
@@ -175,7 +197,7 @@ async def run_action(
         await _internal_client_api.cancel_request(
             client=runner.client, request_id=error.request_id
         )
-        raise error
+        raise
     except jsonrpc_client.ErrorOnRequest as error:
         if error.error.code == jsonrpc_client.REQUEST_CANCELLED:
             raise ActionRunCancelled(error.error.message) from error
@@ -194,7 +216,9 @@ async def run_action(
     if status == "stopped":
         raise ActionRunStopped(message=result_by_format)
 
-    return RunActionResponse(result_by_format=result_by_format, return_code=return_code, status=status)
+    return RunActionResponse(
+        result_by_format=result_by_format, return_code=return_code, status=status
+    )
 
 
 async def run_handlers(
@@ -249,7 +273,7 @@ async def run_handlers(
         await _internal_client_api.cancel_request(
             client=runner.client, request_id=error.request_id
         )
-        raise error
+        raise
     except jsonrpc_client.ErrorOnRequest as error:
         if error.error.code == jsonrpc_client.REQUEST_CANCELLED:
             raise ActionRunCancelled(error.error.message) from error
@@ -298,17 +322,25 @@ async def merge_results(
     return merge_result.merged
 
 
-async def reload_action(runner: ExtensionRunnerInfo, action_name: str) -> None:
+async def reload_action(runner: ExtensionRunnerInfo, action_name: str) -> bool:
+    """Ask a runner to re-import an action and its handlers.
+
+    Returns whether the request was sent: a runner that is not running has
+    nothing to reload, which is a normal condition rather than an error, but the
+    caller must be able to tell that from a reload that happened.
+    """
     if not runner.initialized_event.is_set():
         await runner.initialized_event.wait()
 
     if runner.status != RunnerStatus.RUNNING:
-        return
+        return False
 
     await runner.client.send_request(
         method=_internal_client_types.ER_RELOAD_ACTION,
         params=_internal_client_types.ErReloadActionParams(action_name=action_name),
+        timeout=_ER_CONTROL_RPC_TIMEOUT_SEC,
     )
+    return True
 
 
 async def resolve_source(runner: ExtensionRunnerInfo, source: str) -> str | None:
@@ -340,12 +372,14 @@ async def resolve_action_meta(runner: ExtensionRunnerInfo) -> dict[str, dict]:
     """Ask the ER to resolve action meta info (canonical source + execution mode)."""
     response = await runner.client.send_request(
         method=_internal_client_types.ER_RESOLVE_ACTION_META,
-        timeout=None,
+        timeout=_ER_CONTROL_RPC_TIMEOUT_SEC,
     )
     return response.result
 
 
-async def get_payload_schemas(runner: ExtensionRunnerInfo) -> dict[str, dict | None]:
+async def get_payload_schemas(
+    runner: ExtensionRunnerInfo,
+) -> dict[str, schema_utils.PayloadSchema | None]:
     """Fetch payload schemas for all actions known to the runner."""
     if not runner.initialized_event.is_set():
         await runner.initialized_event.wait()
@@ -357,7 +391,7 @@ async def get_payload_schemas(runner: ExtensionRunnerInfo) -> dict[str, dict | N
 
     response = await runner.client.send_request(
         method=_internal_client_types.ER_GET_PAYLOAD_SCHEMAS,
-        timeout=None,
+        timeout=_ER_CONTROL_RPC_TIMEOUT_SEC,
     )
     return response.result
 
@@ -371,7 +405,10 @@ async def resolve_package_path(
     # checked here.
     response = await runner.client.send_request(
         method=_internal_client_types.ER_RESOLVE_PACKAGE_PATH,
-        params=_internal_client_types.ErResolvePackagePathParams(package_name=package_name),
+        params=_internal_client_types.ErResolvePackagePathParams(
+            package_name=package_name
+        ),
+        timeout=_ER_CONTROL_RPC_TIMEOUT_SEC,
     )
     return {"packagePath": response.result.package_path}
 
@@ -387,6 +424,12 @@ class RunnerConfig:
     # config by handler source
     action_handler_configs: dict[str, dict[str, Any]]
     services: list[domain.ServiceDeclaration] = dataclasses.field(default_factory=list)
+    # Service config overrides keyed by derived alias. Forwarded verbatim: the ER
+    # matches them against its bindings, because activator-registered services
+    # are invisible from here (ADR-0070).
+    service_config_overrides: dict[str, dict[str, Any]] = dataclasses.field(
+        default_factory=dict
+    )
     # If provided, eagerly instantiate these handlers after config update.
     # Keys are action names, values are lists of handler names within that action.
     handlers_to_initialize: dict[str, list[str]] | None = None
@@ -398,6 +441,7 @@ class RunnerConfig:
             "actions": [action.to_dict() for action in self.actions],
             "action_handler_configs": self.action_handler_configs,
             "services": [svc.to_dict() for svc in self.services],
+            "service_config_overrides": self.service_config_overrides,
             "logging": {
                 "defaultLevel": self.logging.default_level,
                 "logGroups": self.logging.log_groups,
@@ -422,10 +466,13 @@ async def update_config(
             project_def_path=project_def_path.as_posix(),
             config=config.to_dict(),
         ),
+        timeout=_ER_UPDATE_CONFIG_TIMEOUT_SEC,
     )
 
 
-async def update_logging(runner: ExtensionRunnerInfo, forward: bool, forward_level: str) -> None:
+async def update_logging(
+    runner: ExtensionRunnerInfo, forward: bool, forward_level: str
+) -> None:
     """Toggle ER->WM log forwarding via the dedicated ``finecodeRunner/updateLogging``
     request. Process-level only on the ER side -- does NOT rebuild RunnerContext
     (contrast ``update_config``)."""
@@ -434,6 +481,20 @@ async def update_logging(runner: ExtensionRunnerInfo, forward: bool, forward_lev
         params=_internal_client_types.ErUpdateLoggingParams(
             forward=forward, forward_level=forward_level
         ),
+        timeout=_ER_CONTROL_RPC_TIMEOUT_SEC,
+    )
+
+
+async def update_process_budget(runner: ExtensionRunnerInfo, target: int) -> None:
+    """Resize an ER's process-slot gate via ``finecodeRunner/updateProcessBudget``.
+
+    Process-level only on the ER side -- does NOT rebuild RunnerContext
+    (contrast ``update_config``). See ADR-0090.
+    """
+    await runner.client.send_request(
+        method=_internal_client_types.ER_UPDATE_PROCESS_BUDGET,
+        params=_internal_client_types.ErUpdateProcessBudgetParams(target=target),
+        timeout=_ER_CONTROL_RPC_TIMEOUT_SEC,
     )
 
 
@@ -463,7 +524,11 @@ async def notify_document_did_close(
         ),
     )
 
-async def notify_document_did_change(runner: ExtensionRunnerInfo, change_params: _internal_client_types.DidChangeTextDocumentParams) -> None:
+
+async def notify_document_did_change(
+    runner: ExtensionRunnerInfo,
+    change_params: _internal_client_types.DidChangeTextDocumentParams,
+) -> None:
     runner.client.notify(
         method=_internal_client_types.TEXT_DOCUMENT_DID_CHANGE,
         params=change_params,
@@ -471,23 +536,24 @@ async def notify_document_did_change(runner: ExtensionRunnerInfo, change_params:
 
 
 __all__ = [
+    "ActionRunCancelled",
     "ActionRunFailed",
     "ActionRunStopped",
-    "ActionRunCancelled",
     "ExtensionRunnerInfo",
-    "RunnerStatus",
     "RunActionRawResult",
     "RunActionResponse",
     "RunResultFormat",
-    "run_action",
+    "RunnerConfig",
+    "RunnerStatus",
+    "get_payload_schemas",
     "merge_results",
+    "notify_document_did_close",
+    "notify_document_did_open",
     "reload_action",
     "resolve_action_meta",
-    "get_payload_schemas",
     "resolve_package_path",
-    "RunnerConfig",
+    "run_action",
     "update_config",
     "update_logging",
-    "notify_document_did_open",
-    "notify_document_did_close",
+    "update_process_budget",
 ]

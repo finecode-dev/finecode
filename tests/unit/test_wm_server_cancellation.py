@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-import finecode_jsonrpc
 import pytest
 
+import finecode_jsonrpc
 from finecode.wm_server import wm_server
 from finecode.wm_server.errors import ActionCancelledError
 

@@ -7,24 +7,24 @@ except ModuleNotFoundError:
     import tomli as tomllib  # type: ignore[no-redef]
 
 from finecode_extension_api import code_action
+from finecode_extension_api.interfaces import ilogger, iprojectactionrunner
 from finecode_extension_api.resource_uri import (
     path_to_resource_uri,
     resource_uri_to_path,
 )
+
 from fine_envs import (
+    dependency_config_utils,
     install_deps_in_env_action,
     install_env_action,
 )
 from fine_envs.install_envs_action import (
     InstallEnvsRunResult,
 )
-from finecode_extension_api.interfaces import ilogger, iprojectactionrunner
 
 
 @dataclasses.dataclass
-class InstallEnvInstallDepsFromLockHandlerConfig(
-    code_action.ActionHandlerConfig
-): ...
+class InstallEnvInstallDepsFromLockHandlerConfig(code_action.ActionHandlerConfig): ...
 
 
 class InstallEnvInstallDepsFromLockHandler(
@@ -36,7 +36,9 @@ class InstallEnvInstallDepsFromLockHandler(
     """Install dependencies for a single environment from a lock file (e.g. pylock.toml)."""
 
     def __init__(
-        self, action_runner: iprojectactionrunner.IProjectActionRunner, logger: ilogger.ILogger
+        self,
+        action_runner: iprojectactionrunner.IProjectActionRunner,
+        logger: ilogger.ILogger,
     ) -> None:
         self.action_runner = action_runner
         self.logger = logger
@@ -59,16 +61,20 @@ class InstallEnvInstallDepsFromLockHandler(
             await progress.report("Reading lock file")
             dependencies = _parse_lock_file(lock_file_path)
 
-            install_deps_payload = install_deps_in_env_action.InstallDepsInEnvRunPayload(
-                env_name=env.name,
-                venv_dir_path=env.venv_dir_path,
-                project_dir_path=path_to_resource_uri(project_dir_path),
-                dependencies=dependencies,
+            install_deps_payload = (
+                install_deps_in_env_action.InstallDepsInEnvRunPayload(
+                    env_name=env.name,
+                    venv_dir_path=env.venv_dir_path,
+                    project_dir_path=path_to_resource_uri(project_dir_path),
+                    dependencies=dependencies,
+                )
             )
 
             await progress.report("Installing dependencies")
             result = await self.action_runner.run_action(
-                action_type=iprojectactionrunner.ActionRef.from_type(install_deps_in_env_action.InstallDepsInEnvAction),
+                action_type=iprojectactionrunner.ActionRef.from_type(
+                    install_deps_in_env_action.InstallDepsInEnvAction
+                ),
                 payload=install_deps_payload,
                 meta=run_context.meta,
             )
@@ -99,7 +105,7 @@ def _parse_lock_file(
             raw_path = pathlib.Path(directory.get("path", ""))
             resolved_path = (lock_file_path.parent / raw_path).resolve()
             editable = directory.get("editable", False)
-            version_or_source = f" @ file://{resolved_path}"
+            version_or_source = dependency_config_utils.direct_reference(resolved_path)
 
         dependencies.append(
             install_deps_in_env_action.Dependency(

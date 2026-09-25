@@ -9,21 +9,17 @@ Public API
 
 Both functions raise :class:`PrepareEnvsFailed` on failure.
 """
+
 from __future__ import annotations
 
 import asyncio
-import os
+import json
 import pathlib
 import uuid
 from typing import TYPE_CHECKING, Any
 
+from finecode_extension_api.resource_uri import resource_uri_to_path
 from loguru import logger
-
-from finecode_extension_runner.concurrency import (
-    ConcurrencyDecision,
-    default_layered_concurrency,
-    machine_subprocess_budget,
-)
 
 from finecode import user_messages
 from finecode.wm_server import context, domain
@@ -36,34 +32,6 @@ class PrepareEnvsFailed(Exception):
     def __init__(self, message: str) -> None:
         super().__init__(message)
         self.message = message
-
-
-def resolve_project_concurrency(cli_value: int | None) -> ConcurrencyDecision:
-    """Effective cap on concurrent projects for `prepare-envs`, with the
-    reason it was picked (for logging — see `ConcurrencyDecision`).
-
-    Priority: --max-concurrent-projects CLI flag (if passed) >
-    FINECODE_WM_PREPARE_ENVS_MAX_CONCURRENT_PROJECTS env var (if set) >
-    `default_layered_concurrency()`. Intentionally has no
-    finecode-workspace.toml equivalent: this value is bound to the
-    machine invoking prepare-envs, not to the project, so committing it
-    to shared config would be wrong on every teammate's machine.
-    """
-    if cli_value is not None:
-        return ConcurrencyDecision(max(cli_value, 1), "--max-concurrent-projects flag")
-    if (
-        env_value := os.environ.get(
-            "FINECODE_WM_PREPARE_ENVS_MAX_CONCURRENT_PROJECTS"
-        )
-    ) is not None:
-        return ConcurrencyDecision(
-            max(int(env_value), 1),
-            "FINECODE_WM_PREPARE_ENVS_MAX_CONCURRENT_PROJECTS env var",
-        )
-    return ConcurrencyDecision(
-        default_layered_concurrency(),
-        f"computed default (machine budget {machine_subprocess_budget()}, sqrt-split)",
-    )
 
 
 def build_create_envs_params(
@@ -94,11 +62,25 @@ def build_create_envs_params(
     return {"recreate": recreate}
 
 
+def project_fan_out_budget(work_cap: int, project_count: int) -> domain.RunBudget:
+    """Each member of a prepare-envs project fan-out waits for its share of the budget.
+
+    ``work_cap // project_count`` (never below one) keeps about ``work_cap``
+    projects in flight while holding the fan-out's total at the budget; with
+    fewer projects than slots, each still gets the full ``work_cap``.
+    """
+    if project_count <= 0:
+        return domain.RunBudget(waits=True, max_slots=1)
+    return domain.RunBudget(waits=True, max_slots=max(1, work_cap // project_count))
+
+
 async def _run_env_action(
     action_source: str,
     params: dict,
     executor_project: domain.CollectedProject,
     ws_context: context.WorkspaceContext,
+    *,
+    budget: domain.RunBudget,
 ) -> str | None:
     """Run a ``fine_envs`` action on *executor_project*'s dev_workspace runner.
 
@@ -108,20 +90,30 @@ async def _run_env_action(
     forwards each ``report`` event as a user message, so a single slow batched
     call still shows which env is currently being created/installed.
 
+    ``budget`` declares how the process budget treats this dispatch (ADR-0094).
+    It has no default: a waiting budget and a non-waiting one have opposite
+    failure modes, so which one this is must be written at every call site.
+
     Returns an error string on failure, ``None`` on success.
     """
     from finecode.wm_server.runner import runner_client as rc
     from finecode.wm_server.services import run_service
     from finecode.wm_server.services.run_service import proxy_utils
 
-    action = next((a for a in executor_project.actions if a.source == action_source), None)
+    action = next(
+        (a for a in executor_project.actions if a.source == action_source), None
+    )
     if action is None or action.canonical_source is None:
         return f"{action_source} not available in project '{executor_project.name}'"
 
     progress_token = str(uuid.uuid4())
-    progress_list: proxy_utils.AsyncList[domain.ProgressRawValue] = proxy_utils.AsyncList()
+    progress_list: proxy_utils.AsyncList[domain.ProgressRawValue] = (
+        proxy_utils.AsyncList()
+    )
     progress_tasks: list[asyncio.Task] = []
-    runners_by_env = ws_context.ws_projects_extension_runners.get(executor_project.dir_path, {})
+    runners_by_env = ws_context.ws_projects_extension_runners.get(
+        executor_project.dir_path, {}
+    )
     # action may declare multiple handlers in the
     # same env; subscribing once per handler would register two
     # listeners on the same runner+token and double-emit every progress event, so
@@ -163,6 +155,10 @@ async def _run_env_action(
             result_formats=[rc.RunResultFormat.STRING],
             initialize_all_handlers=True,
             progress_token=progress_token,
+            budget=budget,
+            # Started by the WM on its own behalf during env preparation, with
+            # no client connection behind it.
+            origin=None,
         )
     except run_service.ActionRunFailed as action_exc:
         return action_exc.message
@@ -175,9 +171,175 @@ async def _run_env_action(
         await asyncio.gather(forward_task, return_exceptions=True)
 
     if result.return_code != 0:
-        return (result.result_by_format or {}).get("string", "") or f"{action_source} failed"
+        return (result.result_by_format or {}).get(
+            "string", ""
+        ) or f"{action_source} failed"
 
     return None
+
+
+_BUILD_PYTHON_ARTIFACT_ACTION = "fine_python_lang.BuildPythonArtifactAction"
+
+
+def _wheelhouse_dir(workdir_path: pathlib.Path) -> pathlib.Path:
+    """Directory holding the built wheels and their manifest.
+
+    It lives under the workspace root's ``dev_workspace`` venv cache (beside the
+    WM's discovery file) rather than a separate workspace-root directory: the
+    wheelhouse is derived build state, not committed configuration, and a
+    recreated ``dev_workspace`` correctly invalidates it.
+    """
+    return workdir_path / ".venvs" / "dev_workspace" / "cache" / "wheelhouse"
+
+
+def _write_wheelhouse_manifest(
+    workdir_path: pathlib.Path,
+    ws_context: context.WorkspaceContext,
+    wheels: dict[str, pathlib.Path],
+) -> pathlib.Path:
+    """Write the wheelhouse manifest atomically and return its directory.
+
+    The manifest is ``{name: {dir, wheel}}``. It is written to a temp file and
+    renamed so a reader never observes a half-written file (R4).
+    """
+    wheelhouse_dir = _wheelhouse_dir(workdir_path)
+    wheelhouse_dir.mkdir(parents=True, exist_ok=True)
+    manifest = {
+        name: {
+            "dir": ws_context.ws_workspace_packages[name].as_posix(),
+            "wheel": wheel.as_posix(),
+        }
+        for name, wheel in wheels.items()
+    }
+    manifest_path = wheelhouse_dir / "manifest.json"
+    tmp_path = manifest_path.with_suffix(".json.tmp")
+    tmp_path.write_text(json.dumps(manifest, indent=2))
+    tmp_path.replace(manifest_path)
+    return wheelhouse_dir
+
+
+async def _build_wheelhouse(
+    ws_context: context.WorkspaceContext,
+    workdir_path: pathlib.Path,
+    excluded_packages: set[str],
+    budget: domain.RunBudget,
+) -> dict[str, pathlib.Path]:
+    """Build a wheel for every workspace package.
+
+    Each wheel is built by its own package's project runner, so that project's
+    handler selection and config apply — never by a single root-env builder.
+    A workspace package that is not itself a FineCode project (a preset-only
+    library) is built by the workspace root's runner, since it has no builder of
+    its own and no per-project config to override.
+
+    The wheelhouse is workspace-wide: any wheel-mode env must resolve *every*
+    workspace package it depends on to a wheel, so ``--project`` is rejected in
+    wheel mode rather than producing a partial wheelhouse (P5/R4).
+
+    Raises:
+        PrepareEnvsFailed: a package's project is not a collected project, does
+            not register ``build_python_artifact``, or a build failed.
+    """
+    from finecode.wm_server.runner import runner_client as rc
+    from finecode.wm_server.services import run_service
+
+    packages = {
+        name: package_dir
+        for name, package_dir in ws_context.ws_workspace_packages.items()
+        if name not in excluded_packages
+    }
+
+    root_project = ws_context.ws_projects.get(workdir_path)
+
+    plans: list[tuple[str, pathlib.Path, domain.CollectedProject, str]] = []
+    for name, package_dir in packages.items():
+        builder = ws_context.ws_projects.get(package_dir)
+        if not isinstance(builder, domain.CollectedProject):
+            # A workspace package that is not itself a FineCode project (e.g. a
+            # preset-only library) has no builder of its own. Build it on the
+            # workspace root's runner: it has the build handler, and with no
+            # per-project FineCode config there is no builder override to
+            # respect. A FineCode project still builds on its own runner.
+            builder = root_project
+        if not isinstance(builder, domain.CollectedProject):
+            raise PrepareEnvsFailed(
+                f"Workspace package '{name}' at {package_dir} has no builder: neither "
+                "it nor the workspace root is a collected project. Add it to "
+                "[workspace.workspace_packages_install].exclude to keep it editable."
+            )
+        action = next(
+            (
+                candidate
+                for candidate in builder.actions
+                if candidate.source == _BUILD_PYTHON_ARTIFACT_ACTION
+            ),
+            None,
+        )
+        if action is None or action.canonical_source is None:
+            raise PrepareEnvsFailed(
+                f"Workspace package '{name}': builder project '{builder.name}' does not "
+                f"register {_BUILD_PYTHON_ARTIFACT_ACTION}; cannot build its wheel. Add it "
+                "to [workspace.workspace_packages_install].exclude to keep it editable."
+            )
+        plans.append((name, package_dir, builder, action.canonical_source))
+
+    wheelhouse_dir = _wheelhouse_dir(workdir_path)
+    wheelhouse_dir.mkdir(parents=True, exist_ok=True)
+
+    wheels: dict[str, pathlib.Path] = {}
+    errors: list[str] = []
+
+    async def _build_one(
+        name: str,
+        package_dir: pathlib.Path,
+        project: domain.CollectedProject,
+        canonical_source: str,
+    ) -> None:
+        params = {
+            "src_artifact_def_path": (package_dir / "pyproject.toml").as_uri(),
+            "distributions": ["wheel"],
+            "output_dir": wheelhouse_dir.as_uri(),
+        }
+        try:
+            response = await run_service.ProjectExecutor(ws_context).run_action(
+                action_source=canonical_source,
+                params=params,
+                project_path=project.dir_path,
+                run_trigger=rc.RunActionTrigger.USER,
+                dev_env=rc.DevEnv.CLI,
+                result_formats=[rc.RunResultFormat.JSON],
+                initialize_all_handlers=True,
+                budget=budget,
+                origin=None,
+            )
+        except run_service.ActionRunFailed as action_exc:
+            errors.append(f"{name}: {action_exc.message}")
+            return
+        if response.return_code != 0:
+            errors.append(f"{name}: build failed")
+            return
+        json_result = response.result_by_format.get("json") or {}
+        output_paths = json_result.get("build_output_paths") or []
+        wheel_path = next(
+            (
+                resource_uri_to_path(uri)
+                for uri in output_paths
+                if str(uri).endswith(".whl")
+            ),
+            None,
+        )
+        if wheel_path is None:
+            errors.append(f"{name}: build reported no wheel")
+            return
+        wheels[name] = wheel_path
+
+    await asyncio.gather(*(_build_one(name, d, p, src) for name, d, p, src in plans))
+    if errors:
+        raise PrepareEnvsFailed(
+            "'build_python_artifact' failed for workspace packages:\n"
+            + "\n".join(sorted(errors))
+        )
+    return wheels
 
 
 async def prepare_envs(
@@ -188,7 +350,7 @@ async def prepare_envs(
     interpreter_names: list[str] | None = None,
     project_names: list[str] | None = None,
     dev_env: str = "cli",
-    max_concurrent_projects: int | None = None,
+    workspace_packages_mode: str | None = None,
 ) -> None:
     """Prepare all virtual environments for a workspace.
 
@@ -198,8 +360,13 @@ async def prepare_envs(
     2.5. Start workspace root dev_workspace runner.
     3. create_envs + install_envs for subproject dev_workspace envs.
     4. Start all dev_workspace runners.
+    4.5. Install each project's dev_workspace env (preset-resolved deps).
+    4.6. Wheel mode only: build a wheel for every workspace package, each by
+         its own project's runner, into
+         ``<ws_root>/.venvs/dev_workspace/cache/wheelhouse``.
     5. create_envs across all projects (skips unselected matrix children).
-    6. install_envs across all projects (installs only the selected envs).
+    6. install_envs across all projects (installs the selected non-dev_workspace
+       envs; in wheel mode they install from the wheelhouse).
 
     Args:
         ws_context: Workspace context.
@@ -214,12 +381,6 @@ async def prepare_envs(
         dev_env: Active dev-env, used to resolve each matrix env's
             config-declared ``default_interpreters`` subset when
             `interpreter_names` is not given.
-        max_concurrent_projects: Cap on concurrent projects for steps 5 and 6
-            (see `resolve_project_concurrency`). ``None`` resolves the
-            machine-based default; this is a machine-bound tuning value, not
-            a project setting, so it has no `finecode-workspace.toml`
-            equivalent.
-
     Per project, `env_names` / `interpreter_names` / each matrix env's
     `default_interpreters` policy are resolved (via
     `finecode.wm_server.config.env_selection`) into a selection. When that
@@ -254,11 +415,30 @@ async def prepare_envs(
             project.dir_path.is_relative_to(workdir_path)
             and project.dir_path not in ws_context.ws_projects_raw_configs
         ):
-            await read_configs.read_project_config(
-                project=project, ws_context=ws_context, resolve_presets=False
-            )
+            read_configs.read_project_config(project=project, ws_context=ws_context)
 
-    ws_context.ws_editable_packages = read_configs.resolve_workspace_editable_packages(ws_context)
+    ws_context.ws_workspace_packages = read_configs.resolve_workspace_packages(
+        ws_context
+    )
+    ws_context.workspace_packages_install_mode = (
+        workspace_packages_mode
+        or read_configs.resolve_workspace_packages_install_mode(ws_context, dev_env)
+    )
+    ws_context.ws_workspace_packages_install_exclude = set(
+        read_configs.resolve_workspace_packages_install_exclude(ws_context)
+    )
+    resolved_install_mode = ws_context.workspace_packages_install_mode
+    if resolved_install_mode == "wheel" and project_names is not None:
+        raise PrepareEnvsFailed(
+            "prepare-envs --workspace-packages=wheel builds a workspace-wide "
+            "wheelhouse and cannot be combined with --project; run it without "
+            "--project (or use --workspace-packages=editable for a filtered run)."
+        )
+    # The dev_workspace envs are the builders: they must install editable before
+    # the wheelhouse exists (steps 3 and 4.5). The resolved mode is applied just
+    # before the non-dev_workspace envs are installed (step 4.6 onward).
+    ws_context.workspace_packages_install_mode = "editable"
+    logger.info(f"Workspace packages install mode: {resolved_install_mode}")
 
     workdir_project = ws_context.ws_projects.get(workdir_path)
     if workdir_project is None:
@@ -287,9 +467,7 @@ async def prepare_envs(
 
     project_paths_filter: list[str] | None = None
     if project_names is not None:
-        unknown = [
-            n for n in project_names if not any(p.name == n for p in projects)
-        ]
+        unknown = [n for n in project_names if not any(p.name == n for p in projects)]
         if unknown:
             raise PrepareEnvsFailed(f"Unknown project(s): {unknown}")
         other_projects = [p for p in other_projects if p.name in project_names]
@@ -300,46 +478,40 @@ async def prepare_envs(
     logger.info(f"Found {len(projects)} project(s): {[p.name for p in projects]}")
     await user_messages.info(f"Found {len(projects)} project(s)")
 
-    # Concurrency cap (ADR-0055): computed once and shared by every concurrent
-    # project fan-out in this function (steps 2, 5, 6). They run sequentially
-    # relative to each other, so reusing one semaphore is safe — by the time a
-    # later step's fan-out starts, the previous one has released every permit.
-    concurrency_decision = resolve_project_concurrency(max_concurrent_projects)
-    logger.info(
-        f"Capping concurrent projects to {concurrency_decision.value} "
-        f"({concurrency_decision.source})"
-    )
-    semaphore = asyncio.Semaphore(concurrency_decision.value)
-
     # Step 2 — Check / remove dev_workspace envs.
     logger.info("Checking dev workspace environments...")
     await user_messages.info("Checking dev workspace environments...")
 
     async def _check_or_remove(project: domain.Project) -> None:
-        async with semaphore:
-            if recreate:
-                logger.trace(f"Recreating dev_workspace for '{project.name}'")
-                runners = ws_context.ws_projects_extension_runners.get(project.dir_path, {})
+        if recreate:
+            logger.trace(f"Recreating dev_workspace for '{project.name}'")
+            runners = ws_context.ws_projects_extension_runners.get(project.dir_path, {})
+            runner = runners.get("dev_workspace")
+            if runner is not None:
+                await runner_manager.stop_extension_runner(
+                    runner=runner, ws_context=ws_context
+                )
+            await runner_manager.remove_runner_env(project.dir_path, "dev_workspace")
+        else:
+            check = await runner_manager.check_runner_within_budget(
+                ws_context, runner_dir=project.dir_path, env_name="dev_workspace"
+            )
+            if not check.valid:
+                logger.warning(
+                    f"Env 'dev_workspace' in project '{project.name}' is invalid"
+                    f" ({check.reason}), recreating it"
+                )
+                runners = ws_context.ws_projects_extension_runners.get(
+                    project.dir_path, {}
+                )
                 runner = runners.get("dev_workspace")
                 if runner is not None:
-                    await runner_manager.stop_extension_runner(runner=runner)
-                runner_manager.remove_runner_env(project.dir_path, "dev_workspace")
-            else:
-                valid = await runner_manager.check_runner(
-                    runner_dir=project.dir_path, env_name="dev_workspace"
+                    await runner_manager.stop_extension_runner(
+                        runner=runner, ws_context=ws_context
+                    )
+                await runner_manager.remove_runner_env(
+                    project.dir_path, "dev_workspace"
                 )
-                if not valid:
-                    logger.warning(
-                        f"Env 'dev_workspace' in project '{project.name}' is invalid,"
-                        " recreating it"
-                    )
-                    runners = ws_context.ws_projects_extension_runners.get(
-                        project.dir_path, {}
-                    )
-                    runner = runners.get("dev_workspace")
-                    if runner is not None:
-                        await runner_manager.stop_extension_runner(runner=runner)
-                    runner_manager.remove_runner_env(project.dir_path, "dev_workspace")
 
     try:
         async with asyncio.TaskGroup() as tg:
@@ -381,13 +553,24 @@ async def prepare_envs(
     ]
     if dw_envs and isinstance(root_project, domain.CollectedProject):
         error = await _run_env_action(
-            "fine_envs.CreateEnvsAction", {"envs": dw_envs}, root_project, ws_context
+            "fine_envs.CreateEnvsAction",
+            {"envs": dw_envs},
+            root_project,
+            ws_context,
+            # One batched run on the root runner, not a fan-out: it needs its
+            # full grant to create every subproject's dev_workspace venv.
+            budget=domain.RunBudget(),
         )
         if error:
             raise PrepareEnvsFailed(f"dev_workspace create_envs failed: {error}")
 
         error = await _run_env_action(
-            "fine_envs.InstallEnvsAction", {"envs": dw_envs}, root_project, ws_context
+            "fine_envs.InstallEnvsAction",
+            {"envs": dw_envs},
+            root_project,
+            ws_context,
+            # Same batched bootstrap run as above; full grant, no fan-out.
+            budget=domain.RunBudget(),
         )
         if error:
             raise PrepareEnvsFailed(f"dev_workspace install_envs failed: {error}")
@@ -428,6 +611,59 @@ async def prepare_envs(
         and p.dir_path.is_relative_to(workdir_path)
         and (project_paths_filter is None or str(p.dir_path) in project_paths_filter)
     ]
+    total_projects = len(step_projects)
+    fan_out_budget = project_fan_out_budget(
+        ws_context.process_budget.size, total_projects
+    )
+
+    # Step 4.5 — preset-resolved install of each project's dev_workspace env.
+    # Split out of step 6 because the wheelhouse build (4.6) needs each
+    # project's dev_workspace to carry its preset-resolved handlers (the build
+    # handlers among them) before it can run. The dev_workspace envs are the
+    # builders and the wheelhouse cannot exist before them, so they install
+    # editables even in wheel mode — the wheel map is still empty here.
+    logger.info("Installing dev_workspace environments...")
+    await user_messages.info("Installing dev_workspace environments...")
+    dev_workspace_install_errors: list[str] = []
+
+    async def _install_dev_workspace_one(p: domain.CollectedProject) -> None:
+        err = await _run_env_action(
+            "fine_envs.InstallEnvsAction",
+            {"env_names": ["dev_workspace"]},
+            p,
+            ws_context,
+            budget=fan_out_budget,
+        )
+        if err:
+            dev_workspace_install_errors.append(err)
+
+    await asyncio.gather(*(_install_dev_workspace_one(p) for p in step_projects))
+    if dev_workspace_install_errors:
+        raise PrepareEnvsFailed(
+            "'install_envs' failed for dev_workspace:\n"
+            + "\n".join(dev_workspace_install_errors)
+        )
+
+    # Step 4.6 — build the wheelhouse (wheel mode only).
+    if resolved_install_mode == "wheel":
+        ws_context.workspace_packages_install_mode = "wheel"
+        logger.info("Building workspace package wheels...")
+        await user_messages.info("Building workspace package wheels...")
+        excluded_packages = ws_context.ws_workspace_packages_install_exclude
+        wheels = await _build_wheelhouse(
+            ws_context=ws_context,
+            workdir_path=workdir_path,
+            excluded_packages=excluded_packages,
+            budget=fan_out_budget,
+        )
+        ws_context.ws_workspace_package_wheels = wheels
+        wheelhouse_dir = _write_wheelhouse_manifest(workdir_path, ws_context, wheels)
+        logger.info(
+            f"Built {len(wheels)} workspace package wheel(s) into {wheelhouse_dir}"
+        )
+    else:
+        ws_context.workspace_packages_install_mode = "editable"
+        ws_context.ws_workspace_package_wheels = {}
 
     def _project_env_universe(p: domain.CollectedProject) -> dict[str, Any]:
         """The project's full env-name -> `tool.finecode.env` entry map.
@@ -473,11 +709,9 @@ async def prepare_envs(
     # `create_envs`/`install_envs` run exclusively on each project's own
     # dev_workspace ER (never on other per-env ERs, which aren't even started
     # during prepare-envs — see the module-level "Verified 'projects' is the
-    # right unit" note in the design). So for this operation "concurrent
-    # projects" and "concurrent ERs" are the same number, and bounding
-    # `step_projects` fan-out directly bounds concurrent ERs. Reuses the
-    # `semaphore` computed above (shared across steps 2, 5, 6).
-    total_projects = len(step_projects)
+    # right unit" note in the design). The subprocess fan-out they drive is
+    # bounded by the machine-wide process budget (ADR-0090), leased by each
+    # ER when the action run begins.
     await user_messages.info(f"Creating envs for {total_projects} project(s)...")
 
     create_errors: list[str] = []
@@ -489,8 +723,13 @@ async def prepare_envs(
         params = build_create_envs_params(
             sel, env_universe_by_project[p.dir_path], recreate
         )
-        async with semaphore:
-            err = await _run_env_action("fine_envs.CreateEnvsAction", params, p, ws_context)
+        err = await _run_env_action(
+            "fine_envs.CreateEnvsAction",
+            params,
+            p,
+            ws_context,
+            budget=fan_out_budget,
+        )
         if err:
             create_errors.append(err)
         create_done += 1
@@ -504,9 +743,26 @@ async def prepare_envs(
     async def _install_one(p: domain.CollectedProject) -> None:
         nonlocal install_done
         sel = selections_by_project[p.dir_path]
-        params = {} if not sel.active else {"env_names": sorted(sel.selected_env_names)}
-        async with semaphore:
-            err = await _run_env_action("fine_envs.InstallEnvsAction", params, p, ws_context)
+        if sel.active:
+            install_env_names = sorted(sel.selected_env_names - {"dev_workspace"})
+        else:
+            install_env_names = sorted(
+                name
+                for name in env_universe_by_project[p.dir_path]
+                if name != "dev_workspace"
+            )
+        # `dev_workspace` is excluded because step 4.5 already installed its
+        # preset-resolved deps on the project's own now-running runner;
+        # reinstalling it here would run from the env being replaced.
+        params = {"env_names": install_env_names}
+        err = await _run_env_action(
+            "fine_envs.InstallEnvsAction",
+            params,
+            p,
+            ws_context,
+            # Step 6 reuses the step 5 fan-out's per-project share.
+            budget=fan_out_budget,
+        )
         if err:
             install_errors.append(err)
         install_done += 1
@@ -520,7 +776,9 @@ async def prepare_envs(
 
     # Step 6 — install_envs across all projects.
     logger.info("Installing dependencies...")
-    await user_messages.info(f"Installing dependencies for {total_projects} project(s)...")
+    await user_messages.info(
+        f"Installing dependencies for {total_projects} project(s)..."
+    )
     await asyncio.gather(*[_install_one(p) for p in step_projects])
     if install_errors:
         raise PrepareEnvsFailed("'install_envs' failed:\n" + "\n".join(install_errors))
@@ -566,11 +824,9 @@ async def install_env_for_project(
             if not venv_path.exists():
                 detail = f"venv directory does not exist ({venv_path})"
             else:
-                runner = (
-                    ws_context.ws_projects_extension_runners
-                    .get(project.dir_path, {})
-                    .get("dev_workspace")
-                )
+                runner = ws_context.ws_projects_extension_runners.get(
+                    project.dir_path, {}
+                ).get("dev_workspace")
                 if runner is not None and runner.logs_path is not None:
                     detail = (
                         f"venv exists but runner failed to start "
@@ -646,15 +902,31 @@ async def install_env_for_project(
             )
         executor_project = resolved
 
-    env_spec = {
+    env_spec: dict[str, str] = {
         "name": env_name,
         "venv_dir_path": (project.dir_path / ".venvs" / env_name).as_uri(),
         "project_def_path": (project.dir_path / "pyproject.toml").as_uri(),
     }
+    interpreter = (
+        ws_context.ws_projects_raw_configs.get(project.dir_path, {})
+        .get("tool", {})
+        .get("finecode", {})
+        .get("env", {})
+        .get(env_name, {})
+        .get("interpreter")
+    )
+    if interpreter is not None:
+        env_spec["interpreter"] = interpreter
 
     # Create the venv if it does not exist yet (idempotent on existing venvs).
     error = await _run_env_action(
-        "fine_envs.CreateEnvsAction", {"envs": [env_spec]}, executor_project, ws_context
+        "fine_envs.CreateEnvsAction",
+        {"envs": [env_spec]},
+        executor_project,
+        ws_context,
+        # Auto-prepare runs inside another dispatch, so it must never wait on
+        # slots its own ancestor holds — the escape is load-bearing.
+        budget=domain.RunBudget(),
     )
     if error:
         raise PrepareEnvsFailed(
@@ -662,7 +934,12 @@ async def install_env_for_project(
         )
 
     error = await _run_env_action(
-        "fine_envs.InstallEnvsAction", {"envs": [env_spec]}, executor_project, ws_context
+        "fine_envs.InstallEnvsAction",
+        {"envs": [env_spec]},
+        executor_project,
+        ws_context,
+        # Same load-bearing escape as the create above.
+        budget=domain.RunBudget(),
     )
     if error:
         raise PrepareEnvsFailed(
@@ -672,7 +949,7 @@ async def install_env_for_project(
 
 __all__ = [
     "PrepareEnvsFailed",
-    "prepare_envs",
-    "install_env_for_project",
     "build_create_envs_params",
+    "install_env_for_project",
+    "prepare_envs",
 ]

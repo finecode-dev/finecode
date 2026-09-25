@@ -2,14 +2,15 @@ from __future__ import annotations
 
 import asyncio
 import collections.abc
+import contextlib
 import json
 import re
-import sys
-import subprocess  # needed for windows
 import typing
 from pathlib import Path
 
 from loguru import logger
+
+from finecode_jsonrpc import _spawn
 
 CONTENT_LENGTH_PATTERN = re.compile(rb"^Content-Length: (\d+)\r\n$")
 CHARSET = "utf-8"
@@ -64,28 +65,18 @@ class StdioTransport:
 
     async def start(
         self,
-        cmd: str,
+        cmd: collections.abc.Sequence[str],
         cwd: Path | None = None,
         env: dict[str, str] | None = None,
     ) -> None:
         self._loop = asyncio.get_running_loop()
 
-        creationflags = 0
-        start_new_session = True
-        if sys.platform == "win32":
-            creationflags = subprocess.DETACHED_PROCESS | subprocess.CREATE_NO_WINDOW
-            start_new_session = False
-
-        self._process = await asyncio.create_subprocess_shell(
+        self._process = await _spawn.spawn_process(
             cmd,
-            stdin=asyncio.subprocess.PIPE,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
+            stdin_pipe=True,
             cwd=cwd,
             env=env,
             limit=1024 * 1024 * 10,  # 10 MiB
-            creationflags=creationflags,
-            start_new_session=start_new_session,
         )
 
         logger.debug(
@@ -192,13 +183,11 @@ class StdioTransport:
                 await stdin.drain()
         except asyncio.CancelledError:
             pass
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
             logger.error(f"Error writing message | {self._readable_id}: {exc}")
         finally:
-            try:
+            with contextlib.suppress(Exception):
                 stdin.close()
-            except Exception:
-                pass
         logger.debug(f"End writing messages | {self._readable_id}")
 
     async def _read_messages(self, stdout: asyncio.StreamReader) -> None:
@@ -255,7 +244,7 @@ class StdioTransport:
                     if self._on_message is not None:
                         try:
                             await self._on_message(message)
-                        except Exception as exc:
+                        except Exception as exc:  # noqa: BLE001
                             logger.exception(
                                 f"Error in message handler | {self._readable_id}: {exc}"
                             )
@@ -294,5 +283,5 @@ class StdioTransport:
         if self._on_exit is not None:
             try:
                 await self._on_exit()
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001
                 logger.exception(f"Error in exit handler | {self._readable_id}: {exc}")

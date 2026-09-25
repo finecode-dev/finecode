@@ -7,6 +7,7 @@ TCP loopback connection — no subprocess, no ``tests/e2e/``.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import uuid
 
 import pytest
@@ -17,11 +18,21 @@ from finecode.wm_server._jsonrpc import _read_message, _write_message
 
 
 class InProcClient:
-    def __init__(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+    def __init__(
+        self,
+        reader: asyncio.StreamReader,
+        writer: asyncio.StreamWriter,
+        ws_context: context.WorkspaceContext,
+    ) -> None:
         self._reader, self._writer = reader, writer
+        # The server-side state this connection dispatches against, so tests can
+        # seed workspace state and read it back after a request.
+        self.ws_context = ws_context
         self._pending: dict = {}
         self._notifs: asyncio.Queue = asyncio.Queue()
-        self.received_order: list[tuple[str, object]] = []  # ("resp", id) / ("notif", method)
+        self.received_order: list[
+            tuple[str, object]
+        ] = []  # ("resp", id) / ("notif", method)
         self._task = asyncio.create_task(self._read_loop())
 
     async def _read_loop(self) -> None:
@@ -38,7 +49,11 @@ class InProcClient:
                 elif msg.get("method"):
                     self.received_order.append(("notif", msg["method"]))
                     await self._notifs.put(msg)
-        except (asyncio.IncompleteReadError, ConnectionResetError, asyncio.CancelledError):
+        except (
+            asyncio.IncompleteReadError,
+            ConnectionResetError,
+            asyncio.CancelledError,
+        ):
             pass
 
     async def request(self, method: str, params: dict | None = None) -> object:
@@ -55,7 +70,9 @@ class InProcClient:
             raise RuntimeError(msg["error"])
         return msg.get("result")
 
-    async def next_notification(self, method: str | None = None, timeout: float = 1.0) -> dict:
+    async def next_notification(
+        self, method: str | None = None, timeout: float = 1.0
+    ) -> dict:
         async def _get() -> dict:
             while True:
                 msg = await self._notifs.get()
@@ -66,14 +83,12 @@ class InProcClient:
 
     async def close(self) -> None:
         self._task.cancel()
-        try:
+        with contextlib.suppress(asyncio.CancelledError):
             await self._task
-        except asyncio.CancelledError:
-            pass
         self._writer.close()
         try:
             await self._writer.wait_closed()
-        except Exception:
+        except Exception:  # noqa: BLE001, S110
             pass
 
 
@@ -90,7 +105,7 @@ async def wm_client():
     )
     port = srv.sockets[0].getsockname()[1]
     reader, writer = await asyncio.open_connection("127.0.0.1", port)
-    client = InProcClient(reader, writer)
+    client = InProcClient(reader, writer, ctx)
     try:
         yield client
     finally:

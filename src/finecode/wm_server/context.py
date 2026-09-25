@@ -1,73 +1,20 @@
 from __future__ import annotations
 
 import asyncio
-import os
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 from loguru import logger
 
 from finecode.wm_server import domain
 from finecode.wm_server.runner.runner_client import ExtensionRunnerInfo
-from finecode_extension_runner.concurrency import (
-    ConcurrencyDecision,
-    machine_subprocess_budget,
-)
+from finecode.wm_server.services import process_budget
 
 if TYPE_CHECKING:
     from finecode_jsonrpc._io_thread import AsyncIOThread
+
     from finecode.wm_server.wal import WalWriter
-
-
-def resolve_er_startup_concurrency(env_value: str | None = None) -> ConcurrencyDecision:
-    """Effective cap on concurrently-starting Extension Runner processes —
-    how many ERs may be mid-startup (spawned, importing, not yet reachable
-    over its RPC channel) at once, regardless of what triggered the starts:
-    workspace init, a matrixed ``run``, or ``prepare-envs``' own runner-start
-    step all funnel through the same chokepoint
-    (``runner_manager._start_extension_runner_process``) and share this one
-    cap. See ADR-0063.
-
-    Once an ER reports its port and its RPC channel connects, the cap no
-    longer applies to it — the triggering action then runs in that ER's own
-    process, a separate and much more variable resource cost (e.g. an actual
-    test-suite run) that this cap deliberately does not throttle.
-
-    Unlike the two ``prepare-envs`` layers (ADR-0055), this guards a single
-    flat resource axis rather than two composing layers, so it uses the full
-    ``machine_subprocess_budget()`` rather than its sqrt-split.
-
-    Priority: ``FINECODE_WM_MAX_CONCURRENT_ER_STARTS`` env var (if set) >
-    ``machine_subprocess_budget()``. Machine-bound like the layers above, so
-    no ``finecode-workspace.toml`` equivalent. Unlike
-    ``prepare_envs_service.resolve_project_concurrency``, there is no CLI
-    flag: this cap protects
-    the WM server's entire lifetime, not one command's request, so it is
-    resolved once — here, as the default factory for
-    ``WorkspaceContext.er_startup_semaphore`` — when the long-lived
-    ``WorkspaceContext`` is constructed, rather than threaded through a
-    single RPC call. ``env_value`` is injectable for tests; production
-    callers omit it and let this read ``os.environ`` directly.
-    """
-    if env_value is None:
-        env_value = os.environ.get("FINECODE_WM_MAX_CONCURRENT_ER_STARTS")
-    if env_value is not None:
-        return ConcurrencyDecision(
-            max(int(env_value), 1), "FINECODE_WM_MAX_CONCURRENT_ER_STARTS env var"
-        )
-    return ConcurrencyDecision(
-        machine_subprocess_budget(),
-        f"computed default (machine budget {machine_subprocess_budget()})",
-    )
-
-
-def _make_er_startup_semaphore() -> asyncio.Semaphore:
-    decision = resolve_er_startup_concurrency()
-    logger.info(
-        f"ER startup concurrency cap: {decision.value} ({decision.source})"
-    )
-    return asyncio.Semaphore(decision.value)
 
 
 @dataclass
@@ -83,16 +30,16 @@ class WorkspaceContext:
     Fields are populated in stages as the server starts up and clients connect:
 
     1. **Construction** — ``ws_dirs_paths`` is set (may be empty ``[]`` initially).
-       ``otlp_endpoint``, ``handler_config_overrides`` are set from config and
-       are immutable thereafter.  All collection and cache fields start empty.
-       Both locks are created and ready.
+       ``otlp_endpoint``, ``handler_config_overrides``, ``service_config_overrides``
+       are set from config and are immutable thereafter.  All collection and
+       cache fields start empty.  Both locks are created and ready.
 
     2. **Runner IO thread** — ``runner_io_thread`` is set once during WM startup
        (before any runner is started).  It is ``None`` before that point and
        non-``None`` for the rest of the server's lifetime.
 
     3. **Workspace discovery** — triggered by ``addDir`` API calls.
-       ``ws_dirs_paths`` grows; ``ws_projects`` and ``ws_editable_packages`` are
+       ``ws_dirs_paths`` grows; ``ws_projects`` and ``ws_workspace_packages`` are
        populated.  Protected by ``workspace_state_lock``.
 
     4. **Project initialization** — per project, protected by the project's entry
@@ -127,7 +74,15 @@ class WorkspaceContext:
         released.  Does not bound the triggering action's execution, which
         runs afterward in that ER's own process.  Shared by every start
         trigger (workspace init, matrixed run, prepare-envs), since they all
-        call through the same chokepoint. See ADR-0063.
+        call through the same chokepoint. See ADR-0063.  Its size is one half
+        of the combined subprocess-concurrency budget (ADR-0093).
+
+    ``process_budget``
+        The one machine-wide budget of subprocess work slots, leased to ERs
+        per action run and reclaimed on run end or ER death.  Each ER's
+        leased quota sizes that ER's local ``ProcessSlots`` gate, which both
+        ``CommandRunner`` and ``ProcessExecutor`` draw from. See ADR-0090.
+        Its size is the other half of the same combined budget (ADR-0093).
 
     Caches
     ------
@@ -145,9 +100,29 @@ class WorkspaceContext:
     # Mutated under workspace_state_lock (discovery) and project_init_locks (init).
     ws_projects: dict[Path, domain.Project] = field(default_factory=dict)
 
-    # Name → absolute path of workspace-resident editable packages.
+    # Name → absolute path of workspace-resident packages.
     # Populated from finecode-workspace.toml during workspace scan; stable after that.
-    ws_editable_packages: dict[str, Path] = field(default_factory=dict)
+    ws_workspace_packages: dict[str, Path] = field(default_factory=dict)
+
+    # Package name → wheel built from that package's source for the active
+    # wheel install mode. Empty in editable mode; populated by prepare-envs
+    # after the wheelhouse fan-out.
+    ws_workspace_package_wheels: dict[str, Path] = field(default_factory=dict)
+
+    # How workspace packages are installed in envs ("editable" or "wheel").
+    # Resolved from [workspace.workspace_packages_install] per dev-env (or the
+    # CLI flag override); "editable" until a prepare-envs run resolves it.
+    workspace_packages_install_mode: Literal["editable", "wheel"] = "editable"
+
+    # Packages the wheelhouse must skip; kept editable in every env even in
+    # wheel mode. Resolved alongside the install mode by prepare-envs.
+    ws_workspace_packages_install_exclude: set[str] = field(default_factory=set)
+
+    # Canonical package name → selected extras, read from the gitignored
+    # finecode-workspace-user.toml. Lazily computed by
+    # read_configs.read_workspace_extra_selection; reset on config reload so a
+    # rename/removal of the selection file is observed.
+    ws_extra_selection: dict[str, list[str]] = field(default_factory=dict)
 
     # Raw definition-file config per project path.  Populated by read_project_config
     # before collect_project is called.  Entries are not automatically removed when
@@ -179,6 +154,21 @@ class WorkspaceContext:
     # The empty-string key "" means the override applies to all handlers of the action.
     # Set from config at construction; immutable thereafter.
     handler_config_overrides: dict[str, dict[str, dict[str, str]]] = field(
+        default_factory=dict
+    )
+
+    # Service config overrides supplied via CLI-detected environment variables.
+    # Format: {service_name: {nested param path as a dict}}
+    # Keyed by ServiceDeclaration.name (the addressing alias), not interface.
+    # Set from config at construction; immutable thereafter.
+    service_config_overrides: dict[str, dict[str, Any]] = field(default_factory=dict)
+
+    # project_path → { run_id → InFlightRun }: runs dispatched and not yet
+    # finished.  Always maintained, independently of whether the WAL is enabled,
+    # because recovery consults it to decide whether replacing that project's
+    # runners would kill a run (ADR-0079).  Keyed by run id rather than counted,
+    # since run fan-out is re-entrant and a project can hold several at once.
+    in_flight_runs: dict[Path, dict[str, domain.InFlightRun]] = field(
         default_factory=dict
     )
 
@@ -220,14 +210,62 @@ class WorkspaceContext:
     # from inside that same Phase 2.
     env_install_locks: dict[Path, asyncio.Lock] = field(default_factory=dict)
 
+    # Per-env repair locks.  Guard per-env repair (install + restart) so two
+    # concurrent repairs of the same (project, env) never install into one
+    # venv at the same time.  Keyed per env and separate from
+    # env_install_locks: install_env_for_project takes env_install_locks[project]
+    # inside the repair, so sharing that dict would self-deadlock.
+    env_repair_locks: dict[tuple[Path, str], asyncio.Lock] = field(default_factory=dict)
+
+    # Both budgets below are sized from ONE combined machine budget in
+    # __post_init__ (ADR-0093): their sum stays at or below
+    # machine_subprocess_budget(), so the WM's event loop keeps a free core.
+    # They stay separate objects on purpose — a run holding work slots must
+    # never block on the startup cap to start the ER it fans into (ADR-0090).
+
     # Bounds how many ERs may be mid-startup (spawned through RPC-connected) at
     # once, across every trigger (workspace init, matrixed run, prepare-envs'
-    # runner-start step) — see resolve_er_startup_concurrency and ADR-0063.
-    # Sized once here, at WorkspaceContext construction, since the WM
-    # constructs exactly one WorkspaceContext for its whole process lifetime.
-    er_startup_semaphore: asyncio.Semaphore = field(
-        default_factory=_make_er_startup_semaphore
-    )
+    # runner-start step) — see ADR-0063. Sized from the combined budget.
+    er_startup_semaphore: asyncio.Semaphore = field(init=False)
+
+    # The machine-wide budget of subprocess work slots, leased to ERs per action
+    # run and reclaimed on run end or ER death (ADR-0090).  Sized from the same
+    # combined budget as er_startup_semaphore.
+    process_budget: process_budget.ProcessBudget = field(init=False)
+
+    def workspace_packages_wire(self) -> dict[str, dict]:
+        """Project the resolved workspace packages into the WM API/ER wire shape.
+
+        Each entry carries the package's source directory and the resolved
+        install decision for the active mode. ``editable`` is True for editable
+        mode and for an excluded package; otherwise the package installs from
+        ``wheel``, which is None when the wheelhouse has no entry — the
+        consumer turns that into the P5/R4 error rather than falling back to
+        editable.
+        """
+        result: dict[str, dict] = {}
+        for name, package_dir in self.ws_workspace_packages.items():
+            editable = (
+                self.workspace_packages_install_mode == "editable"
+                or name in self.ws_workspace_packages_install_exclude
+            )
+            wheel = None if editable else self.ws_workspace_package_wheels.get(name)
+            result[name] = {
+                "dir": package_dir.as_posix(),
+                "wheel": wheel.as_posix() if wheel is not None else None,
+                "editable": editable,
+            }
+        return result
+
+    def __post_init__(self) -> None:
+        budgets = process_budget.resolve_subprocess_budgets()
+        logger.info(
+            f"Subprocess concurrency budget: {budgets.total} total "
+            f"({budgets.total_source}); ER startup cap {budgets.startup_cap} "
+            f"(half of combined budget); process work budget {budgets.work_cap}"
+        )
+        self.er_startup_semaphore = asyncio.Semaphore(budgets.startup_cap)
+        self.process_budget = process_budget.ProcessBudget(budgets.work_cap)
 
 
 @dataclass

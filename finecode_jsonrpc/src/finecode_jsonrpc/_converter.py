@@ -39,14 +39,20 @@ def _new_union_structure_fn(cls, conv):
     def structure(val, _):
         if val is None and none_type in args:
             return None
+        exceptions = []
         for arg in args:
             if arg is none_type:
                 continue
             try:
                 return conv.structure(val, arg)
-            except Exception:
-                continue
-        return val
+            except Exception as exc:  # noqa: BLE001
+                # cattrs' own Literal structuring hook raises a bare `Exception`
+                # (not a subclass) on mismatch, so narrowing this to specific
+                # exception types would break unions with a Literal member.
+                exceptions.append(exc)
+        raise cattrs.ClassValidationError(
+            f"No member of union {cls} could structure {val!r}", exceptions, cls
+        )
 
     return structure
 

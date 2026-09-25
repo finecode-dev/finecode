@@ -1,34 +1,15 @@
 [tool.finecode]
-presets = [{ source = "fine_format" }]
-
+# fine_python_src_artifacts registers get_src_artifact_toolchain_range's Python handler,
+# which is where the formatters' language level comes from when it is not configured
+presets = [{ source = "fine_format" }, { source = "fine_python_src_artifacts" }]
 
 [tool.finecode.action.format_python_file]
 source = "fine_python_lang.FormatPythonFileAction"
 handlers = [
-    # ruff formatter doesn't handle imports, run isort to sort them first
-    { name = "isort", source = "fine_python_isort.IsortFormatFileHandler", env = "dev_no_runtime", dependencies = [
-        "fine_python_isort~=0.3.0a0",
-    ] },
-    { name = "ruff", source = "fine_python_ruff.RuffFormatFileHandler", env = "dev_no_runtime", dependencies = [
-        "fine_python_ruff~=0.2.0a0",
-    ] },
+  { name = "ruff", source = "fine_python_ruff.RuffFormatFileHandler", env = "dev_no_runtime", dependencies = [
+    "fine_python_ruff~=0.2.0a0",
+  ] },
 ]
 
 [tool.finecode.extension.fine_python_ruff]
-dependencies_override = ["ruff==0.15.*"]
-
-[tool.finecode.extension.fine_python_isort]
-dependencies_override = ["isort==8.0.*"]
-
-[[tool.finecode.action_handler]]
-source = "fine_python_isort.IsortFormatFileHandler"
-# make isort config compatible with fine_python_lint
-# this config is based on 'black' profile of isort, black is not used in lint preset,
-# but rules configured for ruff formatter are compatible with black formatting
-config.multi_line_output = 3
-config.include_trailing_comma = true
-config.force_grid_wrap = 0
-config.use_parentheses = true
-config.ensure_newline_before_comments = true
-config.line_length = 88
-config.split_on_trailing_comma = true
+dependencies_override = ["ruff==0.16.*"]

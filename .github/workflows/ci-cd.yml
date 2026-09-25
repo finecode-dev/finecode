@@ -34,19 +34,21 @@ env:
 jobs:
   build:
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 40
+    # A cold `prepare-envs` over the whole workspace plus the full check suite does
+    # not fit in 40 minutes on the slower matrix legs. The venvs cache keeps the
+    timeout-minutes: 240
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-24.04, macos-15, windows-2022]
+        os: [ubuntu-26.04, macos-26, windows-2025]
         include:
-          - os: ubuntu-24.04
+          - os: ubuntu-26.04
             name: Linux
             venv_bin: bin
-          - os: macos-15
+          - os: macos-26
             name: macOS
             venv_bin: bin
-          - os: windows-2022
+          - os: windows-2025
             name: Windows
             venv_bin: Scripts
 
@@ -71,9 +73,21 @@ jobs:
           fi
 
       - name: Set up Python ${{ env.DEV_WORKSPACE_PYTHON_VERSION }}
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: ${{ env.DEV_WORKSPACE_PYTHON_VERSION }}
+
+      # uv hardlinks (Linux/Windows) or CoW-clones (macOS) package files out of its
+      # cache into each venv only within one filesystem. The default cache is on C: on
+      # Windows runners while the workspace is on D:, so every venv file becomes a full
+      # copy. RUNNER_TEMP is on the workspace volume on every hosted image and is wiped
+      # between jobs, so only what actions/cache restores carries over.
+      # See docs/guides/preparing-environments.md.
+      - name: Configure uv cache
+        id: uv_env
+        run: |
+          echo "UV_CACHE_DIR=$RUNNER_TEMP/uv-cache" >> "$GITHUB_ENV"
+          echo "generation=$(date -u +%Y-%m)" >> "$GITHUB_OUTPUT"
 
       # Every package in the monorepo has its own .venvs/ (root dev_workspace plus one
       # per project for envs created by `prepare-envs`, e.g. dev_no_runtime, runtime).
@@ -81,16 +95,32 @@ jobs:
       # skip reinstalling whenever a restored venv already looks valid, so a stale
       # partial-match restore could mask a dependency that was added since the cache
       # was written.
-      - name: Cache all venvs
-        uses: actions/cache@v4
+      - name: Restore venvs cache
+        id: venvs_cache
+        uses: actions/cache/restore@v5
         with:
           path: |
             .venvs
             **/.venvs
           key: ${{ runner.os }}-venvs-${{ hashFiles('**/pyproject.toml', '**/preset.toml') }}
 
+      # Restore only on a venvs miss: on a hit nothing installs, so fetching a
+      # multi-GB uv entry would be wasted. A partial match is safe here, unlike for
+      # `.venvs`: the cache is content-addressed and uv re-resolves against the
+      # project, so a stale entry can only miss, never mask a missing dependency.
+      - name: Restore uv cache
+        id: uv_cache
+        if: steps.venvs_cache.outputs.cache-hit != 'true'
+        uses: actions/cache/restore@v5
+        with:
+          path: ${{ runner.temp }}/uv-cache
+          key: uv-${{ steps.uv_env.outputs.generation }}-${{ steps.venvs_cache.outputs.cache-primary-key }}
+          restore-keys: |
+            uv-${{ steps.uv_env.outputs.generation }}-${{ runner.os }}-venvs-
+
       - name: Install dependencies
         id: install
+        timeout-minutes: 80
         run: |
           # CI must exercise this branch's local source, so finecode and its sibling
           # packages need an editable install, not a released version from PyPI — see
@@ -101,13 +131,16 @@ jobs:
 
       - name: Inspect code
         if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        timeout-minutes: 30
         run: |
           source .venvs/dev_workspace/${{ matrix.venv_bin }}/activate
           python -m finecode run --log-level="$FINECODE_LOG_LEVEL" inspect_code
+        continue-on-error: true
         shell: bash
 
       - name: Audit code
         if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        timeout-minutes: 30
         run: |
           source .venvs/dev_workspace/${{ matrix.venv_bin }}/activate
           python -m finecode run --log-level="$FINECODE_LOG_LEVEL" audit_code
@@ -132,14 +165,13 @@ jobs:
         if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         run: |
           source .venvs/dev_workspace/${{ matrix.venv_bin }}/activate
-          # TODO: test with all supported python versions
           python -m finecode run --log-level="$FINECODE_LOG_LEVEL" run_tests
         shell: bash
 
       - name: Publish to TestPyPI and verify
         if: runner.os == 'Linux' && github.event_name == 'workflow_dispatch' && inputs.publish_testpypi
         env:
-          FINECODE_CONFIG_PUBLISH_AND_VERIFY_ARTIFACT__INIT_REPOSITORY_PROVIDER__REPOSITORIES: '[{"name": "testpypi", "url": "https://test.pypi.org/"}]'
+          FINECODE_CONFIG_PUBLISH_AND_VERIFY_ARTIFACT__INIT_REPOSITORY_PROVIDER__REPOSITORIES: '[{"name": "testpypi", "index_url": "https://test.pypi.org/simple/", "upload_url": "https://test.pypi.org/legacy/"}]'
           FINECODE_CONFIG_PUBLISH_AND_VERIFY_ARTIFACT__INIT_REPOSITORY_PROVIDER__CREDENTIALS_BY_REPOSITORY: '{"testpypi": {"username": "${{ secrets.TESTPYPI_USERNAME }}", "password": "${{ secrets.TESTPYPI_PASSWORD }}"}}'
         run: |
           source .venvs/dev_workspace/${{ matrix.venv_bin }}/activate
@@ -154,7 +186,7 @@ jobs:
       - name: Publish to PyPI and verify
         if: runner.os == 'Linux' && startsWith(github.ref, 'refs/tags/')
         env:
-          FINECODE_CONFIG_PUBLISH_AND_VERIFY_ARTIFACT__INIT_REPOSITORY_PROVIDER__REPOSITORIES: '[{"name": "pypi", "url": "https://pypi.org/"}]'
+          FINECODE_CONFIG_PUBLISH_AND_VERIFY_ARTIFACT__INIT_REPOSITORY_PROVIDER__REPOSITORIES: '[{"name": "pypi", "index_url": "https://pypi.org/simple/", "upload_url": "https://upload.pypi.org/legacy/"}]'
           FINECODE_CONFIG_PUBLISH_AND_VERIFY_ARTIFACT__INIT_REPOSITORY_PROVIDER__CREDENTIALS_BY_REPOSITORY: '{"pypi": {"username": "${{ secrets.PYPI_USERNAME }}", "password": "${{ secrets.PYPI_PASSWORD }}"}}'
         run: |
           # TODO: make sure git tag exists (for manual trigger)
@@ -170,8 +202,267 @@ jobs:
 
       # TODO: try to replace by finecode action
       - name: Store the distribution packages
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         if: runner.os == 'Linux'
         with:
           name: python-package-distributions
           path: dist/
+
+      # Save the venvs explicitly instead of relying on actions/cache's own post-step:
+      # that post-step skips the save when the job fails, which throws away a perfectly
+      # good cold install just because a later check or test failed. The only
+      # precondition here is that the install itself succeeded; on an exact key match
+      # there is nothing new to save.
+      # The key is reused from the restore step, never recomputed: by now every .venvs/
+      # is populated, so a `**/pyproject.toml` glob would walk all of site-packages
+      # (hashFiles times out at 120s) and could hash venv-internal files the restore
+      # key never saw, saving under a key no later run would ever restore.
+      - name: Save venvs cache
+        if: ${{ always() && steps.install.outcome == 'success' && steps.venvs_cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@v5
+        with:
+          path: |
+            .venvs
+            **/.venvs
+          key: ${{ steps.venvs_cache.outputs.cache-primary-key }}
+
+      # Remove workspace packages from the cache before saving. uv's documented CI
+      # recipe (`uv cache prune --ci`) keeps source builds and drops downloaded wheels;
+      # for this repo that keeps the wrong half — the only sdists are FineCode's own
+      # packages, and a fresh checkout can never reuse those builds (uv checks local
+      # source freshness against timestamps a checkout resets). The reusable part is the
+      # PyPI wheels, and `--ci` deletes exactly those. Clean by name through uv's own
+      # interface — bucket directories carry version suffixes that change between uv
+      # releases — then prune dangling entries.
+      - name: Trim uv cache to reusable entries
+        id: uv_trim
+        if: ${{ always() && steps.install.outcome != 'skipped' && steps.uv_cache.outcome == 'success' }}
+        run: |
+          manifest=".venvs/dev_workspace/cache/wheelhouse/manifest.json"
+          if [ -f "$manifest" ]; then
+            # Wheel mode is the CI default; the manifest is the authoritative installed set.
+            names=$(python -c "import json,sys; print(' '.join(json.load(open(sys.argv[1]))))" "$manifest")
+          else
+            # Fallback: derive the same names from the workspace's own resolver. Covers a
+            # future non-wheel CI mode and mirrors what prepare-envs installed.
+            names=$(python -c "import pathlib,sys; sys.path.insert(0,'scripts'); import list_dev_workspace_editables as m; print(' '.join(m.resolve_workspace_packages(pathlib.Path.cwd())))")
+          fi
+          uv cache clean finecode $names
+          uv cache prune
+      - name: Save uv cache
+        if: ${{ always() && steps.uv_trim.outcome == 'success' }}
+        uses: actions/cache/save@v5
+        with:
+          path: ${{ runner.temp }}/uv-cache
+          key: ${{ steps.uv_cache.outputs.cache-primary-key }}
+
+      - name: Upload FineCode logs
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        uses: actions/upload-artifact@v6
+        with:
+          name: finecode-logs-${{ matrix.name }}
+          path: |
+            .venvs/*/logs
+            **/.venvs/*/logs
+          if-no-files-found: warn
+          retention-days: 14
+
+  audit-private:
+    name: Audit (private layer)
+    runs-on: ubuntu-26.04
+    # This job pays a cold prepare-envs over ~74 projects and then a
+    # workspace-wide audit_code, which is slow by design (see
+    # docs/guides/developing-finecode.md "Running checks"), so it carries its own
+    # budget rather than inheriting the build matrix's.
+    timeout-minutes: 60
+    # `secrets` is NOT available in jobs.<job_id>.if -- only github, needs,
+    # vars, inputs. An unavailable context evaluates to empty, so a secrets test
+    # here would skip the job forever without ever erroring. Fork PRs are
+    # excluded with the `github` context alone; the credentials test is the
+    # `env` gate below, which step `if`s can read.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    env:
+      # jobs.<job_id>.env DOES have the secrets context, and steps' `if` has
+      # `env`. This one line is what bridges the two.
+      HAS_PRIVATE_CLONE_APP: ${{ secrets.PRIVATE_CLONE_APP_ID != '' && secrets.PRIVATE_CLONE_APP_PRIVATE_KEY != '' }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          # setuptools-scm uses tags to get the current version, fetch history and tags
+          # to get correct version
+          fetch-depth: 0
+          fetch-tags: 'true'
+
+      - name: Report skip reason
+        if: env.HAS_PRIVATE_CLONE_APP != 'true'
+        run: echo "::notice::Private-layer audit skipped - App credentials are not available on this run."
+
+      - name: Determine FineCode log level
+        if: env.HAS_PRIVATE_CLONE_APP == 'true'
+        run: |
+          # WM/ER diagnostic logs are streamed to the job log (verbose is auto-enabled
+          # in CI). Keep them at INFO normally; raise to DEBUG only when the job is
+          # re-run with "Enable debug logging" (GitHub sets RUNNER_DEBUG=1). This keeps
+          # the debug-vs-info decision in CI config — FineCode just honors --log-level.
+          if [ "${RUNNER_DEBUG:-0}" = "1" ]; then
+            echo "FINECODE_LOG_LEVEL=DEBUG" >> "$GITHUB_ENV"
+          else
+            echo "FINECODE_LOG_LEVEL=INFO" >> "$GITHUB_ENV"
+          fi
+
+      - name: Set up Python ${{ env.DEV_WORKSPACE_PYTHON_VERSION }}
+        if: env.HAS_PRIVATE_CLONE_APP == 'true'
+        uses: actions/setup-python@v6
+        with:
+          python-version: ${{ env.DEV_WORKSPACE_PYTHON_VERSION }}
+
+      - name: Mint private-clone token
+        id: app_token
+        if: env.HAS_PRIVATE_CLONE_APP == 'true'
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ secrets.PRIVATE_CLONE_APP_ID }}
+          private-key: ${{ secrets.PRIVATE_CLONE_APP_PRIVATE_KEY }}
+          owner: finecode-dev
+          repositories: fine_knowledge,finecode_internal_experiments
+
+      - name: Check out fine_knowledge
+        if: env.HAS_PRIVATE_CLONE_APP == 'true'
+        uses: actions/checkout@v5
+        with:
+          repository: finecode-dev/fine_knowledge
+          path: presets/fine_knowledge
+          token: ${{ steps.app_token.outputs.token }}
+          # A `git clone` with the token in the URL writes it into the clone's
+          # .git/config; checkout with persist-credentials disabled does not.
+          persist-credentials: false
+
+      - name: Check out internal experiments
+        if: env.HAS_PRIVATE_CLONE_APP == 'true'
+        uses: actions/checkout@v5
+        with:
+          repository: finecode-dev/finecode_internal_experiments
+          path: finecode_internal_experiments
+          token: ${{ steps.app_token.outputs.token }}
+          persist-credentials: false
+
+      - name: Install the CI private-layer config
+        if: env.HAS_PRIVATE_CLONE_APP == 'true'
+        run: cp .github/ci/finecode-user.ci.toml finecode-user.toml
+
+      - name: Configure uv cache
+        id: uv_env
+        if: env.HAS_PRIVATE_CLONE_APP == 'true'
+        run: |
+          echo "UV_CACHE_DIR=$RUNNER_TEMP/uv-cache" >> "$GITHUB_ENV"
+          echo "generation=$(date -u +%Y-%m)" >> "$GITHUB_OUTPUT"
+
+      - name: Restore venvs cache
+        id: venvs_cache
+        if: env.HAS_PRIVATE_CLONE_APP == 'true'
+        uses: actions/cache/restore@v5
+        with:
+          path: |
+            .venvs
+            **/.venvs
+          key: ${{ runner.os }}-private-venvs-${{ hashFiles('**/pyproject.toml', '**/preset.toml', 'finecode-user.toml') }}
+
+      - name: Restore uv cache
+        id: uv_cache
+        if: ${{ env.HAS_PRIVATE_CLONE_APP == 'true' && steps.venvs_cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/restore@v5
+        with:
+          path: ${{ runner.temp }}/uv-cache
+          # `private-venvs-`, never `venvs-`: a public run (a fork PR included) must not
+          # restore an entry written by the private job, and vice versa.
+          key: uv-${{ steps.uv_env.outputs.generation }}-${{ steps.venvs_cache.outputs.cache-primary-key }}
+          restore-keys: |
+            uv-${{ steps.uv_env.outputs.generation }}-${{ runner.os }}-private-venvs-
+
+      - name: Install dependencies
+        id: install
+        if: env.HAS_PRIVATE_CLONE_APP == 'true'
+        run: |
+          # CI must exercise this branch's local source, so finecode and its sibling
+          # packages need an editable install, not a released version from PyPI — see
+          # docs/guides/developing-finecode.md#continuous-integration.
+          sh scripts/setup-dev-workspace.sh
+          source .venvs/dev_workspace/bin/activate
+        shell: bash
+
+      - name: Inspect code
+        if: env.HAS_PRIVATE_CLONE_APP == 'true'
+        run: |
+          source .venvs/dev_workspace/bin/activate
+          python -m finecode run --log-level="$FINECODE_LOG_LEVEL" inspect_code
+        shell: bash
+
+      - name: Extract knowledge
+        if: env.HAS_PRIVATE_CLONE_APP == 'true'
+        run: |
+          source .venvs/dev_workspace/bin/activate
+          python -m finecode run --log-level="$FINECODE_LOG_LEVEL" extract_knowledge
+        shell: bash
+
+      - name: Audit code
+        if: env.HAS_PRIVATE_CLONE_APP == 'true'
+        run: |
+          source .venvs/dev_workspace/bin/activate
+          python -m finecode run --log-level="$FINECODE_LOG_LEVEL" audit_code
+        shell: bash
+
+      - name: Run unit tests
+        if: env.HAS_PRIVATE_CLONE_APP == 'true'
+        run: |
+          source .venvs/dev_workspace/bin/activate
+          python -m finecode run --log-level="$FINECODE_LOG_LEVEL" run_tests
+        shell: bash
+
+      # See the matching step in the `build` job for the rationale: save the venvs
+      # whenever the install succeeded, even if a later check, audit or test failed,
+      # and reuse the restore step's key rather than recomputing it.
+      - name: Save venvs cache
+        if: ${{ always() && env.HAS_PRIVATE_CLONE_APP == 'true' && steps.install.outcome == 'success' && steps.venvs_cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@v5
+        with:
+          path: |
+            .venvs
+            **/.venvs
+          key: ${{ steps.venvs_cache.outputs.cache-primary-key }}
+
+      # See the matching step in the `build` job for the rationale behind the trim and
+      # the save gating.
+      - name: Trim uv cache to reusable entries
+        id: uv_trim
+        if: ${{ always() && env.HAS_PRIVATE_CLONE_APP == 'true' && steps.install.outcome == 'success' && steps.uv_cache.outcome == 'success' }}
+        run: |
+          manifest=".venvs/dev_workspace/cache/wheelhouse/manifest.json"
+          if [ -f "$manifest" ]; then
+            # Wheel mode is the CI default; the manifest is the authoritative installed set.
+            names=$(python -c "import json,sys; print(' '.join(json.load(open(sys.argv[1]))))" "$manifest")
+          else
+            # Fallback: derive the same names from the workspace's own resolver. Covers a
+            # future non-wheel CI mode and mirrors what prepare-envs installed.
+            names=$(python -c "import pathlib,sys; sys.path.insert(0,'scripts'); import list_dev_workspace_editables as m; print(' '.join(m.resolve_workspace_packages(pathlib.Path.cwd())))")
+          fi
+          uv cache clean finecode $names
+          uv cache prune
+      - name: Save uv cache
+        if: ${{ always() && env.HAS_PRIVATE_CLONE_APP == 'true' && steps.install.outcome == 'success' && steps.uv_trim.outcome == 'success' }}
+        uses: actions/cache/save@v5
+        with:
+          path: ${{ runner.temp }}/uv-cache
+          key: ${{ steps.uv_cache.outputs.cache-primary-key }}
+
+      - name: Upload FineCode logs
+        if: ${{ !cancelled() && env.HAS_PRIVATE_CLONE_APP == 'true' }}
+        continue-on-error: true
+        uses: actions/upload-artifact@v6
+        with:
+          name: finecode-logs-audit-private
+          path: |
+            .venvs/*/logs
+            **/.venvs/*/logs
+          if-no-files-found: warn
+          retention-days: 14

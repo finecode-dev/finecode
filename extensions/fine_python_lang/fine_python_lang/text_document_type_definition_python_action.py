@@ -1,9 +1,9 @@
-from finecode_extension_api import code_action
 from fine_symbol_info.text_document_type_definition_action import (
+    TextDocumentTypeDefinitionAction,
     TypeDefinitionPayload,
     TypeDefinitionResult,
-    TextDocumentTypeDefinitionAction,
 )
+from finecode_extension_api import code_action
 
 
 class TextDocumentTypeDefinitionPythonAction(code_action.Action):

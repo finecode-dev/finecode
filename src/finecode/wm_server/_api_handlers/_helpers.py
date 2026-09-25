@@ -1,4 +1,5 @@
 """Shared helpers, parameter parsing, and config-override utilities for API handlers."""
+
 from __future__ import annotations
 
 import asyncio
@@ -9,12 +10,10 @@ from loguru import logger
 
 from finecode.wm_server import context, domain
 from finecode.wm_server._jsonrpc import _write_message
-from finecode.wm_server.context import pick_workspace_root_dir as _pick_workspace_root_dir
-from finecode.wm_server.services.run_service.exceptions import ActionNotFoundError
-from finecode.wm_server.services.run_service.merge_helpers import (
-    merge_partial_results_for_action as _merge_partial_results_for_action,
+from finecode.wm_server.context import (
+    pick_workspace_root_dir as _pick_workspace_root_dir,
 )
-
+from finecode.wm_server.services.run_service.exceptions import ActionNotFoundError
 
 # ---------------------------------------------------------------------------
 # Server → client (single-client) notification helper
@@ -60,6 +59,23 @@ def _find_project_by_path(
 # ---------------------------------------------------------------------------
 
 
+def _matches_source(action: domain.Action, source: str) -> bool:
+    # canonical_source is set by update_runner_config for every action whose class
+    # can be imported; None comparisons are safe (None != any string).
+    return action.source == source or action.canonical_source == source
+
+
+def project_exposes_action(project: domain.CollectedProject, source: str) -> bool:
+    """Whether a project defines an action under the given alias, without asking
+    an ER to resolve it.
+
+    Only the direct match of :func:`find_action_by_source` — selecting the
+    projects a workspace-wide operation applies to must not cost one ER round
+    trip per project that does not have the action.
+    """
+    return any(_matches_source(action, source) for action in project.actions)
+
+
 async def find_action_by_source(
     actions: list[domain.Action],
     source: str,
@@ -86,16 +102,7 @@ async def find_action_by_source(
     """
     # Step 1: direct match — covers the alias written in project config (source)
     # and callers that already hold the canonical path (canonical_source).
-    # canonical_source is set by update_runner_config for every action whose class
-    # can be imported; None comparisons are safe (None != any string).
-    action = next(
-        (
-            a
-            for a in actions
-            if a.source == source or a.canonical_source == source
-        ),
-        None,
-    )
+    action = next((a for a in actions if _matches_source(a, source)), None)
     if action is not None:
         return action
 
@@ -116,7 +123,10 @@ async def find_action_by_source(
                 seen_envs.add(h.env)
                 handler_envs.append(h.env)
     env_order = handler_envs + [
-        e for e in (["dev_workspace"] + [e for e in runners_by_env if e != "dev_workspace"])
+        e
+        for e in (
+            ["dev_workspace"] + [e for e in runners_by_env if e != "dev_workspace"]
+        )
         if e not in seen_envs
     ]
     for env_name in env_order:
@@ -126,7 +136,9 @@ async def find_action_by_source(
         try:
             canonical = await rc.resolve_source(runner, source)
         except Exception as exc:
-            logger.debug(f"find_action_by_source: ER '{env_name}' failed for '{source}': {exc}")
+            logger.debug(
+                f"find_action_by_source: ER '{env_name}' failed for '{source}': {exc}"
+            )
             continue
         if canonical is None:
             continue
@@ -199,7 +211,9 @@ async def _parse_and_validate_run_action_params(
                 f"Project '{project_name}' actions are not collected yet. "
                 "Ensure the project is initialized before running actions."
             )
-        action = await find_action_by_source(project.actions, action_source, project, ws_context)
+        action = await find_action_by_source(
+            project.actions, action_source, project, ws_context
+        )
         if action is None:
             raise ValueError(
                 f"Action with source '{action_source}' not found in project '{project_name}'"
@@ -211,7 +225,9 @@ async def _parse_and_validate_run_action_params(
     else:
         # No project specified — valid only for workspace-scoped actions.
         workspace_root = _pick_workspace_root_dir(ws_context)
-        root_project = ws_context.ws_projects.get(workspace_root) if workspace_root else None
+        root_project = (
+            ws_context.ws_projects.get(workspace_root) if workspace_root else None
+        )
         if not isinstance(root_project, domain.CollectedProject):
             raise ValueError("project parameter is required")
         action = await find_action_by_source(
@@ -223,6 +239,7 @@ async def _parse_and_validate_run_action_params(
             )
         if action.canonical_source is None:
             from finecode.wm_server.services import run_service
+
             await run_service.ensure_action_metadata(action, root_project, ws_context)
         if action.scope != domain.ActionScope.WORKSPACE:
             raise ValueError("project parameter is required")
@@ -342,7 +359,10 @@ async def _resolve_actions_by_project(
                     continue
                 if action.canonical_source is None:
                     from finecode.wm_server.services import run_service
-                    await run_service.ensure_action_metadata(action, project, ws_context)
+
+                    await run_service.ensure_action_metadata(
+                        action, project, ws_context
+                    )
                 if action.scope == domain.ActionScope.WORKSPACE:
                     raise ValueError(
                         f"Action '{source}' is workspace-scoped; do not pass a project path. "
@@ -361,7 +381,9 @@ async def _resolve_actions_by_project(
             if workspace_root is not None
             else None
         )
-        has_workspace_root_project = isinstance(workspace_root_project, domain.CollectedProject)
+        has_workspace_root_project = isinstance(
+            workspace_root_project, domain.CollectedProject
+        )
         unrooted_ws_sources: set[str] = set()
 
         actions_by_project = {}
@@ -380,7 +402,10 @@ async def _resolve_actions_by_project(
                     # the action's package so update_runner_config can import
                     # the class and set scope (+ propagate to other projects).
                     from finecode.wm_server.services import run_service
-                    await run_service.ensure_action_metadata(action, project, ws_context)
+
+                    await run_service.ensure_action_metadata(
+                        action, project, ws_context
+                    )
                 if action.scope == domain.ActionScope.WORKSPACE:
                     if has_workspace_root_project:
                         if project.dir_path != workspace_root_project.dir_path:
@@ -412,7 +437,9 @@ async def _resolve_actions_by_project(
                 f"Known projects: {[str(p) for p in all_projects]}. "
                 f"Actions per project: {projects_with_actions}"
             )
-            raise ActionNotFoundError(f"No projects found with actionSources: {action_sources}")
+            raise ActionNotFoundError(
+                f"No projects found with actionSources: {action_sources}"
+            )
 
     return actions_by_project, name_to_source
 
@@ -459,8 +486,7 @@ def _apply_config_overrides_to_projects(
         if not isinstance(project, domain.CollectedProject):
             continue
         originals[project.dir_path] = {
-            source: dict(cfg)
-            for source, cfg in project.action_handler_configs.items()
+            source: dict(cfg) for source, cfg in project.action_handler_configs.items()
         }
         for action in project.actions:
             if action.name not in actions_set:

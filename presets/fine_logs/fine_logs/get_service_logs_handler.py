@@ -4,17 +4,17 @@ import re
 from datetime import datetime
 
 from finecode_extension_api import code_action
+from finecode_extension_api.interfaces import (
+    iextensionrunnerinfoprovider,
+    ilogger,
+)
+
 from fine_logs.get_service_logs_action import (
     GetServiceLogsAction,
     GetServiceLogsRunContext,
     GetServiceLogsRunPayload,
     GetServiceLogsRunResult,
 )
-from finecode_extension_api.interfaces import (
-    iextensionrunnerinfoprovider,
-    ilogger,
-)
-
 from fine_logs.observability_log_utils import resolve_log_dir
 
 _TS_RE = re.compile(r"^(\d{4}-\d{2}-\d{2}[\sT]\d{2}:\d{2}:\d{2})")

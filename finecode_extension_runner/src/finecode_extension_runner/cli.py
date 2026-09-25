@@ -13,7 +13,6 @@ from finecode_extension_runner import er_wal, global_state, logs
 @click.group()
 def main():
     """FineCode Extension Runner CLI"""
-    pass
 
 
 @main.command()
@@ -59,12 +58,9 @@ def start(
     global_state.env_name = env_name
     wal_writer = er_wal.ErWalWriter() if wal else None
 
-    log_file_path = (project_path
-        / ".venvs"
-        / env_name
-        / "logs"
-        / "runner"
-        / "runner.log")
+    log_file_path = (
+        project_path / ".venvs" / env_name / "logs" / "runner" / "runner.log"
+    )
 
     global_state.log_file_path = logs.setup_logging(
         log_level=log_level,

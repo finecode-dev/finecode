@@ -16,6 +16,7 @@ class Dependency:
     name: str
     version_or_source: str
     editable: bool = False
+    extras: list[str] = dataclasses.field(default_factory=list)
 
 
 @dataclasses.dataclass

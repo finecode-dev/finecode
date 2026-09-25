@@ -4,6 +4,13 @@ import pathlib
 
 import pytest
 import tomlkit
+from fine_python_lang.list_obtainable_python_interpreters_action import (
+    ListObtainablePythonInterpretersAction,
+)
+from fine_python_lang.sync_python_interpreters_action import (
+    SyncPythonInterpretersAction,
+    SyncPythonInterpretersRunPayload,
+)
 from finecode_extension_api import code_action
 from finecode_extension_api.interfaces.ifileeditor import IFileEditor
 from finecode_extension_api.interfaces.ilogger import ILogger
@@ -18,25 +25,15 @@ from finecode_extension_runner._services.run_action import (
 )
 from finecode_extension_runner.testing import InMemoryFileEditor, handler_test_session
 
-from fine_python_lang.list_obtainable_python_interpreters_action import (
-    ListObtainablePythonInterpretersAction,
-)
-from fine_python_lang.sync_python_interpreters_action import (
-    SyncPythonInterpretersAction,
-    SyncPythonInterpretersRunPayload,
-)
 from fine_python_package_info.sync_python_interpreters_handler import (
     SyncPythonInterpretersHandler,
     derive_interpreters,
 )
-
 from tests.stubs import OBTAINABLE as _OBTAINABLE
 from tests.stubs import CollectingLogger, StubObtainableInterpretersHandler
 
 _ACTION_NAME = SyncPythonInterpretersAction.__name__
-_ACTION_SOURCE = (
-    f"{SyncPythonInterpretersAction.__module__}.{SyncPythonInterpretersAction.__qualname__}"
-)
+_ACTION_SOURCE = f"{SyncPythonInterpretersAction.__module__}.{SyncPythonInterpretersAction.__qualname__}"
 _HANDLER_NAME = SyncPythonInterpretersHandler.__name__
 _HANDLER_SOURCE = (
     f"{SyncPythonInterpretersHandler.__module__}"
@@ -138,9 +135,9 @@ def test_non_cpython_is_never_derived() -> None:
 
 
 def test_ceiling_caps_the_newest_derived_version() -> None:
-    assert derive_interpreters(
-        ">=3.12", _OBTAINABLE, max_supported_python="3.12"
-    ) == ["cpython@3.12"]
+    assert derive_interpreters(">=3.12", _OBTAINABLE, max_supported_python="3.12") == [
+        "cpython@3.12"
+    ]
 
 
 def test_extra_interpreters_are_appended_after_the_derived_rows() -> None:
@@ -150,9 +147,9 @@ def test_extra_interpreters_are_appended_after_the_derived_rows() -> None:
 
 
 def test_extra_interpreter_already_derived_is_not_duplicated() -> None:
-    assert derive_interpreters(
-        ">=3.14", _OBTAINABLE, extra_interpreters=["3.14"]
-    ) == ["cpython@3.14"]
+    assert derive_interpreters(">=3.14", _OBTAINABLE, extra_interpreters=["3.14"]) == [
+        "cpython@3.14"
+    ]
 
 
 def test_patch_level_floor_keeps_its_own_minor() -> None:
@@ -176,9 +173,7 @@ def test_patch_level_ceiling_drops_the_minor_it_cannot_satisfy() -> None:
 def test_invalid_max_supported_python_is_an_action_failure() -> None:
     # a typo'd handler config must name the offending key, not surface as a raw
     # packaging.InvalidVersion traceback
-    with pytest.raises(
-        code_action.ActionFailedException, match="max_supported_python"
-    ):
+    with pytest.raises(code_action.ActionFailedException, match="max_supported_python"):
         derive_interpreters(">=3.11", _OBTAINABLE, max_supported_python="3.12.x")
 
 
@@ -222,7 +217,7 @@ class _StubProjectInfoProvider:
     def get_current_project_raw_config_version(self) -> int:
         return 0
 
-    async def get_workspace_editable_packages(self) -> dict:
+    async def get_workspace_packages(self) -> dict:
         return {}
 
 
@@ -272,9 +267,7 @@ async def test_axis_already_current_is_left_alone(tmp_path: pathlib.Path) -> Non
     _write_pyproject(
         tmp_path,
         requires_python=">=3.13,<3.14",
-        env_table=(
-            "\n[tool.finecode.env.dev]\n" 'interpreters = ["cpython@3.13"]\n'
-        ),
+        env_table=('\n[tool.finecode.env.dev]\ninterpreters = ["cpython@3.13"]\n'),
     )
     file_editor = InMemoryFileEditor()
 
@@ -298,7 +291,7 @@ async def test_version_only_shorthand_is_not_drift(tmp_path: pathlib.Path) -> No
     _write_pyproject(
         tmp_path,
         requires_python=">=3.13,<3.14",
-        env_table="\n[tool.finecode.env.dev]\ninterpreters = [\"3.13\"]\n",
+        env_table='\n[tool.finecode.env.dev]\ninterpreters = ["3.13"]\n',
     )
     file_editor = InMemoryFileEditor()
 

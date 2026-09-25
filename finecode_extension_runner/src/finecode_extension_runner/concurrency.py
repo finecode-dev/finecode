@@ -1,19 +1,20 @@
 """Shared machine-sizing primitives for bounding concurrent subprocess fan-out.
 
 Both the WM (`src/finecode`) and the ER (`finecode_extension_runner`) size
-their concurrency caps from this module — it is the one place both processes
-can compute identical, independently-executed defaults without duplicating the
-formula. See ADR-0055 (bound `prepare-envs` concurrency at two layers) and
-ADR-0063 (bound ER startup concurrency) for the full rationale.
+their machine-derived process caps from this module — it is the one place both
+processes can compute identical, independently-executed defaults without
+duplicating the formula. See ADR-0055 and ADR-0063 for the original rationale,
+and ADR-0090 for the single machine-wide process budget that replaced the
+per-layer sqrt-split.
 
 Only the shared primitives live here. Each cap's *resolver* — which decides
 how CLI flags, env vars and service config override the default — lives next
 to the code that owns that cap, since each has a different override chain.
 """
+
 from __future__ import annotations
 
 import dataclasses
-import math
 import os
 
 
@@ -51,33 +52,7 @@ def machine_subprocess_budget() -> int:
     return max(available - 1, 1)
 
 
-def default_layered_concurrency() -> int:
-    """Default cap for EACH of the two independent concurrency layers
-    (projects-in-parallel during prepare-envs, and envs-in-parallel /
-    subprocesses-in-parallel within one Extension Runner).
-
-    The two layers compose multiplicatively in the worst case (N projects
-    each running M envs concurrently = N*M concurrent subprocesses), so
-    handing each layer the full machine_subprocess_budget() independently
-    would let the product overshoot the machine's real budget by up to a
-    squared factor (e.g. 7 -> 49 on an 8-core box). Splitting the shared
-    budget via its square root keeps the worst-case product close to the
-    single-machine budget instead of squaring it, while still giving each
-    layer genuine parallelism:
-
-        budget=1  -> 1  (product 1)
-        budget=3  -> 2  (product 4,  vs target 3)
-        budget=7  -> 3  (product 9,  vs target 7)
-        budget=15 -> 4  (product 16, vs target 15)
-
-    Each layer is independently configurable; this is only the value used
-    when a layer's own setting is left unset.
-    """
-    return max(round(math.sqrt(machine_subprocess_budget())), 1)
-
-
 __all__ = [
     "ConcurrencyDecision",
     "machine_subprocess_budget",
-    "default_layered_concurrency",
 ]

@@ -11,12 +11,50 @@ from __future__ import annotations
 
 import asyncio
 import collections.abc
+import contextlib
+import dataclasses
 import json
 import pathlib
+import random
+import typing
 
 from loguru import logger
 
+from finecode.wm_server import wm_lifecycle
+from finecode_extension_runner import schema_utils
+
 CONTENT_LENGTH_HEADER = "Content-Length: "
+
+
+@dataclasses.dataclass(frozen=True)
+class ReconnectPolicy:
+    """How a client behaves when the WM connection drops (ADR-0074).
+
+    Whether a client may start a WM is configuration, never inferred: a client
+    that owns a dedicated server for one command must not resurrect one it or
+    its user deliberately stopped (rule 4).
+
+    The default schedule spends at most about 24s over its attempts, jitter
+    included, inside the WM's 30s disconnect timeout (ADR-0004) — past that
+    there is no server left to reconnect to, and what happens then is
+    ``may_start_server``'s business rather than the loop's.
+
+    Attributes:
+        may_start_server: Start a WM when none is listening.  Requires ``workdir``.
+        workdir: Directory a started WM is rooted at.
+        max_attempts: Attempts before the client reports itself disconnected.
+        base_delay: Delay before the first attempt, in seconds.
+        max_delay: Ceiling the doubling delay stops at, in seconds.
+        jitter: Fraction of each delay to randomize by, spreading the reconnects
+            of every client of a restarted WM.
+    """
+
+    may_start_server: bool = False
+    workdir: pathlib.Path | None = None
+    max_attempts: int = 7
+    base_delay: float = 0.2
+    max_delay: float = 5.0
+    jitter: float = 0.5
 
 
 class ApiError(Exception):
@@ -48,7 +86,7 @@ async def _read_message(reader: asyncio.StreamReader) -> dict | None:
     if not header_str.startswith(CONTENT_LENGTH_HEADER):
         logger.warning(f"WmClient: unexpected header: {header_str!r}")
         return None
-    content_length = int(header_str[len(CONTENT_LENGTH_HEADER):])
+    content_length = int(header_str[len(CONTENT_LENGTH_HEADER) :])
 
     # Blank separator line
     await reader.readline()
@@ -60,9 +98,13 @@ async def _read_message(reader: asyncio.StreamReader) -> dict | None:
 class ApiClient:
     """JSON-RPC client using Content-Length framing over TCP.
 
-    After connect(), a background reader loop dispatches incoming messages:
-    - Responses (with ``id``) resolve the matching pending request future.
-    - Notifications (without ``id``) are dispatched to registered callbacks.
+    After connect(), a background reader loop dispatches incoming messages by
+    their JSON-RPC shape:
+    - Requests (``id`` *and* ``method``) go to an :meth:`on_request` callback and
+      are answered on this connection.
+    - Responses (``id``, no ``method``) resolve the matching pending future.
+    - Notifications (``method``, no ``id``) go to an :meth:`on_notification`
+      callback.
 
     Errors:
     - ``ApiServerError``: the server returned a JSON-RPC error.
@@ -78,19 +120,141 @@ class ApiClient:
         self._notification_handlers: dict[
             str, collections.abc.Callable[..., collections.abc.Coroutine]
         ] = {}
+        # Server→client *requests* (ADR-0082), kept apart from notifications
+        # because the two are answered differently: a notification handler's
+        # return value goes nowhere, a request handler's return value is the
+        # JSON-RPC result this client owes the server.
+        self._request_handlers: dict[
+            str, collections.abc.Callable[..., collections.abc.Coroutine]
+        ] = {}
+        # Strong references to in-flight inbound-request handlers. They run as
+        # tasks rather than inline in the read loop: a handler may wait on a
+        # person for minutes, and handling it inline would stall every other
+        # message on the connection — including the partial results of the very
+        # run that is asking.
+        self._inbound_request_tasks: set[asyncio.Task] = set()
         self._reader_task: asyncio.Task | None = None
         self.server_info: dict = {}
+        self._host: str = "127.0.0.1"
+        self._client_id: str | None = None
+        self._reconnect_policy: ReconnectPolicy | None = None
+        self._on_reattach: (
+            collections.abc.Callable[..., collections.abc.Coroutine] | None
+        ) = None
+        self._on_session_lost: collections.abc.Callable[[bool], None] | None = None
+        self._reconnect_task: asyncio.Task | None = None
+        self._capabilities: dict = {}
+        # Distinguishes a deliberate close from a lost connection: close()
+        # cancels the reader, and a reconnect racing its own shutdown would
+        # leave a client nobody asked for.
+        self._closing = False
+        self._reconnecting = False
+        self._connected = asyncio.Event()
+        self._epoch = 0
 
     # -- Connection lifecycle -----------------------------------------------
 
-    async def connect(self, host: str, port: int, client_id: str | None = None) -> None:
+    def configure_reconnect(
+        self,
+        policy: ReconnectPolicy | None,
+        on_reattach: collections.abc.Callable[..., collections.abc.Coroutine]
+        | None = None,
+        on_session_lost: collections.abc.Callable[[bool], None] | None = None,
+    ) -> None:
+        """Reconnect when the connection drops, re-establishing the session first.
+
+        ``policy=None`` keeps the session hook without reconnecting, which is
+        what a client holding a dedicated server for one command wants: it must
+        not resurrect a server it deliberately stopped (ADR-0074 rule 4).
+
+        ``on_reattach`` is awaited with ``first_connect=True`` by :meth:`connect`
+        and with ``first_connect=False`` after each reconnect, so the session
+        setup has one definition rather than one per path.  It must re-establish
+        whatever the WM held on this client's behalf — a client that cannot
+        complete it is disconnected, not connected (ADR-0074 rule 3).
+
+        ``on_session_lost`` is the inverse edge, called synchronously the moment
+        the session stops existing: with ``True`` while a reconnect is still
+        coming, and with ``False`` once the client has given up.  A surface that
+        gates its own work on the session needs both — the first to stop
+        dispatching into a WM that has never heard of it, the second to stop
+        waiting for a re-attach that is never going to happen.  Not called for a
+        deliberate :meth:`close`, which is not a lost session.
+        """
+        self._reconnect_policy = policy
+        self._on_reattach = on_reattach
+        self._on_session_lost = on_session_lost
+
+    @property
+    def is_connected(self) -> bool:
+        return self._connected.is_set()
+
+    @property
+    def connection_epoch(self) -> int:
+        """Counts re-attached connections.
+
+        A caller waiting for a *replacement* connection cannot wait on
+        connectedness alone: the old connection reads as live until its reader
+        notices the peer is gone, so waiting would return immediately on a
+        socket that is already dead.
+        """
+        return self._epoch
+
+    async def wait_connected(
+        self, timeout: float, *, after_epoch: int | None = None
+    ) -> None:
+        """Block until the client holds a re-attached connection.
+
+        With ``after_epoch``, block until a *later* connection than that one is
+        established.
+
+        Raises:
+            TimeoutError: no such connection within *timeout*.
+        """
+
+        async def _wait() -> None:
+            while True:
+                await self._connected.wait()
+                if after_epoch is None or self._epoch > after_epoch:
+                    return
+                await asyncio.sleep(0.01)
+
+        await asyncio.wait_for(_wait(), timeout=timeout)
+
+    async def connect(
+        self,
+        host: str,
+        port: int,
+        client_id: str | None = None,
+        capabilities: dict | None = None,
+    ) -> None:
+        """Connect, identify this client and declare what it can do.
+
+        ``capabilities`` is what the WM is allowed to ask of this connection —
+        today only ``{"elicitation": {...}}``, which says a person can be put a
+        question (ADR-0082 rule 2). It is a property of the *connection*, not of
+        the binary: the same CLI declares it when attached to a terminal and
+        withholds it in a pipeline. Kept on the client so every reconnect
+        re-declares it, since a restarted WM has never heard of this client.
+        """
+        self._closing = False
+        self._host = host
+        self._client_id = client_id
+        self._capabilities = capabilities or {}
+        await self._open(host, port)
+        await self._reattach(first_connect=True)
+
+    async def _open(self, host: str, port: int) -> None:
+        """Establish the socket and identify this client to the server."""
         self._reader, self._writer = await asyncio.open_connection(host, port)
         self._reader_task = asyncio.create_task(self._read_loop())
         logger.info(f"Connected to FineCode API at {host}:{port}")
         try:
             params: dict = {}
-            if client_id is not None:
-                params["clientId"] = client_id
+            if self._client_id is not None:
+                params["clientId"] = self._client_id
+            if self._capabilities:
+                params["capabilities"] = self._capabilities
             self.server_info = await self.request("client/initialize", params) or {}
             log_path = self.server_info.get("logFilePath")
             if log_path:
@@ -100,7 +264,52 @@ class ApiClient:
         except Exception as exception:
             logger.info(f"Failed to initialize with WM Server: {exception}")
 
+    async def _reattach(self, *, first_connect: bool) -> None:
+        """Re-establish the session, then report the client connected.
+
+        Raises:
+            Exception: whatever the surface's re-attach hook raises. [untranslated]
+        """
+        if self._on_reattach is not None:
+            await self._on_reattach(first_connect=first_connect)
+        self._epoch += 1
+        self._connected.set()
+
+    def _notify_session_lost(self, *, recoverable: bool) -> None:
+        """Tell the surface its session is gone, without letting it break us.
+
+        Called from a ``finally`` and from the reconnect loop, neither of which
+        has anywhere to report a hook that raises: a surface whose bookkeeping
+        failed must not also cost the client its reconnect.
+        """
+        if self._on_session_lost is None:
+            return
+        try:
+            self._on_session_lost(recoverable)
+        except Exception:
+            logger.exception("WmClient: on_session_lost hook failed")
+
+    async def drop_connection(self) -> None:
+        """Close the current transport and let the reconnect path take over.
+
+        Not a shutdown: the client is expected to come back. Used when the server
+        on the other end is being replaced — it has to see this connection end
+        before it can exit, and this client has to stop talking to it.
+        """
+        await self._drop_socket()
+
     async def close(self) -> None:
+        self._closing = True
+        self._connected.clear()
+        # Captured before the reader task is cancelled: its `finally` drops the
+        # transport, and this path still wants to await it closing.
+        writer = self._writer
+        if self._reconnect_task is not None:
+            self._reconnect_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._reconnect_task
+            self._reconnect_task = None
+
         if self._reader_task is not None:
             self._reader_task.cancel()
             try:
@@ -109,17 +318,25 @@ class ApiClient:
                 pass
             self._reader_task = None
 
-        if self._writer is not None:
-            self._writer.close()
-            await self._writer.wait_closed()
-            self._writer = None
-            self._reader = None
+        if writer is not None:
+            writer.close()
+            with contextlib.suppress(ConnectionError, OSError):
+                await writer.wait_closed()
+        self._writer = None
+        self._reader = None
 
         # Fail any pending requests.
         for future in self._pending.values():
             if not future.done():
                 future.set_exception(ConnectionError("Connection closed"))
         self._pending.clear()
+
+        # Drop any inbound request still being answered. There is no connection
+        # left to answer it on, and a handler waiting on a person would
+        # otherwise keep this process alive after the client asked to close.
+        for task in list(self._inbound_request_tasks):
+            task.cancel()
+        self._inbound_request_tasks.clear()
 
     # -- Notifications ------------------------------------------------------
 
@@ -130,6 +347,24 @@ class ApiClient:
     ) -> None:
         """Register an async callback for a server→client notification."""
         self._notification_handlers[method] = callback
+
+    # -- Inbound requests ----------------------------------------------------
+
+    def on_request(
+        self,
+        method: str,
+        callback: collections.abc.Callable[..., collections.abc.Coroutine],
+    ) -> None:
+        """Register an async callback for a server→client *request*.
+
+        The callback is awaited with the request's ``params`` and whatever it
+        returns becomes the JSON-RPC ``result`` sent back to the server. A
+        callback that raises is answered with an internal-error response rather
+        than being allowed to take down the reader loop: the server is waiting
+        on this id and a dead reader would leave it waiting for its whole
+        deadline.
+        """
+        self._request_handlers[method] = callback
 
     # -- Server methods -----------------------------------------------------
 
@@ -144,6 +379,10 @@ class ApiClient:
     async def unsubscribe_logs(self) -> None:
         """Unsubscribe this connection from WM diagnostic logs."""
         await self.request("server/unsubscribeLogs", {})
+
+    async def shutdown(self) -> dict:
+        """Ask the WM server to shut down."""
+        return await self.request("server/shutdown")
 
     # -- Workspace methods --------------------------------------------------
 
@@ -164,16 +403,17 @@ class ApiClient:
         # server returns {"project": name | None}
         if not isinstance(result, dict):
             raise ApiResponseError(
-                "workspace/findProjectForFile", f"expected dict, got {type(result).__name__}"
+                "workspace/findProjectForFile",
+                f"expected dict, got {type(result).__name__}",
             )
         return result.get("project")
 
-    async def get_workspace_editable_packages(self) -> dict[str, str]:
-        """Return workspace editable packages as name → absolute posix path."""
-        result = await self.request("workspace/getWorkspaceEditablePackages")
+    async def get_workspace_packages(self) -> dict[str, dict]:
+        """Return workspace packages as name → ``{dir, wheel}``."""
+        result = await self.request("workspace/getWorkspacePackages")
         if not isinstance(result, dict) or "packages" not in result:
             raise ApiResponseError(
-                "workspace/getWorkspaceEditablePackages",
+                "workspace/getWorkspacePackages",
                 f"missing 'packages' field, got {result!r}",
             )
         return result["packages"]
@@ -203,8 +443,13 @@ class ApiClient:
         return result["actions"]
 
     async def get_payload_schemas(
-        self, project: str, action_sources: list[str]
-    ) -> dict[str, dict | None]:
+        self,
+        project: str,
+        action_sources: list[str],
+        *,
+        start_runners: bool = False,
+        run_options: dict[str, typing.Any] | None = None,
+    ) -> dict[str, schema_utils.PayloadSchema | None]:
         """Return payload schemas for the given actions in a project.
 
         Delegates to the WM ``actions/getPayloadSchemas`` endpoint.
@@ -212,14 +457,28 @@ class ApiClient:
         Args:
             project: Absolute path to the project directory.
             action_sources: List of action import-path aliases (ADR-0019).
+            start_runners: When true, ask the WM to start the handler
+                environments before probing so a schema that needs one is
+                available. Defaults to false so passive listing never starts
+                environments.
+            run_options: Selection inputs honoured only with
+                ``start_runners``: ``devEnv``, ``envSelectors`` and
+                ``interpreterSelectors`` — the same values the run itself
+                will use, so the fetch starts only the interpreter
+                instances the run will select.
 
         Returns:
             Mapping of action source → JSON Schema fragment, or ``None``
             for actions whose class could not be imported by the ER.
         """
+        params: dict = {"project": project, "actionSources": action_sources}
+        if start_runners:
+            params["startRunners"] = True
+            if run_options is not None:
+                params["runOptions"] = run_options
         result = await self.request(
             "actions/getPayloadSchemas",
-            {"project": project, "actionSources": action_sources},
+            params,
         )
         if not isinstance(result, dict) or "schemas" not in result:
             raise ApiResponseError(
@@ -244,9 +503,9 @@ class ApiClient:
         return result
 
     async def set_config_overrides(
-        self, overrides: dict
+        self, overrides: dict, service_overrides: dict | None = None
     ) -> None:
-        """Set persistent handler config overrides on the server.
+        """Set persistent handler and service config overrides on the server.
 
         Overrides are stored for the lifetime of the server and applied to all
         subsequent action runs.  Call this before ``add_dir`` if possible so that runners
@@ -255,8 +514,14 @@ class ApiClient:
         overrides format: {action_name: {handler_name_or_"": {param: value}}}
         The empty-string key "" means the override applies to all handlers of
         that action.
+
+        service_overrides format: {service_name: {nested param path}}, keyed by
+        the service's addressing ``name`` (not its ``interface``).
         """
-        await self.request("workspace/setConfigOverrides", {"overrides": overrides})
+        params: dict = {"overrides": overrides}
+        if service_overrides:
+            params["serviceOverrides"] = service_overrides
+        await self.request("workspace/setConfigOverrides", params)
 
     async def run_batch(
         self,
@@ -324,6 +589,23 @@ class ApiClient:
             body["partialResultToken"] = partial_result_token
         return await self.request("actions/run", body)
 
+    async def reload_action(
+        self, action_source: str, project: str | None = None
+    ) -> dict:
+        """Re-import the packages owning an action and its handlers.
+
+        Only those packages are re-imported — a change elsewhere (a shared
+        library, any config) needs a runner restart instead.  ``project``
+        omitted reloads the action in every project exposing it.
+
+        Raises:
+            ApiServerError: if no project has that action.
+        """
+        body: dict = {"action": action_source}
+        if project is not None:
+            body["project"] = project
+        return await self.request("actions/reload", body)
+
     async def add_dir(
         self,
         dir_path: pathlib.Path,
@@ -385,7 +667,7 @@ class ApiClient:
         interpreter_names: list[str] | None = None,
         project_names: list[str] | None = None,
         dev_env: str | None = None,
-        max_concurrent_projects: int | None = None,
+        workspace_packages_mode: str | None = None,
     ) -> None:
         """Prepare all environments for the workspace.
 
@@ -404,8 +686,8 @@ class ApiClient:
             params["projectNames"] = project_names
         if dev_env is not None:
             params["devEnv"] = dev_env
-        if max_concurrent_projects is not None:
-            params["maxConcurrentProjects"] = max_concurrent_projects
+        if workspace_packages_mode is not None:
+            params["workspacePackagesMode"] = workspace_packages_mode
         await self.request("workspace/prepareEnvs", params)
 
     async def list_runners(self) -> list[dict]:
@@ -416,6 +698,76 @@ class ApiClient:
                 "runners/list", f"missing 'runners' field, got {result!r}"
             )
         return result["runners"]
+
+    async def reload_config(
+        self,
+        project: str | None = None,
+        *,
+        all_projects: bool = False,
+        rescan: bool = False,
+        kill_in_flight_runs: bool = False,
+    ) -> list[dict]:
+        """Make the configuration on disk take effect, reporting one result per
+        target project.
+
+        Exactly one of ``project`` and ``all_projects`` must be given (ADR-0078).
+        ``rescan`` picks up projects created since the server started.  A project
+        that could not be recovered carries ``"status": "failed"``, and one with a
+        run in flight is refused rather than recovered unless
+        ``kill_in_flight_runs`` accepts killing it.
+
+        Raises:
+            ApiServerError: if the target is unstated, doubly stated, or matches
+                no project.
+        """
+        body: dict = {}
+        if project is not None:
+            body["project"] = project
+        if all_projects:
+            body["allProjects"] = True
+        if rescan:
+            body["rescan"] = True
+        if kill_in_flight_runs:
+            body["killInFlightRuns"] = True
+        result = await self.request("workspace/reloadConfig", body)
+        if not isinstance(result, dict) or "projects" not in result:
+            raise ApiResponseError(
+                "workspace/reloadConfig", f"missing 'projects' field, got {result!r}"
+            )
+        return result["projects"]
+
+    async def restart_runner(
+        self,
+        project: str | None = None,
+        *,
+        all_projects: bool = False,
+        env: str | None = None,
+        debug: bool = False,
+        kill_in_flight_runs: bool = False,
+    ) -> dict:
+        """Restart extension runners, reporting one result per (project, env).
+
+        Exactly one of ``project`` and ``all_projects`` must be given — the
+        whole workspace is asked for, never defaulted into (ADR-0078).  ``env``
+        omitted restarts every environment of each target project.  A runner
+        that did not come back up is reported in ``failed`` rather than as an
+        error, and a project with a run in flight is reported in ``refused``
+        rather than restarted unless ``kill_in_flight_runs`` accepts killing it.
+
+        Raises:
+            ApiServerError: if the target is unstated, doubly stated, or matches
+                no runner.
+        """
+        body: dict = {"debug": debug}
+        if project is not None:
+            body["project"] = project
+        if all_projects:
+            body["allProjects"] = True
+        if env is not None:
+            body["env"] = env
+        if kill_in_flight_runs:
+            body["killInFlightRuns"] = True
+        return await self.request("runners/restart", body)
 
     async def check_env(self, project: str, env_name: str) -> bool:
         """Return whether the named environment is valid for a project."""
@@ -479,10 +831,9 @@ class ApiClient:
         }
 
         body = json.dumps(msg).encode("utf-8")
-        header = f"Content-Length: {len(body)}\r\n\r\n".encode("utf-8")
+        header = f"Content-Length: {len(body)}\r\n\r\n".encode()
         self._writer.write(header + body)
         # Don't await drain for notifications, fire and forget
-
 
     # -- Low-level request --------------------------------------------------
 
@@ -500,6 +851,7 @@ class ApiClient:
         rid = self._request_id
 
         from finecode import telemetry
+
         effective_params = dict(params or {})
         tp = telemetry.get_current_traceparent()
         if tp is not None:
@@ -516,7 +868,7 @@ class ApiClient:
         self._pending[rid] = future
 
         body = json.dumps(msg).encode("utf-8")
-        header = f"Content-Length: {len(body)}\r\n\r\n".encode("utf-8")
+        header = f"Content-Length: {len(body)}\r\n\r\n".encode()
         self._writer.write(header + body)
         await self._writer.drain()
 
@@ -528,6 +880,63 @@ class ApiClient:
 
         return response.get("result")
 
+    # -- Inbound request dispatch -------------------------------------------
+
+    def _send_raw(self, msg: dict) -> None:
+        """Frame and write one message. No drain: the reader loop cannot block."""
+        if self._writer is None:
+            raise RuntimeError("Not connected to FineCode WM server")
+        body = json.dumps(msg).encode("utf-8")
+        header = f"Content-Length: {len(body)}\r\n\r\n".encode()
+        self._writer.write(header + body)
+
+    def _answer_request(self, req_id: int | str, payload: dict) -> None:
+        """Write one response for *req_id*, tolerating a connection that died.
+
+        A handler that took long enough for the connection to go away is the
+        ordinary case for a question put to a person, and there is nothing left
+        to report the write failure to.
+        """
+        try:
+            self._send_raw({"jsonrpc": "2.0", "id": req_id, **payload})
+        except (RuntimeError, ConnectionError, OSError):
+            logger.debug(
+                f"WmClient: could not answer request {req_id}; connection is gone"
+            )
+
+    def _dispatch_inbound_request(self, msg: dict) -> None:
+        """Answer a server→client request, out of band of the reader loop."""
+        req_id = msg["id"]
+        method = msg["method"]
+        handler = self._request_handlers.get(method)
+        if handler is None:
+            logger.warning(f"WmClient: unhandled request {method}")
+            self._answer_request(
+                req_id,
+                {"error": {"code": -32601, "message": f"Method not found: {method}"}},
+            )
+            return
+
+        async def _run() -> None:
+            try:
+                result = await handler(msg.get("params"))
+            # The handler is a surface's own code — a terminal prompt, an MCP
+            # round trip — so the reachable exception set is open. Narrowing this
+            # would let an unlisted failure kill the reader loop and leave the
+            # server waiting out its deadline on a client that is still running.
+            except Exception as exception:
+                logger.exception(f"WmClient: request handler for {method} failed")
+                self._answer_request(
+                    req_id,
+                    {"error": {"code": -32603, "message": str(exception)}},
+                )
+            else:
+                self._answer_request(req_id, {"result": result})
+
+        task = asyncio.create_task(_run())
+        self._inbound_request_tasks.add(task)
+        task.add_done_callback(self._inbound_request_tasks.discard)
+
     # -- Background reader --------------------------------------------------
 
     async def _read_loop(self) -> None:
@@ -538,7 +947,17 @@ class ApiClient:
                 if msg is None:
                     break
 
-                if "id" in msg:
+                # JSON-RPC 2.0 discrimination, in full: `id` alone does not
+                # identify a request. `id` *and* `method` is a request the
+                # server is waiting on, `id` without `method` is a response to
+                # something this client sent, `method` without `id` is a
+                # notification. Before the WM could send requests (ADR-0082)
+                # this loop tested `id` alone and read every inbound request as
+                # a response for an unknown id — silently, and with the server
+                # left waiting.
+                if "method" in msg and "id" in msg:
+                    self._dispatch_inbound_request(msg)
+                elif "id" in msg:
                     # Response to a pending request.
                     future = self._pending.pop(msg["id"], None)
                     if future is None:
@@ -562,9 +981,7 @@ class ApiClient:
                     if handler is not None:
                         asyncio.create_task(handler(msg.get("params")))
                     else:
-                        logger.trace(
-                            f"WmClient: unhandled notification {method}"
-                        )
+                        logger.trace(f"WmClient: unhandled notification {method}")
         except asyncio.CancelledError:
             raise
         except (asyncio.IncompleteReadError, ConnectionResetError):
@@ -572,8 +989,124 @@ class ApiClient:
         except Exception:
             logger.exception("WmClient: error in reader loop")
         finally:
-            # Fail any remaining pending requests.
+            # Drop the transport before anything else can observe it.  A
+            # non-None writer is exactly what `request()` and
+            # `_send_notification()` read as "connected", so leaving it behind
+            # would let a call made during the reconnect window pass that guard,
+            # write into a closed transport, and then wait forever on a future
+            # this loop has already stopped serving and the next connection's
+            # reader will never see.
+            writer = self._writer
+            self._writer = None
+            self._reader = None
+            if writer is not None:
+                writer.close()
+            # Fail any remaining pending requests.  Never retried: an action may
+            # have formatted files, pushed a tag or published an artifact before
+            # the connection died, and the client cannot tell how far it got
+            # (ADR-0074 rule 2).
             for future in self._pending.values():
                 if not future.done():
                     future.set_exception(ConnectionError("Connection lost"))
             self._pending.clear()
+            # Drop any inbound request still being answered, for the same reason
+            # `close()` does. The server resolved its side the moment this
+            # connection went away, so a question still on a person's screen can
+            # no longer be answered — and if it were, `_answer_request` would
+            # write an id the server has discarded into whatever transport the
+            # reconnect had put in place by then.
+            for task in list(self._inbound_request_tasks):
+                task.cancel()
+            self._inbound_request_tasks.clear()
+            self._connected.clear()
+            if not self._closing:
+                # Recoverable whenever reconnection is configured at all, not
+                # only when *this* loop is the one that starts it: a failed
+                # attempt lands here too, with the reconnect loop still running.
+                self._notify_session_lost(
+                    recoverable=self._reconnect_policy is not None
+                )
+                if not self._reconnecting and self._reconnect_policy is not None:
+                    self._reconnect_task = asyncio.create_task(self._reconnect())
+
+    # -- Reconnection (ADR-0074) --------------------------------------------
+
+    async def _reconnect(self) -> None:
+        """Re-establish the connection with bounded backoff, then re-attach."""
+        policy = self._reconnect_policy
+        if policy is None:
+            return
+        delay = policy.base_delay
+        # A failed attempt closes a socket whose reader loop then reaches the
+        # same `finally` that started this one; without the flag each failure
+        # would leave one more loop behind it.
+        self._reconnecting = True
+        try:
+            await self._reconnect_attempts(policy, delay)
+        finally:
+            self._reconnecting = False
+
+    async def _reconnect_attempts(self, policy: ReconnectPolicy, delay: float) -> None:
+        for attempt in range(1, policy.max_attempts + 1):
+            await asyncio.sleep(delay * (1 + random.uniform(0, policy.jitter)))
+            if self._closing:
+                return
+
+            port = await self._discover_port(policy)
+            if port is not None:
+                try:
+                    await self._open(self._host, port)
+                    await self._reattach(first_connect=False)
+                except Exception as exception:
+                    # Including a re-attach that failed: a client whose session
+                    # was not restored is talking to a server that has never
+                    # heard of it, so it counts as disconnected (rule 3).
+                    logger.warning(
+                        f"WmClient: reconnect attempt {attempt} failed: {exception}"
+                    )
+                    await self._drop_socket()
+                else:
+                    logger.info(
+                        f"WmClient: reconnected to FineCode API on port {port} "
+                        f"after {attempt} attempt(s). Requests that were in flight "
+                        f"when the connection dropped were not retried."
+                    )
+                    return
+
+            delay = min(delay * 2, policy.max_delay)
+
+        logger.error(
+            f"WmClient: gave up reconnecting to the FineCode WM server after "
+            f"{policy.max_attempts} attempts. The client is disconnected."
+        )
+        # No further attempt is coming, so a surface still holding its work back
+        # for the re-attach would hold it forever.
+        self._notify_session_lost(recoverable=False)
+
+    async def _discover_port(self, policy: ReconnectPolicy) -> int | None:
+        """Re-read the discovery file: a restarted WM listens on a new port
+        (ADR-0002), so the address this client last used is not reusable."""
+        # Blocking: `running_port` probes the port with a synchronous connect
+        # that takes its full 1s timeout when the port is filtered rather than
+        # refused, and this runs on the surface's own event loop.
+        port = await asyncio.to_thread(wm_lifecycle.running_port)
+        if port is not None:
+            return port
+        if not policy.may_start_server or policy.workdir is None:
+            return None
+        # Blocking: spawns the server and waits for it to be observable.
+        await asyncio.to_thread(wm_lifecycle.ensure_running, policy.workdir)
+        return await asyncio.to_thread(wm_lifecycle.running_port)
+
+    async def _drop_socket(self) -> None:
+        if self._reader_task is not None:
+            self._reader_task.cancel()
+            # Awaited so its `finally` runs now: it must not schedule a second
+            # reconnect after this one has finished.
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._reader_task
+            self._reader_task = None
+        if self._writer is not None:
+            self._writer.close()
+            self._writer = None
+            self._reader = None

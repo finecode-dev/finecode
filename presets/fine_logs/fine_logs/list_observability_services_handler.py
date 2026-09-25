@@ -1,17 +1,18 @@
 import dataclasses
 
 from finecode_extension_api import code_action
-from fine_logs.list_observability_services_action import (
-    ListObservabilityServicesAction,
-    ListObservabilityServicesRunPayload,
-    ListObservabilityServicesRunContext,
-    ListObservabilityServicesRunResult,
-    ServiceInfo,
-)
 from finecode_extension_api.interfaces import (
     iextensionrunnerinfoprovider,
     ilogger,
     iprojectinfoprovider,
+)
+
+from fine_logs.list_observability_services_action import (
+    ListObservabilityServicesAction,
+    ListObservabilityServicesRunContext,
+    ListObservabilityServicesRunPayload,
+    ListObservabilityServicesRunResult,
+    ServiceInfo,
 )
 
 _WM_SERVICE_DESCRIPTIONS: dict[str, str] = {
@@ -51,7 +52,9 @@ class ListObservabilityServicesHandler(
     ) -> ListObservabilityServicesRunResult:
         services: list[ServiceInfo] = []
 
-        project_name = await self.project_info_provider.get_current_project_package_name()
+        project_name = (
+            await self.project_info_provider.get_current_project_package_name()
+        )
 
         # WM-side services: each subdirectory under dev_workspace venv's logs/ is a service
         dev_workspace_venv = self.runner_info_provider.get_venv_dir_path_of_env(
@@ -60,7 +63,7 @@ class ListObservabilityServicesHandler(
         logs_dir = dev_workspace_venv / "logs"
         if logs_dir.is_dir():
             for subdir in sorted(logs_dir.iterdir()):
-                if subdir.is_dir() and subdir.name != 'runner':
+                if subdir.is_dir() and subdir.name != "runner":
                     local_id = subdir.name
                     description = _WM_SERVICE_DESCRIPTIONS.get(local_id, "")
                     services.append(
@@ -86,5 +89,7 @@ class ListObservabilityServicesHandler(
                     )
                 )
 
-        self.logger.debug(f"Found observability services: {[s.service_id for s in services]}")
+        self.logger.debug(
+            f"Found observability services: {[s.service_id for s in services]}"
+        )
         return ListObservabilityServicesRunResult(services=services)

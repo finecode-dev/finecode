@@ -5,6 +5,7 @@ only encapsulates the orchestration logic; it does **not** perform any I/O
 with client sockets.  The request handler in ``wm_server.py`` will take the
 async iterator produced here and write notifications back to the caller.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -16,18 +17,19 @@ from loguru import logger
 
 from finecode.wm_server import context, domain
 from finecode.wm_server.context import pick_workspace_root_dir
-from finecode.wm_server.runner import runner_client
 from finecode.wm_server.errors import ActionNotResolvableError
+from finecode.wm_server.runner import elicitation_bridge, runner_client
 from finecode.wm_server.services.run_service import (
     ActionRunFailed,
+    DevEnv,
+    RunActionTrigger,
+    RunResultFormat,
     find_all_projects_with_action,
+    matrix_runner,
+    matrix_streaming,
     run_with_partial_results,
     start_required_environments,
-    RunActionTrigger,
-    DevEnv,
-    RunResultFormat,
 )
-from finecode.wm_server.services.run_service import matrix_runner, matrix_streaming
 
 _DONE_SENTINEL: typing.Final = object()
 
@@ -110,39 +112,51 @@ class ProgressAggregator:
             self._per_project_completed[project_name] = 0
             if not self._began:
                 self._began = True
-                self._output.put({
-                    "type": "begin",
-                    "title": value.get("title", ""),
-                    "percentage": 0,
-                    "cancellable": value.get("cancellable", False),
-                    "total": None,  # aggregated total not yet known
-                })
+                self._output.put(
+                    {
+                        "type": "begin",
+                        "title": value.get("title", ""),
+                        "percentage": 0,
+                        "cancellable": value.get("cancellable", False),
+                        "total": None,  # aggregated total not yet known
+                    }
+                )
         elif progress_type == "report":
             pct = value.get("percentage")
             proj_total = self._per_project_total.get(project_name)
             if proj_total is not None and pct is not None:
                 self._per_project_completed[project_name] = int(proj_total * pct / 100)
-            combined_total = sum(t for t in self._per_project_total.values() if t is not None)
+            combined_total = sum(
+                t for t in self._per_project_total.values() if t is not None
+            )
             combined_done = sum(self._per_project_completed.values())
-            combined_pct = int(combined_done / combined_total * 100) if combined_total > 0 else None
+            combined_pct = (
+                int(combined_done / combined_total * 100)
+                if combined_total > 0
+                else None
+            )
             msg = value.get("message")
             if self._num_projects > 1 and msg:
                 msg = f"{project_name}: {msg}"
-            self._output.put({
-                "type": "report",
-                "message": msg,
-                "percentage": combined_pct,
-            })
+            self._output.put(
+                {
+                    "type": "report",
+                    "message": msg,
+                    "percentage": combined_pct,
+                }
+            )
         elif progress_type == "end":
             proj_total = self._per_project_total.get(project_name)
             if proj_total is not None:
                 self._per_project_completed[project_name] = proj_total
             self._projects_ended.add(project_name)
             if len(self._projects_ended) >= self._num_projects:
-                self._output.put({
-                    "type": "end",
-                    "message": value.get("message"),
-                })
+                self._output.put(
+                    {
+                        "type": "end",
+                        "message": value.get("message"),
+                    }
+                )
 
 
 async def run_action_with_partial_results(
@@ -153,6 +167,7 @@ async def run_action_with_partial_results(
     run_trigger: RunActionTrigger,
     dev_env: DevEnv,
     ws_context: context.WorkspaceContext,
+    origin: elicitation_bridge.RunDispatchOrigin | None,
     result_formats: list[str] | None = None,
     progress_token: str | int | None = None,
     selected_interpreters: set[str] | None = None,
@@ -171,6 +186,11 @@ async def run_action_with_partial_results(
     fan-out to the given interpreter canonicals, forwarded to every project's
     ``matrix_streaming.run_matrix_with_partial_results`` call; ``None`` (the
     default) runs the full declared axis.
+
+    ``origin`` is who to ask if a handler elicits a choice while any of the
+    fanned-out projects run (ADR-0082), forwarded unchanged to every project's
+    dispatch; ``None`` is the honest answer for a run with no identifiable
+    client.
     """
 
     # determine target project(s) — only CollectedProject instances have actions
@@ -179,11 +199,22 @@ async def run_action_with_partial_results(
         project = ws_context.ws_projects.get(pathlib.Path(project_path))
         if project is None or not isinstance(project, domain.CollectedProject):
             raise ValueError(f"Project '{project_path}' not found")
+        # Mirrors the non-streaming actions/run guard in _helpers.py: a
+        # workspace-scoped action's routing is the WM's decision (see the
+        # `else` branch below), not the caller's — accepting an explicit
+        # project here would silently narrow a workspace-wide action to one
+        # runner instead of rejecting the combination.
+        action = next((a for a in project.actions if a.name == action_name), None)
+        if action is not None and action.scope == domain.ActionScope.WORKSPACE:
+            raise ValueError(
+                f"Action '{action_name}' is workspace-scoped; do not pass a project path."
+            )
         projects = [project]
     else:
         paths = find_all_projects_with_action(action_name, ws_context)
         all_projects = [
-            p for path in paths
+            p
+            for path in paths
             if isinstance(p := ws_context.ws_projects[path], domain.CollectedProject)
         ]
         # For workspace-scoped actions, run in the workspace root project only.
@@ -196,9 +227,14 @@ async def run_action_with_partial_results(
                 f"Action '{action_name}' scope has not been resolved. "
                 f"Metadata resolution must complete before dispatch."
             )
-        if first_action is not None and first_action.scope == domain.ActionScope.WORKSPACE:
+        if (
+            first_action is not None
+            and first_action.scope == domain.ActionScope.WORKSPACE
+        ):
             workspace_root = pick_workspace_root_dir(ws_context)
-            root_project = ws_context.ws_projects.get(workspace_root) if workspace_root else None
+            root_project = (
+                ws_context.ws_projects.get(workspace_root) if workspace_root else None
+            )
             if isinstance(root_project, domain.CollectedProject):
                 projects = [root_project]
             else:
@@ -215,10 +251,15 @@ async def run_action_with_partial_results(
         {p.dir_path: [action_name] for p in projects},
         ws_context,
         initialize_all_handlers=True,
+        selected_interpreters_by_project={
+            p.dir_path: selected_interpreters for p in projects
+        },
     )
 
     requested_formats = result_formats or ["json"]
-    runner_formats = [RunResultFormat(fmt) for fmt in requested_formats if fmt in ("json", "string")]
+    runner_formats = [
+        RunResultFormat(fmt) for fmt in requested_formats if fmt in ("json", "string")
+    ]
 
     stream = PartialResultsStream()
     return_codes: list[int] = []
@@ -245,14 +286,21 @@ async def run_action_with_partial_results(
                 f" action={action_name} token={partial_result_token}"
             )
 
-            async def _on_partial(interpreter_canonical: str, result_by_format: dict) -> None:
-                stream.put({
-                    "project": str(project.dir_path),
-                    "interpreter": interpreter_canonical,
-                    "resultByFormat": result_by_format,
-                })
+            async def _on_partial(
+                interpreter_canonical: str, result_by_format: dict
+            ) -> None:
+                stream.put(
+                    {
+                        "project": str(project.dir_path),
+                        "interpreter": interpreter_canonical,
+                        "resultByFormat": result_by_format,
+                    }
+                )
 
-            _combined_rbf, matrix_return_code = await matrix_streaming.run_matrix_with_partial_results(
+            (
+                _combined_rbf,
+                matrix_return_code,
+            ) = await matrix_streaming.run_matrix_with_partial_results(
                 project=project,
                 action=action_def,
                 action_name=action_name,
@@ -265,12 +313,15 @@ async def run_action_with_partial_results(
                 merge_results=False,
                 on_partial=_on_partial,
                 selected_interpreters=selected_interpreters,
+                origin=origin,
             )
             return_codes.append(matrix_return_code)
             return
 
         partial_count = 0
-        logger.trace(f"partial_results: run_one start project={project.name} action={action_name} token={partial_result_token}")
+        logger.trace(
+            f"partial_results: run_one start project={project.name} action={action_name} token={partial_result_token}"
+        )
         async with run_with_partial_results(
             action_name=action_name,
             params=params,
@@ -282,23 +333,33 @@ async def run_action_with_partial_results(
             initialize_all_handlers=True,
             result_formats=runner_formats,
             progress_token=project_progress_token,
+            origin=origin,
         ) as ctx:
+
             async def _forward_partials() -> None:
                 nonlocal partial_count
                 async for value in ctx:
                     partial_count += 1
                     value_preview = str(value)[:200] if value else "None"
-                    logger.trace(f"partial_results: got partial #{partial_count} from runner for project={project.name}: {value_preview}")
+                    logger.trace(
+                        f"partial_results: got partial #{partial_count} from runner for project={project.name}: {value_preview}"
+                    )
                     # value is a result_by_format envelope {"json": ..., "styled_text_json": ...}
                     # already filtered to requested formats by the ER.
-                    stream.put({"project": str(project.dir_path), "resultByFormat": value})
-                logger.trace(f"partial_results: partial iteration done for project={project.name}, got {partial_count} partials")
+                    stream.put(
+                        {"project": str(project.dir_path), "resultByFormat": value}
+                    )
+                logger.trace(
+                    f"partial_results: partial iteration done for project={project.name}, got {partial_count} partials"
+                )
 
             async def _forward_progress() -> None:
                 if ctx.progress is None or aggregator is None:
                     return
                 async for value in ctx.progress:
-                    logger.trace(f"progress: got type={value.get('type')} for project={project.name}")
+                    logger.trace(
+                        f"progress: got type={value.get('type')} for project={project.name}"
+                    )
                     aggregator.on_progress(project.name, value)
 
             async with asyncio.TaskGroup() as forward_tg:
@@ -316,15 +377,24 @@ async def run_action_with_partial_results(
                     "expected 'streamed' status when result_by_format is empty"
                 )
 
-            logger.trace(f"partial_results: final result for project={project.name}: return_code={resp.return_code}, keys={list(resp.result_by_format.keys())}")
+            logger.trace(
+                f"partial_results: final result for project={project.name}: return_code={resp.return_code}, keys={list(resp.result_by_format.keys())}"
+            )
             return_codes.append(resp.return_code)
 
             # If the runner sent no partial results (collected everything internally
             # and returned it all as the final response), emit the final result as a
             # partial result so the client still receives streaming updates.
             if partial_count == 0 and resp.result_by_format:
-                logger.trace(f"partial_results: no partials received for project={project.name}, emitting final result as partial")
-                stream.put({"project": str(project.dir_path), "resultByFormat": resp.result_by_format})
+                logger.trace(
+                    f"partial_results: no partials received for project={project.name}, emitting final result as partial"
+                )
+                stream.put(
+                    {
+                        "project": str(project.dir_path),
+                        "resultByFormat": resp.result_by_format,
+                    }
+                )
 
     try:
         async with asyncio.TaskGroup() as tg:

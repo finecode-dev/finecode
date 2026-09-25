@@ -23,12 +23,12 @@ from finecode.wm_server.config.interpreter_matrix import (
 __all__ = [
     "EnvSelection",
     "EnvSelectionError",
-    "resolve_env_selection",
-    "resolve_selected_interpreters",
     "compute_create_set",
     "compute_install_set",
     "env_selector_known_in",
     "interpreter_selector_known_in",
+    "resolve_env_selection",
+    "resolve_selected_interpreters",
 ]
 
 
@@ -64,8 +64,8 @@ def _resolve_policy(
         return set(axis)
     if policy == "newest" or policy == "oldest":
         keyed = [(_version_sort_key(interp.version), interp) for interp in axis]
-        target_key = max(k for k, _ in keyed) if policy == "newest" else min(
-            k for k, _ in keyed
+        target_key = (
+            max(k for k, _ in keyed) if policy == "newest" else min(k for k, _ in keyed)
         )
         return {interp for k, interp in keyed if k == target_key}
     if isinstance(policy, list):
@@ -238,7 +238,9 @@ def resolve_selected_interpreters(
             interpreter not in its base's declared axis.
         InvalidInterpreterError: An `--interpreter` selector string is malformed.
     """
-    selection = resolve_env_selection(env_table, env_selectors, interpreter_selectors, dev_env)
+    selection = resolve_env_selection(
+        env_table, env_selectors, interpreter_selectors, dev_env
+    )
     if not selection.active:
         return None
     return {

@@ -1,4 +1,5 @@
 """Workspace and project API handlers."""
+
 from __future__ import annotations
 
 import asyncio
@@ -13,6 +14,7 @@ from finecode.wm_server._api_handlers._helpers import (
     _find_project_by_path,
     _project_to_dict,
 )
+from finecode.wm_server.runner import wm_bridge
 
 
 async def _handle_list_projects(
@@ -22,19 +24,14 @@ async def _handle_list_projects(
     return [_project_to_dict(p) for p in ws_context.ws_projects.values()]
 
 
-async def _handle_get_workspace_editable_packages(
+async def _handle_get_workspace_packages(
     params: dict | None, ws_context: context.WorkspaceContext
 ) -> dict:
-    """Return workspace editable packages as name → absolute posix path.
+    """Return workspace packages as name → {dir, wheel, editable}.
 
-    Result: ``{"packages": {"pkg_name": "/abs/path", ...}}``
+    Result: ``{"packages": {"pkg_name": {"dir": "/abs/path", "wheel": null, "editable": true}}}``
     """
-    return {
-        "packages": {
-            name: path.as_posix()
-            for name, path in ws_context.ws_editable_packages.items()
-        }
-    }
+    return {"packages": ws_context.workspace_packages_wire()}
 
 
 async def _handle_get_project_raw_config(
@@ -94,7 +91,6 @@ async def _handle_find_project_for_file(
     return {"project": None}
 
 
-
 async def _handle_add_dir(
     params: dict | None, ws_context: context.WorkspaceContext
 ) -> dict:
@@ -139,18 +135,23 @@ async def _handle_add_dir(
         if is_new_dir:
             ws_context.ws_dirs_paths.append(dir_path)
             await read_configs.read_projects_in_dir(dir_path, ws_context)
-            ws_context.ws_editable_packages = read_configs.resolve_workspace_editable_packages(ws_context)
+            ws_context.ws_workspace_packages = read_configs.resolve_workspace_packages(
+                ws_context
+            )
 
         # Projects in this dir that haven't been config-initialized yet, covering
         # both newly discovered projects and ones filtered out by a previous call.
         projects_to_init = [
-            p for p in ws_context.ws_projects.values()
+            p
+            for p in ws_context.ws_projects.values()
             if p.dir_path.is_relative_to(dir_path)
             and p.dir_path not in ws_context.ws_projects_raw_configs
         ]
 
         if projects_filter is not None:
-            projects_to_init = [p for p in projects_to_init if str(p.dir_path) in projects_filter]
+            projects_to_init = [
+                p for p in projects_to_init if str(p.dir_path) in projects_filter
+            ]
 
         # Claim per-project initialization locks before releasing the global lock.
         # acquire() on a freshly created, uncontested Lock completes without yielding,
@@ -177,12 +178,15 @@ async def _handle_add_dir(
         # hasn't finished starting runners yet (Phase 2 in progress).  Without
         # this check, we'd return before those projects become CollectedProjects.
         already_configured = [
-            p for p in ws_context.ws_projects.values()
+            p
+            for p in ws_context.ws_projects.values()
             if p.dir_path.is_relative_to(dir_path)
             and p.dir_path in ws_context.ws_projects_raw_configs
         ]
         if projects_filter is not None:
-            already_configured = [p for p in already_configured if str(p.dir_path) in projects_filter]
+            already_configured = [
+                p for p in already_configured if str(p.dir_path) in projects_filter
+            ]
         for project in already_configured:
             init_lock = ws_context.project_init_locks.get(project.dir_path)
             if init_lock is not None and init_lock.locked():
@@ -208,13 +212,12 @@ async def _handle_add_dir(
 
     try:
         for project in projects_to_init:
-            await read_configs.read_project_config(
-                project=project, ws_context=ws_context, resolve_presets=False
-            )
+            read_configs.read_project_config(project=project, ws_context=ws_context)
 
         if not start_runners:
             # Collect actions directly from raw config without needing runners.
             from finecode.wm_server.config import config_models
+
             for project in projects_to_init:
                 if project.status == domain.ProjectStatus.CONFIG_VALID:
                     try:
@@ -230,6 +233,7 @@ async def _handle_add_dir(
             return {"projects": [_project_to_dict(p) for p in projects_to_init]}
 
         from finecode.wm_server.services import runner_start_service
+
         try:
             await runner_start_service.start_runners_with_auto_prepare(
                 projects=projects_to_init,
@@ -237,32 +241,42 @@ async def _handle_add_dir(
                 initialize_all_handlers=initialize_all_handlers,
             )
         except runner_manager.RunnerFailedToStart as exc:
-            from finecode.wm_server import wm_server as _wm
-            _wm._notify_all_clients("server/userMessage", {
-                "message": f"Starting runners failed: {exc.message}",
-                "type": "ERROR",
-            })
+            wm_bridge.handlers().notify_all_clients(
+                "server/userMessage",
+                {
+                    "message": f"Starting runners failed: {exc.message}",
+                    "type": "ERROR",
+                },
+            )
             raise
 
         # If config overrides were set before this addDir call (e.g. standalone CLI mode),
         # apply them to the newly discovered projects and push to their running runners.
-        if ws_context.handler_config_overrides and projects_to_init:
+        if (
+            ws_context.handler_config_overrides or ws_context.service_config_overrides
+        ) and projects_to_init:
             # Re-fetch projects from ws_context: start_runners_with_presets upgrades
             # plain Project instances to CollectedProject/ResolvedProject in-place there.
             collected_projects = [
-                p for p in (ws_context.ws_projects.get(p.dir_path) for p in projects_to_init)
+                p
+                for p in (
+                    ws_context.ws_projects.get(p.dir_path) for p in projects_to_init
+                )
                 if isinstance(p, domain.CollectedProject)
             ]
-            action_names = list(ws_context.handler_config_overrides.keys())
-            _apply_config_overrides_to_projects(
-                cast(list[domain.Project], collected_projects),
-                action_names,
-                ws_context.handler_config_overrides,
-            )
+            if ws_context.handler_config_overrides:
+                action_names = list(ws_context.handler_config_overrides.keys())
+                _apply_config_overrides_to_projects(
+                    cast(list[domain.Project], collected_projects),
+                    action_names,
+                    ws_context.handler_config_overrides,
+                )
             try:
                 async with asyncio.TaskGroup() as tg:
                     for project in collected_projects:
-                        runners = ws_context.ws_projects_extension_runners.get(project.dir_path, {})
+                        runners = ws_context.ws_projects_extension_runners.get(
+                            project.dir_path, {}
+                        )
                         for runner in runners.values():
                             if runner.status == RunnerStatus.RUNNING:
                                 tg.create_task(
@@ -285,6 +299,42 @@ async def _handle_add_dir(
                 lock.release()
 
 
+async def _handle_reload_config(
+    params: dict | None, ws_context: context.WorkspaceContext
+) -> dict:
+    """Make the configuration on disk take effect for a project or the workspace.
+
+    Params: ``{"project": "/abs/path", "allProjects": false, "rescan": false,
+    "killInFlightRuns": false}`` — exactly one of ``project`` and ``allProjects``
+    (ADR-0078). ``rescan`` walks the workspace directories again first, so projects
+    created since startup are picked up. ``killInFlightRuns`` accepts that the
+    recovery kills whatever the project's runners are executing.
+    Result: ``{"projects": [{"project", "status", "actionsAdded", "actionsRemoved"}]}``
+    — one entry per target project; a project that could not be recovered carries
+    ``"status": "failed"`` and an ``error``, and one that was not attempted because a
+    run is in flight carries ``"status": "refused"`` with the runs it is waiting on.
+
+    Raises:
+        ValueError: the target is unstated or doubly stated.
+    """
+    from finecode.wm_server.services import config_reload_service
+
+    params = params or {}
+    project = params.get("project")
+    all_projects = params.get("allProjects", False)
+    rescan = params.get("rescan", False)
+    kill_in_flight_runs = params.get("killInFlightRuns", False)
+
+    results = await config_reload_service.reload_config(
+        ws_context,
+        project_dir=pathlib.Path(project) if project is not None else None,
+        all_projects=all_projects,
+        rescan=rescan,
+        kill_in_flight_runs=kill_in_flight_runs,
+    )
+    return {"projects": results}
+
+
 async def _handle_remove_dir(
     params: dict | None, ws_context: context.WorkspaceContext
 ) -> dict:
@@ -293,7 +343,7 @@ async def _handle_remove_dir(
 
     params = params or {}
     dir_path = pathlib.Path(params["dirPath"])
-    logger.trace(f'Remove ws dir: {dir_path}')
+    logger.trace(f"Remove ws dir: {dir_path}")
 
     async with ws_context.workspace_state_lock:
         ws_context.ws_dirs_paths.remove(dir_path)
@@ -303,15 +353,15 @@ async def _handle_remove_dir(
                 continue
 
             # Keep if the project is also under another remaining ws_dir.
-            keep = any(
-                project_dir.is_relative_to(d) for d in ws_context.ws_dirs_paths
-            )
+            keep = any(project_dir.is_relative_to(d) for d in ws_context.ws_dirs_paths)
             if keep:
                 continue
 
             runners = ws_context.ws_projects_extension_runners.get(project_dir, {})
             for runner in runners.values():
-                await runner_manager.stop_extension_runner(runner=runner)
+                await runner_manager.stop_extension_runner(
+                    runner=runner, ws_context=ws_context
+                )
             del ws_context.ws_projects[project_dir]
             ws_context.ws_projects_raw_configs.pop(project_dir, None)
 
@@ -332,23 +382,34 @@ async def _handle_list_actions(
         for action in project.actions:
             if action.canonical_source is None:
                 from finecode.wm_server.services import run_service
-                try:
-                    await run_service.ensure_action_metadata(action, project, ws_context)
-                except Exception as exc:
-                    logger.warning(
-                        f"actions/list: could not resolve metadata for {action.source!r} "
-                        f"in {project.dir_path}: {exc}"
+
+                if not action.handlers:
+                    logger.debug(
+                        f"actions/list: {action.source!r} in {project.dir_path} has no"
+                        " handlers; metadata left unresolved"
                     )
-            actions.append({
-                "name": action.name,
-                "source": action.source,
-                "scope": action.scope.value if action.scope is not None else None,
-                "project": str(project.dir_path),
-                "handlers": [
-                    {"name": h.name, "source": h.source, "env": h.env}
-                    for h in action.handlers
-                ],
-            })
+                else:
+                    try:
+                        await run_service.ensure_action_metadata(
+                            action, project, ws_context
+                        )
+                    except Exception as exc:
+                        logger.warning(
+                            f"actions/list: could not resolve metadata for {action.source!r} "
+                            f"in {project.dir_path}: {exc}"
+                        )
+            actions.append(
+                {
+                    "name": action.name,
+                    "source": action.source,
+                    "scope": action.scope.value if action.scope is not None else None,
+                    "project": str(project.dir_path),
+                    "handlers": [
+                        {"name": h.name, "source": h.source, "env": h.env}
+                        for h in action.handlers
+                    ],
+                }
+            )
     return {"actions": actions}
 
 
@@ -366,9 +427,8 @@ async def _handle_prepare_envs(
       projectNames: list[str] | null - limit to these projects
       devEnv: str - active dev-env, used to resolve each matrix env's
         config-declared default interpreter subset (default "cli")
-      maxConcurrentProjects: int | null - cap on concurrent projects for
-        steps 5 and 6 (default: machine-based, see
-        `prepare_envs_service.resolve_project_concurrency`)
+      workspacePackagesMode: "editable" | "wheel" | null - override how
+        workspace packages are installed (default: resolved from config)
     Result: {}
     """
     from finecode.wm_server.services.prepare_envs_service import (
@@ -385,7 +445,7 @@ async def _handle_prepare_envs(
     interpreter_names: list[str] | None = params.get("interpreters")
     project_names: list[str] | None = params.get("projectNames")
     dev_env: str = params.get("devEnv", "cli")
-    max_concurrent_projects: int | None = params.get("maxConcurrentProjects")
+    workspace_packages_mode: str | None = params.get("workspacePackagesMode")
 
     try:
         await prepare_envs(
@@ -396,7 +456,7 @@ async def _handle_prepare_envs(
             interpreter_names=interpreter_names,
             project_names=project_names,
             dev_env=dev_env,
-            max_concurrent_projects=max_concurrent_projects,
+            workspace_packages_mode=workspace_packages_mode,
         )
     except PrepareEnvsFailed as exc:
         raise ValueError(exc.message) from exc
