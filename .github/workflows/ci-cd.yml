@@ -36,8 +36,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     # A cold `prepare-envs` over the whole workspace plus the full check suite does
     # not fit in 40 minutes on the slower matrix legs. The venvs cache keeps the
-    # happy path short; this budget only covers the cold run.
-    timeout-minutes: 120
+    timeout-minutes: 240
     strategy:
       fail-fast: false
       matrix:
@@ -121,6 +120,7 @@ jobs:
 
       - name: Install dependencies
         id: install
+        timeout-minutes: 80
         run: |
           # CI must exercise this branch's local source, so finecode and its sibling
           # packages need an editable install, not a released version from PyPI — see
@@ -131,6 +131,7 @@ jobs:
 
       - name: Inspect code
         if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        timeout-minutes: 30
         run: |
           source .venvs/dev_workspace/${{ matrix.venv_bin }}/activate
           python -m finecode run --log-level="$FINECODE_LOG_LEVEL" inspect_code
@@ -139,6 +140,7 @@ jobs:
 
       - name: Audit code
         if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        timeout-minutes: 30
         run: |
           source .venvs/dev_workspace/${{ matrix.venv_bin }}/activate
           python -m finecode run --log-level="$FINECODE_LOG_LEVEL" audit_code
@@ -234,7 +236,7 @@ jobs:
       # releases — then prune dangling entries.
       - name: Trim uv cache to reusable entries
         id: uv_trim
-        if: ${{ always() && steps.install.outcome == 'success' && steps.uv_cache.outcome == 'success' }}
+        if: ${{ always() && steps.install.outcome != 'skipped' && steps.uv_cache.outcome == 'success' }}
         run: |
           manifest=".venvs/dev_workspace/cache/wheelhouse/manifest.json"
           if [ -f "$manifest" ]; then
@@ -248,7 +250,7 @@ jobs:
           uv cache clean finecode $names
           uv cache prune
       - name: Save uv cache
-        if: ${{ always() && steps.install.outcome == 'success' && steps.uv_trim.outcome == 'success' }}
+        if: ${{ always() && steps.uv_trim.outcome == 'success' }}
         uses: actions/cache/save@v5
         with:
           path: ${{ runner.temp }}/uv-cache
