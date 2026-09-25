@@ -4,6 +4,7 @@ import dataclasses
 from collections.abc import AsyncIterator
 from pathlib import Path
 
+import pytest
 from finecode_extension_api.interfaces import icommandrunner
 
 
@@ -57,3 +58,21 @@ class FakeCommandRunner:
         icommandrunner.check_argv(cmd)
         self.commands.append(list(cmd))
         return self._results.pop(0)
+
+
+@pytest.fixture
+def repo_root(tmp_path: Path) -> Path:
+    """A repository toplevel that is absolute on every OS.
+
+    A POSIX literal such as ``/repo`` has no drive on Windows, so it is not
+    absolute there and cannot become a ``file://`` URI.
+    """
+    return tmp_path
+
+
+def toplevel_result(repo_root: Path) -> FakeCommandResult:
+    """``git rev-parse --show-toplevel`` output for *repo_root*.
+
+    Git prints forward slashes on every OS, Git for Windows included.
+    """
+    return FakeCommandResult(exit_code=0, stdout=f"{repo_root.as_posix()}\n")

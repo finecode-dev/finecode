@@ -135,7 +135,13 @@ async def test_subscribing_late_replays_what_was_already_produced() -> None:
 async def test_buffered_output_is_unchanged_for_callers_that_never_subscribe() -> None:
     """The path every existing handler uses, including the trailing newline."""
     process = await _runner().run(
-        _python("import sys\nprint('out')\nsys.stderr.write('err\\n')")
+        _python(
+            "import sys\n"
+            "sys.stdout.buffer.write(b'out\\n')\n"
+            "sys.stdout.buffer.flush()\n"
+            "sys.stderr.buffer.write(b'err\\n')\n"
+            "sys.stderr.buffer.flush()\n"
+        )
     )
     await process.wait_for_end()
 
@@ -233,8 +239,8 @@ async def test_stderr_is_complete_when_a_stdout_failure_surfaces() -> None:
             "import sys\n"
             f"sys.stdout.write('x' * {oversized})\n"
             "sys.stdout.flush()\n"
-            "sys.stderr.write('the real error message\\n')\n"
-            "sys.stderr.flush()\n"
+            "sys.stderr.buffer.write(b'the real error message\\n')\n"
+            "sys.stderr.buffer.flush()\n"
         )
     )
 
@@ -366,10 +372,13 @@ async def test_a_trailing_carriage_return_without_a_newline_is_data() -> None:
 
 
 async def test_crlf_line_endings_are_still_stripped() -> None:
-    """The `\\r` that does precede a `\\n` is part of the terminator."""
+    """The `\\r` that does precede a `\\n` is part of the terminator. It writes
+    bytes because a text-mode stdout on Windows would turn the literal `\\r\\n`
+    into `\\r\\r\\n`."""
     process = await _runner().run(
         _python(
-            "import sys\nsys.stdout.write('one\\r\\ntwo\\r\\n')\nsys.stdout.flush()"
+            "import sys\nsys.stdout.buffer.write(b'one\\r\\ntwo\\r\\n')\n"
+            "sys.stdout.buffer.flush()"
         )
     )
 

@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from conftest import FakeCommandResult, FakeCommandRunner
+from conftest import FakeCommandResult, FakeCommandRunner, toplevel_result
 from finecode_extension_api.interfaces.icommandrunner import ICommandRunner
 from finecode_extension_runner.testing import run_handler
 
@@ -43,14 +43,16 @@ _BINARY_SECTION = (
 
 
 @pytest.mark.asyncio
-async def test_two_file_diff_parses_change_kind_and_added_removed_lines() -> None:
+async def test_two_file_diff_parses_change_kind_and_added_removed_lines(
+    repo_root: Path,
+) -> None:
     """A modified file and an added file must each decode to the right
     change_kind, with added_lines/removed_lines stripped of their +/- markers
     and the +++/--- header lines excluded, while patch keeps the diff --git
     header verbatim."""
     command_runner = FakeCommandRunner(
         results=[
-            FakeCommandResult(exit_code=0, stdout="/repo\n"),
+            toplevel_result(repo_root),
             FakeCommandResult(exit_code=0, stdout=_MODIFIED_SECTION + _ADDED_SECTION),
         ]
     )
@@ -67,27 +69,29 @@ async def test_two_file_diff_parses_change_kind_and_added_removed_lines() -> Non
 
     modified, added = result.files
 
-    assert modified.path == "file:///repo/mod.txt"
+    assert modified.path == (repo_root / "mod.txt").as_uri()
     assert modified.change_kind == GitChangeKind.MODIFIED
     assert modified.added_lines == ["new line"]
     assert modified.removed_lines == ["old line"]
     assert modified.patch.startswith("diff --git a/mod.txt b/mod.txt\n")
     assert modified.is_binary is False
 
-    assert added.path == "file:///repo/new.txt"
+    assert added.path == (repo_root / "new.txt").as_uri()
     assert added.change_kind == GitChangeKind.ADDED
     assert added.added_lines == ["new content"]
     assert added.removed_lines == []
 
 
 @pytest.mark.asyncio
-async def test_binary_diff_section_is_reported_without_added_removed_lines() -> None:
+async def test_binary_diff_section_is_reported_without_added_removed_lines(
+    repo_root: Path,
+) -> None:
     """A `Binary files ... differ` section carries no hunks to scan for +/-
     lines, so it must set is_binary and leave added/removed lines empty
     rather than the parser tripping over the absence of a `@@` marker."""
     command_runner = FakeCommandRunner(
         results=[
-            FakeCommandResult(exit_code=0, stdout="/repo\n"),
+            toplevel_result(repo_root),
             FakeCommandResult(exit_code=0, stdout=_BINARY_SECTION),
         ]
     )
@@ -107,13 +111,15 @@ async def test_binary_diff_section_is_reported_without_added_removed_lines() -> 
 
 
 @pytest.mark.asyncio
-async def test_staged_source_and_context_lines_reach_the_diff_command() -> None:
+async def test_staged_source_and_context_lines_reach_the_diff_command(
+    repo_root: Path,
+) -> None:
     """`source=STAGED` must add `--cached` and `context_lines=0` must add
     `-U0` to the `git diff` invocation, or a caller's request is silently
     ignored."""
     command_runner = FakeCommandRunner(
         results=[
-            FakeCommandResult(exit_code=0, stdout="/repo\n"),
+            toplevel_result(repo_root),
             FakeCommandResult(exit_code=0, stdout=""),
         ]
     )
@@ -133,6 +139,7 @@ async def test_staged_source_and_context_lines_reach_the_diff_command() -> None:
 @pytest.mark.asyncio
 async def test_paths_none_scopes_diff_to_the_project_directory(
     tmp_path: Path,
+    repo_root: Path,
 ) -> None:
     """`paths=None` means the project directory, not the repository. `git diff`
     ignores cwd and covers the whole repository unless a pathspec says otherwise,
@@ -140,7 +147,7 @@ async def test_paths_none_scopes_diff_to_the_project_directory(
     project's diff would include every other project in the same repository."""
     command_runner = FakeCommandRunner(
         results=[
-            FakeCommandResult(exit_code=0, stdout="/repo\n"),
+            toplevel_result(repo_root),
             FakeCommandResult(exit_code=0, stdout=""),
         ]
     )
@@ -176,7 +183,9 @@ _MODE_CHANGE_QUOTED_PATH_SECTION = (
 
 
 @pytest.mark.asyncio
-async def test_content_lines_starting_with_dashes_or_pluses_are_not_dropped() -> None:
+async def test_content_lines_starting_with_dashes_or_pluses_are_not_dropped(
+    repo_root: Path,
+) -> None:
     """Inside a hunk, a removed `---` arrives as `----` and an added `+++more` as
     `++++more` (verified against real git). Excluding those prefixes as if they
     were file headers loses real content, and `added_lines`/`removed_lines` then
@@ -185,7 +194,7 @@ async def test_content_lines_starting_with_dashes_or_pluses_are_not_dropped() ->
     corner one."""
     command_runner = FakeCommandRunner(
         results=[
-            FakeCommandResult(exit_code=0, stdout="/repo\n"),
+            toplevel_result(repo_root),
             FakeCommandResult(exit_code=0, stdout=_MARKDOWN_RULE_SECTION),
         ]
     )
@@ -203,13 +212,15 @@ async def test_content_lines_starting_with_dashes_or_pluses_are_not_dropped() ->
 
 
 @pytest.mark.asyncio
-async def test_section_naming_no_path_is_skipped_not_fatal_for_the_whole_diff() -> None:
+async def test_section_naming_no_path_is_skipped_not_fatal_for_the_whole_diff(
+    repo_root: Path,
+) -> None:
     """A mode-only change on a path git had to quote carries no `---`/`+++` lines
     and a header the parser cannot match (real git output). One unparseable
     section must cost that one file, not the whole answer."""
     command_runner = FakeCommandRunner(
         results=[
-            FakeCommandResult(exit_code=0, stdout="/repo\n"),
+            toplevel_result(repo_root),
             FakeCommandResult(
                 exit_code=0,
                 stdout=_MODE_CHANGE_QUOTED_PATH_SECTION + _MODIFIED_SECTION,
@@ -225,4 +236,4 @@ async def test_section_naming_no_path_is_skipped_not_fatal_for_the_whole_diff() 
     )
 
     assert result.error is None
-    assert [file.path for file in result.files] == ["file:///repo/mod.txt"]
+    assert [file.path for file in result.files] == [(repo_root / "mod.txt").as_uri()]
