@@ -120,7 +120,7 @@ jobs:
 
       - name: Install dependencies
         id: install
-        timeout-minutes: 80
+        timeout-minutes: 120
         run: |
           # CI must exercise this branch's local source, so finecode and its sibling
           # packages need an editable install, not a released version from PyPI — see
