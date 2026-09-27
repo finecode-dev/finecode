@@ -4,13 +4,11 @@ from __future__ import annotations
 
 import asyncio
 import pathlib
-from typing import cast
 
 from loguru import logger
 
 from finecode.wm_server import context, domain
 from finecode.wm_server._api_handlers._helpers import (
-    _apply_config_overrides_to_projects,
     _find_project_by_path,
     _project_to_dict,
 )
@@ -51,7 +49,19 @@ async def _handle_get_project_raw_config(
     if project is None:
         raise ValueError(f"Project '{project_path}' not found")
 
-    raw_config = ws_context.ws_projects_raw_configs.get(project.dir_path, {})
+    dir_path = project.dir_path
+    if project.status == domain.ProjectStatus.CONFIG_VALID:
+        from finecode.wm_server.services import project_resolution_service
+
+        try:
+            outcome = await project_resolution_service.ensure_projects_resolved(
+                [dir_path], ws_context
+            )
+            outcome.require([dir_path])
+        except project_resolution_service.ProjectResolutionFailed as exc:
+            raise ValueError(exc.message) from exc
+
+    raw_config = ws_context.ws_projects_raw_configs.get(dir_path, {})
     return {"rawConfig": raw_config}
 
 
@@ -113,7 +123,6 @@ async def _handle_add_dir(
     """
     from finecode.wm_server.config import collect_actions, read_configs
     from finecode.wm_server.runner import runner_manager
-    from finecode.wm_server.runner.runner_client import RunnerStatus
 
     logger.trace(f"Add ws dir: {params}")
 
@@ -250,47 +259,6 @@ async def _handle_add_dir(
             )
             raise
 
-        # If config overrides were set before this addDir call (e.g. standalone CLI mode),
-        # apply them to the newly discovered projects and push to their running runners.
-        if (
-            ws_context.handler_config_overrides or ws_context.service_config_overrides
-        ) and projects_to_init:
-            # Re-fetch projects from ws_context: start_runners_with_presets upgrades
-            # plain Project instances to CollectedProject/ResolvedProject in-place there.
-            collected_projects = [
-                p
-                for p in (
-                    ws_context.ws_projects.get(p.dir_path) for p in projects_to_init
-                )
-                if isinstance(p, domain.CollectedProject)
-            ]
-            if ws_context.handler_config_overrides:
-                action_names = list(ws_context.handler_config_overrides.keys())
-                _apply_config_overrides_to_projects(
-                    cast(list[domain.Project], collected_projects),
-                    action_names,
-                    ws_context.handler_config_overrides,
-                )
-            try:
-                async with asyncio.TaskGroup() as tg:
-                    for project in collected_projects:
-                        runners = ws_context.ws_projects_extension_runners.get(
-                            project.dir_path, {}
-                        )
-                        for runner in runners.values():
-                            if runner.status == RunnerStatus.RUNNING:
-                                tg.create_task(
-                                    runner_manager.update_runner_config(
-                                        runner=runner,
-                                        project=project,
-                                        handlers_to_initialize=None,
-                                        ws_context=ws_context,
-                                    )
-                                )
-            except* Exception as eg:
-                for exc in eg.exceptions:
-                    logger.warning(f"Failed to push config update to runner: {exc}")
-
         return {"projects": [_project_to_dict(p) for p in projects_to_init]}
     finally:
         for project in projects_to_init:
@@ -364,6 +332,7 @@ async def _handle_remove_dir(
                 )
             del ws_context.ws_projects[project_dir]
             ws_context.ws_projects_raw_configs.pop(project_dir, None)
+            ws_context.project_resolution_failures.pop(project_dir, None)
 
     return {}
 
@@ -371,15 +340,73 @@ async def _handle_remove_dir(
 async def _handle_list_actions(
     params: dict | None, ws_context: context.WorkspaceContext
 ) -> dict:
-    """List available actions, optionally filtered by project path."""
-    project_filter = (params or {}).get("project")
+    """List available actions, optionally filtered by project path(s) or names.
+
+    Params: ``{"project": "/abs/path"}``, ``{"projects": [...]}`` or
+    ``{"names": [...]}`` — ``project`` and ``projects`` are mutually exclusive;
+    ``names`` filters the listing by action name in every mode.
+    Result: ``{"actions": [...], "unresolvedProjects": [{"project", "error"}]}`` —
+    ``unresolvedProjects`` is always present, ``[]`` when everything resolved.
+    """
+    from finecode.wm_server.services import project_resolution_service
+
+    params = params or {}
+    project_filter = params.get("project")
+    project_names: list[str] | None = params.get("projects")
+    names: list[str] | None = params.get("names")
+
+    if project_filter is not None and project_names is not None:
+        raise ValueError("pass project or projects, not both")
+
+    if project_names is not None:
+        paths = [pathlib.Path(p) for p in project_names]
+        try:
+            projects = (
+                await project_resolution_service.ensure_projects_resolved(
+                    paths, ws_context
+                )
+            ).require(paths)
+        except project_resolution_service.ProjectResolutionFailed as exc:
+            raise ValueError(exc.message) from exc
+        unresolved: list[dict] = []
+    elif project_filter is not None:
+        path = pathlib.Path(project_filter)
+        try:
+            projects = (
+                await project_resolution_service.ensure_projects_resolved(
+                    [path], ws_context
+                )
+            ).require([path])
+        except project_resolution_service.ProjectResolutionFailed as exc:
+            raise ValueError(exc.message) from exc
+        unresolved = []
+    elif names is not None:
+        hosting = await project_resolution_service.resolve_hosting_projects(
+            names, "name", ws_context
+        )
+        projects = list(hosting.outcome.resolved.values())
+        unresolved = (
+            [
+                {"project": str(p), "error": reason}
+                for p, reason in hosting.outcome.failed.items()
+            ]
+            if not hosting.root_only
+            else []
+        )
+    else:
+        outcome = await project_resolution_service.ensure_all_projects_resolved(
+            ws_context
+        )
+        projects = list(outcome.resolved.values())
+        unresolved = [
+            {"project": str(p), "error": reason} for p, reason in outcome.failed.items()
+        ]
+
     actions = []
-    for project in ws_context.ws_projects.values():
-        if project_filter and str(project.dir_path) != project_filter:
-            continue
-        if not isinstance(project, domain.CollectedProject):
-            continue
+    for project in projects:
         for action in project.actions:
+            if names is not None and action.name not in names:
+                continue
             if action.canonical_source is None:
                 from finecode.wm_server.services import run_service
 
@@ -410,7 +437,7 @@ async def _handle_list_actions(
                     ],
                 }
             )
-    return {"actions": actions}
+    return {"actions": actions, "unresolvedProjects": unresolved}
 
 
 async def _handle_prepare_envs(

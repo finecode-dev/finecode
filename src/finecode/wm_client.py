@@ -57,6 +57,22 @@ class ReconnectPolicy:
     jitter: float = 0.5
 
 
+@dataclasses.dataclass(frozen=True)
+class ActionListing:
+    """The ``actions/list`` response: the listing plus any project whose
+    resolution failed.
+
+    Attributes:
+        actions: The action records, straight from the WM.
+        unresolved_projects: ``[{"project": str, "error": str}]`` — projects
+            the WM could not resolve while listing.  Empty when every project
+            resolved (and when an older WM does not send the field).
+    """
+
+    actions: list[dict]
+    unresolved_projects: list[dict]
+
+
 class ApiError(Exception):
     """Base class for API client errors."""
 
@@ -430,17 +446,34 @@ class ApiClient:
             )
         return result["rawConfig"]
 
-    async def list_actions(self, project: str | None = None) -> list[dict]:
-        """List available actions, optionally filtered by project name."""
+    async def list_actions(
+        self,
+        *,
+        project: str | None = None,
+        names: list[str] | None = None,
+        projects: list[str] | None = None,
+    ) -> ActionListing:
+        """List available actions; parameters are sent only when set.
+
+        ``names`` filters the listing by action name; ``projects`` filters by
+        project paths; ``project`` is the single-project form.
+        """
         params: dict = {}
         if project is not None:
             params["project"] = project
+        if names is not None:
+            params["names"] = names
+        if projects is not None:
+            params["projects"] = projects
         result = await self.request("actions/list", params)
         if not isinstance(result, dict) or "actions" not in result:
             raise ApiResponseError(
                 "actions/list", f"missing 'actions' field, got {result!r}"
             )
-        return result["actions"]
+        return ActionListing(
+            actions=result["actions"],
+            unresolved_projects=result.get("unresolvedProjects", []),
+        )
 
     async def get_payload_schemas(
         self,

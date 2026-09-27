@@ -24,6 +24,7 @@ from finecode.wm_server.runner.runner_client import (
     ExtensionRunnerInfo,
     RunActionTrigger,
 )
+from finecode.wm_server.services import project_resolution_service
 from finecode.wm_server.services.run_service.project_executor import ProjectExecutor
 from finecode.wm_server.services.run_service.proxy_utils import (
     ensure_action_metadata,
@@ -260,7 +261,7 @@ class _BridgeHandlers:
         else:
             actions_by_project = {
                 p: [action_name]
-                for p in find_all_projects_with_action(action_name, ws_context)
+                for p in await find_all_projects_with_action(action_name, ws_context)
             }
 
         executor = WorkspaceExecutor(ws_context)
@@ -331,6 +332,50 @@ class _BridgeHandlers:
                 for a in subactions
             ]
         )
+
+    async def list_workspace_actions(
+        self, ws_context: context.WorkspaceContext
+    ) -> dict:
+        """Serve ``finecode/listWorkspaceActions`` (ER → WM).
+
+        Returns the aggregated action/handler registry across every project and
+        env in the workspace.
+        """
+        outcome = await project_resolution_service.ensure_all_projects_resolved(
+            ws_context
+        )
+        if outcome.failed:
+            reasons = "; ".join(
+                f"{p}: {reason}" for p, reason in outcome.failed.items()
+            )
+            raise errors.ProjectError(f"Cannot collect workspace actions: {reasons}")
+        actions: list[dict] = []
+        for project in outcome.resolved.values():
+            for action in project.actions:
+                actions.append(
+                    {
+                        "name": action.name,
+                        "source": action.source,
+                        "canonicalSource": action.canonical_source,
+                        "scope": (
+                            action.scope.value if action.scope is not None else None
+                        ),
+                        "project": str(project.dir_path),
+                        "language": action.language,
+                        "parentActionSource": action.parent_action_source,
+                        "fileLoc": action.file_loc,
+                        "handlers": [
+                            {
+                                "name": h.name,
+                                "source": h.source,
+                                "env": h.env,
+                                "fileLoc": h.file_loc,
+                            }
+                            for h in action.handlers
+                        ],
+                    }
+                )
+        return {"actions": actions}
 
 
 run_dispatch_bridge.install(_BridgeHandlers())

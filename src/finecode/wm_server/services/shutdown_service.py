@@ -14,6 +14,22 @@ async def on_shutdown(ws_context: context.WorkspaceContext) -> None:
     # this needs no runner and nothing below it depends on runners being up.
     await knowledge_service.persist_pending(ws_context)
 
+    # Cancel in-flight resolutions before the runner sweep snapshots statuses,
+    # and let their cancellation unwind: a batch cancelled this late stops a
+    # start mid-flight, and the sweep must see its final statuses.
+    # Recovery markers are futures their owning recovery sets
+    # itself; they are left alone.
+    batch_tasks = [
+        task
+        for task in ws_context.project_resolution_tasks.values()
+        if isinstance(task, asyncio.Task)
+    ]
+    distinct_batches = list(dict.fromkeys(batch_tasks))
+    for task in distinct_batches:
+        task.cancel()
+    if distinct_batches:
+        await asyncio.gather(*distinct_batches, return_exceptions=True)
+
     running_runners = []
     initializing_runners = []
     for runners_by_env in ws_context.ws_projects_extension_runners.values():

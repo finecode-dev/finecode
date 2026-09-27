@@ -17,7 +17,7 @@ from loguru import logger
 import finecode_jsonrpc as jsonrpc_client
 from finecode.wm_server import context, domain, errors
 from finecode.wm_server.config import read_configs
-from finecode.wm_server.runner import runner_manager
+from finecode.wm_server.runner import runner_client, runner_manager
 from finecode.wm_server.services import (
     in_flight_runs,
     next_step,
@@ -127,6 +127,26 @@ async def _reload_project_config(
     async with _init_lock(project_dir, ws_context):
         actions_before = _action_names(ws_context.ws_projects.get(project_dir))
 
+        # A resolution gate that is mid-flight for this project must unwind
+        # before the recovery re-reads config and replaces runners
+        in_flight = ws_context.project_resolution_tasks.get(project_dir)
+        if in_flight is not None:
+            await asyncio.shield(in_flight)
+        # An explicit reload that succeeds is the retry path the remembered
+        # failure's hint names.
+        ws_context.project_resolution_failures.pop(project_dir, None)
+
+        # An unresolved project's replacement is raced by every gate request
+        # for it: register a marker so those requests wait for this recovery
+        # instead of starting a resolution of their own.
+        marker: asyncio.Future[dict[pathlib.Path, str]] | None = None
+        if not isinstance(
+            ws_context.ws_projects.get(project_dir), domain.ResolvedProject
+        ):
+            marker = asyncio.get_running_loop().create_future()
+            ws_context.project_resolution_tasks[project_dir] = marker
+        recovery_failed_message: str | None = None
+
         # Every re-read path short-circuits on the presence of this entry — the
         # reason a second addDir for an initialized project does nothing.
         config_in_effect = ws_context.ws_projects_raw_configs.pop(project_dir, None)
@@ -137,12 +157,25 @@ async def _reload_project_config(
             # dev_workspace ER where preset packages live, so an implementation
             # that stops the runners first cannot resolve presets at all
             # (ADR-0073, Consequences).
+            dev_workspace_runner = ws_context.ws_projects_extension_runners.get(
+                project_dir, {}
+            ).get("dev_workspace")
+            runner_was_live = (
+                dev_workspace_runner is not None
+                and dev_workspace_runner.status
+                in (
+                    runner_client.RunnerStatus.RUNNING,
+                    runner_client.RunnerStatus.INITIALIZING,
+                    runner_client.RunnerStatus.REPAIRING,
+                )
+            )
             await runner_start_service.start_runners_with_auto_prepare(
                 projects=[project], ws_context=ws_context
             )
-            await runner_manager.restart_extension_runners(
-                runner_working_dir_path=project_dir, ws_context=ws_context
-            )
+            if runner_was_live:
+                await runner_manager.restart_extension_runners(
+                    runner_working_dir_path=project_dir, ws_context=ws_context
+                )
         except (
             errors.WmError,
             runner_manager.RunnerFailedToStart,
@@ -151,6 +184,15 @@ async def _reload_project_config(
             logger.warning(
                 f"Configuration recovery failed for {project_dir}: {exception}"
             )
+            recovery_failed_message = str(exception)
+            if not isinstance(
+                ws_context.ws_projects.get(project_dir), domain.ResolvedProject
+            ):
+                # An explicit reload that failed is attributable: the next gate
+                # request is served this reason, not a fresh resolution.
+                ws_context.project_resolution_failures[project_dir] = (
+                    recovery_failed_message
+                )
             # A runner whose channel is provably dead must not survive as an
             # orphan just because the recovery failed before reaching the
             # replace step. Healthy runners are left running, so a failure for
@@ -168,6 +210,21 @@ async def _reload_project_config(
                 ),
             )
         finally:
+            # Release the marker and tell every gate that waited on it how the
+            # recovery came out.  Set on cancellation too, so waiters never
+            # hang on a recovery that was cut short.
+            if (
+                marker is not None
+                and ws_context.project_resolution_tasks.get(project_dir) is marker
+            ):
+                del ws_context.project_resolution_tasks[project_dir]
+            if marker is not None and not marker.done():
+                if recovery_failed_message is not None and not isinstance(
+                    ws_context.ws_projects.get(project_dir), domain.ResolvedProject
+                ):
+                    marker.set_result({project_dir: recovery_failed_message})
+                else:
+                    marker.set_result({})
             if (
                 config_in_effect is not None
                 and project_dir not in ws_context.ws_projects_raw_configs

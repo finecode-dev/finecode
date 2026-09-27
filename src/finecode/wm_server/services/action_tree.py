@@ -179,14 +179,29 @@ def _build_tree(ws_context: context.WorkspaceContext) -> list[dict]:
 async def _handle_get_tree(
     _params: dict | None, ws_context: context.WorkspaceContext
 ) -> dict:
-    """Request handler that returns the action tree for the workspace."""
+    """Request handler that returns the action tree for the workspace.
 
-    # wait for dev_workspace runners to start
-    async with asyncio.TaskGroup() as tg:
-        for envs in ws_context.ws_projects_extension_runners.values():
-            dev_workspace_runner = envs.get("dev_workspace")
-            if dev_workspace_runner is not None:
-                tg.create_task(dev_workspace_runner.initialized_event.wait())
+    Every project is resolved first — the tree lists actions, so nothing may
+    show a partial set.  A project that failed to resolve carries an
+    additive ``resolutionError`` field on its node; rendering it is a follow-up.
+    """
+    from finecode.wm_server.services import project_resolution_service
+
+    outcome = await project_resolution_service.ensure_all_projects_resolved(ws_context)
 
     nodes = _build_tree(ws_context)
+    errors_by_node_id = {
+        path.as_posix(): reason for path, reason in outcome.failed.items()
+    }
+
+    def _annotate(tree_nodes: list[dict]) -> None:
+        for node in tree_nodes:
+            node_id = node.get("nodeId")
+            if node_id in errors_by_node_id:
+                node["resolutionError"] = errors_by_node_id[node_id]
+            subnodes = node.get("subnodes")
+            if subnodes:
+                _annotate(subnodes)
+
+    _annotate(nodes)
     return {"nodes": nodes}

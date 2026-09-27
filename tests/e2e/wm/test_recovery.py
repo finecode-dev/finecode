@@ -119,7 +119,7 @@ async def test_configuration_edited_on_disk_takes_effect_without_reconnecting(
     """
     client, workspace_dir = wm_with_er
 
-    before = {action["name"] for action in await client.list_actions()}
+    before = {action["name"] for action in (await client.list_actions()).actions}
     assert "lock_dependencies" not in before
 
     pyproject = workspace_dir / "pyproject.toml"
@@ -132,7 +132,7 @@ async def test_configuration_edited_on_disk_takes_effect_without_reconnecting(
     assert projects[0]["actionsRemoved"] == []
 
     # Same client, same connection: nothing was restarted on this side.
-    after = {action["name"] for action in await client.list_actions()}
+    after = {action["name"] for action in (await client.list_actions()).actions}
     assert "lock_dependencies" in after
 
 

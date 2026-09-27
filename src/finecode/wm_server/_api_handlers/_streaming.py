@@ -317,9 +317,12 @@ async def _handle_run_batch_with_partial_results(
             f"runBatch+partialResults: actionSources={parsed.action_sources} projects={parsed.project_names}"
         )
 
-        actions_by_project, name_to_source = await _resolve_actions_by_project(
-            parsed.project_names, parsed.action_sources, ws_context
-        )
+        try:
+            actions_by_project, name_to_source = await _resolve_actions_by_project(
+                parsed.project_names, parsed.action_sources, ws_context
+            )
+        except project_resolution_service.ProjectResolutionFailed as exc:
+            raise ActionRunFailed(exc.message) from exc
 
         run_selection.validate_run_selectors(
             parsed.env_selectors,
@@ -651,7 +654,10 @@ async def _handle_run_action_with_progress(
         from finecode.wm_server.services import run_service
         from finecode.wm_server.services.run_service import proxy_utils
 
-        parsed = await _parse_and_validate_run_action_params(params, ws_context)
+        try:
+            parsed = await _parse_and_validate_run_action_params(params, ws_context)
+        except project_resolution_service.ProjectResolutionFailed as exc:
+            raise ValueError(exc.message) from exc
         progress_token = params["progressToken"]
 
         # Ensure runners are started before subscribing to progress notifications
@@ -796,9 +802,12 @@ async def _handle_run_batch_with_progress(
             f"runBatch+progress: actionSources={parsed.action_sources} projects={parsed.project_names}"
         )
 
-        actions_by_project, name_to_source = await _resolve_actions_by_project(
-            parsed.project_names, parsed.action_sources, ws_context
-        )
+        try:
+            actions_by_project, name_to_source = await _resolve_actions_by_project(
+                parsed.project_names, parsed.action_sources, ws_context
+            )
+        except project_resolution_service.ProjectResolutionFailed as exc:
+            raise ActionRunFailed(exc.message) from exc
 
         await run_service.start_required_environments(actions_by_project, ws_context)
 
@@ -974,13 +983,21 @@ async def _resolve_source_to_name(
     from finecode.wm_server._api_handlers._helpers import (
         find_action_by_source,
     )
+    from finecode.wm_server.services import project_resolution_service
 
     if project_path_str:
-        project = ws_context.ws_projects.get(pathlib.Path(project_path_str))
-        if project is None or not isinstance(project, _domain.CollectedProject):
+        path = pathlib.Path(project_path_str)
+        project = ws_context.ws_projects.get(path)
+        if project is None:
             raise ValueError(
                 f"Project '{project_path_str}' not found or not initialized"
             )
+
+        project = (
+            await project_resolution_service.ensure_projects_resolved(
+                [path], ws_context
+            )
+        ).require([path])[0]
         action = await find_action_by_source(
             project.actions, action_source, project, ws_context
         )
@@ -990,16 +1007,23 @@ async def _resolve_source_to_name(
             )
         return action.name
     else:
-        # project="" means "all projects" — resolve against the first project that
-        # declares the action so we can obtain the canonical action name.
-        for project in ws_context.ws_projects.values():
-            if not isinstance(project, _domain.CollectedProject):
-                continue
+        # project="" means "all projects" — resolve against who hosts the
+        # action
+        hosting = await project_resolution_service.resolve_hosting_projects(
+            [action_source], "source", ws_context
+        )
+        for project in hosting.outcome.resolved.values():
             action = await find_action_by_source(
                 project.actions, action_source, project, ws_context
             )
             if action is not None:
                 return action.name
+        if hosting.outcome.failed:
+            raise project_resolution_service.ProjectResolutionFailed(
+                "; ".join(
+                    f"{p}: {reason}" for p, reason in hosting.outcome.failed.items()
+                )
+            )
         raise ActionNotFoundError(
             f"Action with source '{action_source}' not found in any project"
         )

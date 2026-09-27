@@ -167,7 +167,7 @@ See [Configuration](configuration.md) for full details on config precedence.
 
 ### Behavior
 
-- With no `--project`: FineCode treats `cwd` (or `--workdir`) as the workspace root, discovers all projects, and runs the action in each project that defines it.
+- With no `--project`: FineCode treats `cwd` (or `--workdir`) as the workspace root and runs the action in each project that defines it.
 - With `--project`: the action must exist in every specified project.
 - Action results are saved to `<venv>/cache/finecode/results/<action>.json` (one entry per project path).
 - WAL options on `run` apply only when FineCode starts a dedicated WM server (default mode). In `--shared-server` mode, configure WAL on the shared WM server process.

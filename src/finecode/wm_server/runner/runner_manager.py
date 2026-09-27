@@ -79,6 +79,8 @@ _STARTUP_SLOT_YIELDING_METHODS: typing.Final[frozenset[str]] = frozenset(
         # Waits on the editor connection / on a human.
         _internal_client_types.WORKSPACE_APPLY_EDIT,
         _internal_client_types.ELICIT,
+        # Resolves every project on demand: can wait on ER starts.
+        _internal_client_types.LIST_WORKSPACE_ACTIONS,
     }
 )
 _STARTUP_SLOT_NEUTRAL_METHODS: typing.Final[frozenset[str]] = frozenset(
@@ -91,8 +93,6 @@ _STARTUP_SLOT_NEUTRAL_METHODS: typing.Final[frozenset[str]] = frozenset(
         _internal_client_types.WORKSPACE_EXTRA_SELECTION_GET,
         # Synchronous ws_context read: awaits no runner start, event, lease or human.
         _internal_client_types.WORKSPACE_PROJECT_PATHS_GET,
-        # Synchronous ws_context read: awaits no runner start, event, lease or human.
-        _internal_client_types.LIST_WORKSPACE_ACTIONS,
         # Releases a lease (no wait) and RPCs only its own runner.
         _internal_client_types.RELEASE_PROCESS_BUDGET,
         # Local publish (progress/partial-result): awaits nothing.
@@ -196,6 +196,36 @@ class EnvironmentOutOfDateError(RunnerFailedToStart):
     def __init__(self, message: str, env_name: str | None = None) -> None:
         super().__init__(message)
         self.env_name = env_name
+
+
+class ProjectsFailedToResolve(RunnerFailedToStart):
+    """Several projects failed to start in one batch.
+
+    A subclass of ``RunnerFailedToStart`` so every existing handler — the
+    auto-repair path included — keeps catching it, while a caller that
+    resolves projects on demand can attribute the failure to the individual
+    projects (``per_project``) instead of only getting one aggregate message.
+    A single-project call raises its recorded exception object directly rather
+    than this wrapper, so single-path callers see the same exception types as
+    before.
+    """
+
+    def __init__(
+        self,
+        per_project: dict[Path, Exception],
+        message: str | None = None,
+    ) -> None:
+        self.per_project = per_project
+        if message is None:
+            message = "Failed to start runner(s) for: " + "; ".join(
+                _exception_message(exc) for exc in per_project.values()
+            )
+        super().__init__(message)
+
+
+def _exception_message(exc: Exception) -> str:
+    """The human-readable reason behind a recorded start failure."""
+    return getattr(exc, "message", None) or str(exc) or repr(exc)
 
 
 async def notify_project_changed(project: domain.Project) -> None:
@@ -793,42 +823,12 @@ async def _start_extension_runner_process(
         """Serve ``finecode/listWorkspaceActions`` (ER → WM).
 
         Returns the aggregated action/handler registry across every project and
-        env in the workspace. An ER only ever sees the actions its own env
-        executes, so this cross-env picture can only come from the WM. Values
-        come straight from the resolved ``domain.Action`` objects, including the
-        ``file_loc`` each owning ER resolves via ``resolveActionMeta``; fields
-        not yet resolved (before all ERs have started) are serialized as
+        env in the workspace.  An ER only ever sees the actions its own env
+        executes, so this cross-env picture can only come from the WM. Fields
+        not yet resolved are serialized as
         ``null``. Keys are camelCase for the JSON-RPC boundary.
         """
-        actions: list[dict] = []
-        for project in ws_context.ws_projects.values():
-            if not isinstance(project, domain.CollectedProject):
-                continue
-            for action in project.actions:
-                actions.append(
-                    {
-                        "name": action.name,
-                        "source": action.source,
-                        "canonicalSource": action.canonical_source,
-                        "scope": (
-                            action.scope.value if action.scope is not None else None
-                        ),
-                        "project": str(project.dir_path),
-                        "language": action.language,
-                        "parentActionSource": action.parent_action_source,
-                        "fileLoc": action.file_loc,
-                        "handlers": [
-                            {
-                                "name": h.name,
-                                "source": h.source,
-                                "env": h.env,
-                                "fileLoc": h.file_loc,
-                            }
-                            for h in action.handlers
-                        ],
-                    }
-                )
-        return {"actions": actions}
+        return await _run_dispatch_handlers().list_workspace_actions(ws_context)
 
     _register(
         _internal_client_types.LIST_WORKSPACE_ACTIONS,
@@ -1001,6 +1001,7 @@ async def start_runners_with_presets(
         tuple[domain.Project, runner_client.ExtensionRunnerInfo]
     ] = []
     coros = []
+    per_project_failures: dict[Path, Exception] = {}
 
     for project in projects:
         project_status = project.status
@@ -1046,11 +1047,9 @@ async def start_runners_with_presets(
                 )
                 projects_to_start.append(project)
         elif project_status != domain.ProjectStatus.NO_FINECODE:
-            raise RunnerFailedToStart(
+            per_project_failures[project.dir_path] = RunnerFailedToStart(
                 f"Project '{project.name}' has invalid configuration, status: {project_status.name}"
             )
-
-    failed_names: list[str] = []
 
     if coros:
         # Use gather instead of TaskGroup so that a single project failure does not
@@ -1069,7 +1068,9 @@ async def start_runners_with_presets(
                 logger.error(
                     f"Runner for '{project.name}' ({project.dir_path}) failed to start: {msg}"
                 )
-                failed_names.append(project.name)
+                per_project_failures[project.dir_path] = RunnerFailedToStart(
+                    f"Runner for '{project.name}' ({project.dir_path}) failed to start: {msg}"
+                )
 
     # Wait for runners that were already INITIALIZING when we entered so that
     # runner.client is set before the second pass reads project configs.
@@ -1081,18 +1082,18 @@ async def start_runners_with_presets(
                 f"Runner for '{project.name}' ({project.dir_path}) did not reach RUNNING"
                 f" state: {runner.status}"
             )
-            failed_names.append(project.name)
-
-    if failed_names:
-        raise RunnerFailedToStart(
-            f"Failed to start runner(s) for: {', '.join(failed_names)}. "
-            f"See logs above for per-project details."
-        )
+            per_project_failures[project.dir_path] = RunnerFailedToStart(
+                f"Runner for '{project.name}' ({project.dir_path}) failed to start: {runner.status}"
+            )
 
     handlerless: dict[str, list[Path]] = {}
     try:
         for project in projects:
             if project.status != domain.ProjectStatus.CONFIG_VALID:
+                continue
+            if project.dir_path in per_project_failures:
+                # Its first-pass start failed; resolving it would read a config
+                # no runner is configured for.
                 continue
 
             try:
@@ -1104,39 +1105,84 @@ async def start_runners_with_presets(
                 collected = collect_actions.collect_project(
                     project_path=project.dir_path, ws_context=ws_context
                 )
-            except config_models.ConfigurationError as exception:
-                raise RunnerFailedToStart(
-                    f"Reading project config with presets and collecting actions in {project.dir_path} failed: {exception.message}"
-                ) from exception
 
-            # Upgrade to ResolvedProject — presets are now resolved in the raw config
-            resolved = domain.ResolvedProject.from_collected(collected)
-            ws_context.ws_projects[project.dir_path] = resolved
+                # Upgrade to ResolvedProject — presets are now resolved in the raw config
+                resolved = domain.ResolvedProject.from_collected(collected)
+                ws_context.ws_projects[project.dir_path] = resolved
 
-            for action in resolved.actions:
-                if not action.handlers:
-                    handlerless.setdefault(action.source, []).append(project.dir_path)
+                for action in resolved.actions:
+                    if not action.handlers:
+                        handlerless.setdefault(action.source, []).append(
+                            project.dir_path
+                        )
 
-            # update config of dev_workspace runner, the new config contains resolved presets
-            dev_workspace_runner = ws_context.ws_projects_extension_runners[
-                project.dir_path
-            ]["dev_workspace"]
-            handlers_to_init = (
-                domain_helpers.collect_all_handlers_to_initialize(
-                    resolved, "dev_workspace"
+                # update config of dev_workspace runner, the new config contains resolved presets
+                dev_workspace_runner = ws_context.ws_projects_extension_runners[
+                    project.dir_path
+                ]["dev_workspace"]
+                handlers_to_init = (
+                    domain_helpers.collect_all_handlers_to_initialize(
+                        resolved, "dev_workspace"
+                    )
+                    if initialize_all_handlers
+                    else None
                 )
-                if initialize_all_handlers
-                else None
-            )
-            await update_runner_config(
-                runner=dev_workspace_runner,
-                project=resolved,
-                handlers_to_initialize=handlers_to_init,
-                ws_context=ws_context,
-                pass_label="second",
-            )
+                await update_runner_config(
+                    runner=dev_workspace_runner,
+                    project=resolved,
+                    handlers_to_initialize=handlers_to_init,
+                    ws_context=ws_context,
+                    pass_label="second",
+                )
+            except config_models.ConfigurationError as exception:
+                per_project_failures[project.dir_path] = RunnerFailedToStart(
+                    f"Reading project config with presets and collecting actions in {project.dir_path} failed: {exception.message}"
+                )
+            except preset_resolution.DevWorkspaceRunnerNotConnectedError as exception:
+                per_project_failures[project.dir_path] = RunnerFailedToStart(
+                    str(exception)
+                )
+            except asyncio.CancelledError:
+                raise
+            except Exception as exception:
+                # RunnerFailedToStart / EnvironmentOutOfDateError from
+                # update_runner_config, JSON-RPC errors from the preset read,
+                # a ValueError from collect_project after a removeDir: recorded
+                # as raised
+                per_project_failures[project.dir_path] = exception
     finally:
         _warn_handlerless_actions(handlerless)
+
+    if not per_project_failures:
+        return
+
+    # A project this call resolved is no longer remembered as failed,
+    # whatever the caller
+    for project in projects:
+        if project.dir_path not in per_project_failures:
+            ws_context.project_resolution_failures.pop(project.dir_path, None)
+
+    if len(projects) == 1:
+        # Single-project callers (config recovery, install_env_for_project,
+        # get_or_start_runners_with_presets) see the same exception type as
+        # before
+        raise per_project_failures[projects[0].dir_path]
+
+    failed_names = ", ".join(
+        str(project.name)
+        for project in projects
+        if project.dir_path in per_project_failures
+    )
+    per_project_messages = "; ".join(
+        _exception_message(per_project_failures[project.dir_path])
+        for project in projects
+        if project.dir_path in per_project_failures
+    )
+    raise ProjectsFailedToResolve(
+        per_project=per_project_failures,
+        message=f"Failed to start runner(s) for: {failed_names}. "
+        + per_project_messages,
+    )
 
 
 async def get_or_start_runners_with_presets(
@@ -1490,7 +1536,7 @@ async def _init_lsp_client(
     logger.debug(f"LSP Client for initialized: {runner.readable_id}")
 
 
-def _propagate_action_meta(
+def propagate_action_meta(
     resolved: domain.Action,
     source_project: domain.CollectedProject,
     ws_context: context.WorkspaceContext,
@@ -1611,7 +1657,7 @@ async def update_runner_config(
             # project that registers the same action class.  Propagate immediately
             # so the dispatch layer sees the correct scope even before each
             # project's own ER has started.
-            _propagate_action_meta(action, project, ws_context)
+            propagate_action_meta(action, project, ws_context)
 
         for handler in action.handlers:
             if handler.env != runner.env_name:

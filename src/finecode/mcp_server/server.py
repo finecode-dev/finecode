@@ -264,7 +264,7 @@ async def _attach_session(*, first_connect: bool) -> None:
         _wm_port = wm_lifecycle.running_port() or _wm_port
 
     logger.debug(f"MCP: Add dir to API Client: {_workdir}")
-    await _wm_client.add_dir(_workdir)
+    await _wm_client.add_dir(_workdir, start_runners=False)
     logger.info(f"MCP: Added workspace dir {_workdir}")
 
     if not first_connect:
@@ -550,7 +550,19 @@ async def _handle_list_tools(_params: dict | None) -> dict:
     tools: list[dict] = [*_META_TOOLS]
 
     try:
-        actions = await _wm_client.list_actions()
+        listing = await _wm_client.list_actions()
+        actions = listing.actions
+        if listing.unresolved_projects:
+            # The tool list itself cannot carry the error; the one-time
+            # server/userMessage from auto-prepare already reached the client.
+            missing = " ".join(
+                f"{item.get('project')}: {item.get('error')}"
+                for item in listing.unresolved_projects
+            )
+            logger.warning(
+                f"MCP: {len(listing.unresolved_projects)} project(s) could not be"
+                f" resolved; their actions are missing from the tool list: {missing}"
+            )
         logger.info(f"MCP: Fetched {len(actions)} actions from WM")
     except Exception as exc:
         logger.error(f"MCP: Failed to fetch actions from WM: {exc}", exc_info=True)
@@ -640,7 +652,7 @@ async def _resolve_action_source(tool_name: str) -> str:
     if source is not None:
         return source
 
-    for action in await _wm_client.list_actions():
+    for action in (await _wm_client.list_actions()).actions:
         _tool_name_to_source.setdefault(action["name"], action["source"])
     # An unknown name may already be a source (ADR-0019 alias); let the WM judge.
     return _tool_name_to_source.get(tool_name, tool_name)
@@ -674,7 +686,7 @@ async def _handle_call_tool(params: dict | None) -> dict:
 
         if name == "list_actions":
             project = arguments.get("project")
-            result = await _wm_client.list_actions(project=project)
+            result = (await _wm_client.list_actions(project=project)).actions
             return {
                 "content": [{"type": "text", "text": json.dumps({"actions": result})}]
             }

@@ -441,6 +441,16 @@ def test_every_registered_startup_method_is_classified() -> None:
             " _STARTUP_SLOT_YIELDING_METHODS / _STARTUP_SLOT_NEUTRAL_METHODS"
         )
 
+    # The back-channel methods that can reach the resolution gate (a gate call
+    # made from a back-channel request waits on other ERs' starts, B rule 5 /
+    # ADR-0101) must be classified yielding, never neutral.
+    gated_back_channel = {
+        _internal_client_types.RUN_ACTION_IN_WORKSPACE,
+        _internal_client_types.LIST_WORKSPACE_ACTIONS,
+    }
+    assert gated_back_channel <= runner_manager._STARTUP_SLOT_YIELDING_METHODS
+    assert gated_back_channel.isdisjoint(runner_manager._STARTUP_SLOT_NEUTRAL_METHODS)
+
 
 # --------------------------------------------------------------------------- #
 # AC4 — every exit path releases the slot exactly once and leaves no wedge

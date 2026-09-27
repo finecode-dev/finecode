@@ -19,12 +19,12 @@ from finecode.wm_server import context, domain
 from finecode.wm_server.context import pick_workspace_root_dir
 from finecode.wm_server.errors import ActionNotResolvableError
 from finecode.wm_server.runner import elicitation_bridge, runner_client
+from finecode.wm_server.services import project_resolution_service
 from finecode.wm_server.services.run_service import (
     ActionRunFailed,
     DevEnv,
     RunActionTrigger,
     RunResultFormat,
-    find_all_projects_with_action,
     matrix_runner,
     matrix_streaming,
     run_with_partial_results,
@@ -193,35 +193,73 @@ async def run_action_with_partial_results(
     client.
     """
 
-    # determine target project(s) — only CollectedProject instances have actions
+    # determine target project(s) — the gate resolves exactly who the action's
+    # routing needs
     projects: list[domain.CollectedProject]
     if project_path:
-        project = ws_context.ws_projects.get(pathlib.Path(project_path))
-        if project is None or not isinstance(project, domain.CollectedProject):
+        path = pathlib.Path(project_path)
+        project = ws_context.ws_projects.get(path)
+        if project is None:
             raise ValueError(f"Project '{project_path}' not found")
+        try:
+            project = (
+                await project_resolution_service.ensure_projects_resolved(
+                    [path], ws_context
+                )
+            ).require([path])[0]
+        except project_resolution_service.ProjectResolutionFailed as exc:
+            raise ActionRunFailed(exc.message) from exc
         # Mirrors the non-streaming actions/run guard in _helpers.py: a
         # workspace-scoped action's routing is the WM's decision (see the
         # `else` branch below), not the caller's — accepting an explicit
         # project here would silently narrow a workspace-wide action to one
         # runner instead of rejecting the combination.
         action = next((a for a in project.actions if a.name == action_name), None)
+        if action is not None and action.canonical_source is None:
+            # Scope is untrusted until the metadata resolves; a scope of None
+            # would otherwise pass the check below silently.
+            from finecode.wm_server.services.run_service import proxy_utils
+
+            await proxy_utils.ensure_action_metadata(action, project, ws_context)
         if action is not None and action.scope == domain.ActionScope.WORKSPACE:
             raise ValueError(
                 f"Action '{action_name}' is workspace-scoped; do not pass a project path."
             )
         projects = [project]
     else:
-        paths = find_all_projects_with_action(action_name, ws_context)
-        all_projects = [
-            p
-            for path in paths
-            if isinstance(p := ws_context.ws_projects[path], domain.CollectedProject)
-        ]
-        # For workspace-scoped actions, run in the workspace root project only.
+        from finecode.wm_server.services.run_service import proxy_utils
+
+        # Root-first: a workspace-scoped root-hosted action runs in the
+        # root alone; anything else resolves every project, and a failed
+        # sibling fails the run loudly rather than being skipped.
+        hosting = await project_resolution_service.resolve_hosting_projects(
+            [action_name], "name", ws_context
+        )
+        if hosting.root_only:
+            all_projects = list(hosting.outcome.resolved.values())
+        else:
+            try:
+                resolved = hosting.outcome.require_all()
+            except project_resolution_service.ProjectResolutionFailed as exc:
+                raise ActionRunFailed(exc.message) from exc
+            all_projects = [
+                project
+                for project in resolved.values()
+                if any(a.name == action_name for a in project.actions)
+            ]
+        # A freshly resolved sibling's action has no metadata (the rebuild
+        # drops it); ensure the first one before trusting its scope.
         first_action = next(
             (a for proj in all_projects for a in proj.actions if a.name == action_name),
             None,
         )
+        if first_action is not None and first_action.canonical_source is None:
+            first_project = next(
+                proj for proj in all_projects if first_action in proj.actions
+            )
+            await proxy_utils.ensure_action_metadata(
+                first_action, first_project, ws_context
+            )
         if first_action is not None and first_action.scope is None:
             raise ActionNotResolvableError(
                 f"Action '{action_name}' scope has not been resolved. "

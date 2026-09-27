@@ -692,7 +692,9 @@ async def _attach_session(server: LspServer, *, first_connect: bool) -> None:
     async with asyncio.TaskGroup() as tg:
         for folder in server._workspace_folders:
             dir_path = Path(folder["uri"].replace("file://", ""))
-            tg.create_task(global_state.wm_client.add_dir(dir_path))
+            tg.create_task(
+                global_state.wm_client.add_dir(dir_path, start_runners=False)
+            )
 
     if not first_connect:
         # The editor will not re-send these, and without them the WM answers
@@ -740,7 +742,7 @@ async def _workspace_did_change_workspace_folders(
         )
     for ws_folder in typed.event.added:
         await global_state.wm_client.add_dir(
-            Path(ws_folder.uri.removeprefix("file://"))
+            Path(ws_folder.uri.removeprefix("file://")), start_runners=False
         )
 
 

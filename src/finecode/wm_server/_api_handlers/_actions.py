@@ -11,7 +11,6 @@ import finecode_jsonrpc as jsonrpc_client
 from finecode import telemetry
 from finecode.wm_server import context, domain
 from finecode.wm_server._api_handlers._helpers import (
-    _apply_config_overrides_to_projects,
     _build_batch_result,
     _find_project_by_path,
     _parse_and_validate_run_action_params,
@@ -20,6 +19,8 @@ from finecode.wm_server._api_handlers._helpers import (
     find_action_by_source,
     project_exposes_action,
 )
+from finecode.wm_server.config import collect_actions
+from finecode.wm_server.services import project_resolution_service
 from finecode.wm_server.services.action_tree import (  # noqa: F401 (re-export)
     _handle_get_tree,
 )
@@ -36,7 +37,10 @@ async def _handle_run_action(
 
     raw_params = params or {}
     with telemetry.attach_incoming_traceparent(raw_params):
-        parsed = await _parse_and_validate_run_action_params(raw_params, ws_context)
+        try:
+            parsed = await _parse_and_validate_run_action_params(raw_params, ws_context)
+        except project_resolution_service.ProjectResolutionFailed as exc:
+            raise ValueError(exc.message) from exc
 
         try:
             # PRD-0003 AC8: resolve `--env`/`--interpreter` selectors
@@ -233,9 +237,12 @@ async def _handle_run_batch(
             f"runBatch: actionSources={parsed.action_sources} projects={parsed.project_names} formats={parsed.result_format_strs}"
         )
 
-        actions_by_project, name_to_source = await _resolve_actions_by_project(
-            parsed.project_names, parsed.action_sources, ws_context
-        )
+        try:
+            actions_by_project, name_to_source = await _resolve_actions_by_project(
+                parsed.project_names, parsed.action_sources, ws_context
+            )
+        except project_resolution_service.ProjectResolutionFailed as exc:
+            raise ValueError(exc.message) from exc
 
         await run_service.start_required_environments(actions_by_project, ws_context)
 
@@ -289,11 +296,13 @@ async def _handle_set_config_overrides(
     ws_context.service_config_overrides = service_overrides
 
     # Apply to all existing project domain objects so that project.action_handler_configs
-    # reflects the new overrides
-    all_projects = list(ws_context.ws_projects.values())
-    action_names = list(overrides.keys())
-    if all_projects and action_names:
-        _apply_config_overrides_to_projects(all_projects, action_names, overrides)
+    # reflects the new overrides.
+    for project in list(ws_context.ws_projects.values()):
+        if not isinstance(project, domain.CollectedProject):
+            continue
+        if project.dir_path not in ws_context.ws_projects_raw_configs:
+            continue
+        collect_actions.rebuild_handler_configs(project, ws_context)
 
     # Service overrides need no application here: they are forwarded verbatim to
     # each runner, which matches them against its own bindings (ADR-0070).
@@ -349,11 +358,16 @@ async def _handle_get_payload_schemas(
     project = _find_project_by_path(ws_context, project_path)
     if project is None:
         raise ValueError(f"Project '{project_path}' not found")
-    if not isinstance(project, domain.CollectedProject):
-        raise ValueError(
-            f"Project '{project_path}' actions are not collected yet. "
-            "Ensure the project is initialized before requesting schemas."
-        )
+    # Gate + require: a lazily attached WM resolves the named project here, and
+    # an uncollected, invalid or unstartable project fails with its real reason
+    try:
+        project = (
+            await project_resolution_service.ensure_projects_resolved(
+                [project.dir_path], ws_context
+            )
+        ).require([project.dir_path])[0]
+    except project_resolution_service.ProjectResolutionFailed as exc:
+        raise ValueError(exc.message) from exc
 
     # Bind the narrowed type for the nested probe below: pyrefly widens a
     # closure variable back to its declared type, so the isinstance narrowing

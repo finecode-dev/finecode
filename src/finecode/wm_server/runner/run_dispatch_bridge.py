@@ -63,6 +63,19 @@ class RunDispatchHandlers(typing.Protocol):
             ConfigurationError: the calling project has no valid config.
         """
 
+    async def list_workspace_actions(
+        self, ws_context: context.WorkspaceContext
+    ) -> dict:
+        """Aggregate the workspace action/handler registry over every project.
+
+        Resolves every project first, so the registry names and handlers are
+        complete; fields not yet resolved are serialized as ``null``.
+
+        Raises:
+            ProjectError: a project failed to resolve — a silently partial
+                registry would feed empty knowledge facts.
+        """
+
 
 _installed: RunDispatchHandlers | None = None
 

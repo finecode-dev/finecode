@@ -172,6 +172,14 @@ class WorkspaceContext:
         default_factory=dict
     )
 
+    # project_path → reason: remembered, attributable resolution failures
+    project_resolution_failures: dict[Path, str] = field(default_factory=dict)
+
+    # project_path → in-flight resolution for that project
+    project_resolution_tasks: dict[Path, asyncio.Future[dict[Path, str]]] = field(
+        default_factory=dict
+    )
+
     # --- Caches (lazily populated; must be invalidated on project changes) -------
 
     # directory path (str) → { action_name → project_path }

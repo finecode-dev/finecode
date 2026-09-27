@@ -277,12 +277,6 @@ async def run_actions(
         if can_answer_questions:
             client.on_request("client/elicit", _make_elicit_handler(prompt_idle))
 
-        # When a project filter is given and we own the server, discover
-        # projects first (no runners), resolve names to paths, then start
-        # runners only for the requested projects.  In shared-server mode
-        # runners are already running, so always use the normal path.
-        deferred_runner_start = own_server and projects_names is not None
-
         async def _attach_session(*, first_connect: bool) -> None:
             """Establish the session state the WM holds for this client.
 
@@ -293,11 +287,7 @@ async def run_actions(
             if verbose:
                 await client.subscribe_logs(log_level)
             logger.info("Initializing workspace...")
-            await client.add_dir(
-                workdir_path,
-                start_runners=not deferred_runner_start,
-                initialize_all_handlers=not own_server,
-            )
+            await client.add_dir(workdir_path, start_runners=False)
 
         client.configure_reconnect(
             # A dedicated server was started for this command alone; if it is
@@ -355,14 +345,22 @@ async def run_actions(
                     p["path"] for p in all_projects if p["name"] in projects_names
                 ]
 
-            if deferred_runner_start:
-                try:
-                    await client.start_runners(projects=project_paths)
-                except ApiError as exc:
-                    raise RunFailed(str(exc)) from exc
-
-            # Resolve action names to sources (ADR-0019).
-            all_actions = await client.list_actions()
+            # Resolve action names to sources.
+            try:
+                listing = await client.list_actions(
+                    names=actions, projects=project_paths
+                )
+            except ApiError as exc:
+                raise RunFailed(str(exc)) from exc
+            if listing.unresolved_projects:
+                raise RunFailed(
+                    "Could not resolve project(s): "
+                    + "; ".join(
+                        f"{item.get('project')}: {item.get('error')}"
+                        for item in listing.unresolved_projects
+                    )
+                )
+            all_actions = listing.actions
             name_to_source: dict[str, str] = {
                 a["name"]: a["source"] for a in all_actions
             }

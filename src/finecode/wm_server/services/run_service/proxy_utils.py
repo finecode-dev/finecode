@@ -22,7 +22,11 @@ from finecode.wm_server.config import interpreter_matrix
 from finecode.wm_server.runner import elicitation_bridge, runner_client, runner_manager
 from finecode.wm_server.runner.runner_client import RunResultFormat  # reexport
 from finecode.wm_server.runner.runner_manager import RunnerFailedToStart
-from finecode.wm_server.services import in_flight_runs, runner_start_service
+from finecode.wm_server.services import (
+    in_flight_runs,
+    project_resolution_service,
+    runner_start_service,
+)
 
 from . import matrix_runner
 from .exceptions import (
@@ -465,32 +469,27 @@ async def run_with_partial_results(
             ) from eg
 
 
-def find_all_projects_with_action(
+async def find_all_projects_with_action(
     action_name: str, ws_context: context.WorkspaceContext
 ) -> list[pathlib.Path]:
-    projects = ws_context.ws_projects
-    relevant_projects: dict[pathlib.Path, domain.Project] = {
-        path: project
-        for path, project in projects.items()
-        if project.status != domain.ProjectStatus.NO_FINECODE
-    }
+    """Resolve every project that declares *action_name*, resolving projects on
+    demand first (an unresolved project's action set is incomplete).
 
-    # exclude projects that are not fully resolved and projects without requested action
-    for project_dir_path, project_def in relevant_projects.copy().items():
-        if not isinstance(project_def, domain.ResolvedProject):
-            # unresolved projects (CollectedProject or plain Project) have incomplete
-            # action sets — preset-contributed actions are not yet visible
-            del relevant_projects[project_dir_path]
-            continue
-
-        try:
-            next(action for action in project_def.actions if action.name == action_name)
-        except StopIteration:
-            del relevant_projects[project_dir_path]
-            continue
-
-    relevant_projects_paths: list[pathlib.Path] = list(relevant_projects.keys())
-    return relevant_projects_paths
+    A project that fails to resolve fails the enumeration loudly, naming it —
+    the fan-out is 'every project with the action' by contract, so silently
+    skipping one would produce a silently partial run.
+    """
+    outcome = await project_resolution_service.ensure_all_projects_resolved(ws_context)
+    if outcome.failed:
+        reasons = "; ".join(f"{p}: {reason}" for p, reason in outcome.failed.items())
+        raise ActionRunFailed(
+            f"Cannot enumerate projects with action '{action_name}': {reasons}"
+        )
+    return [
+        path
+        for path, project in outcome.resolved.items()
+        if any(a.name == action_name for a in project.actions)
+    ]
 
 
 async def ensure_action_metadata(
@@ -905,25 +904,13 @@ async def run_actions_in_projects(
 ) -> dict[pathlib.Path, dict[str, RunActionResponse]]:
     _payload_overrides_by_project = payload_overrides_by_project or {}
 
-    # Lazily start runners for projects that are not yet resolved.  This handles
-    # the case where a workspace-scope action fans out to projects whose runners
-    # were not started upfront (e.g. CLI run with --project filter).
-    unresolved = [
-        ws_context.ws_projects[p]
-        for p in actions_by_project
-        if not isinstance(ws_context.ws_projects.get(p), domain.ResolvedProject)
-        and ws_context.ws_projects.get(p) is not None
-    ]
-    if unresolved:
-        unresolved_names = ", ".join(p.name for p in unresolved)
-        logger.debug(
-            f"Lazily starting runners for {len(unresolved)} unresolved project(s): {unresolved_names}"
+    try:
+        outcome = await project_resolution_service.ensure_projects_resolved(
+            actions_by_project.keys(), ws_context
         )
-        await runner_start_service.start_runners_with_auto_prepare(
-            projects=unresolved,
-            ws_context=ws_context,
-            initialize_all_handlers=True,
-        )
+        outcome.require(actions_by_project.keys())
+    except project_resolution_service.ProjectResolutionFailed as exc:
+        raise ActionRunFailed(exc.message) from exc
 
     project_handler_tasks: list[asyncio.Task] = []
     try:

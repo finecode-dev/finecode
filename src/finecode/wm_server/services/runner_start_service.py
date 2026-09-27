@@ -136,9 +136,14 @@ async def _auto_prepare_and_retry(
                 f"Auto install_env failed for {project.name}: {prep_exc.message}"
             )
             _notify(f"Auto prepare failed for {project.name}: {prep_exc.message}")
-            raise runner_manager.RunnerFailedToStart(
+            failure = runner_manager.RunnerFailedToStart(
                 f"Auto prepare-envs failed for '{project.name}': {prep_exc.message}"
-            ) from prep_exc
+            )
+            if isinstance(exc, runner_manager.ProjectsFailedToResolve):
+                raise runner_manager.ProjectsFailedToResolve(
+                    per_project={**exc.per_project, project.dir_path: failure}
+                ) from prep_exc
+            raise failure from prep_exc
 
     # Restart runners so they pick up the newly populated venvs.
     for project in affected_projects:
