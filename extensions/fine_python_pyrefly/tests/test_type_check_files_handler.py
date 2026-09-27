@@ -21,7 +21,12 @@ from finecode_extension_api.interfaces import (
     isrcartifactfileclassifier,
 )
 from finecode_extension_api.resource_uri import path_to_resource_uri
-from finecode_extension_runner.testing import NoOpLogger, Session, handler_test_session
+from finecode_extension_runner.testing import (
+    NoOpLogger,
+    Session,
+    handler_test_session,
+    nonexistent_abs_path,
+)
 
 from fine_python_pyrefly.pyrefly_lsp_service import PyreflyLspService
 from fine_python_pyrefly.type_check_files_handler import PyreflyTypeCheckFilesHandler
@@ -108,7 +113,7 @@ class _FakeSrcArtifactFileClassifier:
 
 class _FakeExtensionRunnerInfoProvider:
     def get_venv_dir_path_of_env(self, env_name: str) -> Path:
-        return Path("/fake") / "venvs" / env_name
+        return nonexistent_abs_path("fake", "venvs", env_name)
 
     def get_venv_site_packages(self, venv_dir_path: Path) -> list[Path]:
         return [venv_dir_path / "lib" / "site-packages"]
@@ -218,10 +223,12 @@ async def test_cli_mode_skips_the_lsp_service_entirely(
     assert [Path(cmd[-1]) for cmd in runner.commands] == [a, b]
     # the interpreter path reaches pyrefly as one verbatim token -- no shell
     # quoting around it, so a path with spaces survives
-    assert all(
-        "--python-interpreter-path=/fake/venvs/source/bin/python" in cmd
-        for cmd in runner.commands
+    fake_info = _FakeExtensionRunnerInfoProvider()
+    expected = (
+        "--python-interpreter-path="
+        f"{fake_info.get_venv_python_interpreter(fake_info.get_venv_dir_path_of_env('source'))}"
     )
+    assert all(expected in cmd for cmd in runner.commands)
 
 
 async def test_run_sweeps_the_full_file_set_before_checking(

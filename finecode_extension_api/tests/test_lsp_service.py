@@ -1569,9 +1569,12 @@ async def test_watched_file_sweep_waits_for_every_open_document_to_republish(
         await service._sync_document(second_uri, "b = 2\n")
         assert {first_uri, second_uri} <= service._open_documents
 
+        republished_at: dict[str, float] = {}
+
         async def republish(uri: str, delay: float) -> None:
             await asyncio.sleep(delay)
             await service._handle_diagnostics({"uri": uri, "diagnostics": []})
+            republished_at[uri] = time.monotonic()
 
         async def on_notification_sent(
             method: str, params: dict[str, Any] | None
@@ -1583,15 +1586,14 @@ async def test_watched_file_sweep_waits_for_every_open_document_to_republish(
 
         session.on_notification_sent = on_notification_sent
 
-        started = time.monotonic()
         missing = await service.sync_watched_files(
             [first, second, driver], recheck_timeout=5
         )
-        elapsed = time.monotonic() - started
+        sweep_end = time.monotonic()
 
         assert missing == set()
-        assert elapsed >= 0.08  # after the second republish
-        assert elapsed < 1  # well before the ceiling
+        # after the second republish
+        assert max(republished_at.values()) <= sweep_end
 
 
 async def test_watched_file_sweep_hits_the_ceiling_but_leaves_no_waiter_behind(

@@ -4,19 +4,18 @@ from __future__ import annotations
 
 import json
 from collections.abc import AsyncIterator
-from pathlib import Path
 
 from fine_lint.get_lint_fixes_action import GetLintFixesRunPayload
 from finecode_extension_api.interfaces import icommandrunner
 from finecode_extension_api.resource_uri import path_to_resource_uri
-from finecode_extension_runner.testing import NoOpLogger
+from finecode_extension_runner.testing import NoOpLogger, nonexistent_abs_path
 
 from fine_python_ruff.get_lint_fixes_handler import (
     RuffGetLintFixesHandler,
     RuffGetLintFixesHandlerConfig,
 )
 
-_FILE_PATH = Path("/tmp/subject.py")
+_FILE_PATH = nonexistent_abs_path("subject.py")
 _FILE_URI = path_to_resource_uri(_FILE_PATH)
 
 

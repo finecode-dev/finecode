@@ -197,14 +197,12 @@ async def test_output_is_complete_when_wait_for_end_returns() -> None:
     assert process.get_output().splitlines() == [str(i) for i in range(500)]
 
 
-async def test_undecodable_output_fails_the_subscriber_instead_of_ending_quietly() -> (
-    None
-):
-    """A decode error must not look like a clean end of stream.
+async def test_undecodable_output_is_decoded_with_replacement_and_stays_complete() -> None:
+    """Undecodable bytes cost a few U+FFFD characters, not the stream.
 
-    `decode()` happens outside the guard around `readline`, so this is the easy
-    way to get the exact failure the design forbids everywhere else: the
-    subscriber's loop finishing normally on a stream that was actually cut off.
+    A child writing in the console encoding (cp1252 on a Windows runner) must
+    not fail the run: the stream stays complete and `wait_for_end()` returns
+    normally.
     """
     process = await _runner().run(
         _python(
@@ -216,14 +214,10 @@ async def test_undecodable_output_fails_the_subscriber_instead_of_ending_quietly
         )
     )
 
-    received: list[str] = []
-    with pytest.raises(RuntimeError, match="not valid UTF-8"):
-        async for line in process.stdout_lines():
-            # A comprehension would be discarded when the iteration raises, and
-            # what arrived before the failure is exactly what this test checks.
-            received.append(line)  # noqa: PERF401
+    received = [line async for line in process.stdout_lines()]
+    await process.wait_for_end()
 
-    assert received == ["good"]
+    assert received == ["good", "\ufffd\ufffd bad", "after"]
 
 
 async def test_stderr_is_complete_when_a_stdout_failure_surfaces() -> None:
@@ -310,16 +304,17 @@ async def test_a_drain_failure_nobody_awaits_is_not_logged_as_unhandled() -> Non
     reporting "Task exception was never retrieved", which makes it the precise
     thing to assert -- the alternative is forcing a GC pass and scraping logs.
     """
+    oversized = 9 * 1024 * 1024
     process = await _runner().run(
         _python(
             "import sys\n"
-            "sys.stdout.buffer.write(b'\\xff\\xfe bad\\n')\n"
-            "sys.stdout.buffer.flush()\n"
+            f"sys.stdout.write('x' * {oversized})\n"
+            "sys.stdout.flush()\n"
         )
     )
     assert isinstance(process, AsyncProcess)
 
-    with pytest.raises(RuntimeError, match="not valid UTF-8"):
+    with pytest.raises(RuntimeError, match="exceeded"):
         async for _ in process.stdout_lines():
             pass
 
@@ -336,11 +331,12 @@ async def test_the_subscriber_and_the_drain_do_not_share_one_exception() -> None
     The result reads as if the subscriber caused the drain to fail, which sends
     anyone debugging it to the wrong side of the pipe.
     """
+    oversized = 9 * 1024 * 1024
     process = await _runner().run(
         _python(
             "import sys\n"
-            "sys.stdout.buffer.write(b'\\xff\\xfe bad\\n')\n"
-            "sys.stdout.buffer.flush()\n"
+            f"sys.stdout.write('x' * {oversized})\n"
+            "sys.stdout.flush()\n"
         )
     )
 
@@ -352,7 +348,7 @@ async def test_the_subscriber_and_the_drain_do_not_share_one_exception() -> None
         await process.wait_for_end()
 
     assert from_subscriber.value is not from_drain.value
-    assert isinstance(from_subscriber.value.__cause__, UnicodeDecodeError)
+    assert isinstance(from_subscriber.value.__cause__, ValueError)
 
 
 async def test_a_trailing_carriage_return_without_a_newline_is_data() -> None:

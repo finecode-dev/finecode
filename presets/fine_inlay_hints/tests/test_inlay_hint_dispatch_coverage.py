@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import pathlib
 import typing
 
 from fine_src_artifacts import group_src_artifact_files_by_lang_action
@@ -10,6 +9,7 @@ from finecode_extension_api import code_action, common_types
 from finecode_extension_api.code_action import CoverageStatus, ItemCoverage
 from finecode_extension_api.interfaces import iprojectactionrunner
 from finecode_extension_api.resource_uri import path_to_resource_uri
+from finecode_extension_runner.testing import nonexistent_abs_path
 
 from fine_inlay_hints.inlay_hint_dispatch_handler import InlayHintDispatchHandler
 from fine_inlay_hints.text_document_inlay_hint import (
@@ -17,7 +17,7 @@ from fine_inlay_hints.text_document_inlay_hint import (
     InlayHintResult,
 )
 
-_URI = path_to_resource_uri(pathlib.Path("/tmp/doc.rs"))
+_URI = path_to_resource_uri(nonexistent_abs_path("doc.rs"))
 _RANGE = common_types.Range(
     start=common_types.Position(line=0, character=0),
     end=common_types.Position(line=0, character=0),

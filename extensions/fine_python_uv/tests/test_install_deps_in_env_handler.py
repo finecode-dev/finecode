@@ -14,12 +14,14 @@ from finecode_extension_api.resource_uri import (
     resource_uri_to_path,
 )
 from finecode_extension_runner._services import run_action as run_action_service
-from finecode_extension_runner.testing import NoOpLogger, run_handler
+from finecode_extension_runner.testing import NoOpLogger, nonexistent_abs_path, run_handler
 
 from fine_python_uv.install_deps_in_env_handler import (
     UvInstallDepsInEnvHandler,
     UvInstallDepsInEnvHandlerConfig,
 )
+
+_VENV_DIR = nonexistent_abs_path("venv")
 
 
 class _FakeProcess:
@@ -196,7 +198,7 @@ def test_uv_editable_dep_emits_extras() -> None:
     """An editable spec with extras renders the bracket group before the file URI."""
     cmd = _handler()._construct_uv_install_cmd(
         uv_executable=pathlib.Path("uv"),
-        venv_dir_path=pathlib.Path("/venv"),
+        venv_dir_path=_VENV_DIR,
         dependencies=[_dep("pkg", " @ file:///tmp/pkg", editable=True, extras=["a"])],
     )
 
@@ -206,7 +208,7 @@ def test_uv_editable_dep_emits_extras() -> None:
 def test_uv_non_editable_dep_emits_extras() -> None:
     cmd = _handler()._construct_uv_install_cmd(
         uv_executable=pathlib.Path("uv"),
-        venv_dir_path=pathlib.Path("/venv"),
+        venv_dir_path=_VENV_DIR,
         dependencies=[_dep("pkg", "~=1.0", extras=["a"])],
     )
 
@@ -222,7 +224,7 @@ def test_uv_cmd_argv_is_exact() -> None:
     """
     cmd = _handler(editable_mode="compat")._construct_uv_install_cmd(
         uv_executable=pathlib.Path("uv"),
-        venv_dir_path=pathlib.Path("/venv"),
+        venv_dir_path=_VENV_DIR,
         dependencies=[
             _dep("pkg", " @ file:///D:/a/pkg", editable=True, extras=["a"]),
             _dep("other", ">=1.0"),
@@ -235,7 +237,7 @@ def test_uv_cmd_argv_is_exact() -> None:
         "pip",
         "install",
         "--python",
-        "/venv",
+        str(_VENV_DIR),
         "-C",
         "editable_mode=compat",
         "-e",

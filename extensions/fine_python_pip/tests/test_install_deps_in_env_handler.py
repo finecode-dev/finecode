@@ -1,12 +1,13 @@
-import pathlib
-
 import pytest
 from fine_envs import install_deps_in_env_action
+from finecode_extension_runner.testing import nonexistent_abs_path
 
 from fine_python_pip.install_deps_in_env_handler import (
     PipInstallDepsInEnvHandler,
     PipInstallDepsInEnvHandlerConfig,
 )
+
+_VENV_PYTHON = nonexistent_abs_path("venv", "bin", "python")
 
 
 def _handler(editable_mode: str | None = None) -> PipInstallDepsInEnvHandler:
@@ -35,7 +36,7 @@ def _dep(
 def test_pip_editable_dep_emits_extras() -> None:
     """An editable spec with extras appends the bracket group to the file URI."""
     cmd = _handler()._construct_pip_install_cmd(
-        python_executable=pathlib.Path("/venv/bin/python"),
+        python_executable=_VENV_PYTHON,
         dependencies=[_dep("pkg", " @ file:///tmp/pkg", editable=True, extras=["a"])],
     )
 
@@ -44,7 +45,7 @@ def test_pip_editable_dep_emits_extras() -> None:
 
 def test_pip_non_editable_dep_emits_extras() -> None:
     cmd = _handler()._construct_pip_install_cmd(
-        python_executable=pathlib.Path("/venv/bin/python"),
+        python_executable=_VENV_PYTHON,
         dependencies=[_dep("pkg", "~=1.0", extras=["a"])],
     )
 
@@ -59,7 +60,7 @@ def test_pip_cmd_argv_is_exact() -> None:
     on every platform pip receives exactly these tokens.
     """
     cmd = _handler(editable_mode="compat")._construct_pip_install_cmd(
-        python_executable=pathlib.Path("/venv/bin/python"),
+        python_executable=_VENV_PYTHON,
         dependencies=[
             _dep("pkg", " @ file:///D:/a/pkg", editable=True, extras=["a"]),
             _dep("other", ">=1.0"),
@@ -68,7 +69,7 @@ def test_pip_cmd_argv_is_exact() -> None:
     )
 
     assert cmd == [
-        "/venv/bin/python",
+        str(_VENV_PYTHON),
         "-m",
         "pip",
         "--disable-pip-version-check",
@@ -89,7 +90,7 @@ def test_pip_marker_string_survives_verbatim() -> None:
     parses the marker, so `"` inside the requirement stays a marker quote.
     """
     cmd = _handler()._construct_pip_install_cmd(
-        python_executable=pathlib.Path("/venv/bin/python"),
+        python_executable=_VENV_PYTHON,
         dependencies=[_dep("pkg", ' ; python_version < "3.12"')],
     )
 

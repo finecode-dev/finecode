@@ -18,14 +18,14 @@ from fine_lint.get_lint_fixes_action import GetLintFixesRunPayload
 from fine_lint.lint_fix import FixApplicability
 from finecode_extension_api.interfaces import icommandrunner
 from finecode_extension_api.resource_uri import path_to_resource_uri
-from finecode_extension_runner.testing import NoOpLogger
+from finecode_extension_runner.testing import NoOpLogger, nonexistent_abs_path
 
 from fine_python_ruff.get_lint_fixes_handler import (
     RuffGetLintFixesHandler,
     RuffGetLintFixesHandlerConfig,
 )
 
-_FILE_PATH = Path("/tmp/subject.py")
+_FILE_PATH = nonexistent_abs_path("subject.py")
 _FILE_URI = path_to_resource_uri(_FILE_PATH)
 _CONTENT = "import os\n\n\ndef f():\n    x = 1\n    return 2\n"
 

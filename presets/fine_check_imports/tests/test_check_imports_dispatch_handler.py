@@ -8,7 +8,6 @@ detail is what separates the two.
 
 from __future__ import annotations
 
-import pathlib
 import typing
 
 from fine_src_artifacts.get_src_artifact_language_action import (
@@ -18,6 +17,7 @@ from finecode_extension_api import code_action
 from finecode_extension_api.code_action import CoverageStatus, ItemCoverage
 from finecode_extension_api.interfaces import iprojectactionrunner
 from finecode_extension_api.resource_uri import path_to_resource_uri
+from finecode_extension_runner.testing import nonexistent_abs_path
 
 from fine_check_imports.check_imports_action import (
     CheckImportsRunPayload,
@@ -27,7 +27,7 @@ from fine_check_imports.check_imports_dispatch_handler import (
     CheckImportsDispatchHandler,
 )
 
-_SRC_URI = path_to_resource_uri(pathlib.Path("/tmp/pyproject.toml"))
+_SRC_URI = path_to_resource_uri(nonexistent_abs_path("pyproject.toml"))
 
 
 class _FakeLogger:

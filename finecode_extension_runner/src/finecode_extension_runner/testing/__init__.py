@@ -7,6 +7,9 @@ from finecode_extension_runner.testing._file_editor import (
     FileWrite,
     InMemoryFileEditor,
 )
+from finecode_extension_runner.testing._paths import (
+    nonexistent_abs_path,
+)
 from finecode_extension_runner.testing._senders import (
     CollectingPartialResultSender,
     CollectingProgressSender,
@@ -37,5 +40,6 @@ __all__ = [
     "Session",
     "WalEvent",
     "handler_test_session",
+    "nonexistent_abs_path",
     "run_handler",
 ]

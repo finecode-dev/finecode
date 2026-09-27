@@ -9,12 +9,12 @@ distinct from a type mismatch.
 from __future__ import annotations
 
 import dataclasses
-import pathlib
 
 import pytest
 from finecode_extension_api import code_action
 from finecode_extension_api.resource_uri import ResourceUri, path_to_resource_uri
 from finecode_extension_runner.impls.dataclass_codec import DataclassCodec
+from finecode_extension_runner.testing import nonexistent_abs_path
 
 from fine_agent import task_support
 from fine_agent.run_agent_task_action import (
@@ -104,12 +104,13 @@ def test_render_template_names_both_directions_in_one_error() -> None:
 
 
 def test_slots_from_payload_gives_one_slot_per_field() -> None:
+    plan_path = nonexistent_abs_path("plan.md")
     payload = _SlotsPayload(
-        plan_path=path_to_resource_uri(pathlib.Path("/tmp/plan.md")), label="x"
+        plan_path=path_to_resource_uri(plan_path), label="x"
     )
 
     assert task_support.slots_from_payload(payload) == {
-        "plan_path": "/tmp/plan.md",
+        "plan_path": str(plan_path),
         "label": "x",
     }
 

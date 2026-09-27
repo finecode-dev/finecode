@@ -10,6 +10,7 @@ from collections.abc import AsyncIterator, Callable
 from pathlib import Path
 
 from finecode_extension_api.interfaces import icommandrunner, ilogger
+from loguru import logger
 
 from finecode_extension_runner.concurrency import ConcurrencyDecision
 from finecode_extension_runner.process_slots import ProcessSlots
@@ -28,6 +29,7 @@ _POSIX = os.name == "posix"
 `getpgid` all exist only there, so `new_process_group` degrades to signalling
 the process alone elsewhere rather than failing at spawn time."""
 
+_WINDOWS = sys.platform == "win32"
 _TERMINATE_SIGNAL = signal.SIGTERM
 _KILL_SIGNAL = getattr(signal, "SIGKILL", signal.SIGTERM)
 """`SIGKILL` does not exist off POSIX. Falling back to `SIGTERM` there keeps the
@@ -133,11 +135,13 @@ class _LineStream:
     Lines are held verbatim, newline included, so `text()` reproduces what the
     process actually wrote; only subscribers see them stripped.
 
-    A stream that hits an unrecoverable error keeps draining and discarding
+    A stream that overruns the reader limit keeps draining and discarding
     instead of stopping. Stopping would leave the child blocked on a pipe
     nobody empties, so the failure of one stream would turn into a hang of the
     whole process; the error is recorded and reported once the stream really
-    ends.
+    ends. Undecodable bytes are not such an error: they decode with
+    replacement, so a child writing in another encoding costs a few U+FFFD
+    characters rather than the stream.
     """
 
     def __init__(self, reader: asyncio.StreamReader | None) -> None:
@@ -173,24 +177,15 @@ class _LineStream:
                 if not raw_line:
                     return
 
-                try:
-                    # Split on bytes and decode after. `str.splitlines()` would
-                    # also break on \x0b, \x0c, \x1c-\x1e, \x85, \u2028 and
-                    # \u2029 -- all legal inside a JSON string, so splitting a
-                    # decoded payload would silently cut lines in half.
-                    line = raw_line.decode()
-                except UnicodeDecodeError as error:
-                    # Recorded for the same reason as an overrun, and easy to
-                    # miss: `decode()` sits outside the `readline` guard, so
-                    # without this the exception would escape to `_finish` and
-                    # hand subscribers an ordinary end-of-stream.
-                    self._fail(
-                        "Process output is not valid UTF-8; the stream is "
-                        "incomplete and cannot be recovered",
-                        error,
-                    )
-                    continue
-
+                # Split on bytes and decode after. `str.splitlines()` would
+                # also break on \x0b, \x0c, \x1c-\x1e, \x85, \u2028 and
+                # \u2029 -- all legal inside a JSON string, so splitting a
+                # decoded payload would silently cut lines in half.
+                # Undecodable bytes decode with replacement rather than
+                # failing the stream: no consumer derives a run's verdict
+                # from raw stdout bytes, so killing the whole run over one
+                # console-encoded line is pure collateral damage.
+                line = raw_line.decode("utf-8", errors="replace")
                 self._emit(line)
         finally:
             self._finish()
@@ -405,6 +400,40 @@ class AsyncProcess(icommandrunner.IAsyncProcess):
     def kill(self) -> None:
         self._signal(_KILL_SIGNAL)
 
+    def _kill_tree(self) -> None:
+        # Windows-only: there are no process groups, so a direct signal stops
+        # the child but orphans everything it spawned.
+        # The descendant snapshot is walked
+        # leaves-first, root last; an already-exited target (`NoSuchProcess`) is
+        # the state the caller is asking for, so it is success. Anything else
+        # logs a warning and never raises: the handler ladders call
+        # `terminate()`/`kill()` under `contextlib.suppress`, and a teardown
+        # error must not replace the original outcome.
+        #
+        # Known limitation: `children(recursive=True)` is a snapshot, so
+        # detached/doubly-forked grandchildren can survive -- the same class of
+        # gap POSIX `killpg` has for `setsid` children.
+        import psutil
+
+        try:
+            root = psutil.Process(self.async_subprocess.pid)
+        except psutil.NoSuchProcess:
+            return
+        try:
+            tree = [*reversed(root.children(recursive=True)), root]
+        except (psutil.NoSuchProcess, psutil.ZombieProcess):
+            # The root exited mid-walk; there is no tree left to walk from here.
+            return
+        for target in tree:
+            try:
+                target.kill()
+            except psutil.NoSuchProcess:
+                pass
+            except Exception as error:
+                logger.warning(
+                    f"Failed to kill descendant process {target.pid}: {error}"
+                )
+
     def _signal(self, sig: signal.Signals) -> None:
         # An already-gone target is the state the caller is asking for, so both
         # the early return and the `ProcessLookupError` below are successes
@@ -413,6 +442,14 @@ class AsyncProcess(icommandrunner.IAsyncProcess):
         # the good outcome. A group that `is_alive()` reports as alive only
         # because of EPERM cannot be signalled, and that is also not a failure.
         if not self.is_alive():
+            return
+
+        if _WINDOWS:
+            # Both rungs, not just kill: the handler ladders exit at terminate
+            # on Windows (a Windows process cannot ignore `TerminateProcess`),
+            # so a kill-only tree kill would never run -- and there is no
+            # graceful/forced distinction to preserve there anyway.
+            self._kill_tree()
             return
 
         try:
@@ -432,8 +469,8 @@ class SyncProcess(icommandrunner.ISyncProcess):
 
     def wait_for_end(self, timeout: float | None = None) -> None:
         stdout, stderr = self.popen.communicate(timeout=timeout)
-        self._stdout = stdout.decode()
-        self._stderr = stderr.decode()
+        self._stdout = stdout.decode("utf-8", errors="replace")
+        self._stderr = stderr.decode("utf-8", errors="replace")
 
     def get_exit_code(self) -> int | None:
         return self.popen.returncode
