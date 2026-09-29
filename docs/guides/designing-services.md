@@ -17,10 +17,10 @@ without renumbering the others:
 - `S-300` to `S-399`: Registration and lifecycle
 
 Services are a smaller surface than actions, and this rule set is deliberately
-compact. It is the distilled form of [ADR-0038](../../../finecode_internal_docs/adr/0038-init-action-for-shared-handler-infrastructure-config.md),
-[ADR-0056](../../../finecode_internal_docs/adr/0056-service-declarations-support-constructor-config-injection.md),
-[ADR-0068](../../../finecode_internal_docs/adr/0068-service-provisioning-belongs-to-implementation-not-interface.md),
-and [ADR-0070](../../../finecode_internal_docs/adr/0070-one-binding-per-service-interface-addressed-by-derived-name.md);
+compact. It is the distilled form of [ADR-0038](../../finecode_internal_docs/adr/0038-init-action-for-shared-handler-infrastructure-config.md),
+[ADR-0056](../../finecode_internal_docs/adr/0056-service-declarations-support-constructor-config-injection.md),
+[ADR-0068](../../finecode_internal_docs/adr/0068-service-provisioning-belongs-to-implementation-not-interface.md),
+and [ADR-0070](../../finecode_internal_docs/adr/0070-one-binding-per-service-interface-addressed-by-derived-name.md);
 consult those for the full rationale.
 
 ## Service Contract
