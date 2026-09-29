@@ -289,7 +289,10 @@ async def _handle_run_batch_with_partial_results(
     has completed.
     """
     from finecode.wm_server.config import env_selection
-    from finecode.wm_server.services import run_service
+    from finecode.wm_server.services import (
+        project_resolution_service,
+        run_service,
+    )
     from finecode.wm_server.services.run_service import (
         matrix_runner,
         matrix_streaming,
@@ -651,7 +654,10 @@ async def _handle_run_action_with_progress(
     if params is None:
         raise ValueError("params required")
     with telemetry.attach_incoming_traceparent(params):
-        from finecode.wm_server.services import run_service
+        from finecode.wm_server.services import (
+            project_resolution_service,
+            run_service,
+        )
         from finecode.wm_server.services.run_service import proxy_utils
 
         try:
@@ -786,6 +792,7 @@ async def _handle_run_batch_with_progress(
     """
     from finecode.wm_server.services import (
         partial_results_service,
+        project_resolution_service,
         run_service,
     )
     from finecode.wm_server.services.run_service import proxy_utils
