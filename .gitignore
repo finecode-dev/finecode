@@ -20,7 +20,8 @@ finecode-workspace-user.toml
 # docs build
 site/
 
-# Private packages, cloned into the public checkout
+# Private repos, cloned into the public checkout (gitignored nested repos)
+/finecode_internal_docs/
 /finecode_internal_experiments/
 
 presets/*

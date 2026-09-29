@@ -28,9 +28,6 @@ services:
     volumes:
       - .:/workspaces/finecode:cached
       - ./.claude:/home/vscode/.claude:cached
-      - type: bind
-        source: ${DEVCONTAINER_INTERNAL_DOCS_PATH:-./.devcontainer/empty-internal-docs}
-        target: /workspaces/finecode_internal_docs
     networks:
       - finecode-net
     depends_on:

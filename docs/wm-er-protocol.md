@@ -405,7 +405,7 @@ protocol even though the runner never became reachable. (Regression-tested in
     - `payloadOverridesByProject` (object | null): complete per-project payload overrides (keyed by POSIX path); the WM shallow-merges `{**payload, **overrides[project]}`
     - `concurrently` (boolean, default `true`): run projects concurrently.
   - Result: `{ "resultsByProject": { "<posix path>": <json result>, ... } }`
-  - Fans out the action across the specified projects (or all projects that declare it). Because this route is always nested orchestration (an ER handler asking the WM to fan out, so `orchestrationDepth > 0`), the WM enforces `OrchestrationPolicy.max_recursion_depth` before dispatching, and never refuses a fan-out for its width — see [ADR-0095](../../finecode_internal_docs/adr/0095-workspace-fan-out-is-bounded-by-recursion-depth-not-width.md). The subprocess fan-out a dispatch leads to is bounded by the [process budget](guides/wm-server-internals.md#process-budget) (ADR-0090).
+  - Fans out the action across the specified projects (or all projects that declare it). Because this route is always nested orchestration (an ER handler asking the WM to fan out, so `orchestrationDepth > 0`), the WM enforces `OrchestrationPolicy.max_recursion_depth` before dispatching, and never refuses a fan-out for its width — see [ADR-0095](../finecode_internal_docs/adr/0095-workspace-fan-out-is-bounded-by-recursion-depth-not-width.md). The subprocess fan-out a dispatch leads to is bounded by the [process budget](guides/wm-server-internals.md#process-budget) (ADR-0090).
 
 - `knowledge/registerSchema`
   - Params: `{ "snapshot": <object> }`

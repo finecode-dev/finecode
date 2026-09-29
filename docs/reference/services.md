@@ -302,7 +302,7 @@ When a handler requests an interface, the registry returns a cached instance if 
 
 ### One binding per interface
 
-An interface resolves to exactly one implementation instance per Extension Runner: the factory runs once and the result is cached for the runner's life. Two concurrent instances of one interface are not supported, by design — see [ADR-0070](../../../finecode_internal_docs/adr/0070-one-binding-per-service-interface-addressed-by-derived-name.md) and rule [S-100](../guides/designing-services.md#s-100-one-binding-per-interface--model-plurality-as-types-or-as-a-keyed-collection) for what to do instead when you need several like-shaped things.
+An interface resolves to exactly one implementation instance per Extension Runner: the factory runs once and the result is cached for the runner's life. Two concurrent instances of one interface are not supported, by design — see [ADR-0070](../../finecode_internal_docs/adr/0070-one-binding-per-service-interface-addressed-by-derived-name.md) and rule [S-100](../guides/designing-services.md#s-100-one-binding-per-interface--model-plurality-as-types-or-as-a-keyed-collection) for what to do instead when you need several like-shaped things.
 
 One consequence is worth stating plainly: **`register_impl`'s `singleton` parameter does not control lifetime.** Every resolved service is a singleton regardless. The concrete type is always alias-bound to the interface's instance, so a handler injecting the implementation class and a handler injecting the interface share one object (rule S-304) — `singleton` is accepted for compatibility but decides nothing.
 

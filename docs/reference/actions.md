@@ -1058,7 +1058,7 @@ provisioning of registry definitions and credentials for
 `IRepositoryCredentialsProvider` is `[[tool.finecode.service]]` config,
 resolved at Extension Runner bootstrap with no init step; see
 [Provisioning `IRepositoryCredentialsProvider`](services.md#provisioning-irepositorycredentialsprovider)
-and [ADR-0068](../../../finecode_internal_docs/adr/0068-service-provisioning-belongs-to-implementation-not-interface.md).
+and [ADR-0068](../../finecode_internal_docs/adr/0068-service-provisioning-belongs-to-implementation-not-interface.md).
 This action remains only for a consumer that must push credentials in *at run
 time* (e.g. a token fetched or rotated mid-session) — nothing in this repo's
 default presets exercises that path today; it is registered by
