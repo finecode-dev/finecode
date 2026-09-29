@@ -19,6 +19,11 @@ tests/                             # Test suite
 finecode_internal_docs/            # Private docs (gitignored nested repo)
 ```
 
+Private repos live **inside** the checkout as gitignored nested clones. From the
+repo root, clone the internal docs with
+`git clone https://github.com/finecode-dev/finecode_internal_docs.git finecode_internal_docs`.
+Commit inside that directory, not from the root.
+
 ## Setting up the development environment
 
 ```bash
