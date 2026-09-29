@@ -16,6 +16,7 @@ extensions/                        # Extension packages (ruff, flake8, mypy, ...
 presets/                           # Preset packages (recommended, lint, format)
 finecode_dev_common_preset/        # Preset used for developing FineCode itself
 tests/                             # Test suite
+finecode_internal_docs/            # Private docs (gitignored nested repo)
 ```
 
 ## Setting up the development environment
@@ -356,7 +357,7 @@ To update lock files, run `lock_dependencies` locally or in a scheduled CI job a
 
 FineCode's own packages declare a **lower bound only** on `requires-python` (e.g. `>=3.11`), never an upper bound (`< 3.15`, `<= 3.14`).
 
-An upper bound is a packaging anti-pattern for published packages: a resolver that cannot satisfy the cap **backtracks to an older release** of the package rather than failing cleanly, so a consumer on a newer Python silently gets a stale version instead of a clear "not supported yet" error. See [ADR-0053](../../../finecode_internal_docs/adr/0053-derived-interpreter-axis-is-materialized-into-config.md) for the full rationale.
+An upper bound is a packaging anti-pattern for published packages: a resolver that cannot satisfy the cap **backtracks to an older release** of the package rather than failing cleanly, so a consumer on a newer Python silently gets a stale version instead of a clear "not supported yet" error. See [ADR-0053](../../finecode_internal_docs/adr/0053-derived-interpreter-axis-is-materialized-into-config.md) for the full rationale.
 
 The cap also has no remaining job now that the interpreter matrix exists. The set of Python versions an action is tested against is **derived from `requires-python` and bounded by what the provisioning toolchain (uv) can actually obtain** (ADR-0053, part 5), not by a hand-written ceiling. So removing the upper bound does not widen the test matrix to unreleased versions — the obtainable-versions ceiling does that job, on the developer's clock and in a reviewable diff.
 

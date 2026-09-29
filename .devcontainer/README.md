@@ -22,18 +22,4 @@ Bring the stack up either way:
 
 WAL events are recorded on disk regardless of whether the stack is running, so you can
 bring it up later and ingest the history retroactively. See
-[ADR-0052](../../finecode_internal_docs/adr/0052-observability-stack-opt-in-via-compose-profile.md).
-
-## Optional private internal docs mount
-
-The workspace service supports an optional bind mount for private internal docs.
-
-- Container target path: `/workspaces/internal-docs`
-- Host source path: `${FINECODE_INTERNAL_DOCS_PATH}`
-- Fallback when unset: `./.devcontainer/empty-internal-docs`
-
-This means developers without private docs access can still start the devcontainer successfully.
-
-The mount is writable from inside the container so you can edit docs directly.
-
-If you have private docs locally, set `FINECODE_INTERNAL_DOCS_PATH` in your shell or a local `.env` file before opening the devcontainer.
+[ADR-0052](../finecode_internal_docs/adr/0052-observability-stack-opt-in-via-compose-profile.md).
