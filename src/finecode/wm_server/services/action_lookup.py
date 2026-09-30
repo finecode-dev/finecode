@@ -1,5 +1,4 @@
-"""Action lookup by import-path alias across a project's action set (ADR-0019).
-"""
+"""Action lookup by import-path alias across a project's action set (ADR-0019)."""
 
 from __future__ import annotations
 

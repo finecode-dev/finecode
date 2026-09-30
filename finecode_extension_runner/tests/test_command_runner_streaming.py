@@ -197,7 +197,9 @@ async def test_output_is_complete_when_wait_for_end_returns() -> None:
     assert process.get_output().splitlines() == [str(i) for i in range(500)]
 
 
-async def test_undecodable_output_is_decoded_with_replacement_and_stays_complete() -> None:
+async def test_undecodable_output_is_decoded_with_replacement_and_stays_complete() -> (
+    None
+):
     """Undecodable bytes cost a few U+FFFD characters, not the stream.
 
     A child writing in the console encoding (cp1252 on a Windows runner) must
@@ -307,9 +309,7 @@ async def test_a_drain_failure_nobody_awaits_is_not_logged_as_unhandled() -> Non
     oversized = 9 * 1024 * 1024
     process = await _runner().run(
         _python(
-            "import sys\n"
-            f"sys.stdout.write('x' * {oversized})\n"
-            "sys.stdout.flush()\n"
+            f"import sys\nsys.stdout.write('x' * {oversized})\nsys.stdout.flush()\n"
         )
     )
     assert isinstance(process, AsyncProcess)
@@ -334,9 +334,7 @@ async def test_the_subscriber_and_the_drain_do_not_share_one_exception() -> None
     oversized = 9 * 1024 * 1024
     process = await _runner().run(
         _python(
-            "import sys\n"
-            f"sys.stdout.write('x' * {oversized})\n"
-            "sys.stdout.flush()\n"
+            f"import sys\nsys.stdout.write('x' * {oversized})\nsys.stdout.flush()\n"
         )
     )
 

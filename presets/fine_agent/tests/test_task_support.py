@@ -105,9 +105,7 @@ def test_render_template_names_both_directions_in_one_error() -> None:
 
 def test_slots_from_payload_gives_one_slot_per_field() -> None:
     plan_path = nonexistent_abs_path("plan.md")
-    payload = _SlotsPayload(
-        plan_path=path_to_resource_uri(plan_path), label="x"
-    )
+    payload = _SlotsPayload(plan_path=path_to_resource_uri(plan_path), label="x")
 
     assert task_support.slots_from_payload(payload) == {
         "plan_path": str(plan_path),

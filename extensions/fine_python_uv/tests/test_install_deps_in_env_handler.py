@@ -14,7 +14,11 @@ from finecode_extension_api.resource_uri import (
     resource_uri_to_path,
 )
 from finecode_extension_runner._services import run_action as run_action_service
-from finecode_extension_runner.testing import NoOpLogger, nonexistent_abs_path, run_handler
+from finecode_extension_runner.testing import (
+    NoOpLogger,
+    nonexistent_abs_path,
+    run_handler,
+)
 
 from fine_python_uv.install_deps_in_env_handler import (
     UvInstallDepsInEnvHandler,

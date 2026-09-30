@@ -37,10 +37,9 @@ def test_relative_uri_is_expanded_against_the_given_base(ws: pathlib.Path) -> No
     assert absolutize_resource_uri(ResourceUri("file://pkg"), ws) == (
         path_to_resource_uri(ws / "pkg")
     )
-    assert (
-        absolutize_resource_uri(ResourceUri("file://pkg/mod.py"), ws)
-        == path_to_resource_uri(ws / "pkg" / "mod.py")
-    )
+    assert absolutize_resource_uri(
+        ResourceUri("file://pkg/mod.py"), ws
+    ) == path_to_resource_uri(ws / "pkg" / "mod.py")
 
 
 def test_expansion_does_not_depend_on_the_process_cwd(ws: pathlib.Path) -> None:
@@ -48,19 +47,17 @@ def test_expansion_does_not_depend_on_the_process_cwd(ws: pathlib.Path) -> None:
     assert absolutize_resource_uri(
         ResourceUri("file://./pkg"), ws
     ) == absolutize_resource_uri(ResourceUri("file://./pkg"), ws)
-    assert (
-        absolutize_resource_uri(ResourceUri("file://./pkg"), ws / "pkg")
-        == path_to_resource_uri(ws / "pkg" / "pkg")
-    )
+    assert absolutize_resource_uri(
+        ResourceUri("file://./pkg"), ws / "pkg"
+    ) == path_to_resource_uri(ws / "pkg" / "pkg")
 
 
 def test_parent_segments_are_collapsed_lexically(ws: pathlib.Path) -> None:
     # resolve() would follow symlinks and hand back a path the WM does not key
     # its project state by; normpath leaves the base spelled as it was given
-    assert (
-        absolutize_resource_uri(ResourceUri("file://../other"), ws / "pkg")
-        == path_to_resource_uri(ws / "other")
-    )
+    assert absolutize_resource_uri(
+        ResourceUri("file://../other"), ws / "pkg"
+    ) == path_to_resource_uri(ws / "other")
 
 
 def test_absolute_uri_is_returned_unchanged(ws: pathlib.Path) -> None:
