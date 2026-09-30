@@ -17,8 +17,12 @@ gate.  It lives for the ER process's whole lifetime, independent of any
 from __future__ import annotations
 
 import asyncio
+import collections.abc
+
+from loguru import logger
 
 from finecode_extension_runner.concurrency import machine_subprocess_budget
+from finecode_extension_runner.work_slots import ensure_outside_scope
 
 __all__ = [
     "ProcessSlots",
@@ -35,6 +39,17 @@ class ProcessSlots:
         self._target = max(target, 1)
         self._in_flight = 0
         self._condition = asyncio.Condition()
+        self._lease: (
+            collections.abc.Callable[[], collections.abc.Awaitable[str]] | None
+        ) = None
+        self._release_backend: (
+            collections.abc.Callable[[str], collections.abc.Awaitable[None]] | None
+        ) = None
+        # Strong references to cancellation-cleanup tasks. Without them the
+        # event loop keeps only a weak reference, so a cleanup task can be
+        # garbage-collected before it returns a granted lease — leaking one WM
+        # lease, which at a budget of 1 costs every later unit a stall window.
+        self._cleanup_tasks: set[asyncio.Task[None]] = set()
 
     @property
     def target(self) -> int:
@@ -44,32 +59,82 @@ class ProcessSlots:
     def in_flight(self) -> int:
         return self._in_flight
 
-    async def acquire(self) -> None:
-        """Wait for a free slot and take it.
+    def attach_budget(
+        self,
+        lease: collections.abc.Callable[[], collections.abc.Awaitable[str]],
+        release: collections.abc.Callable[[str], collections.abc.Awaitable[None]],
+    ) -> None:
+        """Attach the WM lease backend; without it the gate is purely local."""
+        self._lease = lease
+        self._release_backend = release
 
-        Never raises: shrinking the target only delays new grants, it does not
-        revoke slots already held (ADR-0090).
+    async def acquire(self) -> str | None:
+        """Take the local slot, then a WM lease, returning the lease id.
+
+        With no backend attached this is today's gate and returns None. A
+        backend failure also returns None and keeps the local slot: a throttle
+        never refuses work (ADR-0090).
         """
+        ensure_outside_scope("starting a bounded process or executor task")
         async with self._condition:
             await self._condition.wait_for(lambda: self._in_flight < self._target)
             self._in_flight += 1
+        if self._lease is None:
+            return None
+        try:
+            lease_task: asyncio.Task[str] = asyncio.create_task(self._lease())
+            return await asyncio.shield(lease_task)
+        except asyncio.CancelledError:
+            cleanup = asyncio.create_task(self._return_cancelled(lease_task))
+            self._cleanup_tasks.add(cleanup)
+            cleanup.add_done_callback(self._cleanup_tasks.discard)
+            raise
+        except Exception as exc:
+            logger.warning(f"Process budget lease failed; continuing locally: {exc}")
+            return None
 
-    async def release(self) -> None:
-        """Return one slot, waking any waiters."""
+    async def _return_cancelled(self, lease_task: asyncio.Task[str]) -> None:
+        """Return the local slot at once, then release the pending grant if any."""
         async with self._condition:
             self._in_flight -= 1
             self._condition.notify_all()
+        try:
+            lease_id = await lease_task
+        except asyncio.CancelledError:
+            logger.debug("Cancelled budget lease never granted; nothing to release")
+            return
+        except Exception as exc:
+            logger.debug(f"Cancelled budget lease failed; nothing to release: {exc}")
+            return
+        if self._release_backend is None:
+            return
+        try:
+            await self._release_backend(lease_id)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.warning(
+                f"Process budget release failed for a cancelled acquire: {exc}"
+            )
 
-    async def set_target(self, target: int) -> None:
-        """Resize the gate.
+    async def release(self, lease_id: str | None) -> None:
+        """Return the local slot and the WM lease from its acquire.
 
-        Growing wakes waiters; shrinking only blocks future grants until the
-        in-flight count falls back to the new target.  Held slots are never
-        revoked.
+        The id is required, with no default, so a caller cannot drop a lease
+        by omission. A cancelled release still reached the WM.
         """
-        async with self._condition:
-            self._target = max(target, 1)
-            self._condition.notify_all()
+        try:
+            if lease_id is not None and self._release_backend is not None:
+                try:
+                    await self._release_backend(lease_id)
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:
+                    logger.warning(f"Process budget release failed: {exc}")
+        finally:
+            async with self._condition:
+                self._in_flight -= 1
+                self._condition.notify_all()
 
 
 _process_slots: ProcessSlots | None = None

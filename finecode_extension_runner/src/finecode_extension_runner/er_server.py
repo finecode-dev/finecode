@@ -49,11 +49,11 @@ from finecode_extension_runner import (
     run_context,
     schemas,
     services,
+    work_slots,
 )
 from finecode_extension_runner._converter import converter as _converter
 from finecode_extension_runner._services import merge_results as merge_results_service
 from finecode_extension_runner._services import run_action as run_action_service
-from finecode_extension_runner.concurrency import machine_subprocess_budget
 from finecode_extension_runner.di import bootstrap as di_bootstrap
 from finecode_extension_runner.impls import (
     project_action_runner as project_action_runner_module,
@@ -641,6 +641,48 @@ async def _retire_runner_context(
     previous_context.di_registry.dispose_all()
 
 
+def make_wm_request_sender(
+    server: ErServer,
+) -> typing.Callable[[str, dict], typing.Awaitable[typing.Any]]:
+    """Build the guarded ER-to-WM request callable injected into DI."""
+
+    async def _send_request_to_wm(method: str, req_params: dict) -> typing.Any:
+        work_slots.ensure_outside_scope(f"WM request {method}")
+        try:
+            return await server.send_request_to_wm(method, req_params)
+        except finecode_jsonrpc_module.JsonRpcError as exc:
+            if exc.code == finecode_jsonrpc_module.REQUEST_CANCELLED:
+                raise er_errors.WmCommunicationCancelled(str(exc)) from exc
+            raise er_errors.WmCommunicationError(str(exc)) from exc
+
+    return _send_request_to_wm
+
+
+def attach_wm_budget(server: ErServer, slots: process_slots.ProcessSlots) -> None:
+    """Wire per-unit WM leases into the ER-lifetime gate, once per process."""
+
+    async def _lease() -> str:
+        raw = await server.send_request_to_wm(
+            "finecode/leaseProcessBudget",
+            {
+                "requested": 1,
+                "nested": False,
+                "runId": run_context.current_run_id(),
+            },
+        )
+        lease_id = raw.get("leaseId") if isinstance(raw, dict) else None
+        if not isinstance(lease_id, str):
+            raise TypeError(f"Process budget lease response had no leaseId: {raw!r}")
+        return lease_id
+
+    async def _release(lease_id: str) -> None:
+        await server.send_request_to_wm(
+            "finecode/releaseProcessBudget", {"leaseId": lease_id}
+        )
+
+    slots.attach_budget(_lease, _release)
+
+
 async def update_config(server: ErServer, params: dict | None) -> dict:
     """Handler for ``finecodeRunner/updateConfig``."""
     assert params is not None
@@ -698,13 +740,7 @@ async def update_config(server: ErServer, params: dict | None) -> dict:
                 env_name=global_state.env_name,
             )
 
-        async def _send_request_to_wm(method: str, req_params: dict):
-            try:
-                return await server.send_request_to_wm(method, req_params)
-            except finecode_jsonrpc_module.JsonRpcError as exc:
-                if exc.code == finecode_jsonrpc_module.REQUEST_CANCELLED:
-                    raise er_errors.WmCommunicationCancelled(str(exc)) from exc
-                raise er_errors.WmCommunicationError(str(exc)) from exc
+        _send_request_to_wm = make_wm_request_sender(server)
 
         response, runner_context = await services.update_config(
             request=request,
@@ -789,59 +825,6 @@ async def update_logging(server: ErServer, params: dict | None) -> dict:
     return {}
 
 
-async def update_process_budget(server: ErServer, params: dict | None) -> dict:
-    """Handler for ``finecodeRunner/updateProcessBudget``. Resizes the ER's
-    shared process-slot gate.
-
-    Process-level only -- does NOT rebuild RunnerContext (contrast
-    update_config). See ADR-0090.
-    """
-    p = params or {}
-    target = p.get("target")
-    if not isinstance(target, int):
-        raise ValueError("updateProcessBudget requires an integer 'target'")
-    await process_slots.get_process_slots().set_target(target)
-    return {}
-
-
-async def _lease_process_budget(
-    server: ErServer, *, requested: int, nested: bool, run_id: str
-) -> str | None:
-    """Ask the WM for a work-slot lease, returning the lease id to release.
-
-    A failed lease degrades to the ER's own machine budget rather than
-    refusing the run: the WM-leased gate is a throttle, never a gate that can
-    refuse work (ADR-0067/ADR-0090).
-    """
-    try:
-        raw = await server.send_request_to_wm(
-            "finecode/leaseProcessBudget",
-            {"requested": requested, "nested": nested, "runId": run_id},
-        )
-    except finecode_jsonrpc_module.JsonRpcError as exc:
-        logger.warning(
-            f"Process budget lease failed; falling back to the machine budget: {exc}"
-        )
-        await process_slots.get_process_slots().set_target(machine_subprocess_budget())
-        return None
-    lease_id = raw.get("leaseId")
-    if not isinstance(lease_id, str):
-        logger.warning("Process budget lease response had no leaseId; ignoring it")
-        await process_slots.get_process_slots().set_target(machine_subprocess_budget())
-        return None
-    return lease_id
-
-
-async def _release_process_budget(server: ErServer, lease_id: str) -> None:
-    try:
-        await server.send_request_to_wm(
-            "finecode/releaseProcessBudget", {"leaseId": lease_id}
-        )
-    except finecode_jsonrpc_module.JsonRpcError as exc:
-        # Non-fatal: the WM reclaims a dead ER's leases on teardown anyway.
-        logger.warning(f"Process budget release failed: {exc}")
-
-
 async def run_action(server: ErServer, params: dict | None) -> dict:
     """Handler for ``actions/run``."""
     assert params is not None
@@ -880,27 +863,34 @@ async def run_action(server: ErServer, params: dict | None) -> dict:
     )
     status: str = "success"
 
-    lease_id = await _lease_process_budget(
-        server,
-        requested=machine_subprocess_budget(),
-        nested=options_schema.meta.orchestration_depth > 0,
-        run_id=wal_run_id,
-    )
     try:
-        try:
-            # Everything this run starts is marked as belonging to it, so a
-            # back-channel call made deep inside a handler can name the run it
-            # speaks for without being handed it explicitly (ADR-0082 rule 1).
-            with run_context.run(wal_run_id):
-                response = await services.run_action_raw(
-                    request=request,
-                    options=options_schema,
-                    runner_context=server._runner_context,
-                )
-        except Exception as exception:
-            if isinstance(exception, services.StopWithResponse):
-                status = "stopped"
-                response = exception.response
+        # Everything this run starts is marked as belonging to it, so a
+        # back-channel call made deep inside a handler can name the run it
+        # speaks for without being handed it explicitly (ADR-0082 rule 1).
+        with run_context.run(wal_run_id):
+            response = await services.run_action_raw(
+                request=request,
+                options=options_schema,
+                runner_context=server._runner_context,
+            )
+    except Exception as exception:
+        if isinstance(exception, services.StopWithResponse):
+            status = "stopped"
+            response = exception.response
+            er_wal.emit_run_event(
+                server._wal_writer,
+                event_type=er_wal.ErWalEventType.RUN_FAILED,
+                wal_run_id=wal_run_id,
+                action_name=action_name,
+                project_path=project_path,
+                trigger=trigger,
+                dev_env=dev_env,
+                payload={"error": "stopped"},
+            )
+        else:
+            if isinstance(exception, services.ActionCancelledException):
+                error_msg = exception.message
+                logger.debug(f"Run action cancelled: {error_msg}")
                 er_wal.emit_run_event(
                     server._wal_writer,
                     event_type=er_wal.ErWalEventType.RUN_FAILED,
@@ -909,69 +899,52 @@ async def run_action(server: ErServer, params: dict | None) -> dict:
                     project_path=project_path,
                     trigger=trigger,
                     dev_env=dev_env,
-                    payload={"error": "stopped"},
+                    payload={"error": f"cancelled: {error_msg}"},
                 )
+                raise finecode_jsonrpc_module.JsonRpcHandlerError(
+                    finecode_jsonrpc_module.REQUEST_CANCELLED, error_msg
+                ) from exception
+            elif isinstance(exception, services.ActionFailedException):
+                logger.error(f"Run action failed: {exception.message}")
+                error_msg = exception.message
             else:
-                if isinstance(exception, services.ActionCancelledException):
-                    error_msg = exception.message
-                    logger.debug(f"Run action cancelled: {error_msg}")
-                    er_wal.emit_run_event(
-                        server._wal_writer,
-                        event_type=er_wal.ErWalEventType.RUN_FAILED,
-                        wal_run_id=wal_run_id,
-                        action_name=action_name,
-                        project_path=project_path,
-                        trigger=trigger,
-                        dev_env=dev_env,
-                        payload={"error": f"cancelled: {error_msg}"},
-                    )
-                    raise finecode_jsonrpc_module.JsonRpcHandlerError(
-                        finecode_jsonrpc_module.REQUEST_CANCELLED, error_msg
-                    ) from exception
-                elif isinstance(exception, services.ActionFailedException):
-                    logger.error(f"Run action failed: {exception.message}")
-                    error_msg = exception.message
-                else:
-                    logger.error("Unhandled exception in action run:")
-                    logger.exception(exception)
-                    error_msg = f"{type(exception)}: {exception!s}"
-                er_wal.emit_run_event(
-                    server._wal_writer,
-                    event_type=er_wal.ErWalEventType.RUN_FAILED,
-                    wal_run_id=wal_run_id,
-                    action_name=action_name,
-                    project_path=project_path,
-                    trigger=trigger,
-                    dev_env=dev_env,
-                    payload={"error": error_msg},
-                )
-                return {"error": error_msg}
+                logger.error("Unhandled exception in action run:")
+                logger.exception(exception)
+                error_msg = f"{type(exception)}: {exception!s}"
+            er_wal.emit_run_event(
+                server._wal_writer,
+                event_type=er_wal.ErWalEventType.RUN_FAILED,
+                wal_run_id=wal_run_id,
+                action_name=action_name,
+                project_path=project_path,
+                trigger=trigger,
+                dev_env=dev_env,
+                payload={"error": error_msg},
+            )
+            return {"error": error_msg}
 
-        result_by_format = response.to_dict()["result_by_format"]
-        if not result_by_format and options_schema.partial_result_token is not None:
-            status = "streamed"
-        converted_result_by_format = {
-            fmt: convert_path_keys(result) if isinstance(result, dict) else result
-            for fmt, result in result_by_format.items()
-        }
-        er_wal.emit_run_event(
-            server._wal_writer,
-            event_type=er_wal.ErWalEventType.RUN_COMPLETED,
-            wal_run_id=wal_run_id,
-            action_name=action_name,
-            project_path=project_path,
-            trigger=trigger,
-            dev_env=dev_env,
-            payload={"status": status, "return_code": response.return_code},
-        )
-        return {
-            "status": status,
-            "resultByFormat": converted_result_by_format,
-            "returnCode": response.return_code,
-        }
-    finally:
-        if lease_id is not None:
-            await _release_process_budget(server, lease_id)
+    result_by_format = response.to_dict()["result_by_format"]
+    if not result_by_format and options_schema.partial_result_token is not None:
+        status = "streamed"
+    converted_result_by_format = {
+        fmt: convert_path_keys(result) if isinstance(result, dict) else result
+        for fmt, result in result_by_format.items()
+    }
+    er_wal.emit_run_event(
+        server._wal_writer,
+        event_type=er_wal.ErWalEventType.RUN_COMPLETED,
+        wal_run_id=wal_run_id,
+        action_name=action_name,
+        project_path=project_path,
+        trigger=trigger,
+        dev_env=dev_env,
+        payload={"status": status, "return_code": response.return_code},
+    )
+    return {
+        "status": status,
+        "resultByFormat": converted_result_by_format,
+        "returnCode": response.return_code,
+    }
 
 
 async def run_handlers(server: ErServer, params: dict | None) -> dict:
@@ -1024,44 +997,17 @@ async def run_handlers(server: ErServer, params: dict | None) -> dict:
     )
     status: str = "success"
 
-    lease_id = await _lease_process_budget(
-        server,
-        requested=machine_subprocess_budget(),
-        nested=options_schema.meta.orchestration_depth > 0,
-        run_id=wal_run_id,
-    )
     try:
-        try:
-            with run_context.run(wal_run_id):
-                response = await services.run_handlers_raw(
-                    request=request,
-                    options=options_schema,
-                    runner_context=server._runner_context,
-                )
-        except Exception as exception:
-            if isinstance(exception, services.ActionCancelledException):
-                error_msg = exception.message
-                logger.debug(f"Run handlers cancelled: {error_msg}")
-                er_wal.emit_run_event(
-                    server._wal_writer,
-                    event_type=er_wal.ErWalEventType.RUN_FAILED,
-                    wal_run_id=wal_run_id,
-                    action_name=action_name,
-                    project_path=project_path,
-                    trigger=trigger,
-                    dev_env=dev_env,
-                    payload={"error": f"cancelled: {error_msg}"},
-                )
-                raise finecode_jsonrpc_module.JsonRpcHandlerError(
-                    finecode_jsonrpc_module.REQUEST_CANCELLED, error_msg
-                ) from exception
-            elif isinstance(exception, services.ActionFailedException):
-                logger.error(f"Run handlers failed: {exception.message}")
-                error_msg = exception.message
-            else:
-                logger.error("Unhandled exception in run_handlers:")
-                logger.exception(exception)
-                error_msg = f"{type(exception)}: {exception!s}"
+        with run_context.run(wal_run_id):
+            response = await services.run_handlers_raw(
+                request=request,
+                options=options_schema,
+                runner_context=server._runner_context,
+            )
+    except Exception as exception:
+        if isinstance(exception, services.ActionCancelledException):
+            error_msg = exception.message
+            logger.debug(f"Run handlers cancelled: {error_msg}")
             er_wal.emit_run_event(
                 server._wal_writer,
                 event_type=er_wal.ErWalEventType.RUN_FAILED,
@@ -1070,37 +1016,54 @@ async def run_handlers(server: ErServer, params: dict | None) -> dict:
                 project_path=project_path,
                 trigger=trigger,
                 dev_env=dev_env,
-                payload={"error": error_msg},
+                payload={"error": f"cancelled: {error_msg}"},
             )
-            return {"error": error_msg}
-
-        result_by_format = response.result_by_format
-        if not result_by_format and options_schema.partial_result_token is not None:
-            status = "streamed"
-        converted_result_by_format = {
-            fmt: convert_path_keys(result) if isinstance(result, dict) else result
-            for fmt, result in result_by_format.items()
-        }
+            raise finecode_jsonrpc_module.JsonRpcHandlerError(
+                finecode_jsonrpc_module.REQUEST_CANCELLED, error_msg
+            ) from exception
+        elif isinstance(exception, services.ActionFailedException):
+            logger.error(f"Run handlers failed: {exception.message}")
+            error_msg = exception.message
+        else:
+            logger.error("Unhandled exception in run_handlers:")
+            logger.exception(exception)
+            error_msg = f"{type(exception)}: {exception!s}"
         er_wal.emit_run_event(
             server._wal_writer,
-            event_type=er_wal.ErWalEventType.RUN_COMPLETED,
+            event_type=er_wal.ErWalEventType.RUN_FAILED,
             wal_run_id=wal_run_id,
             action_name=action_name,
             project_path=project_path,
             trigger=trigger,
             dev_env=dev_env,
-            payload={"status": status, "return_code": response.return_code},
+            payload={"error": error_msg},
         )
-        return {
-            "status": status,
-            "result": convert_path_keys(response.result) if response.result else {},
-            "resultByFormat": converted_result_by_format,
-            "returnCode": response.return_code,
-            "context": response.context,
-        }
-    finally:
-        if lease_id is not None:
-            await _release_process_budget(server, lease_id)
+        return {"error": error_msg}
+
+    result_by_format = response.result_by_format
+    if not result_by_format and options_schema.partial_result_token is not None:
+        status = "streamed"
+    converted_result_by_format = {
+        fmt: convert_path_keys(result) if isinstance(result, dict) else result
+        for fmt, result in result_by_format.items()
+    }
+    er_wal.emit_run_event(
+        server._wal_writer,
+        event_type=er_wal.ErWalEventType.RUN_COMPLETED,
+        wal_run_id=wal_run_id,
+        action_name=action_name,
+        project_path=project_path,
+        trigger=trigger,
+        dev_env=dev_env,
+        payload={"status": status, "return_code": response.return_code},
+    )
+    return {
+        "status": status,
+        "result": convert_path_keys(response.result) if response.result else {},
+        "resultByFormat": converted_result_by_format,
+        "returnCode": response.return_code,
+        "context": response.context,
+    }
 
 
 async def reload_action(server: ErServer, params: dict | None) -> dict:
@@ -1198,6 +1161,10 @@ def create_er_server(wal_writer: er_wal.ErWalWriter | None = None) -> ErServer:
     server._wal_writer = wal_writer
     session = server._session
 
+    # The gate outlives every RunnerContext rebuild, so the backend is wired
+    # once here and never re-attached or dropped by a later updateConfig.
+    attach_wm_budget(server, process_slots.get_process_slots())
+
     logs.set_forward_sender(
         lambda records: server.send_log_records_notification(records)
     )
@@ -1247,9 +1214,6 @@ def create_er_server(wal_writer: er_wal.ErWalWriter | None = None) -> ErServer:
     # ER-specific commands (direct JSON-RPC methods, previously workspace/executeCommand)
     session.on_request("finecodeRunner/updateConfig", _wrap(update_config))
     session.on_request("finecodeRunner/updateLogging", _wrap(update_logging))
-    session.on_request(
-        "finecodeRunner/updateProcessBudget", _wrap(update_process_budget)
-    )
     session.on_request("finecodeRunner/resolveActionMeta", _wrap(resolve_action_meta))
     session.on_request("actions/run", _wrap(run_action))
     session.on_request("actions/runHandlers", _wrap(run_handlers))

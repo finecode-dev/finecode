@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import collections.abc
 import contextlib
 import dataclasses
 import time
@@ -234,6 +235,7 @@ async def _running_service(
     content: str,
     max_concurrent_requests: int | None = None,
     server_capabilities: dict[str, Any] | None = None,
+    work_slots: Any | None = None,
 ) -> AsyncIterator[tuple[LspService, _FakeLspSession, _FakeFileEditor]]:
     session = _FakeLspSession()
     if server_capabilities is not None:
@@ -246,6 +248,7 @@ async def _running_service(
         cmd=["fake-lsp-server"],
         language_id="python",
         max_concurrent_requests=max_concurrent_requests,
+        work_slots=work_slots,
     )
     await service.ensure_started(root_uri=file_path.parent.as_uri())
     try:
@@ -794,6 +797,7 @@ def test_concurrency_limit_below_one_is_rejected() -> None:
             cmd=["fake-lsp-server"],
             language_id="python",
             max_concurrent_requests=0,
+            work_slots=None,
         )
 
 
@@ -808,6 +812,7 @@ def test_cmd_str_is_rejected() -> None:
             logger=_NullLogger(),  # type: ignore[arg-type]
             cmd="fake-lsp-server",
             language_id="python",
+            work_slots=None,
         )
 
 
@@ -1797,3 +1802,222 @@ async def test_watched_file_sweep_and_concurrent_check_survive_a_capped_service(
         assert not sweep_task.done()
         await asyncio.wait_for(asyncio.shield(check_task), timeout=1)
         await asyncio.wait_for(sweep_task, timeout=2)
+
+
+class _RecordingWorkSlots:
+    """Counts slot entries and exits so a test can order them against traffic."""
+
+    def __init__(self) -> None:
+        self.enters = 0
+        self.exits = 0
+
+    @contextlib.asynccontextmanager
+    async def acquire(self) -> collections.abc.AsyncGenerator[None, None]:
+        self.enters += 1
+        try:
+            yield
+        finally:
+            self.exits += 1
+
+
+def _no_open_files() -> list[Path]:
+    return []
+
+
+@contextlib.asynccontextmanager
+async def _slotted_service(
+    file_path: Path,
+    content: str,
+    work_slots: Any | None,
+    server_capabilities: dict[str, Any] | None = None,
+    settle_sec: float = 1.0,
+    editor_open: bool = True,
+) -> AsyncIterator[tuple[LspService, _FakeLspSession, _FakeFileEditor]]:
+    session = _FakeLspSession()
+    if server_capabilities is not None:
+        session.capabilities = server_capabilities
+    file_editor = _FakeFileEditor(file_path, content)
+    if not editor_open:
+        file_editor.get_opened_files = _no_open_files  # type: ignore[method-assign]
+    service = LspService(
+        lsp_client=_FakeLspClient(session),
+        file_editor=file_editor,  # type: ignore[arg-type]
+        logger=_NullLogger(),  # type: ignore[arg-type]
+        cmd=["fake-lsp-server"],
+        language_id="python",
+        empty_diagnostics_settle_sec=settle_sec,
+        work_slots=work_slots,
+    )
+    await service.ensure_started(root_uri=file_path.parent.as_uri())
+    try:
+        yield service, session, file_editor
+    finally:
+        await service._async_dispose()
+
+
+async def test_work_slot_released_before_the_settle_wait_and_close(
+    tmp_path: Path,
+) -> None:
+    """The slot covers the analysis, not the waiting: a clean file's settle delay
+    must not hold machine budget, and neither must the document close."""
+    file_path = tmp_path / "subject.py"
+    slots = _RecordingWorkSlots()
+    async with _slotted_service(
+        file_path, "x = 1\n", slots, settle_sec=5.0, editor_open=False
+    ) as (service, session, _):
+
+        async def publish(uri: str) -> None:
+            await service._handle_diagnostics({"uri": uri, "diagnostics": []})
+
+        session.on_document_synced = publish
+        task = asyncio.create_task(service.check_file(file_path))
+        for _ in range(100):
+            if slots.exits == 1:
+                break
+            await asyncio.sleep(0.02)
+        assert slots.exits == 1
+        assert not task.done()
+        assert "textDocument/didClose" not in session.traffic
+
+        assert await asyncio.wait_for(task, timeout=10) == []
+        assert "textDocument/didClose" in session.traffic
+
+
+async def test_work_slot_held_only_around_an_already_current_sync(
+    tmp_path: Path,
+) -> None:
+    """A file the server already holds costs one quick lease, not a wait."""
+    file_path = tmp_path / "subject.py"
+    slots = _RecordingWorkSlots()
+    async with _slotted_service(file_path, "x = 1\n", slots) as (service, session, _):
+
+        async def publish(uri: str) -> None:
+            await service._handle_diagnostics({"uri": uri, "diagnostics": [_F401]})
+
+        session.on_document_synced = publish
+        assert await service.check_file(file_path) == [_F401]
+        assert (slots.enters, slots.exits) == (1, 1)
+
+        started = asyncio.get_running_loop().time()
+        assert await service.check_file(file_path) == [_F401]
+        assert asyncio.get_running_loop().time() - started < 1.0
+        assert (slots.enters, slots.exits) == (2, 2)
+
+
+async def test_work_slot_released_after_the_pull_response(tmp_path: Path) -> None:
+    """On the pull path the slot is held through the request that is the work."""
+    file_path = tmp_path / "subject.py"
+    slots = _RecordingWorkSlots()
+    async with _slotted_service(
+        file_path, "x = 1\n", slots, server_capabilities=_PULL_CAPABLE
+    ) as (service, session, _):
+        session.request_results["textDocument/diagnostic"] = {
+            "kind": "full",
+            "items": [_F401],
+        }
+        session.release_request = asyncio.Event()
+        task = asyncio.create_task(service.check_file(file_path))
+        for _ in range(100):
+            if session.requests:
+                break
+            await asyncio.sleep(0.02)
+        assert [r.method for r in session.requests] == ["textDocument/diagnostic"]
+        assert slots.exits == 0
+
+        assert session.release_request is not None
+        session.release_request.set()
+        assert await asyncio.wait_for(task, timeout=5) == [_F401]
+        assert (slots.enters, slots.exits) == (1, 1)
+
+
+async def test_work_slot_released_when_analysis_raises(tmp_path: Path) -> None:
+    """A failing analysis must not keep the slot it was given."""
+    file_path = tmp_path / "subject.py"
+    slots = _RecordingWorkSlots()
+    async with _slotted_service(
+        file_path, "x = 1\n", slots, server_capabilities=_PULL_CAPABLE
+    ) as (service, session, _):
+        session.raise_on_send_request = RuntimeError("boom")
+        with pytest.raises(RuntimeError, match="boom"):
+            await service.check_file(file_path)
+        assert (slots.enters, slots.exits) == (1, 1)
+
+
+async def test_work_slot_released_before_the_code_action_request(
+    tmp_path: Path,
+) -> None:
+    """The fix request runs under the document lease, not under the work slot."""
+    file_path = tmp_path / "subject.py"
+    slots = _RecordingWorkSlots()
+    async with _slotted_service(
+        file_path, "import os\n", slots, server_capabilities=_PULL_CAPABLE
+    ) as (service, session, _):
+        session.request_results["textDocument/diagnostic"] = {
+            "kind": "full",
+            "items": [_F401],
+        }
+        session.request_results["textDocument/codeAction"] = []
+        reached_code_action = asyncio.Event()
+        release_code_action = asyncio.Event()
+        original_send = session.send_request
+
+        async def _gated(
+            method: str,
+            params: dict[str, Any] | None = None,
+            timeout: float | None = None,
+        ) -> Any:
+            if method == "textDocument/codeAction":
+                reached_code_action.set()
+                await release_code_action.wait()
+            return await original_send(method, params, timeout)
+
+        session.send_request = _gated  # type: ignore[method-assign]
+        task = asyncio.create_task(
+            service.get_code_actions(file_path, "import os\n", _WHOLE_FILE)
+        )
+        await asyncio.wait_for(reached_code_action.wait(), timeout=5)
+        assert (slots.enters, slots.exits) == (1, 1)
+        assert "textDocument/codeAction" not in [r.method for r in session.requests]
+
+        release_code_action.set()
+        assert await asyncio.wait_for(task, timeout=5) == []
+
+
+async def test_interactive_requests_take_no_work_slot(tmp_path: Path) -> None:
+    """Hover, definition and the watched-files sweep are cheap or uncounted."""
+    file_path = tmp_path / "subject.py"
+    slots = _RecordingWorkSlots()
+    async with _slotted_service(file_path, "x = 1\n", slots) as (service, _, _):
+        await service.get_hover(file_path, "x = 1\n", {"line": 0, "character": 0})
+        await service.get_definition(file_path, "x = 1\n", {"line": 0, "character": 0})
+        await service.sync_watched_files([file_path], recheck_timeout=0.01)
+        assert (slots.enters, slots.exits) == (0, 0)
+
+
+async def test_no_configured_slots_leaves_check_working(tmp_path: Path) -> None:
+    """A remote server takes no slot and still gets its diagnostics."""
+    file_path = tmp_path / "subject.py"
+    async with _slotted_service(file_path, "x = 1\n", None) as (
+        service,
+        session,
+        _,
+    ):
+
+        async def publish(uri: str) -> None:
+            await service._handle_diagnostics({"uri": uri, "diagnostics": [_F401]})
+
+        session.on_document_synced = publish
+        assert await service.check_file(file_path, timeout=5) == [_F401]
+
+
+def test_work_slots_keyword_is_required() -> None:
+    """Local vs remote is a deliberate choice, so there is no default to forget."""
+    file_editor = _FakeFileEditor(Path("/nonexistent"), "")
+    with pytest.raises(TypeError):
+        LspService(  # type: ignore[call-arg]
+            lsp_client=_FakeLspClient(_FakeLspSession()),
+            file_editor=file_editor,  # type: ignore[arg-type]
+            logger=_NullLogger(),  # type: ignore[arg-type]
+            cmd=["fake-lsp-server"],
+            language_id="python",
+        )

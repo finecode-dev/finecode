@@ -65,7 +65,7 @@ class ProcessExecutor(iprocessexecutor.IProcessExecutor):
             f" processes: {len(self._py_process_executor._processes)},"
             f" max workers: {self._py_process_executor._max_workers}"
         )
-        await self._process_slots.acquire()
+        lease_id = await self._process_slots.acquire()
         try:
             result = await loop.run_in_executor(
                 self._py_process_executor, func_to_execute, *args
@@ -74,5 +74,5 @@ class ProcessExecutor(iprocessexecutor.IProcessExecutor):
             logger.exception(exc)
             raise
         finally:
-            await self._process_slots.release()
+            await self._process_slots.release(lease_id)
         return result

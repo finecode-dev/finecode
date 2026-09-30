@@ -205,3 +205,15 @@ class ICommandRunner(Protocol):
         process-group option.
         """
         ...
+
+    async def start_long_running(
+        self,
+        cmd: Argv,
+        cwd: Path | None = None,
+        env: dict[str, str] | None = None,
+        new_process_group: bool = False,
+    ) -> IAsyncProcess:
+        """Same contract as `run`, for a process whose lifetime is not a unit of
+        work (a server, an interactive agent). Takes no work slot and no local
+        cap. CPU-heavy requests sent to it take IWorkSlots.acquire()."""
+        ...

@@ -23,7 +23,7 @@ import json
 import sys
 import time
 import typing
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncGenerator, AsyncIterator, Sequence
 from pathlib import Path
 from typing import Any, Self
 
@@ -243,6 +243,12 @@ class _NullLogger:
     def enable(self, package: str) -> None: ...
 
 
+class _NoopWorkSlots:
+    @contextlib.asynccontextmanager
+    async def acquire(self) -> AsyncGenerator[None, None]:
+        yield
+
+
 @pytest.fixture
 def subject(tmp_path: Path) -> Path:
     """A file with two fixable diagnostics, in a project ruff will analyze."""
@@ -264,6 +270,7 @@ async def service(subject: Path) -> AsyncIterator[RuffLspService]:
         lsp_client=typing.cast(typing.Any, _StdioLspClient()),
         file_editor=typing.cast(typing.Any, _HeadlessFileEditor()),
         logger=typing.cast(typing.Any, _NullLogger()),
+        work_slots=_NoopWorkSlots(),
     )
     await lsp_service.ensure_started(subject.parent.as_uri(), _META)
     try:
@@ -462,6 +469,7 @@ async def _ruff_service(project_dir: Path) -> AsyncIterator[RuffLspService]:
         lsp_client=typing.cast(typing.Any, _StdioLspClient()),
         file_editor=typing.cast(typing.Any, _HeadlessFileEditor()),
         logger=typing.cast(typing.Any, _NullLogger()),
+        work_slots=_NoopWorkSlots(),
     )
     await lsp_service.ensure_started(project_dir.as_uri(), _META)
     try:

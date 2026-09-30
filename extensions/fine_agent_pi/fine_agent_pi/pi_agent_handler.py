@@ -92,7 +92,7 @@ class PiAgentHandlerConfig(code_action.ActionHandlerConfig):
     answer on the user's behalf."""
     settle_timeout_sec: float = 900.0
     """Ceiling on one agent run. An agent loop has no natural bound, so without
-    this a wedged run holds an ER subprocess slot indefinitely."""
+    this a wedged run never ends."""
     profiles: dict[str, PiAgentProfile] = dataclasses.field(default_factory=dict)
     """Named runs, keyed by the `profile` a caller passes, so an override can be
     expressed in an environment variable (S-205).
@@ -172,7 +172,7 @@ class PiAgentHandler(
 
         started = time.monotonic()
         try:
-            process = await self.command_runner.run(
+            process = await self.command_runner.start_long_running(
                 command,
                 cwd=project_dir,
                 # pi runs tools of its own, so tearing it down has to reach them
@@ -199,9 +199,8 @@ class PiAgentHandler(
             # Anything escaping the drive that the paths inside do not already
             # handle -- a stream that failed its size limit or its encoding
             # (`stdout_lines` raises `RuntimeError`), a bug in a frame handler.
-            # Without this, pi is left with stdin open, blocks on it forever,
-            # never exits, and its subprocess slot is lost for the ER's
-            # lifetime. The teardown is the same one every other exit path uses,
+            # Without this, pi is left with stdin open and blocks on it forever,
+            # never exiting. The teardown is the same one every other exit path uses,
             # and `_abort` is idempotent, so running it again after one of those
             # costs nothing.
             await self._abort(process)
@@ -613,8 +612,8 @@ class PiAgentHandler(
         Asking first is worth the grace period: pi runs tools of its own, and
         the polite exit is the one that lets it stop them. But asking is not
         enough on its own -- a pi that ignores `abort` keeps write access to the
-        project, keeps spending, and keeps holding the subprocess slot the
-        timeout exists to release, so the ladder ends somewhere unconditional.
+        project and keeps spending, which is what the timeout exists to bound,
+        so the ladder ends somewhere unconditional.
 
         Best-effort throughout: this runs on paths where something has already
         gone wrong or been withdrawn, and a failure to abort cleanly must not

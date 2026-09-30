@@ -488,6 +488,7 @@ async def test_no_profile_uses_the_top_level_model(tmp_path: pathlib.Path) -> No
 class _RecordingCommandRunner:
     def __init__(self) -> None:
         self.run_calls = 0
+        self.start_long_running_calls = 0
 
     async def run(
         self,
@@ -496,14 +497,26 @@ class _RecordingCommandRunner:
         env: dict[str, str] | None = None,
         new_process_group: bool = False,
     ) -> Any:
-        icommandrunner.check_argv(cmd)
         self.run_calls += 1
+        raise AssertionError("agent processes must start through start_long_running")
+
+    async def start_long_running(
+        self,
+        cmd: icommandrunner.Argv,
+        cwd: pathlib.Path | None = None,
+        env: dict[str, str] | None = None,
+        new_process_group: bool = False,
+    ) -> Any:
+        icommandrunner.check_argv(cmd)
+        self.start_long_running_calls += 1
         raise AssertionError("an unknown profile must not spawn a process")
 
 
 class _RaisingCommandRunner:
     def __init__(self, error: Exception) -> None:
         self._error = error
+        self.run_calls = 0
+        self.start_long_running_calls = 0
 
     async def run(
         self,
@@ -512,7 +525,18 @@ class _RaisingCommandRunner:
         env: dict[str, str] | None = None,
         new_process_group: bool = False,
     ) -> Any:
+        self.run_calls += 1
+        raise AssertionError("agent processes must start through start_long_running")
+
+    async def start_long_running(
+        self,
+        cmd: icommandrunner.Argv,
+        cwd: pathlib.Path | None = None,
+        env: dict[str, str] | None = None,
+        new_process_group: bool = False,
+    ) -> Any:
         icommandrunner.check_argv(cmd)
+        self.start_long_running_calls += 1
         raise self._error
 
     def run_sync(
@@ -552,6 +576,19 @@ async def test_a_run_that_cannot_spawn_claude_is_a_structured_failure(
     assert sys.executable in result.error
     assert getattr(error, "strerror", None) or str(error) in result.error
     assert result.duration_sec == 0.0
+
+
+async def test_agent_spawns_through_start_long_running_not_run() -> None:
+    """The agent run is long-lived, so it must not hold a bounded-job slot."""
+    runner = _RaisingCommandRunner(FileNotFoundError(2, "No such file or directory"))
+    result = await _run(
+        {"steps": []},
+        service_overrides={icommandrunner.ICommandRunner: runner},
+    )
+
+    assert result.status is AgentRunStatus.FAILED
+    assert runner.start_long_running_calls == 1
+    assert runner.run_calls == 0
 
 
 async def test_unknown_profile_fails_before_spawning() -> None:

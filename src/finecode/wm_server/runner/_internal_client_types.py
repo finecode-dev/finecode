@@ -36,7 +36,6 @@ ER_RESOLVE_SOURCE = "actions/resolveSource"
 ER_RESOLVE_PACKAGE_PATH = "packages/resolvePath"
 ER_UPDATE_CONFIG = "finecodeRunner/updateConfig"
 ER_UPDATE_LOGGING = "finecodeRunner/updateLogging"
-ER_UPDATE_PROCESS_BUDGET = "finecodeRunner/updateProcessBudget"
 ER_RESOLVE_ACTION_META = "finecodeRunner/resolveActionMeta"
 ER_GET_INFO = "finecodeRunner/getInfo"
 WORKSPACE_APPLY_EDIT = "workspace/applyEdit"
@@ -2248,12 +2247,6 @@ METHOD_TO_TYPES: dict[
         ErUpdateLoggingRequest,
         ErUpdateLoggingParams,
         ErUpdateLoggingResponse,
-        None,
-    ),
-    ER_UPDATE_PROCESS_BUDGET: (
-        ErUpdateProcessBudgetRequest,
-        ErUpdateProcessBudgetParams,
-        ErUpdateProcessBudgetResponse,
         None,
     ),
     ER_LOG_RECORDS: (ErLogRecordsNotification, ErLogRecordsParams, None, None),

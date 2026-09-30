@@ -55,7 +55,6 @@ async def test_control_plane_rpcs_are_bounded(tmp_path: pathlib.Path) -> None:
             runner_client.RunnerConfig(actions=[], action_handler_configs={}),
         ),
         runner_client.update_logging(runner, True, "INFO"),
-        runner_client.update_process_budget(runner, 4),
         runner_client.reload_action(runner, "some_action"),
         runner_client.resolve_action_meta(runner),
         runner_client.get_payload_schemas(runner),

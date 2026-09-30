@@ -62,25 +62,11 @@ def build_create_envs_params(
     return {"recreate": recreate}
 
 
-def project_fan_out_budget(work_cap: int, project_count: int) -> domain.RunBudget:
-    """Each member of a prepare-envs project fan-out waits for its share of the budget.
-
-    ``work_cap // project_count`` (never below one) keeps about ``work_cap``
-    projects in flight while holding the fan-out's total at the budget; with
-    fewer projects than slots, each still gets the full ``work_cap``.
-    """
-    if project_count <= 0:
-        return domain.RunBudget(waits=True, max_slots=1)
-    return domain.RunBudget(waits=True, max_slots=max(1, work_cap // project_count))
-
-
 async def _run_env_action(
     action_source: str,
     params: dict,
     executor_project: domain.CollectedProject,
     ws_context: context.WorkspaceContext,
-    *,
-    budget: domain.RunBudget,
 ) -> str | None:
     """Run a ``fine_envs`` action on *executor_project*'s dev_workspace runner.
 
@@ -89,10 +75,6 @@ async def _run_env_action(
     subscribes to that progress stream and
     forwards each ``report`` event as a user message, so a single slow batched
     call still shows which env is currently being created/installed.
-
-    ``budget`` declares how the process budget treats this dispatch (ADR-0094).
-    It has no default: a waiting budget and a non-waiting one have opposite
-    failure modes, so which one this is must be written at every call site.
 
     Returns an error string on failure, ``None`` on success.
     """
@@ -155,7 +137,6 @@ async def _run_env_action(
             result_formats=[rc.RunResultFormat.STRING],
             initialize_all_handlers=True,
             progress_token=progress_token,
-            budget=budget,
             # Started by the WM on its own behalf during env preparation, with
             # no client connection behind it.
             origin=None,
@@ -222,7 +203,6 @@ async def _build_wheelhouse(
     ws_context: context.WorkspaceContext,
     workdir_path: pathlib.Path,
     excluded_packages: set[str],
-    budget: domain.RunBudget,
 ) -> dict[str, pathlib.Path]:
     """Build a wheel for every workspace package.
 
@@ -309,7 +289,6 @@ async def _build_wheelhouse(
                 dev_env=rc.DevEnv.CLI,
                 result_formats=[rc.RunResultFormat.JSON],
                 initialize_all_handlers=True,
-                budget=budget,
                 origin=None,
             )
         except run_service.ActionRunFailed as action_exc:
@@ -557,9 +536,6 @@ async def prepare_envs(
             {"envs": dw_envs},
             root_project,
             ws_context,
-            # One batched run on the root runner, not a fan-out: it needs its
-            # full grant to create every subproject's dev_workspace venv.
-            budget=domain.RunBudget(),
         )
         if error:
             raise PrepareEnvsFailed(f"dev_workspace create_envs failed: {error}")
@@ -569,8 +545,6 @@ async def prepare_envs(
             {"envs": dw_envs},
             root_project,
             ws_context,
-            # Same batched bootstrap run as above; full grant, no fan-out.
-            budget=domain.RunBudget(),
         )
         if error:
             raise PrepareEnvsFailed(f"dev_workspace install_envs failed: {error}")
@@ -612,9 +586,6 @@ async def prepare_envs(
         and (project_paths_filter is None or str(p.dir_path) in project_paths_filter)
     ]
     total_projects = len(step_projects)
-    fan_out_budget = project_fan_out_budget(
-        ws_context.process_budget.size, total_projects
-    )
 
     # Step 4.5 — preset-resolved install of each project's dev_workspace env.
     # Split out of step 6 because the wheelhouse build (4.6) needs each
@@ -632,7 +603,6 @@ async def prepare_envs(
             {"env_names": ["dev_workspace"]},
             p,
             ws_context,
-            budget=fan_out_budget,
         )
         if err:
             dev_workspace_install_errors.append(err)
@@ -654,7 +624,6 @@ async def prepare_envs(
             ws_context=ws_context,
             workdir_path=workdir_path,
             excluded_packages=excluded_packages,
-            budget=fan_out_budget,
         )
         ws_context.ws_workspace_package_wheels = wheels
         wheelhouse_dir = _write_wheelhouse_manifest(workdir_path, ws_context, wheels)
@@ -710,8 +679,8 @@ async def prepare_envs(
     # dev_workspace ER (never on other per-env ERs, which aren't even started
     # during prepare-envs — see the module-level "Verified 'projects' is the
     # right unit" note in the design). The subprocess fan-out they drive is
-    # bounded by the machine-wide process budget (ADR-0090), leased by each
-    # ER when the action run begins.
+    # bounded by the machine-wide process budget (ADR-0090), leased per unit
+    # of work.
     await user_messages.info(f"Creating envs for {total_projects} project(s)...")
 
     create_errors: list[str] = []
@@ -728,7 +697,6 @@ async def prepare_envs(
             params,
             p,
             ws_context,
-            budget=fan_out_budget,
         )
         if err:
             create_errors.append(err)
@@ -760,8 +728,6 @@ async def prepare_envs(
             params,
             p,
             ws_context,
-            # Step 6 reuses the step 5 fan-out's per-project share.
-            budget=fan_out_budget,
         )
         if err:
             install_errors.append(err)
@@ -924,9 +890,6 @@ async def install_env_for_project(
         {"envs": [env_spec]},
         executor_project,
         ws_context,
-        # Auto-prepare runs inside another dispatch, so it must never wait on
-        # slots its own ancestor holds — the escape is load-bearing.
-        budget=domain.RunBudget(),
     )
     if error:
         raise PrepareEnvsFailed(
@@ -938,8 +901,6 @@ async def install_env_for_project(
         {"envs": [env_spec]},
         executor_project,
         ws_context,
-        # Same load-bearing escape as the create above.
-        budget=domain.RunBudget(),
     )
     if error:
         raise PrepareEnvsFailed(

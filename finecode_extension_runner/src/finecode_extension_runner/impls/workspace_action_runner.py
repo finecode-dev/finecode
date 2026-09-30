@@ -10,6 +10,7 @@ import cattrs.errors
 from finecode_extension_api import code_action
 from finecode_extension_api.interfaces import (
     iprojectactionrunner,
+    iworkslots,
     iworkspaceactionrunner,
 )
 
@@ -64,6 +65,8 @@ class WorkspaceActionRunnerImpl(iworkspaceactionrunner.IWorkspaceActionRunner):
                     "runId": run_context.current_run_id(),
                 },
             )
+        except iworkslots.WorkSlotScopeError:
+            raise
         except Exception as e:
             project_str = (
                 ", ".join(str(p) for p in project_paths)
@@ -114,6 +117,8 @@ class WorkspaceActionRunnerImpl(iworkspaceactionrunner.IWorkspaceActionRunner):
                     "runId": run_context.current_run_id(),
                 },
             )
+        except iworkslots.WorkSlotScopeError:
+            raise
         except Exception as e:
             project_str = ", ".join(str(p) for p in payload_by_project)
             raise iprojectactionrunner.ActionRunFailed(

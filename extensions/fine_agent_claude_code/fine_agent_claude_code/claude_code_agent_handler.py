@@ -80,7 +80,7 @@ class ClaudeCodeAgentHandlerConfig(code_action.ActionHandlerConfig):
     """Ceiling on what one run may spend on API calls, enforced by the CLI."""
     settle_timeout_sec: float = 900.0
     """Ceiling on one agent run. An agent loop has no natural bound, so without
-    this a wedged run holds an ER subprocess slot indefinitely."""
+    this a wedged run never ends."""
     profiles: dict[str, ClaudeCodeAgentProfile] = dataclasses.field(
         default_factory=dict
     )
@@ -159,7 +159,7 @@ class ClaudeCodeAgentHandler(
 
         started = time.monotonic()
         try:
-            process = await self.command_runner.run(
+            process = await self.command_runner.start_long_running(
                 command,
                 cwd=project_dir,
                 # claude runs tools of its own, so tearing it down has to reach them
@@ -187,7 +187,7 @@ class ClaudeCodeAgentHandler(
             # handle -- a stream that failed its size limit or its encoding
             # (`stdout_lines` raises `RuntimeError`), a bug in a frame handler.
             # Without this the process is left running with write access to the
-            # project and holding its subprocess slot. `_abort` is idempotent,
+            # project. `_abort` is idempotent,
             # so running it again after one of those paths costs nothing.
             await self._abort(process)
             raise
@@ -404,9 +404,8 @@ class ClaudeCodeAgentHandler(
         closed with it, and print mode has no control channel. So the grace
         period is all the politeness available, and after it the ladder has to
         become unconditional -- a claude that outlives its own timeout keeps
-        write access to the project a caller may already be restoring, keeps
-        spending budget, and keeps holding the subprocess slot the timeout
-        exists to release.
+        write access to the project a caller may already be restoring and keeps
+        spending budget, which is what the timeout exists to bound.
 
         Best-effort throughout: this runs where something has already gone wrong
         or been withdrawn, and a teardown failure must not replace the original

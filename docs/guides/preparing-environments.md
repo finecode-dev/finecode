@@ -405,25 +405,18 @@ An explicit `--interpreter` selector always overrides the config default outrigh
 
 `prepare-envs` fans work out across projects and across envs, and each fan-out ultimately spawns
 real OS processes. All of them draw from one machine-wide budget (ADR-0090): the WM leases
-subprocess *work slots* to each ER for the duration of an action run, and every spawn inside that
-ER — `CommandRunner` subprocesses (e.g. `uv install`) and `ProcessExecutor` pool workers alike —
-draws from the ER's leased gate. The work budget is the work half of the combined
+subprocess *work slots* per unit of work — one per bounded subprocess (`ICommandRunner.run`)
+or `IProcessExecutor` task — and every spawn inside an ER draws from that ER's gate. A run that
+spawns nothing holds nothing. The work budget is the work half of the combined
 subprocess-concurrency budget: one machine-bound total, split into an ER-startup cap and this work
 cap so their sum always leaves a core free for the WM's event loop
 ([Combined subprocess-concurrency budget](wm-server-internals.md#combined-subprocess-concurrency-budget),
 ADR-0093). See [Process budget](wm-server-internals.md#process-budget) for the mechanics.
 
-A nested run (one asked for by another run's fan-out) is always granted at least one slot, so it
-can always make progress; the whole machine is never over-subscribed in the common, non-nested
-case.
-
-`prepare-envs` closes the gap for its own big fan-out: steps 5 and 6 give each project's
-`create_envs` / `install_envs` run a budget that waits and asks for `max(1, W // N)` slots
-(`W` = the work cap, `N` = the number of in-scope projects). With more projects than slots every
-project takes one, so about `W` projects build envs at once; with no more projects than slots a
-single project still gets the whole work cap. Step 3's batched `dev_workspace` bootstrap and
-auto-repair keep the ER's full request, because they run *inside* other dispatches and must not
-wait on slots their ancestors hold.
+Every lease waits for a free slot rather than oversubscribing: parents hold no slots, so a
+child always has something to run in, and `granted ≤ work_cap + 1` (the +1 is the stall
+escape). There is no per-project share to declare — the bound is on running work, not on
+in-flight runs.
 
 ### Optional per-ER ceiling
 

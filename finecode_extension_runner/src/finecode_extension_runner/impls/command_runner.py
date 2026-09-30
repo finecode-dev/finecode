@@ -572,40 +572,77 @@ class CommandRunner(icommandrunner.ICommandRunner):
         # so bounding just this method's body would release the semaphore
         # almost instantly and fail to bound how many subprocesses are alive
         # at once, which is what actually causes resource contention.
-        await self._process_slots.acquire()
+        lease_id = await self._process_slots.acquire()
         if self._local_cap is not None:
             await self._local_cap.acquire()
         owns_process_group = new_process_group and _POSIX
         try:
-            async_subprocess = await asyncio.create_subprocess_exec(
-                *argv,
-                stdin=asyncio.subprocess.PIPE,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                cwd=cwd,
-                env=env,
-                limit=_STREAM_LINE_LIMIT,
-                start_new_session=owns_process_group,
-            )
+            process = await self._spawn(argv, cwd, env, owns_process_group)
         except BaseException:
             if self._local_cap is not None:
                 self._local_cap.release()
-            await self._process_slots.release()
+            await self._process_slots.release(lease_id)
             raise
-        release_task = asyncio.create_task(self._release_when_done(async_subprocess))
+        release_task = asyncio.create_task(
+            self._release_when_done(process.async_subprocess, lease_id)
+        )
         self._release_tasks.add(release_task)
         release_task.add_done_callback(self._release_tasks.discard)
+        return process
+
+    async def start_long_running(
+        self,
+        cmd: icommandrunner.Argv,
+        cwd: Path | None = None,
+        env: dict[str, str] | None = None,
+        new_process_group: bool = False,
+    ) -> icommandrunner.IAsyncProcess:
+        """Same contract as `run`, for a process whose lifetime is not a unit of
+        work (a server, an interactive agent). Takes no work slot and no local
+        cap. CPU-heavy requests sent to it take IWorkSlots.acquire()."""
+        argv = _prepare_argv(
+            cmd,
+            env,
+            platform=sys.platform,
+            which=shutil.which,
+        )
+        log_msg = f"Async subprocess run: {argv!r}"
+        if cwd is not None:
+            log_msg += f" in {cwd}"
+        self.logger.debug(log_msg)
+        owns_process_group = new_process_group and _POSIX
+        return await self._spawn(argv, cwd, env, owns_process_group)
+
+    async def _spawn(
+        self,
+        argv: list[str],
+        cwd: Path | None,
+        env: dict[str, str] | None,
+        owns_process_group: bool,
+    ) -> AsyncProcess:
+        async_subprocess = await asyncio.create_subprocess_exec(
+            *argv,
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            cwd=cwd,
+            env=env,
+            limit=_STREAM_LINE_LIMIT,
+            start_new_session=owns_process_group,
+        )
         return AsyncProcess(
             async_subprocess=async_subprocess, owns_process_group=owns_process_group
         )
 
-    async def _release_when_done(self, proc: asyncio.subprocess.Process) -> None:
+    async def _release_when_done(
+        self, proc: asyncio.subprocess.Process, lease_id: str | None
+    ) -> None:
         try:
             await proc.wait()
         finally:
             if self._local_cap is not None:
                 self._local_cap.release()
-            await self._process_slots.release()
+            await self._process_slots.release(lease_id)
 
     def run_sync(
         self,

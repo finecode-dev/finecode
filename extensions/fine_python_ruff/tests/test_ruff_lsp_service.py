@@ -10,7 +10,9 @@ them have contributed.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import typing
+from collections.abc import AsyncGenerator
 
 from finecode_extension_api import code_action
 
@@ -41,6 +43,12 @@ class _StubLspService:
         self.starts += 1
 
 
+class _NoopWorkSlots:
+    @contextlib.asynccontextmanager
+    async def acquire(self) -> AsyncGenerator[None, None]:
+        yield
+
+
 class _CollectingLogger:
     def __init__(self) -> None:
         self.warnings: list[str] = []
@@ -63,6 +71,7 @@ def _service() -> tuple[RuffLspService, _StubLspService, _CollectingLogger]:
         lsp_client=typing.cast(typing.Any, object()),
         file_editor=typing.cast(typing.Any, object()),
         logger=typing.cast(typing.Any, logger),
+        work_slots=_NoopWorkSlots(),
     )
     stub = _StubLspService()
     service._lsp_service = typing.cast(typing.Any, stub)

@@ -23,6 +23,7 @@ from finecode_extension_api.interfaces import (
     ifileeditor,
     ilogger,
     ilspclient,
+    iworkslots,
 )
 
 _PYREFLY_CLIENT_CAPABILITIES: dict[str, Any] = {
@@ -78,12 +79,14 @@ class PyreflyLspService(service.DisposableService):
         file_editor: ifileeditor.IFileEditor,
         logger: ilogger.ILogger,
         extension_runner_info_provider: iextensionrunnerinfoprovider.IExtensionRunnerInfoProvider,
+        work_slots: iworkslots.IWorkSlots,
     ) -> None:
         pyrefly_bin = Path(sys.executable).parent / "pyrefly"
         self._lsp_service = LspService(
             lsp_client=lsp_client,
             file_editor=file_editor,
             logger=logger,
+            work_slots=work_slots,
             cmd=[str(pyrefly_bin), "lsp"],
             language_id="python",
             readable_id="pyrefly-lsp",

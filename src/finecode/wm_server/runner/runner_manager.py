@@ -290,34 +290,36 @@ async def _apply_workspace_edit(
     return await bridge.apply_workspace_edit(params)
 
 
-def resolve_lease_terms(
+async def lease_for_runner(
     ws_context: context.WorkspaceContext,
-    *,
-    requested: int,
-    nested: bool,
-    run_id: str | None,
-) -> tuple[int, bool]:
-    """(requested, nested) for a lease, after the run's declared RunBudget (ADR-0094).
-
-    A dispatch may declare how the process budget should treat its leases —
-    ``waits`` overrides the ER's nesting flag and ``max_slots`` caps the
-    requested width. An unknown run, or one dispatched without a run id, keeps
-    the ER's own values. The run is found by scanning the in-flight entries for
-    its id rather than by the runner's project path, so a project-key mismatch
-    cannot silently miss it.
-    """
-    if run_id is not None:
+    runner: runner_client.ExtensionRunnerInfo,
+    params: _internal_client_types.LeaseProcessBudgetParams,
+) -> _internal_client_types.LeaseProcessBudgetResult:
+    """Lease process-budget slots for one unit of work in this ER (ADR-0090)."""
+    lease = await ws_context.process_budget.lease(
+        runner_id=runner.readable_id,
+        requested=params.requested,
+        nested=params.nested,
+    )
+    action: object = "?"
+    project: object = "?"
+    if params.run_id is not None:
         for runs in ws_context.in_flight_runs.values():
-            run = runs.get(run_id)
+            run = runs.get(params.run_id)
             if run is None:
                 continue
-            budget = run.budget
-            if budget.waits is not None:
-                nested = not budget.waits
-            if budget.max_slots is not None:
-                requested = min(requested, budget.max_slots)
+            action = run.action_name
+            project = run.project_path
             break
-    return requested, nested
+    logger.debug(
+        f"Process budget lease run={params.run_id} action={action} "
+        f"project={project} requested={params.requested} nested={params.nested} "
+        f"granted={lease.granted} "
+        f"in_use={ws_context.process_budget.granted}/{ws_context.process_budget.size}"
+    )
+    return _internal_client_types.LeaseProcessBudgetResult(
+        lease_id=lease.lease_id, granted=lease.granted
+    )
 
 
 async def _start_extension_runner_process(
@@ -766,23 +768,8 @@ async def _start_extension_runner_process(
     async def handle_lease_process_budget(
         params: _internal_client_types.LeaseProcessBudgetParams,
     ) -> _internal_client_types.LeaseProcessBudgetResult:
-        """Lease process-budget slots for one action run in this ER (ADR-0090)."""
-        requested, nested = resolve_lease_terms(
-            ws_context,
-            requested=params.requested,
-            nested=params.nested,
-            run_id=params.run_id,
-        )
-        lease = await ws_context.process_budget.lease(
-            runner_id=runner.readable_id,
-            requested=requested,
-            nested=nested,
-        )
-        target = ws_context.process_budget.target_for_runner(runner.readable_id)
-        await runner_client.update_process_budget(runner=runner, target=target)
-        return _internal_client_types.LeaseProcessBudgetResult(
-            lease_id=lease.lease_id, granted=lease.granted
-        )
+        """Lease process-budget slots for one unit of work in this ER (ADR-0090)."""
+        return await lease_for_runner(ws_context, runner, params)
 
     _register(
         _internal_client_types.LEASE_PROCESS_BUDGET,
@@ -792,10 +779,8 @@ async def _start_extension_runner_process(
     async def handle_release_process_budget(
         params: _internal_client_types.ReleaseProcessBudgetParams,
     ) -> _internal_client_types.ReleaseProcessBudgetResult:
-        """Release one action run's process-budget lease (ADR-0090)."""
+        """Release one unit of work's process-budget lease (ADR-0090)."""
         await ws_context.process_budget.release(params.lease_id)
-        target = ws_context.process_budget.target_for_runner(runner.readable_id)
-        await runner_client.update_process_budget(runner=runner, target=target)
         return _internal_client_types.ReleaseProcessBudgetResult()
 
     _register(

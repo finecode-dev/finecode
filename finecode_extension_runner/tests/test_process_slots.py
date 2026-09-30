@@ -8,7 +8,10 @@ must let waiters through when the target grows.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import sys
+
+from loguru import logger
 
 from finecode_extension_runner.impls.command_runner import (
     CommandRunner,
@@ -31,52 +34,6 @@ class _NoopLogger:
 
 def _identity(value: int) -> int:
     return value
-
-
-async def test_growing_target_releases_waiters() -> None:
-    """A budget top-up must let queued work start, not leave it sleeping."""
-    gate = ProcessSlots(target=1)
-    await gate.acquire()
-
-    waiter1 = asyncio.create_task(gate.acquire())
-    waiter2 = asyncio.create_task(gate.acquire())
-    await asyncio.sleep(0)
-    assert not waiter1.done()
-    assert not waiter2.done()
-
-    await gate.set_target(3)
-    await asyncio.wait_for(waiter1, timeout=1)
-    await asyncio.wait_for(waiter2, timeout=1)
-    assert gate.in_flight == 3
-
-    await gate.release()
-    await gate.release()
-    await gate.release()
-
-
-async def test_shrinking_target_blocks_new_grants_without_revoking_held_ones() -> None:
-    """A shrunken budget must not yank slots out from under running work; it
-    only stops new work from starting until the held slots drain naturally.
-    """
-    gate = ProcessSlots(target=3)
-    await gate.acquire()
-    await gate.acquire()
-
-    await gate.set_target(1)
-    assert gate.in_flight == 2  # held slots survive the shrink
-
-    waiter = asyncio.create_task(gate.acquire())
-    await asyncio.sleep(0)
-    assert not waiter.done()
-
-    await gate.release()
-    await asyncio.sleep(0)
-    assert not waiter.done()  # still over target: 1 held, target 1
-
-    await gate.release()
-    await asyncio.wait_for(waiter, timeout=1)
-    assert gate.in_flight == 1
-    await gate.release()
 
 
 async def test_command_runner_and_process_executor_share_one_gate() -> None:
@@ -124,4 +81,189 @@ async def test_command_runner_releases_slot_when_process_exits() -> None:
         if gate.in_flight == 0:
             break
         await asyncio.sleep(0.01)
+    assert gate.in_flight == 0
+
+
+class _ImmediateBackend:
+    """A WM backend granting every lease at once, recording both directions."""
+
+    def __init__(self) -> None:
+        self.leases: list[str] = []
+        self.releases: list[str] = []
+        self._counter = 0
+
+    async def lease(self) -> str:
+        self._counter += 1
+        lease_id = f"lease-{self._counter}"
+        self.leases.append(lease_id)
+        return lease_id
+
+    async def release(self, lease_id: str) -> None:
+        self.releases.append(lease_id)
+
+
+class _Warnings:
+    def __init__(self) -> None:
+        self.messages: list[str] = []
+
+    def __call__(self, message: object) -> None:
+        self.messages.append(str(message))
+
+
+async def test_acquire_returns_its_lease_and_release_returns_it() -> None:
+    """Each holder hands back exactly the lease it was given."""
+    gate = ProcessSlots(target=8)
+    backend = _ImmediateBackend()
+    gate.attach_budget(backend.lease, backend.release)
+
+    lease_id = await gate.acquire()
+    assert lease_id == "lease-1"
+    assert backend.leases == ["lease-1"]
+
+    await gate.release(lease_id)
+    assert backend.releases == ["lease-1"]
+    assert gate.in_flight == 0
+
+
+async def test_overlapping_acquires_keep_their_own_ids() -> None:
+    """Releases carry their own acquire's id even when they overlap."""
+    gate = ProcessSlots(target=8)
+    backend = _ImmediateBackend()
+    gate.attach_budget(backend.lease, backend.release)
+
+    first = await gate.acquire()
+    second = await gate.acquire()
+    await gate.release(first)
+    await gate.release(second)
+    assert backend.releases == [first, second]
+    assert gate.in_flight == 0
+
+
+async def test_backend_cap_bounds_concurrent_work() -> None:
+    """A backend granting one at a time serializes work the local gate allows."""
+    gate = ProcessSlots(target=8)
+    capacity = asyncio.Semaphore(1)
+    releases: list[str] = []
+    counter = 0
+    active = 0
+    peak = 0
+
+    async def lease() -> str:
+        nonlocal counter
+        await capacity.acquire()
+        counter += 1
+        return f"lease-{counter}"
+
+    async def release(lease_id: str) -> None:
+        releases.append(lease_id)
+        capacity.release()
+
+    gate.attach_budget(lease, release)
+
+    async def _unit() -> None:
+        nonlocal active, peak
+        lease_id = await gate.acquire()
+        active += 1
+        peak = max(peak, active)
+        await asyncio.sleep(0.01)
+        active -= 1
+        await gate.release(lease_id)
+
+    await asyncio.gather(*(_unit() for _ in range(4)))
+    assert peak == 1
+    assert sorted(releases) == [f"lease-{n}" for n in range(1, 5)]
+    assert gate.in_flight == 0
+
+
+async def test_failed_lease_keeps_the_local_slot() -> None:
+    """A throttle never refuses work: a failed lease still runs locally."""
+    gate = ProcessSlots(target=8)
+
+    async def lease() -> str:
+        raise RuntimeError("WM unreachable")
+
+    releases: list[str] = []
+
+    async def release(lease_id: str) -> None:
+        releases.append(lease_id)
+
+    gate.attach_budget(lease, release)
+    warnings = _Warnings()
+    sink = logger.add(warnings)
+    try:
+        assert await gate.acquire() is None
+    finally:
+        logger.remove(sink)
+    assert sum("Process budget lease failed" in m for m in warnings.messages) == 1
+    assert gate.in_flight == 1
+
+    await gate.release(None)
+    assert releases == []
+    assert gate.in_flight == 0
+
+
+async def test_cancelled_acquire_returns_its_grant() -> None:
+    """A grant landing after its acquire was cancelled is still released."""
+    gate = ProcessSlots(target=8)
+    pending: list[asyncio.Future[str]] = []
+    releases: list[str] = []
+
+    async def lease() -> str:
+        future: asyncio.Future[str] = asyncio.get_running_loop().create_future()
+        pending.append(future)
+        return await future
+
+    async def release(lease_id: str) -> None:
+        releases.append(lease_id)
+
+    gate.attach_budget(lease, release)
+
+    task = asyncio.create_task(gate.acquire())
+    await asyncio.sleep(0.05)
+    assert gate.in_flight == 1
+    task.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await task
+    for _ in range(100):
+        if gate.in_flight == 0:
+            break
+        await asyncio.sleep(0.01)
+    assert gate.in_flight == 0
+
+    pending[0].set_result("late-grant")
+    for _ in range(100):
+        if releases == ["late-grant"]:
+            break
+        await asyncio.sleep(0.01)
+    assert releases == ["late-grant"]
+
+    pending_future = gate.acquire()
+    second = asyncio.create_task(pending_future)
+    await asyncio.sleep(0.05)
+    pending[1].set_result("next-grant")
+    assert await asyncio.wait_for(second, timeout=5) == "next-grant"
+    await gate.release("next-grant")
+    assert releases == ["late-grant", "next-grant"]
+    assert gate.in_flight == 0
+
+
+async def test_failed_release_warns_but_returns_the_slot() -> None:
+    """A release the WM never acknowledges must still free local capacity."""
+    gate = ProcessSlots(target=1)
+    backend = _ImmediateBackend()
+
+    async def release(lease_id: str) -> None:
+        backend.releases.append(lease_id)
+        raise RuntimeError("WM unreachable")
+
+    gate.attach_budget(backend.lease, release)
+    lease_id = await gate.acquire()
+
+    warnings = _Warnings()
+    sink = logger.add(warnings)
+    try:
+        await gate.release(lease_id)
+    finally:
+        logger.remove(sink)
+    assert sum("Process budget release failed" in m for m in warnings.messages) == 1
     assert gate.in_flight == 0

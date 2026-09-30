@@ -17,7 +17,12 @@ from fine_semantic_tokens.text_document_semantic_tokens_action import (
 )
 from finecode_extension_api import service
 from finecode_extension_api.contrib.lsp_service import LspService, apply_text_edits
-from finecode_extension_api.interfaces import ifileeditor, ilogger, ilspclient
+from finecode_extension_api.interfaces import (
+    ifileeditor,
+    ilogger,
+    ilspclient,
+    iworkslots,
+)
 
 _TOMBI_CLIENT_CAPABILITIES: dict[str, Any] = {
     "textDocument": {
@@ -56,12 +61,14 @@ class TombiLspService(service.DisposableService):
         lsp_client: ilspclient.ILspClient,
         file_editor: ifileeditor.IFileEditor,
         logger: ilogger.ILogger,
+        work_slots: iworkslots.IWorkSlots,
     ) -> None:
         tombi_bin = Path(sys.executable).parent / "tombi"
         self._lsp_service = LspService(
             lsp_client=lsp_client,
             file_editor=file_editor,
             logger=logger,
+            work_slots=work_slots,
             # Without this tombi resolves dependency names over the network (e.g.
             # against PyPI) while analyzing a pyproject.toml, on top of its local
             # schema cache. No action here consumes live dependency data, so the

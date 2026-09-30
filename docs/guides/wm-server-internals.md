@@ -418,10 +418,10 @@ The total is `FINECODE_MAX_CONCURRENT_PROCESSES` if set, otherwise `machine_subp
 entry: it is a property of the machine, and it protects the WM server's whole lifetime. The
 resolved total and both derived caps are logged at INFO once, at construction. See ADR-0093.
 
-On a host whose split lands on `work_cap = 1` (e.g. 3 CPUs: startup 1 / work 1), ADR-0094's stall
-escape routinely runs one slot over budget while a test takes longer than the 30 s no-progress
-window — effective work concurrency ≈ 2, so startup + work reaches 3 > T. This is a known
-small-host overshoot of ADR-0093's invariant, caused by the escape itself, not a fault.
+On a host whose split lands on `work_cap = 1` (e.g. 3 CPUs: startup 1 / work 1), the stall
+escape can grant one slot over budget when nothing moves for 30 s — so `granted ≤ work_cap + 1`.
+This is the whole overshoot: every lease is one non-nested unit of work (ADR-0102), and the
+escape is the only path above the budget.
 
 ### ER startup concurrency
 
@@ -434,7 +434,9 @@ once, across every trigger (workspace init fanning out across projects, a matrix
 out across interpreter children, the lazy env wave inside `run_tests`, and `prepare-envs`' own
 runner-start step), since they all call through `_start_runner`. The slot is released before the
 first action dispatch: action execution stays outside the gate, a separate and far more variable
-resource cost than the burst this cap targets.
+resource cost than the burst this cap targets. `_start_runner` records the runner as INITIALIZING
+before acquiring the startup slot, so a `starting=N` count in a lag line is mostly requests queued
+on the semaphore, not processes.
 
 An ER that starts while its runner is INITIALIZING can send a back-channel request that waits on
 another runner, the process budget, knowledge extraction or a human, and answering it requires
@@ -488,39 +490,27 @@ collapses or swallows it. See ADR-0097 and ADR-0100.
 The WM owns a single machine-wide budget of subprocess *work slots*,
 `services/process_budget.py:ProcessBudget`, sized as the work half of the combined budget above
 (`total − startup_cap`). ERs lease
-slots from it once per action run (over `finecode/leaseProcessBudget` / `finecode/releaseProcessBudget`)
-and the WM pushes each ER's granted quota down as a gate target
-(`finecodeRunner/updateProcessBudget`). Inside an ER, `CommandRunner` and `ProcessExecutor` draw
-from that one gate (`finecode_extension_runner/process_slots.py`), so project fan-out, the
-interpreter matrix, and `prepare-envs` all lead to the same three leaves and the same one bound.
+slots from it per unit of work (over `finecode/leaseProcessBudget` / `finecode/releaseProcessBudget`):
+one per bounded subprocess (`ICommandRunner.run`), one per `IProcessExecutor` task, and one per
+explicit `IWorkSlots.acquire()` scope. A run that spawns nothing holds nothing. There is no target
+push — each ER's gate is a fixed per-ER ceiling, and every acquire owns exactly the WM lease it
+returns, which keeps the stall-escape latch attached to the process that actually holds it.
 
-The ER flags a lease *nested* when its run arrived at orchestration depth > 0. Every
-non-streaming dispatch arrives at depth ≥ 1, so almost every ER lease is nested. Only streaming
-client runs, the WM's own env checks, and runs whose dispatch declares `RunBudget(waits=True)`
-wait for a slot.
-
-Leases that wait are held to the budget plus at most one stall-escape slot; leases that do not
-wait take at least one slot each, so their total is the budget or the number of active
-non-waiting runs, whichever is greater. Recursion depth bounds a chain's *height*, not a
-fan-out's *width*. See ADR-0090 and ADR-0094.
-
-That non-waiting escape is load-bearing: auto-prepare (`install_env_for_project`) runs *inside*
-an already-dispatched run, as a root, and would deadlock waiting on slots its own ancestor holds
-if its leases were classified as nested.
+Leases never wait on another run by construction: parents hold no slots, so a child always has
+something to run in. The `nested` escape is dead code — no ER sends a nested lease any more
+(removal: issue 65).
 
 A waiting lease that has seen no budget movement for `STALL_ESCAPE_SEC` (30 s) is granted one
 slot over the budget, with a WARNING naming the waiting runner, how long it waited and the
-current holders. At most one stall escape is outstanding at a time, so a stalled budget drifts
-by at most one slot; nested leases never reach the wait path.
+current holders. At most one stall escape is outstanding at a time, so `granted ≤ work_cap + 1`.
+See ADR-0090 and ADR-0102.
 
-A dispatch may declare a `RunBudget` (`domain.py`): `waits` overrides the ER's nesting flag and
-`max_slots` caps the requested width. It is recorded on the run's in-flight entry, which the
-lease handler looks up by the ER's run id, and declared at dispatch — the same action run from
-elsewhere keeps the ER's own request. `prepare-envs` steps 5 and 6 use it: each project's
-`create_envs` / `install_envs` run waits for `max(1, work_cap // project_count)` slots, so about
-`work_cap` projects build envs at once while a single project still gets the whole work cap.
-Back-channel project dispatches declare `RunBudget(waits=False)`, because a streaming child
-arrives at depth 0 and would otherwise wait while its parent holds slots.
+A cancelled or failing acquire leaks nothing: the local slot is returned at once and a grant
+already on the wire is released by a background cleanup, while a failed lease keeps the local
+slot and runs locally — a throttle never refuses work.
+
+Every lease is logged at DEBUG (`Process budget lease run=… action=… project=… requested=…
+nested=… granted=… in_use=…`), naming the run that holds it, so a stuck slot has an owner.
 
 The WM leases from the same budget for subprocess work of its own: each env version check
 (`runner_manager.check_runner_within_budget`, used by `prepare-envs` and `runners/checkEnv`)

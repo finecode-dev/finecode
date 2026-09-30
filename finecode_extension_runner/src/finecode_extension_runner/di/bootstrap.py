@@ -23,13 +23,20 @@ from finecode_extension_api.interfaces import (  # idevenvinfoprovider,
     iprojectinfoprovider,
     iuser_messenger,
     iuserprompt,
+    iworkslots,
     iworkspaceactionregistry,
     iworkspaceactionrunner,
     iworkspaceinfoprovider,
 )
 from loguru import logger
 
-from finecode_extension_runner import context, domain, process_slots, service_config
+from finecode_extension_runner import (
+    context,
+    domain,
+    process_slots,
+    service_config,
+    work_slots,
+)
 from finecode_extension_runner._services import run_action as run_action_service
 from finecode_extension_runner.di.registry import Registry
 from finecode_extension_runner.impls import (  # dev_env_info_provider,
@@ -129,6 +136,10 @@ def bootstrap(
     # process-wide singleton, registered fresh into each new registry.
     registry.register_instance(
         process_slots.ProcessSlots, process_slots.get_process_slots()
+    )
+    registry.register_instance(
+        iworkslots.IWorkSlots,
+        work_slots.WorkSlots(process_slots.get_process_slots()),
     )
     _send_user_message = send_user_message_notification or (lambda msg, level: None)
     registry.register_instance(

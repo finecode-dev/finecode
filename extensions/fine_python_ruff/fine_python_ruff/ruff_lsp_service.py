@@ -17,7 +17,12 @@ from fine_lint.diagnostic_types import Diagnostic
 from fine_lint.lint_fix import Position, Range
 from finecode_extension_api import code_action, service
 from finecode_extension_api.contrib.lsp_service import LspService, apply_text_edits
-from finecode_extension_api.interfaces import ifileeditor, ilogger, ilspclient
+from finecode_extension_api.interfaces import (
+    ifileeditor,
+    ilogger,
+    ilspclient,
+    iworkslots,
+)
 
 SettingsProvider = collections.abc.Callable[
     [code_action.RunActionMeta],
@@ -158,6 +163,7 @@ class RuffLspService(service.DisposableService):
         lsp_client: ilspclient.ILspClient,
         file_editor: ifileeditor.IFileEditor,
         logger: ilogger.ILogger,
+        work_slots: iworkslots.IWorkSlots,
     ) -> None:
         ruff_bin = Path(sys.executable).parent / "ruff"
         self._logger = logger
@@ -165,6 +171,7 @@ class RuffLspService(service.DisposableService):
             lsp_client=lsp_client,
             file_editor=file_editor,
             logger=logger,
+            work_slots=work_slots,
             cmd=[str(ruff_bin), "server"],
             language_id="python",
             readable_id="ruff-lsp",

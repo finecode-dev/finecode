@@ -11,7 +11,8 @@ These services are registered by the Extension Runner at startup and are availab
 | Interface | Default implementation | Notes |
 | --- | --- | --- |
 | `finecode_extension_api.interfaces.ilogger.ILogger` | `loguru.logger` via `finecode_extension_runner.impls.loguru_logger.get_logger` | Logging (trace/debug/info/warn/error/exception). |
-| `finecode_extension_api.interfaces.icommandrunner.ICommandRunner` | `finecode_extension_runner.impls.command_runner.CommandRunner` | Async and sync subprocess execution. |
+| `finecode_extension_api.interfaces.icommandrunner.ICommandRunner` | `finecode_extension_runner.impls.command_runner.CommandRunner` | Async and sync subprocess execution, plus long-lived processes via `start_long_running`. |
+| `finecode_extension_api.interfaces.iworkslots.IWorkSlots` | `finecode_extension_runner.work_slots.WorkSlots` | Explicit work-slot scope for CPU-heavy work sent to a long-lived process. |
 | `finecode_extension_api.interfaces.ifilemanager.IFileManager` | `finecode_extension_runner.impls.file_manager.FileManager` | File system IO abstraction (read/write/list/create/delete). |
 | `finecode_extension_api.interfaces.ifileeditor.IFileEditor` | `finecode_extension_runner.impls.file_editor.FileEditor` | Open-file tracking, change subscriptions, read/write with editor awareness. |
 | `finecode_extension_api.interfaces.icache.ICache` | `finecode_extension_runner.impls.inmemory_cache.InMemoryCache` | In-memory, file-versioned cache. |
@@ -185,6 +186,16 @@ Two things are easy to get wrong here:
 The subprocess slot the process holds (ADR-0056) is released when the process
 actually exits, not when the handler returns — which is why a teardown that stops
 one rung early leaks a slot for the ER's lifetime.
+
+## Work slots
+
+Extension code has three explicit ways to do work, each with fixed slot semantics:
+
+- **Bounded job** — `ICommandRunner.run()` holds one work slot for the process lifetime.
+- **Long-lived process** — `ICommandRunner.start_long_running()` takes no work slot and no local cap. Use it for a server or an interactive agent whose lifetime is not a unit of work.
+- **Explicit scope** — `IWorkSlots.acquire()` holds one slot while the block causes CPU-heavy work it does not run as its own bounded child process, typically a request to a long-lived local server.
+
+Inside an `IWorkSlots.acquire()` block, starting a bounded process, submitting to `IProcessExecutor`, acquiring another slot, dispatching an action, or asking the WM anything through an injected service raises `WorkSlotScopeError`: each of those can wait on the slot the block holds. Keep the block to the work itself; a wait that is not the work belongs outside it.
 
 ## Caching with `ICache`
 

@@ -16,7 +16,12 @@ else:
     from typing_extensions import override
 
 from finecode_extension_api import service
-from finecode_extension_api.interfaces import ifileeditor, ilogger, ilspclient
+from finecode_extension_api.interfaces import (
+    ifileeditor,
+    ilogger,
+    ilspclient,
+    iworkslots,
+)
 from finecode_extension_api.resource_uri import resource_uri_to_path
 
 # JSON-RPC "RequestCancelled" code
@@ -92,6 +97,7 @@ class LspService(service.DisposableService):
         client_capabilities: dict[str, Any] | None = None,
         max_concurrent_requests: int | None = None,
         empty_diagnostics_settle_sec: float = 1.0,
+        work_slots: iworkslots.IWorkSlots | None,
     ) -> None:
         # A str satisfies Sequence[str], so the type checker cannot reject it —
         # and tuple(cmd) would silently explode "ruff server" into characters.
@@ -119,6 +125,10 @@ class LspService(service.DisposableService):
         # reliably, which is the argument for pull diagnostics rather than for
         # a better guess here.
         self._empty_diagnostics_settle_sec = empty_diagnostics_settle_sec
+        # Whether this server's analysis runs locally. A local server's work
+        # loads this machine, so analysis takes a work slot; a remote one
+        # does not. Required with no default so the choice is deliberate.
+        self._work_slots = work_slots
         # LSP leaves parallel request execution to the server's discretion: a
         # server may answer requests concurrently and out of order, or process
         # them strictly one at a time. Nothing in the protocol obliges it to stay
@@ -338,6 +348,12 @@ class LspService(service.DisposableService):
 
         async with self._request_semaphore:
             yield
+
+    def _work_slot(self) -> collections.abc.AsyncContextManager[None]:
+        """One machine work slot for local-server analysis, or nothing remote."""
+        if self._work_slots is None:
+            return contextlib.nullcontext()
+        return self._work_slots.acquire()
 
     async def request(
         self,
@@ -638,6 +654,34 @@ class LspService(service.DisposableService):
         assert event is not None, "push path requires a registered waiter"
         return await self._await_diagnostics(uri, event, document_synced, timeout)
 
+    async def _await_first_publish(
+        self, uri: str, event: threading.Event, timeout: float
+    ) -> bool:
+        """Wait for the first publish after a sync; True when one arrived."""
+        was_set = await asyncio.to_thread(event.wait, timeout)
+        if not was_set:
+            self._logger.warning(f"Timeout waiting for LSP diagnostics for {uri}")
+        return was_set
+
+    async def _settle_after_publish(
+        self, uri: str, event: threading.Event, was_set: bool
+    ) -> list[dict[str, Any]]:
+        """Wait out the empty-ack settle window when needed; return current data."""
+        if (
+            was_set
+            and not self._diagnostics_data.get(uri)
+            and self._empty_diagnostics_settle_sec > 0
+        ):
+            # Got empty initial diagnostics; some servers (e.g. pyrefly) send
+            # an empty ack first, then the real diagnostics after analysis.
+            # Wait a short settle time for follow-up notifications. A clean file
+            # is indistinguishable from an ack here, so this is paid for every
+            # clean file -- see `empty_diagnostics_settle_sec`.
+            event.clear()
+            await asyncio.to_thread(event.wait, self._empty_diagnostics_settle_sec)
+
+        return self._diagnostics_data.get(uri, [])
+
     async def _await_diagnostics(
         self,
         uri: str,
@@ -662,22 +706,36 @@ class LspService(service.DisposableService):
             # whatever it has to say about it; there is no new notification coming.
             return self._diagnostics_data.get(uri, [])
 
-        was_set = await asyncio.to_thread(event.wait, timeout)
-        if not was_set:
-            self._logger.warning(f"Timeout waiting for LSP diagnostics for {uri}")
-        elif (
-            not self._diagnostics_data.get(uri)
-            and self._empty_diagnostics_settle_sec > 0
-        ):
-            # Got empty initial diagnostics; some servers (e.g. pyrefly) send
-            # an empty ack first, then the real diagnostics after analysis.
-            # Wait a short settle time for follow-up notifications. A clean file
-            # is indistinguishable from an ack here, so this is paid for every
-            # clean file -- see `empty_diagnostics_settle_sec`.
-            event.clear()
-            await asyncio.to_thread(event.wait, self._empty_diagnostics_settle_sec)
+        was_set = await self._await_first_publish(uri, event, timeout)
+        return await self._settle_after_publish(uri, event, was_set)
 
-        return self._diagnostics_data.get(uri, [])
+    @contextlib.asynccontextmanager
+    async def _synced_diagnostics(
+        self, file_path: Path, uri: str, content: str, timeout: float
+    ) -> collections.abc.AsyncIterator[list[dict[str, Any]]]:
+        """Hold one work slot from the document sync until the server's first answer.
+
+        Yields the document's diagnostics with the document still open. The slot
+        is released before yielding: the settle wait, the close, and whatever the
+        caller does inside the block all run without it.
+        """
+        with self._diagnostics_interest(uri) as event:
+            async with contextlib.AsyncExitStack() as work_stack:
+                await work_stack.enter_async_context(self._work_slot())
+                async with self._document_open(file_path, uri, content) as synced:
+                    if self._supports_pull_diagnostics:
+                        diagnostics = await self._pull_diagnostics(uri, timeout)
+                        await work_stack.aclose()
+                        yield diagnostics
+                        return
+                    if not synced:
+                        await work_stack.aclose()
+                        yield self._diagnostics_data.get(uri, [])
+                        return
+                    assert event is not None, "push path requires a registered waiter"
+                    was_set = await self._await_first_publish(uri, event, timeout)
+                    await work_stack.aclose()
+                    yield await self._settle_after_publish(uri, event, was_set)
 
     async def check_file(
         self,
@@ -695,9 +753,10 @@ class LspService(service.DisposableService):
         ):
             content = file_info.content
 
-        with self._diagnostics_interest(uri) as event:
-            async with self._document_open(file_path, uri, content) as synced:
-                return await self._collect_diagnostics(uri, event, synced, timeout)
+        async with self._synced_diagnostics(
+            file_path, uri, content, timeout
+        ) as diagnostics:
+            return diagnostics
 
     async def sync_watched_files(
         self, file_paths: collections.abc.Sequence[Path], recheck_timeout: float
@@ -834,29 +893,26 @@ class LspService(service.DisposableService):
 
         uri = file_path.as_uri()
 
-        with self._diagnostics_interest(uri) as event:
-            async with self._document_open(file_path, uri, content) as synced:
-                diagnostics = await self._collect_diagnostics(
-                    uri, event, synced, diagnostics_timeout
+        async with self._synced_diagnostics(
+            file_path, uri, content, diagnostics_timeout
+        ) as diagnostics:
+            context: dict[str, Any] = {
+                "diagnostics": _select_diagnostics(
+                    diagnostics, range_dict, diagnostic_codes
                 )
+            }
+            if only is not None:
+                context["only"] = only
 
-                context: dict[str, Any] = {
-                    "diagnostics": _select_diagnostics(
-                        diagnostics, range_dict, diagnostic_codes
-                    )
-                }
-                if only is not None:
-                    context["only"] = only
-
-                return await self._send_cancellable_request(
-                    "textDocument/codeAction",
-                    {
-                        "textDocument": {"uri": uri},
-                        "range": range_dict,
-                        "context": context,
-                    },
-                    timeout=timeout,
-                )
+            return await self._send_cancellable_request(
+                "textDocument/codeAction",
+                {
+                    "textDocument": {"uri": uri},
+                    "range": range_dict,
+                    "context": context,
+                },
+                timeout=timeout,
+            )
 
     async def format_file(
         self,

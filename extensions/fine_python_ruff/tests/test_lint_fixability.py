@@ -11,8 +11,10 @@ fixability must not be reported as having no fixes.
 
 from __future__ import annotations
 
+import contextlib
 import pathlib
 import typing
+from collections.abc import AsyncGenerator
 
 from fine_python_ruff.lint_files_handler import map_ruff_violation_to_lint_message
 from fine_python_ruff.ruff_lsp_service import RuffLspService
@@ -40,6 +42,12 @@ def test_a_violation_ruff_cannot_fix_is_reported_as_not_fixable() -> None:
     )
 
 
+class _NoopWorkSlots:
+    @contextlib.asynccontextmanager
+    async def acquire(self) -> AsyncGenerator[None, None]:
+        yield
+
+
 class _StubLspService:
     def __init__(self, diagnostics: list[dict[str, typing.Any]]) -> None:
         self._diagnostics = diagnostics
@@ -55,6 +63,7 @@ def _service(diagnostics: list[dict[str, typing.Any]]) -> RuffLspService:
         lsp_client=typing.cast(typing.Any, object()),
         file_editor=typing.cast(typing.Any, object()),
         logger=typing.cast(typing.Any, object()),
+        work_slots=_NoopWorkSlots(),
     )
     service._lsp_service = typing.cast(typing.Any, _StubLspService(diagnostics))
     return service

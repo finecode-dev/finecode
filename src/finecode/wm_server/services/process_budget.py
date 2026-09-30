@@ -310,11 +310,3 @@ class ProcessBudget:
                 )
             self._condition.notify_all()
         return freed
-
-    def target_for_runner(self, runner_id: str) -> int:
-        """The gate target an ER should use: the sum of its active leases."""
-        return sum(
-            lease.granted
-            for lease_id in self._leases_by_runner.get(runner_id, set())
-            if (lease := self._leases.get(lease_id)) is not None
-        )

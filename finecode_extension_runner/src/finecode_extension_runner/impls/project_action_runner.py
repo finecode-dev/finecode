@@ -18,6 +18,7 @@ from finecode_extension_runner import (
     er_telemetry,
     run_context,
     run_utils,
+    work_slots,
 )
 from finecode_extension_runner._converter import converter as _converter
 from finecode_extension_runner._services.run_action import _serialize_caller_kwargs
@@ -236,6 +237,7 @@ class ProjectActionRunnerImpl(iprojectactionrunner.IProjectActionRunner):
         meta: code_action.RunActionMeta,
         caller_kwargs: code_action.CallerRunContextKwargs | None = None,
     ) -> ResultT:
+        work_slots.ensure_outside_scope(f"dispatching action {action_type.source}")
         payload = self._coerce_payload(action_type, payload)
         action_source = action_type.source
         if action_type.action_type is not None:
@@ -316,6 +318,7 @@ class ProjectActionRunnerImpl(iprojectactionrunner.IProjectActionRunner):
         meta: code_action.RunActionMeta,
         caller_kwargs: code_action.CallerRunContextKwargs | None = None,
     ) -> collections.abc.AsyncIterator[ResultT]:
+        work_slots.ensure_outside_scope(f"dispatching action {action_type.source}")
         global _last_wm_token
 
         payload = self._coerce_payload(action_type, payload)
