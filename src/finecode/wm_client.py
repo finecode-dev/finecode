@@ -22,6 +22,7 @@ from loguru import logger
 
 from finecode.wm_server import wm_lifecycle
 from finecode_extension_runner import schema_utils
+from finecode_jsonrpc import error_codes
 
 CONTENT_LENGTH_HEADER = "Content-Length: "
 
@@ -83,6 +84,16 @@ class ApiServerError(ApiError):
     def __init__(self, code: int, message: str) -> None:
         self.code = code
         super().__init__(f"API error ({code}): {message}")
+
+
+class ApiMethodNotFoundError(ApiServerError):
+    """The server has no such method (JSON-RPC method-not-found).
+
+    Raised when the server answers
+    ``METHOD_NOT_FOUND`` — typically a server that predates the method the
+    caller asked for. A subclass, so existing ``except ApiServerError``
+    handlers keep catching it.
+    """
 
 
 class ApiResponseError(ApiError):
@@ -732,6 +743,20 @@ class ApiClient:
             )
         return result["runners"]
 
+    async def get_resource_usage(
+        self, include_processes: bool = False, lag_window_sec: float | None = None
+    ) -> dict:
+        params: dict = {"includeProcesses": include_processes}
+        if lag_window_sec is not None:
+            params["lagWindowSec"] = lag_window_sec
+        result = await self.request("server/getResourceUsage", params)
+        if not isinstance(result, dict) or "timestamp" not in result:
+            raise ApiResponseError(
+                "server/getResourceUsage",
+                f"missing 'timestamp' field, got {result!r}",
+            )
+        return result
+
     async def reload_config(
         self,
         project: str | None = None,
@@ -874,7 +899,8 @@ class ApiClient:
         """Send a JSON-RPC request and wait for the response.
 
         Raises:
-            ApiServerError: the server returned a JSON-RPC error.
+            ApiMethodNotFoundError: the server has no such method.
+            ApiServerError: the server returned any other JSON-RPC error.
             ConnectionError: the connection was closed before a response arrived.
         """
         if self._writer is None:
@@ -909,6 +935,8 @@ class ApiClient:
 
         if "error" in response:
             error = response["error"]
+            if error["code"] == error_codes.METHOD_NOT_FOUND:
+                raise ApiMethodNotFoundError(error["code"], error["message"])
             raise ApiServerError(error["code"], error["message"])
 
         return response.get("result")

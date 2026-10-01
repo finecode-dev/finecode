@@ -76,6 +76,19 @@ _META_TOOLS: list[dict] = [
         "inputSchema": {"type": "object", "properties": {}},
     },
     {
+        "name": "get_resource_usage",
+        "description": "Report what the workspace server is doing and what it costs (projects, runners, work/startup slots, in-flight runs, host pressure, peaks). The method itself starts no runner, takes no lease and waits on no lock. Set includeProcesses to also walk every runner's processes: slower, one walk at a time.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "includeProcesses": {
+                    "type": "boolean",
+                    "description": "Include per-process memory footprints.",
+                }
+            },
+        },
+    },
+    {
         "name": "list_actions",
         "description": "List actions available in the workspace, optionally filtered to a single project. Returns action names and which projects expose them.",
         "inputSchema": {
@@ -683,6 +696,12 @@ async def _handle_call_tool(params: dict | None) -> dict:
             return {
                 "content": [{"type": "text", "text": json.dumps({"runners": result})}]
             }
+
+        if name == "get_resource_usage":
+            result = await _wm_client.get_resource_usage(
+                include_processes=bool(arguments.get("includeProcesses", False))
+            )
+            return {"content": [{"type": "text", "text": json.dumps(result)}]}
 
         if name == "list_actions":
             project = arguments.get("project")

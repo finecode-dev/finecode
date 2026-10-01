@@ -29,7 +29,11 @@ import finecode_jsonrpc
 # services/run_service/__init__.py).
 from finecode.wm_server import context, domain
 from finecode.wm_server import testing as wm_testing
-from finecode.wm_server.runner import _internal_client_types, runner_manager
+from finecode.wm_server.runner import (
+    _internal_client_types,
+    runner_counts,
+    runner_manager,
+)
 from finecode.wm_server.services import (
     run_service as _run_service_install,  # noqa: F401
 )
@@ -201,6 +205,105 @@ async def test_startup_slot_cancel_while_acquiring_holds_no_slot() -> None:
     assert semaphore._value == 0  # the queued acquire never took a slot
     await holder.__aexit__(None, None, None)
     assert semaphore._value == 1
+
+
+async def test_startup_slot_queued_sets_flag_and_calls_hook(tmp_path) -> None:
+    """A start that queues for the cap must be visible as waiting.
+
+    The snapshot reports startup pressure from the flag, so a queued start
+    that never sets it would hide the queue an operator is trying to see.
+    """
+    semaphore = asyncio.Semaphore(1)
+    holder = runner_manager._StartupSlot(semaphore)
+    await holder.__aenter__()
+    try:
+        runner = wm_testing.make_initializing_runner(
+            working_dir_path=tmp_path, env_name="e1"
+        )
+        calls: list[str] = []
+        slot = runner_manager._StartupSlot(
+            semaphore, runner=runner, on_queued=lambda: calls.append("queued")
+        )
+        task = asyncio.create_task(slot.__aenter__())
+        await asyncio.sleep(0)
+        assert runner.awaiting_startup_slot
+        assert calls == ["queued"]
+        await holder.__aexit__(None, None, None)
+        await task
+        assert not runner.awaiting_startup_slot
+        await slot.__aexit__(None, None, None)
+    finally:
+        pass
+
+
+async def test_startup_slot_cancel_while_queued_clears_flag(tmp_path) -> None:
+    """Cancelling a queued start must not leave a stuck waiting flag.
+
+    A leftover flag would report a waiter that no longer exists, the same
+    phantom the budget fix removes for work slots.
+    """
+    semaphore = asyncio.Semaphore(1)
+    holder = runner_manager._StartupSlot(semaphore)
+    await holder.__aenter__()
+    try:
+        runner = wm_testing.make_initializing_runner(
+            working_dir_path=tmp_path, env_name="e1"
+        )
+        slot = runner_manager._StartupSlot(semaphore, runner=runner)
+        task = asyncio.create_task(slot.__aenter__())
+        await asyncio.sleep(0)
+        assert runner.awaiting_startup_slot
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert not runner.awaiting_startup_slot
+    finally:
+        await holder.__aexit__(None, None, None)
+
+
+async def test_startup_slot_raising_hook_takes_no_permit(tmp_path) -> None:
+    """A failing peak hook must not consume the slot or wedge the flag.
+
+    The hook runs before the acquire, so its failure must leave the gate
+    exactly as it found it.
+    """
+    semaphore = asyncio.Semaphore(1)
+    holder = runner_manager._StartupSlot(semaphore)
+    await holder.__aenter__()
+    try:
+        runner = wm_testing.make_initializing_runner(
+            working_dir_path=tmp_path, env_name="e1"
+        )
+
+        def _raise() -> None:
+            raise RuntimeError("hook boom")
+
+        slot = runner_manager._StartupSlot(semaphore, runner=runner, on_queued=_raise)
+        with pytest.raises(RuntimeError, match="hook boom"):
+            await slot.__aenter__()
+        assert not runner.awaiting_startup_slot
+        assert semaphore._value == 0
+    finally:
+        await holder.__aexit__(None, None, None)
+
+
+async def test_startup_slot_free_semaphore_sets_no_flag(tmp_path) -> None:
+    """A start granted at once is not a waiter and calls no hook.
+
+    Counting it would make every uncontended start look like queue pressure.
+    """
+    semaphore = asyncio.Semaphore(1)
+    runner = wm_testing.make_initializing_runner(
+        working_dir_path=tmp_path, env_name="e1"
+    )
+    calls: list[str] = []
+    slot = runner_manager._StartupSlot(
+        semaphore, runner=runner, on_queued=lambda: calls.append("queued")
+    )
+    await slot.__aenter__()
+    assert not runner.awaiting_startup_slot
+    assert calls == []
+    await slot.__aexit__(None, None, None)
 
 
 # --------------------------------------------------------------------------- #
@@ -783,3 +886,95 @@ async def test_preset_resolution_refuses_unconnected_dev_workspace_runner(
             )
         assert "dev_workspace" in str(excinfo.value)
         assert "has not connected yet" in str(excinfo.value)
+
+
+async def test_startup_peak_counts_and_used_waiting(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A startup burst must show in counts while queued and in peaks after.
+
+    While the first start holds the cap, the other two queue: used 1, waiting
+    2. After all reach RUNNING the instantaneous counts drain but the peaks
+    keep the burst an operator missed between polls.
+    """
+    ws_context = context.WorkspaceContext(ws_dirs_paths=[tmp_path])
+    projects = []
+    for i in range(3):
+        project_dir = tmp_path / f"peak_project_{i}"
+        project_dir.mkdir()
+        project = wm_testing.make_single_action_project(
+            dir_path=project_dir, action_name="a", handler_env="e1"
+        )
+        projects.append(project)
+        ws_context.ws_projects[project.dir_path] = project
+        ws_context.ws_projects_raw_configs[project.dir_path] = {}
+    ws_context.runner_io_thread = object()  # type: ignore[assignment]
+
+    await _patch_start_environment(monkeypatch, cap=1, ws_context=ws_context)
+    await _patch_success_init(monkeypatch)
+    _FakeJsonRpcClient.spawn_wait_sec = 0.2
+
+    tasks = [
+        asyncio.create_task(
+            runner_manager._start_runner(
+                project_def=project,
+                env_name="e1",
+                handlers_to_initialize=None,
+                ws_context=ws_context,
+            )
+        )
+        for project in projects
+    ]
+    await asyncio.sleep(0.05)
+    mid = runner_counts.count_runners(ws_context)
+    assert mid.startup_slots_used == 1
+    assert mid.startup_slots_waiting == 2
+
+    await asyncio.gather(*tasks)
+    after = runner_counts.count_runners(ws_context)
+    assert after.startup_slots_used == 0
+    assert after.startup_slots_waiting == 0
+    assert ws_context.resource_peaks.startup_slots_waiting == 2
+    assert ws_context.resource_peaks.runners_starting == 3
+    assert ws_context.resource_peaks.runners_running == 3
+
+
+async def test_cancel_while_queued_clears_awaiting_flag(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A start cancelled while queued must not keep its waiting flag.
+
+    The FAILED runner stays in context for inspection, so a stuck flag would
+    report queue pressure that no longer exists.
+    """
+    ws_context, project = _make_context(tmp_path)
+    await _patch_start_environment(monkeypatch, cap=1, ws_context=ws_context)
+    await _patch_success_init(monkeypatch)
+
+    await ws_context.er_startup_semaphore.acquire()
+
+    task = asyncio.create_task(
+        runner_manager._start_runner(
+            project_def=project,
+            env_name="e1",
+            handlers_to_initialize=None,
+            ws_context=ws_context,
+        )
+    )
+    while "e1" not in ws_context.ws_projects_extension_runners.get(
+        project.dir_path, {}
+    ):
+        await asyncio.sleep(0.01)
+    while True:
+        runner = ws_context.ws_projects_extension_runners[project.dir_path]["e1"]
+        if runner.awaiting_startup_slot:
+            break
+        await asyncio.sleep(0.01)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    ws_context.er_startup_semaphore.release()
+
+    failed = ws_context.ws_projects_extension_runners[project.dir_path]["e1"]
+    assert failed.status == domain.ExtensionRunnerStatus.FAILED
+    assert not failed.awaiting_startup_slot

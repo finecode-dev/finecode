@@ -15,13 +15,15 @@ See ``docs/guides/wm-server-internals.md``, "Event-loop lag monitor".
 from __future__ import annotations
 
 import asyncio
+import collections
 import dataclasses
 import os
 import time
 
 from loguru import logger
 
-from finecode.wm_server import context, domain, host_pressure
+from finecode.wm_server import context, host_pressure
+from finecode.wm_server.runner import runner_counts
 
 try:
     import resource
@@ -29,12 +31,15 @@ except ImportError:  # not available on Windows
     resource = None  # type: ignore[assignment]
 
 __all__ = [
+    "LAG_WINDOW_DEFAULT_SEC",
+    "LAG_WINDOW_MAX_SEC",
     "SAMPLE_INTERVAL_SEC",
     "WARN_COOLDOWN_SEC",
     "WARN_THRESHOLD_SEC",
     "EventLoopLagMonitor",
     "HostLoad",
     "LagContext",
+    "LagSummary",
     "ProcessUsage",
     "read_host_load",
     "read_process_usage",
@@ -49,6 +54,12 @@ WARN_THRESHOLD_SEC = 1.0
 
 WARN_COOLDOWN_SEC = 30.0
 """Minimum spacing between warnings while lag stays over the threshold."""
+
+LAG_WINDOW_DEFAULT_SEC = 30.0
+"""Default window for the recent-lag maximum."""
+
+LAG_WINDOW_MAX_SEC = 600.0
+"""Longest window a caller may ask for; bounds the sample deque."""
 
 
 @dataclasses.dataclass(frozen=True)
@@ -67,6 +78,14 @@ class LagContext:
     budget_granted: int
     budget_total: int
     in_flight_runs: int
+
+
+@dataclasses.dataclass(frozen=True)
+class LagSummary:
+    latest_ms: int | None
+    max_recent_ms: int | None
+    pending_ms: int | None
+    window_sec: float
 
 
 @dataclasses.dataclass(frozen=True)
@@ -142,22 +161,11 @@ def snapshot_context(ws_context: context.WorkspaceContext) -> LagContext:
     Reads only: it never acquires the process budget's condition and never
     leases, so sampling a starved loop cannot itself wait on anything.
     """
-    runners_starting = 0
-    runners_running = 0
-    for runners_by_env in ws_context.ws_projects_extension_runners.values():
-        for runner in runners_by_env.values():
-            if runner.status in (
-                domain.ExtensionRunnerStatus.INITIALIZING,
-                domain.ExtensionRunnerStatus.REPAIRING,
-            ):
-                runners_starting += 1
-            elif runner.status == domain.ExtensionRunnerStatus.RUNNING:
-                runners_running += 1
-
-    budget = ws_context.process_budget
+    counts = runner_counts.count_runners(ws_context)
+    budget = ws_context.process_budget.snapshot()
     return LagContext(
-        runners_starting=runners_starting,
-        runners_running=runners_running,
+        runners_starting=counts.starting,
+        runners_running=counts.running,
         budget_granted=budget.granted,
         budget_total=budget.size,
         in_flight_runs=sum(len(runs) for runs in ws_context.in_flight_runs.values()),
@@ -259,6 +267,9 @@ class EventLoopLagMonitor:
         # consumed over the window that ended late.
         self._prev_now: float | None = None
         self._prev_usage: ProcessUsage | None = None
+        self._samples: collections.deque[tuple[float, float]] = collections.deque()
+        self._next_due: float | None = None
+        self._host_sample_failed = False
 
     async def run(self, ws_context: context.WorkspaceContext) -> None:
         """Sample until cancelled.
@@ -269,6 +280,7 @@ class EventLoopLagMonitor:
         """
         loop = asyncio.get_running_loop()
         next_due = loop.time() + self._interval_sec
+        self._next_due = next_due
         self._prev_now = loop.time()
         self._prev_usage = read_process_usage()
         try:
@@ -276,7 +288,9 @@ class EventLoopLagMonitor:
                 await asyncio.sleep(max(0.0, next_due - loop.time()))
                 now = loop.time()
                 self.observe(ws_context, now=now, lag=now - next_due)
+                self._sample_host(ws_context)
                 next_due = now + self._interval_sec
+                self._next_due = next_due
         except asyncio.CancelledError:
             raise
         except Exception:  # noqa: BLE001 - a failed sample must be logged, not left on the task
@@ -286,6 +300,8 @@ class EventLoopLagMonitor:
             logger.exception(
                 "WM event loop lag monitor stopped after an unexpected error"
             )
+        finally:
+            self._next_due = None
 
     def observe(
         self,
@@ -307,6 +323,10 @@ class EventLoopLagMonitor:
             usage = read_process_usage()
         prev_now, prev_usage = self._prev_now, self._prev_usage
         self._prev_now, self._prev_usage = now, usage
+        self._samples.append((now, lag))
+        cutoff = now - LAG_WINDOW_MAX_SEC
+        while self._samples and self._samples[0][0] < cutoff:
+            self._samples.popleft()
 
         if lag < self._threshold_sec:
             if self._episode_started_at is None:
@@ -340,6 +360,42 @@ class EventLoopLagMonitor:
         if self._episode_started_at is None:
             self._episode_started_at = now
         self._last_warn_at = now
+
+    def lag_summary(
+        self, now: float, window_sec: float = LAG_WINDOW_DEFAULT_SEC
+    ) -> LagSummary:
+        latest_ms: int | None = None
+        max_recent_ms: int | None = None
+        if self._samples:
+            latest_ms = round(self._samples[-1][1] * 1000)
+            cutoff = now - window_sec
+            recent = [lag for sample_now, lag in self._samples if sample_now >= cutoff]
+            if recent:
+                max_recent_ms = round(max(recent) * 1000)
+        pending_ms: int | None = None
+        if self._next_due is not None:
+            pending_ms = round(max(0.0, now - self._next_due) * 1000)
+        return LagSummary(
+            latest_ms=latest_ms,
+            max_recent_ms=max_recent_ms,
+            pending_ms=pending_ms,
+            window_sec=window_sec,
+        )
+
+    def _sample_host(self, ws_context: context.WorkspaceContext) -> None:
+        try:
+            meminfo = host_pressure.read_meminfo()
+            ws_context.resource_peaks.observe_host(
+                swap_used_mb=meminfo.swap_used_mb,
+                mem_available_mb=meminfo.mem_available_mb,
+            )
+        except Exception as exc:  # noqa: BLE001
+            if not self._host_sample_failed:
+                logger.warning(
+                    f"WM event loop host sampling failed ({type(exc).__name__}); "
+                    "lag sampling continues"
+                )
+                self._host_sample_failed = True
 
     def _recover(self, *, now: float, usage: ProcessUsage) -> None:
         assert self._episode_started_at is not None

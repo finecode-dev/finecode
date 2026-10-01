@@ -6,6 +6,7 @@ from finecode.cli_app.cli import (
     prepare_envs,
     reload_action,
     reload_config,
+    resource_usage,
     restart_runner,
     restart_wm,
     run,
@@ -34,6 +35,7 @@ cli.add_command(reload_config)
 cli.add_command(restart_wm)
 cli.add_command(stop_wm)
 cli.add_command(version)
+cli.add_command(resource_usage)
 
 
 if __name__ == "__main__":

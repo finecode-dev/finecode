@@ -939,6 +939,41 @@ other clients reconnect on their own (ADR-0074).
 
 ---
 
+#### `server/getResourceUsage`
+
+Return one snapshot of what the WM is doing and what it costs.
+
+- **Type:** request
+- **Clients:** LSP, MCP, CLI
+- **Status:** implemented
+
+**Params:**
+
+```json
+{
+  "includeProcesses": false,
+  "lagWindowSec": 30.0
+}
+```
+
+Both fields are optional. `includeProcesses` walks every runner's processes
+(slower, one walk at a time). `lagWindowSec` is the window for the recent-lag
+maximum, a finite number in `(0, 600]`; the default is 30.
+
+**Result:** see the implementation for the full shape — `wm` (pid, uptime,
+clients, lag), `projects` (total / running / active), `runners` (by status,
+running, starting, active, per env), `budget` (total, source), `workSlots`
+(used / free / waiting / stall escape / holders), `startupSlots` (used / free
+/ waiting), `inFlightRuns` (oldest first), `peaks` since server start, `host`
+(memory / swap / cgroup / PSI / load), and `processes` (only with
+`includeProcesses`). Definitions: see `docs/guides/wm-server-internals.md`,
+"Resource-usage snapshot".
+
+The method never waits: no lock, no lease, no ER request, no runner start,
+no in-flight entry.
+
+---
+
 #### `server/shutdown`
 
 Explicitly shut down the WM Server. Clients can use this when they intentionally

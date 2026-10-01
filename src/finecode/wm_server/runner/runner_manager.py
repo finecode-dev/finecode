@@ -7,6 +7,7 @@ import collections.abc
 import concurrent.futures
 import contextlib
 import dataclasses
+import functools
 import json
 import os
 import shutil
@@ -30,6 +31,7 @@ from finecode.wm_server.runner import (
     preset_resolution,
     run_dispatch_bridge,
     runner_client,
+    runner_counts,
     wm_bridge,
 )
 from finecode_jsonrpc import _io_thread
@@ -144,12 +146,31 @@ class _StartupSlot:
     would raise the effective cap.
     """
 
-    def __init__(self, semaphore: asyncio.Semaphore) -> None:
+    def __init__(
+        self,
+        semaphore: asyncio.Semaphore,
+        *,
+        runner: runner_client.ExtensionRunnerInfo | None = None,
+        on_queued: collections.abc.Callable[[], None] | None = None,
+    ) -> None:
         self._semaphore = semaphore
         self._released = False
+        self._runner = runner
+        self._on_queued = on_queued
 
     async def __aenter__(self) -> typing.Self:
-        await self._semaphore.acquire()
+        queued = self._runner is not None and self._semaphore.locked()
+        try:
+            if queued:
+                assert self._runner is not None
+                self._runner.awaiting_startup_slot = True
+                if self._on_queued is not None:
+                    self._on_queued()
+            await self._semaphore.acquire()
+        finally:
+            if queued:
+                assert self._runner is not None
+                self._runner.awaiting_startup_slot = False
         self._released = False
         return self
 
@@ -521,7 +542,7 @@ async def _start_extension_runner_process(
             runner_client.RunnerStatus.RUNNING,
             runner_client.RunnerStatus.REPAIRING,
         ):
-            telemetry.er_active_dec(runner.env_name)
+            telemetry.er_running_dec(runner.env_name)
         runner.status = runner_client.RunnerStatus.EXITED
         await notify_project_changed(
             ws_context.ws_projects[runner.working_dir_path]
@@ -1267,6 +1288,7 @@ async def _start_runner(
     runner.client = _make_runner_client(runner)
     save_runner_in_context(runner=runner, ws_context=ws_context)
     try:
+        runner_counts.record_runner_peaks(ws_context)
         # Held from spawn until the runner reaches RUNNING: process spawn,
         # interpreter init and imports, initialize, get_runner_info, preset
         # resolution and updateConfig all count as the startup burst
@@ -1276,7 +1298,11 @@ async def _start_runner(
         # ADR-0100. The acquire sits inside this try so a cancellation while
         # queued still reaches `_abandon_start` and leaves no INITIALIZING
         # runner with a never-firing event (ADR-0097).
-        async with _StartupSlot(ws_context.er_startup_semaphore) as slot:
+        async with _StartupSlot(
+            ws_context.er_startup_semaphore,
+            runner=runner,
+            on_queued=functools.partial(runner_counts.record_runner_peaks, ws_context),
+        ) as slot:
             runner.startup_slot_release = slot.release
             try:
                 try:
@@ -1380,9 +1406,10 @@ async def _start_runner(
                 logger.debug(ready_message)
 
     runner.status = runner_client.RunnerStatus.RUNNING
-    telemetry.er_active_inc(runner.env_name)
+    telemetry.er_running_inc(runner.env_name)
     await notify_project_changed(project_def)
     runner.initialized_event.set()
+    runner_counts.record_runner_peaks(ws_context)
 
     # A runner that starts while a client is subscribed to logs must begin
     # forwarding immediately (ADR-0049 Phase 2); no-op when nobody is watching.

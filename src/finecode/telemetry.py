@@ -10,7 +10,7 @@ from urllib.parse import urlparse
 _action_duration_hist = None
 _action_errors_counter = None
 _er_startup_hist = None
-_er_active_counter = None
+_er_running_counter = None
 
 # Endpoints already probed for the one-time reachability heads-up, so the three
 # init_* functions log at most once per endpoint.
@@ -193,7 +193,7 @@ def init_meter_provider(
         _action_duration_hist, \
         _action_errors_counter, \
         _er_startup_hist, \
-        _er_active_counter
+        _er_running_counter
 
     if not endpoint:
         return
@@ -246,9 +246,9 @@ def init_meter_provider(
         unit="s",
         description="Duration of extension runner startup",
     )
-    _er_active_counter = meter.create_up_down_counter(
-        "finecode.er.active",
-        description="Number of active extension runners",
+    _er_running_counter = meter.create_up_down_counter(
+        "finecode.er.running",
+        description="Number of RUNNING extension runners",
     )
 
 
@@ -281,14 +281,14 @@ def er_startup_metrics(env_name: str):
             _er_startup_hist.record(time.perf_counter() - start, {"env.name": env_name})
 
 
-def er_active_inc(env_name: str) -> None:
-    if _er_active_counter is not None:
-        _er_active_counter.add(1, {"env.name": env_name})
+def er_running_inc(env_name: str) -> None:
+    if _er_running_counter is not None:
+        _er_running_counter.add(1, {"env.name": env_name})
 
 
-def er_active_dec(env_name: str) -> None:
-    if _er_active_counter is not None:
-        _er_active_counter.add(-1, {"env.name": env_name})
+def er_running_dec(env_name: str) -> None:
+    if _er_running_counter is not None:
+        _er_running_counter.add(-1, {"env.name": env_name})
 
 
 @contextlib.contextmanager

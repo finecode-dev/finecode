@@ -1,9 +1,11 @@
 # docs: docs/cli.md
+import functools
 import pathlib
 
 import click
 from loguru import logger
 
+from finecode.cli_app import resource_usage
 from finecode.cli_app.log_render import render_log_records, user_message_log_level
 from finecode.wm_client import ApiClient, ApiError
 from finecode.wm_server import wm_lifecycle
@@ -12,6 +14,10 @@ from finecode.wm_server import wm_lifecycle
 class PrepareEnvsFailed(Exception):
     def __init__(self, message: str) -> None:
         self.message = message
+
+
+async def _unreachable_poll() -> dict:
+    raise AssertionError("unreachable")
 
 
 async def prepare_envs(
@@ -25,6 +31,7 @@ async def prepare_envs(
     dev_env: str = "cli",
     workspace_packages_mode: str | None = None,
     verbose: bool = False,
+    resource_usage_interval: float | None = None,
 ) -> None:
     """Prepare all virtual environments for a workspace.
 
@@ -89,16 +96,28 @@ async def prepare_envs(
             # Stream WM+ER logs at the single general level (--log-level).
             await client.subscribe_logs(log_level)
         try:
-            await _run(
-                client,
-                workdir_path,
-                recreate,
-                env_names,
-                interpreter_names,
-                project_names,
-                dev_env,
-                workspace_packages_mode,
-            )
+            if resource_usage_interval is not None:
+                _resource_poll = functools.partial(
+                    client.get_resource_usage,
+                    lag_window_sec=resource_usage.lag_window_for(
+                        resource_usage_interval
+                    ),
+                )
+            else:
+                _resource_poll = _unreachable_poll
+            async with resource_usage.periodic(
+                _resource_poll, resource_usage_interval, paused=None
+            ):
+                await _run(
+                    client,
+                    workdir_path,
+                    recreate,
+                    env_names,
+                    interpreter_names,
+                    project_names,
+                    dev_env,
+                    workspace_packages_mode,
+                )
         finally:
             await client.close()
     finally:

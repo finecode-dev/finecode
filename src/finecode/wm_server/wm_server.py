@@ -19,6 +19,7 @@ import importlib.metadata
 import os
 import pathlib
 import socket
+import time
 import typing
 
 import finecode_jsonrpc.client as jsonrpc_client
@@ -70,6 +71,7 @@ from finecode.wm_server.runner import elicitation_bridge, wm_bridge
 from finecode.wm_server.services import (
     event_loop_lag_monitor,
     log_delivery,
+    resource_usage,
 )
 from finecode.wm_server.services.run_service.exceptions import (
     ActionCancelledError,
@@ -140,6 +142,52 @@ async def _handle_server_get_info(
     }
 
 
+async def _handle_server_get_resource_usage(
+    params: dict | None, ws_context: context.WorkspaceContext
+) -> dict:
+    """Handle ``server/getResourceUsage``.
+
+    Read-only: it never acquires the budget condition, leases, starts a
+    runner, or registers an in-flight run. Result shape: see
+    ``docs/wm-protocol.md``.
+    """
+    payload = params or {}
+    include_processes = payload.get("includeProcesses", False)
+    if "includeProcesses" in payload and not isinstance(include_processes, bool):
+        raise ValueError("includeProcesses must be a bool")
+    window_sec = event_loop_lag_monitor.LAG_WINDOW_DEFAULT_SEC
+    if "lagWindowSec" in payload:
+        window_value = payload["lagWindowSec"]
+        if (
+            isinstance(window_value, bool)
+            or not isinstance(window_value, (int, float))
+            or window_value != window_value
+            or window_value == float("inf")
+            or window_value == float("-inf")
+            or not (0 < window_value <= event_loop_lag_monitor.LAG_WINDOW_MAX_SEC)
+        ):
+            raise ValueError("lagWindowSec must be a finite number in (0, 600]")
+        window_sec = float(window_value)
+    lag = None
+    if _lag_monitor is not None:
+        lag = _lag_monitor.lag_summary(asyncio.get_running_loop().time(), window_sec)
+    uptime_sec: float | None = None
+    if _started_at is not None:
+        uptime_sec = time.monotonic() - _started_at
+    wm_info = resource_usage.WmProcessInfo(
+        pid=os.getpid(),
+        uptime_sec=uptime_sec,
+        connected_clients=len(_connected_clients),
+        lag=lag,
+    )
+    snapshot = resource_usage.build_snapshot(ws_context, wm_info)
+    if include_processes:
+        snapshot["processes"] = await resource_usage.read_processes(
+            ws_context, os.getpid()
+        )
+    return snapshot
+
+
 async def _handle_server_shutdown(
     params: dict | None, ws_context: context.WorkspaceContext
 ) -> dict:
@@ -186,6 +234,7 @@ _METHODS: dict[str, MethodHandler] = {
     "runners/removeEnv": _handle_runners_remove_env,
     # server/
     "server/getInfo": _handle_server_get_info,
+    "server/getResourceUsage": _handle_server_get_resource_usage,
     "server/shutdown": _handle_server_shutdown,
 }
 
@@ -378,6 +427,8 @@ _log_flush_task: asyncio.Task | None = None
 _lag_monitor_task: asyncio.Task | None = None
 _log_loop: asyncio.AbstractEventLoop | None = None
 _log_sink_id: int | None = None
+_started_at: float | None = None
+_lag_monitor: event_loop_lag_monitor.EventLoopLagMonitor | None = None
 _log_interval_ms: int = (
     200  # timer cadence; the LogBatcher hides its interval, so track it here
 )
@@ -475,11 +526,10 @@ def _start_lag_monitor(ws_context: context.WorkspaceContext) -> asyncio.Task:
     Diagnostic only, so it is never awaited or drained: a failure in it is
     logged by the monitor itself and costs observability, not correctness.
     """
-    global _lag_monitor_task
+    global _lag_monitor_task, _lag_monitor
 
-    _lag_monitor_task = asyncio.create_task(
-        event_loop_lag_monitor.EventLoopLagMonitor().run(ws_context)
-    )
+    _lag_monitor = event_loop_lag_monitor.EventLoopLagMonitor()
+    _lag_monitor_task = asyncio.create_task(_lag_monitor.run(ws_context))
     return _lag_monitor_task
 
 
@@ -1055,7 +1105,8 @@ async def start(
         _no_client_timeout_task, \
         _had_client, \
         _disconnect_timeout, \
-        _keep_alive
+        _keep_alive, \
+        _started_at
     _had_client = False
     _disconnect_timeout = disconnect_timeout
     _keep_alive = keep_alive
@@ -1079,6 +1130,7 @@ async def start(
     install_client_log_sink()
     _start_log_flush_loop()
     _start_lag_monitor(ws_context)
+    _started_at = time.monotonic()
 
     if keep_alive:
         logger.info("FineCode WM server: keep-alive, auto-stop timers disabled")
@@ -1101,7 +1153,14 @@ async def start(
 
 def stop() -> None:
     """Stop the WM server and remove the discovery file."""
-    global _server, _discovery_file, _log_flush_task, _log_sink_id, _lag_monitor_task
+    global \
+        _server, \
+        _discovery_file, \
+        _log_flush_task, \
+        _log_sink_id, \
+        _lag_monitor_task, \
+        _lag_monitor, \
+        _started_at
 
     # flush any buffered tails to all subscribers before tearing down
     with contextlib.suppress(Exception):
@@ -1112,6 +1171,8 @@ def stop() -> None:
     if _lag_monitor_task is not None:
         _lag_monitor_task.cancel()
         _lag_monitor_task = None
+    _lag_monitor = None
+    _started_at = None
     if _log_sink_id is not None:
         try:
             logger.remove(_log_sink_id)

@@ -44,12 +44,26 @@ over the budget, once, so no waiting lease can hang forever (ADR-0094)."""
 
 __all__ = [
     "STALL_ESCAPE_SEC",
+    "BudgetSnapshot",
     "ProcessBudget",
     "ProcessLease",
     "SubprocessBudgets",
     "resolve_process_budget",
     "resolve_subprocess_budgets",
 ]
+
+
+@dataclasses.dataclass(frozen=True)
+class BudgetSnapshot:
+    """One point-in-time view of the work-slot budget (no lock taken)."""
+
+    size: int
+    granted: int
+    waiting: int
+    stall_escape: bool
+    holders: tuple[tuple[str, int], ...]
+    peak_granted: int
+    peak_waiting: int
 
 
 @dataclasses.dataclass(frozen=True)
@@ -150,6 +164,9 @@ class ProcessBudget:
         self._stall_escape_sec = stall_escape_sec
         self._last_progress = time.monotonic()
         self._stall_escape_lease_id: str | None = None
+        self._waiting = 0
+        self._peak_granted = 0
+        self._peak_waiting = 0
 
     @property
     def size(self) -> int:
@@ -195,71 +212,91 @@ class ProcessBudget:
         )
         self._leases[lease_id] = lease
         self._leases_by_runner.setdefault(runner_id, set()).add(lease_id)
+        self._waiting += 1
 
-        async with self._condition:
-            while True:
-                if lease_id not in self._leases:
-                    raise RuntimeError(
-                        f"Process budget lease {lease_id} for '{runner_id}' was "
-                        "reclaimed before it could be granted"
-                    )
-                grant = self._grant(requested, nested=nested)
-                if grant > 0:
-                    granted_lease = ProcessLease(
-                        lease_id=lease_id,
-                        runner_id=runner_id,
-                        requested=requested,
-                        granted=grant,
-                    )
-                    self._leases[lease_id] = granted_lease
-                    self._granted += grant
-                    self._last_progress = time.monotonic()
-                    logger.debug(
-                        f"Process budget granted {grant}/{requested} slot(s) to "
-                        f"'{runner_id}' ({self._granted}/{self._size} in use)"
-                    )
-                    return granted_lease
-                # Non-nested and nothing available: wait for a release, but
-                # escape a stall that never moves so no lease hangs forever.
-                now = time.monotonic()
-                stalled_for = now - max(waited_since, self._last_progress)
-                if (
-                    self._stall_escape_lease_id is None
-                    and stalled_for >= self._stall_escape_sec
-                ):
-                    granted_lease = ProcessLease(
-                        lease_id=lease_id,
-                        runner_id=runner_id,
-                        requested=requested,
-                        granted=1,
-                        stall_escape=True,
-                    )
-                    self._leases[lease_id] = granted_lease
-                    self._granted += 1
-                    self._last_progress = now
-                    self._stall_escape_lease_id = lease_id
-                    logger.warning(
-                        f"Process budget stalled: '{runner_id}' waited "
-                        f"{stalled_for:.1f}s for a slot (stall window "
-                        f"{self._stall_escape_sec:.1f}s); granting 1 over budget "
-                        f"({self._granted}/{self._size} in use). Holders: "
-                        f"{self._holders_summary()}"
-                    )
-                    return granted_lease
-                if self._stall_escape_lease_id is not None:
-                    # An escape is already outstanding; its release is what
-                    # will wake us, so there is nothing to time out.
-                    await self._condition.wait()
-                else:
-                    try:
-                        async with asyncio.timeout(
-                            max(self._stall_escape_sec - stalled_for, 0.01)
-                        ):
-                            await self._condition.wait()
-                    except TimeoutError:
-                        # Re-evaluate under the lock; the next pass may grant
-                        # the stall escape.
-                        pass
+        try:
+            async with self._condition:
+                while True:
+                    if lease_id not in self._leases:
+                        raise RuntimeError(
+                            f"Process budget lease {lease_id} for '{runner_id}' was "
+                            "reclaimed before it could be granted"
+                        )
+                    grant = self._grant(requested, nested=nested)
+                    if grant > 0:
+                        granted_lease = ProcessLease(
+                            lease_id=lease_id,
+                            runner_id=runner_id,
+                            requested=requested,
+                            granted=grant,
+                        )
+                        self._leases[lease_id] = granted_lease
+                        self._waiting -= 1
+                        self._granted += grant
+                        self._peak_granted = max(self._peak_granted, self._granted)
+                        self._last_progress = time.monotonic()
+                        logger.debug(
+                            f"Process budget granted {grant}/{requested} slot(s) to "
+                            f"'{runner_id}' ({self._granted}/{self._size} in use)"
+                        )
+                        return granted_lease
+                    # Non-nested and nothing available: wait for a release, but
+                    # escape a stall that never moves so no lease hangs forever.
+                    now = time.monotonic()
+                    stalled_for = now - max(waited_since, self._last_progress)
+                    if (
+                        self._stall_escape_lease_id is None
+                        and stalled_for >= self._stall_escape_sec
+                    ):
+                        granted_lease = ProcessLease(
+                            lease_id=lease_id,
+                            runner_id=runner_id,
+                            requested=requested,
+                            granted=1,
+                            stall_escape=True,
+                        )
+                        self._leases[lease_id] = granted_lease
+                        self._waiting -= 1
+                        self._granted += 1
+                        self._peak_granted = max(self._peak_granted, self._granted)
+                        self._last_progress = now
+                        self._stall_escape_lease_id = lease_id
+                        logger.warning(
+                            f"Process budget stalled: '{runner_id}' waited "
+                            f"{stalled_for:.1f}s for a slot (stall window "
+                            f"{self._stall_escape_sec:.1f}s); granting 1 over budget "
+                            f"({self._granted}/{self._size} in use). Holders: "
+                            f"{self._holders_summary()}"
+                        )
+                        return granted_lease
+                    if self._stall_escape_lease_id is not None:
+                        # An escape is already outstanding; its release is what
+                        # will wake us, so there is nothing to time out.
+                        self._peak_waiting = max(self._peak_waiting, self._waiting)
+                        await self._condition.wait()
+                    else:
+                        try:
+                            async with asyncio.timeout(
+                                max(self._stall_escape_sec - stalled_for, 0.01)
+                            ):
+                                self._peak_waiting = max(
+                                    self._peak_waiting, self._waiting
+                                )
+                                await self._condition.wait()
+                        except TimeoutError:
+                            # Re-evaluate under the lock; the next pass may grant
+                            # the stall escape.
+                            pass
+        finally:
+            record = self._leases.get(lease_id)
+            if record is not None and record.granted == 0:
+                self._leases.pop(lease_id, None)
+                self._waiting -= 1
+                remaining = self._leases_by_runner.get(runner_id)
+                if remaining is not None:
+                    remaining.discard(lease_id)
+                    if not remaining:
+                        del self._leases_by_runner[runner_id]
 
     def _holders_summary(self) -> str:
         """The active leases' runner ids and slot totals, largest first."""
@@ -276,6 +313,8 @@ class ProcessBudget:
             if lease is None:
                 return
             self._leases_by_runner.get(lease.runner_id, set()).discard(lease_id)
+            if lease.granted == 0:
+                self._waiting -= 1
             self._granted -= lease.granted
             self._last_progress = time.monotonic()
             if self._stall_escape_lease_id == lease_id:
@@ -299,6 +338,8 @@ class ProcessBudget:
                 lease = self._leases.pop(lease_id, None)
                 if lease is not None:
                     freed += lease.granted
+                    if lease.granted == 0:
+                        self._waiting -= 1
                     self._granted -= lease.granted
                     self._last_progress = time.monotonic()
                     if self._stall_escape_lease_id == lease_id:
@@ -310,3 +351,25 @@ class ProcessBudget:
                 )
             self._condition.notify_all()
         return freed
+
+    def snapshot(self) -> BudgetSnapshot:
+        """One point-in-time view of the budget; takes no lock."""
+        # A queued lease counts toward the waiting peak once someone could
+        # observe it waiting (ADR-0094/0102 bookkeeping only; granting logic
+        # and the stall-escape latch are unchanged, granted ≤ size + 1).
+        self._peak_waiting = max(self._peak_waiting, self._waiting)
+        self._peak_granted = max(self._peak_granted, self._granted)
+        totals: dict[str, int] = {}
+        for held in self._leases.values():
+            if held.granted > 0:
+                totals[held.runner_id] = totals.get(held.runner_id, 0) + held.granted
+        holders = tuple(sorted(totals.items(), key=lambda item: (-item[1], item[0])))
+        return BudgetSnapshot(
+            size=self._size,
+            granted=self._granted,
+            waiting=self._waiting,
+            stall_escape=self._stall_escape_lease_id is not None,
+            holders=holders,
+            peak_granted=self._peak_granted,
+            peak_waiting=self._peak_waiting,
+        )

@@ -69,6 +69,7 @@ async def track(
     # dispatch site somebody adds.
     with elicitation_bridge.bind_run(run_id, origin):
         try:
+            ws_context.resource_peaks.raise_projects_active(project_count(ws_context))
             yield
         finally:
             project_runs = ws_context.in_flight_runs.get(project_path)
@@ -76,6 +77,14 @@ async def track(
                 project_runs.pop(run_id, None)
                 if not project_runs:
                     del ws_context.in_flight_runs[project_path]
+
+
+def project_count(ws_context: context.WorkspaceContext) -> int:
+    return len(ws_context.in_flight_runs)
+
+
+def run_count(ws_context: context.WorkspaceContext) -> int:
+    return sum(len(runs) for runs in ws_context.in_flight_runs.values())
 
 
 def runs_in_project(

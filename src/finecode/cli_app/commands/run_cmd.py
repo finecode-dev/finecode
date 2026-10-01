@@ -1,6 +1,7 @@
 # docs: docs/cli.md
 import asyncio
 import difflib
+import functools
 import json
 import pathlib
 import sys
@@ -13,7 +14,7 @@ import click
 from finecode_extension_runner.schema_utils import JsonValue
 from loguru import logger
 
-from finecode.cli_app import payload_uris, utils
+from finecode.cli_app import payload_uris, resource_usage, utils
 from finecode.cli_app.log_render import render_log_records, user_message_log_level
 from finecode.wm_client import ApiClient, ApiError, ReconnectPolicy
 from finecode.wm_server import wm_lifecycle
@@ -199,6 +200,10 @@ def _make_progress_handler(is_tty: bool) -> typing.Callable:
     return handler
 
 
+async def _unreachable_poll() -> dict:
+    raise AssertionError("unreachable")
+
+
 async def run_actions(
     workdir_path: pathlib.Path,
     projects_names: list[str] | None,
@@ -217,6 +222,7 @@ async def run_actions(
     verbose: bool = False,
     env_selectors: list[str] | None = None,
     interpreter_selectors: list[str] | None = None,
+    resource_usage_interval: float | None = None,
 ) -> utils.RunActionsResult:
     port_file = None
     try:
@@ -319,177 +325,190 @@ async def run_actions(
                 raise RunFailed(str(exc)) from exc
             raise
         try:
-            if handler_config_overrides or service_config_overrides:
-                if own_server:
-                    await client.set_config_overrides(
-                        handler_config_overrides or {}, service_config_overrides
-                    )
-                else:
-                    click.echo(
-                        "Warning: --config overrides are ignored in --shared-server mode. ",
-                        err=True,
-                    )
-
-            # Resolve project names (CLI option) to paths (canonical API identifier).
-            project_paths: list[str] | None = None
-            if projects_names is not None:
-                all_projects = await client.list_projects()
-                unknown = [
-                    n
-                    for n in projects_names
-                    if not any(p["name"] == n for p in all_projects)
-                ]
-                if unknown:
-                    raise RunFailed(f"Unknown project(s): {unknown}")
-                project_paths = [
-                    p["path"] for p in all_projects if p["name"] in projects_names
-                ]
-
-            # Resolve action names to sources.
-            try:
-                listing = await client.list_actions(
-                    names=actions, projects=project_paths
+            if resource_usage_interval is not None:
+                _resource_poll = functools.partial(
+                    client.get_resource_usage,
+                    lag_window_sec=resource_usage.lag_window_for(
+                        resource_usage_interval
+                    ),
                 )
-            except ApiError as exc:
-                raise RunFailed(str(exc)) from exc
-            if listing.unresolved_projects:
-                raise RunFailed(
-                    "Could not resolve project(s): "
-                    + "; ".join(
-                        f"{item.get('project')}: {item.get('error')}"
-                        for item in listing.unresolved_projects
+            else:
+                _resource_poll = _unreachable_poll
+            async with resource_usage.periodic(
+                _resource_poll, resource_usage_interval, paused=prompt_idle
+            ):
+                if handler_config_overrides or service_config_overrides:
+                    if own_server:
+                        await client.set_config_overrides(
+                            handler_config_overrides or {}, service_config_overrides
+                        )
+                    else:
+                        click.echo(
+                            "Warning: --config overrides are ignored in --shared-server mode. ",
+                            err=True,
+                        )
+
+                # Resolve project names (CLI option) to paths (canonical API identifier).
+                project_paths: list[str] | None = None
+                if projects_names is not None:
+                    all_projects = await client.list_projects()
+                    unknown = [
+                        n
+                        for n in projects_names
+                        if not any(p["name"] == n for p in all_projects)
+                    ]
+                    if unknown:
+                        raise RunFailed(f"Unknown project(s): {unknown}")
+                    project_paths = [
+                        p["path"] for p in all_projects if p["name"] in projects_names
+                    ]
+
+                # Resolve action names to sources.
+                try:
+                    listing = await client.list_actions(
+                        names=actions, projects=project_paths
                     )
+                except ApiError as exc:
+                    raise RunFailed(str(exc)) from exc
+                if listing.unresolved_projects:
+                    raise RunFailed(
+                        "Could not resolve project(s): "
+                        + "; ".join(
+                            f"{item.get('project')}: {item.get('error')}"
+                            for item in listing.unresolved_projects
+                        )
+                    )
+                all_actions = listing.actions
+                name_to_source: dict[str, str] = {
+                    a["name"]: a["source"] for a in all_actions
+                }
+                source_to_name: dict[str, str] = {
+                    a["source"]: a["name"] for a in all_actions
+                }
+                unknown_actions = [a for a in actions if a not in name_to_source]
+                if unknown_actions:
+                    raise RunFailed(f"Unknown action(s): {unknown_actions}")
+                action_sources = [name_to_source[a] for a in actions]
+
+                schema_project = _choose_schema_project(
+                    project_paths, all_actions, action_sources, workdir_path
                 )
-            all_actions = listing.actions
-            name_to_source: dict[str, str] = {
-                a["name"]: a["source"] for a in all_actions
-            }
-            source_to_name: dict[str, str] = {
-                a["source"]: a["name"] for a in all_actions
-            }
-            unknown_actions = [a for a in actions if a not in name_to_source]
-            if unknown_actions:
-                raise RunFailed(f"Unknown action(s): {unknown_actions}")
-            action_sources = [name_to_source[a] for a in actions]
-
-            schema_project = _choose_schema_project(
-                project_paths, all_actions, action_sources, workdir_path
-            )
-            # The schema fetch and the run must select the same interpreter
-            # instances: one dict feeds both, so they cannot drift.
-            selection_options = {
-                "devEnv": dev_env,
-                "envSelectors": env_selectors or [],
-                "interpreterSelectors": interpreter_selectors or [],
-            }
-            action_payload = await _resolve_payload(
-                client=client,
-                action_payload=action_payload,
-                raw_action_payload=raw_action_payload,
-                action_sources=action_sources,
-                schema_project=schema_project,
-                base_dir=workdir_path,
-                map_payload_fields=map_payload_fields,
-                run_options=selection_options,
-            )
-
-            # Workspace-scoped actions run once on the root project and stream all
-            # their sub-project output tagged with that single root path.  Repeating
-            # the root header for every partial adds no information, so suppress it
-            # when every requested action is workspace-scoped.
-            scope_by_source = {a["source"]: a.get("scope") for a in all_actions}
-            show_project_header = not (
-                action_sources
-                and all(
-                    scope_by_source.get(src) == "workspace" for src in action_sources
-                )
-            )
-
-            params_by_project: dict[str, dict[str, typing.Any]] = {}
-            if map_payload_fields:
-                params_by_project = _resolve_mapped_payload_fields(
-                    map_payload_fields=map_payload_fields,
+                # The schema fetch and the run must select the same interpreter
+                # instances: one dict feeds both, so they cannot drift.
+                selection_options = {
+                    "devEnv": dev_env,
+                    "envSelectors": env_selectors or [],
+                    "interpreterSelectors": interpreter_selectors or [],
+                }
+                action_payload = await _resolve_payload(
+                    client=client,
                     action_payload=action_payload,
-                )
-
-            result_formats = ["string", "json"] if save_results else ["string"]
-
-            # Always stream via partial-result notifications, even for single-project runs.
-            #
-            # The non-streaming path (progress_token only) assumed: one project → one direct
-            # result in result_by_format.  That holds for project-scope actions, but
-            # workspace-scope actions (e.g. inspect_code) fan out to sub-projects internally
-            # and deliver all output via partial_result_sender — the final RunActionResponse
-            # has result_by_format={} regardless of how many --project filters are given.
-            # Streaming works correctly for both cases, so there is no reason to branch.
-            batch_options = {
-                "concurrently": concurrently,
-                "resultFormats": result_formats,
-                "trigger": "user",
-                **selection_options,
-                # Ask the WM to type-safely merge streamed partials per project/action
-                # and return the merged result, so the returned/saved data is complete
-                # even when one project streams many partials.
-                "mergeResults": True,
-                # PRD-0003 AC8: WM-only selectors restricting a matrixed
-                # action's fan-out to a subset of its declared interpreter axis.
-                # Never forwarded to an ER.
-            }
-
-            partial_result_token = str(uuid.uuid4())
-
-            async def _on_partial_result(params: dict) -> None:
-                # Hold output back while a question is on screen, rather than
-                # printing between the prompt and the cursor.
-                await prompt_idle.wait()
-                value = params.get("value", {}) if params else {}
-                project_str = value.get("project", "")
-                results = value.get("results", {})
-                interpreter = value.get("interpreter")
-                block = _format_project_block(
-                    project_str,
-                    results,
-                    source_to_name,
-                    show_project_header,
-                    interpreter,
-                )
-                # A partial with no rendered content (e.g. a project with nothing to
-                # report) would otherwise print just the project header with an empty
-                # body; skip it. The merged result still lands in the final response.
-                if block is None:
-                    return
-
-                # split blocks with newline
-                block = "\n" + block
-
-                click.echo(block, nl=False)
-
-            client.on_notification("actions/partialResult", _on_partial_result)
-
-            logger.info(f"Running {', '.join(actions)}...")
-            try:
-                batch_result = await client.run_batch(
+                    raw_action_payload=raw_action_payload,
                     action_sources=action_sources,
-                    projects=project_paths,
-                    params=action_payload,
-                    params_by_project=params_by_project or None,
-                    options=batch_options,
-                    partial_result_token=partial_result_token,
+                    schema_project=schema_project,
+                    base_dir=workdir_path,
+                    map_payload_fields=map_payload_fields,
+                    run_options=selection_options,
                 )
-            except ApiError as exc:
-                raise RunFailed(str(exc)) from exc
 
-            # Use the WM's type-safely merged per-project results (requested via
-            # mergeResults) for the saved/returned data.
-            return _build_streaming_result(
-                batch_result.get("results", {}),
-                batch_result.get("returnCode", 0),
-                scope_by_action_source={
-                    source: scope_by_source.get(source) for source in action_sources
-                },
-                project_paths_requested=project_paths,
-                resolved_payload=action_payload,
-            )
+                # Workspace-scoped actions run once on the root project and stream all
+                # their sub-project output tagged with that single root path.  Repeating
+                # the root header for every partial adds no information, so suppress it
+                # when every requested action is workspace-scoped.
+                scope_by_source = {a["source"]: a.get("scope") for a in all_actions}
+                show_project_header = not (
+                    action_sources
+                    and all(
+                        scope_by_source.get(src) == "workspace"
+                        for src in action_sources
+                    )
+                )
+
+                params_by_project: dict[str, dict[str, typing.Any]] = {}
+                if map_payload_fields:
+                    params_by_project = _resolve_mapped_payload_fields(
+                        map_payload_fields=map_payload_fields,
+                        action_payload=action_payload,
+                    )
+
+                result_formats = ["string", "json"] if save_results else ["string"]
+
+                # Always stream via partial-result notifications, even for single-project runs.
+                #
+                # The non-streaming path (progress_token only) assumed: one project → one direct
+                # result in result_by_format.  That holds for project-scope actions, but
+                # workspace-scope actions (e.g. inspect_code) fan out to sub-projects internally
+                # and deliver all output via partial_result_sender — the final RunActionResponse
+                # has result_by_format={} regardless of how many --project filters are given.
+                # Streaming works correctly for both cases, so there is no reason to branch.
+                batch_options = {
+                    "concurrently": concurrently,
+                    "resultFormats": result_formats,
+                    "trigger": "user",
+                    **selection_options,
+                    # Ask the WM to type-safely merge streamed partials per project/action
+                    # and return the merged result, so the returned/saved data is complete
+                    # even when one project streams many partials.
+                    "mergeResults": True,
+                    # PRD-0003 AC8: WM-only selectors restricting a matrixed
+                    # action's fan-out to a subset of its declared interpreter axis.
+                    # Never forwarded to an ER.
+                }
+
+                partial_result_token = str(uuid.uuid4())
+
+                async def _on_partial_result(params: dict) -> None:
+                    # Hold output back while a question is on screen, rather than
+                    # printing between the prompt and the cursor.
+                    await prompt_idle.wait()
+                    value = params.get("value", {}) if params else {}
+                    project_str = value.get("project", "")
+                    results = value.get("results", {})
+                    interpreter = value.get("interpreter")
+                    block = _format_project_block(
+                        project_str,
+                        results,
+                        source_to_name,
+                        show_project_header,
+                        interpreter,
+                    )
+                    # A partial with no rendered content (e.g. a project with nothing to
+                    # report) would otherwise print just the project header with an empty
+                    # body; skip it. The merged result still lands in the final response.
+                    if block is None:
+                        return
+
+                    # split blocks with newline
+                    block = "\n" + block
+
+                    click.echo(block, nl=False)
+
+                client.on_notification("actions/partialResult", _on_partial_result)
+
+                logger.info(f"Running {', '.join(actions)}...")
+                try:
+                    batch_result = await client.run_batch(
+                        action_sources=action_sources,
+                        projects=project_paths,
+                        params=action_payload,
+                        params_by_project=params_by_project or None,
+                        options=batch_options,
+                        partial_result_token=partial_result_token,
+                    )
+                except ApiError as exc:
+                    raise RunFailed(str(exc)) from exc
+
+                # Use the WM's type-safely merged per-project results (requested via
+                # mergeResults) for the saved/returned data.
+                return _build_streaming_result(
+                    batch_result.get("results", {}),
+                    batch_result.get("returnCode", 0),
+                    scope_by_action_source={
+                        source: scope_by_source.get(source) for source in action_sources
+                    },
+                    project_paths_requested=project_paths,
+                    resolved_payload=action_payload,
+                )
         finally:
             await client.close()
     finally:

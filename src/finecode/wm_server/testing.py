@@ -32,6 +32,7 @@ class FakeErClient:
 
     def __init__(self, readable_id: str = "fake-er") -> None:
         self.readable_id = readable_id
+        self.pid: int | None = None
         self._response: typing.Any = None
         self._exception: BaseException | None = None
         self._configured = False

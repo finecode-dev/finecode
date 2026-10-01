@@ -331,3 +331,202 @@ async def test_stop_cancels_the_lag_monitor_task() -> None:
         assert wm_server._lag_monitor_task is None
     finally:
         wm_server._lag_monitor_task = original_task
+
+
+def test_lag_summary_reports_latest_and_window_max() -> None:
+    """The snapshot needs both the last sample and the recent worst.
+
+    Latest alone misses a stall that already recovered; the window max keeps
+    it visible until the window slides past.
+    """
+    ws_context = context.WorkspaceContext([])
+    monitor = event_loop_lag_monitor.EventLoopLagMonitor(
+        threshold_sec=100.0, cooldown_sec=1000.0
+    )
+    monitor.observe(ws_context, now=100.0, lag=0.1)
+    monitor.observe(ws_context, now=100.5, lag=2.4)
+    monitor.observe(ws_context, now=101.0, lag=0.05)
+
+    summary = monitor.lag_summary(101.0)
+
+    assert summary.latest_ms == 50
+    assert summary.max_recent_ms == 2400
+    assert summary.window_sec == 30.0
+
+
+def test_lag_summary_window_excludes_old_samples() -> None:
+    """Samples outside the caller's window must not move the maximum.
+
+    A long window for a slow poll and a short one for a fast poll need
+    different answers from the same deque.
+    """
+    ws_context = context.WorkspaceContext([])
+    monitor = event_loop_lag_monitor.EventLoopLagMonitor(
+        threshold_sec=100.0, cooldown_sec=1000.0
+    )
+    monitor.observe(ws_context, now=100.0, lag=2.4)
+    monitor.observe(ws_context, now=145.0, lag=0.05)
+
+    assert monitor.lag_summary(145.0).max_recent_ms == 50
+    assert monitor.lag_summary(145.0, window_sec=60.0).max_recent_ms == 2400
+
+
+def test_lag_samples_pruned_beyond_max_window() -> None:
+    """The deque must stay bounded no matter how long the server runs.
+
+    Without pruning, a 0.5 s sample interval would grow the deque without
+    bound over a days-long server lifetime.
+    """
+    ws_context = context.WorkspaceContext([])
+    monitor = event_loop_lag_monitor.EventLoopLagMonitor(
+        threshold_sec=100.0, cooldown_sec=1000.0
+    )
+    monitor.observe(ws_context, now=0.0, lag=1.0)
+    monitor.observe(
+        ws_context,
+        now=event_loop_lag_monitor.LAG_WINDOW_MAX_SEC + 1.0,
+        lag=0.1,
+    )
+
+    assert len(monitor._samples) == 1
+    assert monitor._samples[0][0] == event_loop_lag_monitor.LAG_WINDOW_MAX_SEC + 1.0
+
+
+def test_lag_summary_pending_reports_overdue_sample() -> None:
+    """An overdue monitor sample is itself evidence of a stall.
+
+    When the handler runs before the monitor's own sleeper after a stall,
+    neither latest nor the window max contains it — but the overdue time does.
+    """
+    monitor = event_loop_lag_monitor.EventLoopLagMonitor()
+    monitor._next_due = 100.0
+
+    assert monitor.lag_summary(103.0).pending_ms == 3000
+    assert monitor.lag_summary(99.0).pending_ms == 0
+    monitor._next_due = None
+    assert monitor.lag_summary(103.0).pending_ms is None
+
+
+async def test_run_clears_next_due_on_cancel() -> None:
+    """A dead monitor must not report a growing pending time.
+
+    A frozen due time would make every later snapshot report a stall that is
+    not happening.
+    """
+    ws_context = context.WorkspaceContext([])
+    monitor = event_loop_lag_monitor.EventLoopLagMonitor(interval_sec=0.01)
+    task = asyncio.create_task(monitor.run(ws_context))
+    await asyncio.sleep(0.05)
+    assert monitor._next_due is not None
+    task.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await task
+
+    assert monitor._next_due is None
+    assert monitor.lag_summary(1000.0).pending_ms is None
+
+
+async def test_run_clears_next_due_on_observe_error(monkeypatch) -> None:
+    """An observe failure ends the monitor, and the pending time goes null.
+
+    The terminal catch keeps the failure loud, but the schedule it leaves
+    behind must not keep accusing the loop afterwards.
+    """
+    ws_context = context.WorkspaceContext([])
+
+    def _raise(*args, **kwargs):
+        raise RuntimeError("observe boom")
+
+    monkeypatch.setattr(event_loop_lag_monitor.EventLoopLagMonitor, "observe", _raise)
+    monitor = event_loop_lag_monitor.EventLoopLagMonitor(interval_sec=0.01)
+    await monitor.run(ws_context)
+
+    assert monitor._next_due is None
+    assert monitor.lag_summary(1000.0).pending_ms is None
+
+
+def test_sample_host_folds_into_peaks(monkeypatch) -> None:
+    """Host memory extremes must accumulate across samples.
+
+    The snapshot's swap max and available min are what show a slow leak an
+    operator missed between polls.
+    """
+    ws_context = context.WorkspaceContext([])
+    monitor = event_loop_lag_monitor.EventLoopLagMonitor()
+    monkeypatch.setattr(
+        event_loop_lag_monitor.host_pressure,
+        "read_meminfo",
+        lambda platform=None: event_loop_lag_monitor.host_pressure.MemInfo(
+            mem_total_mb=32000,
+            mem_available_mb=4100,
+            swap_total_mb=20000,
+            swap_used_mb=12000,
+        ),
+    )
+
+    monitor._sample_host(ws_context)
+    monitor._sample_host(ws_context)
+
+    assert ws_context.resource_peaks.host_swap_used_mb == 12000
+    assert ws_context.resource_peaks.host_mem_available_min_mb == 4100
+
+
+async def test_host_sample_failure_keeps_sampling_and_warns_once(
+    monkeypatch,
+) -> None:
+    """A broken host reader must cost one warning, never the monitor.
+
+    Without the guard, the terminal catch would end stall warnings for the
+    rest of the server's life on a host-reader bug.
+    """
+    ws_context = context.WorkspaceContext([])
+    monkeypatch.setattr(
+        event_loop_lag_monitor.host_pressure,
+        "read_meminfo",
+        lambda *a, **k: (_ for _ in ()).throw(OSError("proc gone")),
+    )
+    observe_calls = 0
+    real_observe = event_loop_lag_monitor.EventLoopLagMonitor.observe
+
+    def _counting_observe(self, ws_context, *, now, lag, usage=None):
+        nonlocal observe_calls
+        observe_calls += 1
+        return real_observe(self, ws_context, now=now, lag=lag, usage=usage)
+
+    monkeypatch.setattr(
+        event_loop_lag_monitor.EventLoopLagMonitor, "observe", _counting_observe
+    )
+
+    records: list = []
+
+    @contextlib.contextmanager
+    def _capture():
+        sink_id = logger.add(lambda message: records.append(message.record))
+        try:
+            yield
+        finally:
+            logger.remove(sink_id)
+
+    first = event_loop_lag_monitor.EventLoopLagMonitor(interval_sec=0.01)
+    with _capture():
+        task = asyncio.create_task(first.run(ws_context))
+        await asyncio.sleep(0.05)
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+
+    assert observe_calls > 0
+    warnings = [r for r in records if r["level"].name == "WARNING"]
+    assert len(warnings) == 1
+
+    records.clear()
+    second = event_loop_lag_monitor.EventLoopLagMonitor(interval_sec=0.01)
+    with _capture():
+        task = asyncio.create_task(second.run(ws_context))
+        await asyncio.sleep(0.05)
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+
+    warnings = [r for r in records if r["level"].name == "WARNING"]
+    assert len(warnings) == 1

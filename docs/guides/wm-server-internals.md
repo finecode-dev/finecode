@@ -125,6 +125,7 @@ Each service module is a collection of related functions (not classes).  They re
 | `config_reload_service.py` | Configuration recovery (`workspace/reloadConfig`): re-reads a project's config from disk, resolves its presets, then replaces its runners.  The order is load-bearing — preset resolution needs a running `dev_workspace` ER (ADR-0073). |
 | `shutdown_service.py` | Cleans up runners and resources on server shutdown. |
 | `event_loop_lag_monitor.py` | Samples the WM's own event-loop lag; logs a rate-limited warning carrying runner, process-budget and in-flight-run context when the loop is starved.  Diagnostic only. |
+| `resource_usage.py` | Builds the read-only `server/getResourceUsage` snapshot from runner counts, budget, in-flight runs, host readers and the lag window. Never waits. |
 
 #### Run service
 
@@ -191,6 +192,7 @@ outside the resolved axis raises `ActionRunFailed`.
 | `elicitation_bridge.py` | Slot filled by `wm_server.py`, for putting a question to the client that started the run (ADR-0082).  Also owns the registry mapping a streaming run to its originating connection. |
 | `_internal_client_api.py` | Low-level send/receive over the `AsyncIOThread`. |
 | `_internal_client_types.py` | Protocol types for WM↔ER communication (request/response/notification dataclasses, method name constants). |
+| `runner_counts.py` | The one runner-counting implementation and status filter (`count_runners`, `live_runner_pids`), plus `record_runner_peaks`. Neither the lag monitor nor the resource snapshot names a runner status. |
 | `finecode_cmd.py` | Builds the command line to launch an ER subprocess. |
 
 #### ER→WM callback slots
@@ -505,6 +507,14 @@ slot over the budget, with a WARNING naming the waiting runner, how long it wait
 current holders. At most one stall escape is outstanding at a time, so `granted ≤ work_cap + 1`.
 See ADR-0090 and ADR-0102.
 
+`ProcessBudget.snapshot()` returns the point-in-time view (`size`, `granted`, `waiting`,
+`stall_escape`, per-runner `holders`, `peak_granted`, `peak_waiting`) without taking the
+condition. Waiting means leases not yet granted — records with `granted == 0`, whether parked
+in `wait()` or queued for the condition's lock. The waiting peak is raised where the loop
+decides to wait and stored when a snapshot observes it, so a burst seen only by a snapshot
+stays. A cancelled waiter removes its own record (and its runner's key when emptied), so no
+phantom waiter survives a cancelled `prepare-envs`.
+
 A cancelled or failing acquire leaks nothing: the local slot is returned at once and a grant
 already on the wire is released by a background cleanup, while a failed lease keeps the local
 slot and runs locally — a throttle never refuses work.
@@ -622,6 +632,59 @@ It is diagnostic: it leases nothing, takes no lock, and nothing depends on it ru
 sample interval, threshold and cooldown are module constants (`SAMPLE_INTERVAL_SEC`,
 `WARN_THRESHOLD_SEC`, `WARN_COOLDOWN_SEC`).  `wm_server.start` launches it and
 `wm_server.stop` cancels it.
+
+The monitor keeps the recent samples (600 s window, `LAG_WINDOW_MAX_SEC`) and reports a
+`LagSummary` over a caller-chosen window (`lagWindowSec`, default `LAG_WINDOW_DEFAULT_SEC`
+= 30, capped at 600): `latest_ms` (last sample), `max_recent_ms` (window maximum) and
+`pending_ms` (how overdue the monitor's own next sample is, `None` before `run()` starts
+and after it exits). After a stall the handler task and the monitor's sleeper resume in
+arbitrary order: if the handler runs first, neither latest nor the window max contains the
+stall that delayed the request — but `pending_ms` does. The window max is what makes a
+stall visible to the *next* poll, provided the window covers the poll interval. `run()` also
+samples host memory after every `observe()` and folds the swap max / available min into the
+peaks; a failing host reader logs one warning per monitor instance and sampling continues.
+
+### Resource-usage snapshot (`services/resource_usage.py`)
+
+`server/getResourceUsage` returns one snapshot of what the WM is doing and what it costs.
+Definitions:
+
+- *Project total*: `len(ws_context.ws_projects)` — every project the WM has discovered,
+  resolved or not.
+- *Running project*: ≥ 1 runner `RUNNING` in `ws_projects_extension_runners[path]`.
+- *Active project*: `ws_context.in_flight_runs[path]` non-empty. Covers ER-originated
+  nested runs (they go through `track`). Does **not** cover WM work that is not a run
+  (env version checks, `prepare-envs` steps, LSP start/recheck) — that shows only in
+  `workSlots.holders`.
+- *Starting runner*: INITIALIZING or REPAIRING.
+- *Active runner*: `ExtensionRunnerInfo.active_requests > 0`, the number of
+  `run_action`/`run_handlers` requests sent and not yet answered. An active project
+  with no active runner means its run is queued (startup cap, budget, or WM-side
+  dispatch) — reported, never derived.
+- *Startup slots*: `total = subprocess_budgets.startup_cap`; `used` = runners with
+  `startup_slot_release is not None`; `waiting` = runners with
+  `awaiting_startup_slot`; `free = max(0, total − used)`.
+- *Work slots*: `total = size`; `used = granted`; `waiting` = leases not yet granted —
+  records with `granted == 0`, whether parked in `wait()` or queued for the condition's
+  lock; `free = max(0, total − used)`; `stallEscape` = an escape lease is outstanding,
+  in which case `used` may be `total + 1`.
+
+Cost and safety posture: the snapshot never waits — no lock, no lease, no ER request, no
+runner start, no in-flight entry. `includeProcesses` runs the footprint walk
+(`wm_server/process_footprint.py`) in the default executor from a target list built on the
+loop (the thread never reads `WorkspaceContext`), one walk at a time — released when the
+walk's thread finishes, not when the request ends. The walk attributes group ∪ ppid trees
+(VmRSS + VmSwap), reports untracked ERs — still WM children but referenced by no runner —
+as their own rows, leaves ERs no longer parented by the WM invisible, performs no untracked
+detection on Windows (an untracked ER counts in the WM row there), and delays WM exit by at
+most one walk. Only the process's own (leaf) cgroup is read: a limit set on an *ancestor*
+cgroup reads as `memoryMaxMb: null`.
+
+Peaks are raised only where a count rises: `record_runner_peaks` (first statement inside
+`_start_runner`'s `try`, and after `initialized_event.set()`), `_StartupSlot`'s `on_queued`,
+`in_flight_runs.track`'s `try`, the budget's own grants/wait points/snapshot store, and host
+sampling. The hooks never raise into the code they observe (`record_runner_peaks` logs once
+per context and latches `hook_failed`; WM-state peaks print as `max(stored, current)`).
 
 ---
 

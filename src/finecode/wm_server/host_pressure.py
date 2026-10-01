@@ -15,8 +15,19 @@ on it being accurate or even present.
 from __future__ import annotations
 
 import dataclasses
+import sys
+from pathlib import Path
 
-__all__ = ["HostPressure", "read_host_pressure"]
+import psutil  # type: ignore[import-untyped]
+
+__all__ = [
+    "CgroupMemory",
+    "HostPressure",
+    "MemInfo",
+    "read_cgroup_memory",
+    "read_host_pressure",
+    "read_meminfo",
+]
 
 
 @dataclasses.dataclass(frozen=True)
@@ -56,17 +67,130 @@ def _fmt_pct(value: float | None) -> str:
     return "n/a" if value is None else f"{value:.2f}%"
 
 
+@dataclasses.dataclass(frozen=True)
+class MemInfo:
+    mem_total_mb: int | None
+    mem_available_mb: int | None
+    swap_total_mb: int | None
+    swap_used_mb: int | None
+
+
+@dataclasses.dataclass(frozen=True)
+class CgroupMemory:
+    memory_max_mb: int | None
+    memory_current_mb: int | None
+    swap_current_mb: int | None
+
+
+def _meminfo_values_kb(text: str) -> dict[str, int]:
+    values_kb: dict[str, int] = {}
+    for line in text.splitlines():
+        parts = line.split()
+        if len(parts) >= 2 and parts[0].endswith(":"):
+            try:
+                values_kb[parts[0][:-1]] = int(parts[1])
+            except ValueError:
+                continue
+    return values_kb
+
+
+def read_meminfo(platform: str = sys.platform) -> MemInfo:
+    if platform.startswith("linux"):
+        try:
+            with open("/proc/meminfo", encoding="utf-8") as meminfo_file:
+                values_kb = _meminfo_values_kb(meminfo_file.read())
+        except OSError:
+            return MemInfo(
+                mem_total_mb=None,
+                mem_available_mb=None,
+                swap_total_mb=None,
+                swap_used_mb=None,
+            )
+        mem_total_kb = values_kb.get("MemTotal")
+        mem_available_kb = values_kb.get("MemAvailable")
+        swap_total_kb = values_kb.get("SwapTotal")
+        swap_free_kb = values_kb.get("SwapFree")
+        swap_used_mb: int | None = None
+        if swap_total_kb is not None and swap_free_kb is not None:
+            swap_used_mb = max(0, swap_total_kb - swap_free_kb) // 1024
+        return MemInfo(
+            mem_total_mb=None if mem_total_kb is None else mem_total_kb // 1024,
+            mem_available_mb=None
+            if mem_available_kb is None
+            else mem_available_kb // 1024,
+            swap_total_mb=None if swap_total_kb is None else swap_total_kb // 1024,
+            swap_used_mb=swap_used_mb,
+        )
+    try:
+        virtual = psutil.virtual_memory()
+        swap = psutil.swap_memory()
+        return MemInfo(
+            mem_total_mb=int(virtual.total) // (1024 * 1024),
+            mem_available_mb=int(virtual.available) // (1024 * 1024),
+            swap_total_mb=int(swap.total) // (1024 * 1024),
+            swap_used_mb=int(swap.used) // (1024 * 1024),
+        )
+    except Exception:
+        return MemInfo(
+            mem_total_mb=None,
+            mem_available_mb=None,
+            swap_total_mb=None,
+            swap_used_mb=None,
+        )
+
+
+def read_cgroup_memory(
+    proc_root: Path = Path("/proc"), cgroup_root: Path = Path("/sys/fs/cgroup")
+) -> CgroupMemory | None:
+    try:
+        cgroup_text = (proc_root / "self" / "cgroup").read_text(encoding="utf-8")
+    except OSError:
+        return None
+    leaf: str | None = None
+    for line in cgroup_text.splitlines():
+        if line.startswith("0::"):
+            leaf = line[len("0::") :].strip() or "/"
+            break
+    if leaf is None:
+        return None
+    leaf_dir = cgroup_root / leaf.lstrip("/")
+    try:
+        current_text = (leaf_dir / "memory.current").read_text(encoding="utf-8")
+    except OSError:
+        return None
+    try:
+        memory_current_mb = int(current_text.strip()) // (1024 * 1024)
+    except ValueError:
+        return None
+    memory_max_mb: int | None = None
+    try:
+        max_text = (leaf_dir / "memory.max").read_text(encoding="utf-8").strip()
+    except OSError:
+        max_text = "max"
+    if max_text != "max":
+        try:
+            memory_max_mb = int(max_text) // (1024 * 1024)
+        except ValueError:
+            memory_max_mb = None
+    try:
+        swap_text = (leaf_dir / "memory.swap.current").read_text(encoding="utf-8")
+        swap_current_mb: int | None = int(swap_text.strip()) // (1024 * 1024)
+    except (OSError, ValueError):
+        swap_current_mb = None
+    return CgroupMemory(
+        memory_max_mb=memory_max_mb,
+        memory_current_mb=memory_current_mb,
+        swap_current_mb=swap_current_mb,
+    )
+
+
 def _parse_meminfo(text: str) -> tuple[int | None, int | None]:
     """(MemAvailable MB, swap used MB) from ``/proc/meminfo`` contents.
 
     Swap used is ``SwapTotal - SwapFree``: the file reports neither figure as
     "used", and the pair is what says whether earlier output is being paged out.
     """
-    values_kb: dict[str, int] = {}
-    for line in text.splitlines():
-        parts = line.split()
-        if len(parts) >= 2 and parts[0].endswith(":"):
-            values_kb[parts[0][:-1]] = int(parts[1])
+    values_kb = _meminfo_values_kb(text)
 
     mem_available_kb = values_kb.get("MemAvailable")
     mem_available_mb = None if mem_available_kb is None else mem_available_kb // 1024

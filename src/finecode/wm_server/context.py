@@ -18,6 +18,47 @@ if TYPE_CHECKING:
 
 
 @dataclass
+class ResourcePeaks:
+    """High-water marks since server start (runtime observability state)."""
+
+    runners_running: int = 0
+    runners_starting: int = 0
+    projects_active: int = 0
+    startup_slots_waiting: int = 0
+    host_swap_used_mb: int | None = None
+    host_mem_available_min_mb: int | None = None
+    hook_failed: bool = False
+
+    def raise_runner_counts(
+        self, *, running: int, starting: int, startup_slots_waiting: int
+    ) -> None:
+        self.runners_running = max(self.runners_running, running)
+        self.runners_starting = max(self.runners_starting, starting)
+        self.startup_slots_waiting = max(
+            self.startup_slots_waiting, startup_slots_waiting
+        )
+
+    def raise_projects_active(self, count: int) -> None:
+        self.projects_active = max(self.projects_active, count)
+
+    def observe_host(
+        self, *, swap_used_mb: int | None, mem_available_mb: int | None
+    ) -> None:
+        if swap_used_mb is not None:
+            if self.host_swap_used_mb is None:
+                self.host_swap_used_mb = swap_used_mb
+            else:
+                self.host_swap_used_mb = max(self.host_swap_used_mb, swap_used_mb)
+        if mem_available_mb is not None:
+            if self.host_mem_available_min_mb is None:
+                self.host_mem_available_min_mb = mem_available_mb
+            else:
+                self.host_mem_available_min_mb = min(
+                    self.host_mem_available_min_mb, mem_available_mb
+                )
+
+
+@dataclass
 class WorkspaceContext:
     """Shared mutable state of the WM server.
 
@@ -236,6 +277,10 @@ class WorkspaceContext:
     # runner-start step) — see ADR-0063. Sized from the combined budget.
     er_startup_semaphore: asyncio.Semaphore = field(init=False)
 
+    resource_peaks: ResourcePeaks = field(default_factory=ResourcePeaks)
+
+    subprocess_budgets: process_budget.SubprocessBudgets = field(init=False)
+
     # The machine-wide budget of subprocess work slots, leased to ERs per action
     # run and reclaimed on run end or ER death (ADR-0090).  Sized from the same
     # combined budget as er_startup_semaphore.
@@ -274,6 +319,7 @@ class WorkspaceContext:
         )
         self.er_startup_semaphore = asyncio.Semaphore(budgets.startup_cap)
         self.process_budget = process_budget.ProcessBudget(budgets.work_cap)
+        self.subprocess_budgets = budgets
 
 
 @dataclass

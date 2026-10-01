@@ -66,6 +66,8 @@ python -m finecode run [options] <action> [<action> ...] [payload] [--config.<ke
 | `--dev-env=<env>` | Override the detected dev environment. One of: `ai`, `ci`, `cli`, `ide`, `precommit` (default: auto-detected — see [Dev environment detection](#dev-environment-detection)) |
 | `--env=<name>` | For a matrixed action (ADR-0047), restrict execution to the named interpreter environment(s) — a matrix base selects all of its children, a concrete child selects only itself. Repeatable. Non-matrix envs are unaffected. See [Preparing Environments — filtering by environment name](guides/preparing-environments.md#filtering-by-environment-name). |
 | `--interpreter=<impl>@<version>` | For a matrixed action, restrict execution to the named interpreter(s) across every matrix env the action touches. Repeatable; a bare version means `cpython`. See [Preparing Environments — filtering by interpreter](guides/preparing-environments.md#filtering-by-interpreter). |
+| `--resource-usage[=SEC]` | Print one `[resources]` stderr line per interval plus a peaks summary at the end (see [Resource usage in CI](#resource-usage-in-ci)). Accepted range `0 < SEC ≤ 600`; bare flag polls every 15 s. |
+| `--no-resource-usage` | Disable the reporter, including its CI default. |
 
 In a multi-project workspace, `run` fans out across every project that declares the action; spawned subprocesses are bounded by the machine-wide process budget (one slot per subprocess, leased per unit of work; default: derived from the machine's CPU budget). Fan-out is throttled, never refused — workspace size does not limit which actions you can run. See [Process budget](guides/wm-server-internals.md#process-budget).
 
@@ -225,6 +227,8 @@ See [Preparing Environments](guides/preparing-environments.md) for a full explan
 | `--debug` | Wait for a debugpy client on port 5680 before starting |
 | `--dev-env=<env>` | Override the detected dev environment. One of: `ai`, `ci`, `cli`, `ide`, `precommit` (default: auto-detected) |
 | `--workspace-packages=editable\|wheel` | Override how workspace packages are installed in every env for this run. `editable` installs from source; `wheel` builds one wheel per package and installs it (see [Preparing Environments — workspace packages](guides/preparing-environments.md#workspace-packages)). Default: resolved from `[workspace.workspace_packages_install]` for the active dev-env. |
+| `--resource-usage[=SEC]` | As for `run`: one `[resources]` line per interval plus a peaks summary. A non-numeric value is rejected with click's exit 2. |
+| `--no-resource-usage` | Disable the reporter, including its CI default. |
 
 
 !!! note `--env` restricts only the `install_envs` step. The `create_envs` step still runs for **all** envs regardless of this flag — virtualenvs must exist for every env even when you only need to update dependencies in one of them.
@@ -305,6 +309,25 @@ python -m finecode restart-wm --shared-server
 python -m finecode stop-wm --shared-server
 ```
 
+## `resource-usage`
+
+Print what the running workspace server is doing and what it costs.
+
+```
+python -m finecode resource-usage --shared-server [--json] [--watch[=SEC]] [--processes]
+```
+
+Like the recovery commands, it requires `--shared-server` and refuses without it
+(exit 1, naming the flag): a snapshot only means something against the workspace
+someone else is already using. It never starts a server.
+
+The command's logs go to the CLI log file, never to stdout (`--log-level` sets that
+file's level): log lines on stdout would break `--json` consumers. `· hooks failed`
+marks stale peaks. With `--processes` a walk slower than the interval also shows as
+`no answer` — that is the walk, not necessarily starvation. The command counts in
+`connectedClients`, and while `--watch` holds the connection it postpones a
+non-keep-alive shared WM's idle auto-stop.
+
 ## Dev environment detection
 
 FineCode tracks which environment triggered an action run (e.g. IDE, CLI, CI/CD). This value is passed to handlers via `RunActionMeta.dev_env` and can be used to adjust behavior — for example, to emit machine-readable output in CI.
@@ -363,6 +386,37 @@ The equivalent on other systems is any variable your CI can toggle per run (a pi
 
 > **Note:** on-demand DEBUG only helps for *reproducible* failures. A flaky, non-deterministic failure may not recur on a debug re-run, so its DEBUG detail is lost. If that class of failure is common in your pipeline, default the computed level to `DEBUG` instead.
 
+## Resource usage in CI
+
+`run` and `prepare-envs` print one flushed `[resources]` stderr line per interval from
+their own connection, a `no answer` line when a poll is outstanding at the next tick,
+and a `peaks:` summary at the end. The lines go to stderr and not the WM log because
+CI artifacts for a lost job are the job log — when the runner loses the job, the WM
+log file goes with it.
+
+The reporter is on by default when `CI` is set (any non-empty value, the same predicate
+as dev-env detection), every 15 s. Precedence: `--resource-usage[=SEC]` (bare flag =
+15 s) > `--no-resource-usage` > `FINECODE_RESOURCE_USAGE_INTERVAL` (`0` = off) > `CI`
+default > off. `SEC` must satisfy `0 < SEC ≤ 600` (`0` = off where allowed); anything
+else fails the command with exit 1 naming the switch.
+
+Line format:
+
+```text
+[resources] t=+15s projects 3 act/40 run/72 · ER 40 run/4 act/2 start · work 4/4 (+7 wait) · startup 3/3 (+12 wait) · mem 12.0G/16.0G (cgroup) swap 12.0G/20.0G · lag 2.4s
+```
+
+Summary:
+
+```text
+[resources] peaks: ER 61 run/14 start · projects 9 active · work 5 used/23 waiting · startup 40 waiting · swap max 14.5G · mem avail min 0.9G · WM pid 1234 up 1h02m
+```
+
+Peaks are per WM process, since that process started: after a shared-server reconnect
+to a *restarted* WM, later lines describe the new process only, and the summary's
+`WM pid … up …` tail shows the restart. Reporter errors print a line and never change
+the exit code; a `lag` of `n/a` means the monitor had no sample in the window.
+
 ---
 
 ## `start-lsp`
@@ -403,6 +457,9 @@ Start the FineCode MCP server on stdio. Connects to a running FineCode WM Server
 Typically started automatically by MCP-compatible clients (for example, Claude Code) or by VS Code Copilot when the FineCode VSCode extension registers the MCP provider.
 
 For setup details, see [IDE and MCP Setup](getting-started-ide-mcp.md#mcp-setup-for-ai-clients). If you use VS Code without the FineCode extension, use the fallback `.vscode/mcp.json` configuration from that page.
+
+The MCP server also offers a `get_resource_usage` tool returning the same snapshot
+as `server/getResourceUsage` (with an optional `includeProcesses` flag).
 
 ---
 

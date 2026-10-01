@@ -77,6 +77,8 @@ class ExtensionRunnerInfo(domain.ExtensionRunner):
     startup_slot_release: typing.Callable[[], None] | None = dataclasses.field(
         default=None
     )
+    active_requests: int = 0
+    awaiting_startup_slot: bool = False
 
 
 # Alias for backward compatibility — status enum now lives in domain
@@ -178,6 +180,7 @@ async def run_action(
             f"Runner {runner.readable_id} has no active client connection (status: {runner.status})"
         )
 
+    runner.active_requests += 1
     try:
         response = await runner.client.send_request(
             method=_internal_client_types.ER_RUN_ACTION,
@@ -202,6 +205,8 @@ async def run_action(
         if error.error.code == jsonrpc_client.REQUEST_CANCELLED:
             raise ActionRunCancelled(error.error.message) from error
         raise
+    finally:
+        runner.active_requests -= 1
 
     run_result = response.result
 
@@ -252,6 +257,7 @@ async def run_handlers(
             f"Runner {runner.readable_id} has no active client connection (status: {runner.status})"
         )
 
+    runner.active_requests += 1
     try:
         response = await runner.client.send_request(
             method=_internal_client_types.ER_RUN_HANDLERS,
@@ -278,6 +284,8 @@ async def run_handlers(
         if error.error.code == jsonrpc_client.REQUEST_CANCELLED:
             raise ActionRunCancelled(error.error.message) from error
         raise
+    finally:
+        runner.active_requests -= 1
 
     run_result = response.result
 

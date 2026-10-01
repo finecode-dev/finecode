@@ -393,6 +393,8 @@ def run(ctx) -> None:
     verbose: bool = False
     env_selectors: list[str] = []
     interpreter_selectors: list[str] = []
+    resource_usage_flag_value: str | float | None = None
+    no_resource_usage: bool = False
 
     # finecode run parameters
     for arg in args:
@@ -457,6 +459,14 @@ def run(ctx) -> None:
             env_selectors.append(arg.removeprefix("--env="))
         elif arg.startswith("--interpreter="):
             interpreter_selectors.append(arg.removeprefix("--interpreter="))
+        elif arg == "--resource-usage":
+            from finecode.cli_app import resource_usage as _resource_usage
+
+            resource_usage_flag_value = _resource_usage.DEFAULT_INTERVAL_SEC
+        elif arg.startswith("--resource-usage="):
+            resource_usage_flag_value = arg.removeprefix("--resource-usage=")
+        elif arg == "--no-resource-usage":
+            no_resource_usage = True
         elif not arg.startswith("--"):
             break
         processed_args_count += 1
@@ -542,6 +552,18 @@ def run(ctx) -> None:
 
     user_messages._notification_sender = show_user_message
 
+    from finecode.cli_app import resource_usage as _resource_usage
+
+    try:
+        resource_usage_interval = _resource_usage.resolve_interval(
+            flag_value=resource_usage_flag_value,
+            disabled=no_resource_usage,
+            environ=os.environ,
+        )
+    except _resource_usage.InvalidResourceUsageInterval as exc:
+        click.echo(str(exc), err=True)
+        sys.exit(1)
+
     deserialized_payload = deserialize_action_payload(action_payload)
     result: utils.RunActionsResult | None = None
     try:
@@ -567,6 +589,7 @@ def run(ctx) -> None:
                 verbose=verbose,
                 env_selectors=env_selectors,
                 interpreter_selectors=interpreter_selectors,
+                resource_usage_interval=resource_usage_interval,
             )
         )
     except run_cmd.RunFailed as exception:
@@ -705,6 +728,20 @@ def run(ctx) -> None:
     default=False,
     help="Stream WM/ER diagnostic logs to stderr over the protocol. Auto-enabled in CI.",
 )
+@click.option(
+    "--resource-usage",
+    "resource_usage",
+    is_flag=False,
+    flag_value=15.0,
+    type=float,
+    default=None,
+)
+@click.option(
+    "--no-resource-usage",
+    "no_resource_usage",
+    is_flag=True,
+    default=False,
+)
 def prepare_envs(
     log_level: str,
     debug: bool,
@@ -716,6 +753,8 @@ def prepare_envs(
     interpreter_names: tuple[str, ...],
     project_names: tuple[str, ...],
     verbose: bool,
+    resource_usage: float | None,
+    no_resource_usage: bool,
 ) -> None:
     """
     `prepare-envs` should be called from workspace/project root directory.
@@ -747,6 +786,18 @@ def prepare_envs(
     )
     user_messages._notification_sender = show_user_message
 
+    from finecode.cli_app import resource_usage as _resource_usage
+
+    try:
+        resource_usage_interval = _resource_usage.resolve_interval(
+            flag_value=resource_usage,
+            disabled=no_resource_usage,
+            environ=os.environ,
+        )
+    except _resource_usage.InvalidResourceUsageInterval as exc:
+        click.echo(str(exc), err=True)
+        sys.exit(1)
+
     try:
         asyncio.run(
             prepare_envs_cmd.prepare_envs(
@@ -762,6 +813,7 @@ def prepare_envs(
                 dev_env=dev_env or detect_dev_env(),
                 workspace_packages_mode=workspace_packages_mode,
                 verbose=verbose,
+                resource_usage_interval=resource_usage_interval,
             )
         )
     except prepare_envs_cmd.PrepareEnvsFailed as exception:
@@ -1122,3 +1174,67 @@ def version(log_level: str, shared_server: bool):
         sys.exit(1)
 
     click.echo(reported_version)
+
+
+@click.command(name="resource-usage")
+@_LOG_LEVEL_OPTION
+@click.option("--shared-server", "shared_server", is_flag=True, default=False)
+@click.option("--json", "as_json", is_flag=True, default=False)
+@click.option(
+    "--watch",
+    "watch_sec",
+    is_flag=False,
+    flag_value=2.0,
+    type=float,
+    default=None,
+)
+@click.option("--processes", "include_processes", is_flag=True, default=False)
+def resource_usage(
+    log_level: str,
+    shared_server: bool,
+    as_json: bool,
+    watch_sec: float | None,
+    include_processes: bool,
+):
+    """Print what the workspace server is doing and what it costs."""
+    from finecode.cli_app import resource_usage as resource_usage_lib
+    from finecode.cli_app.commands import resource_usage_cmd
+
+    if not shared_server:
+        click.echo("'resource-usage' needs --shared-server", err=True)
+        sys.exit(1)
+    if watch_sec is not None:
+        try:
+            watch_sec = resource_usage_lib.parse_interval(
+                watch_sec, source="--watch", zero_disables=False
+            )
+        except resource_usage_lib.InvalidResourceUsageInterval as exc:
+            click.echo(str(exc), err=True)
+            sys.exit(1)
+
+    _cwd = pathlib.Path(os.getcwd())
+    logger_utils.init_logger(
+        log_name="cli", log_level=log_level, stdout=False, workspace_path=_cwd
+    )
+    user_messages._notification_sender = show_user_message
+    try:
+        asyncio.run(
+            resource_usage_cmd.show(
+                _cwd,
+                as_json=as_json,
+                watch_sec=watch_sec,
+                include_processes=include_processes,
+            )
+        )
+    except resource_usage_cmd.ResourceUsageFailed as exception:
+        click.echo(exception.message, err=True)
+        sys.exit(1)
+    except WmError as exception:
+        click.echo(str(exception), err=True)
+        sys.exit(1)
+    except KeyboardInterrupt:
+        sys.exit(0)
+    except Exception as exception:
+        logger.exception(exception)
+        click.echo("Unexpected error, see logs in file for more details", err=True)
+        sys.exit(2)

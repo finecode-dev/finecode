@@ -237,3 +237,214 @@ async def test_at_most_one_stall_escape_is_outstanding() -> None:
     await budget.release(remaining.lease_id)
     await budget.release(holder.lease_id)
     assert budget.granted == 0
+
+
+async def test_cancelled_waiting_lease_leaves_no_record() -> None:
+    """A cancelled waiter must not linger as a phantom in usage reports.
+
+    A leftover waiting record would make the resource snapshot report a
+    waiter that no longer exists, misleading an operator into waiting on a
+    queue that is actually empty.
+    """
+    budget = ProcessBudget(size=1)
+    holder = await budget.lease("holder", requested=1)
+
+    waiter = asyncio.create_task(budget.lease("cancelled_runner", requested=1))
+    await asyncio.sleep(0)
+    assert not waiter.done()
+    assert budget.snapshot().waiting == 1
+
+    waiter.cancel()
+    await asyncio.gather(waiter, return_exceptions=True)
+
+    assert budget.snapshot().waiting == 0
+    assert all(
+        lease.runner_id != "cancelled_runner" for lease in budget._leases.values()
+    )
+    assert "cancelled_runner" not in budget._leases_by_runner
+
+    await budget.release(holder.lease_id)
+
+
+async def test_waiting_counter_tracks_ungranted_records() -> None:
+    """The waiting count must match the leases still queued for a slot.
+
+    An operator reading the snapshot relies on it to tell a genuinely idle
+    budget from one with queued work; a drift in either direction hides the
+    queue or invents one.
+    """
+    budget = ProcessBudget(size=1)
+    holder = await budget.lease("holder", requested=1)
+    assert budget.snapshot().waiting == 0
+
+    waiter = asyncio.create_task(budget.lease("waiter", requested=1))
+    await asyncio.sleep(0)
+    assert budget.snapshot().waiting == 1
+    assert sum(1 for lease in budget._leases.values() if lease.granted == 0) == 1
+
+    waiter.cancel()
+    await asyncio.gather(waiter, return_exceptions=True)
+    assert budget.snapshot().waiting == 0
+
+    waiter2 = asyncio.create_task(budget.lease("waiter2", requested=1))
+    await asyncio.sleep(0)
+    assert budget.snapshot().waiting == 1
+    await budget.reclaim_for_runner("waiter2")
+    with pytest.raises(RuntimeError, match="reclaimed"):
+        await waiter2
+    assert budget.snapshot().waiting == 0
+    assert "waiter2" not in budget._leases_by_runner
+
+    await budget.release(holder.lease_id)
+    assert budget.snapshot().waiting == 0
+
+
+async def test_cancelled_lease_queued_for_lock_leaves_no_record() -> None:
+    """A lease cancelled before reaching the wait point must clean up too.
+
+    The same phantom-waiter misreport happens when cancellation lands while
+    the lease is still queued for the budget lock rather than parked inside
+    it, so both paths need the cleanup.
+    """
+    budget = ProcessBudget(size=1)
+    await budget._condition.acquire()
+    try:
+        first = asyncio.create_task(budget.lease("queued1", requested=1))
+        second = asyncio.create_task(budget.lease("queued2", requested=1))
+        await asyncio.sleep(0)
+        assert not first.done()
+        assert not second.done()
+        first.cancel()
+        second.cancel()
+        await asyncio.gather(first, second, return_exceptions=True)
+    finally:
+        budget._condition.release()
+    assert budget.snapshot().waiting == 0
+    assert "queued1" not in budget._leases_by_runner
+    assert "queued2" not in budget._leases_by_runner
+
+
+async def test_stall_escape_snapshot_reports_escape_and_overshoot() -> None:
+    """An escaped budget must be visible as over-budget in the snapshot.
+
+    Without the escape flag an operator cannot tell a legitimately
+    over-budget snapshot from a broken allocator.
+    """
+    budget = ProcessBudget(size=1, stall_escape_sec=0.05)
+    holder = await budget.lease("holder", requested=1)
+
+    waiter = asyncio.create_task(budget.lease("waiter", requested=1))
+    escaped = await asyncio.wait_for(waiter, 2)
+
+    snapshot = budget.snapshot()
+    assert snapshot.stall_escape is True
+    assert snapshot.granted == 2
+    assert snapshot.size == 1
+
+    await budget.release(escaped.lease_id)
+    await budget.release(holder.lease_id)
+
+
+async def test_snapshot_holders_sum_per_runner_and_omit_waiters() -> None:
+    """Holders must show who owns granted slots, not who is waiting.
+
+    Listing a waiter as a holder would send an operator to ask a run that
+    owns nothing to release slots it does not have.
+    """
+    budget = ProcessBudget(size=3)
+    first = await budget.lease("runner_a", requested=1)
+    second = await budget.lease("runner_a", requested=1)
+    third = await budget.lease("runner_b", requested=1)
+
+    waiter = asyncio.create_task(budget.lease("runner_c", requested=1))
+    await asyncio.sleep(0)
+    assert not waiter.done()
+
+    snapshot = budget.snapshot()
+    assert snapshot.waiting == 1
+    assert dict(snapshot.holders) == {"runner_a": 2, "runner_b": 1}
+    assert snapshot.holders[0] == ("runner_a", 2)
+
+    waiter.cancel()
+    await asyncio.gather(waiter, return_exceptions=True)
+    await budget.release(first.lease_id)
+    await budget.release(second.lease_id)
+    await budget.release(third.lease_id)
+
+
+async def test_snapshot_peaks_survive_release() -> None:
+    """A burst between polls must still show in peaks after it drains.
+
+    Polling misses bursts that start and end between samples; without stored
+    peaks an operator would never see the queue that actually stalled the run.
+    """
+    budget = ProcessBudget(size=1, stall_escape_sec=3600.0)
+    holder = await budget.lease("holder", requested=1)
+
+    first = asyncio.create_task(budget.lease("waiter1", requested=1))
+    second = asyncio.create_task(budget.lease("waiter2", requested=1))
+    await asyncio.sleep(0.1)
+    assert budget.snapshot().waiting == 2
+
+    first.cancel()
+    second.cancel()
+    await asyncio.gather(first, second, return_exceptions=True)
+    await budget.release(holder.lease_id)
+
+    snapshot = budget.snapshot()
+    assert snapshot.granted == 0
+    assert snapshot.waiting == 0
+    assert snapshot.peak_granted == 1
+    assert snapshot.peak_waiting == 2
+
+
+async def test_nested_lease_never_raises_waiting_peak() -> None:
+    """A nested grant on an exhausted budget is progress, not waiting.
+
+    Counting it would make every nested fan-out look like a queued budget
+    and drown the real waiters operators need to see.
+    """
+    budget = ProcessBudget(size=1)
+    holder = await budget.lease("holder", requested=1)
+
+    inner = await budget.lease("inner", requested=4, nested=True)
+
+    snapshot = budget.snapshot()
+    assert snapshot.granted == 2
+    assert snapshot.waiting == 0
+    assert snapshot.peak_waiting == 0
+    assert snapshot.peak_granted == 2
+
+    await budget.release(inner.lease_id)
+    await budget.release(holder.lease_id)
+
+
+async def test_snapshot_observes_leases_queued_for_lock() -> None:
+    """Leases queued for the lock count as waiting once observed.
+
+    They have not reached a wait point yet, but a snapshot reader can already
+    see them waiting, so the peak must be stored to stay monotonic after they
+    are granted without ever parking.
+    """
+    budget = ProcessBudget(size=2)
+    await budget._condition.acquire()
+    try:
+        first = asyncio.create_task(budget.lease("queued1", requested=1))
+        second = asyncio.create_task(budget.lease("queued2", requested=1))
+        await asyncio.sleep(0)
+        assert not first.done()
+        assert not second.done()
+        snapshot = budget.snapshot()
+        assert snapshot.waiting == 2
+        assert snapshot.peak_waiting == 2
+    finally:
+        budget._condition.release()
+
+    first_lease = await first
+    second_lease = await second
+    snapshot = budget.snapshot()
+    assert snapshot.waiting == 0
+    assert snapshot.peak_waiting == 2
+
+    await budget.release(first_lease.lease_id)
+    await budget.release(second_lease.lease_id)
