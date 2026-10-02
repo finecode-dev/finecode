@@ -447,9 +447,8 @@ async def _handle_prepare_envs(
 
     Params:
       dirPath: str - absolute path to the workspace root directory
-      recreate: bool - delete and recreate dev_workspace venvs (default false)
-      envNames: list[str] | null - limit to these env names (and, for matrix
-        envs, their config-declared default_interpreters subset)
+      recreate: bool - delete and recreate the venvs this run covers (default false)
+      envNames: list[str] | null - limit create and install to these env names (for a matrix base, its children)
       interpreters: list[str] | null - limit matrix envs to these interpreters
       projectNames: list[str] | null - limit to these projects
       devEnv: str - active dev-env, used to resolve each matrix env's

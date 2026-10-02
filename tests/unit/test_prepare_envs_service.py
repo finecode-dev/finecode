@@ -1,5 +1,11 @@
+import pytest
+
 from finecode.wm_server.config.env_selection import resolve_env_selection
-from finecode.wm_server.services.prepare_envs_service import build_create_envs_params
+from finecode.wm_server.services.prepare_envs_service import (
+    build_create_envs_params,
+    build_install_envs_params,
+    dev_workspace_recreate_requested,
+)
 
 
 def _env(interpreter: str | None = None) -> dict:
@@ -46,7 +52,7 @@ class TestBuildCreateEnvsParams:
 
         assert params["recreate"] is True
         assert params["env_names"] == sorted(
-            {"testing@cpython-3.11", "testing@cpython-3.12", "dev_no_runtime"}
+            {"testing@cpython-3.11", "testing@cpython-3.12"}
         )
 
     def test_recreate_false_with_active_env_selection_still_forwards_recreate_key(
@@ -61,7 +67,7 @@ class TestBuildCreateEnvsParams:
         params = build_create_envs_params(sel, env_table, recreate=False)
 
         assert params["recreate"] is False
-        assert params["env_names"] == sorted({"testing@cpython-3.11", "dev_no_runtime"})
+        assert params["env_names"] == sorted({"testing@cpython-3.11"})
 
 
 class TestBuildCreateEnvsParamsExcludesDevWorkspace:
@@ -110,7 +116,7 @@ class TestBuildCreateEnvsParamsExcludesDevWorkspace:
         params = build_create_envs_params(sel, env_table, recreate=True)
 
         assert params["env_names"] == sorted(
-            {"testing@cpython-3.11", "testing@cpython-3.12", "dev_no_runtime"}
+            {"testing@cpython-3.11", "testing@cpython-3.12"}
         )
         assert "dev_workspace" not in params["env_names"]
 
@@ -123,4 +129,140 @@ class TestBuildCreateEnvsParamsExcludesDevWorkspace:
 
         params = build_create_envs_params(sel, env_table, recreate=True)
 
-        assert "dev_workspace" not in params.get("env_names", [])
+        assert params["env_names"] == []
+
+
+class TestBuildCreateEnvsParamsFollowsEnvFilter:
+    """An `--env` filter narrows step 5 the same way it narrows step 6, so a
+    filtered run never creates venvs it will not install into."""
+
+    def test_env_filter_selects_only_the_named_env(self) -> None:
+        """A filtered run covers only the named env; the venvs it skips stay
+        untouched until the next unfiltered run or on-demand repair."""
+        env_table = {
+            "dev_workspace": _env(),
+            "dev_no_runtime": _env(),
+            "docs": _env(),
+            "runtime": _env(),
+        }
+        sel = resolve_env_selection(env_table, ["dev_no_runtime"], [], "cli")
+
+        params = build_create_envs_params(sel, env_table, recreate=True)
+
+        assert params["env_names"] == ["dev_no_runtime"]
+        assert params["recreate"] is True
+
+    def test_interpreter_only_filter_keeps_every_non_matrix_env(self) -> None:
+        """`--interpreter` alone narrows matrix children but keeps non-matrix
+        envs covered, so they are still created and installed."""
+        env_table = {
+            "dev_workspace": _env(),
+            **_matrix_base("testing", ["3.11", "3.12"]),
+            "dev_no_runtime": _env(),
+            "docs": _env(),
+        }
+        sel = resolve_env_selection(env_table, [], ["3.12"], "cli")
+
+        params = build_create_envs_params(sel, env_table, recreate=False)
+
+        assert params["env_names"] == [
+            "dev_no_runtime",
+            "docs",
+            "testing@cpython-3.12",
+        ]
+
+    @pytest.mark.parametrize(
+        ("env_selectors", "interpreter_selectors"),
+        [
+            ([], []),
+            (["dev_no_runtime"], []),
+            (["testing"], []),
+            ([], ["3.12"]),
+            (["dev_workspace"], []),
+        ],
+    )
+    def test_create_install_parity(
+        self, env_selectors: list[str], interpreter_selectors: list[str]
+    ) -> None:
+        """Step 5 and step 6 always cover the same envs, so an install never
+        targets a venv this run did not create. The table contains
+        `dev_workspace`, so both builders always produce `env_names`."""
+        env_table = {
+            "dev_workspace": _env(),
+            "dev_no_runtime": _env(),
+            "docs": _env(),
+            **_matrix_base("testing", ["3.11", "3.12"]),
+        }
+        sel = resolve_env_selection(
+            env_table, env_selectors, interpreter_selectors, "cli"
+        )
+
+        create_params = build_create_envs_params(sel, env_table, recreate=False)
+        install_params = build_install_envs_params(sel, env_table)
+
+        assert create_params["env_names"] == install_params["env_names"]
+
+
+class TestBuildInstallEnvsParams:
+    """Step 6 covers exactly the selected envs, never the already-installed
+    `dev_workspace`, so preset-resolved deps are not reinstalled from the env
+    being replaced."""
+
+    def test_no_selection_installs_everything_minus_dev_workspace(self) -> None:
+        env_table = {
+            "dev_workspace": _env(),
+            "dev_no_runtime": _env(),
+            "docs": _env(),
+        }
+        sel = resolve_env_selection(env_table, [], [], "cli")
+
+        params = build_install_envs_params(sel, env_table)
+
+        assert params["env_names"] == ["dev_no_runtime", "docs"]
+
+    def test_env_filter_installs_only_selected_matrix_children(self) -> None:
+        env_table = {
+            "dev_workspace": _env(),
+            **_matrix_base("testing", ["3.11", "3.12"]),
+            "dev_no_runtime": _env(),
+        }
+        sel = resolve_env_selection(env_table, ["testing"], [], "cli")
+
+        params = build_install_envs_params(sel, env_table)
+
+        assert params["env_names"] == [
+            "testing@cpython-3.11",
+            "testing@cpython-3.12",
+        ]
+
+    def test_no_selection_without_dev_workspace_installs_every_env(self) -> None:
+        """Unlike the create builder (which omits `env_names` here), the install
+        builder always names its envs, so callers never branch on the key."""
+        env_table = {"dev_no_runtime": _env(), "docs": _env()}
+        sel = resolve_env_selection(env_table, [], [], "cli")
+
+        params = build_install_envs_params(sel, env_table)
+
+        assert params["env_names"] == ["dev_no_runtime", "docs"]
+
+
+class TestDevWorkspaceRecreateRequested:
+    """`--recreate` follows the `--env` filter, so a filtered rebuild never
+    wipes the bootstrap venv every later step runs on."""
+
+    @pytest.mark.parametrize(
+        ("recreate", "env_names", "expected"),
+        [
+            (False, None, False),
+            (False, ["dev_workspace"], False),
+            (True, None, True),
+            (True, [], True),
+            (True, ["dev_no_runtime"], False),
+            (True, ["testing"], False),
+            (True, ["dev_no_runtime", "dev_workspace"], True),
+        ],
+    )
+    def test_truth_table(
+        self, recreate: bool, env_names: list[str] | None, expected: bool
+    ) -> None:
+        assert dev_workspace_recreate_requested(recreate, env_names) is expected

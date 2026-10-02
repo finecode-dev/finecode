@@ -52,7 +52,7 @@ def build_create_envs_params(
     from finecode.wm_server.config import env_selection
 
     if sel.active:
-        create_set = env_selection.compute_create_set(sel, set(env_universe.keys()))
+        create_set = env_selection.compute_prepare_set(sel, set(env_universe.keys()))
         create_set.discard("dev_workspace")
         return {"recreate": recreate, "env_names": sorted(create_set)}
     elif "dev_workspace" in env_universe:
@@ -60,6 +60,37 @@ def build_create_envs_params(
         create_set.discard("dev_workspace")
         return {"recreate": recreate, "env_names": sorted(create_set)}
     return {"recreate": recreate}
+
+
+def build_install_envs_params(
+    sel: EnvSelection, env_universe: dict[str, Any]
+) -> dict[str, Any]:
+    """Build the `fine_envs.InstallEnvsAction` params for one project's step-6 call.
+
+    Covers the same envs as `build_create_envs_params`. `dev_workspace` is
+    excluded because step 4.5 already installed its preset-resolved deps on
+    the project's own now-running runner; reinstalling it here would run from
+    the env being replaced.
+    """
+    from finecode.wm_server.config import env_selection
+
+    install_set = env_selection.compute_prepare_set(sel, set(env_universe.keys()))
+    install_set.discard("dev_workspace")
+    return {"env_names": sorted(install_set)}
+
+
+def dev_workspace_recreate_requested(
+    recreate: bool, env_names: list[str] | None
+) -> bool:
+    """Whether step 2 should wipe subproject `dev_workspace` venvs.
+
+    `--recreate` follows the `--env` selection like every other env: it
+    reaches `dev_workspace` only when no `--env` filter is given or the
+    filter names `dev_workspace`. Without it, step 2 still checks validity
+    and rebuilds an invalid `dev_workspace` — the bootstrap itself is never
+    filtered, because every later step runs on it.
+    """
+    return recreate and (not env_names or "dev_workspace" in env_names)
 
 
 async def _run_env_action(
@@ -343,14 +374,14 @@ async def prepare_envs(
     4.6. Wheel mode only: build a wheel for every workspace package, each by
          its own project's runner, into
          ``<ws_root>/.venvs/dev_workspace/cache/wheelhouse``.
-    5. create_envs across all projects (skips unselected matrix children).
+    5. create_envs across all projects (the selected envs; every env when no selection is active).
     6. install_envs across all projects (installs the selected non-dev_workspace
        envs; in wheel mode they install from the wheelhouse).
 
     Args:
         ws_context: Workspace context.
         workdir_path: Absolute path to the workspace root directory.
-        recreate: When True, delete and recreate all dev_workspace venvs.
+        recreate: Delete and recreate the venvs this run covers. Subproject dev_workspace venvs are wiped only when no --env filter is given or it names dev_workspace.
         env_names: Limit to these env names. For a matrix env, naming its
             base selects all of its children; naming a concrete child selects
             only that child.
@@ -363,9 +394,10 @@ async def prepare_envs(
     Per project, `env_names` / `interpreter_names` / each matrix env's
     `default_interpreters` policy are resolved (via
     `finecode.wm_server.config.env_selection`) into a selection. When that
-    selection is active (a proper subset of the project's envs): step 5
-    skips unselected matrix children (non-matrix envs are still created —
-    PRD-0003 AC8), and step 6 installs only the selected envs. When inactive
+    selection is active (a proper subset of the project's envs): steps 5 and 6
+    both cover exactly the selected envs (an `--env` filter excludes unnamed
+    non-matrix envs from both; `--interpreter` alone keeps every non-matrix env
+    selected). When inactive
     (no selectors and no narrowing config default anywhere), both steps cover
     every env — today's behaviour (R7).
 
@@ -461,8 +493,10 @@ async def prepare_envs(
     logger.info("Checking dev workspace environments...")
     await user_messages.info("Checking dev workspace environments...")
 
+    recreate_dev_workspace = dev_workspace_recreate_requested(recreate, env_names)
+
     async def _check_or_remove(project: domain.Project) -> None:
-        if recreate:
+        if recreate_dev_workspace:
             logger.trace(f"Recreating dev_workspace for '{project.name}'")
             runners = ws_context.ws_projects_extension_runners.get(project.dir_path, {})
             runner = runners.get("dev_workspace")
@@ -710,19 +744,9 @@ async def prepare_envs(
 
     async def _install_one(p: domain.CollectedProject) -> None:
         nonlocal install_done
-        sel = selections_by_project[p.dir_path]
-        if sel.active:
-            install_env_names = sorted(sel.selected_env_names - {"dev_workspace"})
-        else:
-            install_env_names = sorted(
-                name
-                for name in env_universe_by_project[p.dir_path]
-                if name != "dev_workspace"
-            )
-        # `dev_workspace` is excluded because step 4.5 already installed its
-        # preset-resolved deps on the project's own now-running runner;
-        # reinstalling it here would run from the env being replaced.
-        params = {"env_names": install_env_names}
+        params = build_install_envs_params(
+            selections_by_project[p.dir_path], env_universe_by_project[p.dir_path]
+        )
         err = await _run_env_action(
             "fine_envs.InstallEnvsAction",
             params,
@@ -911,6 +935,8 @@ async def install_env_for_project(
 __all__ = [
     "PrepareEnvsFailed",
     "build_create_envs_params",
+    "build_install_envs_params",
+    "dev_workspace_recreate_requested",
     "install_env_for_project",
     "prepare_envs",
 ]

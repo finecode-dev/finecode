@@ -219,8 +219,8 @@ See [Preparing Environments](guides/preparing-environments.md) for a full explan
 
 | Option | Description |
 |---|---|
-| `--recreate` | Delete and recreate all venvs from scratch |
-| `--env=<name>` | Restrict handler dependency installation to the named env(s). Repeatable. See note below. |
+| `--recreate` | Delete and recreate the venvs this run covers (all, or the `--env` selection) |
+| `--env=<name>` | Restrict `create_envs` and `install_envs` to the named env(s). Repeatable. See note below. |
 | `--project=<name>` | Restrict preparation to the named project(s) (matched by `[project].name` from `pyproject.toml`). Repeatable. |
 | `--log-level=<level>` | Set log level: `TRACE`, `DEBUG`, `INFO`, `WARNING`, `ERROR` (default: `INFO`) |
 | `--verbose` / `-v` | Stream WM and ER diagnostic logs to stderr live over the protocol (`server/logRecords`). Auto-enabled in CI. |
@@ -231,7 +231,7 @@ See [Preparing Environments](guides/preparing-environments.md) for a full explan
 | `--no-resource-usage` | Disable the reporter, including its CI default. |
 
 
-!!! note `--env` restricts only the `install_envs` step. The `create_envs` step still runs for **all** envs regardless of this flag — virtualenvs must exist for every env even when you only need to update dependencies in one of them.
+!!! note `--env` restricts both `create_envs` and `install_envs`; the `dev_workspace` bootstrap always runs; envs outside the filter are left untouched, so a missing or broken one is repaired by the next unfiltered run or on demand. See [Filtering by environment name](guides/preparing-environments.md#filtering-by-environment-name).
 
 ---
 

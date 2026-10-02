@@ -3,8 +3,7 @@ import pytest
 from finecode.wm_server.config.env_selection import (
     EnvSelection,
     EnvSelectionError,
-    compute_create_set,
-    compute_install_set,
+    compute_prepare_set,
     env_selector_known_in,
     interpreter_selector_known_in,
     resolve_env_selection,
@@ -295,14 +294,13 @@ class TestDerivedGating:
             matrix_child_names={"testing@cpython-3.11", "testing@cpython-3.12"},
         )
 
-        assert compute_create_set(selection, all_names) == all_names
-        assert compute_install_set(selection, all_names) == all_names
+        assert compute_prepare_set(selection, all_names) == all_names
 
-    def test_active_selection_excludes_unselected_matrix_children_from_create_but_keeps_non_matrix(
+    def test_active_selection_prepares_exactly_the_selected_envs(
         self,
     ) -> None:
-        """An unselected matrix child is skipped in the create set (AC8); a
-        non-matrix env is always in the create set regardless of selection."""
+        """A non-matrix env outside the selection is neither created nor installed,
+        the same as an unselected matrix child."""
         all_names = {"testing@cpython-3.11", "testing@cpython-3.12", "dev"}
         selection = EnvSelection(
             active=True,
@@ -310,12 +308,23 @@ class TestDerivedGating:
             matrix_child_names={"testing@cpython-3.11", "testing@cpython-3.12"},
         )
 
-        create_set = compute_create_set(selection, all_names)
-        install_set = compute_install_set(selection, all_names)
+        assert compute_prepare_set(selection, all_names) == {"testing@cpython-3.11"}
 
-        assert create_set == {"testing@cpython-3.11", "dev"}
-        assert "testing@cpython-3.12" not in create_set
-        assert install_set == {"testing@cpython-3.11"}
+    def test_interpreter_only_selection_keeps_every_non_matrix_env(self) -> None:
+        """`--interpreter` alone narrows matrix children but leaves non-matrix envs
+        selected, so a filtered run still prepares them."""
+        env_table = {
+            "testing@cpython-3.11": {"interpreter": "cpython@3.11"},
+            "testing@cpython-3.12": {"interpreter": "cpython@3.12"},
+            "dev": {},
+        }
+
+        sel = resolve_env_selection(env_table, [], ["3.12"], "cli")
+
+        assert compute_prepare_set(sel, set(env_table.keys())) == {
+            "testing@cpython-3.12",
+            "dev",
+        }
 
 
 class TestEnvSelectorKnownIn:

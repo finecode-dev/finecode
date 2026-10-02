@@ -23,8 +23,7 @@ from finecode.wm_server.config.interpreter_matrix import (
 __all__ = [
     "EnvSelection",
     "EnvSelectionError",
-    "compute_create_set",
-    "compute_install_set",
+    "compute_prepare_set",
     "env_selector_known_in",
     "interpreter_selector_known_in",
     "resolve_env_selection",
@@ -250,16 +249,11 @@ def resolve_selected_interpreters(
     }
 
 
-def compute_create_set(selection: EnvSelection, all_env_names: set[str]) -> set[str]:
-    """Envs to run `create_envs` for: non-matrix envs are always created;
-    unselected matrix children are skipped (PRD-0003 AC8)."""
-    if not selection.active:
-        return set(all_env_names)
-    return all_env_names - (selection.matrix_child_names - selection.selected_env_names)
-
-
-def compute_install_set(selection: EnvSelection, all_env_names: set[str]) -> set[str]:
-    """Envs to run `install_envs` for."""
+def compute_prepare_set(selection: EnvSelection, all_env_names: set[str]) -> set[str]:
+    """Envs to run both `create_envs` and `install_envs` for: every env when
+    the selection is inactive, otherwise exactly the selected envs. A
+    non-matrix env outside an `--env` filter is neither created nor installed,
+    the same as an unselected matrix child (PRD-0003 AC8)."""
     if not selection.active:
         return set(all_env_names)
     return set(selection.selected_env_names)

@@ -259,8 +259,8 @@ This is the only command most users need. It:
 1. Discovers all projects in the workspace
 2. Bootstraps `dev_workspace` for each subproject (`create_envs` + `install_envs`, using workspace root config)
 3. Starts Extension Runners
-4. Runs `create_envs` across all projects
-5. Runs `install_envs` across all projects
+4. Runs `create_envs` across all projects (only the selected envs when `--env`/`--interpreter` narrows the run — see Filtering by environment name)
+5. Runs `install_envs` across all projects (only the selected envs when `--env`/`--interpreter` narrows the run — see Filtering by environment name)
 
 See [CLI reference — prepare-envs](../cli.md#prepare-envs) for available options.
 
@@ -271,6 +271,8 @@ python -m finecode prepare-envs --recreate
 ```
 
 Deletes all existing virtualenvs and rebuilds them from scratch. Use this when a venv becomes corrupted or when you want a clean slate after dependency changes.
+
+With `--env`, `--recreate` rebuilds only the selected envs; subproject `dev_workspace` venvs are wiped only when the filter names `dev_workspace` (they are still checked and rebuilt if invalid).
 
 `--recreate` rebuilds the envs *discovery found* — it does not remove envs that are no longer declared. See [Orphaned environments](#orphaned-environments) below.
 
@@ -339,15 +341,15 @@ Only prepares environments for the listed projects. Useful in a large workspaces
 python -m finecode prepare-envs --env=dev_no_runtime
 ```
 
-For an ordinary, non-matrix env, this restricts the `install_envs` step (step 5) to the named environments. The `create_envs` step still runs for **all** non-matrix envs regardless of this flag.
+For an ordinary, non-matrix env, `--env` restricts **both** `create_envs` and `install_envs` to the named envs; envs not named are neither checked nor created.
 
-**Why?** Virtualenvs must exist for every env — they are cheap to create and skip if already valid. Filtering at that step would leave envs in a broken state if they don't exist yet.
+Trade-off: an unselected venv that is missing or broken stays that way in a filtered run. The next unfiltered `prepare-envs` builds it, and a run that needs it repairs a missing venv on demand (see [Automatic env repair](#automatic-env-repair)).
 
 Useful when you've added a new handler in one env and want to update only that env without reinstalling everything.
 
 #### Matrix environments
 
-For a matrix environment (ADR-0047 — one declaring an `interpreters` axis), the rule above changes: naming a concrete matrix child — or its base name, which expands to all of its children — restricts **both** `create_envs` and `install_envs` to the selected children (PRD-0003 AC8). Unselected children of that matrix are not created at all, since there is no point creating a venv for an interpreter nobody asked for in this run.
+For a matrix environment (ADR-0047 — one declaring an `interpreters` axis), the same rule applies, with base-name expansion: naming a concrete matrix child — or its base name, which expands to all of its children — restricts **both** `create_envs` and `install_envs` to the selected children (PRD-0003 AC8). Unselected children of that matrix are not created at all, since there is no point creating a venv for an interpreter nobody asked for in this run.
 
 ```bash
 # Select every child of the "testing" matrix env.
@@ -370,7 +372,7 @@ Restricts every matrix environment's interpreter axis to the named interpreter(s
 
 `--interpreter` can be combined with `--env`: the effective selection is the intersection of the two — e.g. `--env=testing --interpreter=3.12` selects only `testing`'s `cpython@3.12` child. An `--interpreter` value that doesn't exist in a given matrix env's axis simply contributes nothing for that env (it is not an error by itself — see below for when a selector *is* rejected).
 
-Non-matrix envs are unaffected by `--interpreter`; they are always created, and installed unless excluded by `--env`.
+Non-matrix envs are unaffected by `--interpreter`; they are created and installed unless an `--env` filter excludes them.
 
 ### Default interpreter subset
 
