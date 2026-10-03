@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import gc
+import selectors
 import time
 
 import click
@@ -11,6 +12,72 @@ import pytest
 
 from finecode.cli_app import resource_usage
 from finecode.wm_client import ApiMethodNotFoundError
+
+
+class _VirtualClock:
+    def __init__(self) -> None:
+        self.now = 0.0
+
+
+class _AdvancingSelector(selectors.DefaultSelector):
+    """Never blocks: when nothing is ready, jumps the clock to the next timer."""
+
+    def __init__(self, clock: _VirtualClock) -> None:
+        super().__init__()
+        self._clock = clock
+
+    def select(self, timeout=None):
+        events = super().select(0)
+        if events or timeout == 0:
+            return events
+        if timeout is None:
+            raise RuntimeError("virtual-time loop would block forever")
+        self._clock.now += timeout
+        return events
+
+
+class _VirtualTimeLoop(asyncio.SelectorEventLoop):
+    def __init__(self) -> None:
+        self._virtual = _VirtualClock()
+        super().__init__(selector=_AdvancingSelector(self._virtual))
+
+    def time(self) -> float:
+        return self._virtual.now
+
+    def stall(self, seconds: float) -> None:
+        """Move time forward without running anything, as a blocked loop would."""
+        self._virtual.now += seconds
+
+
+def _run_virtual(poll_latencies, body, interval=4.0, default_latency=0.5):
+    """Run periodic() on virtual time; return [(kind, text), ...] in emission order."""
+    events: list[tuple[str, str]] = []
+    remaining = list(poll_latencies)
+    calls = {"count": 0}
+
+    async def _amain():
+        loop = asyncio.get_running_loop()
+
+        async def _poll() -> dict:
+            calls["count"] += 1
+            latency = remaining.pop(0) if remaining else default_latency
+            await asyncio.sleep(latency)
+            return _snapshot()
+
+        async with resource_usage.periodic(
+            _poll,
+            interval,
+            emit=lambda text: events.append(("line", text)),
+            emit_status=lambda text: events.append(("status", text)),
+            render=lambda _s, elapsed: f"sample {elapsed}",
+            summary=False,
+            clock=loop.time,
+        ):
+            await body(loop)
+        return events, calls["count"]
+
+    with asyncio.Runner(loop_factory=_VirtualTimeLoop) as runner:
+        return runner.run(_amain())
 
 
 def _snapshot(**overrides) -> dict:
@@ -73,6 +140,66 @@ def _snapshot(**overrides) -> dict:
     }
     base.update(overrides)
     return base
+
+
+def test_prompt_answers_produce_no_false_no_answer_and_one_sample_per_interval() -> (
+    None
+):
+    """Prompt answers must not print no answer and must tick once per interval.
+
+    A false no answer line would train operators to ignore the one signal
+    that means the server is actually stalled.
+    """
+
+    async def _body(_loop) -> None:
+        await asyncio.sleep(13.0)
+
+    events, _count = _run_virtual([], _body)
+    assert events == [
+        ("line", "sample 4.5"),
+        ("line", "sample 8.5"),
+        ("line", "sample 12.5"),
+    ]
+
+
+def test_slow_poll_reports_missed_ticks_then_resumes_on_grid() -> None:
+    """A slow poll must report each missed tick once, then resume on the grid.
+
+    Without one line per missed tick an operator cannot tell how long the
+    server was stalled, and off-grid samples would hide the recovery point.
+    """
+
+    async def _body(_loop) -> None:
+        await asyncio.sleep(21.0)
+
+    events, count = _run_virtual([10.0], _body)
+    assert events == [
+        ("status", "[resources] t=+8s no answer for 4.00s"),
+        ("status", "[resources] t=+12s no answer for 8.00s"),
+        ("line", "sample 14.0"),
+        ("line", "sample 16.5"),
+        ("line", "sample 20.5"),
+    ]
+    assert count == 3
+
+
+def test_late_started_poll_gets_a_full_interval() -> None:
+    """A poll started late must still wait a full interval before no answer.
+
+    The client loop can stall on its own work; blaming the server for that
+    delay would send operators chasing a stall that never happened.
+    """
+
+    async def _body(loop) -> None:
+        await asyncio.sleep(3.5)
+        loop.stall(5.0)
+        await asyncio.sleep(5.5)
+
+    events, _count = _run_virtual([], _body)
+    assert events == [
+        ("line", "sample 9.0"),
+        ("line", "sample 13.0"),
+    ]
 
 
 async def test_answered_ticks_emit_lines_and_leave_stdout_alone(capsys) -> None:
@@ -384,7 +511,7 @@ async def test_every_emission_is_contained() -> None:
         async with resource_usage.periodic(
             _poll, 0.02, emit=lambda _line: None, emit_status=_flaky_status
         ) as state:
-            await asyncio.sleep(0.08)
+            await asyncio.sleep(0.10)
             assert not state.stopped.is_set()
             assert any("no answer" in line for line in statuses)
     finally:

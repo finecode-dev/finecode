@@ -416,6 +416,7 @@ async def _run_loop(
                 try:
                     poll_task = asyncio.create_task(poll())
                     poll_started = clock()
+                    next_tick = max(next_tick, poll_started) + interval_sec
                 except BrokenPipeError:
                     raise
                 except Exception as exc:
@@ -473,7 +474,6 @@ async def _run_loop(
                         emit_status,
                     )
                 poll_task = None
-                next_tick += interval_sec
                 continue
             except (ConnectionError, RuntimeError) as exc:
                 try:
@@ -492,7 +492,6 @@ async def _run_loop(
                     state.stopped.set()
                     return
                 poll_task = None
-                next_tick += interval_sec
                 continue
             except ApiError as exc:
                 try:
@@ -507,7 +506,6 @@ async def _run_loop(
                         emit_status,
                     )
                 poll_task = None
-                next_tick += interval_sec
                 continue
             except BrokenPipeError:
                 raise
@@ -517,7 +515,6 @@ async def _run_loop(
                     emit_status,
                 )
                 poll_task = None
-                next_tick += interval_sec
                 continue
             finally:
                 if poll_task is not None and poll_task.done():
@@ -540,7 +537,6 @@ async def _run_loop(
                     f"[resources] reporter error: {type(exc).__name__}: {exc}",
                     emit_status,
                 )
-            next_tick += interval_sec
     finally:
         if poll_task is not None:
             await _reap_poll(poll_task)

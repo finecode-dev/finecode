@@ -35,7 +35,9 @@ class _FakeWm:
         self.close_after_first_snapshot = False
 
     async def start(self) -> None:
-        self._server = await asyncio.start_server(self._handle, "127.0.0.1", 0)
+        self._server = await asyncio.start_server(
+            lambda reader, writer: self._handle(reader, writer), "127.0.0.1", 0
+        )
         self.port = self._server.sockets[0].getsockname()[1]
 
     async def _handle(self, reader, writer) -> None:
@@ -333,8 +335,12 @@ async def test_watch_json_lines_parse_and_no_answer_on_stderr(
             emit_status=statuses.append,
         )
     )
-    while not any("no answer" in line for line in statuses):
-        await asyncio.sleep(0.01)
+
+    async def _no_answer_seen() -> None:
+        while not any("no answer" in line for line in statuses):
+            await asyncio.sleep(0.01)
+
+    await asyncio.wait_for(_no_answer_seen(), 5.0)
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
         await task
