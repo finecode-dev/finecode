@@ -64,14 +64,13 @@ python -m finecode run [options] <action> [<action> ...] [payload] [--config.<ke
 | `--no-save-results` | Do not write action results to the cache directory |
 | `--results-file=<path>` | Also write *this run's* results to `<path>`, unmerged, on every exit path, and report the path on stderr. See [Per-run results file](#per-run-results-file) |
 | `--dev-env=<env>` | Override the detected dev environment. One of: `ai`, `ci`, `cli`, `ide`, `precommit` (default: auto-detected — see [Dev environment detection](#dev-environment-detection)) |
-| `--env=<name>` | For a matrixed action (ADR-0047), restrict execution to the named interpreter environment(s) — a matrix base selects all of its children, a concrete child selects only itself. Repeatable. Non-matrix envs are unaffected. See [Preparing Environments — filtering by environment name](guides/preparing-environments.md#filtering-by-environment-name). |
-| `--interpreter=<impl>@<version>` | For a matrixed action, restrict execution to the named interpreter(s) across every matrix env the action touches. Repeatable; a bare version means `cpython`. See [Preparing Environments — filtering by interpreter](guides/preparing-environments.md#filtering-by-interpreter). |
+| `--interpreter=<impl>@<version>` | For a matrixed action, restrict execution to the named interpreter(s). Repeatable; a bare version means `cpython`; `all` means the full axis, ignoring `default_interpreters`. |
 | `--resource-usage[=SEC]` | Print one `[resources]` stderr line per interval plus a peaks summary at the end (see [Resource usage in CI](#resource-usage-in-ci)). Accepted range `0 < SEC ≤ 600`; bare flag polls every 15 s. |
 | `--no-resource-usage` | Disable the reporter, including its CI default. |
 
 In a multi-project workspace, `run` fans out across every project that declares the action; spawned subprocesses are bounded by the machine-wide process budget (one slot per subprocess, leased per unit of work; default: derived from the machine's CPU budget). Fan-out is throttled, never refused — workspace size does not limit which actions you can run. See [Process budget](guides/wm-server-internals.md#process-budget).
 
-`--env` and `--interpreter` on `run` use the same selector semantics as `prepare-envs` (ADR-0050): they compose by intersection, and a matrix env's config-declared `default_interpreters` policy (see [Preparing Environments — default interpreter subset](guides/preparing-environments.md#default-interpreter-subset)) applies as the default when neither is given — so a plain `run` can execute only a local subset of a matrix (e.g. the newest interpreter) while CI still runs the full axis, mirroring `prepare-envs`. The selection also decides which interpreter instances are *started*, not only which run: unselected matrix children are never started or repaired.
+`run` selects matrix variants with `--interpreter` alone (ADR-0103): no selector applies each base's `default_interpreters` policy (see [Preparing Environments — default interpreter subset](guides/preparing-environments.md#default-interpreter-subset)) — so a plain `run` can execute only a local subset of a matrix (e.g. the newest interpreter) while CI still runs the full axis; values select exactly those interpreters; `all` selects the full axis, ignoring the policy. The selection also decides which interpreter instances are *started*, not only which run: unselected matrix children are never started or repaired.
 
 WAL environment variable and storage settings are shared with `start-wm-server` — see [`start-wm-server`](#start-wm-server) for details.
 
@@ -192,11 +191,14 @@ python -m finecode --workdir=./finecode_extension_api run lint
 # Override ruff line length
 python -m finecode run lint --config.ruff.line_length=120
 
-# Run a matrixed action's "testing" env only for its cpython@3.11 child
-python -m finecode run run_tests --env=testing@cpython-3.11
+# Run a matrixed action's 3.11 variant
+python -m finecode run run_tests --interpreter=3.11
 
 # Run every matrix env's 3.12 interpreter
 python -m finecode run run_tests --interpreter=3.12
+
+# Run the full declared axis, ignoring the default policy
+python -m finecode run run_tests --interpreter=all
 ```
 
 ---
@@ -220,7 +222,7 @@ See [Preparing Environments](guides/preparing-environments.md) for a full explan
 | Option | Description |
 |---|---|
 | `--recreate` | Delete and recreate the venvs this run covers (all, or the `--env` selection) |
-| `--env=<name>` | Restrict `create_envs` and `install_envs` to the named env(s). Repeatable. See note below. |
+| `--env=<name>` | Restrict `create_envs` and `install_envs` to the named env(s): a name, a matrix base (its default interpreters), `<base>@<impl>-<version>`, or `<base>@all`. Repeatable. See note below. |
 | `--project=<name>` | Restrict preparation to the named project(s) (matched by `[project].name` from `pyproject.toml`). Repeatable. |
 | `--log-level=<level>` | Set log level: `TRACE`, `DEBUG`, `INFO`, `WARNING`, `ERROR` (default: `INFO`) |
 | `--verbose` / `-v` | Stream WM and ER diagnostic logs to stderr live over the protocol (`server/logRecords`). Auto-enabled in CI. |

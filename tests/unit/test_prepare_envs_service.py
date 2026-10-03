@@ -23,7 +23,7 @@ class TestBuildCreateEnvsParams:
 
     def test_recreate_true_with_no_selection_forwards_recreate(self) -> None:
         env_table = {"dev_no_runtime": _env(), "docs": _env()}
-        sel = resolve_env_selection(env_table, [], [], "cli")
+        sel = resolve_env_selection(env_table, [], "cli")
 
         params = build_create_envs_params(sel, env_table, recreate=True)
 
@@ -32,7 +32,7 @@ class TestBuildCreateEnvsParams:
 
     def test_recreate_false_with_no_selection_forwards_recreate(self) -> None:
         env_table = {"dev_no_runtime": _env(), "docs": _env()}
-        sel = resolve_env_selection(env_table, [], [], "cli")
+        sel = resolve_env_selection(env_table, [], "cli")
 
         params = build_create_envs_params(sel, env_table, recreate=False)
 
@@ -46,7 +46,7 @@ class TestBuildCreateEnvsParams:
             **_matrix_base("testing", ["3.11", "3.12"]),
             "dev_no_runtime": _env(),
         }
-        sel = resolve_env_selection(env_table, ["testing"], [], "cli")
+        sel = resolve_env_selection(env_table, ["testing"], "cli")
 
         params = build_create_envs_params(sel, env_table, recreate=True)
 
@@ -62,7 +62,7 @@ class TestBuildCreateEnvsParams:
             **_matrix_base("testing", ["3.11", "3.12"]),
             "dev_no_runtime": _env(),
         }
-        sel = resolve_env_selection(env_table, ["testing@cpython-3.11"], [], "cli")
+        sel = resolve_env_selection(env_table, ["testing@cpython-3.11"], "cli")
 
         params = build_create_envs_params(sel, env_table, recreate=False)
 
@@ -85,7 +85,7 @@ class TestBuildCreateEnvsParamsExcludesDevWorkspace:
             "dev_no_runtime": _env(),
             "docs": _env(),
         }
-        sel = resolve_env_selection(env_table, [], [], "cli")
+        sel = resolve_env_selection(env_table, [], "cli")
 
         params = build_create_envs_params(sel, env_table, recreate=True)
 
@@ -99,7 +99,7 @@ class TestBuildCreateEnvsParamsExcludesDevWorkspace:
         """Unaffected case: a project whose universe has no `dev_workspace` key
         keeps the original no-selection behavior of omitting `env_names`."""
         env_table = {"dev_no_runtime": _env(), "docs": _env()}
-        sel = resolve_env_selection(env_table, [], [], "cli")
+        sel = resolve_env_selection(env_table, [], "cli")
 
         params = build_create_envs_params(sel, env_table, recreate=True)
 
@@ -111,7 +111,7 @@ class TestBuildCreateEnvsParamsExcludesDevWorkspace:
             **_matrix_base("testing", ["3.11", "3.12"]),
             "dev_no_runtime": _env(),
         }
-        sel = resolve_env_selection(env_table, ["testing"], [], "cli")
+        sel = resolve_env_selection(env_table, ["testing"], "cli")
 
         params = build_create_envs_params(sel, env_table, recreate=True)
 
@@ -125,7 +125,7 @@ class TestBuildCreateEnvsParamsExcludesDevWorkspace:
         create_envs call: `dev_workspace` creation is exclusively owned by
         steps 2-3's root-executed bootstrap, regardless of selector."""
         env_table = {"dev_workspace": _env(), "dev_no_runtime": _env()}
-        sel = resolve_env_selection(env_table, ["dev_workspace"], [], "cli")
+        sel = resolve_env_selection(env_table, ["dev_workspace"], "cli")
 
         params = build_create_envs_params(sel, env_table, recreate=True)
 
@@ -145,45 +145,25 @@ class TestBuildCreateEnvsParamsFollowsEnvFilter:
             "docs": _env(),
             "runtime": _env(),
         }
-        sel = resolve_env_selection(env_table, ["dev_no_runtime"], [], "cli")
+        sel = resolve_env_selection(env_table, ["dev_no_runtime"], "cli")
 
         params = build_create_envs_params(sel, env_table, recreate=True)
 
         assert params["env_names"] == ["dev_no_runtime"]
         assert params["recreate"] is True
 
-    def test_interpreter_only_filter_keeps_every_non_matrix_env(self) -> None:
-        """`--interpreter` alone narrows matrix children but keeps non-matrix
-        envs covered, so they are still created and installed."""
-        env_table = {
-            "dev_workspace": _env(),
-            **_matrix_base("testing", ["3.11", "3.12"]),
-            "dev_no_runtime": _env(),
-            "docs": _env(),
-        }
-        sel = resolve_env_selection(env_table, [], ["3.12"], "cli")
-
-        params = build_create_envs_params(sel, env_table, recreate=False)
-
-        assert params["env_names"] == [
-            "dev_no_runtime",
-            "docs",
-            "testing@cpython-3.12",
-        ]
-
     @pytest.mark.parametrize(
-        ("env_selectors", "interpreter_selectors"),
+        ("env_selectors",),
         [
-            ([], []),
-            (["dev_no_runtime"], []),
-            (["testing"], []),
-            ([], ["3.12"]),
-            (["dev_workspace"], []),
+            ([],),
+            (["dev_no_runtime"],),
+            (["testing"],),
+            (["testing@all"],),
+            (["testing@cpython-3.12"],),
+            (["dev_workspace"],),
         ],
     )
-    def test_create_install_parity(
-        self, env_selectors: list[str], interpreter_selectors: list[str]
-    ) -> None:
+    def test_create_install_parity(self, env_selectors: list[str]) -> None:
         """Step 5 and step 6 always cover the same envs, so an install never
         targets a venv this run did not create. The table contains
         `dev_workspace`, so both builders always produce `env_names`."""
@@ -193,9 +173,7 @@ class TestBuildCreateEnvsParamsFollowsEnvFilter:
             "docs": _env(),
             **_matrix_base("testing", ["3.11", "3.12"]),
         }
-        sel = resolve_env_selection(
-            env_table, env_selectors, interpreter_selectors, "cli"
-        )
+        sel = resolve_env_selection(env_table, env_selectors, "cli")
 
         create_params = build_create_envs_params(sel, env_table, recreate=False)
         install_params = build_install_envs_params(sel, env_table)
@@ -214,7 +192,7 @@ class TestBuildInstallEnvsParams:
             "dev_no_runtime": _env(),
             "docs": _env(),
         }
-        sel = resolve_env_selection(env_table, [], [], "cli")
+        sel = resolve_env_selection(env_table, [], "cli")
 
         params = build_install_envs_params(sel, env_table)
 
@@ -226,7 +204,7 @@ class TestBuildInstallEnvsParams:
             **_matrix_base("testing", ["3.11", "3.12"]),
             "dev_no_runtime": _env(),
         }
-        sel = resolve_env_selection(env_table, ["testing"], [], "cli")
+        sel = resolve_env_selection(env_table, ["testing"], "cli")
 
         params = build_install_envs_params(sel, env_table)
 
@@ -239,7 +217,7 @@ class TestBuildInstallEnvsParams:
         """Unlike the create builder (which omits `env_names` here), the install
         builder always names its envs, so callers never branch on the key."""
         env_table = {"dev_no_runtime": _env(), "docs": _env()}
-        sel = resolve_env_selection(env_table, [], [], "cli")
+        sel = resolve_env_selection(env_table, [], "cli")
 
         params = build_install_envs_params(sel, env_table)
 

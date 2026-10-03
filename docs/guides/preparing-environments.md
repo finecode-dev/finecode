@@ -259,8 +259,8 @@ This is the only command most users need. It:
 1. Discovers all projects in the workspace
 2. Bootstraps `dev_workspace` for each subproject (`create_envs` + `install_envs`, using workspace root config)
 3. Starts Extension Runners
-4. Runs `create_envs` across all projects (only the selected envs when `--env`/`--interpreter` narrows the run — see Filtering by environment name)
-5. Runs `install_envs` across all projects (only the selected envs when `--env`/`--interpreter` narrows the run — see Filtering by environment name)
+4. Runs `create_envs` across all projects (only the selected envs when `--env` narrows the run — see Filtering by environment name)
+5. Runs `install_envs` across all projects (only the selected envs when `--env` narrows the run — see Filtering by environment name)
 
 See [CLI reference — prepare-envs](../cli.md#prepare-envs) for available options.
 
@@ -349,34 +349,33 @@ Useful when you've added a new handler in one env and want to update only that e
 
 #### Matrix environments
 
-For a matrix environment (ADR-0047 — one declaring an `interpreters` axis), the same rule applies, with base-name expansion: naming a concrete matrix child — or its base name, which expands to all of its children — restricts **both** `create_envs` and `install_envs` to the selected children (PRD-0003 AC8). Unselected children of that matrix are not created at all, since there is no point creating a venv for an interpreter nobody asked for in this run.
+For a matrix base (ADR-0047 — one declaring an `interpreters` axis), `--env` takes four forms (ADR-0103). With any `--env` given, a base not named in any form contributes nothing; with no `--env`, every base contributes its default and every non-matrix env is included:
+
+| Form | Selects |
+|---|---|
+| `<base>` | that base's default interpreters |
+| `<base>@<impl>-<version>` | that one child |
+| `<base>@all` | every child |
+| `<non-matrix>` | that env |
+
+The selection restricts **both** `create_envs` and `install_envs` (PRD-0003 AC8). Unselected children are not created at all. Each base's policy selects its own children only.
 
 ```bash
-# Select every child of the "testing" matrix env.
+# The "testing" base's default subset.
 python -m finecode prepare-envs --env=testing
+
+# Every child of "testing".
+python -m finecode prepare-envs --env=testing@all
 
 # Select only the cpython@3.11 child.
 python -m finecode prepare-envs --env=testing@cpython-3.11
 ```
 
-A matrix base named by `--env` is always expanded to *all* of its children, ignoring that base's own `default_interpreters` policy (see below) — `--env` is more specific than a config default. A sibling matrix base *not* named by `--env` is unaffected by this and keeps applying its own config default (or its full axis, if it has none).
-
-### Filtering by interpreter
-
-```bash
-python -m finecode prepare-envs --interpreter=3.11
-python -m finecode prepare-envs --interpreter=pypy@3.11
-```
-
-Restricts every matrix environment's interpreter axis to the named interpreter(s), the same way for both `create_envs` and `install_envs`. `--interpreter` is repeatable to select more than one interpreter. Values may be the canonical `<impl>@<version>` form or a bare version, which is shorthand for `cpython@<version>`.
-
-`--interpreter` can be combined with `--env`: the effective selection is the intersection of the two — e.g. `--env=testing --interpreter=3.12` selects only `testing`'s `cpython@3.12` child. An `--interpreter` value that doesn't exist in a given matrix env's axis simply contributes nothing for that env (it is not an error by itself — see below for when a selector *is* rejected).
-
-Non-matrix envs are unaffected by `--interpreter`; they are created and installed unless an `--env` filter excludes them.
+`prepare-envs` has no `--interpreter`; name the child, or use `<base>@all`.
 
 ### Default interpreter subset
 
-A matrix environment can declare a default interpreter subset per dev-env, so that a plain `prepare-envs` run (no `--env`/`--interpreter`) still narrows the axis automatically:
+A matrix base can declare a default interpreter subset per dev-env, so that a plain `prepare-envs` run (no `--env`) still narrows the axis automatically:
 
 ```toml
 [tool.finecode.env.testing]
@@ -395,11 +394,11 @@ Each key is either an exact dev-env (`ide`/`cli`/`ai`/`git_hook`/`ci`) or one of
 
 Lookup for the active dev-env `D` (see [dev environment detection](../cli.md#dev-environment-detection) — `ide`/`cli`/`ai`/`git_hook`/`ci`) tries, in order: the exact key `D`, then the bucket key (`"ci"` if `D == "ci"`, otherwise `"local"`), then falls back to `"all"`. In the example above, `local = "newest"` covers `ide`/`cli`/`ai`/`git_hook`, while `ci = "all"` covers `ci` — a common pattern where local development only needs the newest interpreter, but CI verifies every interpreter in the matrix.
 
-An explicit `--interpreter` selector always overrides the config default outright, for every matrix base. A config default (or its explicit-list policy) that names an interpreter outside the env's declared axis is rejected at resolution time with a clear error.
+An explicit `--env` selector always overrides the config default outright, for its own base; each base's policy selects its own children only. A config default (or its explicit-list policy) that names an interpreter outside the env's declared axis is rejected at resolution time with a clear error.
 
-### `run` uses the same selection
+### `run` selects by interpreter
 
-`python -m finecode run` accepts the same `--env`/`--interpreter` selectors, with identical semantics (ADR-0050), to restrict which interpreter variants of a matrixed action actually execute — see [CLI reference — `run`](../cli.md#run). The config-declared `default_interpreters` policy applies there too: a plain `run` (no selectors) executes only the dev-env's default subset of a matrix (e.g. just the newest interpreter locally), while `ci` runs the full axis by default, exactly mirroring `prepare-envs`. Selection is resolved once per project (via `env_selection.resolve_selected_interpreters`) and passed down to whichever fan-out site handles the request — `matrix_runner` (non-streaming) or `matrix_streaming` (CLI / IDE streaming) — so both paths filter identically.
+`python -m finecode run` selects with `--interpreter` (ADR-0103) to restrict which interpreter variants of a matrixed action actually execute — see [CLI reference — `run`](../cli.md#run). Values select exactly those interpreters, `all` selects the full axis, and no selector applies the `default_interpreters` policy. The config-declared `default_interpreters` policy applies there too: a plain `run` (no selectors) executes only the dev-env's default subset of a matrix (e.g. just the newest interpreter locally), while `ci` runs the full axis by default. Selection is resolved once per project (via `env_selection.resolve_run_selection` into selected concrete envs) and passed down to whichever fan-out site handles the request — `matrix_runner` (non-streaming) or `matrix_streaming` (CLI / IDE streaming) via `matrix_runner.selected_variants` — so both paths filter identically.
 
 ---
 

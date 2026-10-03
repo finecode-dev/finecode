@@ -170,7 +170,7 @@ async def run_action_with_partial_results(
     origin: elicitation_bridge.RunDispatchOrigin | None,
     result_formats: list[str] | None = None,
     progress_token: str | int | None = None,
-    selected_interpreters: set[str] | None = None,
+    selected_envs: set[str] | None = None,
 ) -> PartialResultsStream:
     """Run an action and return a stream of partial values.
 
@@ -182,8 +182,8 @@ async def run_action_with_partial_results(
     caller should call :meth:`PartialResultsStream.final_result` to obtain the
     final completion payload (currently ``{"returnCode": int}``).
 
-    ``selected_interpreters`` (PRD-0003 AC8) restricts a matrixed action's
-    fan-out to the given interpreter canonicals, forwarded to every project's
+    ``selected_envs`` (ADR-0103) restricts a matrixed action's
+    fan-out to the given concrete env names, forwarded to every project's
     ``matrix_streaming.run_matrix_with_partial_results`` call; ``None`` (the
     default) runs the full declared axis.
 
@@ -289,9 +289,7 @@ async def run_action_with_partial_results(
         {p.dir_path: [action_name] for p in projects},
         ws_context,
         initialize_all_handlers=True,
-        selected_interpreters_by_project={
-            p.dir_path: selected_interpreters for p in projects
-        },
+        selected_envs_by_project={p.dir_path: selected_envs for p in projects},
     )
 
     requested_formats = result_formats or ["json"]
@@ -350,7 +348,7 @@ async def run_action_with_partial_results(
                 ws_context=ws_context,
                 merge_results=False,
                 on_partial=_on_partial,
-                selected_interpreters=selected_interpreters,
+                selected_envs=selected_envs,
                 origin=origin,
             )
             return_codes.append(matrix_return_code)

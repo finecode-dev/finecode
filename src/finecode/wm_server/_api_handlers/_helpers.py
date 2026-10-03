@@ -86,7 +86,6 @@ class _RunBatchParams(typing.NamedTuple):
     trigger: typing.Any  # run_service.RunActionTrigger
     dev_env: typing.Any  # run_service.DevEnv
     merge_results: bool
-    env_selectors: list[str]
     interpreter_selectors: list[str]
 
 
@@ -211,11 +210,10 @@ def _parse_run_batch_params(params: dict) -> _RunBatchParams:
     # when one project streams many partials.  Default off so the LSP hot path
     # (which discards the response and consumes deltas directly) pays nothing.
     merge_results: bool = options.get("mergeResults", False)
-    # PRD-0003 AC8: WM-only selectors for restricting a matrixed
+    # PRD-0003 AC8, ADR-0103: WM-only `interpreterSelectors` for restricting a matrixed
     # action's fan-out to a subset of its declared interpreter axis. Never
     # forwarded to an ER — consumed only by `run_selection` at the run
     # entry points below.
-    env_selectors: list[str] = options.get("envSelectors", [])
     interpreter_selectors: list[str] = options.get("interpreterSelectors", [])
 
     return _RunBatchParams(
@@ -229,7 +227,6 @@ def _parse_run_batch_params(params: dict) -> _RunBatchParams:
         trigger=trigger,
         dev_env=dev_env,
         merge_results=merge_results,
-        env_selectors=env_selectors,
         interpreter_selectors=interpreter_selectors,
     )
 

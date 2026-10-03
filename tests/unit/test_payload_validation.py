@@ -15,6 +15,7 @@ import pytest
 from finecode_extension_runner.schema_utils import JsonValue, PayloadSchema
 from loguru import logger
 
+from finecode.cli_app import cli as cli_module
 from finecode.cli_app.commands import run_cmd
 from finecode.wm_client import ApiError
 
@@ -163,7 +164,6 @@ async def test_run_options_are_forwarded() -> None:
     client = _FakeClient(schemas={"src.Action": {"properties": {}}})
     run_options = {
         "devEnv": "cli",
-        "envSelectors": [],
         "interpreterSelectors": ["3.14"],
     }
 
@@ -301,3 +301,13 @@ async def test_mapped_fields_skip_coercion_and_type_validation() -> None:
     )
 
     assert result == {"file_paths": "lint.diagnostics"}
+
+
+def test_run_env_selector_is_rejected_with_interpreter_hint() -> None:
+    from click.testing import CliRunner
+
+    runner = CliRunner()
+    result = runner.invoke(cli_module.run, ["--env=testing", "run_tests"])
+
+    assert result.exit_code == 1
+    assert "--interpreter" in result.output

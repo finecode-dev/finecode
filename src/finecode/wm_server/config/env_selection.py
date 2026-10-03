@@ -1,9 +1,10 @@
-"""Pure resolution of matrix-env interpreter subset selection for prepare-envs.
+"""Pure resolution of matrix-env selection, one resolver per command.
 
-Given a project's (post-expansion) ``tool.finecode.env`` table plus the
-``--env`` / ``--interpreter`` CLI selectors and the config-declared
-``default_interpreters`` policy, decide which concrete envs are actually
-"selected" for this run (PRD-0003 AC8).
+Given a
+project's (post-expansion) ``tool.finecode.env`` table plus the relevant
+selectors from WM cleint and the config-declared ``default_interpreters``
+policy, decide which concrete envs are actually "selected" for this run
+(PRD-0003 AC8, ADR-0103).
 
 No I/O, no config-file reading, no venv creation — this module only
 consumes an already-loaded env table dict.
@@ -21,14 +22,18 @@ from finecode.wm_server.config.interpreter_matrix import (
 )
 
 __all__ = [
+    "ALL_INTERPRETERS",
     "EnvSelection",
     "EnvSelectionError",
     "compute_prepare_set",
     "env_selector_known_in",
     "interpreter_selector_known_in",
     "resolve_env_selection",
-    "resolve_selected_interpreters",
+    "resolve_run_selection",
 ]
+
+
+ALL_INTERPRETERS = "all"
 
 
 class EnvSelectionError(ValueError):
@@ -100,21 +105,18 @@ def _lookup_policy(policy_dict: dict[str, Any], dev_env: str) -> Any:
     return "all"
 
 
-def resolve_env_selection(
-    env_table: dict[str, dict],
-    env_selectors: list[str],
-    interpreter_selectors: list[str],
-    dev_env: str,
-) -> EnvSelection:
-    """Resolve which envs in `env_table` are selected for this prepare-envs run.
+@dataclass
+class _MatrixBases:
+    all_env_names: set[str]
+    matrix_children: dict[str, Interpreter]
+    bases: dict[str, list[str]]
+    axis_by_base: dict[str, set[Interpreter]]
+    default_interpreters_by_base: dict[str, dict[str, Any]]
+    non_matrix_names: set[str]
 
-    Raises:
-        EnvSelectionError: A config default or explicit selector names an
-            interpreter not in its base's declared axis.
-        InvalidInterpreterError: An `--interpreter` selector string is malformed.
-    """
+
+def _matrix_bases(env_table: dict[str, dict]) -> _MatrixBases:
     all_env_names = set(env_table.keys())
-
     matrix_children: dict[str, Interpreter] = {}
     bases: dict[str, list[str]] = {}
     for name, entry in env_table.items():
@@ -123,130 +125,114 @@ def resolve_env_selection(
             matrix_children[name] = interp
             base = name.split("@", 1)[0]
             bases.setdefault(base, []).append(name)
-
     non_matrix_names = all_env_names - set(matrix_children.keys())
-
     axis_by_base: dict[str, set[Interpreter]] = {
         base: {matrix_children[child] for child in children}
         for base, children in bases.items()
     }
-
     default_interpreters_by_base: dict[str, dict[str, Any]] = {}
     for base, children in bases.items():
         first_child = env_table[children[0]]
         default_interpreters_by_base[base] = first_child.get("default_interpreters", {})
-
-    # Eagerly validate every declared policy (not just the one active for the
-    # current dev_env) so a config bug surfaces regardless of which run
-    # triggers it.
     for base, policy_dict in default_interpreters_by_base.items():
         for key, policy in policy_dict.items():
             _resolve_policy(base, key, policy, axis_by_base[base])
+    return _MatrixBases(
+        all_env_names=all_env_names,
+        matrix_children=matrix_children,
+        bases=bases,
+        axis_by_base=axis_by_base,
+        default_interpreters_by_base=default_interpreters_by_base,
+        non_matrix_names=non_matrix_names,
+    )
 
-    parsed_interpreter_selectors: set[Interpreter] | None = None
-    if interpreter_selectors:
-        parsed_interpreter_selectors = {
-            parse_interpreter(value) for value in interpreter_selectors
-        }
 
-    interp_effective_set_by_base: dict[str, set[Interpreter]] = {}
-    for base in bases:
-        if parsed_interpreter_selectors is not None:
-            interp_effective_set_by_base[base] = (
-                axis_by_base[base] & parsed_interpreter_selectors
+def _children_with(mb: _MatrixBases, base: str, interps: set[Interpreter]) -> set[str]:
+    return {child for child in mb.bases[base] if mb.matrix_children[child] in interps}
+
+
+def _default_interpreters(
+    mb: _MatrixBases, base: str, dev_env: str
+) -> set[Interpreter]:
+    policy = _lookup_policy(mb.default_interpreters_by_base.get(base, {}), dev_env)
+    return _resolve_policy(base, dev_env, policy, mb.axis_by_base[base])
+
+
+def resolve_env_selection(
+    env_table: dict[str, dict],
+    env_selectors: list[str],
+    dev_env: str,
+) -> EnvSelection:
+    """Resolve which envs in `env_table` are selected."""
+    mb = _matrix_bases(env_table)
+    if not env_selectors:
+        selected: set[str] = set(mb.non_matrix_names)
+        for base in mb.bases:
+            selected |= _children_with(
+                mb, base, _default_interpreters(mb, base, dev_env)
             )
-        else:
-            policy = _lookup_policy(default_interpreters_by_base.get(base, {}), dev_env)
-            interp_effective_set_by_base[base] = _resolve_policy(
-                base, dev_env, policy, axis_by_base[base]
-            )
-
-    named_bases: set[str] = set()
-    named_children_by_base: dict[str, set[str]] = {}
-    named_non_matrix: set[str] = set()
+        active = selected != mb.all_env_names
+        return EnvSelection(
+            active=active,
+            selected_env_names=selected,
+            matrix_child_names=set(mb.matrix_children.keys()),
+        )
+    selected = set()
     for selector in env_selectors:
-        if selector in bases:
-            named_bases.add(selector)
-        elif selector in matrix_children:
-            base = selector.split("@", 1)[0]
-            named_children_by_base.setdefault(base, set()).add(selector)
-        elif selector in non_matrix_names:
-            named_non_matrix.add(selector)
+        if selector in mb.bases:
+            selected |= _children_with(
+                mb, selector, _default_interpreters(mb, selector, dev_env)
+            )
+        elif (
+            selector.endswith("@" + ALL_INTERPRETERS)
+            and selector[: -len("@" + ALL_INTERPRETERS)] in mb.bases
+        ):
+            base = selector[: -len("@" + ALL_INTERPRETERS)]
+            selected |= set(mb.bases[base])
+        elif selector in mb.matrix_children or selector in mb.non_matrix_names:
+            selected.add(selector)
         # else: unknown-in-this-project -> selects nothing here; cross-project
         # validation happens at the service layer.
-
-    selected: set[str] = set()
-    for base, children in bases.items():
-        if base in named_bases:
-            if parsed_interpreter_selectors is not None:
-                chosen = {
-                    child
-                    for child in children
-                    if matrix_children[child] in interp_effective_set_by_base[base]
-                }
-            else:
-                chosen = set(children)
-        elif base in named_children_by_base:
-            named = named_children_by_base[base]
-            if parsed_interpreter_selectors is not None:
-                chosen = {
-                    child
-                    for child in named
-                    if matrix_children[child] in interp_effective_set_by_base[base]
-                }
-            else:
-                chosen = set(named)
-        else:
-            chosen = {
-                child
-                for child in children
-                if matrix_children[child] in interp_effective_set_by_base[base]
-            }
-        selected |= chosen
-
-    if env_selectors:
-        selected |= named_non_matrix
-    else:
-        selected |= non_matrix_names
-
-    active = selected != all_env_names
-
+    active = selected != mb.all_env_names
     return EnvSelection(
         active=active,
         selected_env_names=selected,
-        matrix_child_names=set(matrix_children.keys()),
+        matrix_child_names=set(mb.matrix_children.keys()),
     )
 
 
-def resolve_selected_interpreters(
+def resolve_run_selection(
     env_table: dict[str, dict],
-    env_selectors: list[str],
     interpreter_selectors: list[str],
     dev_env: str,
 ) -> set[str] | None:
-    """Resolve `--env`/`--interpreter` selectors (+ config default) into a set
-    of selected interpreter canonicals (``"<impl>@<version>"``), for use by
-    the run fan-out sites (PRD-0003 AC8).
+    """Resolve `--interpreter` selectors (+ config default) into selected concrete
+    matrix env names, for use by the run fan-out sites (ADR-0103).
 
-    Returns ``None`` when nothing narrows the axis (mirrors
-    ``EnvSelection.active`` being ``False``) — callers then run the full
-    declared axis, unchanged.
-
-    Raises:
-        EnvSelectionError: A config default or explicit selector names an
-            interpreter not in its base's declared axis.
-        InvalidInterpreterError: An `--interpreter` selector string is malformed.
+    Returns ``None`` when every base's effective set equals its full axis
+    (including when there are no bases) — callers then run the full declared
+    axis, unchanged.
     """
-    selection = resolve_env_selection(
-        env_table, env_selectors, interpreter_selectors, dev_env
-    )
-    if not selection.active:
-        return None
-    return {
-        env_table[name]["interpreter"]
-        for name in selection.selected_env_names
-        if name in selection.matrix_child_names
+    mb = _matrix_bases(env_table)
+    parsed = {
+        parse_interpreter(v) for v in interpreter_selectors if v != ALL_INTERPRETERS
     }
+    effective_by_base: dict[str, set[Interpreter]] = {}
+    if ALL_INTERPRETERS in interpreter_selectors:
+        for base in mb.bases:
+            effective_by_base[base] = set(mb.axis_by_base[base])
+    elif interpreter_selectors:
+        for base in mb.bases:
+            effective_by_base[base] = mb.axis_by_base[base] & parsed
+    else:
+        for base in mb.bases:
+            effective_by_base[base] = _default_interpreters(mb, base, dev_env)
+    if all(effective_by_base[base] == mb.axis_by_base[base] for base in mb.bases):
+        return None
+    selected: set[str] = set()
+    for base in mb.bases:
+        selected |= _children_with(mb, base, effective_by_base[base])
+    return selected
 
 
 def compute_prepare_set(selection: EnvSelection, all_env_names: set[str]) -> set[str]:
@@ -260,10 +246,20 @@ def compute_prepare_set(selection: EnvSelection, all_env_names: set[str]) -> set
 
 
 def env_selector_known_in(selector: str, env_table: dict[str, Any]) -> bool:
-    """Whether `--env` value `selector` matches an env name or matrix base
-    name in `env_table` (a project's merged env-name -> config-entry map)."""
+    """Whether `--env` value `selector` matches an env name, a matrix base
+    name, or a `<base>@all` form in `env_table`."""
     if selector in env_table:
         return True
+    if selector.endswith("@" + ALL_INTERPRETERS):
+        prefix = selector[: -len("@" + ALL_INTERPRETERS)]
+        for name, entry in env_table.items():
+            if (
+                isinstance(entry, dict)
+                and "interpreter" in entry
+                and name.split("@", 1)[0] == prefix
+            ):
+                return True
+        return False
     for name, entry in env_table.items():
         if (
             isinstance(entry, dict)
@@ -276,7 +272,9 @@ def env_selector_known_in(selector: str, env_table: dict[str, Any]) -> bool:
 
 def interpreter_selector_known_in(selector: str, env_table: dict[str, Any]) -> bool:
     """Whether `--interpreter` value `selector` matches an interpreter declared
-    by some matrix child in `env_table`."""
+    by some matrix child in `env_table`, or is the `all` keyword."""
+    if selector == ALL_INTERPRETERS:
+        return True
     try:
         parsed = parse_interpreter(selector)
     except InvalidInterpreterError:

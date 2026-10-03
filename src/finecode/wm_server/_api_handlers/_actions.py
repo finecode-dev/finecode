@@ -43,22 +43,26 @@ async def _handle_run_action(
             raise ValueError(exc.message) from exc
 
         try:
-            # PRD-0003 AC8: resolve `--env`/`--interpreter` selectors
+            # PRD-0003 AC8, ADR-0103: resolve `--interpreter` selectors
             # (+ config default) for this project, to restrict a matrixed
             # action's fan-out. `None` (no selectors, no narrowing default)
             # runs the full declared axis, unchanged. Resolved before the
             # gate so the gate starts only the children the dispatch runs.
             run_selection.validate_run_selectors(
-                parsed.options.get("envSelectors", []),
                 parsed.options.get("interpreterSelectors", []),
                 [parsed.project.dir_path],
                 ws_context,
             )
-            selected_interpreters = run_selection.selected_interpreters_for_project(
+            selected_envs = run_selection.selected_envs_for_project(
                 parsed.project.dir_path,
-                parsed.options.get("envSelectors", []),
                 parsed.options.get("interpreterSelectors", []),
                 parsed.dev_env.value,
+                ws_context,
+            )
+            await run_selection.check_variant_selection(
+                {parsed.project.dir_path: [parsed.action.name]},
+                {parsed.project.dir_path: selected_envs},
+                parsed.options.get("interpreterSelectors", []),
                 ws_context,
             )
             # Start required environments so that canonical_source is populated for all
@@ -69,9 +73,7 @@ async def _handle_run_action(
                 {parsed.project.dir_path: [parsed.action.name]},
                 ws_context,
                 initialize_all_handlers=True,
-                selected_interpreters_by_project={
-                    parsed.project.dir_path: selected_interpreters
-                },
+                selected_envs_by_project={parsed.project.dir_path: selected_envs},
             )
             executor = run_service.ProjectExecutor(ws_context)
             result = await executor.run_action(
@@ -82,7 +84,7 @@ async def _handle_run_action(
                 dev_env=parsed.dev_env,
                 result_formats=parsed.result_formats,
                 initialize_all_handlers=True,
-                selected_interpreters=selected_interpreters,
+                selected_envs=selected_envs,
                 # Plain request/response: this handler never receives the
                 # caller's writer, so there is no connection to put a question
                 # to. Elicitation is available on the streamed paths only.
@@ -457,7 +459,6 @@ async def _handle_get_payload_schemas(
             try:
                 selection = run_selection.selection_for_matrixed_actions(
                     {project.dir_path: still_missing},
-                    run_options.get("envSelectors", []),
                     run_options.get("interpreterSelectors", []),
                     run_options.get("devEnv", "cli"),
                     ws_context,
@@ -473,7 +474,7 @@ async def _handle_get_payload_schemas(
                 await run_service.start_required_environments(
                     {project.dir_path: still_missing},
                     ws_context,
-                    selected_interpreters_by_project=selection,
+                    selected_envs_by_project=selection,
                 )
                 await _probe_handler_envs(still_missing)
 

@@ -357,7 +357,6 @@ async def prepare_envs(
     workdir_path: pathlib.Path,
     recreate: bool = False,
     env_names: list[str] | None = None,
-    interpreter_names: list[str] | None = None,
     project_names: list[str] | None = None,
     dev_env: str = "cli",
     workspace_packages_mode: str | None = None,
@@ -382,29 +381,24 @@ async def prepare_envs(
         ws_context: Workspace context.
         workdir_path: Absolute path to the workspace root directory.
         recreate: Delete and recreate the venvs this run covers. Subproject dev_workspace venvs are wiped only when no --env filter is given or it names dev_workspace.
-        env_names: Limit to these env names. For a matrix env, naming its
-            base selects all of its children; naming a concrete child selects
-            only that child.
-        interpreter_names: Limit matrix envs to these interpreters (canonical
-            or version-only shorthand), across every matrix base.
+        env_names: Limit to specific environment(s): a name, a matrix base
+            (its default interpreters), <base>@<impl>-<version>, or <base>@all.
+            Repeatable.
         project_names: Limit steps 3, 5, and 6 to these projects.
-        dev_env: Active dev-env, used to resolve each matrix env's
-            config-declared ``default_interpreters`` subset when
-            `interpreter_names` is not given.
-    Per project, `env_names` / `interpreter_names` / each matrix env's
+        dev_env: Active dev-env, used to resolve each matrix base's
+            config-declared ``default_interpreters`` subset.
+    Per project, `env_names` / each matrix base's
     `default_interpreters` policy are resolved (via
     `finecode.wm_server.config.env_selection`) into a selection. When that
     selection is active (a proper subset of the project's envs): steps 5 and 6
-    both cover exactly the selected envs (an `--env` filter excludes unnamed
-    non-matrix envs from both; `--interpreter` alone keeps every non-matrix env
-    selected). When inactive
+    both cover exactly the selected envs. When inactive
     (no selectors and no narrowing config default anywhere), both steps cover
     every env — today's behaviour (R7).
 
     Raises:
-        PrepareEnvsFailed: if any step fails, or if an `--env` /
-            `--interpreter` selector matches no env in any in-scope project,
-            or if a config default / selector names an interpreter not in its
+        PrepareEnvsFailed: if any step fails, or if an `--env`
+            selector matches no env in any in-scope project,
+            or if a config default names an interpreter not in its
             matrix env's declared axis.
     """
     from finecode.wm_server.config import env_selection, read_configs
@@ -685,12 +679,12 @@ async def prepare_envs(
             env_universe = _project_env_universe(p)
             env_universe_by_project[p.dir_path] = env_universe
             selections_by_project[p.dir_path] = env_selection.resolve_env_selection(
-                env_universe, env_names or [], interpreter_names or [], dev_env
+                env_universe, env_names or [], dev_env
             )
     except env_selection.EnvSelectionError as exc:
         raise PrepareEnvsFailed(str(exc)) from exc
 
-    # Cross-project validation: an explicit --env/--interpreter selector must
+    # Cross-project validation: an explicit --env selector must
     # match at least one env in *some* in-scope project (the pure resolver
     # tolerates an unmatched selector per-project — it can't know about
     # sibling projects).
@@ -701,13 +695,6 @@ async def prepare_envs(
                 for universe in env_universe_by_project.values()
             ):
                 raise PrepareEnvsFailed(f"Unknown environment: '{selector}'")
-    if interpreter_names:
-        for selector in interpreter_names:
-            if not any(
-                env_selection.interpreter_selector_known_in(selector, universe)
-                for universe in env_universe_by_project.values()
-            ):
-                raise PrepareEnvsFailed(f"Unknown interpreter: '{selector}'")
 
     # `create_envs`/`install_envs` run exclusively on each project's own
     # dev_workspace ER (never on other per-env ERs, which aren't even started

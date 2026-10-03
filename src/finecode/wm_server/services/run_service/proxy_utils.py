@@ -595,7 +595,7 @@ async def start_required_environments(
     initialize_handlers: bool = True,
     initialize_all_handlers: bool = False,
     *,
-    selected_interpreters_by_project: dict[pathlib.Path, set[str] | None] | None = None,
+    selected_envs_by_project: dict[pathlib.Path, set[str] | None] | None = None,
 ) -> None:
     """Collect all required envs from actions that will be run and start them.
 
@@ -604,13 +604,11 @@ async def start_required_environments(
         initialize_all_handlers: Initialize all handlers in the environment,
             not just those for the specified actions. Takes precedence over
             initialize_handlers.
-        selected_interpreters_by_project: per-project interpreter selection
-            (canonical ``"<impl>@<version>"`` strings, as computed by the
-            dispatch). A matrixed handler whose interpreter is not in its
-            project's set is skipped — the dispatch only runs selected
-            variants, and the dispatch starts its own runners lazily, so a
-            skipped variant loses only the early start. Every non-matrix
-            handler env and every selected child is still started. A project
+        selected_envs_by_project: per-project selection of concrete env names
+            (as computed by the dispatch). A matrixed action contributes the
+            handler envs of its selected variants; every handler env of a
+            selected variant is started, matching what the fan-out then runs.
+            Every non-matrix handler env is still started. A project
             absent from the dict, mapped to ``None``, or a ``None`` dict
             means no narrowing.
     """
@@ -619,8 +617,8 @@ async def start_required_environments(
         project = ws_context.ws_projects[project_dir_path]
         if isinstance(project, domain.CollectedProject):
             selection: set[str] | None = (
-                selected_interpreters_by_project.get(project_dir_path)
-                if selected_interpreters_by_project is not None
+                selected_envs_by_project.get(project_dir_path)
+                if selected_envs_by_project is not None
                 else None
             )
             project_required_envs = set()
@@ -630,14 +628,20 @@ async def start_required_environments(
                     (a for a in project.actions if a.name == action_name), None
                 )
                 if action is not None:
+                    keep: set[str] | None = None
+                    if selection is not None and matrix_runner.is_matrixed(action):
+                        keep = {
+                            it.canonical
+                            for it in matrix_runner.selected_variants(action, selection)
+                        }
                     for handler in action.handlers:
                         if (
                             handler.interpreter is not None
-                            and selection is not None
+                            and keep is not None
                             and interpreter_matrix.parse_interpreter(
                                 handler.interpreter
                             ).canonical
-                            not in selection
+                            not in keep
                         ):
                             continue
                         project_required_envs.add(handler.env)
@@ -1008,7 +1012,7 @@ async def run_action(
     orchestration_depth: int = 0,
     caller_kwargs: dict | None = None,
     allow_no_handlers: bool = False,
-    selected_interpreters: set[str] | None = None,
+    selected_envs: set[str] | None = None,
     cancellable: bool = False,
     *,
     origin: elicitation_bridge.RunDispatchOrigin | None,
@@ -1022,8 +1026,8 @@ async def run_action(
     ``ws_context.ws_projects`` may receive any subtype — validation happens here
     so call sites do not need to duplicate the check.
 
-    ``selected_interpreters`` (PRD-0003 AC8) restricts a matrixed action's
-    fan-out to the given interpreter canonicals; ``None`` (the default) runs
+    ``selected_envs`` (ADR-0103) restricts a matrixed action's
+    fan-out to the given concrete env names; ``None`` (the default) runs
     the full declared axis. Ignored for non-matrixed actions.
 
     ``cancellable`` marks the run in ``in_flight_runs`` as one a config reload
@@ -1151,7 +1155,7 @@ async def run_action(
                     orchestration_depth=orchestration_depth,
                     caller_kwargs=caller_kwargs,
                     run_variant=_execute_action,
-                    selected_interpreters=selected_interpreters,
+                    selected_envs=selected_envs,
                 )
             else:
                 response = await _execute_action(

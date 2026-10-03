@@ -11,7 +11,6 @@ from finecode.wm_server import domain
 from finecode.wm_server.config.interpreter_matrix import Interpreter
 from finecode.wm_server.runner.runner_client import RunActionResponse, RunResultFormat
 from finecode.wm_server.services.run_service import matrix_streaming
-from finecode.wm_server.services.run_service.exceptions import ActionRunFailed
 
 
 def _make_matrix_action(*, interpreters: list[str]) -> domain.Action:
@@ -372,7 +371,7 @@ async def test_merge_results_false_still_keys_by_interpreter(
     assert return_code == 0
 
 
-async def test_selected_interpreters_restricts_fan_out_to_that_variant(
+async def test_selected_envs_restricts_fan_out_to_that_variant(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     cpython_311 = Interpreter("cpython", "3.11")
@@ -387,7 +386,7 @@ async def test_selected_interpreters_restricts_fan_out_to_that_variant(
             [RunActionResponse(result_by_format={}, return_code=0, status="streamed")],
         ),
         # cpython_312 not scripted — its variant must never be looked up when
-        # it is excluded from `selected_interpreters`.
+        # it is excluded from `selected_envs`.
     }
     monkeypatch.setattr(
         matrix_streaming.proxy_utils,
@@ -412,7 +411,7 @@ async def test_selected_interpreters_restricts_fan_out_to_that_variant(
         ws_context=None,
         merge_results=False,
         on_partial=on_partial,
-        selected_interpreters={cpython_311.canonical},
+        selected_envs={f"testing@{cpython_311.canonical}"},
         origin=None,
     )
 
@@ -421,7 +420,7 @@ async def test_selected_interpreters_restricts_fan_out_to_that_variant(
     assert return_code == 0
 
 
-async def test_unknown_selected_interpreter_raises(
+async def test_selection_naming_no_env_runs_nothing_without_raising(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     cpython_311 = Interpreter("cpython", "3.11")
@@ -430,22 +429,27 @@ async def test_unknown_selected_interpreter_raises(
         interpreters=[cpython_311.canonical, cpython_312.canonical]
     )
 
-    async def on_partial(interpreter_canonical: str, result_by_format: dict) -> None:
-        pass
+    received: list[tuple[str, dict]] = []
 
-    with pytest.raises(ActionRunFailed):
-        await matrix_streaming.run_matrix_with_partial_results(
-            project=_make_project(),
-            action=action,
-            action_name="test_action",
-            params={},
-            result_formats=None,
-            partial_result_token="tok",
-            run_trigger=None,
-            dev_env=None,
-            ws_context=None,
-            merge_results=False,
-            on_partial=on_partial,
-            selected_interpreters={"cpython@3.14"},
-            origin=None,
-        )
+    async def on_partial(interpreter_canonical: str, result_by_format: dict) -> None:
+        received.append((interpreter_canonical, result_by_format))
+
+    combined_rbf, return_code = await matrix_streaming.run_matrix_with_partial_results(
+        project=_make_project(),
+        action=action,
+        action_name="test_action",
+        params={},
+        result_formats=None,
+        partial_result_token="tok",
+        run_trigger=None,
+        dev_env=None,
+        ws_context=None,
+        merge_results=False,
+        on_partial=on_partial,
+        selected_envs={"other@cpython-3.14"},
+        origin=None,
+    )
+
+    assert received == []
+    assert combined_rbf == {}
+    assert return_code == 0

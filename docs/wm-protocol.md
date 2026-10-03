@@ -433,7 +433,7 @@ converted before dispatch; MCP leaves it off so listing tools never starts
 environments.
 
 `runOptions` (optional, honoured only with `startRunners`): the selection
-inputs the run itself will use — `devEnv`, `envSelectors` and
+inputs the run itself will use — `devEnv` and
 `interpreterSelectors` (same shapes as the `actions/runBatch` run options).
 The fetch computes the same per-project interpreter selection as the run, so
 it starts only the interpreter instances the run will select. Selectors are

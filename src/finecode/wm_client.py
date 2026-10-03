@@ -506,7 +506,7 @@ class ApiClient:
                 available. Defaults to false so passive listing never starts
                 environments.
             run_options: Selection inputs honoured only with
-                ``start_runners``: ``devEnv``, ``envSelectors`` and
+                ``start_runners``: ``devEnv`` and
                 ``interpreterSelectors`` — the same values the run itself
                 will use, so the fetch starts only the interpreter
                 instances the run will select.
@@ -708,7 +708,6 @@ class ApiClient:
         workdir_path: pathlib.Path,
         recreate: bool = False,
         env_names: list[str] | None = None,
-        interpreter_names: list[str] | None = None,
         project_names: list[str] | None = None,
         dev_env: str | None = None,
         workspace_packages_mode: str | None = None,
@@ -724,8 +723,6 @@ class ApiClient:
         }
         if env_names is not None:
             params["envNames"] = env_names
-        if interpreter_names is not None:
-            params["interpreters"] = interpreter_names
         if project_names is not None:
             params["projectNames"] = project_names
         if dev_env is not None:

@@ -99,27 +99,31 @@ async def _handle_run_action_with_partial_results(
         # declares the action" (see `_resolve_source_to_name`), which has no
         # single env universe to resolve selectors against, so the full axis
         # runs unrestricted in that case.
-        selected_interpreters: set[str] | None = None
+        selected_envs: set[str] | None = None
         if project_path:
             run_selection.validate_run_selectors(
-                options.get("envSelectors", []),
                 options.get("interpreterSelectors", []),
                 [pathlib.Path(project_path)],
                 ws_context,
             )
             try:
-                selected_interpreters = run_selection.selected_interpreters_for_project(
+                selected_envs = run_selection.selected_envs_for_project(
                     pathlib.Path(project_path),
-                    options.get("envSelectors", []),
                     options.get("interpreterSelectors", []),
                     dev_env.value,
                     ws_context,
                 )
             except env_selection.EnvSelectionError as exc:
                 raise ActionRunFailed(str(exc)) from exc
+            await run_selection.check_variant_selection(
+                {pathlib.Path(project_path): [action_name]},
+                {pathlib.Path(project_path): selected_envs},
+                options.get("interpreterSelectors", []),
+                ws_context,
+            )
         # else: project_path == "" ("all projects") has no single env universe to
         # validate selectors against, so validation is skipped and the full axis
-        # runs unrestricted (mirrors the selected_interpreters skip above).
+        # runs unrestricted (mirrors the selected_envs skip above).
 
         # From here to the final result, this connection is the origin of the
         # run: an ER that asks a question mid-run is asking the client that
@@ -138,7 +142,7 @@ async def _handle_run_action_with_partial_results(
             ws_context=ws_context,
             result_formats=result_formats,
             progress_token=progress_token,
-            selected_interpreters=selected_interpreters,
+            selected_envs=selected_envs,
             origin=origin,
         )
 
@@ -328,7 +332,6 @@ async def _handle_run_batch_with_partial_results(
             raise ActionRunFailed(exc.message) from exc
 
         run_selection.validate_run_selectors(
-            parsed.env_selectors,
             parsed.interpreter_selectors,
             list(actions_by_project.keys()),
             ws_context,
@@ -350,7 +353,6 @@ async def _handle_run_batch_with_partial_results(
         try:
             selection_by_project = run_selection.selection_for_matrixed_actions(
                 actions_by_project,
-                parsed.env_selectors,
                 parsed.interpreter_selectors,
                 parsed.dev_env.value,
                 ws_context,
@@ -358,10 +360,17 @@ async def _handle_run_batch_with_partial_results(
         except env_selection.EnvSelectionError as exc:
             raise ActionRunFailed(str(exc)) from exc
 
+        await run_selection.check_variant_selection(
+            actions_by_project,
+            selection_by_project,
+            parsed.interpreter_selectors,
+            ws_context,
+        )
+
         await run_service.start_required_environments(
             actions_by_project,
             ws_context,
-            selected_interpreters_by_project=selection_by_project,
+            selected_envs_by_project=selection_by_project,
         )
 
         payload_overrides = parsed.params_by_project or {}
@@ -398,7 +407,7 @@ async def _handle_run_batch_with_partial_results(
                 else None
             )
             if action_def is not None and matrix_runner.is_matrixed(action_def):
-                selected_interpreters = selection_by_project.get(project_path)
+                selected_envs = selection_by_project.get(project_path)
 
                 async def _on_partial(
                     interpreter_canonical: str, result_by_format: dict
@@ -439,7 +448,7 @@ async def _handle_run_batch_with_partial_results(
                     ws_context=ws_context,
                     merge_results=parsed.merge_results,
                     on_partial=_on_partial,
-                    selected_interpreters=selected_interpreters,
+                    selected_envs=selected_envs,
                     origin=origin,
                 )
                 if parsed.merge_results:

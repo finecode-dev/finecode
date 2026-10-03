@@ -62,7 +62,7 @@ async def _run_gate(
         await proxy_utils.start_required_environments(
             {project.dir_path: [project.actions[0].name]},
             ws_context,
-            selected_interpreters_by_project=selection,
+            selected_envs_by_project=selection,
         )
     return started
 
@@ -81,7 +81,7 @@ async def test_only_selected_child_is_started(tmp_path: pathlib.Path) -> None:
         await proxy_utils.start_required_environments(
             {project.dir_path: [project.actions[0].name]},
             ws_context,
-            selected_interpreters_by_project={project.dir_path: {"cpython@3.14"}},
+            selected_envs_by_project={project.dir_path: {"testing@cpython-3.14"}},
         )
 
     assert sorted(started) == ["dev_no_runtime", "testing@cpython-3.14"]
@@ -97,7 +97,7 @@ async def test_no_selection_starts_every_child(tmp_path: pathlib.Path) -> None:
     ]
     assert sorted(await _run_gate(tmp_path, None)) == expected
     assert sorted(
-        await _run_gate(tmp_path, {tmp_path / "other": {"cpython@3.14"}})
+        await _run_gate(tmp_path, {tmp_path / "other": {"testing@cpython-3.14"}})
     ) == (expected)
     assert sorted(await _run_gate(tmp_path, {tmp_path / "p": None})) == expected
 
@@ -119,7 +119,7 @@ async def test_non_matrix_env_starts_despite_selection(
         await proxy_utils.start_required_environments(
             {project.dir_path: [project.actions[0].name]},
             ws_context,
-            selected_interpreters_by_project={project.dir_path: {"cpython@3.13"}},
+            selected_envs_by_project={project.dir_path: {"testing@cpython-3.13"}},
         )
 
     assert "dev_no_runtime" in started

@@ -195,8 +195,8 @@ python -m finecode run --shared-server inspect_code --target=files \
 `--interpreter=3.13` restricts a matrixed `testing` run to that interpreter.
 Dropping `--interpreter` does **not** widen to the whole axis: it runs the env's
 `default_interpreters` policy, which for `testing` selects the newest
-downloadable interpreter only. To run more, pass `--dev-env=ci` (the full
-axis) or repeat `--interpreter=` for each one.
+downloadable interpreter only. To run more, pass `--interpreter=all` (the full
+axis), `--dev-env=ci`, or repeat `--interpreter=` for each one.
 
 Payload fields are validated at the CLI against the action's schema before anything
 runs: an unknown field name is refused, and a value that cannot be the field's declared

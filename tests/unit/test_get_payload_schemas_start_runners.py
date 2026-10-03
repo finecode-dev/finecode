@@ -209,7 +209,7 @@ async def test_schema_fetch_passes_local_selection_to_gate(
         ws_context: context.WorkspaceContext,
         **kwargs: object,
     ) -> None:
-        recorded.append(kwargs.get("selected_interpreters_by_project"))
+        recorded.append(kwargs.get("selected_envs_by_project"))
         ws_context.ws_projects_extension_runners[project.dir_path][
             "testing@cpython-3.14"
         ] = make_running_runner(
@@ -231,7 +231,7 @@ async def test_schema_fetch_passes_local_selection_to_gate(
     )
 
     assert result["schemas"][_ACTION_SOURCE] is not None
-    assert recorded == [{tmp_path: {"cpython@3.14"}}]
+    assert recorded == [{tmp_path: {"testing@cpython-3.14"}}]
 
 
 async def test_schema_fetch_passes_no_narrowing_for_ci(
@@ -251,7 +251,7 @@ async def test_schema_fetch_passes_no_narrowing_for_ci(
         _ws_context: context.WorkspaceContext,
         **kwargs: object,
     ) -> None:
-        recorded.append(kwargs.get("selected_interpreters_by_project"))
+        recorded.append(kwargs.get("selected_envs_by_project"))
 
     monkeypatch.setattr(
         run_service, "start_required_environments", fake_start_required_environments
@@ -290,7 +290,7 @@ async def test_schema_fetch_with_unknown_selector_starts_no_child(
         gate_ws_context: context.WorkspaceContext,
         **kwargs: typing.Any,
     ) -> None:
-        gate_selections.append(kwargs.get("selected_interpreters_by_project"))
+        gate_selections.append(kwargs.get("selected_envs_by_project"))
         await real_gate(actions_by_projects, gate_ws_context, **kwargs)
 
     monkeypatch.setattr(run_service, "start_required_environments", spy_gate)

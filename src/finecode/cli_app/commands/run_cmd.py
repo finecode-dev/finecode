@@ -220,7 +220,6 @@ async def run_actions(
     dev_env: str = "cli",
     wal_enabled: bool = False,
     verbose: bool = False,
-    env_selectors: list[str] | None = None,
     interpreter_selectors: list[str] | None = None,
     resource_usage_interval: float | None = None,
 ) -> utils.RunActionsResult:
@@ -397,7 +396,6 @@ async def run_actions(
                 # instances: one dict feeds both, so they cannot drift.
                 selection_options = {
                     "devEnv": dev_env,
-                    "envSelectors": env_selectors or [],
                     "interpreterSelectors": interpreter_selectors or [],
                 }
                 action_payload = await _resolve_payload(

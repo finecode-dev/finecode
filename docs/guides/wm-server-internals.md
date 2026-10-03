@@ -165,19 +165,19 @@ Non-matrix actions use the existing single/multi-env dispatch path unchanged
 on both paths.
 
 A matrixed action's fan-out can be restricted to a subset of its declared
-interpreter axis (PRD-0003 AC8): `run`'s `--env`/`--interpreter` selectors
-(and, absent those, a matrix env's config-declared `default_interpreters`
+interpreter axis (ADR-0103): `run`'s `--interpreter` selectors
+(and, absent those, each base's config-declared `default_interpreters`
 policy) are resolved ONCE per project by
-`run_service/run_selection.selected_interpreters_for_project` (a thin
-WM-side wrapper around the pure `config/env_selection.resolve_selected_interpreters`
-resolver — the same resolver `prepare_envs_service` uses for `prepare-envs`)
+`run_service/run_selection.selected_envs_for_project` (a thin
+WM-side wrapper around the pure `config/env_selection.resolve_run_selection`
+resolver into selected concrete envs)
 at each run entry point (`actions/run`, `actions/runBatch`, both with and
 without a `partialResultToken`), then threaded down as a
-`selected_interpreters: set[str] | None` argument to whichever fan-out site
+`selected_envs: set[str] | None` argument to whichever fan-out site
 handles the request — `matrix_runner.run_matrix_action` or
-`matrix_streaming.run_matrix_with_partial_results`. `None` (no selectors, no
-narrowing config default) runs the full axis, unchanged; an interpreter
-outside the resolved axis raises `ActionRunFailed`.
+`matrix_streaming.run_matrix_with_partial_results` — which derive variants
+via `matrix_runner.selected_variants`. `None` (no selectors, every base full)
+runs the full axis, unchanged.
 
 ### `runner/` — ER process lifecycle and JSON-RPC client
 

@@ -391,7 +391,6 @@ def run(ctx) -> None:
     dev_env: str = detect_dev_env()
     wal_enabled: bool | None = None
     verbose: bool = False
-    env_selectors: list[str] = []
     interpreter_selectors: list[str] = []
     resource_usage_flag_value: str | float | None = None
     no_resource_usage: bool = False
@@ -455,8 +454,12 @@ def run(ctx) -> None:
                     err=True,
                 )
                 sys.exit(1)
-        elif arg.startswith("--env="):
-            env_selectors.append(arg.removeprefix("--env="))
+        elif arg == "--env" or arg.startswith("--env="):
+            click.echo(
+                "run selects matrix variants by interpreter: use --interpreter=<impl>@<version> (repeatable) or --interpreter=all. --env is a prepare-envs option (ADR-0103).",
+                err=True,
+            )
+            sys.exit(1)
         elif arg.startswith("--interpreter="):
             interpreter_selectors.append(arg.removeprefix("--interpreter="))
         elif arg == "--resource-usage":
@@ -587,7 +590,6 @@ def run(ctx) -> None:
                 dev_env=dev_env,
                 wal_enabled=wal_enabled,
                 verbose=verbose,
-                env_selectors=env_selectors,
                 interpreter_selectors=interpreter_selectors,
                 resource_usage_interval=resource_usage_interval,
             )
@@ -704,14 +706,7 @@ def run(ctx) -> None:
     "env_names",
     multiple=True,
     metavar="ENV_NAME",
-    help="Limit to specific environment(s). Can be specified multiple times.",
-)
-@click.option(
-    "--interpreter",
-    "interpreter_names",
-    multiple=True,
-    metavar="IMPL@VERSION",
-    help="Limit to specific interpreter(s) of matrix environments. Repeatable; version-only form means cpython.",
+    help="Limit to specific environment(s): a name, a matrix base (its default interpreters), <base>@<impl>-<version>, or <base>@all. Repeatable.",
 )
 @click.option(
     "--project",
@@ -750,7 +745,6 @@ def prepare_envs(
     dev_env: str | None,
     workspace_packages_mode: str | None,
     env_names: tuple[str, ...],
-    interpreter_names: tuple[str, ...],
     project_names: tuple[str, ...],
     verbose: bool,
     resource_usage: float | None,
@@ -806,9 +800,6 @@ def prepare_envs(
                 own_server=not shared_server,
                 log_level=log_level,
                 env_names=list(env_names) if env_names else None,
-                interpreter_names=list(interpreter_names)
-                if interpreter_names
-                else None,
                 project_names=list(project_names) if project_names else None,
                 dev_env=dev_env or detect_dev_env(),
                 workspace_packages_mode=workspace_packages_mode,

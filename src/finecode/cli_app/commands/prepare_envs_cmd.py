@@ -26,7 +26,6 @@ async def prepare_envs(
     own_server: bool = True,
     log_level: str = "INFO",
     env_names: list[str] | None = None,
-    interpreter_names: list[str] | None = None,
     project_names: list[str] | None = None,
     dev_env: str = "cli",
     workspace_packages_mode: str | None = None,
@@ -45,14 +44,12 @@ async def prepare_envs(
     5. Run ``create_envs`` to create all virtualenvs.
     6. Run ``install_envs`` to install all dependencies.
 
-    ``env_names`` and ``interpreter_names`` (together with each matrix env's
-    config-declared ``default_interpreters`` policy) select a subset of a
-    matrix env's interpreter axis (PRD-0003 AC8): unselected matrix children
-    are skipped in both step 5 and step 6. Non-matrix envs are always created
-    in step 5; they are only installed in step 6 if selected (or if selection
-    is inactive, in which case both steps cover every env). ``dev_env`` is
-    used to resolve each matrix env's config-declared default interpreter
-    subset when ``interpreter_names`` is not given.
+    ``env_names`` (together with each matrix base's
+    config-declared ``default_interpreters`` policy) selects a subset of
+    environments (ADR-0103): unselected envs are skipped in both step 5 and
+    step 6. ``dev_env`` is
+    used to resolve each matrix base's config-declared default interpreter
+    subset.
     When ``project_names`` is given only those projects are prepared in steps 3, 5, and 6.
     """
     port_file = None
@@ -113,7 +110,6 @@ async def prepare_envs(
                     workdir_path,
                     recreate,
                     env_names,
-                    interpreter_names,
                     project_names,
                     dev_env,
                     workspace_packages_mode,
@@ -130,7 +126,6 @@ async def _run(
     workdir_path: pathlib.Path,
     recreate: bool,
     env_names: list[str] | None = None,
-    interpreter_names: list[str] | None = None,
     project_names: list[str] | None = None,
     dev_env: str = "cli",
     workspace_packages_mode: str | None = None,
@@ -140,7 +135,6 @@ async def _run(
             workdir_path=workdir_path,
             recreate=recreate,
             env_names=env_names,
-            interpreter_names=interpreter_names,
             project_names=project_names,
             dev_env=dev_env,
             workspace_packages_mode=workspace_packages_mode,
