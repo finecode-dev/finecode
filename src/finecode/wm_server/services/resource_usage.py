@@ -44,8 +44,23 @@ def build_snapshot(ws_context: context.WorkspaceContext, wm: WmProcessInfo) -> d
     ws_context.resource_peaks.observe_host(
         swap_used_mb=meminfo.swap_used_mb,
         mem_available_mb=meminfo.mem_available_mb,
+        psi_memory_full_avg10=pressure.psi_memory_full_avg10,
     )
     peaks = ws_context.resource_peaks
+    memory_pressure_reasons = host_pressure.memory_pressure_reasons(
+        psi_memory_full_avg10=pressure.psi_memory_full_avg10,
+        mem_total_mb=meminfo.mem_total_mb,
+        mem_available_mb=meminfo.mem_available_mb,
+        swap_total_mb=meminfo.swap_total_mb,
+        swap_used_mb=meminfo.swap_used_mb,
+    )
+    if memory_pressure_reasons is None:
+        memory_pressure_json = None
+    else:
+        memory_pressure_json = {
+            "active": bool(memory_pressure_reasons),
+            "reasons": list(memory_pressure_reasons),
+        }
 
     if wm.lag is None:
         loop_lag_ms = None
@@ -145,6 +160,7 @@ def build_snapshot(ws_context: context.WorkspaceContext, wm: WmProcessInfo) -> d
             "startupSlotsWaiting": max(peaks.startup_slots_waiting, startup_waiting),
             "hostSwapUsedMb": peaks.host_swap_used_mb,
             "hostMemAvailableMinMb": peaks.host_mem_available_min_mb,
+            "hostPsiMemoryFullMax": peaks.host_psi_memory_full_max,
             "hookFailed": peaks.hook_failed,
         },
         "host": {
@@ -160,6 +176,7 @@ def build_snapshot(ws_context: context.WorkspaceContext, wm: WmProcessInfo) -> d
             },
             "load1m": load.load_1m,
             "cpuCount": load.cpu_count,
+            "memoryPressure": memory_pressure_json,
         },
         "processes": None,
     }

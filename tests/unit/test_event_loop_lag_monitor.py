@@ -463,12 +463,18 @@ def test_sample_host_folds_into_peaks(monkeypatch) -> None:
             swap_used_mb=12000,
         ),
     )
+    monkeypatch.setattr(
+        event_loop_lag_monitor.host_pressure,
+        "read_psi_memory_full_avg10",
+        lambda *a, **k: 55.0,
+    )
 
     monitor._sample_host(ws_context)
     monitor._sample_host(ws_context)
 
     assert ws_context.resource_peaks.host_swap_used_mb == 12000
     assert ws_context.resource_peaks.host_mem_available_min_mb == 4100
+    assert ws_context.resource_peaks.host_psi_memory_full_max == 55.0
 
 
 async def test_host_sample_failure_keeps_sampling_and_warns_once(
@@ -523,6 +529,37 @@ async def test_host_sample_failure_keeps_sampling_and_warns_once(
     second = event_loop_lag_monitor.EventLoopLagMonitor(interval_sec=0.01)
     with _capture():
         task = asyncio.create_task(second.run(ws_context))
+        await asyncio.sleep(0.05)
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+
+    warnings = [r for r in records if r["level"].name == "WARNING"]
+    assert len(warnings) == 1
+
+    records.clear()
+    monkeypatch.setattr(
+        event_loop_lag_monitor.host_pressure,
+        "read_meminfo",
+        lambda *a, **k: event_loop_lag_monitor.host_pressure.MemInfo(
+            mem_total_mb=32000,
+            mem_available_mb=4100,
+            swap_total_mb=20000,
+            swap_used_mb=12000,
+        ),
+    )
+
+    def _raise_psi(*args, **kwargs):
+        raise RuntimeError("psi gone")
+
+    monkeypatch.setattr(
+        event_loop_lag_monitor.host_pressure,
+        "read_psi_memory_full_avg10",
+        _raise_psi,
+    )
+    third = event_loop_lag_monitor.EventLoopLagMonitor(interval_sec=0.01)
+    with _capture():
+        task = asyncio.create_task(third.run(ws_context))
         await asyncio.sleep(0.05)
         task.cancel()
         with contextlib.suppress(asyncio.CancelledError):

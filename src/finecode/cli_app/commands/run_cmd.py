@@ -1,7 +1,6 @@
 # docs: docs/cli.md
 import asyncio
 import difflib
-import functools
 import json
 import pathlib
 import sys
@@ -325,16 +324,25 @@ async def run_actions(
             raise
         try:
             if resource_usage_interval is not None:
-                _resource_poll = functools.partial(
+                _reporter = resource_usage.RunReporter(
                     client.get_resource_usage,
                     lag_window_sec=resource_usage.lag_window_for(
                         resource_usage_interval
                     ),
                 )
+                _resource_poll = _reporter.poll
+                _resource_render = _reporter.render
+                _resource_summary_poll = _reporter.summary_poll
             else:
                 _resource_poll = _unreachable_poll
+                _resource_render = resource_usage.format_line
+                _resource_summary_poll = None
             async with resource_usage.periodic(
-                _resource_poll, resource_usage_interval, paused=prompt_idle
+                _resource_poll,
+                resource_usage_interval,
+                render=_resource_render,
+                summary_poll=_resource_summary_poll,
+                paused=prompt_idle,
             ):
                 if handler_config_overrides or service_config_overrides:
                     if own_server:

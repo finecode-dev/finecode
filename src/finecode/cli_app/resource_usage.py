@@ -16,11 +16,15 @@ from finecode.wm_client import ApiError, ApiMethodNotFoundError, ApiServerError
 __all__ = [
     "DEFAULT_INTERVAL_SEC",
     "ENV_VAR",
+    "EPISODE_CLEAR_SAMPLES",
+    "FOOTPRINT_SUMMARY_TIMEOUT_SEC",
     "LAG_WINDOW_DEFAULT_SEC",
     "MAX_INTERVAL_SEC",
     "SUMMARY_TIMEOUT_SEC",
     "InvalidResourceUsageInterval",
     "ReporterState",
+    "RunReporter",
+    "format_footprint",
     "format_line",
     "format_peaks",
     "format_table",
@@ -35,6 +39,8 @@ MAX_INTERVAL_SEC = 600.0
 LAG_WINDOW_DEFAULT_SEC = 30.0
 ENV_VAR = "FINECODE_RESOURCE_USAGE_INTERVAL"
 SUMMARY_TIMEOUT_SEC = 5.0
+FOOTPRINT_SUMMARY_TIMEOUT_SEC = 3.0
+EPISODE_CLEAR_SAMPLES = 2
 
 
 class InvalidResourceUsageInterval(Exception):
@@ -110,6 +116,34 @@ def _gb(mb: float | None) -> str:
     if mb is None:
         return "n/a"
     return f"{mb / 1024:.1f}"
+
+
+def _size(mb: float | None) -> str:
+    if mb is None:
+        return "n/a"
+    return f"{mb / 1024:.1f}G"
+
+
+def _fmt_psi(value: float | None) -> str:
+    if value is None:
+        return "n/a"
+    return f"{value:.0f}%"
+
+
+def format_footprint(processes: dict | None) -> str:
+    if not isinstance(processes, dict):
+        return "n/a"
+    if "error" in processes:
+        return f"n/a ({processes['error']})"
+    wm = processes.get("wm", {}) or {}
+    runners = processes.get("runners", []) or []
+    untracked = processes.get("untracked", []) or []
+    return (
+        f"{_size(processes.get('totalRssMb'))} rss + "
+        f"{_size(processes.get('totalSwapMb'))} swap "
+        f"(WM {_size(wm.get('rssMb'))}, "
+        f"{len(runners)} runners, {len(untracked)} untracked)"
+    )
 
 
 def _fmt_ms(ms: float | None) -> str:
@@ -189,6 +223,8 @@ def format_line(snapshot: dict, elapsed: float) -> str:
         swap_part = "n/a"
     else:
         swap_part = f"{_gb(swap_used)}G/{_gb(swap_total)}G"
+    psi = host.get("psi", {}) or {}
+    psi_part = _fmt_psi(psi.get("memoryFullAvg10"))
     lag_max = wm.get("loopLagMaxMs")
     lag_part = "n/a" if lag_max is None else f"{lag_max / 1000:.1f}s"
 
@@ -202,7 +238,7 @@ def format_line(snapshot: dict, elapsed: float) -> str:
         f"{_n(er_starting)} start · work {_n(work_used)}/{_n(work_total)} "
         f"(+{_n(work_waiting)} wait{work_escape}) · startup "
         f"{_n(startup_used)}/{_n(startup_total)} (+{_n(startup_waiting)} wait) · "
-        f"mem {mem_part} swap {swap_part} · lag {lag_part}"
+        f"mem {mem_part} swap {swap_part} psi {psi_part} · lag {lag_part}"
     )
 
 
@@ -216,7 +252,10 @@ def format_peaks(snapshot: dict) -> str:
         f"{_n(peaks.get('workSlotsUsed'))} used/{_n(peaks.get('workSlotsWaiting'))} "
         f"wait · startup {_n(peaks.get('startupSlotsWaiting'))} wait · swap max "
         f"{_gb(peaks.get('hostSwapUsedMb'))}G · mem avail min "
-        f"{_gb(peaks.get('hostMemAvailableMinMb'))}G · WM pid {_n(wm.get('pid'))} "
+        f"{_gb(peaks.get('hostMemAvailableMinMb'))}G"
+        f" · psi max {_fmt_psi(peaks.get('hostPsiMemoryFullMax'))}"
+        f" · footprint {format_footprint(snapshot.get('processes'))}"
+        f" · WM pid {_n(wm.get('pid'))} "
         f"up {_fmt_uptime(wm.get('uptimeSec'))}"
     )
 
@@ -314,13 +353,23 @@ def format_table(info: dict, snapshot: dict) -> str:
             f"{_gb(cgroup.get('memoryMaxMb'))}G{swap_str}"
         )
     psi = host.get("psi", {})
+    mp = host.get("memoryPressure")
+    if not isinstance(mp, dict):
+        pressure_part = "n/a"
+    elif mp.get("active") is True:
+        reasons = mp.get("reasons") or []
+        pressure_part = f"yes ({', '.join(reasons)})" if reasons else "yes"
+    elif mp.get("active") is False:
+        pressure_part = "no"
+    else:
+        pressure_part = "n/a"
     lines.append(
         f"host       mem {_gb(host.get('memAvailableMb'))} avail / "
         f"{_gb(host.get('memTotalMb'))} · cgroup {cgroup_part} · swap "
         f"{_gb(host.get('swapUsedMb'))} / {_gb(host.get('swapTotalMb'))} · PSI mem "
         f"{_n(psi.get('memoryFullAvg10'))} io {_n(psi.get('ioFullAvg10'))} cpu "
         f"{_n(psi.get('cpuSomeAvg10'))} · load {_n(host.get('load1m'))} / "
-        f"{_n(host.get('cpuCount'))} CPUs"
+        f"{_n(host.get('cpuCount'))} CPUs · pressure {pressure_part}"
     )
     hook = " · hooks failed" if peaks.get("hookFailed") else ""
     lines.append(
@@ -331,7 +380,8 @@ def format_table(info: dict, snapshot: dict) -> str:
         f"{_n(peaks.get('workSlotsWaiting'))} wait · startup "
         f"{_n(peaks.get('startupSlotsWaiting'))} wait · swap max "
         f"{_gb(peaks.get('hostSwapUsedMb'))}G · mem avail min "
-        f"{_gb(peaks.get('hostMemAvailableMinMb'))}G{hook}"
+        f"{_gb(peaks.get('hostMemAvailableMinMb'))}G"
+        f" · psi max {_fmt_psi(peaks.get('hostPsiMemoryFullMax'))}{hook}"
     )
     if processes is not None and not isinstance(processes, dict):
         pass
@@ -352,6 +402,99 @@ def format_table(info: dict, snapshot: dict) -> str:
             f"top runners: {(', '.join(top_parts)) if top_parts else 'n/a'}"
         )
     return "\n".join(lines)
+
+
+class RunReporter:
+    """Poll the snapshot and warn once per memory-pressure episode."""
+
+    def __init__(
+        self,
+        get_resource_usage: typing.Callable[..., typing.Awaitable[dict]],
+        *,
+        lag_window_sec: float,
+    ) -> None:
+        self._get_resource_usage = get_resource_usage
+        self._lag_window_sec = lag_window_sec
+        self._episode_started_at: float | None = None
+        self._clear_streak: int = 0
+        self._footprint_owed: bool = False
+        self._last_poll_wanted_footprint: bool = False
+
+    async def poll(self) -> dict:
+        self._last_poll_wanted_footprint = self._footprint_owed
+        return await self._get_resource_usage(
+            include_processes=self._footprint_owed,
+            lag_window_sec=self._lag_window_sec,
+        )
+
+    async def summary_poll(self) -> dict:
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + FOOTPRINT_SUMMARY_TIMEOUT_SEC
+        walk = asyncio.ensure_future(
+            self._get_resource_usage(
+                include_processes=True,
+                lag_window_sec=self._lag_window_sec,
+            )
+        )
+        try:
+            snapshot = await self._get_resource_usage(
+                include_processes=False,
+                lag_window_sec=self._lag_window_sec,
+            )
+            done, _ = await asyncio.wait(
+                {walk}, timeout=max(0.0, deadline - loop.time())
+            )
+            if walk in done:
+                try:
+                    snapshot["processes"] = walk.result().get("processes")
+                except Exception as exc:
+                    snapshot["processes"] = {"error": f"{type(exc).__name__}: {exc}"}
+            else:
+                snapshot["processes"] = {
+                    "error": f"no answer within {FOOTPRINT_SUMMARY_TIMEOUT_SEC}s"
+                }
+            return snapshot
+        finally:
+            await _reap_poll(walk)
+
+    def render(self, snapshot: dict, elapsed: float) -> str:
+        lines = [format_line(snapshot, elapsed)]
+        host = snapshot.get("host", {}) or {}
+        mp = host.get("memoryPressure")
+        active = isinstance(mp, dict) and mp.get("active") is True
+        if self._last_poll_wanted_footprint:
+            lines.append(
+                f"[resources] t=+{int(elapsed)}s memory pressure footprint: "
+                f"{format_footprint(snapshot.get('processes'))}"
+            )
+            self._footprint_owed = False
+        if active and self._episode_started_at is None:
+            self._episode_started_at = elapsed
+            self._clear_streak = 0
+            self._footprint_owed = True
+            reasons = mp.get("reasons", []) or []
+            psi = (host.get("psi", {}) or {}).get("memoryFullAvg10")
+            lines.append(
+                f"[resources] t=+{int(elapsed)}s !! memory pressure "
+                f"({', '.join(reasons)}): "
+                f"PSI memory full {_fmt_psi(psi)} · "
+                f"mem avail {_size(host.get('memAvailableMb'))} "
+                f"of {_size(host.get('memTotalMb'))} · "
+                f"swap {_size(host.get('swapUsedMb'))} "
+                f"of {_size(host.get('swapTotalMb'))}"
+            )
+        if active and self._episode_started_at is not None:
+            self._clear_streak = 0
+        if not active and self._episode_started_at is not None:
+            self._clear_streak += 1
+            if self._clear_streak >= EPISODE_CLEAR_SAMPLES:
+                started = self._episode_started_at
+                lines.append(
+                    f"[resources] t=+{int(elapsed)}s memory pressure cleared "
+                    f"(began t=+{int(started)}s)"
+                )
+                self._episode_started_at = None
+        return "\n".join(lines)
 
 
 def _emit_stderr(line: str) -> None:
@@ -553,6 +696,8 @@ async def periodic(
     summary: bool = True,
     stop_on_disconnect: bool = False,
     summary_timeout_sec: float = SUMMARY_TIMEOUT_SEC,
+    summary_poll: typing.Callable[[], typing.Coroutine[typing.Any, typing.Any, dict]]
+    | None = None,
     clock: typing.Callable[[], float] = time.monotonic,
     paused: asyncio.Event | None = None,
 ) -> typing.AsyncGenerator[ReporterState, None]:
@@ -620,7 +765,9 @@ async def periodic(
 
     async def _emit_summary() -> None:
         try:
-            snapshot = await asyncio.wait_for(poll(), summary_timeout_sec)
+            snapshot = await asyncio.wait_for(
+                (summary_poll or poll)(), summary_timeout_sec
+            )
         except (asyncio.CancelledError, KeyboardInterrupt):
             return
         except Exception as exc:

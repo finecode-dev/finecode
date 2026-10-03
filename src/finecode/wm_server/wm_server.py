@@ -56,6 +56,7 @@ from finecode.wm_server._api_handlers import (
     handle_documents_closed,
     handle_documents_opened,
 )
+from finecode.wm_server._api_handlers._run_failure import client_message
 from finecode.wm_server._jsonrpc import (
     NOT_IMPLEMENTED_CODE,
     MethodHandler,
@@ -773,15 +774,17 @@ async def _handle_request_task(
         )
         await writer.drain()
     except (ActionRunFailed, StartingEnvironmentsFailed) as exc:
-        logger.error(f"FineCode API: error handling {method} (client: {label}): {exc}")
-        _write_message(writer, _jsonrpc_error(req_id, -32603, str(exc)))
+        msg = client_message(
+            f"FineCode API: error handling {method} (client: {label})", str(exc)
+        )
+        _write_message(writer, _jsonrpc_error(req_id, -32603, msg))
         await writer.drain()
     except jsonrpc_client.ServerFailedToStart as exc:
         # Already logged with details in runner_manager; no traceback needed here.
-        logger.error(
-            f"FineCode API: error handling {method} (client: {label}): {exc.message}"
+        msg = client_message(
+            f"FineCode API: error handling {method} (client: {label})", exc.message
         )
-        _write_message(writer, _jsonrpc_error(req_id, -32603, exc.message))
+        _write_message(writer, _jsonrpc_error(req_id, -32603, msg))
         await writer.drain()
     except Exception as exc:
         logger.exception(f"FineCode API: error handling {method} (client: {label})")

@@ -388,6 +388,7 @@ class EventLoopLagMonitor:
             ws_context.resource_peaks.observe_host(
                 swap_used_mb=meminfo.swap_used_mb,
                 mem_available_mb=meminfo.mem_available_mb,
+                psi_memory_full_avg10=host_pressure.read_psi_memory_full_avg10(),
             )
         except Exception as exc:  # noqa: BLE001
             if not self._host_sample_failed:

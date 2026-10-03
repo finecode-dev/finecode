@@ -581,3 +581,105 @@ async def test_footprint_runs_off_the_loop(monkeypatch) -> None:
     )
 
     assert seen["ident"] != main_ident
+
+
+def _patch_pressured_host(monkeypatch, *, psi_full: float) -> None:
+    monkeypatch.setattr(
+        host_pressure,
+        "read_meminfo",
+        lambda *a, **k: host_pressure.MemInfo(
+            mem_total_mb=17920,
+            mem_available_mb=545,
+            swap_total_mb=20728,
+            swap_used_mb=20727,
+        ),
+    )
+    monkeypatch.setattr(host_pressure, "read_cgroup_memory", lambda *a, **k: None)
+    monkeypatch.setattr(
+        host_pressure,
+        "read_host_pressure",
+        lambda *a, **k: host_pressure.HostPressure(
+            mem_available_mb=545,
+            swap_used_mb=20727,
+            psi_memory_full_avg10=psi_full,
+            psi_io_full_avg10=1.25,
+            psi_cpu_some_avg10=0.18,
+        ),
+    )
+    monkeypatch.setattr(
+        event_loop_lag_monitor,
+        "read_host_load",
+        lambda *a, **k: event_loop_lag_monitor.HostLoad(load_1m=None, cpu_count=None),
+    )
+
+
+async def test_snapshot_reports_memory_pressure_when_pressured(monkeypatch) -> None:
+    """A pressured host must be visible in the snapshot the CLI polls.
+
+    Without the verdict in the snapshot the reporter could not warn and a
+    run failure would carry no host context to explain it.
+    """
+    ws_context = context.WorkspaceContext([])
+    _patch_pressured_host(monkeypatch, psi_full=76.91)
+
+    snapshot = await wm_server._handle_server_get_resource_usage({}, ws_context)
+
+    assert snapshot["host"]["memoryPressure"] == {
+        "active": True,
+        "reasons": ["psi", "memoryExhausted"],
+    }
+
+
+async def test_snapshot_reports_no_pressure_verdict_without_inputs(
+    monkeypatch,
+) -> None:
+    """A host with no readings must abstain rather than claim it is fine."""
+    ws_context = context.WorkspaceContext([])
+    monkeypatch.setattr(
+        host_pressure,
+        "read_meminfo",
+        lambda *a, **k: host_pressure.MemInfo(
+            mem_total_mb=None,
+            mem_available_mb=None,
+            swap_total_mb=None,
+            swap_used_mb=None,
+        ),
+    )
+    monkeypatch.setattr(host_pressure, "read_cgroup_memory", lambda *a, **k: None)
+    monkeypatch.setattr(
+        host_pressure,
+        "read_host_pressure",
+        lambda *a, **k: host_pressure.HostPressure(
+            mem_available_mb=None,
+            swap_used_mb=None,
+            psi_memory_full_avg10=None,
+            psi_io_full_avg10=None,
+            psi_cpu_some_avg10=None,
+        ),
+    )
+    monkeypatch.setattr(
+        event_loop_lag_monitor,
+        "read_host_load",
+        lambda *a, **k: event_loop_lag_monitor.HostLoad(load_1m=None, cpu_count=None),
+    )
+
+    snapshot = await wm_server._handle_server_get_resource_usage({}, ws_context)
+
+    assert snapshot["host"]["memoryPressure"] is None
+    assert snapshot["peaks"]["hostPsiMemoryFullMax"] is None
+
+
+async def test_snapshot_psi_peak_keeps_maximum(monkeypatch) -> None:
+    """The PSI peak must survive a later calmer sample.
+
+    A max that a low reading could lower would hide the worst of an episode
+    that has already passed.
+    """
+    ws_context = context.WorkspaceContext([])
+    _patch_pressured_host(monkeypatch, psi_full=40.0)
+    first = await wm_server._handle_server_get_resource_usage({}, ws_context)
+    assert first["peaks"]["hostPsiMemoryFullMax"] == 40.0
+
+    _patch_pressured_host(monkeypatch, psi_full=12.0)
+    second = await wm_server._handle_server_get_resource_usage({}, ws_context)
+    assert second["peaks"]["hostPsiMemoryFullMax"] == 40.0

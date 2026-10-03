@@ -405,13 +405,33 @@ else fails the command with exit 1 naming the switch.
 Line format:
 
 ```text
-[resources] t=+15s projects 3 act/40 run/72 · ER 40 run/4 act/2 start · work 4/4 (+7 wait) · startup 3/3 (+12 wait) · mem 12.0G/16.0G (cgroup) swap 12.0G/20.0G · lag 2.4s
+[resources] t=+15s projects 3 act/40 run/72 · ER 40 run/4 act/2 start · work 4/4 (+7 wait) · startup 3/3 (+12 wait) · mem 12.0G/16.0G (cgroup) swap 12.0G/20.0G psi 3% · lag 2.4s
 ```
+
+`psi` is the host's PSI `memory full avg10`, or `n/a` when the host reports no PSI.
+When the WM reports pressure, the reporter prints one warning line when the
+episode starts and one when it ends:
+
+```text
+[resources] t=+30s !! memory pressure (psi, memoryExhausted): PSI memory full 77% · mem avail 0.5G of 17.5G · swap 20.2G of 20.2G
+[resources] t=+45s memory pressure footprint: 15.8G rss + 4.1G swap (WM 0.3G, 328 runners, 2 untracked)
+[resources] t=+120s memory pressure cleared (began t=+30s)
+```
+
+The warning fires once per episode: it takes two consecutive calm polls to close
+one, so a single calm sample inside an episode does not end it. The footprint
+line follows the warning on the next tick, from one `includeProcesses` walk per
+episode plus one for the final peaks line — a slow walk renders as
+`footprint n/a (process walk already in progress)` and never delays the peaks
+line (the summary walk runs under a 3 s budget inside the 5 s summary timeout).
+A warning computed while output is paused for an interactive prompt is rendered
+and then dropped, but the episode is still marked as warned; CI — the audience
+for these lines — has no prompts, so nothing is lost there.
 
 Summary:
 
 ```text
-[resources] peaks: ER 61 run/14 start · projects 9 active · work 5 used/23 waiting · startup 40 waiting · swap max 14.5G · mem avail min 0.9G · WM pid 1234 up 1h02m
+[resources] peaks: ER 61 run/14 start · projects 9 active · work 5 used/23 waiting · startup 40 waiting · swap max 14.5G · mem avail min 0.9G · psi max 41% · footprint 15.8G rss + 4.1G swap (WM 0.3G, 328 runners, 2 untracked) · WM pid 1234 up 1h02m
 ```
 
 Peaks are per WM process, since that process started: after a shared-server reconnect

@@ -686,14 +686,56 @@ Peaks are raised only where a count rises: `record_runner_peaks` (first statemen
 sampling. The hooks never raise into the code they observe (`record_runner_peaks` logs once
 per context and latches `hook_failed`; WM-state peaks print as `max(stored, current)`).
 
+Memory pressure (`host_pressure.memory_pressure_reasons`) holds while any reason holds,
+compared inclusively against fixed constants (not configurable in v1):
+
+```python
+MEMORY_PRESSURE_PSI_FULL_PCT = 10.0
+MEMORY_PRESSURE_AVAILABLE_PCT = 5.0
+MEMORY_PRESSURE_SWAP_USED_PCT = 90.0
+```
+
+- `"psi"` iff PSI `memory full avg10 >= 10.0`.
+- `"memoryExhausted"` iff available memory is at most 5% of total **and** swap is
+  absent (`swapTotalMb == 0`) or at least 90% used. Swap alone is not pressure:
+  Linux leaves cold pages in swap on healthy hosts, so a swap-only clause would
+  fire constantly. Unknown swap (`swapTotalMb is None`) never counts.
+- Unevaluable (no PSI **and** no usable memory figures) returns `None`, distinct
+  from the empty tuple that means "evaluated, not pressured".
+
+The snapshot reports it as `host.memoryPressure` (null when unevaluable, else
+`{"active", "reasons"}`), and folds PSI `memory full avg10` into
+`peaks.hostPsiMemoryFullMax` everywhere host peaks are sampled (the snapshot and
+the lag monitor's `_sample_host`). Limitation: the predicate reads host-wide
+`/proc/meminfo` and `/proc/pressure/memory`. A container that thrashes against
+its own cgroup `memory.max` while the host is fine does not trip it;
+cgroup-scoped PSI is follow-up work.
+
 ---
 
 ## Error handling conventions
 
 - All WM domain errors are defined in `errors.py` and rooted at `WmError(Exception)`.
-- The dispatch boundary in `wm_server.py` (`_handle_request_task`) catches known error
-  types and maps them to JSON-RPC error codes.  Unknown `Exception` subtypes fall through
-  to a generic `-32603` response with `logger.exception`.
+- Run failures become client errors at five boundaries, not one: the plain dispatch
+  boundary in `wm_server.py` (`_handle_request_task`, covering non-streamed
+  `actions/run` and every other plain request) plus four task wrappers in
+  `_api_handlers/_streaming.py` (`_handle_run_action_with_partial_results_task`,
+  `_handle_run_batch_with_partial_results_task`,
+  `_handle_run_action_with_progress_task`,
+  `_handle_run_batch_with_progress_task`). Each wrapper has an `ActionRunFailed`
+  and a `StartingEnvironmentsFailed` branch; the plain boundary adds
+  `ServerFailedToStart` (ER boot stalls arrive there under pressure). Ten branches
+  in total, all served by one helper: `_api_handlers/_run_failure.py`
+  `client_message(log_prefix, message)`, which reads host memory state once, logs
+  it as structured extras every time, and appends
+  `[host under memory pressure: …]` to the message while the predicate holds.
+  The read is wrapped: a reader failure logs today's line unchanged and returns
+  the message undecorated, so a diagnostic can never replace the failure
+  response (and the client never hangs without a reply). The reading is host
+  state when the WM answers, not at the moment the ER request timed out —
+  fail-fast batches tear down siblings before the boundary is reached.
+- Unknown `Exception` subtypes fall through to a generic `-32603` response with
+  `logger.exception`.
 - Services raise typed errors; API handlers let them propagate to the dispatch boundary
   rather than catching and re-wrapping.
 - `ConfigurationError` and `PresetPackageNotInstalledError` re-exported from

@@ -27,6 +27,7 @@ class ResourcePeaks:
     startup_slots_waiting: int = 0
     host_swap_used_mb: int | None = None
     host_mem_available_min_mb: int | None = None
+    host_psi_memory_full_max: float | None = None
     hook_failed: bool = False
 
     def raise_runner_counts(
@@ -42,7 +43,11 @@ class ResourcePeaks:
         self.projects_active = max(self.projects_active, count)
 
     def observe_host(
-        self, *, swap_used_mb: int | None, mem_available_mb: int | None
+        self,
+        *,
+        swap_used_mb: int | None,
+        mem_available_mb: int | None,
+        psi_memory_full_avg10: float | None = None,
     ) -> None:
         if swap_used_mb is not None:
             if self.host_swap_used_mb is None:
@@ -55,6 +60,13 @@ class ResourcePeaks:
             else:
                 self.host_mem_available_min_mb = min(
                     self.host_mem_available_min_mb, mem_available_mb
+                )
+        if psi_memory_full_avg10 is not None:
+            if self.host_psi_memory_full_max is None:
+                self.host_psi_memory_full_max = psi_memory_full_avg10
+            else:
+                self.host_psi_memory_full_max = max(
+                    self.host_psi_memory_full_max, psi_memory_full_avg10
                 )
 
 

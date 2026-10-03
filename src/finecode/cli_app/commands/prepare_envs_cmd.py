@@ -1,5 +1,4 @@
 # docs: docs/cli.md
-import functools
 import pathlib
 
 import click
@@ -94,16 +93,25 @@ async def prepare_envs(
             await client.subscribe_logs(log_level)
         try:
             if resource_usage_interval is not None:
-                _resource_poll = functools.partial(
+                _reporter = resource_usage.RunReporter(
                     client.get_resource_usage,
                     lag_window_sec=resource_usage.lag_window_for(
                         resource_usage_interval
                     ),
                 )
+                _resource_poll = _reporter.poll
+                _resource_render = _reporter.render
+                _resource_summary_poll = _reporter.summary_poll
             else:
                 _resource_poll = _unreachable_poll
+                _resource_render = resource_usage.format_line
+                _resource_summary_poll = None
             async with resource_usage.periodic(
-                _resource_poll, resource_usage_interval, paused=None
+                _resource_poll,
+                resource_usage_interval,
+                render=_resource_render,
+                summary_poll=_resource_summary_poll,
+                paused=None,
             ):
                 await _run(
                     client,

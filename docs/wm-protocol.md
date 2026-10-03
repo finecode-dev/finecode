@@ -31,6 +31,13 @@ connect to it.
 {"jsonrpc": "2.0", "id": 1, "error": {"code": -32002, "message": "Not yet implemented"}}
 ```
 
+Run failures (`ActionRunFailed`, `StartingEnvironmentsFailed`, and ER boot stalls
+that arrive as `ServerFailedToStart`) carry a `[host under memory pressure: …]`
+suffix on the message while the host is under memory pressure, so the CLI's
+`API error` line names the host state beside the failure. The note is appended
+at the boundary where the failure becomes a client error; the log line always
+carries the same state as structured extras either way.
+
 **Notification** (no `id` field, no response expected):
 
 ```json
@@ -964,8 +971,10 @@ maximum, a finite number in `(0, 600]`; the default is 30.
 clients, lag), `projects` (total / running / active), `runners` (by status,
 running, starting, active, per env), `budget` (total, source), `workSlots`
 (used / free / waiting / stall escape / holders), `startupSlots` (used / free
-/ waiting), `inFlightRuns` (oldest first), `peaks` since server start, `host`
-(memory / swap / cgroup / PSI / load), and `processes` (only with
+/ waiting), `inFlightRuns` (oldest first), `peaks` since server start
+(including `hostPsiMemoryFullMax`, the max PSI `memory full avg10` sampled),
+`host` (memory / swap / cgroup / PSI / load, plus `memoryPressure`: null when
+unevaluable, else `{"active", "reasons"}`), and `processes` (only with
 `includeProcesses`). Definitions: see `docs/guides/wm-server-internals.md`,
 "Resource-usage snapshot".
 

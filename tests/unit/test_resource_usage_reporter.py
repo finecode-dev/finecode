@@ -844,3 +844,370 @@ def test_resolve_interval_names_sources() -> None:
             disabled=False,
             environ={resource_usage.ENV_VAR: "abc"},
         )
+
+
+def test_format_line_shows_psi() -> None:
+    """The tick line must show PSI beside swap so thrashing is visible live."""
+    pressured = _snapshot(
+        host={
+            "memTotalMb": 17920,
+            "memAvailableMb": 545,
+            "swapTotalMb": 20728,
+            "swapUsedMb": 20727,
+            "cgroup": None,
+            "psi": {
+                "memoryFullAvg10": 76.91,
+                "ioFullAvg10": 1.25,
+                "cpuSomeAvg10": 0.18,
+            },
+            "load1m": None,
+            "cpuCount": 8,
+        }
+    )
+    assert "swap 20.2G/20.2G psi 77% · lag" in resource_usage.format_line(
+        pressured, 15.0
+    )
+
+    calm = _snapshot(
+        host={
+            "memTotalMb": 17920,
+            "memAvailableMb": 10000,
+            "swapTotalMb": 20728,
+            "swapUsedMb": 0,
+            "cgroup": None,
+            "psi": {
+                "memoryFullAvg10": None,
+                "ioFullAvg10": None,
+                "cpuSomeAvg10": None,
+            },
+            "load1m": None,
+            "cpuCount": 8,
+        }
+    )
+    assert "psi n/a · lag" in resource_usage.format_line(calm, 15.0)
+
+    old_wm = _snapshot(
+        host={
+            "memTotalMb": 17920,
+            "memAvailableMb": 10000,
+            "swapTotalMb": 20728,
+            "swapUsedMb": 0,
+            "cgroup": None,
+            "load1m": None,
+            "cpuCount": 8,
+        }
+    )
+    assert "psi n/a" in resource_usage.format_line(old_wm, 15.0)
+
+
+def test_format_peaks_shows_psi_max_and_footprint() -> None:
+    """The final line must carry the episode's worst PSI and its footprint."""
+    snapshot = _snapshot(
+        peaks={
+            "runnersRunning": 328,
+            "runnersStarting": 0,
+            "projectsActive": 1,
+            "workSlotsUsed": 1,
+            "workSlotsWaiting": 0,
+            "startupSlotsWaiting": 0,
+            "hostSwapUsedMb": 20727,
+            "hostMemAvailableMinMb": 545,
+            "hostPsiMemoryFullMax": 82.24,
+            "hookFailed": False,
+        },
+        processes={
+            "wm": {"pid": 1, "processCount": 1, "rssMb": 307, "swapMb": 100},
+            "runners": [
+                {
+                    "runner": f"r{i}",
+                    "pid": i,
+                    "processCount": 1,
+                    "rssMb": 48,
+                    "swapMb": 12,
+                }
+                for i in range(328)
+            ],
+            "untracked": [
+                {"pid": 9000, "processCount": 1, "rssMb": 10, "swapMb": 1},
+                {"pid": 9001, "processCount": 1, "rssMb": 11, "swapMb": 1},
+            ],
+            "totalRssMb": 16179,
+            "totalSwapMb": 4198,
+        },
+    )
+
+    line = resource_usage.format_peaks(snapshot)
+
+    assert "psi max 82%" in line
+    assert "footprint 15.8G rss + 4.1G swap (WM 0.3G, 328 runners, 2 untracked)" in line
+
+    without_walk = _snapshot(processes=None)
+    assert "footprint n/a" in resource_usage.format_peaks(without_walk)
+
+    busy = _snapshot(processes={"error": "process walk already in progress"})
+    assert "footprint n/a (process walk already in progress)" in (
+        resource_usage.format_peaks(busy)
+    )
+
+
+def test_format_table_shows_pressure_and_psi_max() -> None:
+    """The on-demand table must name the pressure verdict and the PSI peak."""
+    snapshot = _snapshot(
+        host={
+            "memTotalMb": 17920,
+            "memAvailableMb": 545,
+            "swapTotalMb": 20728,
+            "swapUsedMb": 20727,
+            "cgroup": None,
+            "psi": {
+                "memoryFullAvg10": 76.91,
+                "ioFullAvg10": 1.25,
+                "cpuSomeAvg10": 0.18,
+            },
+            "load1m": None,
+            "cpuCount": 8,
+            "memoryPressure": {"active": True, "reasons": ["psi", "memoryExhausted"]},
+        },
+        peaks={
+            "runnersRunning": 1,
+            "runnersStarting": 0,
+            "projectsActive": 1,
+            "workSlotsUsed": 1,
+            "workSlotsWaiting": 0,
+            "startupSlotsWaiting": 0,
+            "hostSwapUsedMb": 20727,
+            "hostMemAvailableMinMb": 545,
+            "hostPsiMemoryFullMax": 82.24,
+            "hookFailed": False,
+        },
+    )
+
+    table = resource_usage.format_table({"version": "test", "clients": []}, snapshot)
+
+    assert "pressure yes (psi, memoryExhausted)" in table
+    assert "psi max 82%" in table
+
+
+def _pressure_snapshot(*, active: bool) -> dict:
+    reasons = ["psi", "memoryExhausted"] if active else []
+    return _snapshot(
+        host={
+            "memTotalMb": 17920,
+            "memAvailableMb": 545,
+            "swapTotalMb": 20728,
+            "swapUsedMb": 20727,
+            "cgroup": None,
+            "psi": {
+                "memoryFullAvg10": 76.91,
+                "ioFullAvg10": 1.25,
+                "cpuSomeAvg10": 0.18,
+            },
+            "load1m": None,
+            "cpuCount": 8,
+            "memoryPressure": {"active": active, "reasons": reasons},
+        },
+        processes={
+            "wm": {"pid": 1, "processCount": 1, "rssMb": 307, "swapMb": 100},
+            "runners": [],
+            "untracked": [],
+            "totalRssMb": 16179,
+            "totalSwapMb": 4198,
+        },
+    )
+
+
+async def test_reporter_warns_once_per_episode() -> None:
+    """A pressure episode must warn once and clear only after two calm polls.
+
+    A single calm sample inside an episode is noise, not recovery; warning
+    again on every pressured tick would train operators to ignore the line.
+    """
+    actives = [False, True, True, True, False, True, False, False, True, True]
+    elapsed_list = [15, 30, 45, 60, 75, 90, 105, 120, 135, 150]
+    snapshots = [_pressure_snapshot(active=active) for active in actives]
+    calls: list[bool] = []
+    state = {"i": 0}
+
+    async def _fake(*, include_processes=False, lag_window_sec=None):
+        calls.append(include_processes)
+        snapshot = snapshots[state["i"]]
+        state["i"] += 1
+        return snapshot
+
+    reporter = resource_usage.RunReporter(_fake, lag_window_sec=30.0)
+    rendered: list[tuple[int, str]] = []
+    for elapsed in elapsed_list:
+        snapshot = await reporter.poll()
+        rendered.append((elapsed, reporter.render(snapshot, float(elapsed))))
+
+    warnings = [elapsed for elapsed, text in rendered if "!! memory pressure" in text]
+    assert warnings == [30, 135]
+
+    cleared = [
+        (elapsed, text)
+        for elapsed, text in rendered
+        if "memory pressure cleared" in text
+    ]
+    assert len(cleared) == 1
+    assert cleared[0][0] == 120
+    assert "began t=+30s" in cleared[0][1]
+
+    footprints = [
+        elapsed for elapsed, text in rendered if "memory pressure footprint:" in text
+    ]
+    assert footprints == [45, 150]
+
+    assert calls == [
+        False,
+        False,
+        True,
+        False,
+        False,
+        False,
+        False,
+        False,
+        False,
+        True,
+    ]
+
+
+async def test_reporter_footprint_survives_failed_poll() -> None:
+    """A poll that fails while a footprint is owed must not lose the walk.
+
+    The next poll has to ask again, or the episode's one footprint never
+    happens and the final line cannot name the heaviest processes.
+    """
+    snapshots = [
+        _pressure_snapshot(active=False),
+        _pressure_snapshot(active=True),
+        _pressure_snapshot(active=True),
+    ]
+    calls: list[bool] = []
+    state = {"i": 0, "fail_once": True}
+
+    async def _fake(*, include_processes=False, lag_window_sec=None):
+        calls.append(include_processes)
+        if state["fail_once"] and len(calls) == 3:
+            raise RuntimeError("poll boom")
+        snapshot = snapshots[state["i"]]
+        state["i"] += 1
+        return snapshot
+
+    reporter = resource_usage.RunReporter(_fake, lag_window_sec=30.0)
+    first = await reporter.poll()
+    reporter.render(first, 15.0)
+    second = await reporter.poll()
+    reporter.render(second, 30.0)
+    with pytest.raises(RuntimeError, match="poll boom"):
+        await reporter.poll()
+    fourth = await reporter.poll()
+    text = reporter.render(fourth, 60.0)
+
+    assert calls == [False, False, True, True]
+    assert "memory pressure footprint:" in text
+
+
+def test_footprint_timeout_orders_before_summary_timeout() -> None:
+    """The walk budget must fit inside the summary budget it runs under."""
+    assert (
+        resource_usage.FOOTPRINT_SUMMARY_TIMEOUT_SEC
+        < resource_usage.SUMMARY_TIMEOUT_SEC
+    )
+
+
+def test_summary_poll_slow_walk_times_out_without_leak() -> None:
+    """A thrashing host must not make the final line wait for the walk.
+
+    The peaks line is the last thing a CI log shows; holding it for a walk
+    that never answers would hide the run result behind a stuck snapshot.
+    """
+
+    async def _amain():
+        loop = asyncio.get_running_loop()
+        started = loop.time()
+
+        async def _fake(*, include_processes=False, lag_window_sec=None):
+            if include_processes:
+                await asyncio.sleep(3600.0)
+                return {"processes": {"wm": {}}}
+            await asyncio.sleep(0.5)
+            return _snapshot(processes=None)
+
+        reporter = resource_usage.RunReporter(_fake, lag_window_sec=30.0)
+        snapshot = await reporter.summary_poll()
+        elapsed = loop.time() - started
+        pending = [
+            task
+            for task in asyncio.all_tasks()
+            if task is not asyncio.current_task() and not task.done()
+        ]
+        return snapshot, elapsed, pending
+
+    with asyncio.Runner(loop_factory=_VirtualTimeLoop) as runner:
+        snapshot, elapsed, pending = runner.run(_amain())
+
+    assert elapsed < resource_usage.FOOTPRINT_SUMMARY_TIMEOUT_SEC + 0.5 + 1.0
+    assert snapshot["processes"] == {
+        "error": f"no answer within {resource_usage.FOOTPRINT_SUMMARY_TIMEOUT_SEC}s"
+    }
+    assert pending == []
+
+
+async def test_summary_poll_fast_failure_reaps_walk() -> None:
+    """A failing fast call must not leave its walk running behind."""
+
+    async def _fake(*, include_processes=False, lag_window_sec=None):
+        if include_processes:
+            await asyncio.sleep(3600.0)
+            return {"processes": {}}
+        raise RuntimeError("fast boom")
+
+    reporter = resource_usage.RunReporter(_fake, lag_window_sec=30.0)
+    with pytest.raises(RuntimeError, match="fast boom"):
+        await reporter.summary_poll()
+    pending = [
+        task
+        for task in asyncio.all_tasks()
+        if task is not asyncio.current_task() and not task.done()
+    ]
+    assert pending == []
+
+
+async def test_summary_poll_walk_failure_reports_error() -> None:
+    """A walk that fails fast must read as an error footprint, not a crash."""
+
+    async def _fake(*, include_processes=False, lag_window_sec=None):
+        if include_processes:
+            raise RuntimeError("walk boom")
+        return _snapshot(processes=None)
+
+    reporter = resource_usage.RunReporter(_fake, lag_window_sec=30.0)
+    snapshot = await reporter.summary_poll()
+
+    assert snapshot["processes"] == {"error": "RuntimeError: walk boom"}
+
+
+async def test_periodic_uses_summary_poll_for_summary() -> None:
+    """The exit summary must come from the walk-aware poll, not the tick poll."""
+    calls: list[str] = []
+
+    async def _poll() -> dict:
+        calls.append("poll")
+        return _snapshot()
+
+    async def _summary() -> dict:
+        calls.append("summary")
+        return _snapshot()
+
+    async with resource_usage.periodic(
+        _poll,
+        0.02,
+        emit=lambda _line: None,
+        emit_status=lambda _line: None,
+        summary_poll=_summary,
+    ):
+        await asyncio.sleep(0.05)
+
+    assert calls.count("summary") == 1
+    assert calls[-1] == "summary"
+    assert "poll" in calls
