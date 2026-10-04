@@ -297,6 +297,7 @@ Extensions can register services via the `finecode.activator` entry point using 
 | `fine_python_package_info` | `finecode_extension_api.interfaces.isrcartifactfileclassifier.ISrcArtifactFileClassifier` | `fine_python_package_info.py_src_artifact_file_classifier.PySrcArtifactFileClassifier` |
 | `fine_python_ruff` | `fine_python_ruff.ruff_lsp_service.RuffLspService` | `fine_python_ruff.ruff_lsp_service.RuffLspService` |
 | `fine_python_pyrefly` | `fine_python_pyrefly.pyrefly_lsp_service.PyreflyLspService` | `fine_python_pyrefly.pyrefly_lsp_service.PyreflyLspService` |
+| `fine_python_pyrefly` | `fine_python_pyrefly.pyrefly_config.PyreflyConfig` | `fine_python_pyrefly.pyrefly_config.PyreflyConfig` |
 
 ## Service registry for extensions
 

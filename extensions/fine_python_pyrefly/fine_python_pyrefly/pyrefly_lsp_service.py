@@ -26,6 +26,8 @@ from finecode_extension_api.interfaces import (
     iworkslots,
 )
 
+from fine_python_pyrefly.pyrefly_config import PyreflyConfig
+
 _PYREFLY_CLIENT_CAPABILITIES: dict[str, Any] = {
     "textDocument": {
         "synchronization": {
@@ -80,6 +82,7 @@ class PyreflyLspService(service.DisposableService):
         logger: ilogger.ILogger,
         extension_runner_info_provider: iextensionrunnerinfoprovider.IExtensionRunnerInfoProvider,
         work_slots: iworkslots.IWorkSlots,
+        pyrefly_config: PyreflyConfig,
     ) -> None:
         pyrefly_bin = Path(sys.executable).parent / "pyrefly"
         self._lsp_service = LspService(
@@ -109,6 +112,8 @@ class PyreflyLspService(service.DisposableService):
         # naming conventions (env labels are arbitrary); this could be made configurable
         # in the future, per handler or at the action level.
         self._pyrefly_settings: dict[str, Any] = {}
+        self._settings_version = 0
+        self._sent_settings_version: int | None = None
         resolution_env = "dev"
         venv_dir = extension_runner_info_provider.get_venv_dir_path_of_env(
             resolution_env
@@ -129,6 +134,10 @@ class PyreflyLspService(service.DisposableService):
                 "pyrefly": {"extraPaths": [str(p) for p in site_packages]},
             }
         )
+        if pyrefly_config.lsp_config_path is not None:
+            self.update_settings(
+                {"pyrefly": {"configPath": str(pyrefly_config.lsp_config_path)}}
+            )
 
     @override
     async def init(self) -> None:
@@ -150,10 +159,25 @@ class PyreflyLspService(service.DisposableService):
         if pyrefly_settings is not None:
             self._pyrefly_settings = {**self._pyrefly_settings, **pyrefly_settings}
             settings = {**settings, "pyrefly": self._pyrefly_settings}
+        self._settings_version += 1
         self._lsp_service.update_settings(settings)
 
     async def ensure_started(self, root_uri: str) -> None:
+        """Start the server, then push settings that changed after a previous start.
+
+        Pyrefly rereads client settings on ``workspace/didChangeConfiguration``, so
+        settings registered after the server started are pushed instead of being lost.
+        The version is read before awaiting the start: an update landing while the
+        start is in flight belongs to the next call, not to the one already running.
+        """
+        version = self._settings_version
         await self._lsp_service.ensure_started(root_uri)
+        if self._sent_settings_version is None:
+            self._sent_settings_version = version
+            return
+        if version != self._sent_settings_version:
+            self._sent_settings_version = version
+            await self._lsp_service.send_settings()
 
     async def sync_watched_files(
         self, file_paths: collections.abc.Sequence[Path], recheck_timeout: float

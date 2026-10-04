@@ -39,14 +39,24 @@ class ServiceRegistry(iserviceregistry.IServiceRegistry):
 
         async def factory(registry) -> T:
             from finecode_extension_runner._services.run_action import (
+                ActionFailedException,
+                _format_validation_error,
                 resolve_func_args_with_di,
             )
 
             def get_service_config(param_type):
                 try:
                     return _converter.structure(raw_config or {}, param_type)
-                except cattrs.ClassValidationError as exception:
-                    raise ValueError(str(exception)) from exception
+                # BaseValidationError, not ClassValidationError: a malformed
+                # entry in a list- or dict-typed config field raises
+                # IterableValidationError, which is a sibling of
+                # ClassValidationError rather than a subclass.
+                except cattrs.BaseValidationError as exception:
+                    raise ActionFailedException(
+                        f"Invalid config for service "
+                        f"'{interface.__module__}.{interface.__qualname__}': "
+                        f"{_format_validation_error(exception)}"
+                    ) from exception
 
             args = await resolve_func_args_with_di(
                 impl.__init__,

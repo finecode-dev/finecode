@@ -25,6 +25,7 @@ from finecode_extension_api.interfaces import (
 )
 from finecode_extension_api.resource_uri import ResourceUri, resource_uri_to_path
 
+from fine_python_pyrefly.pyrefly_config import PyreflyConfig
 from fine_python_pyrefly.pyrefly_lsp_service import PyreflyLspService
 
 
@@ -53,6 +54,7 @@ class PyreflyTypeCheckFilesHandler(
     def __init__(
         self,
         config: PyreflyTypeCheckFilesHandlerConfig,
+        pyrefly_config: PyreflyConfig,
         logger: ilogger.ILogger,
         command_runner: icommandrunner.ICommandRunner,
         src_artifact_file_classifier: isrcartifactfileclassifier.ISrcArtifactFileClassifier,
@@ -61,6 +63,7 @@ class PyreflyTypeCheckFilesHandler(
         lsp_service: PyreflyLspService,
     ) -> None:
         self.config = config
+        self.pyrefly_config = pyrefly_config
         self.logger = logger
         self.command_runner = command_runner
         self.src_artifact_file_classifier = src_artifact_file_classifier
@@ -184,6 +187,8 @@ class PyreflyTypeCheckFilesHandler(
         if self.config.python_version is not None:
             cmd.append(f"--python-version={self.config.python_version}")
 
+        cmd.extend(self.pyrefly_config.cli_args())
+
         for path in site_package_pathes:
             cmd.append(f"--site-package-path={path!s}")
         cmd.append(str(file_path))
@@ -200,9 +205,17 @@ class PyreflyTypeCheckFilesHandler(
         except json.JSONDecodeError as exception:
             raise code_action.ActionFailedException(
                 f"Output of pyrefly is not json: {output}"
+                f"\npyrefly stderr: {pyrefly_process.get_error_output()}"
             ) from exception
 
         return type_check_messages
+
+
+_SEVERITY_BY_NAME: dict[str, DiagnosticSeverity] = {
+    "error": DiagnosticSeverity.ERROR,
+    "warn": DiagnosticSeverity.WARNING,
+    "info": DiagnosticSeverity.INFO,
+}
 
 
 def map_pyrefly_error_to_diagnostic(error: dict) -> Diagnostic:
@@ -215,7 +228,12 @@ def map_pyrefly_error_to_diagnostic(error: dict) -> Diagnostic:
 
     error_code = str(error.get("code", ""))
     code_description = error.get("name", "")
-    severity = DiagnosticSeverity.ERROR
+    severity_name = error.get("severity")
+    severity = (
+        _SEVERITY_BY_NAME.get(severity_name, DiagnosticSeverity.ERROR)
+        if isinstance(severity_name, str)
+        else DiagnosticSeverity.ERROR
+    )
 
     return Diagnostic(
         range=Range(
