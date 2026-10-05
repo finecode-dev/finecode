@@ -1,7 +1,6 @@
 import pathlib
 from typing import Any
 
-import pytest
 from fine_envs import dump_config_action, install_deps_in_env_action
 from finecode_extension_api.interfaces import (
     icommandrunner,
@@ -9,11 +8,7 @@ from finecode_extension_api.interfaces import (
     iprojectactionrunner,
     iprojectinfoprovider,
 )
-from finecode_extension_api.resource_uri import (
-    path_to_resource_uri,
-    resource_uri_to_path,
-)
-from finecode_extension_runner._services import run_action as run_action_service
+from finecode_extension_api.resource_uri import path_to_resource_uri
 from finecode_extension_runner.testing import (
     NoOpLogger,
     nonexistent_abs_path,
@@ -90,8 +85,7 @@ class _FakeCommandRunner:
 
 
 class _FakeProjectActionRunner:
-    """Records every dumped payload; the handler's config-dump step doesn't need
-    a real DumpConfigAction handler registered in the test session."""
+    """Records every dispatched payload, so a test can assert none was sent."""
 
     def __init__(self, error: Exception | None = None) -> None:
         self._error = error
@@ -122,7 +116,11 @@ class _FakeProjectActionRunner:
 
 
 class _FakeProjectInfoProvider:
-    """Only `get_project_raw_config` is exercised (by the config-dump step)."""
+    """Counts the config fetches the handler makes, so a test can assert it makes none."""
+
+    def __init__(self) -> None:
+        self.raw_config_calls = 0
+        self.extra_selection_calls = 0
 
     def get_current_project_dir_path(self) -> pathlib.Path:
         raise NotImplementedError
@@ -136,6 +134,11 @@ class _FakeProjectInfoProvider:
     async def get_project_raw_config(
         self, project_def_path: pathlib.Path
     ) -> dict[str, Any]:
+        self.raw_config_calls += 1
+        return {}
+
+    async def get_workspace_extra_selection(self) -> dict[str, list[str]]:
+        self.extra_selection_calls += 1
         return {}
 
     async def get_current_project_raw_config(self) -> dict[str, Any]:
@@ -153,12 +156,13 @@ class _FakeProjectInfoProvider:
 def _service_overrides(
     command_runner: _FakeCommandRunner,
     project_action_runner: _FakeProjectActionRunner,
+    project_info_provider: _FakeProjectInfoProvider,
 ) -> dict[type, Any]:
     return {
         icommandrunner.ICommandRunner: command_runner,
         ilogger.ILogger: NoOpLogger(),
         iprojectactionrunner.IProjectActionRunner: project_action_runner,
-        iprojectinfoprovider.IProjectInfoProvider: _FakeProjectInfoProvider(),
+        iprojectinfoprovider.IProjectInfoProvider: project_info_provider,
     }
 
 
@@ -178,8 +182,6 @@ def _handler(editable_mode: str | None = None) -> UvInstallDepsInEnvHandler:
         config=UvInstallDepsInEnvHandlerConfig(editable_mode=editable_mode),
         command_runner=None,  # type: ignore[arg-type]
         logger=None,  # type: ignore[arg-type]
-        action_runner=None,  # type: ignore[arg-type]
-        project_info_provider=None,  # type: ignore[arg-type]
     )
 
 
@@ -250,92 +252,56 @@ def test_uv_cmd_argv_is_exact() -> None:
     ]
 
 
-async def test_install_dumps_config_once_to_a_private_temp_dir(
+async def test_install_runs_uv_in_project_dir_without_fetching_or_dumping_config(
     tmp_path: pathlib.Path,
 ) -> None:
-    """The config the handler feeds to uv is machine input for a single run:
-    it is dumped exactly once, unformatted, to a directory outside the
-    project, and the uv command runs with that directory as its working
-    directory. The directory is gone after the run — no `finecode_config_dump/`
-    is ever produced by dependency installation."""
+    """uv runs with --no-config, so a dumped config would never be read; the
+    dependency list on the command line is uv's complete input."""
     command_runner = _FakeCommandRunner()
     project_action_runner = _FakeProjectActionRunner()
-    project_dir_path = tmp_path
+    info_provider = _FakeProjectInfoProvider()
 
     result = await run_handler(
         UvInstallDepsInEnvHandler,
         _run_payload(tmp_path),
         action_cls=install_deps_in_env_action.InstallDepsInEnvAction,
         project_dir=tmp_path,
-        service_overrides=_service_overrides(command_runner, project_action_runner),
+        service_overrides=_service_overrides(
+            command_runner, project_action_runner, info_provider
+        ),
     )
 
     assert result is not None
     assert result.errors == []
-    assert len(project_action_runner.recorded_payloads) == 1
-    dumped = project_action_runner.recorded_payloads[0]
-    assert dumped.format_output is False
-    assert dumped.source_file_path == path_to_resource_uri(
-        project_dir_path / "pyproject.toml"
-    )
-    dump_dir = resource_uri_to_path(dumped.target_file_path).parent
-    assert dump_dir.name.startswith("finecode_uv_config_")
-    assert not dump_dir.is_relative_to(tmp_path)
-    assert len(command_runner.cwds) == 1
-    assert command_runner.cwds[0] == dump_dir
-    assert not dump_dir.exists()
+    assert project_action_runner.recorded_payloads == []
+    assert info_provider.raw_config_calls == 0
+    assert info_provider.extra_selection_calls == 0
+    assert command_runner.cwds == [tmp_path]
+    assert len(command_runner.commands) == 1
+    assert command_runner.commands[0][1] == "--no-config"
+    assert not (tmp_path / "finecode_config_dump").exists()
 
 
-async def test_install_uv_failure_removes_the_temp_dump_and_names_dump_config(
+async def test_install_uv_failure_names_the_project(
     tmp_path: pathlib.Path,
 ) -> None:
-    """A failing uv run still cleans up the temporary config dump, and the
-    error tells the user how to inspect what uv ran with, since the dump is
-    gone by the time they read it. The error names the project, not the
-    deleted temp path."""
+    """A failing uv run names the project it ran in."""
     command_runner = _FakeCommandRunner(exit_code=1)
     project_action_runner = _FakeProjectActionRunner()
+    info_provider = _FakeProjectInfoProvider()
 
     result = await run_handler(
         UvInstallDepsInEnvHandler,
         _run_payload(tmp_path),
         action_cls=install_deps_in_env_action.InstallDepsInEnvAction,
         project_dir=tmp_path,
-        service_overrides=_service_overrides(command_runner, project_action_runner),
+        service_overrides=_service_overrides(
+            command_runner, project_action_runner, info_provider
+        ),
     )
 
     assert result is not None
     assert result.errors
     assert f"for project {tmp_path}" in result.errors[0]
-    assert "dump-config" in result.errors[0]
-    dump_dir = resource_uri_to_path(
-        project_action_runner.recorded_payloads[0].target_file_path
-    ).parent
-    assert not dump_dir.exists()
-
-
-async def test_install_dump_failure_propagates_and_removes_the_temp_dir(
-    tmp_path: pathlib.Path,
-) -> None:
-    """A failed `dump_config` dispatch is not something dependency
-    installation can recover from: it propagates as before, and the temp dir
-    is still removed on the way out."""
-    command_runner = _FakeCommandRunner()
-    project_action_runner = _FakeProjectActionRunner(
-        error=iprojectactionrunner.ActionRunFailed("dump failed")
-    )
-
-    with pytest.raises(run_action_service.ActionFailedException) as exc_info:
-        await run_handler(
-            UvInstallDepsInEnvHandler,
-            _run_payload(tmp_path),
-            action_cls=install_deps_in_env_action.InstallDepsInEnvAction,
-            project_dir=tmp_path,
-            service_overrides=_service_overrides(command_runner, project_action_runner),
-        )
-
-    assert "dump failed" in exc_info.value.message
-    dump_dir = resource_uri_to_path(
-        project_action_runner.recorded_payloads[0].target_file_path
-    ).parent
-    assert not dump_dir.exists()
+    assert "dump-config" not in result.errors[0]
+    assert "temporary dump" not in result.errors[0]

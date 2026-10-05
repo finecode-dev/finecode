@@ -3,15 +3,10 @@ import pathlib
 
 from fine_envs import install_deps_in_env_action
 from finecode_extension_api import code_action
-from finecode_extension_api.interfaces import (
-    icommandrunner,
-    ilogger,
-    iprojectactionrunner,
-    iprojectinfoprovider,
-)
+from finecode_extension_api.interfaces import icommandrunner, ilogger
 from finecode_extension_api.resource_uri import resource_uri_to_path
 
-from ._uv_common import get_uv_executable, temp_project_config_dump
+from ._uv_common import get_uv_executable
 
 
 @dataclasses.dataclass
@@ -31,14 +26,10 @@ class UvInstallDepsInEnvHandler(
         config: UvInstallDepsInEnvHandlerConfig,
         command_runner: icommandrunner.ICommandRunner,
         logger: ilogger.ILogger,
-        action_runner: iprojectactionrunner.IProjectActionRunner,
-        project_info_provider: iprojectinfoprovider.IProjectInfoProvider,
     ) -> None:
         self.config = config
         self.command_runner = command_runner
         self.logger = logger
-        self.action_runner = action_runner
-        self.project_info_provider = project_info_provider
 
     async def run(
         self,
@@ -50,30 +41,21 @@ class UvInstallDepsInEnvHandler(
         venv_dir_path = resource_uri_to_path(payload.venv_dir_path)
         project_dir_path = resource_uri_to_path(payload.project_dir_path)
 
-        project_def_path = project_dir_path / "pyproject.toml"
-        async with temp_project_config_dump(
-            project_def_path=project_def_path,
-            action_runner=self.action_runner,
-            project_info_provider=self.project_info_provider,
-            logger=self.logger,
-            meta=run_context.meta,
-        ) as dump_dir:
-            uv_executable = get_uv_executable()
-            cmd = self._construct_uv_install_cmd(
-                uv_executable=uv_executable,
-                venv_dir_path=venv_dir_path,
-                dependencies=dependencies,
-            )
-            error = await self._run_uv_cmd(
-                cmd=cmd,
-                env_name=env_name,
-                cwd=dump_dir,
-                project_dir_path=project_dir_path,
-            )
-            if error is not None:
-                errors = [error]
-            else:
-                errors = []
+        uv_executable = get_uv_executable()
+        cmd = self._construct_uv_install_cmd(
+            uv_executable=uv_executable,
+            venv_dir_path=venv_dir_path,
+            dependencies=dependencies,
+        )
+        error = await self._run_uv_cmd(
+            cmd=cmd,
+            env_name=env_name,
+            project_dir_path=project_dir_path,
+        )
+        if error is not None:
+            errors = [error]
+        else:
+            errors = []
 
         return install_deps_in_env_action.InstallDepsInEnvRunResult(errors=errors)
 
@@ -85,6 +67,8 @@ class UvInstallDepsInEnvHandler(
     ) -> list[str]:
         cmd: list[str] = [
             str(uv_executable),
+            # uv reads no pyproject.toml/uv.toml: the specs below are its complete input, so this
+            # handler writes no config dump (create_env's `uv venv` does read one).
             "--no-config",
             "pip",
             "install",
@@ -116,11 +100,10 @@ class UvInstallDepsInEnvHandler(
         self,
         cmd: list[str],
         env_name: str,
-        cwd: pathlib.Path,
         project_dir_path: pathlib.Path,
     ) -> str | None:
         self.logger.debug(f"Running uv: {cmd!r}")
-        process = await self.command_runner.run(cmd, cwd=cwd)
+        process = await self.command_runner.run(cmd, cwd=project_dir_path)
         await process.wait_for_end()
         process_stdout = process.get_output()
         process_stderr = process.get_error_output()
@@ -139,9 +122,7 @@ class UvInstallDepsInEnvHandler(
 
             error = (
                 f"Installation of dependencies in env {env_name} for project "
-                f"{project_dir_path} failed (cmd: {cmd!r}):\n{logs}\n"
-                "The config uv ran with was a temporary dump of the project; run "
-                "`python -m finecode dump-config` for that project to inspect it."
+                f"{project_dir_path} failed (cmd: {cmd!r}):\n{logs}"
             )
             self.logger.error(error)
             return error

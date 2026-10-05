@@ -32,8 +32,7 @@ async def temp_project_config_dump(
     """Dump the resolved config of ``project_def_path`` into a fresh temp dir for uv to run in.
 
     The dump is machine input to uv, so it is not formatted: formatting would
-    dispatch ``format_file``, whose env may be the very one being created or
-    installed. The user-facing dump in ``finecode_config_dump/`` is written
+    dispatch ``format_file``, whose env may be the very one being created. The user-facing dump in ``finecode_config_dump/`` is written
     only by the ``dump_config`` action on request.
     """
     with tempfile.TemporaryDirectory(
