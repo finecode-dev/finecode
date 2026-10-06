@@ -1,10 +1,14 @@
 from fine_python_lang import ipypackagelayoutinfoprovider
+from finecode_extension_api import extension
+from finecode_extension_api.interfaces import (
+    iserviceregistry,
+    isrcartifactfileclassifier,
+)
+
 from fine_python_package_info import (
     py_package_layout_info_provider,
     py_src_artifact_file_classifier,
 )
-from finecode_extension_api import extension
-from finecode_extension_api.interfaces import iserviceregistry, isrcartifactfileclassifier
 
 
 class Activator(extension.ExtensionActivator):

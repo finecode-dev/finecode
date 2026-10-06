@@ -29,7 +29,9 @@ class InlayHint:
 class InlayHintResult(code_action.RunActionResult):
     hints: list[InlayHint] = dataclasses.field(default_factory=list)
     """Inlay hints for the requested range. Empty list means the handler
-    ran and found no hints."""
+    ran and found no hints — the legitimate empty answer, distinct from "no
+    handler covered this input", which the ``coverage`` field reports
+    (R-310/ADR-0098)."""
 
     def update(self, other: code_action.RunActionResult) -> None:
         if not isinstance(other, InlayHintResult):

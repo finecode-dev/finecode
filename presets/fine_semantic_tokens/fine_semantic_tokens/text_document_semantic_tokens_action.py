@@ -1,49 +1,47 @@
 from __future__ import annotations
 
 import dataclasses
-from typing import Any
 
 from finecode_extension_api import code_action, common_types
 from finecode_extension_api.resource_uri import ResourceUri
 
-
 SEMANTIC_TOKEN_TYPES: list[str] = [
-    "namespace",     # 0
-    "type",          # 1
-    "class",         # 2
-    "enum",          # 3
-    "interface",     # 4
-    "struct",        # 5
-    "typeParameter", # 6
-    "parameter",     # 7
-    "variable",      # 8
-    "property",      # 9
-    "enumMember",    # 10
-    "event",         # 11
-    "function",      # 12
-    "method",        # 13
-    "macro",         # 14
-    "keyword",       # 15
-    "modifier",      # 16
-    "comment",       # 17
-    "string",        # 18
-    "number",        # 19
-    "regexp",        # 20
-    "operator",      # 21
-    "decorator",     # 22
+    "namespace",  # 0
+    "type",  # 1
+    "class",  # 2
+    "enum",  # 3
+    "interface",  # 4
+    "struct",  # 5
+    "typeParameter",  # 6
+    "parameter",  # 7
+    "variable",  # 8
+    "property",  # 9
+    "enumMember",  # 10
+    "event",  # 11
+    "function",  # 12
+    "method",  # 13
+    "macro",  # 14
+    "keyword",  # 15
+    "modifier",  # 16
+    "comment",  # 17
+    "string",  # 18
+    "number",  # 19
+    "regexp",  # 20
+    "operator",  # 21
+    "decorator",  # 22
 ]
 
 SEMANTIC_TOKEN_MODIFIERS: list[str] = [
-    "declaration",    # bit 0
-    "definition",     # bit 1
-    "readonly",       # bit 2
-    "static",         # bit 3
-    "deprecated",     # bit 4
-    "abstract",       # bit 5
-    "async",          # bit 6
-    "modification",   # bit 7
+    "declaration",  # bit 0
+    "definition",  # bit 1
+    "readonly",  # bit 2
+    "static",  # bit 3
+    "deprecated",  # bit 4
+    "abstract",  # bit 5
+    "async",  # bit 6
+    "modification",  # bit 7
     "documentation",  # bit 8
-    "defaultLibrary", # bit 9
+    "defaultLibrary",  # bit 9
 ]
 
 
@@ -94,7 +92,9 @@ class SemanticTokensResult(code_action.RunActionResult):
 
     tokens: list[SemanticToken] = dataclasses.field(default_factory=list)
     """Semantic tokens at absolute positions. Empty list means the handler
-    ran and found no tokens."""
+    ran and found no tokens — the legitimate empty answer, distinct from "no
+    handler covered this input", which the ``coverage`` field reports
+    (R-310/ADR-0098)."""
 
     def update(self, other: code_action.RunActionResult) -> None:
         if not isinstance(other, SemanticTokensResult):
@@ -154,7 +154,7 @@ def decode_lsp_semantic_tokens(
         global_modifiers = 0
         for server_bit, global_bit in mod_bit_map.items():
             if server_modifiers_bits & (1 << server_bit):
-                global_modifiers |= (1 << global_bit)
+                global_modifiers |= 1 << global_bit
 
         tokens.append(
             SemanticToken(

@@ -1,6 +1,8 @@
 import dataclasses
 
 from finecode_extension_api import code_action
+from finecode_extension_api.interfaces import ilogger, iprojectactionrunner
+
 from fine_logs.clean_service_logs_action import (
     CleanServiceLogsAction,
     CleanServiceLogsRunPayload,
@@ -11,7 +13,6 @@ from fine_logs.clean_services_logs_action import (
     CleanServicesLogsRunPayload,
     CleanServicesLogsRunResult,
 )
-from finecode_extension_api.interfaces import ilogger, iprojectactionrunner
 
 
 @dataclasses.dataclass
@@ -55,7 +56,9 @@ class CleanServicesLogsIterateHandler(
 
         for service_id in run_context.service_ids:
             result = await self.project_action_runner.run_action(
-                action_type=iprojectactionrunner.ActionRef.from_type(CleanServiceLogsAction),
+                action_type=iprojectactionrunner.ActionRef.from_type(
+                    CleanServiceLogsAction
+                ),
                 payload=CleanServiceLogsRunPayload(service_id=service_id),
                 meta=run_context.meta,
             )

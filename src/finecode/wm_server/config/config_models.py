@@ -2,7 +2,7 @@
 from dataclasses import dataclass, field
 from typing import Any
 
-from cattrs import ClassValidationError as ValidationError
+from finecode.wm_server.domain import ErLoggingConfig
 
 
 @dataclass
@@ -46,9 +46,14 @@ class ActionHandlerDefinition:
 
 @dataclass
 class ServiceDefinition:
+    # `source` and `env` are optional so an entry can carry config alone,
+    # layering onto a binding an activator already owns without restating (and
+    # pinning) the implementation -- see ADR-0070 and rule S-207. Entries merge
+    # by `interface`, so a config-only entry and a binding entry for the same
+    # interface combine into one declaration.
     interface: str
-    source: str
-    env: str
+    source: str | None = None
+    env: str | None = None
     dependencies: list[str] = field(default_factory=list)
     config: dict[str, Any] | None = None
 
@@ -69,12 +74,6 @@ class ActionDefinition:
 class ViewDefinition:
     name: str
     source: str
-
-
-@dataclass
-class ErLoggingConfig:
-    default_level: str = "INFO"
-    log_groups: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass

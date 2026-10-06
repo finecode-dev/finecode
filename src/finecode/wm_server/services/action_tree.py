@@ -9,12 +9,15 @@ from __future__ import annotations
 
 import asyncio
 import pathlib
+
 from loguru import logger
 
 from finecode.wm_server import context, domain
 
 
-def _project_action_tree(project: domain.Project | None, ws_context: context.WorkspaceContext) -> list[dict]:
+def _project_action_tree(
+    project: domain.Project | None, ws_context: context.WorkspaceContext
+) -> list[dict]:
     """Return action/env nodes for a single project.
 
     ``project`` may be None when constructing a node for a directory without a
@@ -33,7 +36,9 @@ def _project_action_tree(project: domain.Project | None, ws_context: context.Wor
             node_id = f"{project.dir_path.as_posix()}::{action.source}"
             handlers_nodes: list[dict] = []
             for handler in action.handlers:
-                handler_node_id = f"{project.dir_path.as_posix()}::{action.source}::{handler.name}"
+                handler_node_id = (
+                    f"{project.dir_path.as_posix()}::{action.source}::{handler.name}"
+                )
                 handlers_nodes.append(
                     {
                         "nodeId": handler_node_id,
@@ -113,7 +118,9 @@ def _build_tree(ws_context: context.WorkspaceContext) -> list[dict]:
     all_projects_paths_set = set(all_projects_paths)
 
     for ws_dir in all_ws_dirs:
-        ws_dir_projects = [p for p in all_projects_paths_set if p.is_relative_to(ws_dir)]
+        ws_dir_projects = [
+            p for p in all_projects_paths_set if p.is_relative_to(ws_dir)
+        ]
         projects_by_ws_dir[ws_dir] = ws_dir_projects
         all_projects_paths_set -= set(ws_dir_projects)
 
@@ -134,7 +141,9 @@ def _build_tree(ws_context: context.WorkspaceContext) -> list[dict]:
             dir_node_type = 0  # DIRECTORY
             status = ""
 
-        actions_nodes = _project_action_tree(ws_context.ws_projects.get(ws_dir), ws_context)
+        actions_nodes = _project_action_tree(
+            ws_context.ws_projects.get(ws_dir), ws_context
+        )
         node = {
             "nodeId": ws_dir.as_posix(),
             "name": ws_dir.name,
@@ -170,14 +179,29 @@ def _build_tree(ws_context: context.WorkspaceContext) -> list[dict]:
 async def _handle_get_tree(
     _params: dict | None, ws_context: context.WorkspaceContext
 ) -> dict:
-    """Request handler that returns the action tree for the workspace."""
+    """Request handler that returns the action tree for the workspace.
 
-    # wait for dev_workspace runners to start
-    async with asyncio.TaskGroup() as tg:
-        for envs in ws_context.ws_projects_extension_runners.values():
-            dev_workspace_runner = envs.get("dev_workspace")
-            if dev_workspace_runner is not None:
-                tg.create_task(dev_workspace_runner.initialized_event.wait())
+    Every project is resolved first — the tree lists actions, so nothing may
+    show a partial set.  A project that failed to resolve carries an
+    additive ``resolutionError`` field on its node; rendering it is a follow-up.
+    """
+    from finecode.wm_server.services import project_resolution_service
+
+    outcome = await project_resolution_service.ensure_all_projects_resolved(ws_context)
 
     nodes = _build_tree(ws_context)
+    errors_by_node_id = {
+        path.as_posix(): reason for path, reason in outcome.failed.items()
+    }
+
+    def _annotate(tree_nodes: list[dict]) -> None:
+        for node in tree_nodes:
+            node_id = node.get("nodeId")
+            if node_id in errors_by_node_id:
+                node["resolutionError"] = errors_by_node_id[node_id]
+            subnodes = node.get("subnodes")
+            if subnodes:
+                _annotate(subnodes)
+
+    _annotate(nodes)
     return {"nodes": nodes}

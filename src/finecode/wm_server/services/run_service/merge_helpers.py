@@ -1,5 +1,4 @@
-"""Type-safe merging of streamed partial results.
-"""
+"""Type-safe merging of streamed partial results."""
 
 from __future__ import annotations
 
@@ -62,7 +61,10 @@ async def merge_partial_results_for_action(
     merge_runner: runner_client.ExtensionRunnerInfo | None = None
     for handler in action_def.handlers:
         candidate = runners_by_env.get(handler.env)
-        if candidate is not None and candidate.status == runner_client.RunnerStatus.RUNNING:
+        if (
+            candidate is not None
+            and candidate.status == runner_client.RunnerStatus.RUNNING
+        ):
             merge_runner = candidate
             break
 

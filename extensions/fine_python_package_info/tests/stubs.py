@@ -7,12 +7,12 @@ which interpreters this machine's uv happens to offer.
 
 import dataclasses
 
-from finecode_extension_api import code_action
-from finecode_extension_api.interfaces import ilogger
 from fine_envs.list_obtainable_toolchains_action import (
     ListObtainableToolchainsRunResult,
 )
 from fine_python_lang import list_obtainable_python_interpreters_action
+from finecode_extension_api import code_action
+from finecode_extension_api.interfaces import ilogger
 
 OBTAINABLE = [
     "cpython@3.10",

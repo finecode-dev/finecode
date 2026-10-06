@@ -4,6 +4,7 @@ import dataclasses
 
 from finecode_extension_api import code_action, common_types
 from finecode_extension_api.resource_uri import ResourceUri
+
 from fine_symbol_info.types import Location
 
 
@@ -23,7 +24,9 @@ class DefinitionResult(code_action.RunActionResult):
 
 
 class TextDocumentDefinitionAction(code_action.Action):
-    DESCRIPTION = "Find the definition location(s) of the symbol at a document position."
+    DESCRIPTION = (
+        "Find the definition location(s) of the symbol at a document position."
+    )
     PAYLOAD_TYPE = DefinitionPayload
     RESULT_TYPE = DefinitionResult
     # SEQUENTIAL (default) — definition is single-source navigation

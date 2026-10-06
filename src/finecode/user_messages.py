@@ -1,8 +1,8 @@
 # actions can be also integrated
 from __future__ import annotations
 
+from collections.abc import Callable
 from enum import IntEnum
-from typing import Callable
 
 from loguru import logger
 
@@ -45,4 +45,4 @@ async def send(message: str, message_type: UserMessageType):
         logger.error("Sender of user messages is not initialized")
 
 
-__all__ = ["error", "warning", "info", "log", "debug"]
+__all__ = ["debug", "error", "info", "log", "warning"]

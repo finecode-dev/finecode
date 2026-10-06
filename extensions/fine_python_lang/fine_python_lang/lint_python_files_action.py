@@ -1,10 +1,10 @@
-from finecode_extension_api import code_action
 from fine_lint.diagnostic_types import (
-    DiagnosticFilesRunPayload,
     DiagnosticFilesRunContext,
+    DiagnosticFilesRunPayload,
     DiagnosticFilesRunResult,
 )
 from fine_lint.lint_files_action import LintFilesAction
+from finecode_extension_api import code_action
 
 
 class LintPythonFilesAction(

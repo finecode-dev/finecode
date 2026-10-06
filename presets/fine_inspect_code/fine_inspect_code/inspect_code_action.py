@@ -3,8 +3,9 @@ import dataclasses
 import enum
 
 from finecode_extension_api import code_action
-from fine_inspect_code.diagnostic_types import DiagnosticFilesRunResult
 from finecode_extension_api.resource_uri import ResourceUri
+
+from fine_inspect_code.diagnostic_types import DiagnosticFilesRunResult
 
 
 class InspectCodeTarget(enum.StrEnum):
@@ -29,7 +30,9 @@ class InspectCodeRunContext(
 
 
 class InspectCodeAction(
-    code_action.Action[InspectCodeRunPayload, InspectCodeRunContext, InspectCodeRunResult]
+    code_action.Action[
+        InspectCodeRunPayload, InspectCodeRunContext, InspectCodeRunResult
+    ]
 ):
     """Run all registered diagnostic tools and aggregate their results.
 
@@ -41,7 +44,9 @@ class InspectCodeAction(
         not expected to validate path existence themselves.
     """
 
-    DESCRIPTION = "Run all code diagnostic tools (linters, type checkers) and aggregate results."
+    DESCRIPTION = (
+        "Run all code diagnostic tools (linters, type checkers) and aggregate results."
+    )
     SCOPE = code_action.ActionScope.WORKSPACE
     PAYLOAD_TYPE = InspectCodeRunPayload
     RUN_CONTEXT_TYPE = InspectCodeRunContext

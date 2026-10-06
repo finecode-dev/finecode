@@ -29,13 +29,18 @@ class FixApplicability(enum.StrEnum):
 @dataclasses.dataclass
 class LintFix:
     fix_id: str
-    """Handler-generated identifier. Unique within a single GetLintFixesRunResult. Not
-    persistent across runs, not globally unique. Used by the WM LSP layer as the
-    codeAction/resolve key when fixes are returned as stubs.
+    """Handler-generated identifier. Unique within a single GetLintFixesRunResult and
+    MUST be deterministic for identical file content: resolve re-runs the handler and
+    matches on fix_id to recover the fix, so an id that depends on anything other than
+    the fix's own content and position (e.g. its position in an iteration order) breaks
+    re-resolution as soon as an unrelated fix is added or removed earlier in the file.
+    Used by the WM LSP layer as the codeAction/resolve key when fixes are returned as
+    stubs.
 
-    Handlers that never emit multiple fixes for the same diagnostic can use a simple
-    counter. Handlers with alternatives (e.g. ruff 'remove unused import' vs. 'add noqa')
-    should use stable semantic IDs so repeated requests produce the same identifiers."""
+    Recommended shape: ``{tool}:{code}:{line}:{character}:{occurrence}``, where
+    ``occurrence`` disambiguates multiple fixes at the same ``{tool}:{code}:{line}:
+    {character}`` key (e.g. ruff 'remove unused import' vs. 'add noqa') by counting
+    occurrences of that key rather than by a global index."""
 
     title: str
     """User-facing label, e.g. 'Remove unused import `os`'."""

@@ -1,8 +1,8 @@
 import dataclasses
 import pathlib
 
-from finecode_extension_api import code_action
 from fine_envs import install_deps_in_env_action
+from finecode_extension_api import code_action
 from finecode_extension_api.interfaces import icommandrunner, ilogger
 from finecode_extension_api.resource_uri import resource_uri_to_path
 
@@ -57,42 +57,48 @@ class PipInstallDepsInEnvHandler(
         self,
         python_executable: pathlib.Path,
         dependencies: list[install_deps_in_env_action.Dependency],
-    ) -> str:
-        install_params: str = ""
+    ) -> list[str]:
+        cmd: list[str] = [
+            str(python_executable),
+            "-m",
+            "pip",
+            "--disable-pip-version-check",
+            "install",
+        ]
 
         if self.config.find_links is not None:
             for link in self.config.find_links:
-                install_params += f'--find-links="{link}" '
+                cmd.append(f"--find-links={link}")
 
         if self.config.editable_mode is not None:
-            install_params += (
-                f"--config-settings editable_mode='{self.config.editable_mode}' "
-            )
+            cmd.append("--config-settings")
+            cmd.append(f"editable_mode={self.config.editable_mode}")
 
         for dependency in dependencies:
             if dependency.editable:
-                install_params += "-e "
+                cmd.append("-e")
+
+            extras_str = ""
+            if dependency.extras:
+                extras_str = "[" + ",".join(dependency.extras) + "]"
 
             if "@ file://" in dependency.version_or_source:
                 # dependency is specified as '<name> @ file://' but pip CLI supports
                 # only 'file://'
                 start_idx_of_file_uri = dependency.version_or_source.index("file://")
-                # put in single quoutes to avoid problems in case of spaces in path
-                # because in CLI commands single dependencies are splitted by space
-                install_params += (
-                    f"'{dependency.version_or_source[start_idx_of_file_uri:]}' "
+                cmd.append(
+                    f"{dependency.version_or_source[start_idx_of_file_uri:]}{extras_str}"
                 )
             else:
-                # put in single quoutes to avoid problems in case of spaces in version,
-                # because in CLI commands single dependencies are splitted by space
-                install_params += f"'{dependency.name}{dependency.version_or_source}' "
-        cmd = f"{python_executable} -m pip --disable-pip-version-check install {install_params}"
+                cmd.append(
+                    f"{dependency.name}{extras_str}{dependency.version_or_source}"
+                )
         return cmd
 
     async def _run_pip_cmd(
-        self, cmd: str, env_name: str, project_dir_path: pathlib.Path
+        self, cmd: list[str], env_name: str, project_dir_path: pathlib.Path
     ) -> str | None:
-        self.logger.debug(f"Running pip: {cmd}")
+        self.logger.debug(f"Running pip: {cmd!r}")
         process = await self.command_runner.run(cmd, cwd=project_dir_path)
         await process.wait_for_end()
         process_stdout = process.get_output()
@@ -110,7 +116,7 @@ class PipInstallDepsInEnvHandler(
             else:
                 logs = process_stderr
 
-            error = f'Installation of dependencies in env {env_name} from {project_dir_path} failed (cmd: {cmd}):\n{logs}'
+            error = f"Installation of dependencies in env {env_name} from {project_dir_path} failed (cmd: {cmd!r}):\n{logs}"
             self.logger.error(error)
             return error
 

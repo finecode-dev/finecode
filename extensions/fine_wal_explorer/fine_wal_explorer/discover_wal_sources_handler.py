@@ -1,20 +1,19 @@
 import dataclasses
 import pathlib
 
-from finecode_extension_api import code_action
 from fine_wal_events.discover_wal_sources_action import (
     DiscoverWalSourcesAction,
     DiscoverWalSourcesRunPayload,
     DiscoverWalSourcesRunResult,
 )
 from fine_wal_events.ingest_wal_to_store_action import WalSourceSpec
+from finecode_extension_api import code_action
 from finecode_extension_api.interfaces import (
     iextensionrunnerinfoprovider,
     ilogger,
     iprojectinfoprovider,
 )
 from finecode_extension_api.resource_uri import path_to_resource_uri
-
 
 _WAL_WRITER_DIRS: tuple[tuple[str, str], ...] = (
     ("wm", "wm"),
@@ -49,7 +48,9 @@ class DiscoverWalSourcesHandler(
         payload: DiscoverWalSourcesRunPayload,
         run_context: code_action.RunActionContext[DiscoverWalSourcesRunPayload],
     ) -> DiscoverWalSourcesRunResult:
-        project_raw_config = await self.project_info_provider.get_current_project_raw_config()
+        project_raw_config = (
+            await self.project_info_provider.get_current_project_raw_config()
+        )
         env_names = list(project_raw_config.get("dependency-groups", {}).keys())
 
         source_specs: list[WalSourceSpec] = []
@@ -69,6 +70,8 @@ class DiscoverWalSourcesHandler(
                         )
                     )
 
-        self.logger.debug(f"Discovered WAL sources: {[s.source_id for s in source_specs]}")
+        self.logger.debug(
+            f"Discovered WAL sources: {[s.source_id for s in source_specs]}"
+        )
 
         return DiscoverWalSourcesRunResult(source_specs=source_specs)

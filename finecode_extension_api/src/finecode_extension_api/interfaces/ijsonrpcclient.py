@@ -108,7 +108,7 @@ class IJsonRpcClient(Protocol):
 
     def session(
         self,
-        cmd: str,
+        cmd: collections.abc.Sequence[str],
         cwd: Path | None = None,
         env: dict[str, str] | None = None,
         readable_id: str = "",
@@ -117,11 +117,12 @@ class IJsonRpcClient(Protocol):
 
         Usage::
 
-            async with json_rpc_client.session("some-server --stdio") as session:
+            async with json_rpc_client.session(["some-server", "--stdio"]) as session:
                 result = await session.send_request("method", {"key": "value"})
 
         Args:
-            cmd: Shell command to start the JSON-RPC server process.
+            cmd: Program and arguments of the server process, executed directly
+                (no shell); a ``str`` is rejected.
             cwd: Working directory for the subprocess.
             env: Environment variables for the subprocess.
             readable_id: Human-readable identifier for logging.

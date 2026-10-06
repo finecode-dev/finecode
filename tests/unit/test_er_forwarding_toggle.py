@@ -12,7 +12,8 @@ import pathlib
 
 import pytest
 
-from finecode.wm_server import domain, testing as wm_testing, wm_server
+from finecode.wm_server import domain, wm_server
+from finecode.wm_server import testing as wm_testing
 from finecode.wm_server.runner import _internal_client_types, runner_client
 
 

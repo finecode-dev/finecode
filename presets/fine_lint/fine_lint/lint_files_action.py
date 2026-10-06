@@ -1,14 +1,14 @@
 # docs: docs/reference/actions.md
-from finecode_extension_api import code_action
 from fine_inspect_code.diagnostic_types import (
-    Position,
-    Range,
-    DiagnosticSeverity as LintMessageSeverity,
-    Diagnostic as LintMessage,
-    DiagnosticFilesRunPayload as LintFilesRunPayload,
-    DiagnosticFilesRunResult as LintFilesRunResult,
     DiagnosticFilesRunContext as LintFilesRunContext,
 )
+from fine_inspect_code.diagnostic_types import (
+    DiagnosticFilesRunPayload as LintFilesRunPayload,
+)
+from fine_inspect_code.diagnostic_types import (
+    DiagnosticFilesRunResult as LintFilesRunResult,
+)
+from finecode_extension_api import code_action
 
 
 class LintFilesAction(

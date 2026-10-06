@@ -9,6 +9,7 @@ never fired and ER-originated user messages never reached any client.
 These tests lock the fix and guard against the same class of omission for other
 notification types.
 """
+
 from __future__ import annotations
 
 import inspect
@@ -23,7 +24,9 @@ def test_er_user_message_is_registered() -> None:
         "er/userMessage missing from METHOD_TO_TYPES — the client drops it at its "
         "message_types gate and on_er_user_message never fires"
     )
-    notif_type, params_type, resp_type, result_type = t.METHOD_TO_TYPES[t.ER_USER_MESSAGE]
+    notif_type, params_type, resp_type, result_type = t.METHOD_TO_TYPES[
+        t.ER_USER_MESSAGE
+    ]
     assert notif_type is t.ErUserMessageNotification
     assert params_type is t.ErUserMessageParams
     assert resp_type is None and result_type is None  # it is a notification
@@ -42,6 +45,44 @@ def test_er_user_message_incoming_structures_to_params() -> None:
     notif = converter.structure(msg, notif_type)
     assert notif.params.message == "install failed"
     assert notif.params.type == "ERROR"
+
+
+def test_elicit_is_registered() -> None:
+    """``finecode/elicit`` is a ``feature()`` registration too (ADR-0082).
+
+    Same gate, same failure mode: absent from this table the client answers the
+    ER "method not found", and every question a handler asks resolves as
+    unanswerable no matter who is connected.
+    """
+    assert t.ELICIT in t.METHOD_TO_TYPES
+    req_type, params_type, resp_type, result_type = t.METHOD_TO_TYPES[t.ELICIT]
+    assert req_type is t.ElicitRequest
+    assert params_type is t.ElicitParams
+    assert resp_type is t.ElicitResponse
+    assert result_type is t.ElicitResult
+
+
+def test_elicit_request_structures_from_the_wire_shape() -> None:
+    """The ER sends camelCase ``timeoutSec``; the handler reads ``timeout_sec``."""
+    msg = {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": t.ELICIT,
+        "params": {
+            "message": "keep it?",
+            "options": ["keep", "revert"],
+            "default": "keep",
+            "timeoutSec": 30.0,
+        },
+    }
+    request = converter.structure(msg, t.METHOD_TO_TYPES[t.ELICIT][0])
+    assert request.params.options == ["keep", "revert"]
+    assert request.params.timeout_sec == 30.0
+    # And the result goes back out in the shape the ER structures.
+    assert converter.unstructure(t.ElicitResult(outcome="answered", value="keep")) == {
+        "outcome": "answered",
+        "value": "keep",
+    }
 
 
 def test_every_notification_type_is_registered() -> None:

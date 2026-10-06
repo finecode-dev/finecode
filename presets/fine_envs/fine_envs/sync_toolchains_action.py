@@ -109,7 +109,9 @@ class SyncToolchainsAction(
     and makes drift unambiguous.
     """
 
-    DESCRIPTION = "Derive each env's toolchain axis from the project's declared support range."
+    DESCRIPTION = (
+        "Derive each env's toolchain axis from the project's declared support range."
+    )
     PAYLOAD_TYPE = SyncToolchainsRunPayload
     RUN_CONTEXT_TYPE = SyncToolchainsRunContext
     RESULT_TYPE = SyncToolchainsRunResult

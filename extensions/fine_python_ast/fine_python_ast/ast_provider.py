@@ -1,9 +1,9 @@
 import ast
 from pathlib import Path
 
-from fine_python_ast import iast_provider
-
 from finecode_extension_api.interfaces import icache, ifileeditor, ilogger
+
+from fine_python_ast import iast_provider
 
 
 class PythonSingleAstProvider(iast_provider.IPythonSingleAstProvider):
@@ -33,12 +33,12 @@ class PythonSingleAstProvider(iast_provider.IPythonSingleAstProvider):
         except icache.CacheMissException:
             ...
 
-        async with self.file_editor.session(
-            author=self.FILE_OPERATION_AUTHOR
-        ) as session:
-            async with session.read_file(file_path=file_path) as file_info:
-                file_content: str = file_info.content
-                file_version: str = file_info.version
+        async with (
+            self.file_editor.session(author=self.FILE_OPERATION_AUTHOR) as session,
+            session.read_file(file_path=file_path) as file_info,
+        ):
+            file_content: str = file_info.content
+            file_version: str = file_info.version
 
         try:
             ast_instance = ast.parse(file_content)

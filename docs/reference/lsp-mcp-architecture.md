@@ -41,9 +41,14 @@ The LSP layer translates protocol messages into FineCode actions, delegates exec
 
 ## Lifecycle behavior
 
-- Any client (CLI, LSP, MCP) can start the WM Server if it is not already running.
+- Any client (CLI, LSP, MCP) can start the WM Server if it is not already running. Whichever gets there first starts it; the rest find it through the discovery file and attach to that one.
 - Each connected client keeps the WM Server alive.
-- When the last client disconnects, the WM Server exits automatically.
+- When the last client disconnects, the WM Server exits automatically — after `--disconnect-timeout` seconds (default 30), and after 30 seconds if no client ever connected. Disconnecting itself discards nothing: the loaded configuration and started runners are the exiting process's, and they survive until it exits.
+- `start-wm-server --keep-alive` disables both of those timers, for a server whose lifetime something else owns (a devcontainer, a supervisor). See [CLI reference — start-wm-server](../cli.md#start-wm-server).
+
+Because the first starter wins, the log level a client asks for is ignored when a
+server is already up — including the one the LSP passes. `restart-wm` is what applies
+a new one.
 
 ## Manual server startup for debugging
 

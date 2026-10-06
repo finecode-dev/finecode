@@ -14,6 +14,7 @@ else:
     from typing_extensions import override
 
 from finecode_extension_api import code_action, textstyler
+
 from fine_format.format_file_action import (
     FILE_OPERATION_AUTHOR,
 )

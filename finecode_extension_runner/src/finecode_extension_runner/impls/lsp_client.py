@@ -161,7 +161,7 @@ class LspClientImpl(ilspclient.ILspClient):
 
     def session(
         self,
-        cmd: str,
+        cmd: collections.abc.Sequence[str],
         root_uri: str,
         workspace_folders: list[dict[str, str]] | None = None,
         initialization_options: dict[str, Any] | None = None,

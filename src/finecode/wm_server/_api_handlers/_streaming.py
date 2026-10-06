@@ -1,4 +1,5 @@
 """Streaming and progress-reporting action run handlers."""
+
 from __future__ import annotations
 
 import asyncio
@@ -9,21 +10,33 @@ from loguru import logger
 
 from finecode import telemetry
 from finecode.wm_server import context, domain
-from finecode.wm_server.services.run_service.exceptions import ActionNotFoundError, ActionRunFailed, StartingEnvironmentsFailed
 from finecode.wm_server._api_handlers._helpers import (
     _build_batch_result,
-    _merge_partial_results_for_action,
     _notify_client,
     _parse_and_validate_run_action_params,
     _parse_run_batch_params,
     _resolve_actions_by_project,
 )
+from finecode.wm_server._api_handlers._run_failure import client_message
 from finecode.wm_server._jsonrpc import (
     NOT_IMPLEMENTED_CODE,
-    _NotImplementedError,
     _jsonrpc_error,
     _jsonrpc_response,
+    _NotImplementedError,
     _write_message,
+)
+from finecode.wm_server.runner import elicitation_bridge
+from finecode.wm_server.services.run_service.exceptions import (
+    ActionNotFoundError,
+    ActionRunFailed,
+    StartingEnvironmentsFailed,
+)
+from finecode.wm_server.services.run_service.execution_scopes import (
+    DEFAULT_ORCHESTRATION_POLICY,
+    OrchestrationPolicy,
+)
+from finecode.wm_server.services.run_service.merge_helpers import (
+    merge_partial_results_for_action,
 )
 
 
@@ -44,15 +57,24 @@ async def _handle_run_action_with_partial_results(
         raise ValueError("params required")
     with telemetry.attach_incoming_traceparent(params):
         from finecode.wm_server.config import env_selection
-        from finecode.wm_server.services import partial_results_service, run_service
-        from finecode.wm_server.services.run_service import run_selection
-        from finecode.wm_server.services.run_service.exceptions import ActionRunFailed
+        from finecode.wm_server.services import (
+            partial_results_service,
+            run_service,
+        )
+        from finecode.wm_server.services.run_service import (
+            run_selection,
+        )
+        from finecode.wm_server.services.run_service.exceptions import (
+            ActionRunFailed,
+        )
 
         action_source = params.get("actionSource")
         token = params.get("partialResultToken")
         project_path = params.get("project")
         if not action_source or token is None or project_path is None:
-            raise ValueError("actionSource, partialResultToken and project are required")
+            raise ValueError(
+                "actionSource, partialResultToken and project are required"
+            )
         # `.get("options", {})` only applies its default when the key is absent
         # — a caller sending the key with an explicit `None` would pass that
         # through as-is.
@@ -62,10 +84,14 @@ async def _handle_run_action_with_partial_results(
         dev_env = run_service.DevEnv(options.get("devEnv", "ide"))
         result_formats = options.get("resultFormats", ["json"])
 
-        logger.trace(f"run+partialResults: actionSource={action_source} project={project_path!r} token={token} formats={result_formats}")
+        logger.trace(
+            f"run+partialResults: actionSource={action_source} project={project_path!r} token={token} formats={result_formats}"
+        )
 
         # Resolve the action source to an action name for the internal pipeline.
-        action_name = await _resolve_source_to_name(action_source, project_path, ws_context)
+        action_name = await _resolve_source_to_name(
+            action_source, project_path, ws_context
+        )
 
         progress_token = params.get("progressToken")
 
@@ -74,28 +100,39 @@ async def _handle_run_action_with_partial_results(
         # declares the action" (see `_resolve_source_to_name`), which has no
         # single env universe to resolve selectors against, so the full axis
         # runs unrestricted in that case.
-        selected_interpreters: set[str] | None = None
+        selected_envs: set[str] | None = None
         if project_path:
             run_selection.validate_run_selectors(
-                options.get("envSelectors", []),
                 options.get("interpreterSelectors", []),
                 [pathlib.Path(project_path)],
                 ws_context,
             )
             try:
-                selected_interpreters = run_selection.selected_interpreters_for_project(
+                selected_envs = run_selection.selected_envs_for_project(
                     pathlib.Path(project_path),
-                    options.get("envSelectors", []),
                     options.get("interpreterSelectors", []),
                     dev_env.value,
                     ws_context,
                 )
             except env_selection.EnvSelectionError as exc:
                 raise ActionRunFailed(str(exc)) from exc
+            await run_selection.check_variant_selection(
+                {pathlib.Path(project_path): [action_name]},
+                {pathlib.Path(project_path): selected_envs},
+                options.get("interpreterSelectors", []),
+                ws_context,
+            )
         # else: project_path == "" ("all projects") has no single env universe to
         # validate selectors against, so validation is skipped and the full axis
-        # runs unrestricted (mirrors the selected_interpreters skip above).
+        # runs unrestricted (mirrors the selected_envs skip above).
 
+        # From here to the final result, this connection is the origin of the
+        # run: an ER that asks a question mid-run is asking the client that
+        # started it and nobody else (ADR-0082 rule 1). Constructed on the
+        # streamed paths, which are the ones that still hold their caller's
+        # connection; the dispatch below binds it to the run id it mints,
+        # which is what the ER names when it asks.
+        origin = elicitation_bridge.RunDispatchOrigin(connection=writer)
         stream = await partial_results_service.run_action_with_partial_results(
             action_name=action_name,
             project_path=project_path,
@@ -106,7 +143,8 @@ async def _handle_run_action_with_partial_results(
             ws_context=ws_context,
             result_formats=result_formats,
             progress_token=progress_token,
-            selected_interpreters=selected_interpreters,
+            selected_envs=selected_envs,
+            origin=origin,
         )
 
         # Opt-in (collect-style callers like MCP): accumulate the `json` format of
@@ -124,7 +162,9 @@ async def _handle_run_action_with_partial_results(
                     json_by_project.setdefault(project_str, []).append(
                         result_by_format.get("json")
                     )
-                logger.trace(f"run+partialResults: sending partial #{count} for token={token}, keys={list(value.keys()) if isinstance(value, dict) else type(value)}")
+                logger.trace(
+                    f"run+partialResults: sending partial #{count} for token={token}, keys={list(value.keys()) if isinstance(value, dict) else type(value)}"
+                )
                 _notify_client(
                     writer,
                     "actions/partialResult",
@@ -137,7 +177,9 @@ async def _handle_run_action_with_partial_results(
             if stream.progress_stream is None or progress_token is None:
                 return
             async for value in stream.progress_stream:
-                logger.trace(f"run+partialResults: sending progress type={value.get('type')} for token={progress_token}")
+                logger.trace(
+                    f"run+partialResults: sending progress type={value.get('type')} for token={progress_token}"
+                )
                 _notify_client(
                     writer,
                     "actions/progress",
@@ -157,7 +199,7 @@ async def _handle_run_action_with_partial_results(
             return_code = final.get("returnCode", 0) if isinstance(final, dict) else 0
             results: dict[str, dict] = {}
             for project_str, payloads in json_by_project.items():
-                merged_json = await _merge_partial_results_for_action(
+                merged_json = await merge_partial_results_for_action(
                     project_path=pathlib.Path(project_str),
                     action_name=action_name,
                     json_payloads=payloads,
@@ -173,7 +215,9 @@ async def _handle_run_action_with_partial_results(
             if results:
                 final = {**final, "results": results}
 
-        logger.trace(f"run+partialResults: done, sent {partial_count} partials, final keys={list(final.keys()) if isinstance(final, dict) else type(final)}")
+        logger.trace(
+            f"run+partialResults: done, sent {partial_count} partials, final keys={list(final.keys()) if isinstance(final, dict) else type(final)}"
+        )
         return final
 
 
@@ -207,14 +251,18 @@ async def _handle_run_action_with_partial_results_task(
         _write_message(writer, _jsonrpc_error(req_id, -32603, str(exc)))
         await writer.drain()
     except ActionRunFailed as exc:
-        logger.error(
-            "FineCode API: error handling actions/run with partialResultToken: {}", exc
+        msg = client_message(
+            "FineCode API: error handling actions/run with partialResultToken",
+            str(exc),
         )
-        _write_message(writer, _jsonrpc_error(req_id, -32603, str(exc)))
+        _write_message(writer, _jsonrpc_error(req_id, -32603, msg))
         await writer.drain()
     except StartingEnvironmentsFailed as exc:
-        logger.error(f"FineCode API: error handling actions/run with partialResultToken: {exc.message}")
-        _write_message(writer, _jsonrpc_error(req_id, -32603, exc.message))
+        msg = client_message(
+            "FineCode API: error handling actions/run with partialResultToken",
+            exc.message,
+        )
+        _write_message(writer, _jsonrpc_error(req_id, -32603, msg))
         await writer.drain()
     except Exception as exc:
         logger.exception(
@@ -228,6 +276,8 @@ async def _handle_run_batch_with_partial_results(
     params: dict | None,
     ws_context: context.WorkspaceContext,
     writer: asyncio.StreamWriter,
+    orchestration_depth: int = 0,
+    policy: OrchestrationPolicy = DEFAULT_ORCHESTRATION_POLICY,
 ) -> dict:
     """Handle ``actions/runBatch`` when a ``partialResultToken`` is present.
 
@@ -246,17 +296,26 @@ async def _handle_run_batch_with_partial_results(
     has completed.
     """
     from finecode.wm_server.config import env_selection
-    from finecode.wm_server.services import run_service
+    from finecode.wm_server.services import (
+        project_resolution_service,
+        run_service,
+    )
     from finecode.wm_server.services.run_service import (
         matrix_runner,
         matrix_streaming,
         proxy_utils,
         run_selection,
     )
-    from finecode.wm_server.services.run_service.exceptions import ActionRunFailed
-    from finecode.wm_server.services.run_service.execution_scopes import DEFAULT_ORCHESTRATION_POLICY
+    from finecode.wm_server.services.run_service.exceptions import (
+        ActionRunFailed,
+    )
 
     params = params or {}
+    # The connection that asked for the batch is the origin of every run in it,
+    # including the ones the per-project tasks below dispatch: `origin` is
+    # captured in `_stream_action`'s closure, so a task created from it carries
+    # the same descriptor to every dispatch it makes (ADR-0082 rule 1).
+    origin = elicitation_bridge.RunDispatchOrigin(connection=writer)
     with telemetry.attach_incoming_traceparent(params):
         parsed = _parse_run_batch_params(params)
         token = params["partialResultToken"]
@@ -264,27 +323,57 @@ async def _handle_run_batch_with_partial_results(
         if not parsed.action_sources:
             raise ValueError("actionSources list is required and must be non-empty")
 
-        logger.debug(f"runBatch+partialResults: actionSources={parsed.action_sources} projects={parsed.project_names}")
-
-        actions_by_project, name_to_source = await _resolve_actions_by_project(
-            parsed.project_names, parsed.action_sources, ws_context
+        logger.debug(
+            f"runBatch+partialResults: actionSources={parsed.action_sources} projects={parsed.project_names}"
         )
 
+        try:
+            actions_by_project, name_to_source = await _resolve_actions_by_project(
+                parsed.project_names, parsed.action_sources, ws_context
+            )
+        except project_resolution_service.ProjectResolutionFailed as exc:
+            raise ActionRunFailed(exc.message) from exc
+
         run_selection.validate_run_selectors(
-            parsed.env_selectors,
             parsed.interpreter_selectors,
             list(actions_by_project.keys()),
             ws_context,
         )
 
-        if len(actions_by_project) > DEFAULT_ORCHESTRATION_POLICY.max_project_fanout:
+        # Recursion is bounded by height, not width. A nested fan-out's width can
+        # never exceed the workspace's project count (er_dispatch validates every
+        # requested path), so a width cap measures the workspace, not a runaway:
+        # it could never fire at <= cap projects and refused every legitimate
+        # workspace-wide gather above it (ADR-0095). Subprocess width is bounded
+        # at the leaf by the process budget (ADR-0090).
+        if orchestration_depth >= policy.max_recursion_depth:
             raise ActionRunFailed(
-                f"Workspace fan-out {len(actions_by_project)} exceeds limit "
-                f"{DEFAULT_ORCHESTRATION_POLICY.max_project_fanout}"
+                f"Orchestration depth {orchestration_depth} reached limit "
+                f"{policy.max_recursion_depth}. Actions: "
+                f"{sorted({a for names in actions_by_project.values() for a in names})}"
             )
 
+        try:
+            selection_by_project = run_selection.selection_for_matrixed_actions(
+                actions_by_project,
+                parsed.interpreter_selectors,
+                parsed.dev_env.value,
+                ws_context,
+            )
+        except env_selection.EnvSelectionError as exc:
+            raise ActionRunFailed(str(exc)) from exc
+
+        await run_selection.check_variant_selection(
+            actions_by_project,
+            selection_by_project,
+            parsed.interpreter_selectors,
+            ws_context,
+        )
+
         await run_service.start_required_environments(
-            actions_by_project, ws_context
+            actions_by_project,
+            ws_context,
+            selected_envs_by_project=selection_by_project,
         )
 
         payload_overrides = parsed.params_by_project or {}
@@ -321,18 +410,11 @@ async def _handle_run_batch_with_partial_results(
                 else None
             )
             if action_def is not None and matrix_runner.is_matrixed(action_def):
-                try:
-                    selected_interpreters = run_selection.selected_interpreters_for_project(
-                        project_path,
-                        parsed.env_selectors,
-                        parsed.interpreter_selectors,
-                        parsed.dev_env.value,
-                        ws_context,
-                    )
-                except env_selection.EnvSelectionError as exc:
-                    raise ActionRunFailed(str(exc)) from exc
+                selected_envs = selection_by_project.get(project_path)
 
-                async def _on_partial(interpreter_canonical: str, result_by_format: dict) -> None:
+                async def _on_partial(
+                    interpreter_canonical: str, result_by_format: dict
+                ) -> None:
                     async with writer_lock:
                         _notify_client(
                             writer,
@@ -354,7 +436,10 @@ async def _handle_run_batch_with_partial_results(
                         )
                         await writer.drain()
 
-                combined_rbf, matrix_return_code = await matrix_streaming.run_matrix_with_partial_results(
+                (
+                    combined_rbf,
+                    matrix_return_code,
+                ) = await matrix_streaming.run_matrix_with_partial_results(
                     project=project_def,
                     action=action_def,
                     action_name=action_name,
@@ -366,7 +451,8 @@ async def _handle_run_batch_with_partial_results(
                     ws_context=ws_context,
                     merge_results=parsed.merge_results,
                     on_partial=_on_partial,
-                    selected_interpreters=selected_interpreters,
+                    selected_envs=selected_envs,
+                    origin=origin,
                 )
                 if parsed.merge_results:
                     merged_results.setdefault(str(project_path), {})[action_source] = {
@@ -390,6 +476,7 @@ async def _handle_run_batch_with_partial_results(
                 ws_context=ws_context,
                 initialize_all_handlers=True,
                 result_formats=parsed.result_formats,
+                origin=origin,
             ) as ctx:
                 async for value in ctx:
                     partial_count += 1
@@ -455,7 +542,7 @@ async def _handle_run_batch_with_partial_results(
             # for the response, so a caller that replaces-by-key keeps complete data
             # rather than only the last partial.
             if parsed.merge_results:
-                merged_json = await _merge_partial_results_for_action(
+                merged_json = await merge_partial_results_for_action(
                     project_path=project_path,
                     action_name=action_name,
                     json_payloads=json_payloads,
@@ -483,7 +570,10 @@ async def _handle_run_batch_with_partial_results(
                 project_return_code |= rc
             return project_return_code
 
-        # Launch one task per project for project-level concurrency.
+        # Launch one task per project for project-level concurrency. The
+        # machine-wide process budget (ADR-0090), leased to each project's ER
+        # when its run begins, is what bounds the subprocess fan-out these
+        # tasks lead to.
         project_tasks: dict[pathlib.Path, asyncio.Task] = {}
         for project_path, actions_to_run in actions_by_project.items():
             project_payload = {
@@ -499,7 +589,9 @@ async def _handle_run_batch_with_partial_results(
         pending: set[asyncio.Task] = set(project_tasks.values())
 
         while pending:
-            done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
+            done, pending = await asyncio.wait(
+                pending, return_when=asyncio.FIRST_COMPLETED
+            )
             for task in done:
                 exc = task.exception()
                 if exc is not None:
@@ -527,26 +619,38 @@ async def _handle_run_batch_with_partial_results_task(
 ) -> None:
     """Task wrapper for ``actions/runBatch`` with ``partialResultToken``."""
     try:
-        result = await _handle_run_batch_with_partial_results(params, ws_context, writer)
+        result = await _handle_run_batch_with_partial_results(
+            params, ws_context, writer
+        )
         _write_message(writer, _jsonrpc_response(req_id, result))
         await writer.drain()
     except _NotImplementedError as exc:
         _write_message(writer, _jsonrpc_error(req_id, NOT_IMPLEMENTED_CODE, str(exc)))
         await writer.drain()
     except ActionNotFoundError as exc:
-        logger.error(f"FineCode API: error handling actions/runBatch with partialResultToken: {exc.message}")
+        logger.error(
+            f"FineCode API: error handling actions/runBatch with partialResultToken: {exc.message}"
+        )
         _write_message(writer, _jsonrpc_error(req_id, -32603, exc.message))
         await writer.drain()
     except ActionRunFailed as exc:
-        logger.error(f"FineCode API: error handling actions/runBatch with partialResultToken: {exc.message}")
-        _write_message(writer, _jsonrpc_error(req_id, -32603, exc.message))
+        msg = client_message(
+            "FineCode API: error handling actions/runBatch with partialResultToken",
+            exc.message,
+        )
+        _write_message(writer, _jsonrpc_error(req_id, -32603, msg))
         await writer.drain()
     except StartingEnvironmentsFailed as exc:
-        logger.error(f"FineCode API: error handling actions/runBatch with partialResultToken: {exc.message}")
-        _write_message(writer, _jsonrpc_error(req_id, -32603, exc.message))
+        msg = client_message(
+            "FineCode API: error handling actions/runBatch with partialResultToken",
+            exc.message,
+        )
+        _write_message(writer, _jsonrpc_error(req_id, -32603, msg))
         await writer.drain()
     except Exception as exc:
-        logger.exception("FineCode API: error handling actions/runBatch with partialResultToken")
+        logger.exception(
+            "FineCode API: error handling actions/runBatch with partialResultToken"
+        )
         _write_message(writer, _jsonrpc_error(req_id, -32603, str(exc)))
         await writer.drain()
 
@@ -564,10 +668,16 @@ async def _handle_run_action_with_progress(
     if params is None:
         raise ValueError("params required")
     with telemetry.attach_incoming_traceparent(params):
-        from finecode.wm_server.services import run_service
+        from finecode.wm_server.services import (
+            project_resolution_service,
+            run_service,
+        )
         from finecode.wm_server.services.run_service import proxy_utils
 
-        parsed = await _parse_and_validate_run_action_params(params, ws_context)
+        try:
+            parsed = await _parse_and_validate_run_action_params(params, ws_context)
+        except project_resolution_service.ProjectResolutionFailed as exc:
+            raise ValueError(exc.message) from exc
         progress_token = params["progressToken"]
 
         # Ensure runners are started before subscribing to progress notifications
@@ -579,9 +689,13 @@ async def _handle_run_action_with_progress(
         )
 
         # Subscribe to progress on all runners for this project's action handlers.
-        progress_list: proxy_utils.AsyncList[domain.ProgressRawValue] = proxy_utils.AsyncList()
+        progress_list: proxy_utils.AsyncList[domain.ProgressRawValue] = (
+            proxy_utils.AsyncList()
+        )
         progress_tasks: list[asyncio.Task] = []
-        runners_by_env = ws_context.ws_projects_extension_runners.get(parsed.project.dir_path, {})
+        runners_by_env = ws_context.ws_projects_extension_runners.get(
+            parsed.project.dir_path, {}
+        )
         for handler in parsed.action.handlers:
             runner = runners_by_env.get(handler.env)
             if runner is not None:
@@ -597,7 +711,9 @@ async def _handle_run_action_with_progress(
         async def _forward_progress() -> None:
             try:
                 async for value in progress_list:
-                    logger.trace(f"runAction: sending progress type={value.get('type')} for token={progress_token}")
+                    logger.trace(
+                        f"runAction: sending progress type={value.get('type')} for token={progress_token}"
+                    )
                     _notify_client(
                         writer,
                         "actions/progress",
@@ -620,6 +736,10 @@ async def _handle_run_action_with_progress(
                 result_formats=parsed.result_formats,
                 initialize_all_handlers=True,
                 progress_token=progress_token,
+                # Progress is forwarded to this connection for the whole run, so
+                # it is just as much the run's origin as on the partial-results
+                # paths: an ER that elicits mid-run has a client to ask.
+                origin=elicitation_bridge.RunDispatchOrigin(connection=writer),
             )
             return {
                 "resultByFormat": result.result_by_format,
@@ -643,9 +763,7 @@ async def _handle_run_action_with_progress_task(
     """Task wrapper for ``actions/run`` with progress — mirrors
     ``_handle_run_with_partial_results_task``."""
     try:
-        result = await _handle_run_action_with_progress(
-            params, ws_context, writer
-        )
+        result = await _handle_run_action_with_progress(params, ws_context, writer)
         _write_message(writer, _jsonrpc_response(req_id, result))
         await writer.drain()
     except _NotImplementedError as exc:
@@ -655,28 +773,24 @@ async def _handle_run_action_with_progress_task(
         )
         await writer.drain()
     except ActionNotFoundError as exc:
-        logger.error(
-            "FineCode API: error handling actions/run with progress: {}", exc
-        )
+        logger.error("FineCode API: error handling actions/run with progress: {}", exc)
         _write_message(writer, _jsonrpc_error(req_id, -32603, str(exc)))
         await writer.drain()
     except ActionRunFailed as exc:
-        logger.error(
-            "FineCode API: error handling actions/run with progress: {}", exc
+        msg = client_message(
+            "FineCode API: error handling actions/run with progress", str(exc)
         )
-        _write_message(writer, _jsonrpc_error(req_id, -32603, str(exc)))
+        _write_message(writer, _jsonrpc_error(req_id, -32603, msg))
         await writer.drain()
     except StartingEnvironmentsFailed as exc:
-        logger.error(f"FineCode API: error handling actions/run with progress: {exc.message}")
-        _write_message(writer, _jsonrpc_error(req_id, -32603, exc.message))
+        msg = client_message(
+            "FineCode API: error handling actions/run with progress", exc.message
+        )
+        _write_message(writer, _jsonrpc_error(req_id, -32603, msg))
         await writer.drain()
     except Exception as exc:
-        logger.exception(
-            "FineCode API: error handling actions/run with progress"
-        )
-        _write_message(
-            writer, _jsonrpc_error(req_id, -32603, str(exc))
-        )
+        logger.exception("FineCode API: error handling actions/run with progress")
+        _write_message(writer, _jsonrpc_error(req_id, -32603, str(exc)))
         await writer.drain()
 
 
@@ -692,7 +806,11 @@ async def _handle_run_batch_with_progress(
     slots, and forwards the combined stream to the client as ``actions/progress``
     notifications while the batch is running.
     """
-    from finecode.wm_server.services import partial_results_service, run_service
+    from finecode.wm_server.services import (
+        partial_results_service,
+        project_resolution_service,
+        run_service,
+    )
     from finecode.wm_server.services.run_service import proxy_utils
 
     params = params or {}
@@ -703,21 +821,26 @@ async def _handle_run_batch_with_progress(
         if not parsed.action_sources:
             raise ValueError("actionSources list is required and must be non-empty")
 
-        logger.debug(f"runBatch+progress: actionSources={parsed.action_sources} projects={parsed.project_names}")
-
-        actions_by_project, name_to_source = await _resolve_actions_by_project(
-            parsed.project_names, parsed.action_sources, ws_context
+        logger.debug(
+            f"runBatch+progress: actionSources={parsed.action_sources} projects={parsed.project_names}"
         )
 
-        await run_service.start_required_environments(
-            actions_by_project, ws_context
-        )
+        try:
+            actions_by_project, name_to_source = await _resolve_actions_by_project(
+                parsed.project_names, parsed.action_sources, ws_context
+            )
+        except project_resolution_service.ProjectResolutionFailed as exc:
+            raise ActionRunFailed(exc.message) from exc
+
+        await run_service.start_required_environments(actions_by_project, ws_context)
 
         # One aggregation slot per (project × action) pair.
         # Each slot gets a unique internal progress token sent to its ER.
         slot_count = sum(len(acts) for acts in actions_by_project.values())
         combined_stream = partial_results_service.ProgressStream()
-        aggregator = partial_results_service.ProgressAggregator(slot_count, combined_stream)
+        aggregator = partial_results_service.ProgressAggregator(
+            slot_count, combined_stream
+        )
 
         # progress_token_by_project[project_path][action_name] = internal_token
         progress_token_by_project: dict[pathlib.Path, dict[str, str]] = {}
@@ -730,17 +853,23 @@ async def _handle_run_batch_with_progress(
             if not isinstance(project_def, domain.CollectedProject):
                 continue
             progress_token_by_project[project_path] = {}
-            runners_by_env = ws_context.ws_projects_extension_runners.get(project_path, {})
+            runners_by_env = ws_context.ws_projects_extension_runners.get(
+                project_path, {}
+            )
 
             for action_name in actions_to_run:
                 internal_token = f"progress-{uuid.uuid4()}"
                 progress_token_by_project[project_path][action_name] = internal_token
                 slot_key = f"{project_def.name}/{action_name}"
 
-                slot_list: proxy_utils.AsyncList[domain.ProgressRawValue] = proxy_utils.AsyncList()
+                slot_list: proxy_utils.AsyncList[domain.ProgressRawValue] = (
+                    proxy_utils.AsyncList()
+                )
                 slot_lists[slot_key] = slot_list
 
-                action_def = next((a for a in project_def.actions if a.name == action_name), None)
+                action_def = next(
+                    (a for a in project_def.actions if a.name == action_name), None
+                )
                 if action_def is None:
                     continue
                 for handler in action_def.handlers:
@@ -758,17 +887,27 @@ async def _handle_run_batch_with_progress(
         # One task per slot: reads from slot_list and routes to aggregator
         aggregator_tasks: list[asyncio.Task] = []
         for slot_key, slot_list in slot_lists.items():
-            async def _forward_slot(sl: proxy_utils.AsyncList = slot_list, key: str = slot_key) -> None:
+
+            async def _forward_slot(
+                sl: proxy_utils.AsyncList = slot_list, key: str = slot_key
+            ) -> None:
                 async for value in sl:
                     aggregator.on_progress(key, value)
+
             aggregator_tasks.append(asyncio.create_task(_forward_slot()))
 
         # Forward combined aggregated stream to client
         async def _forward_to_client() -> None:
             try:
                 async for value in combined_stream:
-                    logger.trace(f"runBatch+progress: forwarding type={value.get('type')} token={progress_token}")
-                    _notify_client(writer, "actions/progress", {"token": progress_token, "value": value})
+                    logger.trace(
+                        f"runBatch+progress: forwarding type={value.get('type')} token={progress_token}"
+                    )
+                    _notify_client(
+                        writer,
+                        "actions/progress",
+                        {"token": progress_token, "value": value},
+                    )
                     await writer.drain()
             except asyncio.CancelledError:
                 pass
@@ -786,6 +925,9 @@ async def _handle_run_batch_with_progress(
                 result_formats=parsed.result_formats,
                 payload_overrides_by_project=parsed.params_by_project or None,
                 progress_token_by_project=progress_token_by_project,
+                # Aggregated progress goes to this connection until the batch
+                # ends, so it is the origin of every run in the batch.
+                origin=elicitation_bridge.RunDispatchOrigin(connection=writer),
             )
         finally:
             # Cancel get_progress tasks first, then drain slot lists through aggregator,
@@ -799,8 +941,12 @@ async def _handle_run_batch_with_progress(
             combined_stream.set_done()
             await asyncio.gather(client_forward_task, return_exceptions=True)
 
-        results, overall_return_code = _build_batch_result(result_by_project, name_to_source)
-        logger.debug(f"runBatch+progress: done, projects_count={len(results)} returnCode={overall_return_code}")
+        results, overall_return_code = _build_batch_result(
+            result_by_project, name_to_source
+        )
+        logger.debug(
+            f"runBatch+progress: done, projects_count={len(results)} returnCode={overall_return_code}"
+        )
         return {"results": results, "returnCode": overall_return_code}
 
 
@@ -819,16 +965,22 @@ async def _handle_run_batch_with_progress_task(
         _write_message(writer, _jsonrpc_error(req_id, NOT_IMPLEMENTED_CODE, str(exc)))
         await writer.drain()
     except ActionNotFoundError as exc:
-        logger.error(f"FineCode API: error handling actions/runBatch with progress: {exc.message}")
+        logger.error(
+            f"FineCode API: error handling actions/runBatch with progress: {exc.message}"
+        )
         _write_message(writer, _jsonrpc_error(req_id, -32603, exc.message))
         await writer.drain()
     except ActionRunFailed as exc:
-        logger.error(f"FineCode API: error handling actions/runBatch with progress: {exc.message}")
-        _write_message(writer, _jsonrpc_error(req_id, -32603, exc.message))
+        msg = client_message(
+            "FineCode API: error handling actions/runBatch with progress", exc.message
+        )
+        _write_message(writer, _jsonrpc_error(req_id, -32603, msg))
         await writer.drain()
     except StartingEnvironmentsFailed as exc:
-        logger.error(f"FineCode API: error handling actions/runBatch with progress: {exc.message}")
-        _write_message(writer, _jsonrpc_error(req_id, -32603, exc.message))
+        msg = client_message(
+            "FineCode API: error handling actions/runBatch with progress", exc.message
+        )
+        _write_message(writer, _jsonrpc_error(req_id, -32603, msg))
         await writer.drain()
     except Exception as exc:
         logger.exception("FineCode API: error handling actions/runBatch with progress")
@@ -851,29 +1003,50 @@ async def _resolve_source_to_name(
     Raises ``ValueError`` if the project or action cannot be found.
     """
     from finecode.wm_server import domain as _domain
-    from finecode.wm_server._api_handlers._helpers import find_action_by_source
+    from finecode.wm_server._api_handlers._helpers import (
+        find_action_by_source,
+    )
+    from finecode.wm_server.services import project_resolution_service
 
     if project_path_str:
-        project = ws_context.ws_projects.get(pathlib.Path(project_path_str))
-        if project is None or not isinstance(project, _domain.CollectedProject):
-            raise ValueError(f"Project '{project_path_str}' not found or not initialized")
-        action = await find_action_by_source(project.actions, action_source, project, ws_context)
+        path = pathlib.Path(project_path_str)
+        project = ws_context.ws_projects.get(path)
+        if project is None:
+            raise ValueError(
+                f"Project '{project_path_str}' not found or not initialized"
+            )
+
+        project = (
+            await project_resolution_service.ensure_projects_resolved(
+                [path], ws_context
+            )
+        ).require([path])[0]
+        action = await find_action_by_source(
+            project.actions, action_source, project, ws_context
+        )
         if action is None:
             raise ActionNotFoundError(
                 f"Action with source '{action_source}' not found in project '{project_path_str}'"
             )
         return action.name
     else:
-        # project="" means "all projects" — resolve against the first project that
-        # declares the action so we can obtain the canonical action name.
-        for project in ws_context.ws_projects.values():
-            if not isinstance(project, _domain.CollectedProject):
-                continue
+        # project="" means "all projects" — resolve against who hosts the
+        # action
+        hosting = await project_resolution_service.resolve_hosting_projects(
+            [action_source], "source", ws_context
+        )
+        for project in hosting.outcome.resolved.values():
             action = await find_action_by_source(
                 project.actions, action_source, project, ws_context
             )
             if action is not None:
                 return action.name
+        if hosting.outcome.failed:
+            raise project_resolution_service.ProjectResolutionFailed(
+                "; ".join(
+                    f"{p}: {reason}" for p, reason in hosting.outcome.failed.items()
+                )
+            )
         raise ActionNotFoundError(
             f"Action with source '{action_source}' not found in any project"
         )

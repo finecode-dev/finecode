@@ -2,19 +2,20 @@ from __future__ import annotations
 
 import json
 import pathlib
+from collections.abc import AsyncIterator
 from typing import Any
 
 import pytest
+from fine_python_lang.list_obtainable_python_interpreters_action import (
+    ListObtainablePythonInterpretersAction,
+    ListObtainablePythonInterpretersRunPayload,
+)
 from finecode_extension_api.interfaces import icommandrunner, ilogger
 from finecode_extension_runner._services.run_action import (
     ActionFailedException as ActionRunFailed,
 )
 from finecode_extension_runner.testing import NoOpLogger, run_handler
 
-from fine_python_lang.list_obtainable_python_interpreters_action import (
-    ListObtainablePythonInterpretersAction,
-    ListObtainablePythonInterpretersRunPayload,
-)
 from fine_python_uv.list_obtainable_python_interpreters_handler import (
     UvListObtainablePythonInterpretersHandler,
 )
@@ -77,29 +78,38 @@ class _FakeProcess:
     def close_stdin(self) -> None:
         pass
 
+    async def stdout_lines(self) -> AsyncIterator[str]:
+        for line in self.get_output().splitlines():
+            yield line
+
+    async def stderr_lines(self) -> AsyncIterator[str]:
+        for line in self.get_error_output().splitlines():
+            yield line
+
     async def wait_for_end(self, timeout: float | None = None) -> None:
         pass
 
 
 class _FakeCommandRunner:
-    """Returns a fixed process for `run`, and records the command it was given."""
+    """Returns a fixed process for `run`, and records the argv it was given."""
 
     def __init__(self, process: _FakeProcess) -> None:
         self._process = process
-        self.commands: list[str] = []
+        self.commands: list[list[str]] = []
 
     async def run(
         self,
-        cmd: str,
+        cmd: icommandrunner.Argv,
         cwd: pathlib.Path | None = None,
         env: dict[str, str] | None = None,
     ) -> _FakeProcess:
-        self.commands.append(cmd)
+        icommandrunner.check_argv(cmd)
+        self.commands.append(list(cmd))
         return self._process
 
     def run_sync(
         self,
-        cmd: str,
+        cmd: icommandrunner.Argv,
         cwd: pathlib.Path | None = None,
         env: dict[str, str] | None = None,
     ) -> _FakeProcess:
@@ -152,7 +162,8 @@ async def test_uses_only_downloads_not_installed_state() -> None:
     command = command_runner.commands[0]
     # the determinism guarantee: uv's manifest, not the machine's installed pythons
     assert "--only-downloads" in command
-    assert "--output-format json" in command
+    assert "--output-format" in command
+    assert command[command.index("--output-format") + 1] == "json"
 
 
 async def test_include_prereleases_admits_the_beta() -> None:

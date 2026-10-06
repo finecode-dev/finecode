@@ -1,6 +1,7 @@
 from finecode_extension_api import extension
 from finecode_extension_api.interfaces import iserviceregistry
 
+from fine_python_pyrefly.pyrefly_config import PyreflyConfig
 from fine_python_pyrefly.pyrefly_lsp_service import PyreflyLspService
 
 
@@ -12,4 +13,8 @@ class Activator(extension.ExtensionActivator):
         self.registry.register_impl(
             PyreflyLspService,
             PyreflyLspService,
+        )
+        self.registry.register_impl(
+            PyreflyConfig,
+            PyreflyConfig,
         )

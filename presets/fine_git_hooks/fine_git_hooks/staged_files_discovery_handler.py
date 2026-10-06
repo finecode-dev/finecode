@@ -2,8 +2,13 @@ import dataclasses
 from pathlib import Path
 
 from finecode_extension_api import code_action
+from finecode_extension_api.interfaces import (
+    icommandrunner,
+    ilogger,
+    iprojectinfoprovider,
+)
+
 from fine_git_hooks import precommit_action
-from finecode_extension_api.interfaces import icommandrunner, ilogger, iprojectinfoprovider
 
 
 @dataclasses.dataclass
@@ -50,7 +55,9 @@ class StagedFilesDiscoveryHandler(
             )
 
         repo_root = await self._get_repo_root()
-        project_dir = self.project_info_provider.get_current_project_dir_path().resolve()
+        project_dir = (
+            self.project_info_provider.get_current_project_dir_path().resolve()
+        )
         if project_dir != repo_root.resolve():
             run_context.staged_files = []
             self.logger.info(
@@ -75,7 +82,7 @@ class StagedFilesDiscoveryHandler(
     async def _get_staged_files(self, repo_root: Path) -> list[Path]:
         """Run git diff --cached --name-only --diff-filter=ACMR and return absolute paths."""
         proc = await self.command_runner.run(
-            "git diff --cached --name-only --diff-filter=ACMR"
+            ["git", "diff", "--cached", "--name-only", "--diff-filter=ACMR"]
         )
         await proc.wait_for_end()
         exit_code = proc.get_exit_code()
@@ -92,7 +99,7 @@ class StagedFilesDiscoveryHandler(
         return paths
 
     async def _get_repo_root(self) -> Path:
-        proc = await self.command_runner.run("git rev-parse --show-toplevel")
+        proc = await self.command_runner.run(["git", "rev-parse", "--show-toplevel"])
         await proc.wait_for_end()
         exit_code = proc.get_exit_code()
         if exit_code != 0:

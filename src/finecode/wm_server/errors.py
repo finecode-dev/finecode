@@ -17,8 +17,11 @@ WmError
 │   ├── ActionCancelledError
 │   └── ActionNotResolvableError
 ├── InternalError
-└── RunnerError
-    └── StartingEnvironmentsFailed
+├── RunnerError
+│   ├── StartingEnvironmentsFailed
+│   └── RunnerNotFoundError
+└── KnowledgeError
+    └── FactsNotExtractedError
 """
 
 
@@ -139,6 +142,40 @@ class RunnerError(WmError):
 
 class StartingEnvironmentsFailed(RunnerError):
     """One or more execution environments failed to start."""
+
+    def __init__(self, message: str) -> None:
+        super().__init__(message)
+        self.message = message
+
+
+class RunnerNotFoundError(RunnerError):
+    """The workspace has no runner for the requested project or environment.
+
+    The target does not exist, so the operation was not attempted at all —
+    distinct from a runner that exists and failed to start.
+    """
+
+    def __init__(self, message: str) -> None:
+        super().__init__(message)
+        self.message = message
+
+
+# ---------------------------------------------------------------------------
+# Knowledge errors
+# ---------------------------------------------------------------------------
+
+
+class KnowledgeError(WmError):
+    """Error related to the WM-owned knowledge store."""
+
+
+class FactsNotExtractedError(KnowledgeError):
+    """No fact file exists yet, so the WM has no store to hold.
+
+    Distinct from an unreadable or corrupt one: nothing is wrong, the
+    data extraction simply has not run. The caller's response is to
+    run it, which is why this is not an ``InternalError``.
+    """
 
     def __init__(self, message: str) -> None:
         super().__init__(message)

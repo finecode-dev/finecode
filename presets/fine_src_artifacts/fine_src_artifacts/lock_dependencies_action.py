@@ -47,7 +47,9 @@ class LockDependenciesAction(
 ):
     """Generate a lock file pinning an artifact's dependencies to exact versions."""
 
-    DESCRIPTION = "Generate a lock file pinning an artifact's dependencies to exact versions."
+    DESCRIPTION = (
+        "Generate a lock file pinning an artifact's dependencies to exact versions."
+    )
     PAYLOAD_TYPE = LockDependenciesRunPayload
     RUN_CONTEXT_TYPE = LockDependenciesRunContext
     RESULT_TYPE = LockDependenciesRunResult

@@ -37,6 +37,7 @@ Runner lifecycle  (top-level fields: env_name, project_path)
 ``runner.stopped``   Runner process exited cleanly (EXITED status).
                      No payload.
 """
+
 from __future__ import annotations
 
 import dataclasses

@@ -22,7 +22,7 @@ def resolve_log_dir(
     """
     local_id = service_id.split("/", 1)[-1]
     if local_id.startswith(_ER_PREFIX):
-        env_name = local_id[len(_ER_PREFIX):]
+        env_name = local_id[len(_ER_PREFIX) :]
         return (
             runner_info_provider.get_venv_dir_path_of_env(env_name)
             / "logs"

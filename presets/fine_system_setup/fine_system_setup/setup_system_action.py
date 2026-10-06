@@ -38,8 +38,7 @@ class SetupSystemRunResult(code_action.RunActionResult):
         return "\n".join(lines) if lines else "No setup steps ran."
 
 
-class SetupSystemRunContext(code_action.RunActionContext[SetupSystemRunPayload]):
-    ...
+class SetupSystemRunContext(code_action.RunActionContext[SetupSystemRunPayload]): ...
 
 
 class SetupSystemAction(

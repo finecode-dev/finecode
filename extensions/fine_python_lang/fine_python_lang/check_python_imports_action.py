@@ -1,11 +1,11 @@
 # docs: docs/reference/actions.md
-from finecode_extension_api import code_action
 from fine_check_imports.check_imports_action import (
     CheckImportsAction,
+    CheckImportsRunContext,
     CheckImportsRunPayload,
     CheckImportsRunResult,
-    CheckImportsRunContext,
 )
+from finecode_extension_api import code_action
 
 
 class CheckPythonImportsAction(

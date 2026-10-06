@@ -3,18 +3,25 @@ import asyncio
 import dataclasses
 import pathlib
 
-from finecode_extension_api import code_action
 from fine_src_artifacts import list_src_artifact_files_by_lang_action
-from fine_lint import lint_action, lint_files_action
+from finecode_extension_api import code_action
 from finecode_extension_api.interfaces import (
     ifileeditor,
     ilogger,
     iworkspaceactionrunner,
     iworkspaceinfoprovider,
 )
-from finecode_extension_api.interfaces.iworkspaceinfoprovider import actionable_project_paths
-from finecode_extension_api.resource_uri import ResourceUri, path_to_resource_uri, resource_uri_to_path
+from finecode_extension_api.interfaces.iworkspaceinfoprovider import (
+    actionable_project_paths,
+)
+from finecode_extension_api.resource_uri import (
+    ResourceUri,
+    path_to_resource_uri,
+    resource_uri_to_path,
+)
 from finecode_extension_api.workspace_utils import group_files_by_project
+
+from fine_lint import lint_action, lint_files_action
 
 
 @dataclasses.dataclass
@@ -46,11 +53,7 @@ async def _list_workspace_files(
     return files
 
 
-class LintHandler(
-    code_action.ActionHandler[
-        lint_action.LintAction, LintHandlerConfig
-    ]
-):
+class LintHandler(code_action.ActionHandler[lint_action.LintAction, LintHandlerConfig]):
     def __init__(
         self,
         config: LintHandlerConfig,
@@ -87,7 +90,9 @@ class LintHandler(
             )
             await progress.advance(steps=len(project_files), message=None)
             await partial_result_sender.send(
-                lint_action.LintRunResult(messages={uri: [] for uri in project_file_uris})
+                lint_action.LintRunResult(
+                    messages={uri: [] for uri in project_file_uris}
+                )
             )
             return
         for result in results.values():
@@ -96,7 +101,9 @@ class LintHandler(
             if len(uris) > 1:
                 msg += f" and {len(uris) - 1} related"
             await progress.advance(steps=len(project_files), message=msg)
-            await partial_result_sender.send(lint_action.LintRunResult(messages=result.messages))
+            await partial_result_sender.send(
+                lint_action.LintRunResult(messages=result.messages)
+            )
 
     async def run(
         self,
@@ -108,7 +115,9 @@ class LintHandler(
         project_paths = (
             [resource_uri_to_path(uri) for uri in payload.project_paths]
             if payload.project_paths is not None
-            else actionable_project_paths(await self.workspace_info_provider.get_workspace_projects())
+            else actionable_project_paths(
+                await self.workspace_info_provider.get_workspace_projects()
+            )
         )
 
         file_uris: list[ResourceUri]
@@ -119,9 +128,17 @@ class LintHandler(
             and run_meta.dev_env == code_action.DevEnv.IDE
             and run_meta.trigger == code_action.RunActionTrigger.SYSTEM
         ):
+            # Only this run's projects: a narrowed run (e.g. one project of an
+            # inspect_code bridge) must not report the other projects' open files,
+            # because it would send them as empty -- and an empty list clears that
+            # file's diagnostics in the IDE, racing the project that owns it.
+            opened_by_project = group_files_by_project(
+                self.file_editor.get_opened_files(), project_paths
+            )
             file_uris = [
                 path_to_resource_uri(p)
-                for p in self.file_editor.get_opened_files()
+                for files in opened_by_project.values()
+                for p in files
             ]
         else:
             files = await _list_workspace_files(
@@ -134,15 +151,21 @@ class LintHandler(
                 f"LintHandler: no files to lint (target={payload.target}, "
                 f"dev_env={run_meta.dev_env}, trigger={run_meta.trigger})"
             )
-            await run_context.partial_result_sender.send(lint_action.LintRunResult(messages={}))
+            await run_context.partial_result_sender.send(
+                lint_action.LintRunResult(messages={})
+            )
             return
 
         file_paths = [resource_uri_to_path(u) for u in file_uris]
         files_by_project = group_files_by_project(file_paths, project_paths)
 
         # R-307: every requested file must be covered by a partial result
-        assigned_paths = {f for project_files in files_by_project.values() for f in project_files}
-        unassigned_uris = [u for u, p in zip(file_uris, file_paths) if p not in assigned_paths]
+        assigned_paths = {
+            f for project_files in files_by_project.values() for f in project_files
+        }
+        unassigned_uris = [
+            u for u, p in zip(file_uris, file_paths) if p not in assigned_paths
+        ]
         if unassigned_uris:
             self.logger.warning(
                 f"LintHandler: {len(unassigned_uris)} file(s) could not be matched to any project "
@@ -151,7 +174,9 @@ class LintHandler(
                 + ("..." if len(unassigned_uris) > 5 else "")
             )
 
-        async with run_context.progress("Linting files", total=len(file_uris)) as progress:
+        async with run_context.progress(
+            "Linting files", total=len(file_uris)
+        ) as progress:
             async with asyncio.TaskGroup() as tg:
                 for project_path, project_files in files_by_project.items():
                     tg.create_task(

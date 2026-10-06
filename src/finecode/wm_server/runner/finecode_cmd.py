@@ -4,7 +4,9 @@ from pathlib import Path
 
 # Matches the standard `python -m venv` / virtualenv activate script:
 #   VIRTUAL_ENV='/abs/path/.venvs/dev'
-_VIRTUAL_ENV_POSIX_RE = re.compile(r"^VIRTUAL_ENV=(['\"]?)(?P<path>.*?)\1\s*$", re.MULTILINE)
+_VIRTUAL_ENV_POSIX_RE = re.compile(
+    r"^VIRTUAL_ENV=(['\"]?)(?P<path>.*?)\1\s*$", re.MULTILINE
+)
 
 # activate.bat records the same path, but some generators (e.g. uv) route it through
 # a `for %%i in ("...") do @set "VIRTUAL_ENV=%%~fi"` indirection instead of a plain

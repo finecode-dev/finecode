@@ -11,7 +11,9 @@ from finecode.wm_server.runner import runner_manager
 from finecode.wm_server.services.run_service import proxy_utils
 
 
-def _build_project_and_context(tmp_path: pathlib.Path, *, handler_env: str = "dev_no_runtime"):
+def _build_project_and_context(
+    tmp_path: pathlib.Path, *, handler_env: str = "dev_no_runtime"
+):
     project = wm_testing.make_single_action_project(
         dir_path=tmp_path,
         action_name="get_src_artifact_language",
@@ -39,14 +41,18 @@ async def test_ensure_action_metadata_starts_the_handlers_env_to_resolve_canonic
     action = project.actions[0]
     assert action.canonical_source is None
 
-    async def _fake_start_runner(*, project_def, env_name, handlers_to_initialize, ws_context, **_):
+    async def _fake_start_runner(
+        *, project_def, env_name, handlers_to_initialize, ws_context, **_
+    ):
         assert env_name == "dev_no_runtime"
         action.canonical_source = f"resolved.{action.source}"
         return wm_testing.make_running_runner(
             working_dir_path=project_def.dir_path, env_name=env_name
         )
 
-    with mock.patch.object(runner_manager, "start_runner", side_effect=_fake_start_runner):
+    with mock.patch.object(
+        runner_manager, "start_runner", side_effect=_fake_start_runner
+    ):
         await proxy_utils.ensure_action_metadata(action, project, ws_context)
 
     assert action.canonical_source == f"resolved.{action.source}"
@@ -65,9 +71,13 @@ async def test_ensure_action_metadata_raises_when_env_fails_to_start(
     async def _failing_start_runner(**_):
         raise runner_manager.RunnerFailedToStart("boom")
 
-    with mock.patch.object(runner_manager, "start_runner", side_effect=_failing_start_runner):
-        with pytest.raises(ActionNotResolvableError):
-            await proxy_utils.ensure_action_metadata(action, project, ws_context)
+    with (
+        mock.patch.object(
+            runner_manager, "start_runner", side_effect=_failing_start_runner
+        ),
+        pytest.raises(ActionNotResolvableError),
+    ):
+        await proxy_utils.ensure_action_metadata(action, project, ws_context)
 
 
 async def test_ensure_action_metadata_raises_when_env_starts_but_class_stays_unresolved(
@@ -86,9 +96,13 @@ async def test_ensure_action_metadata_raises_when_env_starts_but_class_stays_unr
             working_dir_path=project_def.dir_path, env_name=env_name
         )
 
-    with mock.patch.object(runner_manager, "start_runner", side_effect=_fake_start_runner):
-        with pytest.raises(ActionNotResolvableError):
-            await proxy_utils.ensure_action_metadata(action, project, ws_context)
+    with (
+        mock.patch.object(
+            runner_manager, "start_runner", side_effect=_fake_start_runner
+        ),
+        pytest.raises(ActionNotResolvableError),
+    ):
+        await proxy_utils.ensure_action_metadata(action, project, ws_context)
 
 
 async def test_ensure_action_metadata_raises_when_action_has_no_handlers(

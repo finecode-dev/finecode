@@ -9,16 +9,16 @@ config-file reading, no venv creation.
 from dataclasses import dataclass
 
 __all__ = [
-    "Interpreter",
-    "EnvSpec",
-    "HandlerRef",
     "ConcreteEnv",
+    "EnvSpec",
     "ExpansionResult",
+    "HandlerRef",
+    "Interpreter",
     "InvalidInterpreterError",
-    "MixedMatrixError",
     "MatrixSetMismatchError",
-    "parse_interpreter",
+    "MixedMatrixError",
     "expand",
+    "parse_interpreter",
     "validate",
 ]
 

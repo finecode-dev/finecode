@@ -1,10 +1,10 @@
 # docs: docs/reference/actions.md
-from finecode_extension_api import code_action
 from fine_inspect_code.diagnostic_types import (
-    DiagnosticFilesRunPayload,
     DiagnosticFilesRunContext,
+    DiagnosticFilesRunPayload,
     DiagnosticFilesRunResult,
 )
+from finecode_extension_api import code_action
 
 
 class TypeCheckFilesAction(

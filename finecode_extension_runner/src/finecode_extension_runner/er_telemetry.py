@@ -1,4 +1,5 @@
 import contextlib
+import importlib.metadata
 import time
 from pathlib import Path
 
@@ -21,14 +22,19 @@ def apply_telemetry_config(
     if not endpoint:
         return
     service_name = f"finecode.er.{env_name}" if env_name else "finecode.er"
-    init_otel_logging(service_name=service_name, project_path=project_path, endpoint=endpoint)
-    init_tracer_provider(service_name=service_name, project_path=project_path, endpoint=endpoint)
-    init_meter_provider(service_name=service_name, project_path=project_path, endpoint=endpoint)
+    init_otel_logging(
+        service_name=service_name, project_path=project_path, endpoint=endpoint
+    )
+    init_tracer_provider(
+        service_name=service_name, project_path=project_path, endpoint=endpoint
+    )
+    init_meter_provider(
+        service_name=service_name, project_path=project_path, endpoint=endpoint
+    )
     _telemetry_initialized = True
 
 
 def init_otel_logging(service_name: str, project_path: Path, endpoint: str) -> None:
-    import importlib.metadata
 
     from loguru import logger
     from opentelemetry._logs.severity import SeverityNumber
@@ -96,7 +102,6 @@ def init_otel_logging(service_name: str, project_path: Path, endpoint: str) -> N
 
 
 def init_tracer_provider(service_name: str, project_path: Path, endpoint: str) -> None:
-    import importlib.metadata
 
     from opentelemetry import trace
     from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
@@ -126,10 +131,10 @@ def init_tracer_provider(service_name: str, project_path: Path, endpoint: str) -
 def init_meter_provider(service_name: str, project_path: Path, endpoint: str) -> None:
     global _handler_duration_hist, _handler_errors_counter
 
-    import importlib.metadata
-
     from opentelemetry import metrics
-    from opentelemetry.exporter.otlp.proto.grpc.metric_exporter import OTLPMetricExporter
+    from opentelemetry.exporter.otlp.proto.grpc.metric_exporter import (
+        OTLPMetricExporter,
+    )
     from opentelemetry.sdk.metrics import MeterProvider
     from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
     from opentelemetry.sdk.resources import Resource
@@ -226,6 +231,7 @@ def handler_initialize_span(handler_name: str, action_name: str):
         yield None
         return
     from opentelemetry import trace
+
     if not trace.get_current_span().get_span_context().is_valid:
         yield None
         return
@@ -261,7 +267,9 @@ def _jsonrpc_server_span(method: str, traceparent: str | None):
     from opentelemetry import propagate, trace
 
     tracer = trace.get_tracer("finecode.jsonrpc")
-    parent_ctx = propagate.extract({"traceparent": traceparent}) if traceparent else None
+    parent_ctx = (
+        propagate.extract({"traceparent": traceparent}) if traceparent else None
+    )
     with tracer.start_as_current_span(
         f"jsonrpc.server/{method}",
         context=parent_ctx,
@@ -291,12 +299,14 @@ class JsonRpcTracingHooks:
 
     def notification_sent(self, method: str) -> None:
         from opentelemetry import trace
+
         span = trace.get_current_span()
         if span.is_recording():
             span.add_event("jsonrpc.notification.sent", {"rpc.method": method})
 
     def notification_received(self, method: str, traceparent: str | None) -> None:
         from opentelemetry import trace
+
         span = trace.get_current_span()
         if span.is_recording():
             span.add_event("jsonrpc.notification.received", {"rpc.method": method})
@@ -306,6 +316,7 @@ def add_span_event(name: str, attributes: dict | None = None) -> None:
     if not _telemetry_initialized:
         return
     from opentelemetry import trace
+
     span = trace.get_current_span()
     if span.is_recording():
         span.add_event(name, attributes or {})

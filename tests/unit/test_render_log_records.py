@@ -4,8 +4,18 @@ from finecode.cli_app.log_render import render_log_records
 def test_render_log_records_two_records_in_order() -> None:
     params = {
         "records": [
-            {"level": "INFO", "source": "wm", "group": "finecode.wm_server", "message": "first"},
-            {"level": "ERROR", "source": "wm", "group": "finecode.wm_server", "message": "second"},
+            {
+                "level": "INFO",
+                "source": "wm",
+                "group": "finecode.wm_server",
+                "message": "first",
+            },
+            {
+                "level": "ERROR",
+                "source": "wm",
+                "group": "finecode.wm_server",
+                "message": "second",
+            },
         ]
     }
     assert render_log_records(params) == [

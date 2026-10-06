@@ -110,7 +110,7 @@ class ILspClient(Protocol):
 
     def session(
         self,
-        cmd: str,
+        cmd: collections.abc.Sequence[str],
         root_uri: str,
         workspace_folders: list[dict[str, str]] | None = None,
         initialization_options: dict[str, Any] | None = None,
@@ -126,7 +126,7 @@ class ILspClient(Protocol):
         Usage::
 
             async with lsp_client.session(
-                cmd="pyright-langserver --stdio",
+                cmd=["pyright-langserver", "--stdio"],
                 root_uri="file:///path/to/project",
             ) as session:
                 result = await session.send_request(
@@ -135,7 +135,8 @@ class ILspClient(Protocol):
                 )
 
         Args:
-            cmd: Shell command to start the language server.
+            cmd: Program and arguments of the server process, executed directly
+                (no shell); a ``str`` is rejected.
             root_uri: The root URI of the workspace.
             workspace_folders: Optional workspace folders (each with 'uri' and 'name' keys).
             initialization_options: Optional server-specific initialization options.

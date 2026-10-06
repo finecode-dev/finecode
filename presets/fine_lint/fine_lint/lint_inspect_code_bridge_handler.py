@@ -2,19 +2,30 @@ import asyncio
 import dataclasses
 import pathlib
 
-from finecode_extension_api import code_action
 from fine_inspect_code.inspect_code_action import (
     InspectCodeAction,
-    InspectCodeRunPayload,
     InspectCodeRunContext,
+    InspectCodeRunPayload,
     InspectCodeRunResult,
     InspectCodeTarget,
 )
-from fine_lint.lint_action import LintAction, LintRunPayload, LintTarget
-from finecode_extension_api.interfaces import iworkspaceactionrunner, iworkspaceinfoprovider, ilogger, iuser_messenger
-from finecode_extension_api.interfaces.iworkspaceinfoprovider import actionable_project_paths
-from finecode_extension_api.resource_uri import resource_uri_to_path, path_to_resource_uri
+from finecode_extension_api import code_action
+from finecode_extension_api.interfaces import (
+    ilogger,
+    iuser_messenger,
+    iworkspaceactionrunner,
+    iworkspaceinfoprovider,
+)
+from finecode_extension_api.interfaces.iworkspaceinfoprovider import (
+    actionable_project_paths,
+)
+from finecode_extension_api.resource_uri import (
+    path_to_resource_uri,
+    resource_uri_to_path,
+)
 from finecode_extension_api.workspace_utils import group_files_by_project
+
+from fine_lint.lint_action import LintAction, LintRunPayload, LintTarget
 
 
 @dataclasses.dataclass
@@ -54,13 +65,19 @@ class LintInspectCodeBridgeHandler(
             payload=LintRunPayload(
                 target=LintTarget(payload.target.value),
                 file_paths=payload.file_paths,
-                project_paths=payload.project_paths,
+                # `lint` is workspace-scoped, and this dispatches it into one
+                # project. Without narrowing, every per-project instance
+                # re-resolves the whole workspace and gathers across it: N
+                # instances x N projects.
+                project_paths=[path_to_resource_uri(project_path)],
             ),
             meta=run_meta,
             project_paths=[project_path],
         )
         for proj_path, result in results.items():
-            await partial_result_sender.send(InspectCodeRunResult(messages=result.messages))
+            await partial_result_sender.send(
+                InspectCodeRunResult(messages=result.messages)
+            )
 
     async def run(
         self,
@@ -70,7 +87,9 @@ class LintInspectCodeBridgeHandler(
         if payload.project_paths is not None:
             project_paths = [resource_uri_to_path(uri) for uri in payload.project_paths]
         else:
-            project_paths = actionable_project_paths(await self.workspace_info_provider.get_workspace_projects())
+            project_paths = actionable_project_paths(
+                await self.workspace_info_provider.get_workspace_projects()
+            )
 
         if payload.target == InspectCodeTarget.FILES:
             if not payload.file_paths:
@@ -78,7 +97,12 @@ class LintInspectCodeBridgeHandler(
             file_abs_paths = [resource_uri_to_path(uri) for uri in payload.file_paths]
             project_to_files = group_files_by_project(file_abs_paths, project_paths)
             tasks = [
-                (project_path, dataclasses.replace(payload, file_paths=[path_to_resource_uri(f) for f in files]))
+                (
+                    project_path,
+                    dataclasses.replace(
+                        payload, file_paths=[path_to_resource_uri(f) for f in files]
+                    ),
+                )
                 for project_path, files in project_to_files.items()
             ]
             if not tasks:

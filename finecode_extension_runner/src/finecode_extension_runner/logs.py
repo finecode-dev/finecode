@@ -1,8 +1,9 @@
+import contextlib
 import enum
-import io
-import sys
 import inspect
+import io
 import logging
+import sys
 import typing
 from pathlib import Path
 
@@ -25,7 +26,9 @@ _default_log_level: LogLevel = LogLevel.INFO
 # --- ER -> WM log forwarding (ADR-0049 decision 6) ---------------
 _forward_enabled: bool = False
 _forward_level: LogLevel = LogLevel.INFO
-_forward_sender: typing.Callable[[list[dict]], None] | None = None  # set by ErServer once it exists
+_forward_sender: typing.Callable[[list[dict]], None] | None = (
+    None  # set by ErServer once it exists
+)
 
 
 def filter_logs(record):
@@ -34,7 +37,9 @@ def filter_logs(record):
     matched_level: LogLevel | None = None
     matched_len = -1
     for group, level in log_level_by_group.items():
-        if (module_name == group or module_name.startswith(group + ".")) and len(group) > matched_len:
+        if (module_name == group or module_name.startswith(group + ".")) and len(
+            group
+        ) > matched_len:
             matched_level = level
             matched_len = len(group)
     if matched_len == -1:
@@ -52,10 +57,8 @@ def save_logs_to_file(
     stdout: bool = True,
 ) -> Path:
     global _default_log_level
-    try:
+    with contextlib.suppress(KeyError):
         _default_log_level = LogLevel[log_level.upper()]
-    except KeyError:
-        pass
 
     if stdout is True:
         if isinstance(sys.stdout, io.TextIOWrapper):
@@ -76,11 +79,11 @@ def save_logs_to_file(
                 stem = log_file.stem
                 # Extract numeric ID from the pattern: base_stem_<number>
                 # stem might be something like "my_logfile_1.2025-03-04_12-00-00"
-                if stem.startswith(base_stem + '_'):
+                if stem.startswith(base_stem + "_"):
                     # Get the part after "base_stem_"
-                    id_part = stem[len(base_stem) + 1:]
+                    id_part = stem[len(base_stem) + 1 :]
                     # Split by '.' to handle datetime added by loguru
-                    potential_id = id_part.split('.')[0]
+                    potential_id = id_part.split(".")[0]
                     if potential_id.isdigit():
                         file_id = int(potential_id)
                         max_id = max(max_id, file_id)
@@ -103,7 +106,7 @@ def save_logs_to_file(
     next_id = max_id + 1
 
     # Update file_path with the new ID
-    file_path_with_id = file_path.with_stem(file_path.stem + '_' + str(next_id))
+    file_path_with_id = file_path.with_stem(file_path.stem + "_" + str(next_id))
 
     logger.add(
         str(file_path_with_id),
@@ -131,8 +134,7 @@ def set_log_level_for_group(group: str, level: LogLevel | None):
 
 
 def reset_log_level_for_group(group: str):
-    if group in log_level_by_group:
-        del log_level_by_group[group]
+    log_level_by_group.pop(group, None)
 
 
 def set_forward_sender(sender: typing.Callable[[list[dict]], None] | None) -> None:
@@ -151,7 +153,11 @@ def set_log_forwarding(enabled: bool, level: str = "INFO") -> None:
 
 
 def should_forward(level_no: int) -> bool:
-    return _forward_enabled and _forward_sender is not None and level_no >= _forward_level.value
+    return (
+        _forward_enabled
+        and _forward_sender is not None
+        and level_no >= _forward_level.value
+    )
 
 
 def _forward_sink(message) -> None:
@@ -165,12 +171,16 @@ def _forward_sink(message) -> None:
     sender = _forward_sender
     if sender is None:
         return
-    sender([{
-        "timestamp": record["time"].timestamp(),
-        "level": record["level"].name,
-        "group": record["name"] or "",
-        "message": record["message"],  # raw; WM redacts at its boundary
-    }])
+    sender(
+        [
+            {
+                "timestamp": record["time"].timestamp(),
+                "level": record["level"].name,
+                "group": record["name"] or "",
+                "message": record["message"],  # raw; WM redacts at its boundary
+            }
+        ]
+    )
 
 
 def apply_logging_config(config: dict) -> None:
@@ -179,14 +189,18 @@ def apply_logging_config(config: dict) -> None:
         try:
             set_default_log_level(LogLevel[default_level_str.upper()])
         except KeyError:
-            logger.warning(f"Unknown log level '{default_level_str}' for defaultLevel, ignoring")
+            logger.warning(
+                f"Unknown log level '{default_level_str}' for defaultLevel, ignoring"
+            )
 
     for group, level_str in config.get("logGroups", {}).items():
         try:
             level = LogLevel[level_str.upper()]
             set_log_level_for_group(group, level)
         except KeyError:
-            logger.warning(f"Unknown log level '{level_str}' for group '{group}', ignoring")
+            logger.warning(
+                f"Unknown log level '{level_str}' for group '{group}', ignoring"
+            )
 
 
 def setup_logging(
@@ -235,13 +249,13 @@ def setup_logging(
 
 
 __all__ = [
+    "apply_logging_config",
+    "reset_log_level_for_group",
     "save_logs_to_file",
     "set_default_log_level",
-    "set_log_level_for_group",
-    "reset_log_level_for_group",
-    "apply_logging_config",
-    "setup_logging",
     "set_forward_sender",
     "set_log_forwarding",
+    "set_log_level_for_group",
+    "setup_logging",
     "should_forward",
 ]

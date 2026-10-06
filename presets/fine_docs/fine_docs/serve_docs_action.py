@@ -18,8 +18,7 @@ class ServeDocsRunPayload(code_action.RunActionPayload):
     """Port the dev server listens on."""
 
 
-class ServeDocsRunContext(code_action.RunActionContext[ServeDocsRunPayload]):
-    ...
+class ServeDocsRunContext(code_action.RunActionContext[ServeDocsRunPayload]): ...
 
 
 @dataclasses.dataclass

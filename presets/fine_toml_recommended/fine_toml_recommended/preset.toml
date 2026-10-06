@@ -37,15 +37,17 @@ dependencies = ["fine_toml_tombi~=0.1.0a0"]
 [tool.finecode.action.text_document_semantic_tokens]
 source = "fine_semantic_tokens.TextDocumentSemanticTokensAction"
 handlers = [
-    { name = "dispatch", source = "fine_semantic_tokens.SemanticTokensDispatchHandler", env = "dev_no_runtime", dependencies = ["fine_semantic_tokens~=0.1.0a0"] },
+  { name = "dispatch", source = "fine_semantic_tokens.SemanticTokensDispatchHandler", env = "dev_no_runtime", dependencies = [
+    "fine_semantic_tokens~=0.1.0a0"
+  ] },
 ]
 
 [tool.finecode.action.text_document_semantic_tokens_toml]
 source = "fine_toml_lang.TextDocumentSemanticTokensTomlAction"
 handlers = [
-    { name = "tombi", source = "fine_toml_tombi.TombiSemanticTokensHandler", env = "dev_no_runtime", dependencies = [
-        "fine_toml_tombi~=0.1.0a0",
-    ] },
+  { name = "tombi", source = "fine_toml_tombi.TombiSemanticTokensHandler", env = "dev_no_runtime", dependencies = [
+    "fine_toml_tombi~=0.1.0a0",
+  ] },
 ]
 
 [tool.finecode.extension.fine_python_tombi]

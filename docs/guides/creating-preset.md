@@ -197,7 +197,7 @@ A preset can itself reference other presets in its `preset.toml` if needed.
 
 ## Package naming
 
-Preset package names follow the pattern `fine_<lang?>_<role>`, where `<role>` is drawn from the closed set of FineCode role words and the language segment is optional.
+Preset package names follow the pattern `fine_<domain?>_<role>`, where `<role>` is a role word naming the semantic domain the preset covers and the domain segment is optional. The role-word vocabulary is open — coin a new one when a new capability needs it.
 
 See [Package Naming](package-naming.md) for the shared extension and preset naming convention.
 

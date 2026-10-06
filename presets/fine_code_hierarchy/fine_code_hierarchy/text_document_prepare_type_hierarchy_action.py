@@ -4,6 +4,7 @@ import dataclasses
 
 from finecode_extension_api import code_action, common_types
 from finecode_extension_api.resource_uri import ResourceUri
+
 from fine_code_hierarchy.types import SymbolKind, SymbolTag
 
 
@@ -61,6 +62,8 @@ class TextDocumentPrepareTypeHierarchyAction(code_action.Action):
     Use language-specific subactions to restrict handlers to a particular language.
     """
 
-    DESCRIPTION = "Identify the type entity at a document position for type hierarchy navigation."
+    DESCRIPTION = (
+        "Identify the type entity at a document position for type hierarchy navigation."
+    )
     PAYLOAD_TYPE = PrepareTypeHierarchyPayload
     RESULT_TYPE = PrepareTypeHierarchyResult

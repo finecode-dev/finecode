@@ -1,7 +1,5 @@
-import enum
 import dataclasses
-
-from finecode_extension_api import code_action
+import enum
 
 
 class CodeActionKind(enum.Enum):

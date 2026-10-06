@@ -51,8 +51,9 @@ class InstallGitHooksRunResult(code_action.RunActionResult):
         return "\n".join(lines) if lines else "No hooks processed."
 
 
-class InstallGitHooksRunContext(code_action.RunActionContext[InstallGitHooksRunPayload]):
-    ...
+class InstallGitHooksRunContext(
+    code_action.RunActionContext[InstallGitHooksRunPayload]
+): ...
 
 
 class InstallGitHooksAction(
@@ -73,7 +74,9 @@ class InstallGitHooksAction(
     that applies to projects with and without git.
     """
 
-    DESCRIPTION = "Install git hooks that run FineCode into the project's git repository."
+    DESCRIPTION = (
+        "Install git hooks that run FineCode into the project's git repository."
+    )
     PAYLOAD_TYPE = InstallGitHooksRunPayload
     RUN_CONTEXT_TYPE = InstallGitHooksRunContext
     RESULT_TYPE = InstallGitHooksRunResult

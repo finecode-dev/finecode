@@ -1,11 +1,12 @@
 import dataclasses
+import pathlib
 
-from finecode_extension_api import code_action
 from fine_envs import install_deps_in_env_action
-from finecode_extension_api.interfaces import icommandrunner, ilogger, iprojectactionrunner, iprojectinfoprovider
+from finecode_extension_api import code_action
+from finecode_extension_api.interfaces import icommandrunner, ilogger
 from finecode_extension_api.resource_uri import resource_uri_to_path
 
-from ._uv_common import dump_project_config, get_uv_executable
+from ._uv_common import get_uv_executable
 
 
 @dataclasses.dataclass
@@ -25,14 +26,10 @@ class UvInstallDepsInEnvHandler(
         config: UvInstallDepsInEnvHandlerConfig,
         command_runner: icommandrunner.ICommandRunner,
         logger: ilogger.ILogger,
-        action_runner: iprojectactionrunner.IProjectActionRunner,
-        project_info_provider: iprojectinfoprovider.IProjectInfoProvider,
     ) -> None:
         self.config = config
         self.command_runner = command_runner
         self.logger = logger
-        self.action_runner = action_runner
-        self.project_info_provider = project_info_provider
 
     async def run(
         self,
@@ -44,15 +41,6 @@ class UvInstallDepsInEnvHandler(
         venv_dir_path = resource_uri_to_path(payload.venv_dir_path)
         project_dir_path = resource_uri_to_path(payload.project_dir_path)
 
-        project_def_path = project_dir_path / "pyproject.toml"
-        dump_dir = await dump_project_config(
-            project_def_path=project_def_path,
-            action_runner=self.action_runner,
-            project_info_provider=self.project_info_provider,
-            logger=self.logger,
-            meta=run_context.meta,
-        )
-
         uv_executable = get_uv_executable()
         cmd = self._construct_uv_install_cmd(
             uv_executable=uv_executable,
@@ -60,7 +48,9 @@ class UvInstallDepsInEnvHandler(
             dependencies=dependencies,
         )
         error = await self._run_uv_cmd(
-            cmd=cmd, env_name=env_name, cwd=dump_dir
+            cmd=cmd,
+            env_name=env_name,
+            project_dir_path=project_dir_path,
         )
         if error is not None:
             errors = [error]
@@ -71,35 +61,49 @@ class UvInstallDepsInEnvHandler(
 
     def _construct_uv_install_cmd(
         self,
-        uv_executable,
-        venv_dir_path,
+        uv_executable: pathlib.Path,
+        venv_dir_path: pathlib.Path,
         dependencies: list[install_deps_in_env_action.Dependency],
-    ) -> str:
-        install_params: str = ""
+    ) -> list[str]:
+        cmd: list[str] = [
+            str(uv_executable),
+            # uv reads no pyproject.toml/uv.toml: the specs below are its complete input, so this
+            # handler writes no config dump (create_env's `uv venv` does read one).
+            "--no-config",
+            "pip",
+            "install",
+            "--python",
+            str(venv_dir_path),
+        ]
 
         if self.config.find_links is not None:
             for link in self.config.find_links:
-                install_params += f'--find-links="{link}" '
+                cmd.append(f"--find-links={link}")
 
         if self.config.editable_mode is not None:
-            install_params += f"-C editable_mode='{self.config.editable_mode}' "
+            cmd.append("-C")
+            cmd.append(f"editable_mode={self.config.editable_mode}")
 
         for dependency in dependencies:
             if dependency.editable:
-                install_params += "-e "
+                cmd.append("-e")
 
-            # uv supports the full PEP 508 'name @ file://...' syntax natively,
-            # so no stripping of the package name is needed (unlike pip CLI).
-            install_params += f"'{dependency.name}{dependency.version_or_source}' "
+            extras_str = ""
+            if dependency.extras:
+                extras_str = "[" + ",".join(dependency.extras) + "]"
 
-        cmd = f'"{uv_executable}" --no-config pip install --python "{venv_dir_path}" {install_params}'
+            cmd.append(f"{dependency.name}{extras_str}{dependency.version_or_source}")
+
         return cmd
 
     async def _run_uv_cmd(
-        self, cmd: str, env_name: str, cwd
+        self,
+        cmd: list[str],
+        env_name: str,
+        project_dir_path: pathlib.Path,
     ) -> str | None:
-        self.logger.debug(f"Running uv: {cmd}")
-        process = await self.command_runner.run(cmd, cwd=cwd)
+        self.logger.debug(f"Running uv: {cmd!r}")
+        process = await self.command_runner.run(cmd, cwd=project_dir_path)
         await process.wait_for_end()
         process_stdout = process.get_output()
         process_stderr = process.get_error_output()
@@ -116,7 +120,10 @@ class UvInstallDepsInEnvHandler(
             else:
                 logs = process_stderr
 
-            error = f'Installation of dependencies in env {env_name} from {cwd} failed (cmd: {cmd}):\n{logs}'
+            error = (
+                f"Installation of dependencies in env {env_name} for project "
+                f"{project_dir_path} failed (cmd: {cmd!r}):\n{logs}"
+            )
             self.logger.error(error)
             return error
 

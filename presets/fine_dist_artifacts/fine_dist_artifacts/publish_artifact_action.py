@@ -21,6 +21,11 @@ class PublishArtifactRunContext(
 class PublishArtifactRunResult(code_action.RunActionResult):
     version: str
     published_registries: list[str]
+    """Registries that accepted the upload. A registry that was already up to
+    date is absent from both this and `failed_registries`."""
+    failed_registries: dict[str, str] = dataclasses.field(default_factory=dict)
+    """registry_name -> error, for registries whose upload failed. One registry
+    failing does not prevent the others from publishing."""
 
     def update(self, other: code_action.RunActionResult) -> None:
         if not isinstance(other, PublishArtifactRunResult):
@@ -28,16 +33,25 @@ class PublishArtifactRunResult(code_action.RunActionResult):
 
         self.version = other.version
         self.published_registries = other.published_registries
+        self.failed_registries = other.failed_registries
 
     def to_text(self) -> str | textstyler.StyledText:
-        if len(self.published_registries) > 0:
+        lines: list[str] = []
+        if self.published_registries:
             registries_str = ", ".join(self.published_registries)
-            return f"Published version {self.version} to: {registries_str}"
-        else:
-            return f"Version {self.version} is already published"
+            lines.append(f"Published version {self.version} to: {registries_str}")
+        elif not self.failed_registries:
+            lines.append(f"Version {self.version} is already published")
+
+        for registry_name, error in self.failed_registries.items():
+            lines.append(f"Failed to publish to {registry_name}: {error}")
+
+        return "\n".join(lines)
 
     @property
     def return_code(self) -> code_action.RunReturnCode:
+        if self.failed_registries:
+            return code_action.RunReturnCode.ERROR
         return code_action.RunReturnCode.SUCCESS
 
 

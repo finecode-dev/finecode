@@ -9,6 +9,7 @@ else:
 
 from finecode_extension_api import code_action, textstyler
 from finecode_extension_api.resource_uri import ResourceUri
+
 from fine_format.format_action import FormatTarget
 
 

@@ -57,8 +57,7 @@ class UninstallGitHooksRunResult(code_action.RunActionResult):
 
 class UninstallGitHooksRunContext(
     code_action.RunActionContext[UninstallGitHooksRunPayload]
-):
-    ...
+): ...
 
 
 class UninstallGitHooksAction(

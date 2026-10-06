@@ -9,22 +9,23 @@ from __future__ import annotations
 import dataclasses
 import re
 import time
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 __all__ = [
     "LOG_LEVEL_VALUES",
-    "level_value",
-    "ClientLogRecord",
-    "SENSITIVE_KEYWORDS",
-    "REDACTED",
-    "redact",
-    "SubscriptionRegistry",
-    "FlushCallback",
-    "LogBatcher",
     "LOG_RECORDS_METHOD",
+    "REDACTED",
+    "SENSITIVE_KEYWORDS",
     "SUBSCRIBE_METHOD",
     "UNSUBSCRIBE_METHOD",
+    "ClientLogRecord",
+    "FlushCallback",
+    "LogBatcher",
+    "SubscriptionRegistry",
     "build_log_notification",
+    "level_value",
+    "redact",
 ]
 
 LOG_LEVEL_VALUES: dict[str, int] = {

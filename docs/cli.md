@@ -35,7 +35,9 @@ python -m finecode run --shared-server format
 
 This mode is used automatically by the LSP and MCP integrations. It gives faster repeated runs because configuration loading and runner startup are amortized across calls.
 
-The server waits 30 seconds after the last client disconnects before shutting down (configurable via `--disconnect-timeout` on `start-wm-server`).
+You do not have to start the shared server first — `run`, `prepare-envs` and `dump-config` start one if none is listening, and find it afterwards through the discovery file. (The [recovery commands](#recovery-commands) are the exception: they deliberately refuse to start one.)
+
+**What amortizes it is the server staying up, not the flag.** A client disconnecting does not discard the loaded configuration or the started runners — only the server exiting does, and it exits 30 seconds after the last client disconnects (`--disconnect-timeout` on `start-wm-server`). So two `run --shared-server` calls further apart than that each pay full startup, exactly as if the flag had not been passed. To hold the state for longer, run the shared server under something that owns its lifetime and pass `--keep-alive` (see [`start-wm-server`](#start-wm-server)).
 
 ---
 
@@ -58,15 +60,88 @@ python -m finecode run [options] <action> [<action> ...] [payload] [--config.<ke
 | `--wal` | Enable WM write-ahead log (WAL) for the dedicated WM server started by this run command |
 | `--log-level=<level>` | Set log level: `TRACE`, `DEBUG`, `INFO`, `WARNING`, `ERROR` (default: `INFO`) |
 | `--verbose` / `-v` | Stream WM and ER diagnostic logs to stderr live over the protocol (`server/logRecords`). Auto-enabled in CI. |
-| `--no-env-config` | Ignore `FINECODE_CONFIG_*` environment variables |
+| `--no-env-config` | Ignore `FINECODE_CONFIG_*` and `FINECODE_SERVICE_CONFIG_*` environment variables |
 | `--no-save-results` | Do not write action results to the cache directory |
+| `--results-file=<path>` | Also write *this run's* results to `<path>`, unmerged, on every exit path, and report the path on stderr. See [Per-run results file](#per-run-results-file) |
 | `--dev-env=<env>` | Override the detected dev environment. One of: `ai`, `ci`, `cli`, `ide`, `precommit` (default: auto-detected — see [Dev environment detection](#dev-environment-detection)) |
-| `--env=<name>` | For a matrixed action (ADR-0047), restrict execution to the named interpreter environment(s) — a matrix base selects all of its children, a concrete child selects only itself. Repeatable. Non-matrix envs are unaffected. See [Preparing Environments — filtering by environment name](guides/preparing-environments.md#filtering-by-environment-name). |
-| `--interpreter=<impl>@<version>` | For a matrixed action, restrict execution to the named interpreter(s) across every matrix env the action touches. Repeatable; a bare version means `cpython`. See [Preparing Environments — filtering by interpreter](guides/preparing-environments.md#filtering-by-interpreter). |
+| `--interpreter=<impl>@<version>` | For a matrixed action, restrict execution to the named interpreter(s). Repeatable; a bare version means `cpython`; `all` means the full axis, ignoring `default_interpreters`. |
+| `--resource-usage[=SEC]` | Print one `[resources]` stderr line per interval plus a peaks summary at the end (see [Resource usage in CI](#resource-usage-in-ci)). Accepted range `0 < SEC ≤ 600`; bare flag polls every 15 s. |
+| `--no-resource-usage` | Disable the reporter, including its CI default. |
 
-`--env` and `--interpreter` on `run` use the same selector semantics as `prepare-envs` (ADR-0050): they compose by intersection, and a matrix env's config-declared `default_interpreters` policy (see [Preparing Environments — default interpreter subset](guides/preparing-environments.md#default-interpreter-subset)) applies as the default when neither is given — so a plain `run` can execute only a local subset of a matrix (e.g. the newest interpreter) while CI still runs the full axis, mirroring `prepare-envs`.
+In a multi-project workspace, `run` fans out across every project that declares the action; spawned subprocesses are bounded by the machine-wide process budget (one slot per subprocess, leased per unit of work; default: derived from the machine's CPU budget). Fan-out is throttled, never refused — workspace size does not limit which actions you can run. See [Process budget](guides/wm-server-internals.md#process-budget).
+
+`run` selects matrix variants with `--interpreter` alone (ADR-0103): no selector applies each base's `default_interpreters` policy (see [Preparing Environments — default interpreter subset](guides/preparing-environments.md#default-interpreter-subset)) — so a plain `run` can execute only a local subset of a matrix (e.g. the newest interpreter) while CI still runs the full axis; values select exactly those interpreters; `all` selects the full axis, ignoring the policy. The selection also decides which interpreter instances are *started*, not only which run: unselected matrix children are never started or repaired.
 
 WAL environment variable and storage settings are shared with `start-wm-server` — see [`start-wm-server`](#start-wm-server) for details.
+
+### Per-run results file
+
+By default results go to `<venv>/cache/finecode/results/<action-source>.json`, which is
+**read-modify-written on every run**: each run adds or replaces one project key and
+leaves every other key in place. That file is what `--map-payload-fields` reads, so
+it stays as it is — but it means a reader cannot tell entries this run produced from
+entries left by earlier ones, possibly for projects the run never touched.
+
+`--results-file=<path>` writes a second file describing one run and nothing else:
+
+```bash
+python -m finecode run --results-file=/tmp/lint.json lint \
+  --project_paths='["file:///ws/backend"]'
+```
+
+```json
+{
+  "finecode_results_version": 1,
+  "return_code": 1,
+  "projects_requested": null,
+  "project_paths_requested": null,
+  "payload": {"project_paths": ["file:///ws/backend"]},
+  "actions": {
+    "fine_lint.LintAction": {
+      "scope": "workspace",
+      "results": {
+        "/ws": {"return_code": 1, "result": {"messages": {}}}
+      }
+    }
+  }
+}
+```
+
+`scope` is the field to read before anything else. A **workspace-scoped** action runs
+once and files its result under the project that *hosted* it — the workspace root —
+however many projects it was pointed at, so the key under `results` is not a project
+identity and looking up your project by key finds nothing. Take project membership
+from the file URIs inside the result instead. For a **project-scoped** action the key
+is the project, and a lookup is correct. Nothing else in the payload distinguishes the
+two cases, which is why `scope` is recorded.
+
+`scope` is `null` when the run could not resolve it — an action the WM reports without
+a declared scope, or a result filed under a source that was never listed. Treat `null`
+as "unknown", not as either case above: a key lookup may or may not be a project, so
+read project membership out of the result the way a workspace-scoped action requires.
+
+Each entry under `results` carries its own `return_code`, because the document's
+top-level `return_code` is the whole run's and cannot say which action or which project
+produced a failure. `result` is the action's JSON result, or `null` when the action
+returned none — a fully streamed matrixed action merges to no JSON payload at all.
+
+`projects_requested`, `project_paths_requested` and `payload` record the request rather
+than the outcome, which is what separates "ran and found nothing" from "was dispatched
+to nothing at all". `projects_requested` holds the `--project=<name>` values as typed;
+`project_paths_requested` holds what those names resolved to, and it is the one to join
+against the keys under `results`, which are paths. Both are `null` when the run was not
+restricted to a subset of projects, and `project_paths_requested` is also `null` when
+the run failed before resolving them.
+
+The file is written on **every** exit path, including runs that failed before any action
+executed (`actions` is then `{}`). A failed run must not leave the previous run's file in
+place: it is complete, well-formed, carries the same version, and nothing in it says it
+describes a different run. The write goes through a temporary file in the same directory
+and is renamed into place, so a concurrent reader never sees a half-written document.
+
+`--results-file` implies the JSON result format, so it works alongside
+`--no-save-results` when you want this run's record without touching the shared cache.
+The confirmation line is printed to stderr, leaving stdout to the action's own output.
 
 ### Payload
 
@@ -93,7 +168,7 @@ See [Configuration](configuration.md) for full details on config precedence.
 
 ### Behavior
 
-- With no `--project`: FineCode treats `cwd` (or `--workdir`) as the workspace root, discovers all projects, and runs the action in each project that defines it.
+- With no `--project`: FineCode treats `cwd` (or `--workdir`) as the workspace root and runs the action in each project that defines it.
 - With `--project`: the action must exist in every specified project.
 - Action results are saved to `<venv>/cache/finecode/results/<action>.json` (one entry per project path).
 - WAL options on `run` apply only when FineCode starts a dedicated WM server (default mode). In `--shared-server` mode, configure WAL on the shared WM server process.
@@ -116,11 +191,14 @@ python -m finecode --workdir=./finecode_extension_api run lint
 # Override ruff line length
 python -m finecode run lint --config.ruff.line_length=120
 
-# Run a matrixed action's "testing" env only for its cpython@3.11 child
-python -m finecode run run_tests --env=testing@cpython-3.11
+# Run a matrixed action's 3.11 variant
+python -m finecode run run_tests --interpreter=3.11
 
 # Run every matrix env's 3.12 interpreter
 python -m finecode run run_tests --interpreter=3.12
+
+# Run the full declared axis, ignoring the default policy
+python -m finecode run run_tests --interpreter=all
 ```
 
 ---
@@ -131,7 +209,7 @@ Create and populate virtual environments for all handler dependencies.
 
 ```
 python -m finecode prepare-envs [--recreate] [--env=<name>]...
-                                 [--project=<name>]... [--max-concurrent-projects=<n>]
+                                 [--project=<name>]...
                                  [--log-level=<level>] [--verbose] [--debug]
 ```
 
@@ -143,17 +221,19 @@ See [Preparing Environments](guides/preparing-environments.md) for a full explan
 
 | Option | Description |
 |---|---|
-| `--recreate` | Delete and recreate all venvs from scratch |
-| `--env=<name>` | Restrict handler dependency installation to the named env(s). Repeatable. See note below. |
+| `--recreate` | Delete and recreate the venvs this run covers (all, or the `--env` selection) |
+| `--env=<name>` | Restrict `create_envs` and `install_envs` to the named env(s): a name, a matrix base (its default interpreters), `<base>@<impl>-<version>`, or `<base>@all`. Repeatable. See note below. |
 | `--project=<name>` | Restrict preparation to the named project(s) (matched by `[project].name` from `pyproject.toml`). Repeatable. |
-| `--max-concurrent-projects=<n>` | Cap on concurrent projects during `create_envs`/`install_envs`. Defaults to a machine-based value (same env var: `FINECODE_WM_PREPARE_ENVS_MAX_CONCURRENT_PROJECTS`). See [Preparing Environments — bounding concurrency](guides/preparing-environments.md#bounding-concurrency). |
 | `--log-level=<level>` | Set log level: `TRACE`, `DEBUG`, `INFO`, `WARNING`, `ERROR` (default: `INFO`) |
 | `--verbose` / `-v` | Stream WM and ER diagnostic logs to stderr live over the protocol (`server/logRecords`). Auto-enabled in CI. |
 | `--debug` | Wait for a debugpy client on port 5680 before starting |
 | `--dev-env=<env>` | Override the detected dev environment. One of: `ai`, `ci`, `cli`, `ide`, `precommit` (default: auto-detected) |
+| `--workspace-packages=editable\|wheel` | Override how workspace packages are installed in every env for this run. `editable` installs from source; `wheel` builds one wheel per package and installs it (see [Preparing Environments — workspace packages](guides/preparing-environments.md#workspace-packages)). Default: resolved from `[workspace.workspace_packages_install]` for the active dev-env. |
+| `--resource-usage[=SEC]` | As for `run`: one `[resources]` line per interval plus a peaks summary. A non-numeric value is rejected with click's exit 2. |
+| `--no-resource-usage` | Disable the reporter, including its CI default. |
 
 
-!!! note `--env` restricts only the `install_envs` step. The `create_envs` step still runs for **all** envs regardless of this flag — virtualenvs must exist for every env even when you only need to update dependencies in one of them.
+!!! note `--env` restricts both `create_envs` and `install_envs`; the `dev_workspace` bootstrap always runs; envs outside the filter are left untouched, so a missing or broken one is repaired by the next unfiltered run or on demand. See [Filtering by environment name](guides/preparing-environments.md#filtering-by-environment-name).
 
 ---
 
@@ -162,19 +242,93 @@ See [Preparing Environments](guides/preparing-environments.md) for a full explan
 Dump the fully resolved configuration for a project to disk, useful for debugging preset and config merging.
 
 ```
-python -m finecode dump-config --project=<name> [--log-level=<level>] [--debug]
+python -m finecode dump-config --shared-server --project=<name> [--log-level=<level>] [--debug]
 ```
 
-Output is written to `<cwd>/finecode_config_dump/`.
+Output is written to `<cwd>/finecode_config_dump/` — this command (and the
+MCP `dump_config` tool) is the only thing that writes that directory; env
+preparation never does. The dump is written through the project's configured
+formatter when one covers the target file; without one it falls back to an
+unformatted dump, and the action result's `unhandled` names the target file
+(see the *Unhandled inputs* note in
+[Built-in Actions](reference/actions.md)). If the formatter fails, the command
+fails; pass `--no-format`, or disable the `dump_config_format` handler, to
+dump unformatted.
 
 | Option | Description |
 |---|---|
 | `--project=<name>` | **(Required)** Project to dump config for (matched by `[project].name` from `pyproject.toml`) |
+| `--no-format` | Write the dump unformatted, bypassing the project's formatter |
 | `--log-level=<level>` | Set log level: `TRACE`, `DEBUG`, `INFO`, `WARNING`, `ERROR` (default: `INFO`) |
 | `--debug` | Wait for a debugpy client on port 5680 |
 | `--dev-env=<env>` | Override the detected dev environment. One of: `ai`, `ci`, `cli`, `ide`, `precommit` (default: auto-detected) |
 
 ---
+
+## Recovery commands
+
+`reload-action`, `restart-runner`, `reload-config` and `restart-wm` make a *running*
+workspace pick up something that changed on disk, without restarting the editor or
+agent that is using it. They form a ladder from cheapest to widest; pick the
+narrowest one that covers what you edited, because nothing detects staleness for you.
+
+| Command | Covers | Does not cover |
+| --- | --- | --- |
+| `reload-action` | the packages owning an action and its handlers | any other package; configuration |
+| `restart-runner` | any code a runner imported, and stuck or crashed runners | configuration |
+| `reload-config` | `pyproject.toml`, `finecode.toml` and presets — and, since it replaces runners, all code too | FineCode's own source |
+| `restart-wm` | everything, including FineCode's own source | — |
+| `stop-wm` | nothing — it stops the workspace | restart — pair with `start-wm-server --detach --keep-alive` |
+
+**All five require `--shared-server`.** Without it each command would start a
+workspace server of its own, recover that, and exit — leaving the workspace an editor
+or agent is actually using untouched while reporting success. They exit with status 1
+and name the mode as the reason.
+
+Addressing follows the same rule everywhere: `--project` *or* `--all-projects`,
+never both and never neither, so workspace-wide recovery is always asked for
+explicitly (`reload-action` is the exception: it defaults to every project exposing
+the action, because reloading one unnecessarily costs almost nothing).
+
+A recovery that would replace runners is refused while an action is running in the
+target project, and the refusal names the run. `--kill-in-flight-runs` proceeds
+anyway; it is the remedy for a run that is hung, and it kills the run.
+
+```bash
+# after editing a handler
+python -m finecode reload-action --shared-server --action=lint --project=/abs/path
+
+# after editing pyproject.toml
+python -m finecode reload-config --shared-server --project=/abs/path
+
+# after adding a project directory
+python -m finecode reload-config --shared-server --all-projects --rescan
+
+# after editing FineCode itself
+python -m finecode restart-wm --shared-server
+
+# stop the shared workspace server
+python -m finecode stop-wm --shared-server
+```
+
+## `resource-usage`
+
+Print what the running workspace server is doing and what it costs.
+
+```
+python -m finecode resource-usage --shared-server [--json] [--watch[=SEC]] [--processes]
+```
+
+Like the recovery commands, it requires `--shared-server` and refuses without it
+(exit 1, naming the flag): a snapshot only means something against the workspace
+someone else is already using. It never starts a server.
+
+The command's logs go to the CLI log file, never to stdout (`--log-level` sets that
+file's level): log lines on stdout would break `--json` consumers. `· hooks failed`
+marks stale peaks. With `--processes` a walk slower than the interval also shows as
+`no answer` — that is the walk, not necessarily starvation. The command counts in
+`connectedClients`, and while `--watch` holds the connection it postpones a
+non-keep-alive shared WM's idle auto-stop.
 
 ## Dev environment detection
 
@@ -234,6 +388,57 @@ The equivalent on other systems is any variable your CI can toggle per run (a pi
 
 > **Note:** on-demand DEBUG only helps for *reproducible* failures. A flaky, non-deterministic failure may not recur on a debug re-run, so its DEBUG detail is lost. If that class of failure is common in your pipeline, default the computed level to `DEBUG` instead.
 
+## Resource usage in CI
+
+`run` and `prepare-envs` print one flushed `[resources]` stderr line per interval from
+their own connection, a `no answer` line when a poll is outstanding at the next tick,
+and a `peaks:` summary at the end. The lines go to stderr and not the WM log because
+CI artifacts for a lost job are the job log — when the runner loses the job, the WM
+log file goes with it.
+
+The reporter is on by default when `CI` is set (any non-empty value, the same predicate
+as dev-env detection), every 15 s. Precedence: `--resource-usage[=SEC]` (bare flag =
+15 s) > `--no-resource-usage` > `FINECODE_RESOURCE_USAGE_INTERVAL` (`0` = off) > `CI`
+default > off. `SEC` must satisfy `0 < SEC ≤ 600` (`0` = off where allowed); anything
+else fails the command with exit 1 naming the switch.
+
+Line format:
+
+```text
+[resources] t=+15s projects 3 act/40 run/72 · ER 40 run/4 act/2 start · work 4/4 (+7 wait) · startup 3/3 (+12 wait) · mem 12.0G/16.0G (cgroup) swap 12.0G/20.0G psi 3% · lag 2.4s
+```
+
+`psi` is the host's PSI `memory full avg10`, or `n/a` when the host reports no PSI.
+When the WM reports pressure, the reporter prints one warning line when the
+episode starts and one when it ends:
+
+```text
+[resources] t=+30s !! memory pressure (psi, memoryExhausted): PSI memory full 77% · mem avail 0.5G of 17.5G · swap 20.2G of 20.2G
+[resources] t=+45s memory pressure footprint: 15.8G rss + 4.1G swap (WM 0.3G, 328 runners, 2 untracked)
+[resources] t=+120s memory pressure cleared (began t=+30s)
+```
+
+The warning fires once per episode: it takes two consecutive calm polls to close
+one, so a single calm sample inside an episode does not end it. The footprint
+line follows the warning on the next tick, from one `includeProcesses` walk per
+episode plus one for the final peaks line — a slow walk renders as
+`footprint n/a (process walk already in progress)` and never delays the peaks
+line (the summary walk runs under a 3 s budget inside the 5 s summary timeout).
+A warning computed while output is paused for an interactive prompt is rendered
+and then dropped, but the episode is still marked as warned; CI — the audience
+for these lines — has no prompts, so nothing is lost there.
+
+Summary:
+
+```text
+[resources] peaks: ER 61 run/14 start · projects 9 active · work 5 used/23 waiting · startup 40 waiting · swap max 14.5G · mem avail min 0.9G · psi max 41% · footprint 15.8G rss + 4.1G swap (WM 0.3G, 328 runners, 2 untracked) · WM pid 1234 up 1h02m
+```
+
+Peaks are per WM process, since that process started: after a shared-server reconnect
+to a *restarted* WM, later lines describe the new process only, and the summary's
+`WM pid … up …` tail shows the restart. Reporter errors print a line and never change
+the exit code; a `lag` of `n/a` means the monitor had no sample in the window.
+
 ---
 
 ## `start-lsp`
@@ -275,30 +480,70 @@ Typically started automatically by MCP-compatible clients (for example, Claude C
 
 For setup details, see [IDE and MCP Setup](getting-started-ide-mcp.md#mcp-setup-for-ai-clients). If you use VS Code without the FineCode extension, use the fallback `.vscode/mcp.json` configuration from that page.
 
+The MCP server also offers a `get_resource_usage` tool returning the same snapshot
+as `server/getResourceUsage` (with an optional `includeProcesses` flag).
+
 ---
 
 ## `start-wm-server`
 
-Start the FineCode Workspace Manager Server standalone (TCP JSON-RPC), listen for client connections. Shuts down after the last client disconnects and the disconnect timeout expires.
+Start the FineCode Workspace Manager Server standalone (TCP JSON-RPC), listen for client connections. Unless `--keep-alive` is given, it shuts down after the last client disconnects and the disconnect timeout expires.
 
 ```text
-python -m finecode start-wm-server [--log-level=<level>] [--disconnect-timeout=<seconds>] [--wal]
+python -m finecode start-wm-server [--log-level=<level>] [--disconnect-timeout=<seconds>]
+                                   [--keep-alive] [--detach] [--wal]
 ```
 
 | Option | Description |
 | --- | --- |
 | `--log-level=<level>` | Set log level: `TRACE`, `DEBUG`, `INFO`, `WARNING`, `ERROR` (default: `INFO`) |
 | `--disconnect-timeout=<seconds>` | Seconds to wait after the last client disconnects before shutting down (default: 30) |
+| `--keep-alive` | Never auto-stop — neither when no client connects after startup nor when the last one disconnects. `server/shutdown` (and so `restart-wm`) still stops it. |
+| `--detach` | Start the shared server in the background and exit, doing nothing if one is already listening. Cannot be combined with `--port-file`. |
 | `--wal` | Enable WM write-ahead log (WAL) for run lifecycle events. |
 
-Environment variable equivalent:
+`--keep-alive` is for a server whose lifetime something else owns — a devcontainer, a
+supervisor — where both auto-stop timers would end a workspace that is meant to stay
+warm. Three consequences come with it: extension runners stay resident for as long as
+that owner runs, closing the editor stops discarding them, so picking up changed code
+is entirely on the [recovery commands](#recovery-commands), and the log level the
+server started with is the one it keeps — configuring a different WM log level in an
+editor takes effect only after a `restart-wm`.
 
-- `FINECODE_WAL_ENABLED=1` (or `true`/`yes`/`on`)
+`--detach` ensures *a* server is running, not a keep-alive one: if one is already
+listening it does nothing, whatever that server's own settings are. On its own it is
+rarely what you want — nothing connects to the server it starts, so the disconnect
+timeout ends it seconds later. The other options are passed on to the server it
+starts.
+
+Together the two flags are how a workspace is kept warm: start the server from
+whatever owns that lifetime — a container start script, a systemd unit, a supervisor
+— and the CLI, LSP and MCP all find it through the usual discovery file.
+
+```bash
+python -m finecode start-wm-server --detach --keep-alive
+```
+
+Its counterpart is `python -m finecode stop-wm --shared-server`, which shuts that
+server back down.
+
+Keep-alive has no environment variable and is never inherited: it is passed
+explicitly by whoever starts the server, so the dedicated per-command servers cannot
+pick it up and stop stopping. The flip side is that a server started *lazily* by a
+client — the first `run --shared-server` after a crash, or the replacement
+`restart-wm` starts — is a plain one, and the warm state is gone until the command
+above is run again.
+
+Usually started automatically by `start-lsp`, `start-mcp` or a CLI command in
+`--shared-server` mode. Can also be started manually for debugging.
+
+### Write-ahead log
+
+`--wal` has an environment variable equivalent: `FINECODE_WAL_ENABLED=1` (or
+`true`/`yes`/`on`).
 
 WAL storage and retention are fixed in this version:
 
 - WAL directory: `<venv>/state/finecode/wal/wm`
 - Max segment size: `1048576` bytes
 - Retention: last `20` segment files
-
-Usually started automatically by `start-lsp` or `start-mcp`. Can also be started manually for debugging.

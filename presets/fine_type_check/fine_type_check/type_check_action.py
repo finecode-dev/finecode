@@ -2,8 +2,8 @@
 import dataclasses
 import enum
 
-from finecode_extension_api import code_action
 from fine_inspect_code.diagnostic_types import DiagnosticFilesRunResult
+from finecode_extension_api import code_action
 from finecode_extension_api.resource_uri import ResourceUri
 
 
@@ -31,7 +31,9 @@ class TypeCheckRunContext(
 ): ...
 
 
-class TypeCheckAction(code_action.Action[TypeCheckRunPayload, TypeCheckRunContext, TypeCheckRunResult]):
+class TypeCheckAction(
+    code_action.Action[TypeCheckRunPayload, TypeCheckRunContext, TypeCheckRunResult]
+):
     DESCRIPTION = "Run type checkers across the workspace and report type errors."
     SCOPE = code_action.ActionScope.WORKSPACE
     PAYLOAD_TYPE = TypeCheckRunPayload

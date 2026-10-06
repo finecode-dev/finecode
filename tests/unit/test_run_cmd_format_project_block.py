@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import pathlib
 
-from finecode.cli_app.commands.run_cmd import _build_streaming_result, _format_project_block
+from finecode.cli_app.commands.run_cmd import (
+    _build_streaming_result,
+    _format_project_block,
+)
 
 
 def _action_result(text: str, return_code: int = 0) -> dict:

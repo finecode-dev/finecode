@@ -4,17 +4,17 @@ presets = [{ source = "fine_type_check" }]
 [tool.finecode.action.type_check_python_files]
 source = "fine_python_lang.TypeCheckPythonFilesAction"
 handlers = [
-    { name = "pyrefly", source = "fine_python_pyrefly.PyreflyTypeCheckFilesHandler", env = "dev_no_runtime", dependencies = [
-        "fine_python_pyrefly[jsonrpc]~=0.2.0a0",
-    ] },
+  { name = "pyrefly", source = "fine_python_pyrefly.PyreflyTypeCheckFilesHandler", env = "dev_no_runtime", dependencies = [
+    "fine_python_pyrefly[jsonrpc]~=0.2.0a0",
+  ] },
 ]
 
 [tool.finecode.extension.fine_python_pyrefly]
-dependencies_override = ["pyrefly==1.1.*"]
+dependencies_override = ["pyrefly==1.3.*"]
 
 [[tool.finecode.action_handler]]
 source = "fine_python_pip.PipInstallDepsInEnvHandler"
-config.editable_mode = 'compat'
+config.editable_mode = "compat"
 
 [[tool.finecode.service]]
 interface = "finecode_extension_api.interfaces.ijsonrpcclient.IJsonRpcClient"

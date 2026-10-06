@@ -1,13 +1,16 @@
 import pathlib
 from typing import Any
 
+from finecode_extension_api import code_action
+
 from fine_envs import create_envs_action
 from fine_envs.create_envs_discover_envs_handler import CreateEnvsDiscoverEnvsHandler
-from finecode_extension_api import code_action
 
 
 class _FakeProjectInfoProvider:
-    def __init__(self, project_def_path: pathlib.Path, raw_config: dict[str, Any]) -> None:
+    def __init__(
+        self, project_def_path: pathlib.Path, raw_config: dict[str, Any]
+    ) -> None:
         self._project_def_path = project_def_path
         self._raw_config = raw_config
 

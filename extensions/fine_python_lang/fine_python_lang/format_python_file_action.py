@@ -1,10 +1,10 @@
-from finecode_extension_api import code_action
 from fine_format.format_file_action import (
     FormatFileAction,
     FormatFileRunContext,
     FormatFileRunPayload,
     FormatFileRunResult,
 )
+from finecode_extension_api import code_action
 
 
 class FormatPythonFileAction(

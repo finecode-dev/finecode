@@ -15,8 +15,7 @@ class BuildDocsRunPayload(code_action.RunActionPayload):
     None = use the tool's default output location (e.g. site/, _build/html)."""
 
 
-class BuildDocsRunContext(code_action.RunActionContext[BuildDocsRunPayload]):
-    ...
+class BuildDocsRunContext(code_action.RunActionContext[BuildDocsRunPayload]): ...
 
 
 @dataclasses.dataclass

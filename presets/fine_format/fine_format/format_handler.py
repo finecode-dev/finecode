@@ -1,11 +1,12 @@
 # docs: docs/reference/actions.md
 import dataclasses
 
-from finecode_extension_api import code_action
 from fine_src_artifacts import list_src_artifact_files_by_lang_action
-from fine_format import format_action, format_files_action
+from finecode_extension_api import code_action
 from finecode_extension_api.interfaces import ifileeditor, ilogger, iprojectactionrunner
 from finecode_extension_api.resource_uri import ResourceUri, path_to_resource_uri
+
+from fine_format import format_action, format_files_action
 
 
 @dataclasses.dataclass
@@ -41,12 +42,13 @@ class FormatHandler(
                 # Performance optimisation: when the IDE triggers a background project
                 # format automatically, only format the currently opened files.
                 file_uris = [
-                    path_to_resource_uri(p)
-                    for p in self.file_editor.get_opened_files()
+                    path_to_resource_uri(p) for p in self.file_editor.get_opened_files()
                 ]
             else:
                 files_by_lang_result = await self.action_runner.run_action(
-                    action_type=iprojectactionrunner.ActionRef.from_type(list_src_artifact_files_by_lang_action.ListSrcArtifactFilesByLangAction),
+                    action_type=iprojectactionrunner.ActionRef.from_type(
+                        list_src_artifact_files_by_lang_action.ListSrcArtifactFilesByLangAction
+                    ),
                     payload=list_src_artifact_files_by_lang_action.ListSrcArtifactFilesByLangRunPayload(
                         langs=None
                     ),
@@ -60,9 +62,13 @@ class FormatHandler(
         else:
             file_uris = payload.file_paths
 
-        async with run_context.progress("Formatting files", total=len(file_uris)) as progress:
+        async with run_context.progress(
+            "Formatting files", total=len(file_uris)
+        ) as progress:
             async for partial in self.action_runner.run_action_iter(
-                action_type=iprojectactionrunner.ActionRef.from_type(format_files_action.FormatFilesAction),
+                action_type=iprojectactionrunner.ActionRef.from_type(
+                    format_files_action.FormatFilesAction
+                ),
                 payload=format_files_action.FormatFilesRunPayload(
                     file_paths=file_uris,
                     save=payload.save,

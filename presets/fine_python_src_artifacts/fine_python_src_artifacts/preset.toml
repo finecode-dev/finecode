@@ -1,11 +1,32 @@
 [tool.finecode]
 presets = [{ source = "fine_src_artifacts" }]
 
+[tool.finecode.action.build_python_artifact]
+source = "fine_python_lang.BuildPythonArtifactAction"
+
+[[tool.finecode.action.build_python_artifact.handlers]]
+name = "build_python_artifact_uv"
+source = "fine_python_uv.UvBuildPythonArtifactHandler"
+env = "dev_workspace"
+dependencies = ["fine_python_uv~=0.2.0a0"]
+
+[[tool.finecode.action.build_artifact.handlers]]
+name = "build_artifact_dispatch"
+source = "fine_src_artifacts.BuildArtifactDispatchHandler"
+env = "dev_workspace"
+dependencies = ["fine_src_artifacts~=0.1.0a0"]
+
 [[tool.finecode.action.get_src_artifact_language.handlers]]
 name = "get_src_artifact_language_python"
 source = "fine_python_lang.GetSrcArtifactLanguagePythonHandler"
-env = "dev_no_runtime"
+env = "dev_workspace"
 dependencies = ["fine_python_lang~=0.1.0a0"]
+
+[[tool.finecode.action.get_src_artifact_toolchain_range.handlers]]
+name = "get_src_artifact_toolchain_range_python"
+source = "fine_python_package_info.GetSrcArtifactToolchainRangePyHandler"
+env = "dev_no_runtime"
+dependencies = ["fine_python_package_info~=0.2.0a1"]
 
 [[tool.finecode.action.list_src_artifact_files_by_lang.handlers]]
 name = "list_src_artifact_files_by_lang_python"

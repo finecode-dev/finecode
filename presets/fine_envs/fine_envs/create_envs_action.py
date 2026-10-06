@@ -7,7 +7,7 @@ else:
     from typing_extensions import override
 
 from finecode_extension_api import code_action, textstyler
-from finecode_extension_api.resource_uri import ResourceUri
+from finecode_extension_api.resource_uri import ResourceUri, resource_uri_to_path
 
 
 @dataclasses.dataclass
@@ -19,6 +19,20 @@ class EnvInfo:
     interpreter: str | None = None
     """Canonical "<impl>@<version>" interpreter request (e.g. "cpython@3.11").
     None means the default interpreter — an ordinary single-interpreter env."""
+
+
+def env_label(env: EnvInfo) -> str:
+    """Human-readable ``<project>/<env_name>`` label for progress/log messages.
+
+    The env name alone is ambiguous when one dispatch call spans multiple
+    projects (e.g. prepare-envs' dev_workspace bootstrap step creates one
+    same-named "dev_workspace" env per subproject). ``venv_dir_path`` is
+    always ``<project_dir>/.venvs/<env_name>`` (every caller must supply it
+    to locate the venv), so the project directory name is recoverable for
+    any caller without a caller-supplied label.
+    """
+    project_dir = resource_uri_to_path(env.venv_dir_path).parent.parent
+    return f"{project_dir.name}/{env.name}"
 
 
 @dataclasses.dataclass
@@ -38,12 +52,14 @@ class CreateEnvsRunContext(code_action.RunActionContext[CreateEnvsRunPayload]):
         initial_payload: CreateEnvsRunPayload,
         meta: code_action.RunActionMeta,
         info_provider: code_action.RunContextInfoProvider,
+        progress_sender: code_action.ProgressSender = code_action._NOOP_PROGRESS_SENDER,
     ) -> None:
         super().__init__(
             run_id=run_id,
             initial_payload=initial_payload,
             meta=meta,
             info_provider=info_provider,
+            progress_sender=progress_sender,
         )
 
         self.envs: list[EnvInfo] | None = None
@@ -56,6 +72,11 @@ class CreateEnvsRunContext(code_action.RunActionContext[CreateEnvsRunPayload]):
 @dataclasses.dataclass
 class CreateEnvsRunResult(code_action.RunActionResult):
     errors: list[str]
+    created: bool = True
+    """Whether a new virtualenv was actually built, vs. a valid one already existing
+    and creation being skipped. Meaningful only for a single-env `CreateEnvAction`
+    result — unused/inert on the batch `CreateEnvsAction` aggregate, which nobody
+    reads this field on."""
 
     @override
     def update(self, other: code_action.RunActionResult) -> None:

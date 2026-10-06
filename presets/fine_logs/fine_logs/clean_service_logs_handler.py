@@ -1,17 +1,17 @@
 import dataclasses
 
 from finecode_extension_api import code_action
+from finecode_extension_api.interfaces import (
+    iextensionrunnerinfoprovider,
+    ilogger,
+)
+
 from fine_logs.clean_service_logs_action import (
     CleanServiceLogsAction,
     CleanServiceLogsRunContext,
     CleanServiceLogsRunPayload,
     CleanServiceLogsRunResult,
 )
-from finecode_extension_api.interfaces import (
-    iextensionrunnerinfoprovider,
-    ilogger,
-)
-
 from fine_logs.observability_log_utils import resolve_log_dir
 
 

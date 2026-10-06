@@ -7,7 +7,6 @@ source = "fine_format.FormatHandler"
 env = "dev_no_runtime"
 dependencies = ["fine_format~=0.1.0a0"]
 
-
 [tool.finecode.action.check_formatting]
 source = "fine_format.CheckFormattingAction"
 
@@ -17,7 +16,6 @@ source = "fine_format.CheckFormattingHandler"
 env = "dev_no_runtime"
 dependencies = ["fine_format~=0.1.0a0"]
 
-
 [tool.finecode.action.format_files]
 source = "fine_format.FormatFilesAction"
 
@@ -26,7 +24,6 @@ name = "format_files_iterate"
 source = "fine_format.FormatFilesIterateHandler"
 env = "dev_no_runtime"
 dependencies = ["fine_format~=0.1.0a0"]
-
 
 [tool.finecode.action.format_file]
 source = "fine_format.FormatFileAction"

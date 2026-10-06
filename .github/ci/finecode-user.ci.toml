@@ -1,0 +1,12 @@
+# CI counterpart to a developer's gitignored finecode-user.toml.
+#
+# The `.ci` infix is load-bearing: .gitignore ignores the unanchored name
+# `finecode-user.toml` at any depth, so a file here named exactly
+# `finecode-user.toml` could never be committed. This name is not ignored, which
+# is what lets the public repo track the CI copy while the developer copy stays
+# out of git. Do not "tidy" the infix away.
+
+presets = [{ source = "fine_knowledge" }]
+
+[dependency-groups]
+dev_workspace = ["fine_knowledge~=0.1.0a0"]

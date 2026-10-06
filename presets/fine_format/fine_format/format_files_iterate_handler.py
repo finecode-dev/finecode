@@ -1,6 +1,9 @@
 import dataclasses
 
 from finecode_extension_api import code_action
+from finecode_extension_api.interfaces import ilogger, iprojectactionrunner
+from finecode_extension_api.resource_uri import ResourceUri
+
 from fine_format import format_files_action
 from fine_format.format_file_action import (
     FormatFileAction,
@@ -8,8 +11,6 @@ from fine_format.format_file_action import (
     FormatFileRunPayload,
     FormatFileRunResult,
 )
-from finecode_extension_api.interfaces import ilogger, iprojectactionrunner
-from finecode_extension_api.resource_uri import ResourceUri
 
 
 @dataclasses.dataclass
@@ -30,8 +31,10 @@ class FormatFilesIterateHandler(
 
     The parent's file editor session is passed to each FormatFileAction via
     ``caller_kwargs`` so that all files share one session. Each file is
-    read and blocked individually in FormatFileRunContext.init(), and the block
-    is released when that file's run context exits.
+    read and claimed individually in FormatFileRunContext.init(), and the claim
+    is released when that file's run context exits. Concurrent per-file tasks
+    sharing this one session do not interfere, because modifier exclusion is
+    keyed by file path rather than by session.
     """
 
     def __init__(

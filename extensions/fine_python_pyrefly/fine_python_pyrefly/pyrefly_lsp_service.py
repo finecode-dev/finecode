@@ -1,24 +1,32 @@
 from __future__ import annotations
 
+import collections.abc
 import sys
 from pathlib import Path
-from typing import Any, override
+from typing import Any
 
-from finecode_extension_api import service
+if sys.version_info >= (3, 12):
+    from typing import override
+else:
+    from typing_extensions import override
+
+from fine_inspect_code.diagnostic_types import map_lsp_diagnostics
 from fine_lint.diagnostic_types import Diagnostic
 from fine_semantic_tokens.text_document_semantic_tokens_action import (
-    SEMANTIC_TOKEN_TYPES,
     SEMANTIC_TOKEN_MODIFIERS,
+    SEMANTIC_TOKEN_TYPES,
 )
-from finecode_extension_api.interfaces import (
-    ifileeditor,
-    ilspclient,
-    ilogger,
-    iextensionrunnerinfoprovider,
-)
+from finecode_extension_api import service
 from finecode_extension_api.contrib.lsp_service import LspService
-from fine_inspect_code.diagnostic_types import map_lsp_diagnostics
+from finecode_extension_api.interfaces import (
+    iextensionrunnerinfoprovider,
+    ifileeditor,
+    ilogger,
+    ilspclient,
+    iworkslots,
+)
 
+from fine_python_pyrefly.pyrefly_config import PyreflyConfig
 
 _PYREFLY_CLIENT_CAPABILITIES: dict[str, Any] = {
     "textDocument": {
@@ -26,7 +34,10 @@ _PYREFLY_CLIENT_CAPABILITIES: dict[str, Any] = {
             "dynamicRegistration": False,
             "didSave": True,
         },
-        "hover": {"dynamicRegistration": False, "contentFormat": ["markdown", "plaintext"]},
+        "hover": {
+            "dynamicRegistration": False,
+            "contentFormat": ["markdown", "plaintext"],
+        },
         "publishDiagnostics": {"relatedInformation": True},
         "semanticTokens": {
             "dynamicRegistration": False,
@@ -53,6 +64,10 @@ _PYREFLY_CLIENT_CAPABILITIES: dict[str, Any] = {
     "workspace": {
         "workspaceFolders": True,
         "configuration": True,
+        "didChangeWatchedFiles": {
+            "dynamicRegistration": True,
+            "relativePatternSupport": False,
+        },
     },
 }
 
@@ -66,13 +81,16 @@ class PyreflyLspService(service.DisposableService):
         file_editor: ifileeditor.IFileEditor,
         logger: ilogger.ILogger,
         extension_runner_info_provider: iextensionrunnerinfoprovider.IExtensionRunnerInfoProvider,
+        work_slots: iworkslots.IWorkSlots,
+        pyrefly_config: PyreflyConfig,
     ) -> None:
         pyrefly_bin = Path(sys.executable).parent / "pyrefly"
         self._lsp_service = LspService(
             lsp_client=lsp_client,
             file_editor=file_editor,
             logger=logger,
-            cmd=f"{pyrefly_bin} lsp",
+            work_slots=work_slots,
+            cmd=[str(pyrefly_bin), "lsp"],
             language_id="python",
             readable_id="pyrefly-lsp",
             client_capabilities=_PYREFLY_CLIENT_CAPABILITIES,
@@ -94,6 +112,8 @@ class PyreflyLspService(service.DisposableService):
         # naming conventions (env labels are arbitrary); this could be made configurable
         # in the future, per handler or at the action level.
         self._pyrefly_settings: dict[str, Any] = {}
+        self._settings_version = 0
+        self._sent_settings_version: int | None = None
         resolution_env = "dev"
         venv_dir = extension_runner_info_provider.get_venv_dir_path_of_env(
             resolution_env
@@ -114,6 +134,10 @@ class PyreflyLspService(service.DisposableService):
                 "pyrefly": {"extraPaths": [str(p) for p in site_packages]},
             }
         )
+        if pyrefly_config.lsp_config_path is not None:
+            self.update_settings(
+                {"pyrefly": {"configPath": str(pyrefly_config.lsp_config_path)}}
+            )
 
     @override
     async def init(self) -> None:
@@ -135,10 +159,30 @@ class PyreflyLspService(service.DisposableService):
         if pyrefly_settings is not None:
             self._pyrefly_settings = {**self._pyrefly_settings, **pyrefly_settings}
             settings = {**settings, "pyrefly": self._pyrefly_settings}
+        self._settings_version += 1
         self._lsp_service.update_settings(settings)
 
     async def ensure_started(self, root_uri: str) -> None:
+        """Start the server, then push settings that changed after a previous start.
+
+        Pyrefly rereads client settings on ``workspace/didChangeConfiguration``, so
+        settings registered after the server started are pushed instead of being lost.
+        The version is read before awaiting the start: an update landing while the
+        start is in flight belongs to the next call, not to the one already running.
+        """
+        version = self._settings_version
         await self._lsp_service.ensure_started(root_uri)
+        if self._sent_settings_version is None:
+            self._sent_settings_version = version
+            return
+        if version != self._sent_settings_version:
+            self._sent_settings_version = version
+            await self._lsp_service.send_settings()
+
+    async def sync_watched_files(
+        self, file_paths: collections.abc.Sequence[Path], recheck_timeout: float
+    ) -> set[Path]:
+        return await self._lsp_service.sync_watched_files(file_paths, recheck_timeout)
 
     async def check_file(
         self,
@@ -146,9 +190,7 @@ class PyreflyLspService(service.DisposableService):
         timeout: float = 30.0,
     ) -> list[Diagnostic]:
         raw_diagnostics = await self._lsp_service.check_file(file_path, timeout)
-        return map_lsp_diagnostics(
-            raw_diagnostics, default_source="pyrefly"
-        )
+        return map_lsp_diagnostics(raw_diagnostics, default_source="pyrefly")
 
     @property
     def server_capabilities(self) -> dict[str, Any]:
@@ -185,7 +227,11 @@ class PyreflyLspService(service.DisposableService):
         timeout: float = 30.0,
     ) -> list[dict[str, Any]] | None:
         return await self._lsp_service.get_references(
-            file_path, content, position, include_declaration=include_declaration, timeout=timeout
+            file_path,
+            content,
+            position,
+            include_declaration=include_declaration,
+            timeout=timeout,
         )
 
     async def get_type_definition(

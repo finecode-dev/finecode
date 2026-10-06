@@ -13,7 +13,10 @@ def _to_camel(name: str) -> str:
 
 def _to_camel_dict(obj: Any) -> Any:
     if dataclasses.is_dataclass(obj) and not isinstance(obj, type):
-        return {_to_camel(f.name): _to_camel_dict(getattr(obj, f.name)) for f in dataclasses.fields(obj)}
+        return {
+            _to_camel(f.name): _to_camel_dict(getattr(obj, f.name))
+            for f in dataclasses.fields(obj)
+        }
     elif isinstance(obj, list):
         return [_to_camel_dict(item) for item in obj]
     elif isinstance(obj, enum.Enum):

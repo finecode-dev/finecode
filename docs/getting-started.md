@@ -116,12 +116,18 @@ presets = [
 
 This goes in the project's `pyproject.toml`. You can also put project configuration in a separate `finecode.toml` file at the project root (see [Configuration](configuration.md#finecodetoml)).
 
-**Multiple projects?** Create a `finecode-workspace.toml` at the workspace root to declare workspace-scoped settings for multi-project workspaces, such as which local packages should be installed as editable installs:
+**Multiple projects?** Create a `finecode-workspace.toml` at the workspace root to declare workspace-scoped settings for multi-project workspaces, such as which local packages are workspace packages and how they are installed:
 
 ```toml
-[workspace]
-all_workspace_packages_editable = true
+[workspace.workspace_packages]
+all_projects = true
+
+[workspace.workspace_packages_install]
+local = "editable"
+ci = "wheel"
 ```
+
+Both tables are optional — those values are the defaults: every discovered project is a workspace package, local dev-envs install them editable, and the `ci` dev-env installs wheels built once from the checkout.
 
 ## 4. Prepare environments
 
