@@ -1,6 +1,6 @@
 [project]
 name = "finecode_knowledge"
-version = "0.1.0a0"
+version = "0.1.0a1"
 description = "Knowledge model engine for FineCode: entity/fact model, query IR and interpreter, memoization DAG. Carries no schema of its own -- a schema is declared by a separate package and handed to it (R20)."
 readme = "README.md"
 requires-python = ">=3.11"

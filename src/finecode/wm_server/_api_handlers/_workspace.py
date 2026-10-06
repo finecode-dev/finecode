@@ -348,7 +348,7 @@ async def _handle_list_actions(
     Result: ``{"actions": [...], "unresolvedProjects": [{"project", "error"}]}`` —
     ``unresolvedProjects`` is always present, ``[]`` when everything resolved.
     """
-    from finecode.wm_server.services import project_resolution_service
+    from finecode.wm_server.services import project_resolution_service, run_service
 
     params = params or {}
     project_filter = params.get("project")
@@ -404,31 +404,35 @@ async def _handle_list_actions(
 
     actions = []
     for project in projects:
+        targets = [
+            a
+            for a in project.actions
+            if (names is None or a.name in names)
+            and a.handlers
+            and a.canonical_source is None
+        ]
+        if targets:
+            try:
+                await run_service.resolve_unresolved_metadata(
+                    project, ws_context, actions=targets
+                )
+            except Exception as exc:
+                logger.debug(
+                    f"actions/list: could not resolve metadata in {project.dir_path}: {exc}"
+                )
         for action in project.actions:
             if names is not None and action.name not in names:
                 continue
-            if action.canonical_source is None:
-                from finecode.wm_server.services import run_service
-
-                if not action.handlers:
-                    logger.debug(
-                        f"actions/list: {action.source!r} in {project.dir_path} has no"
-                        " handlers; metadata left unresolved"
-                    )
-                else:
-                    try:
-                        await run_service.ensure_action_metadata(
-                            action, project, ws_context
-                        )
-                    except Exception as exc:
-                        logger.warning(
-                            f"actions/list: could not resolve metadata for {action.source!r} "
-                            f"in {project.dir_path}: {exc}"
-                        )
+            if action.canonical_source is None and action.handlers:
+                logger.debug(
+                    f"actions/list: could not resolve metadata for {action.source!r} "
+                    f"in {project.dir_path}"
+                )
             actions.append(
                 {
                     "name": action.name,
                     "source": action.source,
+                    "canonicalSource": action.canonical_source,
                     "scope": action.scope.value if action.scope is not None else None,
                     "project": str(project.dir_path),
                     "handlers": [

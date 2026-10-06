@@ -813,10 +813,10 @@ List extension runners and their statuses.
 {
   "runners": [
     {
-      "project": "/abs/path/to/project",
-      "env": "runtime",
+      "projectPath": "/abs/path/to/project",
+      "envName": "runtime",
       "status": "RUNNING",
-      "readable_id": "my_project::runtime"
+      "readableId": "/abs/path/to/project (runtime)"
     }
   ]
 }
@@ -971,7 +971,11 @@ maximum, a finite number in `(0, 600]`; the default is 30.
 clients, lag), `projects` (total / running / active), `runners` (by status,
 running, starting, active, per env), `budget` (total, source), `workSlots`
 (used / free / waiting / stall escape / holders), `startupSlots` (used / free
-/ waiting), `inFlightRuns` (oldest first), `peaks` since server start
+/ waiting, including one-shot metadata dumps), `actionMetaDumps` (`running` /
+`waiting` gauges; `spawned` counts every process started, retry attempts
+included; `ok` / `skew` / `envUnusable` / `timeout` count one per completed
+dump task; `skewFromCache` counts skew answers served from a persisted marker
+with no spawn), `inFlightRuns` (oldest first), `peaks` since server start
 (including `hostPsiMemoryFullMax`, the max PSI `memory full avg10` sampled),
 `host` (memory / swap / cgroup / PSI / load, plus `memoryPressure`: null when
 unevaluable, else `{"active", "reasons"}`), and `processes` (only with

@@ -483,6 +483,7 @@ async def test_snapshot_has_every_key_and_nulls_when_host_missing(
         "budget",
         "workSlots",
         "startupSlots",
+        "actionMetaDumps",
         "inFlightRuns",
         "peaks",
         "host",

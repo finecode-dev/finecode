@@ -7,7 +7,6 @@ runner reaches this code through a slot rather than importing it.
 
 from __future__ import annotations
 
-import asyncio
 import json
 from pathlib import Path
 
@@ -27,7 +26,7 @@ from finecode.wm_server.runner.runner_client import (
 from finecode.wm_server.services import project_resolution_service
 from finecode.wm_server.services.run_service.project_executor import ProjectExecutor
 from finecode.wm_server.services.run_service.proxy_utils import (
-    ensure_action_metadata,
+    find_action_by_canonical_source,
     find_all_projects_with_action,
     find_subactions_for_parent,
 )
@@ -183,42 +182,10 @@ class _BridgeHandlers:
                 f"Project {runner.working_dir_path} has no valid config"
             )
 
-        def _find_action_name() -> str | None:
-            return next(
-                (
-                    a.name
-                    for a in project.actions
-                    if a.canonical_source == params.action_source
-                ),
-                None,
-            )
-
-        action_name = _find_action_name()
-        if action_name is None:
-            # canonical_source is resolved asynchronously by each env's runner
-            # (update_runner_config -> resolveActionMeta). Right after a restart
-            # the runner that owns this action's handlers may still be
-            # initializing when this back-channel call arrives. Give any
-            # not-yet-resolved action in this project a chance to resolve
-            # before giving up, reusing the same mechanism the external API
-            # boundary already relies on (ensure_action_metadata). Each attempt
-            # is independent — one action's metadata being unresolvable must
-            # not cancel another action's resolution that is about to succeed,
-            # so gather (not TaskGroup) with return_exceptions=True.
-            # TODO: untested. Needs a unit test with ensure_action_metadata
-            # stubbed to resolve canonical_source as a side effect (race
-            # recovers) and stubbed as a no-op (still raises
-            # ActionNotFoundError).
-            unresolved = [a for a in project.actions if a.canonical_source is None]
-            if unresolved:
-                await asyncio.gather(
-                    *(
-                        ensure_action_metadata(a, project, ws_context)
-                        for a in unresolved
-                    ),
-                    return_exceptions=True,
-                )
-                action_name = _find_action_name()
+        action = await find_action_by_canonical_source(
+            params.action_source, project, ws_context
+        )
+        action_name = action.name if action is not None else None
 
         if action_name is None:
             known = [

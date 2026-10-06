@@ -1045,9 +1045,10 @@ The payload carries `format_output` (default `true`): with `true`, the
 rendered content goes through the project's formatter before saving as
 described above; with `false`, nothing is formatted — no `format_file`
 dispatch happens and the rendered content is written as-is. That is the
-machine-input mode used by the uv env handlers (which pass `format_output:
-false` and point the target file into a private temp directory instead of
-`finecode_config_dump/`), and the escape hatch when a formatter cannot run.
+machine-input mode used by the uv `create_env` handler (which passes
+`format_output: false` and points the target file into a private temp directory instead
+of `finecode_config_dump/`, for `uv venv` to read), and the escape hatch when a formatter
+cannot run.
 
 ---
 

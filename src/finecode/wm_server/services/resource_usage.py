@@ -82,6 +82,7 @@ def build_snapshot(ws_context: context.WorkspaceContext, wm: WmProcessInfo) -> d
     startup_total = ws_context.subprocess_budgets.startup_cap
     startup_used = counts.startup_slots_used
     startup_waiting = counts.startup_slots_waiting
+    dump_stats = ws_context.action_meta_dump_stats
 
     runs: list[dict] = []
     for runs_by_id in ws_context.in_flight_runs.values():
@@ -149,6 +150,16 @@ def build_snapshot(ws_context: context.WorkspaceContext, wm: WmProcessInfo) -> d
             "used": startup_used,
             "free": max(0, startup_total - startup_used),
             "waiting": startup_waiting,
+        },
+        "actionMetaDumps": {
+            "running": dump_stats.running,
+            "waiting": dump_stats.waiting,
+            "spawned": dump_stats.spawned,
+            "ok": dump_stats.ok,
+            "skew": dump_stats.skew,
+            "envUnusable": dump_stats.env_unusable,
+            "timeout": dump_stats.timeout,
+            "skewFromCache": dump_stats.skew_from_cache,
         },
         "inFlightRuns": runs,
         "peaks": {

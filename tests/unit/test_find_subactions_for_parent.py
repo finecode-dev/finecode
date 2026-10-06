@@ -99,9 +99,9 @@ async def test_find_subactions_for_parent_resolves_unresolved_actions_on_demand(
     tmp_path: pathlib.Path,
 ) -> None:
     """An action not yet imported by any ER (canonical_source is None) must
-    still be discoverable: the WM must resolve it on demand rather than only
-    ever consulting an already-populated cache, otherwise discovery would
-    silently depend on which envs happened to have started already."""
+    still be discoverable: the cache or dump resolves it without starting
+    any runner, otherwise discovery would silently depend on which envs
+    happened to have started already."""
     python_subaction = _make_action(
         name="check_python_imports",
         source="fine_python_lang.CheckPythonImportsAction",
@@ -116,17 +116,27 @@ async def test_find_subactions_for_parent_resolves_unresolved_actions_on_demand(
         env_name="dev_workspace",
     )
 
-    async def _fake_start_runner(*, project_def, env_name, **_):
-        assert env_name == "dev_no_runtime"
+    async def _fake_resolve_unresolved(project, ws_context, **_):
         python_subaction.canonical_source = "resolved." + python_subaction.source
         python_subaction.parent_action_source = _PARENT_SOURCE
         python_subaction.language = "python"
-        return wm_testing.make_running_runner(
-            working_dir_path=project_def.dir_path, env_name=env_name
-        )
+        python_subaction.meta_from_cache = True
+        return {}
 
-    with mock.patch.object(
-        runner_manager, "start_runner", side_effect=_fake_start_runner
+    with (
+        mock.patch.object(
+            runner_manager, "start_runner", side_effect=AssertionError("must not start")
+        ),
+        mock.patch.object(
+            proxy_utils,
+            "ensure_action_metadata",
+            side_effect=AssertionError("must not start"),
+        ),
+        mock.patch.object(
+            proxy_utils.action_meta_cache,
+            "resolve_unresolved",
+            side_effect=_fake_resolve_unresolved,
+        ),
     ):
         result = await proxy_utils.find_subactions_for_parent(
             _PARENT_SOURCE, project, ws_context
@@ -138,7 +148,7 @@ async def test_find_subactions_for_parent_resolves_unresolved_actions_on_demand(
 async def test_find_subactions_for_parent_skips_actions_that_cannot_be_resolved(
     tmp_path: pathlib.Path,
 ) -> None:
-    """A best-effort query: one action's env failing to start must not fail
+    """A best-effort query: one action's env failing to dump must not fail
     the whole discovery — it's simply not a candidate."""
     broken_action = _make_action(
         name="check_python_imports",
@@ -154,11 +164,32 @@ async def test_find_subactions_for_parent_skips_actions_that_cannot_be_resolved(
         env_name="dev_workspace",
     )
 
-    async def _failing_start_runner(**_):
-        raise runner_manager.RunnerFailedToStart("boom")
+    async def _failing_resolve(project, ws_context, **_):
+        from finecode.wm_server import context as wm_context
 
-    with mock.patch.object(
-        runner_manager, "start_runner", side_effect=_failing_start_runner
+        return {
+            broken_action.source: wm_context.ActionMetaFailure(
+                kind="env_unusable",
+                reason="boom",
+                stamps=(),
+                site_packages_mtime_ns=None,
+            )
+        }
+
+    with (
+        mock.patch.object(
+            runner_manager, "start_runner", side_effect=AssertionError("must not start")
+        ),
+        mock.patch.object(
+            proxy_utils,
+            "ensure_action_metadata",
+            side_effect=AssertionError("must not start"),
+        ),
+        mock.patch.object(
+            proxy_utils.action_meta_cache,
+            "resolve_unresolved",
+            side_effect=_failing_resolve,
+        ),
     ):
         result = await proxy_utils.find_subactions_for_parent(
             _PARENT_SOURCE, project, ws_context
@@ -193,3 +224,75 @@ async def test_find_subactions_for_parent_excludes_matches_without_a_language(
     )
 
     assert result == []
+
+
+async def test_find_subactions_never_starts_a_runner(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Opportunistic discovery resolves across envs without starting anything.
+
+    Subactions in two unstarted envs resolve through the cache or dump and
+    are returned; one that still fails is excluded, so a workspace-wide
+    format never pays for envs no action executes.
+    """
+    from finecode.wm_server import context as wm_context
+
+    python_subaction = _make_action(
+        name="check_python_imports",
+        source="fine_python_lang.CheckPythonImportsAction",
+        handler_env="dep_graph",
+    )
+    toml_subaction = _make_action(
+        name="check_toml",
+        source="fine_toml_lang.CheckTomlAction",
+        handler_env="wal_explorer",
+    )
+    broken_action = _make_action(
+        name="check_broken",
+        source="fine_broken.CheckBrokenAction",
+        handler_env="dev",
+    )
+    project = _make_project(tmp_path, [python_subaction, toml_subaction, broken_action])
+    ws_context = wm_testing.make_workspace_context(
+        project=project,
+        runner=wm_testing.make_running_runner(
+            working_dir_path=tmp_path, env_name="dev_workspace"
+        ),
+        env_name="dev_workspace",
+    )
+
+    async def _fake_resolve_unresolved(project, ws_context, **_):
+        for action in (python_subaction, toml_subaction):
+            action.canonical_source = "resolved." + action.source
+            action.parent_action_source = _PARENT_SOURCE
+            action.language = "python"
+            action.meta_from_cache = True
+        return {
+            broken_action.source: wm_context.ActionMetaFailure(
+                kind="env_unusable",
+                reason="boom",
+                stamps=(),
+                site_packages_mtime_ns=None,
+            )
+        }
+
+    with (
+        mock.patch.object(
+            runner_manager, "start_runner", side_effect=AssertionError("must not start")
+        ),
+        mock.patch.object(
+            proxy_utils,
+            "ensure_action_metadata",
+            side_effect=AssertionError("must not start"),
+        ),
+        mock.patch.object(
+            proxy_utils.action_meta_cache,
+            "resolve_unresolved",
+            side_effect=_fake_resolve_unresolved,
+        ),
+    ):
+        result = await proxy_utils.find_subactions_for_parent(
+            _PARENT_SOURCE, project, ws_context
+        )
+
+    assert result == [python_subaction, toml_subaction]

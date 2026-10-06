@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import pathlib
 
+import pytest
 from finecode_extension_api.interfaces.irepositorycredentialsprovider import (
     IRepositoryCredentialsProvider,
 )
 
 from finecode_extension_runner import schemas
+from finecode_extension_runner._services.run_action import ActionFailedException
 from finecode_extension_runner.impls.repository_credentials_provider import (
     ConfigRepositoryCredentialsProvider,
 )
@@ -61,6 +63,38 @@ async def test_service_config_seeds_the_default_provider(
         assert credentials is not None
         assert credentials.username == "__token__"
         assert credentials.password == "pypi-token"
+
+
+async def test_invalid_service_config_names_the_offending_field(
+    tmp_path: pathlib.Path,
+) -> None:
+    """A malformed ``[[tool.finecode.service]]`` declaration must fail with the
+    offending field named. The raw validation group only says "(1
+    sub-exception)", which leaves an operator unable to find the bad field."""
+    declaration = schemas.ServiceDeclaration(
+        interface=_INTERFACE_SOURCE,
+        source=_IMPL_SOURCE,
+        config={
+            "repositories": [
+                {
+                    "name": "testpypi",
+                    "upload_url": "https://test.pypi.org/legacy/",
+                },
+            ],
+        },
+    )
+
+    async with handler_test_session(
+        project_dir=tmp_path,
+        actions={},
+        service_declarations=[declaration],
+    ) as session:
+        with pytest.raises(ActionFailedException) as exc_info:
+            await session.service(IRepositoryCredentialsProvider)
+
+    assert "IRepositoryCredentialsProvider" in exc_info.value.message
+    assert "required field missing" in exc_info.value.message
+    assert "$.repositories[0]" in exc_info.value.message
 
 
 async def test_readers_and_concrete_injected_seeding_handler_share_one_instance(

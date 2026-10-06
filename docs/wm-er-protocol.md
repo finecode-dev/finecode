@@ -277,6 +277,22 @@ protocol even though the runner never became reachable. (Regression-tested in
     across projects — anything keying handlers, such as the knowledge extractor —
     must key on `canonicalSource`, because two different aliases can name one handler.
 
+- One-shot action-metadata dump (CLI)
+  - Argv: `python -m finecode_extension_runner.cli dump-action-meta --project-path=<dir>`,
+    with `cwd` set to the project dir and `VIRTUAL_ENV` removed from the environment
+    (the same launch as an ER start). Stdin: `{"sources": ["<configSource>", ...]}`.
+  - Stdout carries only the format-1 document: `{"format": 1, "startedNs": int,
+    "actionMetaFile": <fingerprint of action_meta.py>, "header": {"sysPath",
+    "pythonpath", "sitePackages": {"path", "dir_mtime_ns", "pth": [...]},
+    "headerStable": bool}, "entries": {"<source>": {"meta", "files", "dirs"}},
+    "failures": {"<source>": {"error", "files"}}}`. fd 1 is redirected to stderr
+    at the fd level before the imports, so import-time prints cannot corrupt it.
+  - Exit codes: 0 answered (even with per-source `failures`); 2 is click's usage
+    error, which is how the WM detects an older ER without the subcommand; any other
+    non-zero exit, or unparseable stdout, means the env cannot run the dump.
+  - It shares `action_meta.action_meta` with `finecodeRunner/resolveActionMeta`, so
+    `meta` equals that command's per-action entry for the same class.
+
 - `actions/resolveSource`
   - Params: `{ "source": string }` — an arbitrary import-path alias to resolve.
   - Result: `{ "canonicalSource": string }` — the fully qualified class path
@@ -369,8 +385,8 @@ protocol even though the runner never became reachable. (Regression-tested in
     different env than the caller — an ER only ever knows the actions its own env
     executes, so cross-env subaction discovery is delegated to the WM, which has
     the full project-wide action topology. Actions not yet resolved by any runner
-    are resolved on demand (starting the handler's env if needed) before being
-    checked against `parentActionSource`; an action that still cannot be resolved
+    are resolved from the per-venv cache or a one-shot dump; never starts a runner.
+    An action that still cannot be resolved
     is simply excluded rather than failing the whole request.
 
 - `finecode/listWorkspaceActions`

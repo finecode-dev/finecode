@@ -392,8 +392,6 @@ def _install_ac2_update_config(
         *, runner, project, handlers_to_initialize, ws_context, pass_label="other"
     ):
         if runner.env_name == "e1":
-            # Runner A: its registered getActionsForParent handler runs the real
-            # resolution chain, which starts B (env e2).
             impl = runner.client.feature_impls[
                 _internal_client_types.GET_ACTIONS_FOR_PARENT
             ]
@@ -401,24 +399,51 @@ def _install_ac2_update_config(
                 parent_action_source="test.actions.TestAction"
             )
             await impl(params)
-        else:
-            # Runner B: resolve the action's metadata so the resolution completes.
-            for action in project.actions:
-                action.canonical_source = "test.actions.TestAction"
         return None
 
     monkeypatch.setattr(runner_manager, "update_runner_config", _update_config)
 
 
+def _install_ac2_dump(monkeypatch: pytest.MonkeyPatch, calls: list) -> None:
+    from finecode.wm_server.runner import action_meta_dump
+
+    async def _fake_dump(python_cmd, project_dir, sources, *, attempt_timeout):
+        calls.append(list(sources))
+        return action_meta_dump.DumpOutcome(
+            kind="ok",
+            document={
+                "format": 1,
+                "startedNs": 1,
+                "actionMetaFile": None,
+                "header": {"headerStable": True},
+                "entries": {
+                    source: {
+                        "meta": {
+                            "canonical_source": source,
+                            "runs_concurrently": False,
+                            "scope": "project",
+                            "parentActionSource": "test.actions.TestAction",
+                            "language": "python",
+                            "fileLoc": None,
+                        },
+                        "files": [],
+                        "dirs": [],
+                    }
+                    for source in sources
+                },
+                "failures": {},
+            },
+        )
+
+    monkeypatch.setattr(action_meta_dump, "run_dump", _fake_dump)
+
+
 async def test_get_actions_for_parent_yields_the_slot_and_completes(
     tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A `getActionsForParent` request that reaches `ensure_action_metadata`
-    while its runner holds the startup slot must yield the slot, or runner B's
-    on-demand start would queue forever on A's own slot. Completion alone is not
-    evidence — `find_subactions_for_parent` swallows errors from
-    `ensure_action_metadata` — so the test also asserts B reached RUNNING, the
-    action got its canonical_source, and a yield record was emitted."""
+    """A `getActionsForParent` from INITIALIZING runner A yields the slot so the
+    patched dump acquires it: the action resolves from the dump and env e2 is
+    never started."""
     project = wm_testing.make_single_action_project(
         dir_path=tmp_path, action_name="a", handler_env="e2"
     )
@@ -430,6 +455,8 @@ async def test_get_actions_for_parent_yields_the_slot_and_completes(
     await _patch_start_environment(monkeypatch, ws_context=ws_context)
     await _patch_success_init(monkeypatch)
     _install_ac2_update_config(monkeypatch, project)
+    dump_calls: list = []
+    _install_ac2_dump(monkeypatch, dump_calls)
 
     records: list[str] = []
     sink_id = logger.add(
@@ -447,9 +474,11 @@ async def test_get_actions_for_parent_yields_the_slot_and_completes(
         logger.remove(sink_id)
 
     a = _runner_from_context(ws_context, project, "e1")
-    b = _runner_from_context(ws_context, project, "e2")
     assert a.status == domain.ExtensionRunnerStatus.RUNNING
-    assert b.status == domain.ExtensionRunnerStatus.RUNNING
+    assert dump_calls, "expected the dump to acquire the yielded slot"
+    assert "e2" not in ws_context.ws_projects_extension_runners.get(
+        project.dir_path, {}
+    )
     assert all(action.canonical_source is not None for action in project.actions)
     assert any(
         "startup slot yielded" in message
@@ -462,10 +491,10 @@ async def test_get_actions_for_parent_yields_the_slot_and_completes(
 async def test_without_yield_same_cycle_hangs_on_the_slot(
     tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Falsifying variant of the AC2 cycle: with the yield wrapper disabled, the
-    same test deadlocks — the semaphore is exhausted (A holds the only slot) and
-    B's client was never spawned. That ties the hang to the slot and to nothing
-    else: ``er_startup_semaphore._value == 0`` and B was never started."""
+    """Falsifying variant: with the yield disabled, the dump stays queued behind
+    A's slot and is never spawned — the semaphore reads 0 and no dump runs."""
+    from finecode.wm_server.runner import action_meta_dump
+
     project = wm_testing.make_single_action_project(
         dir_path=tmp_path, action_name="a", handler_env="e2"
     )
@@ -480,6 +509,14 @@ async def test_without_yield_same_cycle_hangs_on_the_slot(
     monkeypatch.setattr(
         runner_manager, "_yield_startup_slot", lambda runner, method, **kwargs: None
     )
+    dump_calls: list = []
+
+    async def _never_dump(python_cmd, project_dir, sources, *, attempt_timeout):
+        dump_calls.append(list(sources))
+        await asyncio.sleep(30.0)
+        return action_meta_dump.DumpOutcome(kind="ok", document={})
+
+    monkeypatch.setattr(action_meta_dump, "run_dump", _never_dump)
 
     task = asyncio.create_task(
         runner_manager._start_runner(
@@ -490,28 +527,19 @@ async def test_without_yield_same_cycle_hangs_on_the_slot(
         )
     )
     async with asyncio.timeout(5):
-        while "e2" not in ws_context.ws_projects_extension_runners.get(
-            project.dir_path, {}
-        ):
+        while ws_context.action_meta_dump_stats.waiting == 0:
             await asyncio.sleep(0.01)
-        b = _runner_from_context(ws_context, project, "e2")
-        while b.status != domain.ExtensionRunnerStatus.INITIALIZING:
-            await asyncio.sleep(0.01)
-        # The deadlock is live: A holds the slot, B is queued behind it.
         assert ws_context.er_startup_semaphore._value == 0
-        b_client = next(
-            client
-            for client in _FakeJsonRpcClient.instances
-            if getattr(client, "runner_ref", None) is b
-        )
-        assert not b_client.start_entered.is_set()
-        with pytest.raises(TimeoutError):
-            async with asyncio.timeout(1):
-                await task
+        await asyncio.sleep(0.2)
+        assert dump_calls == []
+        assert ws_context.action_meta_dump_stats.spawned == 0
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
 
-    # Both abandon paths ran: every waiter released, the slot is back.
-    assert ws_context.er_startup_semaphore._value == 1
-    assert a_and_b_events_set(ws_context, project, "e1", "e2")
+    assert "e2" not in ws_context.ws_projects_extension_runners.get(
+        project.dir_path, {}
+    )
 
 
 def a_and_b_events_set(ws_context, project, *envs) -> bool:

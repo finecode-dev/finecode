@@ -8,6 +8,10 @@
 # wm_server imports _api_handlers at startup. An ER's first back-channel call therefore
 # always finds the slot filled. Keep that chain intact — breaking it turns ER-initiated
 # runs into "no run-dispatch service installed" errors rather than an import failure.
+from finecode.wm_server.services.action_meta_cache import (
+    resolve_unresolved as resolve_unresolved_metadata,
+)
+
 from . import er_dispatch  # noqa: F401
 from .exceptions import (
     ActionCancelledError,
@@ -26,6 +30,7 @@ from .proxy_utils import (
     RunActionTrigger,
     RunResultFormat,
     ensure_action_metadata,
+    find_action_by_canonical_source,
     find_action_project_and_run,
     find_all_projects_with_action,
     find_projects_with_actions,
@@ -51,10 +56,12 @@ __all__ = [
     "StartingEnvironmentsFailed",
     "WorkspaceExecutor",
     "ensure_action_metadata",
+    "find_action_by_canonical_source",
     "find_action_project_and_run",
     "find_all_projects_with_action",
     "find_projects_with_actions",
     "find_subactions_for_parent",
+    "resolve_unresolved_metadata",
     "run_action",
     "run_actions_in_projects",
     "run_with_partial_results",

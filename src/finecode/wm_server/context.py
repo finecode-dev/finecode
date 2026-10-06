@@ -70,6 +70,26 @@ class ResourcePeaks:
                 )
 
 
+@dataclass(frozen=True)
+class ActionMetaFailure:
+    kind: str
+    reason: str
+    stamps: tuple[dict[str, Any], ...] = ()
+    site_packages_mtime_ns: int | None = None
+
+
+@dataclass
+class ActionMetaDumpStats:
+    running: int = 0
+    waiting: int = 0
+    spawned: int = 0
+    ok: int = 0
+    skew: int = 0
+    env_unusable: int = 0
+    timeout: int = 0
+    skew_from_cache: int = 0
+
+
 @dataclass
 class WorkspaceContext:
     """Shared mutable state of the WM server.
@@ -232,6 +252,16 @@ class WorkspaceContext:
     project_resolution_tasks: dict[Path, asyncio.Future[dict[Path, str]]] = field(
         default_factory=dict
     )
+
+    action_meta_dump_tasks: dict[Path, asyncio.Task[Any]] = field(default_factory=dict)
+    action_meta_failures: dict[tuple[Path, str | None], ActionMetaFailure] = field(
+        default_factory=dict
+    )
+    action_meta_skew_logged: set[Path] = field(default_factory=set)
+    action_meta_dump_stats: ActionMetaDumpStats = field(
+        default_factory=ActionMetaDumpStats
+    )
+    shutting_down: bool = False
 
     # --- Caches (lazily populated; must be invalidated on project changes) -------
 

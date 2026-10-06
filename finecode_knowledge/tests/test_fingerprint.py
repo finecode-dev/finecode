@@ -10,6 +10,7 @@ cover the capture and the round trip; the walk that consumes them is
 from __future__ import annotations
 
 import json
+import os
 import pathlib
 
 import pytest
@@ -19,7 +20,7 @@ from finecode_knowledge.fact_file import read_facts, write_facts
 from finecode_knowledge.model.bands import Band
 from finecode_knowledge.model.errors import SchemaError
 from finecode_knowledge.model.facts import FieldFact, Provenance, RunStamp
-from finecode_knowledge.model.fingerprint import capture, resolve
+from finecode_knowledge.model.fingerprint import capture, resolve, unchanged
 from finecode_knowledge.model.store import FactStore
 from finecode_knowledge.model.unit import Unit
 
@@ -159,3 +160,71 @@ def test_editing_an_input_changes_its_hash_but_an_untouched_one_keeps_it(tmp_pat
 
     assert after["a.txt"].sha256 != before["a.txt"].sha256
     assert after["b.txt"].sha256 == before["b.txt"].sha256
+
+
+def test_unchanged_trusts_the_gate_without_hashing(tmp_path, monkeypatch) -> None:
+    """An untouched file is confirmed by stat alone, which is what keeps checks cheap."""
+    target = tmp_path / "a.txt"
+    target.write_bytes(b"hello")
+    fingerprint = capture("a.txt", tmp_path)
+
+    def _fail(*args, **kwargs):
+        raise AssertionError("must not hash on a gate hit")
+
+    monkeypatch.setattr("hashlib.sha256", _fail)
+
+    assert unchanged(fingerprint, tmp_path) is True
+
+
+def test_unchanged_accepts_same_content_with_a_new_mtime(tmp_path) -> None:
+    """Checkout-style rewrites move the mtime with identical content, so the hash decides."""
+    target = tmp_path / "a.txt"
+    target.write_bytes(b"hello")
+    fingerprint = capture("a.txt", tmp_path)
+
+    target.write_bytes(b"hello")
+
+    assert unchanged(fingerprint, tmp_path) is True
+
+
+def test_unchanged_trusts_size_and_mtime_when_content_differs(tmp_path) -> None:
+    """The gate is trusted: a same-size edit with its mtime set back reads as unchanged."""
+    target = tmp_path / "a.txt"
+    target.write_bytes(b"hello")
+    fingerprint = capture("a.txt", tmp_path)
+    stat = target.stat()
+
+    target.write_bytes(b"HELLO")
+    os.utime(target, ns=(stat.st_atime_ns, stat.st_mtime_ns))
+
+    assert unchanged(fingerprint, tmp_path) is True
+
+
+def test_unchanged_rejects_a_same_size_edit_with_a_new_mtime(tmp_path) -> None:
+    """A same-size edit that moves the mtime fails, so real changes are never missed."""
+    target = tmp_path / "a.txt"
+    target.write_bytes(b"hello")
+    fingerprint = capture("a.txt", tmp_path)
+
+    target.write_bytes(b"HELLO")
+
+    assert unchanged(fingerprint, tmp_path) is False
+
+
+def test_unchanged_returns_false_for_a_missing_file(tmp_path) -> None:
+    """A deleted input cannot be confirmed, so the bucket is re-extracted."""
+    target = tmp_path / "a.txt"
+    target.write_bytes(b"hello")
+    fingerprint = capture("a.txt", tmp_path)
+    target.unlink()
+
+    assert unchanged(fingerprint, tmp_path) is False
+
+
+def test_unchanged_accepts_an_absolute_path_outside_the_root(tmp_path) -> None:
+    """Absolute inputs stay usable after a move, because they were never relative."""
+    outside = tmp_path / "elsewhere.txt"
+    outside.write_bytes(b"hello")
+    fingerprint = capture(str(outside), tmp_path / "ws")
+
+    assert unchanged(fingerprint, tmp_path / "ws") is True

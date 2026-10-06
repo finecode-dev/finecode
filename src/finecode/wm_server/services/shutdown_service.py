@@ -4,10 +4,15 @@ from loguru import logger
 
 from finecode.wm_server import context
 from finecode.wm_server.runner import runner_client, runner_manager
-from finecode.wm_server.services import knowledge_service
+from finecode.wm_server.services import action_meta_cache, knowledge_service
 
 
 async def on_shutdown(ws_context: context.WorkspaceContext) -> None:
+    ws_context.shutting_down = True
+    await asyncio.gather(
+        *action_meta_cache.cancel_dumps(ws_context), return_exceptions=True
+    )
+
     # Knowledge fact writes are throttled, so a crash between them can lose
     # the refreshes since the last one; a graceful shutdown has no reason to
     # accept even that, so it flushes unconditionally before anything else --

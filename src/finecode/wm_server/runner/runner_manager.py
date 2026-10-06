@@ -72,7 +72,7 @@ _STARTUP_SLOT_YIELDING_METHODS: typing.Final[frozenset[str]] = frozenset(
         _internal_client_types.RUN_ACTION_IN_PROJECT,
         _internal_client_types.RUN_ACTION_IN_WORKSPACE,
         _internal_client_types.LEASE_PROCESS_BUDGET,
-        # Subaction resolution starts the action's handler-env runner on demand.
+        # Subaction resolution may run a one-shot metadata dump, which takes a startup slot.
         _internal_client_types.GET_ACTIONS_FOR_PARENT,
         # Knowledge extraction runs the DAG and awaits its I/O.
         _internal_client_types.KNOWLEDGE_REGISTER_SCHEMA,
@@ -1571,6 +1571,7 @@ def propagate_action_meta(
                 continue
             if action.canonical_source is None:
                 action.canonical_source = resolved.canonical_source
+            action.meta_from_cache = resolved.meta_from_cache
             action.scope = resolved.scope
             action.runs_concurrently = resolved.runs_concurrently
             if action.parent_action_source is None:
@@ -1650,20 +1651,46 @@ async def update_runner_config(
         if meta is None:
             actions_without_meta.append(action.source)
         else:
-            # Use the first runner that can successfully import an action to set its
-            # canonical_source.  Multiple runners for the same project should agree on
-            # canonical paths, so "first wins" is safe.
-            if action.canonical_source is None:
+            if (
+                action.meta_from_cache
+                and action.handlers
+                and runner.env_name == action.handlers[0].env
+            ):
+                reported = (
+                    meta["canonical_source"],
+                    meta.get("parentActionSource"),
+                    meta.get("language"),
+                )
+                cached = (
+                    action.canonical_source,
+                    action.parent_action_source,
+                    action.language,
+                )
+                if reported != cached:
+                    logger.warning(
+                        f"Action {action.name} in {project.dir_path} resolved from cache"
+                        f" as {cached} but env {runner.env_name} reports {reported}"
+                    )
                 action.canonical_source = meta["canonical_source"]
+                action.parent_action_source = meta.get("parentActionSource")
+                action.language = meta.get("language")
+                action.file_loc = meta.get("fileLoc")
+                action.meta_from_cache = False
+            else:
+                # Use the first runner that can successfully import an action to set its
+                # canonical_source.  Multiple runners for the same project should agree on
+                # canonical paths, so "first wins" is safe.
+                if action.canonical_source is None:
+                    action.canonical_source = meta["canonical_source"]
+                if action.parent_action_source is None:
+                    action.parent_action_source = meta.get("parentActionSource")
+                if action.language is None:
+                    action.language = meta.get("language")
+                if action.file_loc is None:
+                    action.file_loc = meta.get("fileLoc")
 
             action.runs_concurrently = meta["runs_concurrently"]
             action.scope = domain.ActionScope(meta["scope"])
-            if action.parent_action_source is None:
-                action.parent_action_source = meta.get("parentActionSource")
-            if action.language is None:
-                action.language = meta.get("language")
-            if action.file_loc is None:
-                action.file_loc = meta.get("fileLoc")
 
             # Scope and other class-level attributes are identical across every
             # project that registers the same action class.  Propagate immediately

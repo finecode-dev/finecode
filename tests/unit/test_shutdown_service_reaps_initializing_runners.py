@@ -92,3 +92,34 @@ async def test_shutdown_stops_slow_runners_concurrently_not_sequentially(
 
     # Sequential would take ~8 * 0.2s = 1.6s; concurrent stays near 0.2s.
     assert elapsed < 0.2 * 4
+
+
+async def test_shutdown_cancels_dumps_and_blocks_new_ones(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Shutdown stops metadata dumps first, so no dump outlives the runners it serves."""
+    import asyncio
+
+    ws_context = context.WorkspaceContext(ws_dirs_paths=[tmp_path])
+    started = asyncio.Event()
+
+    async def _slow() -> None:
+        started.set()
+        await asyncio.sleep(30.0)
+
+    task = asyncio.ensure_future(_slow())
+    ws_context.action_meta_dump_tasks[tmp_path / ".venvs" / "dev_no_runtime"] = task
+    await started.wait()
+
+    await shutdown_service.on_shutdown(ws_context)
+
+    assert ws_context.shutting_down is True
+    assert task.cancelled()
+    from finecode.wm_server.services import action_meta_cache
+
+    assert (
+        action_meta_cache._ensure_dump_task(
+            tmp_path / ".venvs" / "dev_no_runtime", None, "dev_no_runtime", ws_context
+        )
+        is None
+    )

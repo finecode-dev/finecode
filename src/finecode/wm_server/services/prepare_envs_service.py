@@ -23,6 +23,7 @@ from loguru import logger
 
 from finecode import user_messages
 from finecode.wm_server import context, domain
+from finecode.wm_server.services import action_meta_cache
 
 if TYPE_CHECKING:
     from finecode.wm_server.config.env_selection import EnvSelection
@@ -353,6 +354,29 @@ async def _build_wheelhouse(
 
 
 async def prepare_envs(
+    ws_context: context.WorkspaceContext,
+    workdir_path: pathlib.Path,
+    recreate: bool = False,
+    env_names: list[str] | None = None,
+    project_names: list[str] | None = None,
+    dev_env: str = "cli",
+    workspace_packages_mode: str | None = None,
+) -> None:
+    try:
+        await _prepare_envs_impl(
+            ws_context,
+            workdir_path,
+            recreate=recreate,
+            env_names=env_names,
+            project_names=project_names,
+            dev_env=dev_env,
+            workspace_packages_mode=workspace_packages_mode,
+        )
+    finally:
+        action_meta_cache.forget_failures(ws_context)
+
+
+async def _prepare_envs_impl(
     ws_context: context.WorkspaceContext,
     workdir_path: pathlib.Path,
     recreate: bool = False,
@@ -742,6 +766,10 @@ async def prepare_envs(
         )
         if err:
             install_errors.append(err)
+        else:
+            await action_meta_cache.prefill(
+                p, [*params["env_names"], "dev_workspace"], ws_context
+            )
         install_done += 1
         await user_messages.info(
             f"install_envs: {install_done}/{total_projects} project(s) done ({p.name})"
@@ -917,6 +945,9 @@ async def install_env_for_project(
         raise PrepareEnvsFailed(
             f"install_envs failed for env '{env_name}' in '{project.name}': {error}"
         )
+    action_meta_cache.forget_failures(
+        ws_context, project.dir_path / ".venvs" / env_name
+    )
 
 
 __all__ = [

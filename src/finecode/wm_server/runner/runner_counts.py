@@ -78,6 +78,10 @@ def count_runners(ws_context: context.WorkspaceContext) -> RunnerCounts:
         if env_run > 0 or env_act > 0:
             by_env[env_name] = EnvCounts(running=env_run, active=env_act)
 
+    dump_stats = ws_context.action_meta_dump_stats
+    startup_slots_used += dump_stats.running
+    startup_slots_waiting += dump_stats.waiting
+
     return RunnerCounts(
         by_status=by_status,
         running=running,

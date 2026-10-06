@@ -4,10 +4,6 @@ from importlib import metadata
 from pathlib import Path
 
 import click
-from loguru import logger
-
-import finecode_extension_runner.start as runner_start
-from finecode_extension_runner import er_wal, global_state, logs
 
 
 @click.group()
@@ -33,6 +29,15 @@ def start(
     project_path: Path,
     env_name: str | None,
 ):
+    from loguru import logger  # noqa: I001, PLC0415 - lean entry point
+
+    import finecode_extension_runner.start as runner_start  # noqa: PLC0415 - lean entry point
+    from finecode_extension_runner import (  # noqa: PLC0415 - lean entry point
+        er_wal,
+        global_state,
+        logs,
+    )
+
     debug_port: int = 0
     if debug is True:
         import debugpy
@@ -71,6 +76,53 @@ def start(
         logger.info(f"Started debugger on 127.0.0.1:{debug_port}")
 
     runner_start.start_runner_sync(wal_writer=wal_writer)
+
+
+@main.command("dump-action-meta")
+@click.option(
+    "--project-path",
+    "project_path",
+    type=click.Path(exists=True, file_okay=False, resolve_path=True, path_type=Path),
+    required=True,
+)
+@click.pass_context
+def dump_action_meta(ctx: click.Context, project_path: Path):
+    """One-shot action-metadata dump for the WM per-venv cache.
+
+    Protocol (caller: wm_server/runner/action_meta_dump.py): stdin takes
+    {"sources": [...]}, stdout carries only the format-1 JSON document and
+    stderr carries diagnostics. Exit 0 answers even with per-source failures.
+    """
+    import json  # noqa: PLC0415 - lean entry point
+
+    try:
+        payload = json.loads(sys.stdin.read())
+    except (json.JSONDecodeError, UnicodeError) as exc:
+        click.echo(f"Invalid stdin JSON: {exc}", err=True)
+        ctx.exit(1)
+        return
+    sources = payload.get("sources") if isinstance(payload, dict) else None
+    if not isinstance(sources, list) or not all(
+        isinstance(item, str) for item in sources
+    ):
+        click.echo('stdin JSON must be {"sources": [str, ...]}', err=True)
+        ctx.exit(1)
+        return
+
+    # dump() imports arbitrary extension modules, which may print to stdout at
+    # Python or fd level and corrupt the stdout JSON. Park fd 1 aside, point
+    # both sys.stdout and fd 1 at stderr for the imports, then emit the
+    # document with os.write to the parked fd: click.echo would follow the
+    # redirected stdout and cannot address the parked fd.
+    saved = os.dup(1)
+    os.dup2(2, 1)
+    sys.stdout = sys.stderr  # type: ignore[assignment]
+    from finecode_extension_runner import action_meta  # noqa: I001, PLC0415 - lean entry point
+
+    document = action_meta.dump(sources, project_dir=project_path)
+    os.write(saved, json.dumps(document).encode())
+    os.close(saved)
+    ctx.exit(0)
 
 
 @main.command()

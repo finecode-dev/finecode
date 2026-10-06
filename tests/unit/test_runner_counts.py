@@ -205,3 +205,15 @@ def test_record_runner_peaks_never_raises_and_latches(monkeypatch) -> None:
 
     assert records == []
     assert ws_context.resource_peaks.hook_failed
+
+
+def test_action_meta_dumps_fold_into_startup_slots() -> None:
+    """Dumps hold startup permits, so the gauges must include them or the queue is undercounted."""
+    ws_context = context.WorkspaceContext([])
+    ws_context.action_meta_dump_stats.running = 2
+    ws_context.action_meta_dump_stats.waiting = 3
+
+    counts = runner_counts.count_runners(ws_context)
+
+    assert counts.startup_slots_used == 2
+    assert counts.startup_slots_waiting == 3

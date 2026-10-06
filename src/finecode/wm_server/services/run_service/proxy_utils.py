@@ -23,6 +23,7 @@ from finecode.wm_server.runner import elicitation_bridge, runner_client, runner_
 from finecode.wm_server.runner.runner_client import RunResultFormat  # reexport
 from finecode.wm_server.runner.runner_manager import RunnerFailedToStart
 from finecode.wm_server.services import (
+    action_meta_cache,
     in_flight_runs,
     project_resolution_service,
     runner_start_service,
@@ -553,6 +554,80 @@ async def ensure_action_metadata(
         )
 
 
+def import_error_lines_for_tail(
+    project: domain.CollectedProject,
+    ws_context: context.WorkspaceContext,
+    tail: str,
+) -> list[str]:
+    lines: list[str] = []
+    for action in project.actions:
+        if action.canonical_source is not None:
+            continue
+        if action.source.rsplit(".", 1)[-1] != tail:
+            continue
+        for (
+            _memo_venv,
+            memo_source,
+        ), failure in ws_context.action_meta_failures.items():
+            if memo_source == action.source and failure.kind == "import_failed":
+                lines.append(f"{action.source}: {failure.reason}"[:300])
+                break
+    return lines
+
+
+async def find_action_by_canonical_source(
+    canonical_source: str,
+    project: domain.CollectedProject,
+    ws_context: context.WorkspaceContext,
+) -> domain.Action | None:
+    tail = canonical_source.rsplit(".", 1)[-1]
+    for action in project.actions:
+        if action.canonical_source == canonical_source:
+            return action
+    candidates = [
+        action
+        for action in project.actions
+        if action.canonical_source is None
+        and action.handlers
+        and action.source.rsplit(".", 1)[-1] == tail
+    ]
+    if candidates:
+        failures = await action_meta_cache.resolve_unresolved(
+            project, ws_context, actions=candidates
+        )
+        for action in candidates:
+            if action.canonical_source == canonical_source:
+                return action
+        retry = [
+            action
+            for action in candidates
+            if action.canonical_source is None
+            and (
+                failures.get(action.source) is None
+                or failures[action.source].kind != "import_failed"
+            )  # type: ignore[union-attr]
+        ]
+        if retry:
+            await asyncio.gather(
+                *(ensure_action_metadata(a, project, ws_context) for a in retry),
+                return_exceptions=True,
+            )
+            for action in retry:
+                if action.canonical_source == canonical_source:
+                    return action
+    rest = [
+        action
+        for action in project.actions
+        if action.canonical_source is None and action not in candidates
+    ]
+    if rest:
+        await action_meta_cache.resolve_unresolved(project, ws_context, actions=rest)
+        for action in project.actions:
+            if action.canonical_source == canonical_source:
+                return action
+    return None
+
+
 async def find_subactions_for_parent(
     parent_action_source: str,
     project: domain.CollectedProject,
@@ -563,24 +638,20 @@ async def find_subactions_for_parent(
     Per ADR-0045, this is the WM-owned answer to "what subactions exist for
     this parent", regardless of which env each one's handler runs in — an ER
     only ever knows its own env's actions, so it cannot answer this on its
-    own. An action's specialization relationship (``parent_action_source`` /
-    ``language``) is only known once its class has been imported by some ER,
-    so unresolved actions are resolved on demand via
-    :func:`ensure_action_metadata` (best-effort — an action that cannot be
-    resolved at all is simply not a candidate, rather than failing the whole
-    query).
+    own. Unresolved actions are resolved from the handler env's per-venv cache
+    file or a one-shot dump, which never starts a runner (best-effort — an
+    action that cannot be resolved at all is simply not a candidate, rather
+    than failing the whole query).
     """
     result: list[domain.Action] = []
+    failures = await action_meta_cache.resolve_unresolved(project, ws_context)
+    for source, failure in failures.items():
+        logger.debug(
+            f"Could not resolve metadata for '{source}' while"
+            f" looking for subactions of '{parent_action_source}':"
+            f" {failure.reason if failure is not None else 'unresolved'}"
+        )
     for action in project.actions:
-        if action.canonical_source is None:
-            try:
-                await ensure_action_metadata(action, project, ws_context)
-            except Exception as exc:
-                logger.debug(
-                    f"Could not resolve metadata for '{action.source}' while"
-                    f" looking for subactions of '{parent_action_source}': {exc}"
-                )
-                continue
         if (
             action.parent_action_source == parent_action_source
             and action.language is not None

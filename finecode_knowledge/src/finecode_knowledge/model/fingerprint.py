@@ -27,7 +27,7 @@ import pathlib
 
 from finecode_knowledge.model.errors import SchemaError
 
-__all__ = ["InputFingerprint", "capture", "resolve"]
+__all__ = ["InputFingerprint", "capture", "resolve", "unchanged"]
 
 _CHUNK = 1 << 20
 
@@ -73,6 +73,29 @@ def resolve(path: str, workspace_root: pathlib.Path) -> pathlib.Path:
     """
     candidate = pathlib.Path(path)
     return candidate if candidate.is_absolute() else workspace_root / candidate
+
+
+def unchanged(fingerprint: InputFingerprint, workspace_root: pathlib.Path) -> bool:
+    """Whether the file still matches a stored fingerprint.
+
+    The `(size, mtime_ns)` gate decides without reading: equal means True, so a
+    same-size edit with its mtime set back reads as unchanged by design.
+    """
+    resolved = resolve(fingerprint.path, workspace_root)
+    try:
+        stat = resolved.stat()
+    except OSError:
+        return False
+    if stat.st_size == fingerprint.size and stat.st_mtime_ns == fingerprint.mtime_ns:
+        return True
+    try:
+        digest = hashlib.sha256()
+        with resolved.open("rb") as handle:
+            while chunk := handle.read(_CHUNK):
+                digest.update(chunk)
+    except OSError:
+        return False
+    return digest.hexdigest() == fingerprint.sha256
 
 
 def capture(path: str, workspace_root: pathlib.Path) -> InputFingerprint:

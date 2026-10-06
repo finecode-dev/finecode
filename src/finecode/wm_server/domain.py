@@ -257,6 +257,8 @@ class Action:
     * ``file_loc`` — set by the ER's ``resolveActionMeta`` response.
       ``"<path>:<lineno>"`` of the action class's source, or ``None`` when it
       could not be resolved.
+    * ``meta_from_cache`` — True when the six fields above came from the
+      handler env's per-venv cache file rather than its ER.
 
     Attributes:
         name: Config alias (e.g. ``"lint"``).
@@ -293,6 +295,7 @@ class Action:
         self.language: str | None = None
         # None until the ER that hosts the action class resolves it.
         self.file_loc: str | None = None
+        self.meta_from_cache: bool = False
         self.handlers: list[ActionHandler] = handlers
         self.config = config
 

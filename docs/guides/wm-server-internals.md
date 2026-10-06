@@ -451,6 +451,17 @@ open at runtime (yields and warns), and the classification is asserted by the te
 normal path nothing yields, because the ER's own `updateConfig` calls only neutral methods
 (ADR-0100).
 
+Opportunistic action metadata never starts a runner (ADR-0104). Subaction
+enumeration, `actions/list`, and the non-target tail of nested name resolution
+read the handler env's per-venv cache file (`<venv>/cache/finecode/action_meta.json`)
+and run a one-shot `dump-action-meta` in that env's interpreter on a miss.
+Import failures and transient env failures are memoized in memory; skew (an ER
+without the subcommand) is persisted per ER identity for wheel-installed ERs
+and held in memory for editable ones. Dumps are deduplicated per venv, owned
+by no caller, and hold the startup semaphore — so `getActionsForParent` keeps
+yielding. A report from the handler env's own ER replaces a cached value (with
+a WARNING on identity disagreement); needed paths keep today's semantics.
+
 This is what fixes `Didn't get port in 30 seconds` failures on constrained machines: without it, a
 workspace-wide `run` can attempt far more concurrent ER spawns than the machine can schedule
 promptly, delaying some ERs' port handshake past the hardcoded 30s window in

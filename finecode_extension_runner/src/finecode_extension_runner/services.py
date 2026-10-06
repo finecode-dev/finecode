@@ -1,8 +1,6 @@
 import collections.abc
-import contextlib
 import hashlib
 import importlib
-import inspect
 import json
 import sys
 import types
@@ -14,6 +12,7 @@ from finecode_extension_api.interfaces import iprojectinfoprovider
 from loguru import logger
 
 from finecode_extension_runner import (
+    action_meta,
     context,
     domain,
     global_state,
@@ -162,26 +161,6 @@ async def update_config(
     return schemas.UpdateConfigResponse(), runner_context
 
 
-def _file_loc(cls: type, project_dir: Path | None) -> str | None:
-    """Resolve a ``<path>:<lineno>`` location for a class's source definition.
-
-    Returns ``None`` when the class has no retrievable source (e.g. it was
-    built dynamically via ``type()``).
-    """
-    try:
-        source_file = inspect.getfile(cls)
-        _, lineno = inspect.getsourcelines(cls)
-    except (OSError, TypeError) as exception:
-        logger.debug(f"Could not resolve file location for {cls}: {exception}")
-        return None
-
-    path = Path(source_file)
-    if project_dir is not None:
-        with contextlib.suppress(ValueError):
-            path = path.relative_to(project_dir)
-    return f"{path}:{lineno}"
-
-
 async def resolve_action_meta(runner_context: context.RunnerContext) -> dict[str, dict]:
     """Resolve meta info for all known actions and handlers.
 
@@ -211,8 +190,6 @@ async def resolve_action_meta(runner_context: context.RunnerContext) -> dict[str
     ``handlers`` respectively (import failure = cannot run = no canonical to
     report; ADR-0021, extended to handlers by ADR-0054).
     """
-    from finecode_extension_api.code_action import Action, HandlerExecution
-
     project = runner_context.project
     project_dir = project.dir_path
     actions = project.actions
@@ -222,22 +199,7 @@ async def resolve_action_meta(runner_context: context.RunnerContext) -> dict[str
             continue
         try:
             cls = run_utils.import_module_member_by_source_str(action.source)
-            if not (isinstance(cls, type) and issubclass(cls, Action)):
-                raise TypeError(f"{action.source} is not a subclass of Action")
-            parent = getattr(cls, "PARENT_ACTION", None)
-            resolved[action.source] = {
-                "canonical_source": f"{cls.__module__}.{cls.__qualname__}",
-                "runs_concurrently": cls.HANDLER_EXECUTION
-                == HandlerExecution.CONCURRENT,
-                "scope": cls.SCOPE.value,
-                "parentActionSource": (
-                    f"{parent.__module__}.{parent.__qualname__}"
-                    if parent is not None
-                    else None
-                ),
-                "language": getattr(cls, "LANGUAGE", None),
-                "fileLoc": _file_loc(cls, project_dir),
-            }
+            resolved[action.source] = action_meta.action_meta(cls, project_dir)
         # Importing an action executes its module's top-level code, so the
         # reachable exception set is open and not enumerable here.
         except Exception as exception:  # noqa: BLE001
@@ -256,7 +218,7 @@ async def resolve_action_meta(runner_context: context.RunnerContext) -> dict[str
                     "canonicalSource": (
                         f"{handler_cls.__module__}.{handler_cls.__qualname__}"
                     ),
-                    "fileLoc": _file_loc(handler_cls, project_dir),
+                    "fileLoc": action_meta.file_loc(handler_cls, project_dir),
                 }
             # Importing a handler executes its module's top-level code, so the
             # reachable exception set is open and not enumerable here.
