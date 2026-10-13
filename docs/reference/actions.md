@@ -2,6 +2,8 @@
 
 Built-in actions live in their respective presets. Use the short form `<preset_package>.<ClassName>` as the `source` when declaring actions in `pyproject.toml` or `preset.toml`.
 
+**Terminology.** An extension is the distributable capability package; a preset is its explicitly selected reusable configuration. See the glossary for [extension](../glossary.md#extension), [workspace](../glossary.md#workspace), [source artifact](../glossary.md#source-artifact) (what many tools call “project”), [workspace package](../glossary.md#workspace-package), and [execution environment](../glossary.md#execution-environment) (`env`).
+
 **Unhandled inputs.** Every action result carries a `coverage` list. A dispatch
 handler that finds no subaction for an input records a miss against it
 (`NO_SUBACTIONS`, `NO_LANGUAGE_DETECTED`, or `NO_SUBACTION_FOR_LANGUAGE` with

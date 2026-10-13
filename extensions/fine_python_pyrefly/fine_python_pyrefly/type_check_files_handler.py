@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import dataclasses
+import functools
 import json
 import sys
 from pathlib import Path
 
+from fine_inspect_code.diagnostic_types import server_unavailable_diagnostic
 from fine_python_lang.type_check_python_files_action import TypeCheckPythonFilesAction
 from fine_type_check.diagnostic_types import (
     Diagnostic,
@@ -16,15 +18,25 @@ from fine_type_check.diagnostic_types import (
     Range,
 )
 from finecode_extension_api import code_action
+from finecode_extension_api.contrib.lsp_service import (
+    LspDiagnosticsUnavailable,
+    check_file_with_one_retry,
+)
 from finecode_extension_api.interfaces import (
     icommandrunner,
     iextensionrunnerinfoprovider,
+    ifileeditor,
     ilogger,
     iprojectinfoprovider,
     isrcartifactfileclassifier,
 )
 from finecode_extension_api.resource_uri import ResourceUri, resource_uri_to_path
 
+from fine_python_pyrefly.host_types import (
+    PYREFLY_CHECK_CHUNK_SIZE,
+    FileCheckOutcome,
+    FileCheckStatus,
+)
 from fine_python_pyrefly.pyrefly_config import PyreflyConfig
 from fine_python_pyrefly.pyrefly_lsp_service import PyreflyLspService
 
@@ -51,6 +63,10 @@ class PyreflyTypeCheckFilesHandler(
     save of a file.
     """
 
+    FILE_OPERATION_AUTHOR = ifileeditor.FileOperationAuthor(
+        id="PyreflyTypeCheckFilesHandler"
+    )
+
     def __init__(
         self,
         config: PyreflyTypeCheckFilesHandlerConfig,
@@ -60,6 +76,7 @@ class PyreflyTypeCheckFilesHandler(
         src_artifact_file_classifier: isrcartifactfileclassifier.ISrcArtifactFileClassifier,
         extension_runner_info_provider: iextensionrunnerinfoprovider.IExtensionRunnerInfoProvider,
         project_info_provider: iprojectinfoprovider.IProjectInfoProvider,
+        file_editor: ifileeditor.IFileEditor,
         lsp_service: PyreflyLspService,
     ) -> None:
         self.config = config
@@ -71,6 +88,7 @@ class PyreflyTypeCheckFilesHandler(
         self.project_info_provider: iprojectinfoprovider.IProjectInfoProvider = (
             project_info_provider
         )
+        self.file_editor = file_editor
         self.lsp_service: PyreflyLspService = lsp_service
 
         self.pyrefly_bin_path = Path(sys.executable).parent / "pyrefly"
@@ -88,6 +106,50 @@ class PyreflyTypeCheckFilesHandler(
                 }
             )
 
+    async def _run_on_host(
+        self,
+        file_uris: list[ResourceUri],
+        run_context: DiagnosticFilesRunContext,
+    ) -> None:
+        """Chunk a workspace-topology run and forward each chunk to the host.
+
+        The first chunk carries the sweep; later chunks do not, so a run of N
+        files pays one recheck. One failed forward becomes the same per-file
+        error every other server failure does, and never cancels siblings.
+        """
+        contents: dict[str, str] = {}
+        for file_uri in file_uris:
+            file_path = resource_uri_to_path(file_uri)
+            async with (
+                self.file_editor.session(author=self.FILE_OPERATION_AUTHOR) as session,
+                session.read_file(file_path) as file_info,
+            ):
+                contents[file_uri] = file_info.content
+
+        for start in range(0, len(file_uris), PYREFLY_CHECK_CHUNK_SIZE):
+            chunk = file_uris[start : start + PYREFLY_CHECK_CHUNK_SIZE]
+            try:
+                outcomes = await self.lsp_service.forward_check_chunk(
+                    chunk,
+                    {uri: contents[uri] for uri in chunk},
+                    sweep=start == 0,
+                )
+            except (LspDiagnosticsUnavailable, code_action.ActionFailedException) as exc:
+                outcomes = [
+                    FileCheckOutcome(
+                        uri=uri,
+                        status=FileCheckStatus.FAILED,
+                        diagnostics=[],
+                        error=str(exc),
+                    )
+                    for uri in chunk
+                ]
+            for outcome in outcomes:
+                run_context.partial_result_scheduler.schedule(
+                    outcome.uri,
+                    _completed(_outcome_result(outcome)),
+                )
+
     async def run_on_single_file(
         self, file_uri: ResourceUri
     ) -> DiagnosticFilesRunResult:
@@ -100,9 +162,14 @@ class PyreflyTypeCheckFilesHandler(
             root_uri = (
                 self.project_info_provider.get_current_project_dir_path().as_uri()
             )
-            await self.lsp_service.ensure_started(root_uri)
-
-            type_check_messages = await self.lsp_service.check_file(file_path)
+            try:
+                await self.lsp_service.ensure_started(root_uri)
+                type_check_messages = await check_file_with_one_retry(
+                    functools.partial(self.lsp_service.check_file, file_path),
+                    functools.partial(self.lsp_service.ensure_started, root_uri),
+                )
+            except LspDiagnosticsUnavailable as exc:
+                type_check_messages = [server_unavailable_diagnostic("pyrefly", exc)]
 
         return DiagnosticFilesRunResult(messages={file_uri: type_check_messages})
 
@@ -112,6 +179,10 @@ class PyreflyTypeCheckFilesHandler(
         run_context: DiagnosticFilesRunContext,
     ) -> None:
         file_uris = [file_uri async for file_uri in payload]
+
+        if not self.config.use_cli and self.lsp_service.forwards_to_host:
+            await self._run_on_host(file_uris, run_context)
+            return
 
         if not self.config.use_cli:
             # Order is load-bearing: the sweep must send its watched-file
@@ -246,3 +317,21 @@ def map_pyrefly_error_to_diagnostic(error: dict) -> Diagnostic:
         source="pyrefly",
         severity=severity,
     )
+
+
+def _outcome_result(outcome: FileCheckOutcome) -> DiagnosticFilesRunResult:
+    """Turn one host outcome into the per-file partial the run accumulates."""
+    if outcome.status == FileCheckStatus.FAILED:
+        diagnostics = [
+            server_unavailable_diagnostic(
+                "pyrefly", outcome.error or "pyrefly server unavailable"
+            )
+        ]
+    else:
+        diagnostics = outcome.diagnostics
+    return DiagnosticFilesRunResult(messages={outcome.uri: diagnostics})
+
+
+async def _completed(result: DiagnosticFilesRunResult) -> DiagnosticFilesRunResult:
+    """A scheduled partial that is already known: the forward returned it."""
+    return result

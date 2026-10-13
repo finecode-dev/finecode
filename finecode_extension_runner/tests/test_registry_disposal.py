@@ -14,7 +14,7 @@ class DisposableThing(IThing):
     async def init(self) -> None:
         pass
 
-    def dispose(self) -> None:
+    async def dispose(self) -> None:
         self.disposed = True
 
 
@@ -27,7 +27,7 @@ async def test_evicted_instance_is_rebuilt_on_next_request() -> None:
     first = await registry.get_instance(IThing)
     assert await registry.get_instance(IThing) is first
 
-    first.dispose()
+    await first.dispose()
     registry.evict_instance(first)
 
     second = await registry.get_instance(IThing)
@@ -62,7 +62,7 @@ async def test_dispose_all_disposes_and_clears_resolved_services() -> None:
     registry.register_factory(IThing, lambda _registry: DisposableThing())
     instance = await registry.get_instance(IThing)
 
-    registry.dispose_all()
+    await registry.dispose_all()
 
     assert instance.disposed
     assert await registry.get_instance(IThing) is not instance
@@ -70,7 +70,7 @@ async def test_dispose_all_disposes_and_clears_resolved_services() -> None:
 
 async def test_dispose_all_continues_after_one_service_raises() -> None:
     class Exploding(DisposableThing):
-        def dispose(self) -> None:
+        async def dispose(self) -> None:
             raise RuntimeError("boom")
 
     class OtherThing(IThing):
@@ -82,6 +82,6 @@ async def test_dispose_all_continues_after_one_service_raises() -> None:
     await registry.get_instance(Exploding)
     survivor = await registry.get_instance(IThing)
 
-    registry.dispose_all()
+    await registry.dispose_all()
 
     assert survivor.disposed

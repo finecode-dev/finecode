@@ -102,7 +102,7 @@ jobs:
           path: |
             .venvs
             **/.venvs
-          key: ${{ runner.os }}-venvs-${{ hashFiles('**/pyproject.toml', '**/preset.toml') }}
+          key: ${{ runner.os }}-venvs-layout2-${{ hashFiles('**/pyproject.toml', '**/preset.toml') }}
 
       # Restore only on a venvs miss: on a hit nothing installs, so fetching a
       # multi-GB uv entry would be wasted. A partial match is safe here, unlike for
@@ -366,7 +366,7 @@ jobs:
           path: |
             .venvs
             **/.venvs
-          key: ${{ runner.os }}-private-venvs-${{ hashFiles('**/pyproject.toml', '**/preset.toml', 'finecode-user.toml') }}
+          key: ${{ runner.os }}-private-venvs-layout2-${{ hashFiles('**/pyproject.toml', '**/preset.toml', 'finecode-user.toml') }}
 
       - name: Restore uv cache
         id: uv_cache

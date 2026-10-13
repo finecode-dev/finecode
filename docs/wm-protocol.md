@@ -1,6 +1,6 @@
 # FineCode WM Server Protocol
 
-The FineCode Workspace Manager Server (WM Server) is a TCP JSON-RPC 2.0 service that manages the workspace state
+The FineCode Workspace Manager Server (WM Server) is a TCP JSON-RPC 2.0 service that manages the WM state
 (projects, configs, extension runners). Any client — LSP server, MCP server, or CLI — can
 connect to it.
 
@@ -131,7 +131,7 @@ Actions are still available in the result so clients can validate the workspace.
 
 `projects` is optional. When provided, only the listed projects (by name) will
 be config-initialized and have their runners started. All other projects in the
-directory are still discovered (added to workspace state) but skipped for
+directory are still discovered (added to WM state) but skipped for
 initialization. This avoids the cost of reading configs and spawning runner
 processes for projects that are not needed.
 

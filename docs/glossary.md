@@ -8,6 +8,10 @@ A named operation (for example `lint`, `format`, `build_artifact`).
 
 A concrete implementation of an action. Multiple handlers can be registered for a single action, and they run sequentially or concurrently.
 
+## Coherent
+
+Every requirement on a [workspace package](#workspace-package) reached by the workspace's own requirements is satisfied by its workspace source. This is an operational requirement check; it does not prove general software compatibility.
+
 ## Collection Action
 
 An action whose payload carries multiple items and whose result describes that batch, often with per-item entries. Used when handlers need to iterate over, correlate, or optimize across the full set of items.
@@ -22,11 +26,19 @@ When both an item action and a collection action exist for the same operation, t
 
 ## Execution Environment
 
-A named, isolated context in which handlers and project code execute (e.g. `runtime`, `dev_workspace`, `dev_no_runtime`). Each execution environment has its own dependency set, serving a specific purpose — for example, the project's runtime, dev tooling, or test execution. The concept is inter-language; in Python each execution environment is materialized as a virtual environment. Configuration uses the shorthand `env`.
+A named, isolated context in which handlers and project code execute (e.g. `runtime`, `dev_workspace`, `dev_no_runtime`). Each execution environment has its own dependency set, serving a specific purpose — for example, the project's runtime, dev tooling, or test execution. The concept is inter-language; in Python each execution environment is materialized as a virtual environment. Configuration uses the shorthand `env`. A `dev_workspace` is a project's named execution environment containing preparation packages and presets. The workspace root and each subproject can each have one.
+
+## Extension
+
+A distributable capability package: handlers, services, action contracts, and explicitly selected reusable configuration.
 
 ## Extension Runner (ER)
 
 A process that runs inside a specific execution environment and executes action handler code. The Workspace Manager spawns one ER per (project, execution environment) pair, on demand. ERs communicate with the WM over JSON-RPC. The concept is inter-language — `finecode_extension_runner` is the Python implementation.
+
+## External Dependency
+
+A package outside the declared [workspace package](#workspace-package) set, including a published release of a component of the same product. See [Product](#product).
 
 ## Interpreter
 
@@ -46,7 +58,11 @@ An action whose handlers run in a matrix environment, and therefore execute once
 
 ## Preset
 
-A reusable, distributable bundle of action and handler declarations. Users reference a preset in their project configuration; its declarations merge with the project's own configuration, giving full control to override or disable individual handlers. The concept is inter-language — in Python, presets are distributed as packages installed into the `dev_workspace` execution environment.
+Reusable configuration supplied by an extension package. Users reference a preset in their project configuration; its declarations merge with the project's own configuration, giving full control to override or disable individual handlers.The concept is inter-language — in Python, presets are distributed as packages installed into the `dev_workspace` execution environment.
+
+## Product
+
+The software developed through one or more workspaces. A component is a [source artifact](#source-artifact) of that product. FineCode does not model or act on the relation between those workspaces.
 
 ## Service
 
@@ -78,8 +94,16 @@ The Python-specific materialization of an execution environment. FineCode create
 
 ## Workspace
 
-A set of related source artifacts a developer is working on. Often this is a single directory root, but it can also be multiple directories (workspace roots). FineCode can run actions across all source artifacts that include FineCode configuration. (Some CLI flags and protocol fields still use the word “project” for compatibility.)
+A development context for working with the current package source versions of a checkout. A workspace ("development workspace") has exactly one root — the directory the WM is anchored to — its own environments, and one current [workspace state](#workspace-state). It may have several workspace directories, including the root; additional registered directories do not become additional roots of that workspace. Opened at a checkout's root, a workspace normally represents that checkout. FineCode can run actions across all source artifacts that include FineCode configuration. The root does not require a workspace config file to exist, and no upward search selects the root. (Some CLI flags and protocol fields still use the word “project” for compatibility.)
 
 ## Workspace Manager (WM)
 
 A long-running server that discovers source artifacts, resolves merged configuration, manages execution environments, exposes an LSP and MCP API to clients, and delegates action execution to Extension Runners. Typically one shared WM instance runs per virtual environment.
+
+## Workspace Package
+
+A source artifact declared by the workspace root's configuration as belonging to the [workspace](#workspace). By default every discovered named project belongs; `extra` adds explicit paths, including forks not discovered through FineCode configuration. Membership is declaration-based, not physical containment. See [External Dependency](#external-dependency) and [Workspace State](#workspace-state).
+
+## Workspace State
+
+A workspace state describes the package source versions you are working with at a given moment, together with which packages are declared as [workspace packages](#workspace-package). Membership is part of the state because different releases can contain different packages. For a package with a dynamic version, its source version is the version its build backend computes from the checkout.

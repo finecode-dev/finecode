@@ -1,6 +1,6 @@
 # Extensions
 
-Extensions provide concrete implementations of actions as handlers. All extensions listed here are maintained in the FineCode repository under `extensions/`.
+Extensions are distributable capability packages: handlers, services, action contracts, and explicitly selected reusable configuration. All extensions listed here are maintained in the FineCode repository under `extensions/`.
 
 To use an extension, add its handler to an action in your `pyproject.toml` or use a [preset](../guides/creating-preset.md) that includes it. The extension package is installed automatically into the handler's virtual environment by `prepare-envs`.
 

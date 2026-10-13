@@ -1,6 +1,11 @@
 # Creating a Preset
 
-A **Preset** is a Python package that bundles action and handler declarations into a reusable, distributable configuration. Teams use presets to standardize tooling across projects without duplicating config.
+A **Preset** is explicitly selected reusable configuration supplied by an
+extension package. Teams use presets to standardize tooling across projects
+without duplicating config. Installing the package makes its code available;
+activating its configuration requires explicit selection. The same package may
+supply both handlers and a preset resource. Dependency isolation and tool
+adoption remain the approved separate work (see [ADR-0113](../../finecode_internal_docs/adr/0113-extension-distributions-may-supply-explicitly-selected-integration-presets.md)).
 
 ## 1. Create the package
 
@@ -40,7 +45,7 @@ A preset package contains:
 - **Orchestration handlers** — handler implementations that coordinate or dispatch work to language-specific handlers (e.g. `FormatHandler`, `LintFilesDispatchHandler`). These handlers naturally belong in the preset that defines the action they implement. See [Handlers in presets](#handlers-in-presets) below.
 - Optionally, an `__init__.py` re-exporting action classes and handler classes for convenient imports.
 
-Preset packages must stay **lightweight in their runtime dependencies**: only `finecode_extension_api` (for base classes) and other feature presets (when an action contract references types defined elsewhere) are allowed. Heavy tool dependencies belong to extension packages and are pulled in through dependency groups when handlers are activated.
+Preset packages keep their base configuration lightweight: only `finecode_extension_api` (for base classes) and other feature presets (when an action contract references types defined elsewhere) belong in the base runtime dependencies. Execution-specific heavy tool dependencies are carried by an execution extra and pulled in through dependency groups when handlers are activated.
 
 ## 2. Declare actions in `preset.toml`
 
@@ -80,7 +85,7 @@ config.line_length = 88
 
 ## 3. Use the preset in a project
 
-Install the preset package (e.g. from PyPI or a local path) into the `dev_workspace` dependency group:
+Install the extension package (e.g. from PyPI or a local path) into the `dev_workspace` dependency group, then select its preset resource:
 
 ```toml
 # User's pyproject.toml
@@ -129,9 +134,10 @@ Project-specific presets (e.g. a company-internal preset) may override a univers
 
 A preset can include **handler implementations** alongside its action definitions. This is the right home for handlers that orchestrate or dispatch work rather than wrapping a specific tool.
 
-### Which handlers belong in a preset vs. an extension
+### Which capabilities belong where
 
-| Belongs in **preset** | Belongs in **extension** |
+| Supplies shared contracts / generic orchestration | Supplies concrete tool handling / execution-specific dependencies |
+|---|---|
 |---|---|
 | Orchestrates calls to language-specific subactions (e.g. `FormatHandler` fans out `FormatFilesAction` per language) | Wraps a specific external tool (e.g. `RuffLintFilesHandler` calls ruff) |
 | Dispatches to language-specific handlers (e.g. `LintFilesDispatchHandler`) | Needs heavy third-party dependencies (ruff, mypy, black, etc.) |
@@ -141,7 +147,7 @@ A preset can include **handler implementations** alongside its action definition
 
 Handlers living in a preset are subject to the same dependency rule as the rest of the preset: **only `finecode_extension_api` and other feature presets are allowed as runtime dependencies**. Handler code is imported by the Extension Runner in the handler's declared `env`, but the preset package is also installed in `dev_workspace` for config resolution. If a handler module imported a heavy library at the top level, that library would need to be present in `dev_workspace` too — which is exactly what presets are designed to avoid.
 
-If a handler needs heavy dependencies, it belongs in a separate **extension package**.
+Handlers living in a preset follow the combined-base/execution-extra rule above. A handler that needs heavy dependencies at import time declares them through its execution environment rather than through the base package.
 
 ### Referencing handlers from the same preset
 
@@ -195,11 +201,19 @@ presets = [
 
 A preset can itself reference other presets in its `preset.toml` if needed.
 
+A combined-capability package supplies handlers and configuration together;
+selection still uses the existing syntax and installation alone activates nothing:
+
+```toml
+[tool.finecode]
+presets = [{ source = "fine_format" }]
+```
+
 ## Package naming
 
-Preset package names follow the pattern `fine_<domain?>_<role>`, where `<role>` is a role word naming the semantic domain the preset covers and the domain segment is optional. The role-word vocabulary is open — coin a new one when a new capability needs it.
+Preset configuration is supplied under `fine_<domain?>_<role>`, where `<role>` is a role word naming the semantic domain the configuration covers and the domain segment is optional. The role-word vocabulary is open — coin a new one when a new capability needs it.
 
-See [Package Naming](package-naming.md) for the shared extension and preset naming convention.
+See [Package Naming](package-naming.md) for the shared extension and preset naming convention and proposed [ADR-0115](../../finecode_internal_docs/adr/0115-extension-capabilities-share-terminology-and-repository-directory.md) for the umbrella terminology; [ADR-0081](../../finecode_internal_docs/adr/0081-open-role-word-vocabulary-and-domain-first-segment-in-package-names.md) remains the historical naming context.
 
 ## Publishing
 

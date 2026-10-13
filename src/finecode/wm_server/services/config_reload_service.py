@@ -108,6 +108,14 @@ async def _reload_project_config(
     if project is None:
         return _failure(project_dir, f"Project '{project_dir}' is not in the workspace")
 
+    # Recovery is the retry path the restart-budget refusal names, so it clears
+    # the project's unexpected-exit history: its replacement runners start with
+    # a clean slate (ADR-0109 rule 4).
+    for exit_key in [
+        key for key in ws_context.unexpected_runner_exits if key[0] == project_dir
+    ]:
+        del ws_context.unexpected_runner_exits[exit_key]
+
     # `blocking_runs` has already dropped every cancellable run -- one the WM
     # started on its own behalf, re-derivable and awaited by nobody -- so a
     # reload cancels those rather than being refused by work its caller never

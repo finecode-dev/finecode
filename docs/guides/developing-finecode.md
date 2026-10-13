@@ -2,9 +2,11 @@
 
 This guide is for developers contributing to FineCode itself — the monorepo structure, conventions, and workflows used internally.
 
+For code placement and import restrictions, see [Architecture constraints](../architecture.md#architecture-constraints) and the governing contracts in `pyproject.toml`, including their exceptions. For runtime assumptions, see [Behavior constraints and known limitations](../reference/behavior-constraints.md). Plans must account for the applicable constraints and reference the sections implementers need.
+
 ## Repository structure
 
-The repo is a monorepo. Each package has its own `pyproject.toml`. The root directory is the workspace.
+The repo is a monorepo. Each package has its own `pyproject.toml`. Opening FineCode at the checkout root makes that directory the [workspace](../glossary.md#workspace) root; the root directory is the workspace.
 
 ```text
 finecode/                          # Main package (Workspace Manager)
@@ -13,8 +15,8 @@ finecode_extension_runner/         # Extension execution engine
 finecode_jsonrpc/                  # JSON-RPC client/transport layer
 finecode_httpclient/               # HTTP client for extensions
 finecode_knowledge/                # Knowledge model engine (schema-free; see below)
-extensions/                        # Extension packages (ruff, flake8, mypy, ...)
-presets/                           # Preset packages (recommended, lint, format)
+extensions/                        # Extension packages (capabilities incl. presets)
+presets/                           # Private/local presets only (fine_knowledge, ...)
 finecode_dev_common_preset/        # Preset used for developing FineCode itself
 tests/                             # Test suite
 finecode_internal_docs/            # Private docs (gitignored nested repo)
@@ -120,7 +122,7 @@ The canonical, maintained implementation of "install all local packages editable
 ci = "wheel"
 ```
 
-`prepare-envs` builds each workspace package's wheel with `build_python_artifact` — each on its own project's runner, so per-project builder overrides and config apply — into `<workspace-root>/.venvs/dev_workspace/cache/wheelhouse`, then installs every non-`dev_workspace` env from those wheels. A cold install is measured in minutes instead of the ~2h an all-editable install cost. Local dev-envs default to `editable`; `prepare-envs --workspace-packages=wheel|editable` overrides the mode for one run. The wheelhouse is a snapshot: an edit to a workspace package is not visible to a wheel-mode env until the next `prepare-envs`.
+`prepare-envs` builds each [workspace package](../glossary.md#workspace-package)'s wheel with `build_python_artifact` — each on its own project's runner, so per-project builder overrides and config apply — into `<workspace-root>/.venvs/dev_workspace/cache/wheelhouse`, then installs every non-`dev_workspace` [execution environment](../glossary.md#execution-environment) from those wheels. A cold install is measured in minutes instead of the ~2h an all-editable install cost. Local dev-envs default to `editable`; `prepare-envs --workspace-packages=wheel|editable` overrides the mode for one run. The wheelhouse is a snapshot: an edit to a workspace package is not visible to a wheel-mode env until the next `prepare-envs`.
 
 **uv cache placement in CI.** Every CI job that runs `prepare-envs` points `UV_CACHE_DIR` at `$RUNNER_TEMP/uv-cache`, on the same filesystem as the venvs, so uv can hardlink package files instead of copying them. `RUNNER_TEMP` is wiped between jobs, so the cache is persisted with `actions/cache/restore`/`save`, restored (never blocking) only when the venvs cache misses, and trimmed of workspace-package entries before it is saved. Each saved entry is a new multi-GB artifact, so four of them (three public OS legs plus the private job) compete for the repository's cache quota; if the total does not fit, the least-valuable leg is dropped. Full details and the local verification recipe: [`uv` cache placement in containers](preparing-environments.md#uv-cache-placement-in-containers).
 
@@ -676,7 +678,7 @@ A handler's `run()` method can be either a regular coroutine (returns a result) 
 
 Use `yield` when your handler produces results incrementally — especially when the caller should receive data before the handler finishes:
 
-- Processing a collection and sending per-item results (see `LintHandler` — `presets/fine_lint/fine_lint/lint_handler.py`)
+- Processing a collection and sending per-item results (see `LintHandler` — `extensions/fine_lint/fine_lint/lint_handler.py`)
 - Long-running handlers (servers, watchers) that should emit an initial result (address, port, status) before entering a blocking loop
 
 ### How it works
@@ -715,7 +717,7 @@ Without the `yield`, the caller would only receive the result after the action i
 ### Canonical examples
 
 - `ServeWalExplorerFromStoreHandler` (`extensions/fine_wal_explorer/`) — yield-before-blocking pattern
-- `LintHandler` (`presets/fine_lint/fine_lint/lint_handler.py`) — iterates a sub-action with `run_action_iter` and re-yields each partial
+- `LintHandler` (`extensions/fine_lint/fine_lint/lint_handler.py`) — iterates a sub-action with `run_action_iter` and re-yields each partial
 
 ## Partial result internals
 
@@ -879,7 +881,7 @@ Raises:
 that would catch a violation is switched on today, and the codebase has **589
 bare-generic annotation sites across 74 files** in `src/` and
 `finecode_extension_runner/src/` (measured 2026-08-22 with pyrefly's
-`implicit-any-type-argument`, see `presets/fine_python_lint/LINT_COVERAGE.md`).
+`implicit-any-type-argument`, see `extensions/fine_python_lint/LINT_COVERAGE.md`).
 Some of them sit on the exact call chain you are extending. They are legacy, not
 the convention: matching a violating neighbour is how the count got that high.
 Write the complete type and leave the neighbour alone.

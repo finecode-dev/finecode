@@ -46,7 +46,7 @@ class Registry:
         for type_ in [t for t, cached in self._container.items() if cached is instance]:
             del self._container[type_]
 
-    def dispose_all(self) -> None:
+    async def dispose_all(self) -> None:
         """Dispose and drop every resolved service.
 
         Used when a whole registry is being retired -- an on-the-fly config
@@ -59,7 +59,7 @@ class Registry:
         for instance in list(self._container.values()):
             if isinstance(instance, service.DisposableService):
                 try:
-                    instance.dispose()
+                    await instance.dispose()
                 except Exception:
                     # Best-effort: one service failing to dispose must not strand
                     # the rest, and the registry is being discarded regardless.

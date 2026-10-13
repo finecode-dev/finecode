@@ -46,6 +46,9 @@ class JsonRpcSessionImpl:
                 [dict[str, Any] | None], collections.abc.Awaitable[Any]
             ],
         ] = {}
+        self._exit_callback: (
+            collections.abc.Callable[[], collections.abc.Awaitable[None]] | None
+        ) = None
 
     # ------------------------------------------------------------------
     # Context manager
@@ -202,6 +205,20 @@ class JsonRpcSessionImpl:
         self._request_handlers[method] = handler
 
     # ------------------------------------------------------------------
+    # Process lifetime
+    # ------------------------------------------------------------------
+
+    def on_exit(
+        self,
+        callback: collections.abc.Callable[[], collections.abc.Awaitable[None]],
+    ) -> None:
+        self._exit_callback = callback
+
+    def force_kill(self) -> None:
+        if self._transport is not None:
+            self._transport.force_kill()
+
+    # ------------------------------------------------------------------
     # Internal message dispatch (runs on IO thread)
     # ------------------------------------------------------------------
 
@@ -324,6 +341,9 @@ class JsonRpcSessionImpl:
         for fut in list(self._sync_request_futures.values()):
             if not fut.done():
                 fut.set_exception(err)
+
+        if self._exit_callback is not None:
+            await self._exit_callback()
 
 
 class JsonRpcError(Exception):

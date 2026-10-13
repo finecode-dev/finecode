@@ -248,6 +248,12 @@ class WorkspaceContext:
     # project_path → reason: remembered, attributable resolution failures
     project_resolution_failures: dict[Path, str] = field(default_factory=dict)
 
+    # (project_path, env_name) → monotonic timestamps of unexpected runner
+    # exits
+    unexpected_runner_exits: dict[tuple[Path, str], list[float]] = field(
+        default_factory=dict
+    )
+
     # project_path → in-flight resolution for that project
     project_resolution_tasks: dict[Path, asyncio.Future[dict[Path, str]]] = field(
         default_factory=dict
@@ -285,6 +291,7 @@ class WorkspaceContext:
     # Serializes the fast discovery phase of workspace mutations (addDir, removeDir,
     # startRunners): dir-list updates, filesystem scan, and projects_to_init
     # computation.  Released before the slow runner-startup phase begins.
+    # Guards WM directory/project membership data (`ws_dirs_paths`, `ws_projects`) during discovery.
     workspace_state_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
     # Per-project initialization locks.  Guard the slow per-project work: config

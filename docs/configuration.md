@@ -371,12 +371,12 @@ Workspace-level configuration lives in `finecode-workspace.toml` at the workspac
 
 ### Workspace packages
 
-In a monorepo, local packages can be installed from their source (editable) or from wheels built from that source. Declare the *set* once in `finecode-workspace.toml`:
+The [workspace](glossary.md#workspace)'s [workspace packages](glossary.md#workspace-package) are declared by the workspace root's configuration. In a monorepo, local packages can be installed from their source (editable) or from wheels built from that source. Declare the *set* once in `finecode-workspace.toml`:
 
 ```toml
 [workspace.workspace_packages]
 # Defaults to true, so this table is optional: with no finecode-workspace.toml
-# every discovered project is a workspace package.
+# every discovered named project is a workspace package.
 all_projects = true
 
 # Optional: explicit paths to treat as workspace packages — useful for
@@ -398,7 +398,7 @@ exclude = ["pkg-a"]  # keep these editable and out of the wheelhouse
 
 `editable` rewrites a matching dependency to an editable install from its declared path. `wheel` installs a wheel built from the checkout by `build_python_artifact` into `<workspace-root>/.venvs/dev_workspace/cache/wheelhouse`; each package is built by its own project's builder. The mode is resolved by exact dev-env key, then the `local`/`ci` bucket, then `editable` (non-ci) / `wheel` (ci); `prepare-envs --workspace-packages=wheel|editable` overrides it.
 
-Any dependency whose package name matches a workspace package is rewritten accordingly, across every env in every project. The resolved set is the union of every discovered project (unless `all_projects = false`) and every explicit `extra` entry.
+Any dependency whose package name matches a workspace package is rewritten accordingly, across every env in every project. The resolved set is the union of every discovered named project (unless `all_projects = false`) and every explicit `extra` entry. Membership in this set is separate from how the packages are installed (see below).
 
 In wheel mode a workspace package with no wheel in the wheelhouse is an **error** naming the package and pointing at `prepare-envs` — never a silent editable fallback. Only the packages in `exclude` install editable in wheel mode.
 

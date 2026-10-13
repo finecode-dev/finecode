@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import dataclasses
+import functools
 
+from fine_inspect_code.diagnostic_types import server_unavailable_diagnostic
 from fine_lint.diagnostic_types import (
     DiagnosticFilesRunContext,
     DiagnosticFilesRunPayload,
@@ -9,6 +11,10 @@ from fine_lint.diagnostic_types import (
 )
 from fine_toml_lang.lint_toml_files_action import LintTomlFilesAction
 from finecode_extension_api import code_action
+from finecode_extension_api.contrib.lsp_service import (
+    LspDiagnosticsUnavailable,
+    check_file_with_one_retry,
+)
 from finecode_extension_api.interfaces import iprojectinfoprovider
 from finecode_extension_api.resource_uri import ResourceUri, resource_uri_to_path
 
@@ -38,8 +44,14 @@ class TombiLintTomlFilesHandler(
     ) -> DiagnosticFilesRunResult:
         file_path = resource_uri_to_path(file_uri)
         root_uri = self.project_info_provider.get_current_project_dir_path().as_uri()
-        await self.lsp_service.ensure_started(root_uri)
-        lint_messages = await self.lsp_service.check_file(file_path)
+        try:
+            await self.lsp_service.ensure_started(root_uri)
+            lint_messages = await check_file_with_one_retry(
+                functools.partial(self.lsp_service.check_file, file_path),
+                functools.partial(self.lsp_service.ensure_started, root_uri),
+            )
+        except LspDiagnosticsUnavailable as exc:
+            lint_messages = [server_unavailable_diagnostic("tombi", exc)]
         return DiagnosticFilesRunResult(messages={file_uri: lint_messages})
 
     async def run(

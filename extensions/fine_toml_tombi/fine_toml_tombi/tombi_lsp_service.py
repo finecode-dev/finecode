@@ -95,8 +95,8 @@ class TombiLspService(service.DisposableService):
         await self._lsp_service.init()
 
     @override
-    def dispose(self) -> None:
-        self._lsp_service.dispose()
+    async def dispose(self) -> None:
+        await self._lsp_service.dispose()
 
     async def ensure_started(self, root_uri: str) -> None:
         await self._lsp_service.ensure_started(root_uri)

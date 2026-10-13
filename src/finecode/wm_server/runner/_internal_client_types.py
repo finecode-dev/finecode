@@ -46,6 +46,8 @@ PROJECT_RAW_CONFIG_GET = "projects/getRawConfig"
 WORKSPACE_PACKAGES_GET = "workspace/getWorkspacePackages"
 WORKSPACE_EXTRA_SELECTION_GET = "workspace/getExtraSelection"
 WORKSPACE_PROJECT_PATHS_GET = "workspace/getProjectPaths"
+WORKSPACE_ROOT_GET = "workspace/getWorkspaceRoot"
+PROJECT_DECLARES_ACTION = "workspace/projectDeclaresAction"
 RUN_ACTION_IN_PROJECT = "finecode/runActionInProject"
 RUN_ACTION_IN_WORKSPACE = "finecode/runActionInWorkspace"
 LEASE_PROCESS_BUDGET = "finecode/leaseProcessBudget"
@@ -1477,6 +1479,44 @@ class GetWorkspaceProjectPathsResponse(BaseResponse):
 
 
 @dataclasses.dataclass
+class GetWorkspaceRootRequest(BaseRequest):
+    params: dict | None = None
+    method = WORKSPACE_ROOT_GET
+
+
+@dataclasses.dataclass
+class GetWorkspaceRootResult(BaseResult):
+    root: str | None
+
+
+@dataclasses.dataclass
+class GetWorkspaceRootResponse(BaseResponse):
+    result: GetWorkspaceRootResult
+
+
+@dataclasses.dataclass
+class ProjectDeclaresActionParams:
+    path: str
+    action_source: str
+
+
+@dataclasses.dataclass
+class ProjectDeclaresActionRequest(BaseRequest):
+    params: ProjectDeclaresActionParams
+    method = PROJECT_DECLARES_ACTION
+
+
+@dataclasses.dataclass
+class ProjectDeclaresActionResult(BaseResult):
+    declares: bool
+
+
+@dataclasses.dataclass
+class ProjectDeclaresActionResponse(BaseResponse):
+    result: ProjectDeclaresActionResult
+
+
+@dataclasses.dataclass
 class RegisterKnowledgeSchemaParams:
     """The ER's schema registry, as data.
 
@@ -2342,6 +2382,18 @@ METHOD_TO_TYPES: dict[
         None,
         GetWorkspaceProjectPathsResponse,
         GetWorkspaceProjectPathsResult,
+    ),
+    WORKSPACE_ROOT_GET: (
+        GetWorkspaceRootRequest,
+        None,
+        GetWorkspaceRootResponse,
+        GetWorkspaceRootResult,
+    ),
+    PROJECT_DECLARES_ACTION: (
+        ProjectDeclaresActionRequest,
+        ProjectDeclaresActionParams,
+        ProjectDeclaresActionResponse,
+        ProjectDeclaresActionResult,
     ),
     KNOWLEDGE_REGISTER_SCHEMA: (
         RegisterKnowledgeSchemaRequest,

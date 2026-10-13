@@ -176,8 +176,8 @@ class Session:
     # Lifecycle
     # ------------------------------------------------------------------
 
-    def _shutdown(self) -> None:
-        services_module.shutdown_all_action_handlers(self._runner_context)
+    async def _shutdown(self) -> None:
+        await services_module.shutdown_all_action_handlers(self._runner_context)
 
 
 @asynccontextmanager
@@ -256,7 +256,7 @@ async def handler_test_session(
     try:
         yield session
     finally:
-        session._shutdown()
+        await session._shutdown()
 
 
 async def run_handler(

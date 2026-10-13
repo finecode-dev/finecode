@@ -19,14 +19,20 @@ import pytest
 from fine_python_lang.type_check_python_files_action import TypeCheckPythonFilesAction
 from fine_type_check.diagnostic_types import (
     DiagnosticFilesRunPayload,
+    DiagnosticFilesRunResult,
     DiagnosticSeverity,
 )
 from finecode_extension_api import code_action
+from finecode_extension_api.contrib.lsp_service import (
+    LspDiagnosticsUnavailable,
+    LspDiagnosticsUnavailableCause,
+)
 from finecode_extension_api.interfaces import (
     icommandrunner,
     iextensionrunnerinfoprovider,
     ilogger,
     isrcartifactfileclassifier,
+    iworkspaceinfoprovider,
 )
 from finecode_extension_api.resource_uri import path_to_resource_uri
 from finecode_extension_runner._services.run_action import (
@@ -67,6 +73,13 @@ class _StubPyreflyLspService:
         # What sync_watched_files reports as missing; tests set this to drive
         # scheduling (AC-12).
         self.missing: set[Path] = set()
+        # When set, check_file raises it, simulating an unavailable server.
+        self.check_error: Exception | None = None
+        # When set, check_file raises it once and then behaves normally.
+        self.check_error_once: Exception | None = None
+        # These tests exercise the per-project path; the forwarding facade has
+        # its own tests.
+        self.forwards_to_host = False
 
     def update_settings(self, settings: dict[str, object]) -> None:
         self.calls.append("update_settings")
@@ -86,6 +99,11 @@ class _StubPyreflyLspService:
     async def check_file(self, _file_path: Path) -> list[object]:
         self.calls.append("check_file")
         self.checked.append(_file_path)
+        if self.check_error is not None:
+            raise self.check_error
+        if self.check_error_once is not None:
+            error, self.check_error_once = self.check_error_once, None
+            raise error
         return []
 
 
@@ -155,11 +173,17 @@ class _FakeSrcArtifactFileClassifier:
 
 
 class _FakeExtensionRunnerInfoProvider:
-    def __init__(self, cache_dir_path: Path | None = None) -> None:
+    def __init__(
+        self, cache_dir_path: Path | None = None, env_name: str = "dev_no_runtime"
+    ) -> None:
         self._cache_dir_path = cache_dir_path or nonexistent_abs_path("fake", "cache")
+        self._env_name = env_name
 
     def get_cache_dir_path(self) -> Path:
         return self._cache_dir_path
+
+    def get_current_env_name(self) -> str:
+        return self._env_name
 
     def get_venv_dir_path_of_env(self, env_name: str) -> Path:
         return nonexistent_abs_path("fake", "venvs", env_name)
@@ -169,6 +193,22 @@ class _FakeExtensionRunnerInfoProvider:
 
     def get_venv_python_interpreter(self, venv_dir_path: Path) -> Path:
         return venv_dir_path / "bin" / "python"
+
+
+class _FakeWorkspaceInfoProvider:
+    def __init__(self, projects: list[Path] | None = None) -> None:
+        self.projects = projects or []
+
+    async def get_workspace_projects(
+        self,
+    ) -> list[iworkspaceinfoprovider.WorkspaceProject]:
+        return [
+            iworkspaceinfoprovider.WorkspaceProject(
+                path=path,
+                config_status=iworkspaceinfoprovider.ProjectConfigStatus.VALID,
+            )
+            for path in self.projects
+        ]
 
 
 def _overrides(
@@ -187,6 +227,7 @@ def _overrides(
         iextensionrunnerinfoprovider.IExtensionRunnerInfoProvider: (
             info_provider or _FakeExtensionRunnerInfoProvider()
         ),
+        iworkspaceinfoprovider.IWorkspaceInfoProvider: _FakeWorkspaceInfoProvider(),
     }
 
 
@@ -278,9 +319,9 @@ async def test_cli_mode_skips_the_lsp_service_entirely(
         await session.run_action(_ACTION_NAME, _run_payload([a, b]))
 
     assert lsp.calls == []
-    assert len(runner.commands) == 2
-    assert all(cmd[1] == "check" for cmd in runner.commands)
-    assert [Path(cmd[-1]) for cmd in runner.commands] == [a, b]
+    check_commands = [cmd for cmd in runner.commands if cmd[1] == "check"]
+    assert len(check_commands) == 2
+    assert [Path(cmd[-1]) for cmd in check_commands] == [a, b]
     # the interpreter path reaches pyrefly as one verbatim token -- no shell
     # quoting around it, so a path with spaces survives
     fake_info = _FakeExtensionRunnerInfoProvider()
@@ -288,7 +329,7 @@ async def test_cli_mode_skips_the_lsp_service_entirely(
         "--python-interpreter-path="
         f"{fake_info.get_venv_python_interpreter(fake_info.get_venv_dir_path_of_env('source'))}"
     )
-    assert all(expected in cmd for cmd in runner.commands)
+    assert all(expected in cmd for cmd in check_commands)
 
 
 async def test_run_sweeps_the_full_file_set_before_checking(
@@ -371,7 +412,8 @@ async def test_cli_mode_without_errors_keeps_the_command_unchanged(
 
     info_provider = _FakeExtensionRunnerInfoProvider()
     venv_dir = info_provider.get_venv_dir_path_of_env("source")
-    assert runner.commands == [
+    check_commands = [cmd for cmd in runner.commands if cmd[1] == "check"]
+    assert check_commands == [
         [
             str(Path(sys.executable).parent / "pyrefly"),
             "check",
@@ -566,14 +608,16 @@ async def test_plain_pyproject_with_service_errors_does_not_fail(
 
 
 @pytest.mark.parametrize("use_cli", [True, False])
-async def test_project_pyrefly_config_without_service_errors_does_not_fail(
+async def test_project_pyrefly_config_without_service_errors_always_fails(
     tmp_path: Path, use_cli: bool
 ) -> None:
-    """A user who has not opted into configured errors keeps the project
-    pyrefly config they already rely on."""
+    """A planted project pyrefly config is an error even with no configured
+    errors: pyrefly is configured only through the service, and a project file
+    would silently override it."""
     project_dir = tmp_path / "project"
     project_dir.mkdir()
-    (project_dir / "pyrefly.toml").write_text(
+    config_path = project_dir / "pyrefly.toml"
+    config_path.write_text(
         "disable-project-excludes-heuristics = true\n", encoding="utf-8"
     )
 
@@ -584,17 +628,24 @@ async def test_project_pyrefly_config_without_service_errors_does_not_fail(
         handler_config={"use_cli": use_cli},
         info_provider=_FakeExtensionRunnerInfoProvider(tmp_path / "cache"),
     ) as session:
-        result = await session.run_action(
-            _ACTION_NAME, _run_payload([(project_dir / "a.py").resolve()])
-        )
+        with pytest.raises(code_action.ActionFailedException) as exc_info:
+            await session.run_action(
+                _ACTION_NAME, _run_payload([(project_dir / "a.py").resolve()])
+            )
 
-    assert result is not None
+    assert str(config_path) in exc_info.value.message
+    assert (
+        "Pyrefly is configured only through the PyreflyConfig service"
+        in exc_info.value.message
+    )
 
 
-async def test_lsp_mode_without_errors_writes_no_config(tmp_path: Path) -> None:
-    """With ``errors`` absent the handler must not take over pyrefly's config:
-    a generated file would shadow any pyrefly.toml the project already has."""
-    cache_dir = tmp_path / "cache"
+async def test_lsp_mode_without_errors_writes_the_generated_config(
+    tmp_path: Path,
+) -> None:
+    """Every project gets a generated config, even with no configured errors:
+    the file is what scopes pyrefly to this project's files."""
+    config_path = tmp_path / ".finecode" / "pyrefly" / "dev_no_runtime" / "pyrefly.toml"
     file_path = (tmp_path / "a.py").resolve()
     lsp = _StubPyreflyLspService()
     runner = _FakeCommandRunner()
@@ -602,13 +653,14 @@ async def test_lsp_mode_without_errors_writes_no_config(tmp_path: Path) -> None:
         tmp_path,
         lsp,
         command_runner=runner,
-        info_provider=_FakeExtensionRunnerInfoProvider(cache_dir),
     ) as session:
         await session.run_action(_ACTION_NAME, _run_payload([file_path]))
 
-    assert runner.commands == []
+    assert [cmd[1] for cmd in runner.commands] == ["dump-config"]
+    assert config_path.read_text(encoding="utf-8") == render_lsp_config(
+        tmp_path, {}, []
+    )
     assert lsp.settings_updates == [{"pyrefly": {"displayTypeErrors": "force-on"}}]
-    assert not cache_dir.exists()
 
 
 async def test_lsp_mode_validates_the_generated_config_once_across_runs(
@@ -618,8 +670,9 @@ async def test_lsp_mode_validates_the_generated_config_once_across_runs(
     handler instance: two runs must pay the validation once. Rewriting or
     revalidating on every run would pay a subprocess for a file whose content
     is already pinned by the service config."""
-    cache_dir = tmp_path / "cache"
-    config_path = cache_dir / "pyrefly" / "pyrefly.toml"
+    config_path = (
+        tmp_path / ".finecode" / "pyrefly" / "dev_no_runtime" / "pyrefly.toml"
+    )
     file_path = (tmp_path / "a.py").resolve()
     lsp = _StubPyreflyLspService()
     runner = _FakeCommandRunner()
@@ -630,13 +683,12 @@ async def test_lsp_mode_validates_the_generated_config_once_across_runs(
             "pyrefly_config": {"errors": {"implicit-any-type-argument": "warn"}}
         },
         command_runner=runner,
-        info_provider=_FakeExtensionRunnerInfoProvider(cache_dir),
     ) as session:
         await session.run_action(_ACTION_NAME, _run_payload([file_path]))
         await session.run_action(_ACTION_NAME, _run_payload([file_path]))
 
     assert config_path.read_text(encoding="utf-8") == render_lsp_config(
-        tmp_path, {"implicit-any-type-argument": "warn"}
+        tmp_path, {"implicit-any-type-argument": "warn"}, []
     )
     assert runner.commands == [
         [
@@ -655,8 +707,9 @@ async def test_lsp_mode_invalid_generated_config_fails_before_start(
     """pyrefly's LSP ignores an invalid config file wholesale and reports no
     error, so a config it would reject has to fail the run instead: otherwise
     every configured kind silently stops applying."""
-    cache_dir = tmp_path / "cache"
-    config_path = cache_dir / "pyrefly" / "pyrefly.toml"
+    config_path = (
+        tmp_path / ".finecode" / "pyrefly" / "dev_no_runtime" / "pyrefly.toml"
+    )
     file_path = (tmp_path / "a.py").resolve()
     lsp = _StubPyreflyLspService()
     runner = _FakeCommandRunner(
@@ -674,7 +727,6 @@ async def test_lsp_mode_invalid_generated_config_fails_before_start(
             "pyrefly_config": {"errors": {"implicit-any-type-argument": "warn"}}
         },
         command_runner=runner,
-        info_provider=_FakeExtensionRunnerInfoProvider(cache_dir),
     ) as session:
         with pytest.raises(code_action.ActionFailedException) as exc_info:
             await session.run_action(_ACTION_NAME, _run_payload([file_path]))
@@ -709,3 +761,55 @@ async def test_handler_errors_field_is_inert(tmp_path: Path) -> None:
     )
     assert not any(arg.startswith("--warn=") for arg in check_command)
     assert not any(arg.startswith("--min-severity") for arg in check_command)
+
+
+async def test_a_dead_language_server_yields_a_file_error_not_an_ok_result(
+    tmp_path: Path,
+) -> None:
+    """A failed server must surface on the file, never as an empty (clean) result.
+
+    An empty diagnostics list renders as ``: OK`` and leaves the run's return
+    code at SUCCESS, so a dead server would look exactly like clean code. The
+    error diagnostic is what makes the failure visible and the return code
+    non-zero.
+    """
+    a = (tmp_path / "a.py").resolve()
+    lsp = _StubPyreflyLspService()
+    lsp.check_error = LspDiagnosticsUnavailable(
+        LspDiagnosticsUnavailableCause.SERVER_EXITED
+    )
+    async with _session(tmp_path, lsp) as session:
+        result = await session.run_action(_ACTION_NAME, _run_payload([a]))
+
+    assert isinstance(result, DiagnosticFilesRunResult)
+    diagnostics = result.messages[path_to_resource_uri(a)]
+    assert len(diagnostics) == 1
+    assert diagnostics[0].code == "server-unavailable"
+    assert diagnostics[0].severity is DiagnosticSeverity.ERROR
+    assert diagnostics[0].source == "pyrefly"
+    assert "server exited" in diagnostics[0].message
+    assert result.return_code is code_action.RunReturnCode.ERROR
+    assert lsp.checked == [a, a]
+
+
+async def test_one_transient_server_failure_is_retried_once(
+    tmp_path: Path,
+) -> None:
+    """A single death must be retried once, and only once.
+
+    The server is restarted on the next demand, so a failure caused by one dead
+    session is recoverable; retrying more than once would turn a broken server
+    into an unbounded loop instead of a visible error.
+    """
+    a = (tmp_path / "a.py").resolve()
+    lsp = _StubPyreflyLspService()
+    lsp.check_error_once = LspDiagnosticsUnavailable(
+        LspDiagnosticsUnavailableCause.SERVER_EXITED
+    )
+    async with _session(tmp_path, lsp) as session:
+        result = await session.run_action(_ACTION_NAME, _run_payload([a]))
+
+    assert lsp.checked == [a, a]
+    assert isinstance(result, DiagnosticFilesRunResult)
+    assert result.messages[path_to_resource_uri(a)] == []
+    assert result.return_code is code_action.RunReturnCode.SUCCESS

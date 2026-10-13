@@ -10,7 +10,14 @@ from typing import Any, AsyncIterator
 
 import pytest
 
-from finecode_extension_api.contrib.lsp_service import LspService, _FileChangeType
+from finecode_extension_api.contrib import lsp_service as lsp_service_module
+from finecode_extension_api.contrib.lsp_service import (
+    LspDiagnosticsUnavailable,
+    LspDiagnosticsUnavailableCause,
+    LspService,
+    _FileChangeType,
+    check_file_with_one_retry,
+)
 from finecode_extension_api.interfaces import ifileeditor, ilspclient
 
 # Em dash, right double quote, é and 😀 — the right double quote (U+201D) and
@@ -69,8 +76,13 @@ class _FakeLspSession:
         # Handlers registered with on_request, keyed by method, so a test can
         # invoke the client side of a server-to-client request directly.
         self.request_handlers: dict[str, Any] = {}
+        # Registered with on_exit; a test calls it to simulate a server exit.
+        self.exit_callback: Any = None
+        self.force_killed = False
+        self.aenter_count = 0
 
     async def __aenter__(self) -> "_FakeLspSession":
+        self.aenter_count += 1
         return self
 
     async def __aexit__(self, *exc_info: object) -> None:
@@ -116,6 +128,12 @@ class _FakeLspSession:
 
     def on_request(self, method: str, handler: Any) -> None:
         self.request_handlers[method] = handler
+
+    def on_exit(self, callback: Any) -> None:
+        self.exit_callback = callback
+
+    def force_kill(self) -> None:
+        self.force_killed = True
 
     @property
     def server_capabilities(self) -> dict[str, Any]:
@@ -340,6 +358,12 @@ async def test_diagnostics_and_hover_on_unchanged_file_share_one_sync(
     content = "x = 1\n"
 
     async with _running_service(file_path, content) as (service, session, _):
+        async def publish(uri: str) -> None:
+            await service._handle_diagnostics(
+                {"uri": uri, "diagnostics": [_F401]}
+            )
+
+        session.on_document_synced = publish
         await service.check_file(file_path, timeout=0.05)
         await service.get_hover(file_path, content, {"line": 0, "character": 0})
 
@@ -2021,3 +2045,356 @@ def test_work_slots_keyword_is_required() -> None:
             cmd=["fake-lsp-server"],
             language_id="python",
         )
+
+
+async def test_a_diagnostics_timeout_raises_instead_of_returning_a_false_clean(
+    tmp_path: Path,
+) -> None:
+    """A silent server must surface as an error, not as an empty (\"OK\") result.
+
+    An empty diagnostics list is the representation of a clean file, so returning
+    one for a timeout makes a hung server indistinguishable from clean code and
+    hides the failure from every caller. A previously cached list must not be
+    returned either: it describes an older revision of the file.
+    """
+    file_path = tmp_path / "subject.py"
+    async with _running_service(file_path, "x = 1\n") as (
+        service,
+        session,
+        file_editor,
+    ):
+
+        async def publish(uri: str) -> None:
+            await service._handle_diagnostics({"uri": uri, "diagnostics": [_F401]})
+
+        session.on_document_synced = publish
+        assert await service.check_file(file_path, timeout=5) == [_F401]
+
+        # A different content forces a sync; the server then stays silent.
+        file_editor.content = "x = 2\n"
+        session.on_document_synced = None
+        with pytest.raises(LspDiagnosticsUnavailable) as exc_info:
+            await service.check_file(file_path, timeout=0.05)
+        assert exc_info.value.cause is LspDiagnosticsUnavailableCause.TIMEOUT
+
+
+async def test_a_server_exit_fails_waiters_and_the_next_demand_restarts(
+    tmp_path: Path,
+) -> None:
+    """An exit while a check is waiting must fail that check and allow a new session.
+
+    The failed check must observe a dead server rather than an empty result, and
+    the next demand must start a fresh session: leaving the dead one in place
+    would make every later check fail on a channel nothing will ever answer.
+    """
+    file_path = tmp_path / "subject.py"
+    async with _running_service(file_path, "x = 1\n") as (service, session, _):
+        check = asyncio.create_task(service.check_file(file_path, timeout=5))
+        # Let the check sync the document and register its waiter.
+        await asyncio.sleep(0.05)
+
+        assert session.exit_callback is not None
+        await session.exit_callback()
+
+        with pytest.raises(LspDiagnosticsUnavailable) as exc_info:
+            await asyncio.wait_for(check, timeout=5)
+        assert exc_info.value.cause is LspDiagnosticsUnavailableCause.SERVER_EXITED
+        assert service._session is None
+
+        await service.ensure_started(root_uri=file_path.parent.as_uri())
+        assert session.aenter_count == 2
+
+
+class _JsonRpcMethodNotFound(Exception):
+    code = -32601
+
+
+async def test_the_probe_is_alive_on_any_response_and_hung_on_a_failure(
+    tmp_path: Path,
+) -> None:
+    """A JSON-RPC error response proves the read loop is alive; only a timeout
+    or a transport failure means hung.
+
+    A watchdog that killed a busy-but-answering server would be worse than no
+    watchdog: it would take down a server that was working.
+    """
+    file_path = tmp_path / "subject.py"
+    async with _running_service(file_path, "x = 1\n") as (service, session, _):
+        session.request_results["finecode/lspProbe"] = None
+        assert service._session is not None
+        assert await service._probe_read_loop(service._session) is True
+
+        session.raise_on_send_request = _JsonRpcMethodNotFound("Unknown request")
+        assert await service._probe_read_loop(service._session) is True
+
+        session.raise_on_send_request = TimeoutError()
+        assert await service._probe_read_loop(service._session) is False
+
+
+async def test_the_watchdog_kills_a_session_that_fails_the_probe(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A request stuck past the trigger and an unanswered probe must kill the
+    process group, not wait forever for a server that will never answer."""
+    file_path = tmp_path / "subject.py"
+    async with _running_service(file_path, "x = 1\n") as (service, session, _):
+        monkeypatch.setattr(lsp_service_module, "_WATCHDOG_SCAN_SEC", 0.01)
+        monkeypatch.setattr(lsp_service_module, "_PROBE_TRIGGER_SEC", 0.01)
+        session.raise_on_send_request = TimeoutError()
+        service._outstanding_requests[0] = time.monotonic() - 1.0
+
+        task = asyncio.create_task(service._watchdog_loop())
+        try:
+            await asyncio.sleep(0.05)
+        finally:
+            _ = task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+
+        assert session.force_killed is True
+        assert service._hang_detected is True
+
+
+async def test_the_watchdog_leaves_an_answering_session_alone(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A busy server that still answers the probe must not be killed."""
+    file_path = tmp_path / "subject.py"
+    async with _running_service(file_path, "x = 1\n") as (service, session, _):
+        monkeypatch.setattr(lsp_service_module, "_WATCHDOG_SCAN_SEC", 0.01)
+        monkeypatch.setattr(lsp_service_module, "_PROBE_TRIGGER_SEC", 0.01)
+        session.request_results["finecode/lspProbe"] = None
+        service._outstanding_requests[0] = time.monotonic() - 1.0
+
+        task = asyncio.create_task(service._watchdog_loop())
+        try:
+            await asyncio.sleep(0.05)
+        finally:
+            _ = task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+
+        assert session.force_killed is False
+
+
+async def test_three_server_restarts_open_the_breaker(tmp_path: Path) -> None:
+    """Past three deaths in the window, ensure_started must refuse immediately
+    with the last cause, instead of restarting a server that keeps dying."""
+    file_path = tmp_path / "subject.py"
+    async with _running_service(file_path, "x = 1\n") as (service, session, _):
+        for _ in range(2):
+            assert session.exit_callback is not None
+            await session.exit_callback()
+            await service.ensure_started(root_uri=file_path.parent.as_uri())
+
+        assert session.exit_callback is not None
+        await session.exit_callback()
+        assert service._breaker_open is True
+
+        with pytest.raises(LspDiagnosticsUnavailable) as exc_info:
+            await service.ensure_started(root_uri=file_path.parent.as_uri())
+        assert exc_info.value.cause is LspDiagnosticsUnavailableCause.BREAKER_OPEN
+        assert "Last failure: server exited" in str(exc_info.value)
+
+
+async def test_check_with_one_retry_returns_first_success_without_restart() -> None:
+    """A healthy check must return its own result and leave the server alone.
+
+    Restarting a working server on every file would churn the session the
+    whole run shares, so success must cost exactly one check.
+    """
+    calls: list[str] = []
+    sentinel = object()
+
+    async def check() -> object:
+        calls.append("check")
+        return sentinel
+
+    async def ensure_started() -> None:
+        calls.append("restart")
+
+    result = await check_file_with_one_retry(check, ensure_started)
+
+    assert result is sentinel
+    assert calls == ["check"]
+
+
+@pytest.mark.parametrize(
+    "cause",
+    [
+        LspDiagnosticsUnavailableCause.TIMEOUT,
+        LspDiagnosticsUnavailableCause.SERVER_EXITED,
+        LspDiagnosticsUnavailableCause.PROBE_FAILED,
+    ],
+)
+async def test_check_with_one_retry_retries_a_transient_failure_once(
+    cause: LspDiagnosticsUnavailableCause,
+) -> None:
+    """A dead or hung server must be restarted and the file checked once more.
+
+    Without the single retry every transient server death surfaces as a file
+    error even though a fresh session would have answered it.
+    """
+    calls: list[str] = []
+    sentinel = object()
+
+    async def check() -> object:
+        calls.append("check")
+        if calls.count("check") == 1:
+            raise LspDiagnosticsUnavailable(cause)
+        return sentinel
+
+    async def ensure_started() -> None:
+        calls.append("restart")
+
+    result = await check_file_with_one_retry(check, ensure_started)
+
+    assert result is sentinel
+    assert calls == ["check", "restart", "check"]
+
+
+@pytest.mark.parametrize(
+    "cause",
+    [
+        LspDiagnosticsUnavailableCause.TIMEOUT,
+        LspDiagnosticsUnavailableCause.SERVER_EXITED,
+        LspDiagnosticsUnavailableCause.PROBE_FAILED,
+    ],
+)
+async def test_check_with_one_retry_propagates_a_second_failure(
+    cause: LspDiagnosticsUnavailableCause,
+) -> None:
+    """A retry that fails too must surface instead of looping forever.
+
+    Bounding the retry to one keeps a broken server a visible file error
+    rather than an unbounded wait.
+    """
+    calls: list[str] = []
+
+    async def check() -> object:
+        calls.append("check")
+        raise LspDiagnosticsUnavailable(cause)
+
+    async def ensure_started() -> None:
+        calls.append("restart")
+
+    with pytest.raises(LspDiagnosticsUnavailable) as exc_info:
+        await check_file_with_one_retry(check, ensure_started)
+
+    assert exc_info.value.cause is cause
+    assert calls == ["check", "restart", "check"]
+
+
+async def test_check_with_one_retry_does_not_restart_when_breaker_open() -> None:
+    """A breaker refusal is already the verdict, not a failure to recover from.
+
+    Restarting past the budget would revive a server the service refused to
+    start again.
+    """
+    calls: list[str] = []
+
+    async def check() -> object:
+        calls.append("check")
+        raise LspDiagnosticsUnavailable(LspDiagnosticsUnavailableCause.BREAKER_OPEN)
+
+    async def ensure_started() -> None:
+        calls.append("restart")
+
+    with pytest.raises(LspDiagnosticsUnavailable) as exc_info:
+        await check_file_with_one_retry(check, ensure_started)
+
+    assert exc_info.value.cause is LspDiagnosticsUnavailableCause.BREAKER_OPEN
+    assert calls == ["check"]
+
+
+async def test_check_with_one_retry_propagates_a_breaker_opened_during_restart() -> (
+    None
+):
+    """A restart refused by the breaker must surface with no second check.
+
+    Checking again after a refused restart would run against a session that
+    was never started.
+    """
+    calls: list[str] = []
+
+    async def check() -> object:
+        calls.append("check")
+        raise LspDiagnosticsUnavailable(LspDiagnosticsUnavailableCause.SERVER_EXITED)
+
+    async def ensure_started() -> None:
+        calls.append("restart")
+        raise LspDiagnosticsUnavailable(LspDiagnosticsUnavailableCause.BREAKER_OPEN)
+
+    with pytest.raises(LspDiagnosticsUnavailable) as exc_info:
+        await check_file_with_one_retry(check, ensure_started)
+
+    assert exc_info.value.cause is LspDiagnosticsUnavailableCause.BREAKER_OPEN
+    assert calls == ["check", "restart"]
+
+
+async def test_check_with_one_retry_propagates_cancellation_without_restart() -> None:
+    """A cancelled check must stay cancelled instead of becoming a retry.
+
+    Retrying a cancellation would keep working past the operator asking it
+    to stop.
+    """
+    calls: list[str] = []
+
+    async def check() -> object:
+        calls.append("check")
+        raise asyncio.CancelledError
+
+    async def ensure_started() -> None:
+        calls.append("restart")
+
+    with pytest.raises(asyncio.CancelledError):
+        await check_file_with_one_retry(check, ensure_started)
+
+    assert calls == ["check"]
+
+
+async def test_check_with_one_retry_propagates_an_unexpected_error_without_restart() -> (
+    None
+):
+    """A non-server error must reach the caller unchanged.
+
+    Only the server's own unavailability is recoverable by a restart; any
+    other failure retried against a fresh session would hide its origin.
+    """
+    calls: list[str] = []
+
+    async def check() -> object:
+        calls.append("check")
+        raise RuntimeError("boom")
+
+    async def ensure_started() -> None:
+        calls.append("restart")
+
+    with pytest.raises(RuntimeError, match="boom"):
+        await check_file_with_one_retry(check, ensure_started)
+
+    assert calls == ["check"]
+
+
+async def test_check_with_one_retry_propagates_a_restart_failure_without_a_second_check() -> (
+    None
+):
+    """A restart that fails must surface instead of checking a dead session.
+
+    The second check needs the fresh session the restart was supposed to
+    provide.
+    """
+    calls: list[str] = []
+
+    async def check() -> object:
+        calls.append("check")
+        raise LspDiagnosticsUnavailable(LspDiagnosticsUnavailableCause.SERVER_EXITED)
+
+    async def ensure_started() -> None:
+        calls.append("restart")
+        raise RuntimeError("boom")
+
+    with pytest.raises(RuntimeError, match="boom"):
+        await check_file_with_one_retry(check, ensure_started)
+
+    assert calls == ["check", "restart"]

@@ -141,6 +141,19 @@ class LspSessionImpl(ilspclient.ILspSession):
         self._session.on_request(method, handler)
 
     # ------------------------------------------------------------------
+    # Process lifetime
+    # ------------------------------------------------------------------
+
+    def on_exit(
+        self,
+        callback: collections.abc.Callable[[], collections.abc.Awaitable[None]],
+    ) -> None:
+        self._session.on_exit(callback)
+
+    def force_kill(self) -> None:
+        self._session.force_kill()
+
+    # ------------------------------------------------------------------
     # Properties
     # ------------------------------------------------------------------
 

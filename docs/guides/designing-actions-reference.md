@@ -243,7 +243,7 @@ class MyRunContext(code_action.RunActionContext[MyRunPayload]):
 
 When possible, prefer not overriding `__init__` at all. If you do override it, keep it compatible with the base `RunActionContext` constructor unless you have a concrete reason not to.
 
-See `presets/fine_envs/fine_envs/install_envs_discover_envs_handler.py`
+See `extensions/fine_envs/fine_envs/install_envs_discover_envs_handler.py`
 for a concrete example of this constructor-forwarding pattern.
 <!-- 
 This is currently still an idea, not implemented:

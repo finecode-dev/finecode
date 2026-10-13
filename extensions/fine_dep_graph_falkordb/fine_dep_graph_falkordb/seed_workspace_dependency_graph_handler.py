@@ -1,7 +1,10 @@
 import pathlib
-import re
 import tomllib
 
+from fine_dep_graph._legacy_package_kind import (
+    infer_legacy_package_kind,
+    normalize_package_name,
+)
 from fine_dep_graph.collect_project_dependency_info_action import (
     CollectProjectDependencyInfoAction,
     CollectProjectDependencyInfoRunPayload,
@@ -26,22 +29,6 @@ from fine_dep_graph_falkordb.ifalkordb_client_provider import (
     FalkorDBNotInitializedError,
     IFalkorDBClientProvider,
 )
-
-_NORMALIZE_RE = re.compile(r"[-_.]+")
-
-
-def _normalize_name(name: str) -> str:
-    """PEP 503 canonical name: lowercase with runs of [-_.] replaced by a single dash."""
-    return _NORMALIZE_RE.sub("-", name).lower()
-
-
-def _infer_package_kind(project_path: pathlib.Path) -> str:
-    lower_parts = [p.lower() for p in project_path.parts]
-    if "extensions" in lower_parts:
-        return "extension"
-    if "presets" in lower_parts:
-        return "preset"
-    return "core"
 
 
 def _read_package_name(project_path: pathlib.Path) -> str:
@@ -104,10 +91,15 @@ class SeedWorkspaceDependencyGraphHandler(
         for project in projects:
             package_name = _read_package_name(project.path)
             if package_name:
-                local_packages[_normalize_name(package_name)] = package_name
+                local_packages[normalize_package_name(package_name)] = package_name
                 graph.query(
                     "MERGE (:Package {name: $name, kind: $kind})",
-                    {"name": package_name, "kind": _infer_package_kind(project.path)},
+                    {
+                        "name": package_name,
+                        "kind": infer_legacy_package_kind(
+                            package_name, project.path
+                        ).value,
+                    },
                 )
 
         depends_on_edges = 0
@@ -124,7 +116,7 @@ class SeedWorkspaceDependencyGraphHandler(
             pyproject_source = str(project_path / "pyproject.toml")
 
             for dep_name in result.pyproject_dependencies:
-                target = local_packages.get(_normalize_name(dep_name))
+                target = local_packages.get(normalize_package_name(dep_name))
                 if target is not None:
                     graph.query(
                         "MATCH (a:Package {name: $src}), (b:Package {name: $dst}) "
@@ -138,7 +130,7 @@ class SeedWorkspaceDependencyGraphHandler(
                     depends_on_edges += 1
 
             for preset_source in result.used_preset_sources:
-                target = local_packages.get(_normalize_name(preset_source))
+                target = local_packages.get(normalize_package_name(preset_source))
                 if target is not None:
                     graph.query(
                         "MATCH (a:Package {name: $src}), (b:Package {name: $dst}) "

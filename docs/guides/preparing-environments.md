@@ -52,12 +52,12 @@ Environments that need the project's runtime dependencies reference the project 
 
 ### Workspace packages
 
-In a workspace, local packages can be installed as editable installs, or from wheels built from the checkout. PEP 508 requirement strings cannot express editable installs from a local path, so FineCode provides a workspace-level mechanism in `finecode-workspace.toml` at the workspace root:
+The [workspace](../glossary.md#workspace)'s [workspace packages](../glossary.md#workspace-package) cover local packages in a workspace. In a workspace, local packages can be installed as editable installs, or from wheels built from the checkout. PEP 508 requirement strings cannot express editable installs from a local path, so FineCode provides a workspace-level mechanism in `finecode-workspace.toml` at the workspace root:
 
 ```toml
 [workspace.workspace_packages]
 # Defaults to true, so this table is optional: with no finecode-workspace.toml
-# every discovered project is a workspace package.
+# every discovered named project is a workspace package.
 all_projects = true
 
 # Optional: explicit paths to treat as workspace packages — useful for
@@ -78,14 +78,14 @@ exclude = ["pkg-a"]
 ```
 
 - `editable` rewrites a matching dependency to an editable install from its declared path, across every env in every project. No per-env supplement tables are needed.
-- `wheel` builds one wheel per package with `build_python_artifact` into `<workspace-root>/.venvs/dev_workspace/cache/wheelhouse` and installs it as a direct `name @ file:///…whl` reference, so every env resolves the package to the artifact built from the checkout — never a PyPI release. Each package is built by **its own project's** builder, so a project's handler override and config apply.
+- `wheel` builds one wheel per package with `build_python_artifact` into `<workspace-root>/.venvs/dev_workspace/cache/wheelhouse` (`<workspace-root>` is the workspace's one root) and installs it as a direct `name @ file:///…whl` reference, so every env resolves the package to the artifact built from the checkout — never a PyPI release. Each package is built by **its own project's** builder, so a project's handler override and config apply.
 - `exclude` keeps the named packages editable in every env and omits them from the wheelhouse — the escape hatch for a package no builder can turn into a wheel.
 
 In wheel mode, a workspace package that has no wheel in the wheelhouse is an **error** naming the package and pointing at `prepare-envs`; it is never silently installed editable. Only packages listed in `exclude` install editable in wheel mode.
 
 `prepare-envs --workspace-packages=wheel|editable` overrides the config for a single run. Wheel mode builds a workspace-wide wheelhouse, so it cannot be combined with `--project`: run `prepare-envs --workspace-packages=wheel` at the workspace root, or use the default editable mode for a `--project` run.
 
-The resolved workspace-packages set is the union of every discovered project (unless `all_projects = false`) and every explicit `extra` entry.
+The resolved workspace-packages set is the union of every discovered named project (unless `all_projects = false`) and every explicit `extra` entry.
 
 ### Installing the project under test
 
@@ -136,7 +136,7 @@ Because every FineCode environment is also a real `[dependency-groups]` entry, `
 
 ## The `dev_workspace` bootstrap
 
-The `dev_workspace` env is special: it contains the FineCode packages that are needed to prepare the rest of the workspace. The handlers that implement `create_envs` and `install_envs` run from `dev_workspace` — which creates a bootstrapping constraint.
+The `dev_workspace` env is special: it contains the FineCode packages that are needed to prepare the rest of the workspace. It is a named [execution environment](../glossary.md#execution-environment) per project: the workspace root and each subproject can each have one. The handlers that implement `create_envs` and `install_envs` run from `dev_workspace` — which creates a bootstrapping constraint.
 
 ### Two-phase installation
 
@@ -162,7 +162,7 @@ After the root `dev_workspace` exists, FineCode can start its runner. `prepare-e
 
 In a multi-project workspace, subproject `dev_workspace` envs follow the same raw-then-merged pattern, but you do not run `bootstrap` for them manually. `prepare-envs` creates their raw `dev_workspace` envs automatically before starting their runners, then runs the preset-resolved install after those runners are available.
 
-Workspace packages are only relevant for packages that are local to your workspace. When you declare them in `finecode-workspace.toml`, those local packages are rewritten to editable installs or to wheels built from source, depending on the selected mode (see [Workspace packages](#workspace-packages)). Published FineCode packages such as `finecode` and `finecode_extension_runner` remain ordinary dependency requirements unless you are developing FineCode itself in a local checkout.
+Only packages declared as [workspace packages](../glossary.md#workspace-package) belong to the workspace set: local checkout presence alone does not imply membership. When you declare them in `finecode-workspace.toml`, those packages are rewritten to editable installs or to wheels built from source, depending on the selected mode (see [Workspace packages](#workspace-packages)). Published FineCode packages such as `finecode` and `finecode_extension_runner` remain [external dependencies](../glossary.md#external-dependency) unless declared as workspace packages — for example when developing FineCode itself in a local checkout.
 
 ### Workspace root bootstrap (one-time)
 

@@ -79,6 +79,10 @@ class ExtensionRunnerInfo(domain.ExtensionRunner):
     )
     active_requests: int = 0
     awaiting_startup_slot: bool = False
+    # Set by `stop_extension_runner` before the shutdown RPC. An exit that was
+    # not asked for is an unexpected one and counts against the restart budget
+    # (ADR-0109 rule 4); a WM stop never does.
+    stopped_by_wm: bool = False
 
 
 # Alias for backward compatibility — status enum now lives in domain

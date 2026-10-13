@@ -33,7 +33,6 @@ def _package_dirs(repo_root: pathlib.Path) -> list[pathlib.Path]:
     # `pyproject.toml` there and it silently becomes an editable install.
     dirs += sorted(repo_root.glob("finecode_*"))
     dirs += sorted(repo_root.glob("extensions/*"))
-    dirs += sorted(repo_root.glob("presets/*"))
     # The private repo mirrors the public layout, so two extra globs reach it.
     # These match nothing on a clean public checkout, where the clone is absent.
     # Deliberately NOT an os.walk: `tests/__testdata__` holds 5 fixture

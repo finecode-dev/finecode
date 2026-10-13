@@ -41,10 +41,13 @@ def _get_severity(
     value = severity.get(code) or severity.get(code_type, "error")
     try:
         return DiagnosticSeverity[value.upper()]
-    except ValueError:
-        logger.debug(f"Severity {value.upper()} doesn't exist in DiagnosticSeverity")
+    except KeyError:
+        logger.warning(
+            f"Configured mypy severity {value!r} is not a DiagnosticSeverity name; "
+            "reporting the finding as ERROR"
+        )
 
-    return DiagnosticSeverity.INFO
+    return DiagnosticSeverity.ERROR
 
 
 def parse_output_using_regex(

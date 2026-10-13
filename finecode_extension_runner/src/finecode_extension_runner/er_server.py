@@ -443,7 +443,7 @@ async def _on_shutdown(server: ErServer, _params: dict | None) -> None:
     logger.info("Shutdown extension runner")
     if server._wal_writer is not None:
         server._wal_writer.close()
-    services.shutdown_all_action_handlers(server._runner_context)
+    await services.shutdown_all_action_handlers(server._runner_context)
 
     logger.debug("Stop Finecode async tasks")
     for task in server._finecode_async_tasks:
@@ -637,8 +637,8 @@ async def _retire_runner_context(
     if previous_context is None:
         return
 
-    services.shutdown_all_action_handlers(previous_context)
-    previous_context.di_registry.dispose_all()
+    await services.shutdown_all_action_handlers(previous_context)
+    await previous_context.di_registry.dispose_all()
 
 
 def make_wm_request_sender(
@@ -1072,7 +1072,7 @@ async def reload_action(server: ErServer, params: dict | None) -> dict:
     logger.trace(f"Reload action: {action_name}")
     if server._runner_context is None:
         return {}
-    services.reload_action(action_name, server._runner_context)
+    await services.reload_action(action_name, server._runner_context)
     return {}
 
 
@@ -1228,7 +1228,9 @@ def create_er_server(wal_writer: er_wal.ErWalWriter | None = None) -> ErServer:
         logger.info("Exit extension runner (atexit)")
         if server._wal_writer is not None:
             server._wal_writer.close()
-        services.shutdown_all_action_handlers(server._runner_context)
+        # atexit cannot await; drive the disposal to completion on a fresh loop
+        # so a language-server child is still reaped on this path.
+        asyncio.run(services.shutdown_all_action_handlers(server._runner_context))
         services.exit_all_action_handlers(server._runner_context)
 
     atexit.register(on_process_exit)

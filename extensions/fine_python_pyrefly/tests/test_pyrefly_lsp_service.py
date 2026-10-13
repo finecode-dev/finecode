@@ -58,6 +58,9 @@ class _RecordingLspService:
     def update_settings(self, settings: dict[str, typing.Any]) -> None:
         self.update_settings_calls.append(settings)
 
+    async def init(self) -> None:
+        pass
+
     async def ensure_started(self, _root_uri: str) -> None:
         self.ensure_started_calls += 1
         if self.ensure_started_gate is not None:
@@ -68,16 +71,36 @@ class _RecordingLspService:
 
 
 class _FakePyreflyConfig:
-    def __init__(self, lsp_config_path: Path | None) -> None:
+    def __init__(
+        self, lsp_config_path: Path | None, topology: str = "per-project"
+    ) -> None:
         self.lsp_config_path = lsp_config_path
+        self.topology = topology
 
 
-def _service(
+class _FakeProjectInfoProvider:
+    def get_current_project_dir_path(self) -> Path:
+        return nonexistent_abs_path("fake", "project")
+
+
+class _FakeWorkspaceInfoProvider:
+    async def get_workspace_root(self) -> Path | None:
+        return None
+
+    async def project_declares_action(self, _path: Path, _action_source: str) -> bool:
+        return False
+
+
+class _FakeWorkspaceActionRunner:
+    pass
+
+
+async def _service(
     lsp_config_path: Path | None = None,
 ) -> tuple[PyreflyLspService, _RecordingLspService]:
     recorder = _RecordingLspService()
-    # Patch the inner LspService so the recorder also sees the settings the
-    # constructor pushes, not only the ones pushed after the swap.
+    # Patch the inner LspService so the recorder sees every settings push, and
+    # so no real language server is built.
     with mock.patch(
         "fine_python_pyrefly.pyrefly_lsp_service.LspService", return_value=recorder
     ):
@@ -88,7 +111,15 @@ def _service(
             extension_runner_info_provider=_FakeExtensionRunnerInfoProvider(),
             work_slots=_NoopWorkSlots(),
             pyrefly_config=typing.cast(typing.Any, _FakePyreflyConfig(lsp_config_path)),
+            project_info_provider=typing.cast(typing.Any, _FakeProjectInfoProvider()),
+            workspace_info_provider=typing.cast(
+                typing.Any, _FakeWorkspaceInfoProvider()
+            ),
+            workspace_action_runner=typing.cast(
+                typing.Any, _FakeWorkspaceActionRunner()
+            ),
         )
+        await service.init()
     return service, recorder
 
 
@@ -96,7 +127,7 @@ async def test_settings_registered_before_the_first_start_are_not_pushed() -> No
     """A first start already carries the settings and answers configuration pulls
     from the live dict, so pushing them again would be a redundant notification
     on every session's first use."""
-    service, recorder = _service()
+    service, recorder = await _service()
 
     service.update_settings({"pyrefly": {"displayTypeErrors": "force-on"}})
     await service.ensure_started("file:///project")
@@ -109,7 +140,7 @@ async def test_a_settings_change_after_start_is_pushed_exactly_once() -> None:
     """A handler that applies its configuration after hover already started the
     server must still have it take effect; losing it silently is why settings
     changed after start are pushed rather than assumed to be unreachable."""
-    service, recorder = _service()
+    service, recorder = await _service()
 
     await service.ensure_started("file:///project")
     service.update_settings({"pyrefly": {"configPath": "/cache/pyrefly.toml"}})
@@ -124,7 +155,7 @@ async def test_an_update_during_a_start_is_pushed_by_the_next_call() -> None:
     """The start in flight read its settings before the update landed, so it did
     not carry them; treating that update as sent would leave the new handler's
     configuration permanently unapplied for the session."""
-    service, recorder = _service()
+    service, recorder = await _service()
     recorder.ensure_started_gate = asyncio.Event()
 
     start = asyncio.create_task(service.ensure_started("file:///project"))
@@ -146,7 +177,7 @@ async def test_generated_config_is_in_the_settings_before_the_first_start() -> N
     configPath applied after the first start leaves diagnostics from that
     start unconfigured until the late push lands."""
     config_path = Path("/cache/pyrefly/pyrefly.toml")
-    _, recorder = _service(lsp_config_path=config_path)
+    _, recorder = await _service(lsp_config_path=config_path)
 
     info_provider = _FakeExtensionRunnerInfoProvider()
     expected_extra_paths = [
@@ -156,17 +187,20 @@ async def test_generated_config_is_in_the_settings_before_the_first_start() -> N
         )
     ]
 
-    assert recorder.update_settings_calls[-1]["pyrefly"] == {
-        "configPath": str(config_path),
-        "extraPaths": expected_extra_paths,
-    }
+    assert any(
+        settings.get("pyrefly") == {
+            "configPath": str(config_path),
+            "extraPaths": expected_extra_paths,
+        }
+        for settings in recorder.update_settings_calls
+    )
 
 
 async def test_no_config_path_without_configured_errors() -> None:
     """Without configured errors the service must not take over pyrefly's
     config discovery: a generated configPath would shadow a project
     pyrefly.toml the user relies on."""
-    _, recorder = _service(lsp_config_path=None)
+    _, recorder = await _service(lsp_config_path=None)
 
     assert all(
         "configPath" not in settings.get("pyrefly", {})

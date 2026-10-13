@@ -1,6 +1,14 @@
 # Package Naming
 
-FineCode package names identify both what a package targets and what role it plays. Use these conventions for public extension and preset packages.
+FineCode package names identify both what a package targets and what role it plays. Use these conventions for public extension packages, which are the distributable capability units.
+
+## Extensions and presets share capability naming
+
+Concrete integrations use `fine_<domain>_<qualifier>` (e.g. `fine_python_ruff`, `fine_toml_tombi`). Feature/composition packages use `fine_<domain?>_<role>` (e.g. `fine_format`, `fine_python_format`); existing `fine_format` stays valid. Open, non-colliding role words are preserved and bare base-language names stay reserved.
+
+A name alone does not decide the capabilities a package supplies, and neither
+directory nor resource presence classifies a package exclusively. The same
+package may supply handlers and an explicitly selected preset resource.
 
 ## Extensions
 
@@ -47,10 +55,8 @@ Name presets after the **semantic domain** they cover, not the query mechanism o
 
 Read the existing names in `presets/` before coining one — they are the working vocabulary, and the nearest neighbour usually shows whether a new word is warranted or an existing family should absorb the capability.
 
-## Telling extensions and presets apart
+## Reading a package name
 
-A bare `fine_<word>` is always a preset, since an extension always carries a qualifier.
+A bare `fine_<word>` reads as a feature/composition package, and a multi-segment name hints at its primary capability (`fine_docs_mkdocs` serves `fine_docs`; `fine_docs_markdown` supplies `fine_docs` configuration). The name alone never decides the full capability set: the same package may supply handlers and an explicitly selected preset resource.
 
-For a multi-segment name the structure is a strong hint but not a guarantee: `fine_docs_mkdocs` is an extension and `fine_docs_markdown` is a preset, and both parse as `<domain>_<qualifier>`. The authority is which directory the package lives in — `presets/` or `extensions/` — and whether it ships a `preset.toml`.
-
-See [ADR-0081](../adr/0081-open-role-word-vocabulary-and-domain-first-segment-in-package-names.md) for the rationale, and [ADR-0026](../adr/0026-extension-and-preset-package-naming.md) for the superseded original convention.
+See proposed [ADR-0115](../../finecode_internal_docs/adr/0115-extension-capabilities-share-terminology-and-repository-directory.md) for the umbrella terminology; [ADR-0081](../adr/0081-open-role-word-vocabulary-and-domain-first-segment-in-package-names.md) remains the historical governing context for role words, and [ADR-0026](../adr/0026-extension-and-preset-package-naming.md) for the superseded original convention.

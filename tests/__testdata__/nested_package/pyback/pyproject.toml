@@ -18,5 +18,5 @@ target_versions = ["PY311"]
 preview = true
 
 [tool.poetry.group.dev.dependencies]
-fine_python_recommended = { path = "../../../presets/fine_python_recommended", develop = true }
+fine_python_recommended = { path = "../../../../extensions/fine_python_recommended", develop = true }
 finecode = { path = "../../../", develop = true }

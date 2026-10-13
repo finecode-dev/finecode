@@ -306,7 +306,9 @@ def _make_project(
     # server not having it before the notification.
     config_path = tmp_path / "cache" / "pyrefly.toml"
     config_path.parent.mkdir()
-    config_path.write_text(render_lsp_config(project_dir, errors), encoding="utf-8")
+    config_path.write_text(
+        render_lsp_config(project_dir, errors, []), encoding="utf-8"
+    )
     return _LspProject(project_dir, extra_dir, file_path, config_path, content)
 
 

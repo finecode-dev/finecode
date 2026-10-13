@@ -11,6 +11,7 @@ from pathlib import Path
 from loguru import logger
 
 from finecode_jsonrpc import _spawn
+from finecode_jsonrpc._proc_kill import force_kill_process_group
 
 CONTENT_LENGTH_PATTERN = re.compile(rb"^Content-Length: (\d+)\r\n$")
 CHARSET = "utf-8"
@@ -146,6 +147,12 @@ class StdioTransport:
             and self._process.returncode is None
             and not self._stop_event.is_set()
         )
+
+    def force_kill(self) -> None:
+        """Kill the server and every process it spawned; a no-op if it exited."""
+        if self._process is None:
+            return
+        force_kill_process_group(self._process.pid, self._readable_id)
 
     # ------------------------------------------------------------------
     # Send (thread-safe)

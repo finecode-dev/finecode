@@ -10,8 +10,6 @@ import functools
 import json
 import os
 import re
-import signal
-import subprocess
 import sys
 import threading
 import time
@@ -32,6 +30,7 @@ from loguru import logger
 from finecode_jsonrpc import _io_thread, _spawn, error_codes
 from finecode_jsonrpc._converter import converter as _converter
 from finecode_jsonrpc._loop_event import LoopAwareEvent
+from finecode_jsonrpc._proc_kill import force_kill_process_group
 from finecode_jsonrpc._proc_snapshot import describe_spawned_processes
 from finecode_jsonrpc.tracing import ITracingHooks
 
@@ -433,25 +432,7 @@ class JsonRpcClient:
         if self.pid is None:
             return
 
-        if sys.platform == "win32":
-            # os.killpg has no Windows equivalent; taskkill /T walks the tree.
-            subprocess.run(
-                ["taskkill", "/F", "/T", "/PID", str(self.pid)],
-                capture_output=True,
-                check=False,
-            )
-        else:
-            try:
-                os.killpg(self.pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
-            except PermissionError:
-                # macOS reports EPERM for a group whose only members are
-                # zombies; either way nothing left in it is ours to signal.
-                logger.debug(
-                    f"Process group {self.pid} of {self.readable_id} could not be"
-                    " signalled (EPERM)"
-                )
+        force_kill_process_group(self.pid, self.readable_id)
 
     def _send_data(self, data: str):
         header = (

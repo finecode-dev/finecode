@@ -190,8 +190,8 @@ class RuffLspService(service.DisposableService):
         await self._lsp_service.init()
 
     @override
-    def dispose(self) -> None:
-        self._lsp_service.dispose()
+    async def dispose(self) -> None:
+        await self._lsp_service.dispose()
 
     def add_settings_provider(self, provider: SettingsProvider) -> None:
         """Register a contribution to the settings the server is started with."""

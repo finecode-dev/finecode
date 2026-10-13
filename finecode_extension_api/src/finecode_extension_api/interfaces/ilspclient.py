@@ -92,6 +92,28 @@ class ILspSession(Protocol):
         """Register handler for server-to-client requests."""
         ...
 
+    # -- Process lifetime --------------------------------------------------
+
+    def on_exit(
+        self,
+        callback: collections.abc.Callable[[], collections.abc.Awaitable[None]],
+    ) -> None:
+        """Register a callback invoked once the server process has exited.
+
+        One callback per session; registering again replaces the previous one.
+        """
+        ...
+
+    def force_kill(self) -> None:
+        """Forcefully terminate the server and everything it spawned.
+
+        The escape hatch for a session whose server cannot be asked to stop —
+        it is unresponsive, or a graceful shutdown did not complete within its
+        bound. Not a substitute for the graceful shutdown request; a session
+        whose process already exited makes this a no-op.
+        """
+        ...
+
     # -- Server info -------------------------------------------------------
 
     @property

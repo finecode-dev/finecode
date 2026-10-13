@@ -293,7 +293,7 @@ async def initialize_handlers(
                 )
 
 
-def reload_action(action_name: str, runner_context: context.RunnerContext) -> None:
+async def reload_action(action_name: str, runner_context: context.RunnerContext) -> None:
     project_def = runner_context.project
 
     try:
@@ -312,7 +312,7 @@ def reload_action(action_name: str, runner_context: context.RunnerContext) -> No
 
         for handler_name, handler_cache in action_cache.handler_cache_by_name.items():
             if handler_cache.exec_info is not None:
-                shutdown_action_handler(
+                await shutdown_action_handler(
                     action_handler_name=handler_name,
                     handler_instance=handler_cache.instance,
                     exec_info=handler_cache.exec_info,
@@ -360,7 +360,7 @@ def resolve_package_path(package_name: str) -> str:
     return package_path
 
 
-def shutdown_action_handler(
+async def shutdown_action_handler(
     action_handler_name: str,
     handler_instance: domain.ActionHandlerDeclaration | None,
     exec_info: domain.ActionHandlerExecInfo,
@@ -390,7 +390,7 @@ def shutdown_action_handler(
             if len(running_service_info.used_by) == 0:
                 if isinstance(used_service, service.DisposableService):
                     try:
-                        used_service.dispose()
+                        await used_service.dispose()
                         logger.trace(f"Disposed service: {used_service}")
                     # dispose() is extension-supplied code and can raise arbitrarily.
                     except Exception as exception:  # noqa: BLE001
@@ -403,7 +403,9 @@ def shutdown_action_handler(
                 del runner_context.running_services[used_service]
 
 
-def shutdown_all_action_handlers(runner_context: context.RunnerContext | None) -> None:
+async def shutdown_all_action_handlers(
+    runner_context: context.RunnerContext | None,
+) -> None:
     if runner_context is not None:
         logger.trace("Shutdown all action handlers")
         for action_cache in runner_context.action_cache_by_name.values():
@@ -412,7 +414,7 @@ def shutdown_all_action_handlers(runner_context: context.RunnerContext | None) -
                 handler_cache,
             ) in action_cache.handler_cache_by_name.items():
                 if handler_cache.exec_info is not None:
-                    shutdown_action_handler(
+                    await shutdown_action_handler(
                         action_handler_name=handler_name,
                         handler_instance=handler_cache.instance,
                         exec_info=handler_cache.exec_info,

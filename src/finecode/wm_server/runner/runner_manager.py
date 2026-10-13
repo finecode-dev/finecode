@@ -95,6 +95,10 @@ _STARTUP_SLOT_NEUTRAL_METHODS: typing.Final[frozenset[str]] = frozenset(
         _internal_client_types.WORKSPACE_EXTRA_SELECTION_GET,
         # Synchronous ws_context read: awaits no runner start, event, lease or human.
         _internal_client_types.WORKSPACE_PROJECT_PATHS_GET,
+        # Synchronous ws_context read: awaits no runner start, event, lease or human.
+        _internal_client_types.WORKSPACE_ROOT_GET,
+        # Synchronous ws_context read: awaits no runner start, event, lease or human.
+        _internal_client_types.PROJECT_DECLARES_ACTION,
         # Releases a lease (no wait) and RPCs only its own runner.
         _internal_client_types.RELEASE_PROCESS_BUDGET,
         # Local publish (progress/partial-result): awaits nothing.
@@ -538,16 +542,23 @@ async def _start_extension_runner_process(
 
     async def on_exit():
         logger.debug(f"Extension Runner {runner.readable_id} exited")
-        if runner.status in (
+        was_live = runner.status in (
             runner_client.RunnerStatus.RUNNING,
             runner_client.RunnerStatus.REPAIRING,
-        ):
+        )
+        if was_live:
             telemetry.er_running_dec(runner.env_name)
         runner.status = runner_client.RunnerStatus.EXITED
+        if was_live and not runner.stopped_by_wm:
+            _record_unexpected_exit(ws_context, runner)
+
+        # A crashed runner cannot release its own leases, and a graceful one may
+        # not have released every run that was in flight when the exit arrived;
+        # reclaiming is idempotent, so it is safe on both paths (ADR-0090).
+        await ws_context.process_budget.reclaim_for_runner(runner.readable_id)
         await notify_project_changed(
             ws_context.ws_projects[runner.working_dir_path]
         )  # TODO: fix
-        # TODO: restart if WM is not stopping
 
     runner.client.server_exit_callback = on_exit
 
@@ -692,6 +703,27 @@ async def _start_extension_runner_process(
     _register(
         _internal_client_types.WORKSPACE_PROJECT_PATHS_GET,
         get_workspace_project_paths,
+    )
+
+    async def get_workspace_root(_params) -> dict[str, typing.Any]:
+        root = context.pick_workspace_root_dir(ws_context)
+        return {"root": str(root) if root is not None else None}
+
+    _register(_internal_client_types.WORKSPACE_ROOT_GET, get_workspace_root)
+
+    async def project_declares_action(
+        params: _internal_client_types.ProjectDeclaresActionParams,
+    ) -> dict[str, typing.Any]:
+        project = ws_context.ws_projects.get(Path(params.path))
+        declares = isinstance(project, domain.CollectedProject) and any(
+            action.source == params.action_source
+            or action.canonical_source == params.action_source
+            for action in project.actions
+        )
+        return {"declares": declares}
+
+    _register(
+        _internal_client_types.PROJECT_DECLARES_ACTION, project_declares_action
     )
 
     def _knowledge_handlers() -> knowledge_bridge.KnowledgeHandlers:
@@ -883,6 +915,37 @@ async def _start_extension_runner_process(
 
 
 _STOP_TIMEOUT_SEC: typing.Final = 10
+_UNEXPECTED_EXIT_BUDGET_COUNT: typing.Final = 3
+_UNEXPECTED_EXIT_BUDGET_WINDOW_SEC: typing.Final = 10 * 60
+
+
+def _record_unexpected_exit(
+    ws_context: context.WorkspaceContext, runner: runner_client.ExtensionRunnerInfo
+) -> None:
+    ws_context.unexpected_runner_exits.setdefault(
+        (runner.working_dir_path, runner.env_name), []
+    ).append(time.monotonic())
+
+
+def _unexpected_exits_within_budget(
+    ws_context: context.WorkspaceContext, project_dir: Path, env_name: str
+) -> list[float]:
+    """Timestamps of *project_dir*'s unexpected exits inside the restart window.
+
+    Prunes stale entries as it goes, so a runner that crashed long ago does not
+    count against one that crashes now, and drops the key once nothing recent
+    remains.
+    """
+    key = (project_dir, env_name)
+    exits = ws_context.unexpected_runner_exits.get(key)
+    if exits is None:
+        return []
+    cutoff = time.monotonic() - _UNEXPECTED_EXIT_BUDGET_WINDOW_SEC
+    exits[:] = [timestamp for timestamp in exits if timestamp >= cutoff]
+    if not exits:
+        del ws_context.unexpected_runner_exits[key]
+        return []
+    return exits
 
 
 async def stop_extension_runner(
@@ -894,6 +957,7 @@ async def stop_extension_runner(
         runner_client.RunnerStatus.RUNNING,
         runner_client.RunnerStatus.REPAIRING,
     ):
+        runner.stopped_by_wm = True
         # A `BaseRunnerRequestException` means the shutdown RPC itself did not
         # come back — a timeout or a dead channel. There is no live RPC channel
         # to ask cooperatively, which is exactly the precondition
@@ -1469,11 +1533,28 @@ async def get_or_start_runner(
     action_names_to_initialize: list[str] | None = None,
     cmd_override: str | None = None,
 ) -> runner_client.ExtensionRunnerInfo:
-    try:
-        runners_by_env = ws_context.ws_projects_extension_runners[project_def.dir_path]
-        runner = runners_by_env[env_name]
+    runners_by_env = ws_context.ws_projects_extension_runners.get(project_def.dir_path)
+    runner = runners_by_env.get(env_name) if runners_by_env is not None else None
+
+    if runner is not None and runner.status == runner_client.RunnerStatus.EXITED:
+        exits = _unexpected_exits_within_budget(
+            ws_context, project_def.dir_path, env_name
+        )
+        if len(exits) >= _UNEXPECTED_EXIT_BUDGET_COUNT:
+            raise RunnerFailedToStart(
+                f"Runner {env_name} in project {project_def.dir_path} exited"
+                f" unexpectedly {len(exits)} times in"
+                f" {_UNEXPECTED_EXIT_BUDGET_WINDOW_SEC // 60} minutes and will not"
+                " be restarted automatically. Fix the cause and recover the"
+                " project's configuration (finecode reload-config), or restart"
+                " the workspace manager."
+            )
+        logger.trace(f"Runner {runner.readable_id} exited; starting a replacement")
+        runner = None
+    elif runner is not None:
         logger.trace(f"Runner {runner.readable_id} found")
-    except KeyError:
+
+    if runner is None:
         logger.trace(
             f"Runner for env {env_name} in {project_def.dir_path} not found, start one"
         )

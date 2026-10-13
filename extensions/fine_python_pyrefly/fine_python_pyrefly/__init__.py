@@ -1,3 +1,8 @@
+from .announce_pyrefly_project_action import AnnouncePyreflyProjectAction
+from .announce_pyrefly_project_handler import (
+    AnnouncePyreflyProjectHandler,
+    AnnouncePyreflyProjectHandlerConfig,
+)
 from .call_hierarchy_incoming_calls_handler import (
     PyreflyCallHierarchyIncomingCallsHandler,
     PyreflyCallHierarchyIncomingCallsHandlerConfig,
@@ -5,6 +10,11 @@ from .call_hierarchy_incoming_calls_handler import (
 from .call_hierarchy_outgoing_calls_handler import (
     PyreflyCallHierarchyOutgoingCallsHandler,
     PyreflyCallHierarchyOutgoingCallsHandlerConfig,
+)
+from .check_files_on_pyrefly_host_action import CheckFilesOnPyreflyHostAction
+from .check_files_on_pyrefly_host_handler import (
+    CheckFilesOnPyreflyHostHandler,
+    CheckFilesOnPyreflyHostHandlerConfig,
 )
 from .definition_handler import PyreflyDefinitionHandler, PyreflyDefinitionHandlerConfig
 from .document_highlight_handler import (
@@ -26,6 +36,11 @@ from .prepare_type_hierarchy_handler import (
     PyreflyPrepareTypeHierarchyHandlerConfig,
 )
 from .pyrefly_lsp_service import PyreflyLspService
+from .query_pyrefly_host_action import QueryPyreflyHostAction
+from .query_pyrefly_host_handler import (
+    QueryPyreflyHostHandler,
+    QueryPyreflyHostHandlerConfig,
+)
 from .references_handler import PyreflyReferencesHandler, PyreflyReferencesHandlerConfig
 from .semantic_tokens_handler import (
     PyreflySemanticTokensHandler,
@@ -49,6 +64,12 @@ from .type_hierarchy_supertypes_handler import (
 )
 
 __all__ = [
+    "AnnouncePyreflyProjectAction",
+    "AnnouncePyreflyProjectHandler",
+    "AnnouncePyreflyProjectHandlerConfig",
+    "CheckFilesOnPyreflyHostAction",
+    "CheckFilesOnPyreflyHostHandler",
+    "CheckFilesOnPyreflyHostHandlerConfig",
     "PyreflyCallHierarchyIncomingCallsHandler",
     "PyreflyCallHierarchyIncomingCallsHandlerConfig",
     "PyreflyCallHierarchyOutgoingCallsHandler",
@@ -80,4 +101,7 @@ __all__ = [
     "PyreflyTypeHierarchySubtypesHandlerConfig",
     "PyreflyTypeHierarchySupertypesHandler",
     "PyreflyTypeHierarchySupertypesHandlerConfig",
+    "QueryPyreflyHostAction",
+    "QueryPyreflyHostHandler",
+    "QueryPyreflyHostHandlerConfig",
 ]

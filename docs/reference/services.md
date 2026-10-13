@@ -281,8 +281,8 @@ These services are declared in presets in this repo. They are available when the
 
 | Interface | Implementation | Declared by |
 | --- | --- | --- |
-| `finecode_extension_api.interfaces.ijsonrpcclient.IJsonRpcClient` | `finecode_jsonrpc.jsonrpc_client.JsonRpcClientImpl` | `presets/fine_python_lint` |
-| `finecode_extension_api.interfaces.ilspclient.ILspClient` | `finecode_extension_runner.impls.lsp_client.LspClientImpl` | `presets/fine_python_lint` (wraps `IJsonRpcClient`) |
+| `finecode_extension_api.interfaces.ijsonrpcclient.IJsonRpcClient` | `finecode_jsonrpc.jsonrpc_client.JsonRpcClientImpl` | `extensions/fine_python_lint` |
+| `finecode_extension_api.interfaces.ilspclient.ILspClient` | `finecode_extension_runner.impls.lsp_client.LspClientImpl` | `extensions/fine_python_lint` (wraps `IJsonRpcClient`) |
 
 ## Extension-activated services
 

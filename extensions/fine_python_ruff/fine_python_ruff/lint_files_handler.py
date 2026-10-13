@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
+import functools
 import json
 import sys
 from pathlib import Path
 
+from fine_inspect_code.diagnostic_types import server_unavailable_diagnostic
 from fine_lint.diagnostic_types import (
     Diagnostic,
     DiagnosticFilesRunContext,
@@ -18,6 +20,10 @@ from fine_lint.diagnostic_types import (
 from fine_lint.lint_files_action import LintFilesAction
 from fine_python_lang import support_range
 from finecode_extension_api import code_action
+from finecode_extension_api.contrib.lsp_service import (
+    LspDiagnosticsUnavailable,
+    check_file_with_one_retry,
+)
 from finecode_extension_api.interfaces import (
     icache,
     icommandrunner,
@@ -186,9 +192,17 @@ class RuffLintFilesHandler(
             root_uri = (
                 self.project_info_provider.get_current_project_dir_path().as_uri()
             )
-            await self.lsp_service.ensure_started(root_uri, meta)
-
-            lint_messages = await self.lsp_service.check_file(file_path)
+            try:
+                await self.lsp_service.ensure_started(root_uri, meta)
+                lint_messages = await check_file_with_one_retry(
+                    functools.partial(self.lsp_service.check_file, file_path),
+                    functools.partial(self.lsp_service.ensure_started, root_uri, meta),
+                )
+            except LspDiagnosticsUnavailable as exc:
+                # A failed check must not reach the cache: the next run has to
+                # ask the server again rather than serve the failure.
+                messages[file_uri] = [server_unavailable_diagnostic("ruff", exc)]
+                return DiagnosticFilesRunResult(messages=messages)
         messages[file_uri] = lint_messages
         await self.cache.save_file_cache(
             file_path, file_version, self.CACHE_KEY, lint_messages
@@ -286,15 +300,11 @@ def map_ruff_violation_to_lint_message(
     end_line = max(1, end_location.get("row", start_line + 1))
     end_column = max(1, end_location.get("column", start_column + 1))
 
-    # Determine severity based on rule code
+    # Ruff reports every violation at one severity on the LSP path; the CLI path must
+    # agree or a finding would pass on one path and fail the other
     code = violation.get("code", "")
     code_description = violation.get("url", "")
-    if code.startswith(("E", "F")):  # Error codes
-        severity = DiagnosticSeverity.ERROR
-    elif code.startswith("W"):  # Warning codes
-        severity = DiagnosticSeverity.WARNING
-    else:
-        severity = DiagnosticSeverity.INFO
+    severity = DiagnosticSeverity.WARNING
 
     return Diagnostic(
         range=Range(

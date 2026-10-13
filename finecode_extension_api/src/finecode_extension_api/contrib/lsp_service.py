@@ -5,10 +5,9 @@ import collections.abc
 import contextlib
 import enum
 import sys
-import threading
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeVar
 
 if sys.version_info >= (3, 12):
     from typing import override
@@ -16,6 +15,7 @@ else:
     from typing_extensions import override
 
 from finecode_extension_api import service
+from finecode_extension_api.contrib._loop_event import RearmableLoopEvent
 from finecode_extension_api.interfaces import (
     ifileeditor,
     ilogger,
@@ -26,6 +26,76 @@ from finecode_extension_api.resource_uri import resource_uri_to_path
 
 # JSON-RPC "RequestCancelled" code
 _REQUEST_CANCELLED_CODE = -32800
+
+# How long a graceful language-server shutdown may take before its process group
+# is force-killed
+_DISPOSE_TIMEOUT_SEC: float = 10.0
+
+# A server interaction outstanding this long is worth probing
+_PROBE_TRIGGER_SEC: float = 10.0
+_PROBE_TIMEOUT_SEC: float = 2.0
+_WATCHDOG_SCAN_SEC: float = 1.0
+# Three server deaths or hang-kills in five minutes open the breaker; replacing
+# the runner constructs a new service and resets it (ADR-0109 rule 4).
+_SERVER_RESTART_BUDGET_COUNT: int = 3
+_SERVER_RESTART_BUDGET_WINDOW_SEC: float = 5 * 60
+
+
+class LspDiagnosticsUnavailableCause(enum.StrEnum):
+    """Why a language server could not produce diagnostics for a file."""
+
+    TIMEOUT = "timeout"
+    SERVER_EXITED = "server exited"
+    PROBE_FAILED = "probe failed"
+    BREAKER_OPEN = "breaker open"
+
+
+class LspDiagnosticsUnavailable(Exception):
+    """Diagnostics could not be obtained because the language server failed.
+
+    Raised instead of returning an empty list when the server timed out, exited
+    or hung. An empty result is indistinguishable from a clean file, so the
+    failure has to travel as an error: callers with a per-file result channel
+    turn it into a file error diagnostic, and IDE feature calls let it
+    propagate so the endpoint reports it (ADR-0109).
+    """
+
+    def __init__(
+        self,
+        cause: LspDiagnosticsUnavailableCause,
+        detail: str | None = None,
+    ) -> None:
+        self.cause = cause
+        message = f"Language server diagnostics unavailable: {cause.value}."
+        if detail is not None:
+            message += f" {detail}."
+        message += (
+            " Retry the file; if this repeats, restart the workspace manager."
+        )
+        super().__init__(message)
+
+
+CheckResultT = TypeVar("CheckResultT")
+
+
+async def check_file_with_one_retry(
+    check: collections.abc.Callable[[], collections.abc.Awaitable[CheckResultT]],
+    ensure_started: collections.abc.Callable[[], collections.abc.Awaitable[None]],
+) -> CheckResultT:
+    """Check once, restarting the server and retrying once on a transient failure.
+
+    A death or a detected hang is recoverable by starting a fresh session;
+    one retry covers the common case without turning a broken server into an
+    unbounded retry loop. A breaker-open failure is already the refusal and
+    is not retried (ADR-0109 rule 4).
+    """
+    try:
+        return await check()
+    except LspDiagnosticsUnavailable as exc:
+        if exc.cause is LspDiagnosticsUnavailableCause.BREAKER_OPEN:
+            raise
+        await ensure_started()
+    return await check()
 
 
 class _FileChangeType(enum.IntEnum):
@@ -151,14 +221,36 @@ class LspService(service.DisposableService):
             id=readable_id or "LspService"
         )
         self._session: ilspclient.ILspSession | None = None
+        # Latched by the exit callback: while set, every diagnostics wait fails
+        # rather than returning an empty result, and `ensure_started` starts a
+        # fresh session before it is cleared. The callback sets the session to
+        # None, so it also is the liveness check `ensure_started` performs.
+        self._session_failure: LspDiagnosticsUnavailableCause | None = None
+        # Outstanding server interactions, keyed by a monotonic token. The
+        # watchdog probes the server when the oldest one has waited too long.
+        self._outstanding_requests: dict[int, float] = {}
+        self._next_outstanding_token = 0
+        self._watchdog_task: asyncio.Task[None] | None = None
+        self._last_probe_at = 0.0
+        # Set by the watchdog when a probe fails, so the exit callback records
+        # the hang as the cause instead of a plain crash.
+        self._hang_detected = False
+        # Restart budget: timestamps of deaths and hang-kills. An exit the
+        # service itself caused (dispose) never reaches the callback, so it is
+        # not counted. The breaker stays open until a new service replaces this
+        # one.
+        self._restart_timestamps: list[float] = []
+        self._last_restart_cause: LspDiagnosticsUnavailableCause | None = None
+        self._breaker_open = False
         self._event_task: asyncio.Task[None] | None = None
         self._start_lock: asyncio.Lock = asyncio.Lock()
-        # pending diagnostics waiters: uri -> Events (threading for cross-thread
-        # safety). A list, not a single event: one service is shared by every
+        # pending diagnostics waiters: uri -> loop-aware events (a future on the
+        # waiting loop, because the publish arrives on the IO thread). A list,
+        # not a single event: one service is shared by every
         # handler in a runner and `_document_leases` exists precisely so several
         # interactions can be in flight on one file at once, so two of them can
         # each be waiting for that file's next diagnostics.
-        self._diagnostics: dict[str, list[threading.Event]] = {}
+        self._diagnostics: dict[str, list[RearmableLoopEvent]] = {}
         # last received diagnostics per uri (persistent cache)
         self._diagnostics_data: dict[str, list[dict[str, Any]]] = {}
         # uri -> content version last sent to LSP (for change detection)
@@ -188,6 +280,15 @@ class LspService(service.DisposableService):
         # session root, recorded on start; paths outside it are never named in
         # a watched-file sweep
         self._root_path: Path | None = None
+        # Optional per-scopeUri configuration answer. None (default) answers
+        # every item with the single settings dict, which is what a session
+        # with one folder needs; a multi-folder host installs a resolver.
+        self._configuration_resolver: (
+            collections.abc.Callable[[str | None], dict[str, Any]] | None
+        ) = None
+        # True while `dispose` runs: a kill it causes is a disposal, not a
+        # crash, and must not count against the restart budget.
+        self._stopping = False
         # whether the server asked to be told about workspace file changes via
         # client/registerCapability; gate `workspace/didChangeWatchedFiles`.
         self._registered_watched_files = False
@@ -200,10 +301,36 @@ class LspService(service.DisposableService):
         pass
 
     @override
-    def dispose(self) -> None:
-        asyncio.create_task(self._async_dispose())
+    async def dispose(self) -> None:
+        """Stop the server within a bound, killing its process group if it does not.
+
+        The graceful ``shutdown``/``exit`` handshake happens inside
+        ``_async_dispose`` (the session's ``__aexit__``). A server that does not
+        finish it within ``_DISPOSE_TIMEOUT_SEC`` is force-killed instead: a
+        stopped runner must leave no language server behind (ADR-0109).
+        """
+        session = self._session
+        # A disposal is never a crash; the exit callback must not count it.
+        self._stopping = True
+        try:
+            await asyncio.wait_for(self._async_dispose(), _DISPOSE_TIMEOUT_SEC)
+        except TimeoutError:
+            self._logger.warning(
+                f"LSP server did not stop within {_DISPOSE_TIMEOUT_SEC}s;"
+                " force-killing its process group"
+            )
+            if session is not None:
+                session.force_kill()
+            self._session = None
+            self._clear_state()
 
     async def _async_dispose(self) -> None:
+        if self._watchdog_task is not None:
+            _ = self._watchdog_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._watchdog_task
+            self._watchdog_task = None
+
         if self._event_task is not None:
             self._event_task.cancel()
             try:
@@ -216,6 +343,9 @@ class LspService(service.DisposableService):
             await self._session.__aexit__(None, None, None)
             self._session = None
 
+        self._clear_state()
+
+    def _clear_state(self) -> None:
         self._diagnostics.clear()
         self._diagnostics_data.clear()
         self._file_versions.clear()
@@ -235,6 +365,7 @@ class LspService(service.DisposableService):
         async with self._start_lock:
             if self._session is not None:
                 return
+            self._raise_if_breaker_open()
             await self.start(root_uri)
 
     async def start(
@@ -253,7 +384,12 @@ class LspService(service.DisposableService):
             client_capabilities=self._client_capabilities,
         )
         await session.__aenter__()
+        # Registered before any await hands control back to the loop: a server
+        # that exits during startup must not be missed.
+        session.on_exit(self._make_exit_callback(session))
         self._session = session
+        self._session_failure = None
+        self._stopping = False
         self._root_path = resource_uri_to_path(root_uri)
         self._server_capabilities = session.server_capabilities
         self._workspace_folders = workspace_folders
@@ -301,6 +437,158 @@ class LspService(service.DisposableService):
         ready = asyncio.Event()
         self._event_task = asyncio.create_task(self._run_event_loop(ready))
         await ready.wait()
+        self._start_watchdog()
+
+    def _start_watchdog(self) -> None:
+        if self._watchdog_task is not None and not self._watchdog_task.done():
+            _ = self._watchdog_task.cancel()
+        self._watchdog_task = asyncio.create_task(self._watchdog_loop())
+
+    def _make_exit_callback(
+        self, session: ilspclient.ILspSession
+    ) -> collections.abc.Callable[[], collections.abc.Awaitable[None]]:
+        """Build the `on_exit` callback for *session*.
+
+        Deliberately does not call `dispose()`: the session is already gone, and
+        disposing it would wait on a process that can no longer answer. Clearing
+        `_session` here is what makes the next `ensure_started` start a fresh
+        session; failing the waiters is what turns a dead server into a visible
+        error instead of a false clean result.
+        """
+
+        async def _on_session_exit() -> None:
+            if self._session is not session:
+                # A newer session already replaced this one; its waiters are
+                # not this exit's to fail.
+                return
+            self._session = None
+            cause = (
+                LspDiagnosticsUnavailableCause.PROBE_FAILED
+                if self._hang_detected
+                else LspDiagnosticsUnavailableCause.SERVER_EXITED
+            )
+            self._hang_detected = False
+            if not self._stopping:
+                self._record_server_restart(cause)
+            self._fail_waiters(cause)
+
+        return _on_session_exit
+
+    def _record_server_restart(self, cause: LspDiagnosticsUnavailableCause) -> None:
+        """Count a server death or hang-kill and open the breaker past budget."""
+        now = time.monotonic()
+        cutoff = now - _SERVER_RESTART_BUDGET_WINDOW_SEC
+        self._restart_timestamps = [
+            timestamp for timestamp in self._restart_timestamps if timestamp >= cutoff
+        ]
+        self._restart_timestamps.append(now)
+        self._last_restart_cause = cause
+        if (
+            len(self._restart_timestamps) >= _SERVER_RESTART_BUDGET_COUNT
+            and not self._breaker_open
+        ):
+            self._breaker_open = True
+            # Once per opening: every later demand raises, and logging each one
+            # would only repeat the same line.
+            self._logger.warning(
+                f"Language server restarted {len(self._restart_timestamps)} times"
+                f" in {_SERVER_RESTART_BUDGET_WINDOW_SEC // 60} minutes"
+                f" (last: {cause.value}); refusing to start it again until the"
+                " runner is replaced."
+            )
+
+    def _raise_if_breaker_open(self) -> None:
+        if not self._breaker_open:
+            return
+        last_cause = (
+            self._last_restart_cause or LspDiagnosticsUnavailableCause.SERVER_EXITED
+        )
+        raise LspDiagnosticsUnavailable(
+            LspDiagnosticsUnavailableCause.BREAKER_OPEN,
+            detail=f"Last failure: {last_cause.value}",
+        )
+
+    def _fail_waiters(self, cause: LspDiagnosticsUnavailableCause) -> None:
+        """Record *cause* and wake every diagnostics waiter to observe it."""
+        self._session_failure = cause
+        for waiters in list(self._diagnostics.values()):
+            for event in waiters:
+                event.set()
+
+    @contextlib.asynccontextmanager
+    async def _outstanding_request(
+        self,
+    ) -> collections.abc.AsyncGenerator[None, None]:
+        """Mark one server interaction in flight for the watchdog.
+
+        A token per interaction, so several in flight at once do not overwrite
+        each other's start time. Only the oldest matters: it decides when the
+        server has been unresponsive long enough to probe.
+        """
+        token = self._next_outstanding_token
+        self._next_outstanding_token += 1
+        self._outstanding_requests[token] = time.monotonic()
+        try:
+            yield
+        finally:
+            del self._outstanding_requests[token]
+
+    async def _watchdog_loop(self) -> None:
+        """Probe a session whose requests have stopped making progress.
+
+        A request outstanding for `_PROBE_TRIGGER_SEC` triggers one probe of the
+        read loop. A session that answers is merely busy and is left alone; one
+        that does not is hung, so its process group is killed — which fails the
+        waiters through the exit callback and counts against the restart budget.
+        """
+        while True:
+            await asyncio.sleep(_WATCHDOG_SCAN_SEC)
+            session = self._session
+            if session is None:
+                return
+            if not self._outstanding_requests:
+                continue
+            oldest = min(self._outstanding_requests.values())
+            now = time.monotonic()
+            if now - oldest < _PROBE_TRIGGER_SEC:
+                continue
+            if now - self._last_probe_at < _PROBE_TRIGGER_SEC:
+                # Probed recently and the request is still stuck; give the
+                # server another window before asking again.
+                continue
+            self._last_probe_at = now
+            if await self._probe_read_loop(session):
+                self._logger.debug(
+                    "Language server answered a probe while a request was"
+                    f" outstanding for {now - oldest:.1f}s; still working"
+                )
+                continue
+            self._logger.warning(
+                "Language server did not answer a probe while a request was"
+                f" outstanding for {now - oldest:.1f}s; killing its process group"
+            )
+            self._hang_detected = True
+            session.force_kill()
+
+    async def _probe_read_loop(self, session: ilspclient.ILspSession) -> bool:
+        """True when *session* answered anything within the probe timeout.
+
+        A JSON-RPC error response — method-not-found included — proves the read
+        loop is alive; only a timeout or a transport failure means hung. The
+        probe bypasses the request slot deliberately: a capped server may have
+        every slot held by the very requests that are stuck.
+        """
+        try:
+            await session.send_request(
+                "finecode/lspProbe", {}, timeout=_PROBE_TIMEOUT_SEC
+            )
+            return True
+        except TimeoutError:
+            return False
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            return getattr(exc, "code", None) is not None
 
     def update_settings(self, settings: dict[str, Any]) -> None:
         """Update LSP server settings.
@@ -321,6 +609,35 @@ class LspService(service.DisposableService):
             "workspace/didChangeConfiguration",
             {"settings": self._settings},
         )
+
+    def set_configuration_resolver(
+        self, resolver: collections.abc.Callable[[str | None], dict[str, Any]]
+    ) -> None:
+        """Answer ``workspace/configuration`` by ``scopeUri`` instead of one dict.
+
+        Installed by a multi-folder host; a session with one folder keeps the
+        default, which answers every item with the same settings.
+        """
+        self._configuration_resolver = resolver
+
+    async def add_workspace_folder(self, folder_uri: str, name: str) -> None:
+        """Add a folder to the running session and tell the server about it.
+
+        Appends to the same list `workspace/workspaceFolders` is answered
+        from, so the pull stays true after a dynamic change.
+        """
+        assert self._session is not None, "LspService not started"
+        folder = {"uri": folder_uri, "name": name}
+        self._workspace_folders.append(folder)
+        await self._session.send_notification(
+            "workspace/didChangeWorkspaceFolders",
+            {"event": {"added": [folder], "removed": []}},
+        )
+
+    @property
+    def has_open_documents(self) -> bool:
+        """Whether any editor session or check currently holds a document open."""
+        return bool(self._open_documents)
 
     @property
     def server_capabilities(self) -> dict[str, Any]:
@@ -371,7 +688,7 @@ class LspService(service.DisposableService):
         reaching for this. Kept for requests that address no document at all.
         """
         assert self._session is not None, "LspService not started"
-        async with self._request_slot():
+        async with self._outstanding_request(), self._request_slot():
             return await self._session.send_request(method, params, timeout=timeout)
 
     async def _sync_document(self, uri: str, content: str) -> bool:
@@ -512,17 +829,27 @@ class LspService(service.DisposableService):
 
         Called with the uri lock held, from `_release_lease` only.
         """
-        assert self._session is not None, "LspService not started"
-        if file_path not in self._file_editor.get_opened_files():
+        if (
+            self._session is not None
+            and file_path not in self._file_editor.get_opened_files()
+        ):
             await self._session.send_notification(
                 "textDocument/didClose",
                 {"textDocument": {"uri": uri}},
             )
-            self._open_documents.discard(uri)
-            # The cached version means "content the server currently has".
-            # After a close it has none, and saying otherwise makes the next
-            # sync for unchanged content skip the didOpen that would reopen it.
-            self._file_versions.pop(uri, None)
+        elif self._session is not None:
+            # An editor session still holds the file open: the server keeps it.
+            return
+
+        # Either the close was just sent, or the server exited and there is
+        # nobody to tell. Both leave the server holding no state for this uri,
+        # so the local records are dropped: a restarted session has to reopen
+        # the document rather than skip the sync as unchanged.
+        self._open_documents.discard(uri)
+        # The cached version means "content the server currently has". After a
+        # close it has none, and saying otherwise makes the next sync for
+        # unchanged content skip the didOpen that would reopen it.
+        self._file_versions.pop(uri, None)
 
     async def _send_cancellable_request(
         self,
@@ -544,7 +871,7 @@ class LspService(service.DisposableService):
         """
         assert self._session is not None, "LspService not started"
         try:
-            async with self._request_slot():
+            async with self._outstanding_request(), self._request_slot():
                 return await self._session.send_request(method, params, timeout=timeout)
         except Exception as exc:
             if getattr(exc, "code", None) == _REQUEST_CANCELLED_CODE:
@@ -558,14 +885,14 @@ class LspService(service.DisposableService):
     @contextlib.contextmanager
     def _diagnostics_waiter(
         self, uri: str
-    ) -> collections.abc.Iterator[threading.Event]:
+    ) -> collections.abc.Iterator[RearmableLoopEvent]:
         """Register interest in the next diagnostics published for *uri*.
 
         Entered before the document is synced, never after: the notification can
         arrive between the sync and the wait, and a waiter registered in that gap
         would miss the event it was created for and wait out its whole timeout.
         """
-        event = threading.Event()
+        event = RearmableLoopEvent()
         self._diagnostics.setdefault(uri, []).append(event)
         try:
             yield event
@@ -598,7 +925,7 @@ class LspService(service.DisposableService):
     @contextlib.contextmanager
     def _diagnostics_interest(
         self, uri: str
-    ) -> collections.abc.Iterator[threading.Event | None]:
+    ) -> collections.abc.Iterator[RearmableLoopEvent | None]:
         """Register for pushed diagnostics, or nothing at all when pulling."""
         if self._supports_pull_diagnostics:
             yield None
@@ -613,12 +940,30 @@ class LspService(service.DisposableService):
         document the server was never told about is answered with an empty
         report rather than an error, so the sync is what makes the answer
         meaningful -- this must stay inside `_document_open`.
+
+        Raises:
+            LspDiagnosticsUnavailable: the request timed out or the session
+                died before answering.
         """
-        report = await self._send_cancellable_request(
-            "textDocument/diagnostic",
-            {"textDocument": {"uri": uri}},
-            timeout=timeout,
-        )
+        try:
+            report = await self._send_cancellable_request(
+                "textDocument/diagnostic",
+                {"textDocument": {"uri": uri}},
+                timeout=timeout,
+            )
+        except TimeoutError as exc:
+            raise LspDiagnosticsUnavailable(
+                LspDiagnosticsUnavailableCause.TIMEOUT
+            ) from exc
+        except Exception as exc:
+            # The request future is failed by the transport with a generic error
+            # when the session dies; the exit callback runs first and latches the
+            # cause, so a dead server arrives here as one of ours. Anything else
+            # (e.g. a server-side cancellation) stays what it is.
+            failure = self._session_failure
+            if failure is None:
+                raise
+            raise LspDiagnosticsUnavailable(failure) from exc
         if not isinstance(report, dict):
             self._logger.warning(f"Unusable diagnostic report for {uri}: {report!r}")
             return self._diagnostics_data.get(uri, [])
@@ -636,7 +981,7 @@ class LspService(service.DisposableService):
     async def _collect_diagnostics(
         self,
         uri: str,
-        event: threading.Event | None,
+        event: RearmableLoopEvent | None,
         document_synced: bool,
         timeout: float,
     ) -> list[dict[str, Any]]:
@@ -655,21 +1000,35 @@ class LspService(service.DisposableService):
         return await self._await_diagnostics(uri, event, document_synced, timeout)
 
     async def _await_first_publish(
-        self, uri: str, event: threading.Event, timeout: float
-    ) -> bool:
-        """Wait for the first publish after a sync; True when one arrived."""
-        was_set = await asyncio.to_thread(event.wait, timeout)
-        if not was_set:
+        self, uri: str, event: RearmableLoopEvent, timeout: float
+    ) -> None:
+        """Wait for the first publish after a sync.
+
+        Raises:
+            LspDiagnosticsUnavailable: the wait timed out, or the server exited
+                while this waiter was registered.
+        """
+        try:
+            async with self._outstanding_request():
+                await asyncio.wait_for(event.wait_async(), timeout)
+        except TimeoutError:
             self._logger.warning(f"Timeout waiting for LSP diagnostics for {uri}")
-        return was_set
+            raise LspDiagnosticsUnavailable(
+                LspDiagnosticsUnavailableCause.TIMEOUT
+            ) from None
+        if self._session_failure is not None:
+            raise LspDiagnosticsUnavailable(self._session_failure)
 
     async def _settle_after_publish(
-        self, uri: str, event: threading.Event, was_set: bool
+        self, uri: str, event: RearmableLoopEvent
     ) -> list[dict[str, Any]]:
-        """Wait out the empty-ack settle window when needed; return current data."""
+        """Wait out the empty-ack settle window when needed; return current data.
+
+        Only called once a publish has arrived, so the returned data is never a
+        cache of a previous interaction.
+        """
         if (
-            was_set
-            and not self._diagnostics_data.get(uri)
+            not self._diagnostics_data.get(uri)
             and self._empty_diagnostics_settle_sec > 0
         ):
             # Got empty initial diagnostics; some servers (e.g. pyrefly) send
@@ -678,14 +1037,19 @@ class LspService(service.DisposableService):
             # is indistinguishable from an ack here, so this is paid for every
             # clean file -- see `empty_diagnostics_settle_sec`.
             event.clear()
-            await asyncio.to_thread(event.wait, self._empty_diagnostics_settle_sec)
+            with contextlib.suppress(TimeoutError):
+                await asyncio.wait_for(
+                    event.wait_async(), self._empty_diagnostics_settle_sec
+                )
+            if self._session_failure is not None:
+                raise LspDiagnosticsUnavailable(self._session_failure)
 
         return self._diagnostics_data.get(uri, [])
 
     async def _await_diagnostics(
         self,
         uri: str,
-        event: threading.Event,
+        event: RearmableLoopEvent,
         document_synced: bool,
         timeout: float,
     ) -> list[dict[str, Any]]:
@@ -706,8 +1070,8 @@ class LspService(service.DisposableService):
             # whatever it has to say about it; there is no new notification coming.
             return self._diagnostics_data.get(uri, [])
 
-        was_set = await self._await_first_publish(uri, event, timeout)
-        return await self._settle_after_publish(uri, event, was_set)
+        await self._await_first_publish(uri, event, timeout)
+        return await self._settle_after_publish(uri, event)
 
     @contextlib.asynccontextmanager
     async def _synced_diagnostics(
@@ -733,28 +1097,37 @@ class LspService(service.DisposableService):
                         yield self._diagnostics_data.get(uri, [])
                         return
                     assert event is not None, "push path requires a registered waiter"
-                    was_set = await self._await_first_publish(uri, event, timeout)
+                    await self._await_first_publish(uri, event, timeout)
                     await work_stack.aclose()
-                    yield await self._settle_after_publish(uri, event, was_set)
+                    yield await self._settle_after_publish(uri, event)
 
     async def check_file(
         self,
         file_path: Path,
         timeout: float = 30.0,
+        content: str | None = None,
     ) -> list[dict[str, Any]]:
-        """Check a file and return raw LSP diagnostics."""
+        """Check a file and return raw LSP diagnostics.
+
+        ``content`` is the text to analyze for a file the caller holds but this
+        session's editor does not; a document already open here wins over it,
+        because the open buffer is the authoritative text (D3).
+        """
         assert self._session is not None, "LspService not started"
 
         uri = file_path.as_uri()
 
-        async with (
-            self._file_editor.session(author=self._file_operation_author) as fe_session,
-            fe_session.read_file(file_path) as file_info,
-        ):
-            content = file_info.content
+        if content is not None and uri not in self._open_documents:
+            file_content = content
+        else:
+            async with (
+                self._file_editor.session(author=self._file_operation_author) as fe_session,
+                fe_session.read_file(file_path) as file_info,
+            ):
+                file_content = file_info.content
 
         async with self._synced_diagnostics(
-            file_path, uri, content, timeout
+            file_path, uri, file_content, timeout
         ) as diagnostics:
             return diagnostics
 
@@ -837,9 +1210,8 @@ class LspService(service.DisposableService):
             # from winning.
             started = time.monotonic()
             if events:
-                all_republished = await asyncio.to_thread(
-                    _wait_all, events, recheck_timeout
-                )
+                async with self._outstanding_request():
+                    all_republished = await _wait_all(events, recheck_timeout)
                 elapsed_ms = (time.monotonic() - started) * 1000
                 if all_republished:
                     self._logger.debug(
@@ -942,14 +1314,15 @@ class LspService(service.DisposableService):
             self._document_open(file_path, uri, content, slotted=False),
         ):
             formatting_options = options or {"tabSize": 4, "insertSpaces": True}
-            result = await self._session.send_request(
-                "textDocument/formatting",
-                {
-                    "textDocument": {"uri": uri},
-                    "options": formatting_options,
-                },
-                timeout=timeout,
-            )
+            async with self._outstanding_request():
+                result = await self._session.send_request(
+                    "textDocument/formatting",
+                    {
+                        "textDocument": {"uri": uri},
+                        "options": formatting_options,
+                    },
+                    timeout=timeout,
+                )
 
         return result or []
 
@@ -1502,10 +1875,20 @@ class LspService(service.DisposableService):
     ) -> list[dict[str, Any]]:
         """Handle workspace/configuration pull request from the LSP server.
 
-        Returns one copy of the current settings for each requested item.
+        Answers each requested item by its ``scopeUri`` when a resolver is
+        installed; otherwise every item gets a copy of the current settings.
         """
         items = (params or {}).get("items", [])
-        return [self._settings for _ in items] if items else [self._settings]
+        if not items:
+            return [self._resolve_configuration(None)]
+        return [
+            self._resolve_configuration(item.get("scopeUri")) for item in items
+        ]
+
+    def _resolve_configuration(self, scope_uri: str | None) -> dict[str, Any]:
+        if self._configuration_resolver is not None:
+            return self._configuration_resolver(scope_uri)
+        return self._settings
 
     async def _handle_diagnostics(self, params: dict[str, Any] | None) -> None:
         if params is None:
@@ -1520,18 +1903,22 @@ class LspService(service.DisposableService):
             event.set()
 
 
-def _wait_all(events: list[threading.Event], timeout: float) -> bool:
+async def _wait_all(events: list[RearmableLoopEvent], timeout: float) -> bool:
     """Wait for every event in *events* against one shared deadline.
 
     Returns True if all were set within *timeout*, False if the budget ran
-    out. One call waits on the whole set on a single executor worker rather
-    than one worker per event, which is what keeps a run with many open
-    documents from occupying every worker in the default executor.
+    out. No thread is held while waiting: each event resolves a future on this
+    loop, and the remaining budget is recomputed after every wait so a slow
+    event cannot extend the shared deadline.
     """
     deadline = time.monotonic() + timeout
     for event in events:
         remaining = deadline - time.monotonic()
-        if not event.wait(max(0.0, remaining)):
+        if remaining <= 0:
+            return False
+        try:
+            await asyncio.wait_for(event.wait_async(), remaining)
+        except TimeoutError:
             return False
     return True
 

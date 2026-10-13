@@ -1,6 +1,6 @@
 # CLI Reference
 
-All commands are run from the workspace or project root directory, inside the `dev_workspace` virtual environment.
+All commands are run from the workspace or project root directory (see [Workspace](glossary.md#workspace)), inside the `dev_workspace` [execution environment](glossary.md#execution-environment). For operations intended to cover the whole checkout, run from the checkout root; running from a project root remains valid for project-scoped work.
 
 ```bash
 source .venvs/dev_workspace/bin/activate
@@ -25,7 +25,7 @@ Use this in CI/CD pipelines or any context where you don't want persistent backg
 
 ### Persistent server
 
-A long-lived WM Server holds warm state — loaded configuration, started runners — across multiple `run` calls. Use `--shared-server` to connect to a running shared instance instead of starting a dedicated one.
+A long-lived WM Server holds warm WM state — loaded configuration, started runners — across multiple `run` calls. Use `--shared-server` to connect to a running shared instance instead of starting a dedicated one.
 
 ```bash
 # Connect to the shared server (start it first if needed):
@@ -168,7 +168,7 @@ See [Configuration](configuration.md) for full details on config precedence.
 
 ### Behavior
 
-- With no `--project`: FineCode treats `cwd` (or `--workdir`) as the workspace root and runs the action in each project that defines it.
+- With no `--project`: FineCode treats `cwd` (or `--workdir`) as the workspace root and runs the action in each project that defines it. For operations intended to cover the whole checkout, use the checkout root.
 - With `--project`: the action must exist in every specified project.
 - Action results are saved to `<venv>/cache/finecode/results/<action>.json` (one entry per project path).
 - WAL options on `run` apply only when FineCode starts a dedicated WM server (default mode). In `--shared-server` mode, configure WAL on the shared WM server process.
@@ -228,7 +228,7 @@ See [Preparing Environments](guides/preparing-environments.md) for a full explan
 | `--verbose` / `-v` | Stream WM and ER diagnostic logs to stderr live over the protocol (`server/logRecords`). Auto-enabled in CI. |
 | `--debug` | Wait for a debugpy client on port 5680 before starting |
 | `--dev-env=<env>` | Override the detected dev environment. One of: `ai`, `ci`, `cli`, `ide`, `precommit` (default: auto-detected) |
-| `--workspace-packages=editable\|wheel` | Override how workspace packages are installed in every env for this run. `editable` installs from source; `wheel` builds one wheel per package and installs it (see [Preparing Environments — workspace packages](guides/preparing-environments.md#workspace-packages)). Default: resolved from `[workspace.workspace_packages_install]` for the active dev-env. |
+| `--workspace-packages=editable\|wheel` | Override how [workspace packages](glossary.md#workspace-package) are installed in every env for this run. `editable` installs from source; `wheel` builds one wheel per package and installs it (see [Preparing Environments — workspace packages](guides/preparing-environments.md#workspace-packages)). Default: resolved from `[workspace.workspace_packages_install]` for the active dev-env. |
 | `--resource-usage[=SEC]` | As for `run`: one `[resources]` line per interval plus a peaks summary. A non-numeric value is rejected with click's exit 2. |
 | `--no-resource-usage` | Disable the reporter, including its CI default. |
 
