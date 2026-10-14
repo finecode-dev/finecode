@@ -37,6 +37,7 @@ async def test_run_action_translates_er_cancellation_to_action_cancelled_error(
             ws_context=ws_context,
             run_trigger=proxy_utils.RunActionTrigger.SYSTEM,
             dev_env=proxy_utils.DevEnv.CI,
+            origin=None,
         )
 
     assert "cancelled by pyrefly" in exc_info.value.message
@@ -66,6 +67,7 @@ async def test_run_action_still_translates_ordinary_failure_to_action_run_failed
             ws_context=ws_context,
             run_trigger=proxy_utils.RunActionTrigger.SYSTEM,
             dev_env=proxy_utils.DevEnv.CI,
+            origin=None,
         )
 
 

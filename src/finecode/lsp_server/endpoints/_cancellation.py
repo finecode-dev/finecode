@@ -14,9 +14,9 @@ from __future__ import annotations
 
 import asyncio
 
-import finecode_jsonrpc
 from loguru import logger
 
+import finecode_jsonrpc
 from finecode import wm_client
 
 

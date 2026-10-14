@@ -1,0 +1,113 @@
+import dataclasses
+
+from fine_src_artifacts import group_src_artifact_files_by_lang_action
+from finecode_extension_api import code_action
+from finecode_extension_api.code_action import CoverageStatus, ItemCoverage
+from finecode_extension_api.interfaces import ilogger, iprojectactionrunner
+
+from fine_lint import get_lint_fixes_action
+
+
+@dataclasses.dataclass
+class GetLintFixesFilesDispatchHandlerConfig(code_action.ActionHandlerConfig): ...
+
+
+class GetLintFixesFilesDispatchHandler(
+    code_action.ActionHandler[
+        get_lint_fixes_action.GetLintFixesAction,
+        GetLintFixesFilesDispatchHandlerConfig,
+    ]
+):
+    """Dispatch ``get_lint_fixes`` to language-specific subactions.
+
+    Groups the requested file by language via ``GroupSrcArtifactFilesByLangAction``
+    and invokes the matching language subaction (e.g. ``GetLintFixesPythonFilesAction``).
+    Partial results from the subaction are forwarded to the caller.
+    """
+
+    def __init__(
+        self,
+        action_runner: iprojectactionrunner.IProjectActionRunner,
+        logger: ilogger.ILogger,
+    ) -> None:
+        self.action_runner = action_runner
+        self.logger = logger
+
+    async def run(
+        self,
+        payload: get_lint_fixes_action.GetLintFixesRunPayload,
+        run_context: get_lint_fixes_action.GetLintFixesRunContext,
+    ) -> None:
+        subactions_by_lang = await self.action_runner.get_actions_for_parent(
+            get_lint_fixes_action.GetLintFixesAction
+        )
+
+        if not subactions_by_lang:
+            self.logger.debug(
+                "GetLintFixesFilesDispatchHandler: no language subactions registered"
+            )
+            await run_context.partial_result_sender.send(
+                get_lint_fixes_action.GetLintFixesRunResult(
+                    file_version=payload.file_version or "",
+                    fixes=[],
+                    coverage=[
+                        ItemCoverage(
+                            status=CoverageStatus.NO_SUBACTIONS,
+                            item=payload.file_path,
+                        )
+                    ],
+                )
+            )
+            return
+
+        # Group the single file by language to find the correct language subaction.
+        files_by_lang_result = await self.action_runner.run_action(
+            action_type=iprojectactionrunner.ActionRef.from_type(
+                group_src_artifact_files_by_lang_action.GroupSrcArtifactFilesByLangAction
+            ),
+            payload=group_src_artifact_files_by_lang_action.GroupSrcArtifactFilesByLangRunPayload(
+                file_paths=[payload.file_path],
+                langs=list(subactions_by_lang.keys()),
+            ),
+            meta=run_context.meta,
+        )
+
+        file_lang = next(
+            (
+                lang
+                for lang, files in files_by_lang_result.files_by_lang.items()
+                if files
+            ),
+            None,
+        )
+        if file_lang is None or file_lang not in subactions_by_lang:
+            self.logger.debug(
+                f"GetLintFixesFilesDispatchHandler: no subaction for file "
+                f"{payload.file_path} (detected lang: {file_lang!r})"
+            )
+            if file_lang is None:
+                status = CoverageStatus.NO_LANGUAGE_DETECTED
+                detail = ""
+            else:
+                status = CoverageStatus.NO_SUBACTION_FOR_LANGUAGE
+                detail = file_lang
+            await run_context.partial_result_sender.send(
+                get_lint_fixes_action.GetLintFixesRunResult(
+                    file_version=payload.file_version or "",
+                    fixes=[],
+                    coverage=[
+                        ItemCoverage(
+                            status=status, item=payload.file_path, detail=detail
+                        )
+                    ],
+                )
+            )
+            return
+
+        subaction = subactions_by_lang[file_lang]
+        async for partial in self.action_runner.run_action_iter(
+            action_type=subaction,
+            payload=payload,
+            meta=run_context.meta,
+        ):
+            await run_context.partial_result_sender.send(partial)

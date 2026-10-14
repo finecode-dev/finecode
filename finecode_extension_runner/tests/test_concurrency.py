@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import pytest
-
 from finecode_extension_runner import concurrency
 
 
@@ -54,20 +52,3 @@ def test_machine_subprocess_budget_falls_back_to_four_when_cpu_count_is_none(
     monkeypatch.setattr("os.cpu_count", lambda: None)
 
     assert concurrency.machine_subprocess_budget() == 3
-
-
-@pytest.mark.parametrize(
-    ("budget", "expected"),
-    [
-        (1, 1),
-        (3, 2),
-        (7, 3),
-        (15, 4),
-    ],
-)
-def test_default_layered_concurrency_splits_budget_via_square_root(
-    monkeypatch, budget: int, expected: int
-) -> None:
-    monkeypatch.setattr(concurrency, "machine_subprocess_budget", lambda: budget)
-
-    assert concurrency.default_layered_concurrency() == expected

@@ -1,6 +1,5 @@
 import dataclasses
 
-from finecode_extension_api import code_action
 from fine_wal_events.discover_wal_sources_action import (
     DiscoverWalSourcesAction,
     DiscoverWalSourcesRunPayload,
@@ -11,6 +10,7 @@ from fine_wal_events.ingest_wal_to_store_action import (
     IngestWalToStoreRunPayload,
     IngestWalToStoreRunResult,
 )
+from finecode_extension_api import code_action
 from finecode_extension_api.interfaces import iprojectactionrunner
 
 
@@ -46,7 +46,9 @@ class IngestWalSourceDiscoveryHandler(
             return IngestWalToStoreRunResult()
 
         discover_result = await self.action_runner.run_action(
-            action_type=iprojectactionrunner.ActionRef.from_type(DiscoverWalSourcesAction),
+            action_type=iprojectactionrunner.ActionRef.from_type(
+                DiscoverWalSourcesAction
+            ),
             payload=DiscoverWalSourcesRunPayload(),
             meta=run_context.meta,
         )

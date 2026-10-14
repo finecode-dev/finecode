@@ -8,10 +8,11 @@ property renders as `"cpython@3.11"`, per the plan's own example.
 
 import dataclasses
 
+from finecode_extension_api.code_action import RunActionResult, RunReturnCode
+
 from finecode.wm_server.config.interpreter_matrix import Interpreter
 from finecode.wm_server.matrix_result import VariantKeyedRunResult
 from finecode_extension_api import textstyler
-from finecode_extension_api.code_action import RunActionResult, RunReturnCode
 
 
 @dataclasses.dataclass
@@ -99,7 +100,9 @@ def test_return_code_error_when_all_variants_error() -> None:
     assert result.return_code == RunReturnCode.ERROR
 
 
-def test_to_text_includes_both_interpreter_headers_and_variant_content_in_order() -> None:
+def test_to_text_includes_both_interpreter_headers_and_variant_content_in_order() -> (
+    None
+):
     """A rendered matrix result must let a user see which interpreter each variant's output belongs to, in the order the variants ran."""
     result: VariantKeyedRunResult[StubResult] = VariantKeyedRunResult(
         variants={
@@ -137,7 +140,9 @@ def test_update_with_disjoint_keys_keeps_both_variants() -> None:
     assert self_result.variants[INTERP_B].label == "b1"
 
 
-def test_update_with_matching_key_merges_into_existing_variant_instead_of_overwriting() -> None:
+def test_update_with_matching_key_merges_into_existing_variant_instead_of_overwriting() -> (
+    None
+):
     """Re-running the same interpreter must combine with its prior result (e.g. accumulate test counts) instead of discarding the earlier run's data."""
     existing = StubResult(label="a1")
     self_result: VariantKeyedRunResult[StubResult] = VariantKeyedRunResult(

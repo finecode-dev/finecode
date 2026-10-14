@@ -1,0 +1,137 @@
+import asyncio
+import dataclasses
+import pathlib
+import typing
+
+from fine_inspect_code.inspect_code_action import (
+    InspectCodeAction,
+    InspectCodeRunContext,
+    InspectCodeRunPayload,
+    InspectCodeRunResult,
+    InspectCodeTarget,
+)
+from fine_inspect_code.ratchet import IDiagnosticsRatchet
+from fine_inspect_code.ratchet_matching import RatchetScope
+from finecode_extension_api import code_action
+from finecode_extension_api.interfaces import (
+    ilogger,
+    iworkspaceactionrunner,
+    iworkspaceinfoprovider,
+)
+from finecode_extension_api.interfaces.iworkspaceinfoprovider import (
+    actionable_project_paths,
+)
+from finecode_extension_api.resource_uri import (
+    path_to_resource_uri,
+    resource_uri_to_path,
+)
+from finecode_extension_api.workspace_utils import group_files_by_project
+
+from fine_type_check.type_check_action import (
+    TypeCheckAction,
+    TypeCheckRunPayload,
+    TypeCheckTarget,
+)
+
+
+@dataclasses.dataclass
+class TypeCheckInspectCodeBridgeHandlerConfig(code_action.ActionHandlerConfig): ...
+
+
+class TypeCheckInspectCodeBridgeHandler(
+    code_action.ActionHandler[
+        InspectCodeAction, TypeCheckInspectCodeBridgeHandlerConfig
+    ]
+):
+    """Bridge handler that runs type checking when inspect_code is invoked."""
+
+    RATCHET_CONTRIBUTOR: typing.ClassVar[str] = "type_check"
+
+    def __init__(
+        self,
+        workspace_action_runner: iworkspaceactionrunner.IWorkspaceActionRunner,
+        workspace_info_provider: iworkspaceinfoprovider.IWorkspaceInfoProvider,
+        logger: ilogger.ILogger,
+        ratchet: IDiagnosticsRatchet,
+    ) -> None:
+        self.workspace_action_runner = workspace_action_runner
+        self.workspace_info_provider = workspace_info_provider
+        self.logger = logger
+        self.ratchet = ratchet
+
+    async def _run_type_check_for_project(
+        self,
+        project_path: pathlib.Path,
+        payload: InspectCodeRunPayload,
+        run_meta: code_action.RunActionMeta,
+        partial_result_sender: code_action.PartialResultSender,
+    ) -> None:
+        results = await self.workspace_action_runner.run_action_in_projects(
+            action_type=TypeCheckAction,
+            payload=TypeCheckRunPayload(
+                target=TypeCheckTarget(payload.target.value),
+                file_paths=payload.file_paths,
+                # `type_check` is workspace-scoped, and this dispatches it into
+                # one project. Without narrowing, every per-project instance
+                # re-resolves the whole workspace and gathers across it: N
+                # instances x N projects.
+                project_paths=[path_to_resource_uri(project_path)],
+            ),
+            meta=run_meta,
+            project_paths=[project_path],
+        )
+        for proj_path, result in results.items():
+            outcome = await self.ratchet.apply(
+                contributor=self.RATCHET_CONTRIBUTOR,
+                checked_project=proj_path,
+                messages=result.messages,
+                scope=RatchetScope.for_payload(payload.target.value, payload.file_paths),
+                unhandled=result.unhandled,
+            )
+            await partial_result_sender.send(
+                InspectCodeRunResult(
+                    messages=outcome.messages,
+                    stale=outcome.stale,
+                    receipts=outcome.receipts,
+                )
+            )
+
+    async def run(
+        self,
+        payload: InspectCodeRunPayload,
+        run_context: InspectCodeRunContext,
+    ) -> None:
+        if payload.project_paths is not None:
+            project_paths = [resource_uri_to_path(uri) for uri in payload.project_paths]
+        else:
+            project_paths = actionable_project_paths(
+                await self.workspace_info_provider.get_workspace_projects()
+            )
+
+        if payload.target == InspectCodeTarget.FILES:
+            if not payload.file_paths:
+                return
+            file_abs_paths = [resource_uri_to_path(uri) for uri in payload.file_paths]
+            project_to_files = group_files_by_project(file_abs_paths, project_paths)
+            tasks = [
+                (
+                    project_path,
+                    dataclasses.replace(
+                        payload, file_paths=[path_to_resource_uri(f) for f in files]
+                    ),
+                )
+                for project_path, files in project_to_files.items()
+            ]
+        else:
+            tasks = [(project_path, payload) for project_path in project_paths]
+
+        async with asyncio.TaskGroup() as tg:
+            for project_path, project_payload in tasks:
+                tg.create_task(
+                    self._run_type_check_for_project(
+                        project_path,
+                        project_payload,
+                        run_context.meta,
+                        run_context.partial_result_sender,
+                    )
+                )

@@ -4,14 +4,14 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
+from fine_inspect_code import inspect_code_action
+from fine_inspect_code.diagnostic_types import BaselineStatus, Diagnostic
+from finecode_extension_api.resource_uri import ResourceUri
 from loguru import logger
 from lsprotocol import types
 
 from finecode._converter import converter as _converter
 from finecode.lsp_server import global_state, pygls_types_utils
-from fine_inspect_code import inspect_code_action
-from fine_inspect_code.diagnostic_types import Diagnostic
-from finecode_extension_api.resource_uri import ResourceUri
 
 if TYPE_CHECKING:
     from finecode.lsp_server.lsp_server import LspServer
@@ -21,6 +21,16 @@ def map_lint_message_to_diagnostic(
     lint_message: Diagnostic,
 ) -> types.Diagnostic:
     code_description_url = lint_message.code_description
+    if lint_message.baseline is BaselineStatus.KNOWN:
+        severity = types.DiagnosticSeverity.Information
+        message = f"{lint_message.message} (baseline)"
+    else:
+        severity = (
+            types.DiagnosticSeverity(lint_message.severity)
+            if lint_message.severity is not None
+            else None
+        )
+        message = lint_message.message
     return types.Diagnostic(
         range=types.Range(
             types.Position(
@@ -32,7 +42,7 @@ def map_lint_message_to_diagnostic(
                 lint_message.range.end.character,
             ),
         ),
-        message=lint_message.message,
+        message=message,
         code=lint_message.code,
         code_description=(
             types.CodeDescription(href=code_description_url)
@@ -40,11 +50,7 @@ def map_lint_message_to_diagnostic(
             else None
         ),
         source=lint_message.source,
-        severity=(
-            types.DiagnosticSeverity(lint_message.severity)
-            if lint_message.severity is not None
-            else None
-        ),
+        severity=severity,
     )
 
 
@@ -82,7 +88,9 @@ async def document_diagnostic_with_full_result(
     json_result = (response.get("resultByFormat") or {}).get("json")
     if json_result is None:
         return None
-    inspect_result = _converter.structure(json_result, inspect_code_action.InspectCodeRunResult)
+    inspect_result = _converter.structure(
+        json_result, inspect_code_action.InspectCodeRunResult
+    )
 
     try:
         requested_file_messages = inspect_result.messages.pop(
@@ -121,10 +129,13 @@ async def document_diagnostic_with_partial_results(
 
     if global_state.wm_client is None:
         logger.error("Diagnostics requested but WM client not connected")
-        return None
+        return
 
     # Store the expected response type for this token
-    global_state.partial_result_tokens[partial_result_token] = ("fine_inspect_code.InspectCodeAction", "document_diagnostic")
+    global_state.partial_result_tokens[partial_result_token] = (
+        "fine_inspect_code.InspectCodeAction",
+        "document_diagnostic",
+    )
 
     try:
         await global_state.wm_client.run_action(
@@ -136,7 +147,7 @@ async def document_diagnostic_with_partial_results(
         )
     except Exception as error:
         logger.error(f"Diagnostics API request failed: {error}")
-    return None
+    return
 
 
 async def document_diagnostic(
@@ -173,7 +184,7 @@ async def document_diagnostic(
 
 
 async def run_workspace_diagnostic_with_partial_results(
-    partial_result_token: str | int
+    partial_result_token: str | int,
 ):
     """Run lint with partial results on all projects.
 
@@ -183,7 +194,10 @@ async def run_workspace_diagnostic_with_partial_results(
     assert global_state.wm_client is not None, "WM client must be connected"
 
     # Store the expected response type for this token
-    global_state.partial_result_tokens[partial_result_token] = ("fine_inspect_code.InspectCodeAction", "workspace_diagnostic")
+    global_state.partial_result_tokens[partial_result_token] = (
+        "fine_inspect_code.InspectCodeAction",
+        "workspace_diagnostic",
+    )
 
     try:
         # send request to WM server; notifications will trigger progress reporter
@@ -199,7 +213,7 @@ async def run_workspace_diagnostic_with_partial_results(
 
 
 async def workspace_diagnostic_with_partial_results(
-    partial_result_token: str | int
+    partial_result_token: str | int,
 ) -> types.WorkspaceDiagnosticReport:
     """Request workspace diagnostics with partial results.
 
@@ -238,7 +252,9 @@ async def workspace_diagnostic_with_full_result() -> types.WorkspaceDiagnosticRe
     json_result = (response.get("resultByFormat") or {}).get("json")
     if not json_result:
         return types.WorkspaceDiagnosticReport(items=[])
-    inspect_result = _converter.structure(json_result, inspect_code_action.InspectCodeRunResult)
+    inspect_result = _converter.structure(
+        json_result, inspect_code_action.InspectCodeRunResult
+    )
 
     items: list[types.WorkspaceDocumentDiagnosticReport] = []
     for file_uri, lint_messages in inspect_result.messages.items():

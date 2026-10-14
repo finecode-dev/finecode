@@ -3,17 +3,18 @@ from __future__ import annotations
 import dataclasses
 from typing import Any
 
-from finecode_extension_api import code_action
 from fine_semantic_tokens.text_document_semantic_tokens_action import (
     SemanticTokensPayload,
     SemanticTokensResult,
+    decode_lsp_semantic_tokens,
 )
-from fine_semantic_tokens.text_document_semantic_tokens_action import decode_lsp_semantic_tokens
-from finecode_extension_api.interfaces import ifileeditor, ilogger, iprojectinfoprovider
-from finecode_extension_api.resource_uri import resource_uri_to_path
 from fine_toml_lang.text_document_semantic_tokens_toml_action import (
     TextDocumentSemanticTokensTomlAction,
 )
+from finecode_extension_api import code_action
+from finecode_extension_api.interfaces import ifileeditor, ilogger, iprojectinfoprovider
+from finecode_extension_api.resource_uri import resource_uri_to_path
+
 from fine_toml_tombi.tombi_lsp_service import TombiLspService
 
 
@@ -28,7 +29,9 @@ class TombiSemanticTokensHandler(
         TombiSemanticTokensHandlerConfig,
     ]
 ):
-    FILE_OPERATION_AUTHOR = ifileeditor.FileOperationAuthor(id="TombiSemanticTokensHandler")
+    FILE_OPERATION_AUTHOR = ifileeditor.FileOperationAuthor(
+        id="TombiSemanticTokensHandler"
+    )
 
     def __init__(
         self,
@@ -54,9 +57,11 @@ class TombiSemanticTokensHandler(
         root_uri = self.project_info_provider.get_current_project_dir_path().as_uri()
         await self.lsp_service.ensure_started(root_uri)
 
-        async with self.file_editor.session(author=self.FILE_OPERATION_AUTHOR) as session:
-            async with session.read_file(file_path) as file_info:
-                content = file_info.content
+        async with (
+            self.file_editor.session(author=self.FILE_OPERATION_AUTHOR) as session,
+            session.read_file(file_path) as file_info,
+        ):
+            content = file_info.content
 
         range_dict: dict[str, Any] | None = None
         if payload.range is not None:

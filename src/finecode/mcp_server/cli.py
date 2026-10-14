@@ -8,8 +8,18 @@ from finecode import logger_utils
 
 
 @click.command()
-@click.option("--workdir", "workdir", default=None, type=str, help="Workspace root directory")
-@click.option("--log-level", "log_level", default="INFO", type=click.Choice(["TRACE", "DEBUG", "INFO", "WARNING", "ERROR"], case_sensitive=False), show_default=True)
+@click.option(
+    "--workdir", "workdir", default=None, type=str, help="Workspace root directory"
+)
+@click.option(
+    "--log-level",
+    "log_level",
+    default="INFO",
+    type=click.Choice(
+        ["TRACE", "DEBUG", "INFO", "WARNING", "ERROR"], case_sensitive=False
+    ),
+    show_default=True,
+)
 @click.option(
     "--wm-port-file",
     "wm_port_file",
@@ -25,7 +35,9 @@ def start_mcp(workdir: str | None, log_level: str, wm_port_file: str | None):
     workdir_path = pathlib.Path(workdir) if workdir else pathlib.Path(os.getcwd())
     wm_telemetry = read_configs.read_wm_telemetry_config(workdir_path)
     logger_utils.init_logger(
-        log_name="mcp_server", log_level=log_level, stdout=False,
+        log_name="mcp_server",
+        log_level=log_level,
+        stdout=False,
         otlp_endpoint=wm_telemetry.otlp_endpoint,
     )
     port_file_path = pathlib.Path(wm_port_file) if wm_port_file else None

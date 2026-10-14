@@ -1,0 +1,80 @@
+[tool.finecode]
+presets = [{ source = "fine_inspect_code" }]
+
+[tool.finecode.action.lint]
+source = "fine_lint.LintAction"
+
+[[tool.finecode.action.lint.handlers]]
+name = "lint"
+source = "fine_lint.LintHandler"
+env = "dev_workspace"
+dependencies = ["fine_lint~=0.1.0a0"]
+
+[tool.finecode.action.lint_files]
+source = "fine_lint.LintFilesAction"
+
+[[tool.finecode.action.lint_files.handlers]]
+name = "dispatch"
+source = "fine_lint.LintFilesDispatchHandler"
+env = "dev_no_runtime"
+dependencies = ["fine_lint~=0.1.0a0"]
+
+[tool.finecode.action.get_code_actions]
+source = "fine_lint.GetCodeActionsAction"
+
+[[tool.finecode.action.get_code_actions.handlers]]
+name = "lint_fixes_bridge"
+source = "fine_lint.LintFixesCodeActionsBridgeHandler"
+env = "dev_workspace"
+dependencies = ["fine_lint~=0.1.0a0"]
+
+[tool.finecode.action.get_lint_fixes]
+source = "fine_lint.GetLintFixesAction"
+
+[[tool.finecode.action.get_lint_fixes.handlers]]
+name = "dispatch"
+source = "fine_lint.GetLintFixesFilesDispatchHandler"
+env = "dev_workspace"
+dependencies = ["fine_lint~=0.1.0a0"]
+
+[tool.finecode.action.resolve_code_action]
+source = "fine_lint.ResolveCodeActionAction"
+
+[[tool.finecode.action.resolve_code_action.handlers]]
+name = "lint_fixes_bridge"
+source = "fine_lint.LintFixesResolveBridgeHandler"
+env = "dev_workspace"
+dependencies = ["fine_lint~=0.1.0a0"]
+
+[tool.finecode.action.apply_code_actions]
+source = "fine_lint.ApplyCodeActionsAction"
+
+[[tool.finecode.action.apply_code_actions.handlers]]
+name = "apply"
+source = "fine_lint.ApplyCodeActionsHandler"
+env = "dev_workspace"
+dependencies = ["fine_lint~=0.1.0a0"]
+
+[[tool.finecode.action.inspect_code.handlers]]
+name = "lint_bridge"
+source = "fine_lint.LintInspectCodeBridgeHandler"
+env = "dev_workspace"
+dependencies = ["fine_lint~=0.1.0a0"]
+
+[tool.finecode.action.apply_lint_fixes_files]
+source = "fine_lint.ApplyLintFixesFilesAction"
+
+[[tool.finecode.action.apply_lint_fixes_files.handlers]]
+name = "apply"
+source = "fine_lint.ApplyLintFixesFilesHandler"
+env = "dev_workspace"
+dependencies = ["fine_lint~=0.1.0a0"]
+
+[tool.finecode.action.apply_lint_fixes]
+source = "fine_lint.ApplyLintFixesAction"
+
+[[tool.finecode.action.apply_lint_fixes.handlers]]
+name = "dispatch"
+source = "fine_lint.ApplyLintFixesDispatchHandler"
+env = "dev_workspace"
+dependencies = ["fine_lint~=0.1.0a0"]

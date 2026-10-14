@@ -1,0 +1,15 @@
+[tool.finecode]
+# fine_python_src_artifacts registers get_src_artifact_toolchain_range's Python handler,
+# which is where the formatters' language level comes from when it is not configured
+presets = [{ source = "fine_format" }, { source = "fine_python_src_artifacts" }]
+
+[tool.finecode.action.format_python_file]
+source = "fine_python_lang.FormatPythonFileAction"
+handlers = [
+  { name = "ruff", source = "fine_python_ruff.RuffFormatFileHandler", env = "dev_no_runtime", dependencies = [
+    "fine_python_ruff~=0.2.0a0",
+  ] },
+]
+
+[tool.finecode.extension.fine_python_ruff]
+dependencies_override = ["ruff==0.16.*"]

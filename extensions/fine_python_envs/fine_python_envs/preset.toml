@@ -1,0 +1,22 @@
+[tool.finecode]
+presets = [{ source = "fine_envs" }]
+
+# The Python source for the toolchain axis. It runs in dev_workspace and never in the
+# env whose axis it derives — the axis has to exist before that env does (ADR-0053).
+[tool.finecode.action.sync_python_interpreters]
+source = "fine_python_lang.SyncPythonInterpretersAction"
+
+[[tool.finecode.action.sync_python_interpreters.handlers]]
+name = "sync_python_interpreters"
+source = "fine_python_package_info.SyncPythonInterpretersHandler"
+env = "dev_workspace"
+dependencies = ["fine_python_package_info~=0.2.0a0"]
+
+[tool.finecode.action.list_obtainable_python_interpreters]
+source = "fine_python_lang.ListObtainablePythonInterpretersAction"
+
+[[tool.finecode.action.list_obtainable_python_interpreters.handlers]]
+name = "list_obtainable_python_interpreters_with_uv"
+source = "fine_python_uv.UvListObtainablePythonInterpretersHandler"
+env = "dev_workspace"
+dependencies = ["fine_python_uv~=0.1.0a0"]

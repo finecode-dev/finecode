@@ -28,6 +28,7 @@ from finecode_extension_api.resource_uri import (
     resource_uri_to_path,
 )
 
+
 @contextlib.contextmanager
 def _chdir(path: pathlib.Path) -> collections.abc.Iterator[None]:
     """Temporarily change the process working directory.
@@ -94,7 +95,9 @@ class ImportLinterCheckPythonImportsHandlerConfig(code_action.ActionHandlerConfi
     root_packages: list[str] = dataclasses.field(default_factory=list)
     include_external_packages: bool = False
     exclude_type_checking_imports: bool = False
-    contracts: list[ImportLinterContractConfig] = dataclasses.field(default_factory=list)
+    contracts: list[ImportLinterContractConfig] = dataclasses.field(
+        default_factory=list
+    )
     """Contracts defined directly in FineCode config (e.g. shared by a preset across
     projects) instead of a separate import-linter config file. When non-empty, this
     takes precedence over `config_filename`/file discovery entirely."""
@@ -143,7 +146,9 @@ def _stringify_booleans(options: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _build_user_options_from_config(config: ImportLinterCheckPythonImportsHandlerConfig):
+def _build_user_options_from_config(
+    config: ImportLinterCheckPythonImportsHandlerConfig,
+):
     from importlinter.application.user_options import UserOptions
 
     session_options = _stringify_booleans(
@@ -154,10 +159,14 @@ def _build_user_options_from_config(config: ImportLinterCheckPythonImportsHandle
         }
     )
     contracts_options = [
-        _stringify_booleans({"type": contract.type, "name": contract.name, **contract.options})
+        _stringify_booleans(
+            {"type": contract.type, "name": contract.name, **contract.options}
+        )
         for contract in config.contracts
     ]
-    return UserOptions(session_options=session_options, contracts_options=contracts_options)
+    return UserOptions(
+        session_options=session_options, contracts_options=contracts_options
+    )
 
 
 @dataclasses.dataclass
@@ -178,7 +187,7 @@ def _run_import_linter_check(
     # import-linter's graph-building can be slow on large codebases, and this
     # keeps that work off the ER's event loop.
     from importlinter import configuration as il_configuration
-    from importlinter.application.use_cases import read_user_options, create_report
+    from importlinter.application.use_cases import create_report, read_user_options
 
     # import-linter's global `settings` (timer, user-option readers, graph
     # builder, ...) is only populated as a side effect of importing
@@ -206,7 +215,8 @@ def _run_import_linter_check(
 
         if report.could_not_run:
             reasons = "; ".join(
-                f"{name}: {exc}" for name, exc in report.invalid_contract_options.items()
+                f"{name}: {exc}"
+                for name, exc in report.invalid_contract_options.items()
             )
             raise code_action.ActionFailedException(
                 f"import-linter: invalid contract configuration — {reasons}"
@@ -279,7 +289,9 @@ class ImportLinterCheckPythonImportsHandler(
                 "src_artifact_def_path (the dispatch handler must resolve it first)"
             )
 
-        project_def_path = pathlib.Path(resource_uri_to_path(payload.src_artifact_def_path))
+        project_def_path = pathlib.Path(
+            resource_uri_to_path(payload.src_artifact_def_path)
+        )
         project_dir = project_def_path.parent
         config_uri = path_to_resource_uri(project_def_path)
 

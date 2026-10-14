@@ -1,0 +1,72 @@
+[tool.finecode]
+presets = [
+  { source = "fine_python_src_artifacts" },
+  { source = "fine_python_code_hierarchy" },
+  { source = "fine_python_format" },
+  { source = "fine_python_lint" },
+  { source = "fine_python_type_check" },
+  { source = "fine_python_check_imports" },
+  { source = "fine_python_inlay_hints" },
+  { source = "fine_python_semantic_tokens" },
+  { source = "fine_python_symbol_info" },
+  { source = "fine_python_test" },
+  { source = "fine_toml_recommended" },
+]
+
+[tool.finecode.extension.fine_python_ruff]
+dependencies_override = ["ruff==0.16.*"]
+
+[[tool.finecode.service]]
+interface = "fine_python_pyrefly.pyrefly_config.PyreflyConfig"
+
+[tool.finecode.service.config.errors]
+# Default `warn`: reported in the editor, but hidden from `type_check` below
+# pyrefly's CLI `error` floor, so they never failed a run.
+deprecated = "error"
+direct-abstract-base-instantiation = "error"
+division-by-zero = "error"
+implicit-import = "error"
+invalid-decorator = "error"
+misplaced-ignore = "error"
+missing-attribute-patch-target = "error"
+name-mismatch = "error"
+non-convergent-recursion = "error"
+non-exhaustive-match = "error"
+redundant-cast = "error"
+redundant-condition = "error"
+unnecessary-comparison = "error"
+unnecessary-type-conversion = "error"
+unreachable = "error"
+unreachable-match-case = "error"
+unresolvable-dunder-all = "error"
+untyped-import = "error"
+useless-overload-body = "error"
+variance-mismatch = "error"
+# Default `ignore`: not checked at all unless named here.
+empty-body = "error"
+implicit-abstract-class = "error"
+implicit-any-attribute = "error"
+implicit-any-empty-container = "error"
+implicit-any-lambda = "error"
+implicit-any-parameter = "error"
+implicit-any-type-argument = "error"
+implicit-reexport = "error"
+implicitly-defined-attribute = "error"
+incompatible-comparison = "error"
+invalid-abstract-method = "error"
+invalid-cast = "error"
+missing-source = "error"
+missing-super-call = "error"
+no-any-return-explicit = "error"
+no-any-return-implicit = "error"
+non-exhaustive-match-open-type = "error"
+not-required-key-access = "error"
+open-unpacking = "error"
+string-as-iterable = "error"
+unannotated-return = "error"
+unsupported-dynamic-base = "error"
+untyped-class-decorator = "error"
+untyped-function-decorator = "error"
+unused-call-result = "error"
+unused-ignore = "error"
+unused-type-ignore = "error"

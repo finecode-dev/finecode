@@ -50,8 +50,12 @@ class DomainPurityContract(Contract):
     type_name = "domain_purity"
 
     domain_modules = fields.SetField(subfield=fields.ModuleExpressionField())
-    ignore_imports = fields.SetField(subfield=fields.ImportExpressionField(), required=False)
-    unmatched_ignore_imports_alerting = fields.EnumField(AlertLevel, default=AlertLevel.ERROR)
+    ignore_imports = fields.SetField(
+        subfield=fields.ImportExpressionField(), required=False
+    )
+    unmatched_ignore_imports_alerting = fields.EnumField(
+        AlertLevel, default=AlertLevel.ERROR
+    )
 
     def check(self, graph: ImportGraph, verbose: bool) -> ContractCheck:
         warnings = contract_utils.remove_ignored_imports(
@@ -74,7 +78,9 @@ class DomainPurityContract(Contract):
         illegal_imports: list[dict] = []
 
         for module_name in sorted(allowed_module_names):
-            for imported in sorted(graph.find_modules_directly_imported_by(module_name)):
+            for imported in sorted(
+                graph.find_modules_directly_imported_by(module_name)
+            ):
                 if imported in allowed_module_names or _is_stdlib_module(imported):
                     continue
                 import_details = graph.get_import_details(

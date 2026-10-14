@@ -17,12 +17,12 @@ from __future__ import annotations
 import re
 
 import pytest
-from finecode_extension_runner.testing import run_handler
-
 from fine_python_lang.list_obtainable_python_interpreters_action import (
     ListObtainablePythonInterpretersAction,
     ListObtainablePythonInterpretersRunPayload,
 )
+from finecode_extension_runner.testing import run_handler
+
 from fine_python_uv._uv_common import get_uv_executable
 from fine_python_uv.list_obtainable_python_interpreters_handler import (
     UvListObtainablePythonInterpretersHandler,
@@ -49,7 +49,9 @@ async def test_real_uv_output_matches_handler_assumptions() -> None:
     assert result.toolchains, "handler parsed no toolchains from real uv output"
 
     for toolchain in result.toolchains:
-        assert _CANONICAL.match(toolchain), f"not reduced to canonical form: {toolchain}"
+        assert _CANONICAL.match(toolchain), (
+            f"not reduced to canonical form: {toolchain}"
+        )
 
     assert len(result.toolchains) == len(set(result.toolchains)), (
         "patch levels were not collapsed to one entry per minor"

@@ -1,23 +1,23 @@
 from __future__ import annotations
 
-import asyncio
 import collections.abc
 import contextlib
 import pathlib
 import typing
 
 from finecode.wm_server import context, domain
+from finecode.wm_server.runner import elicitation_bridge
 from finecode.wm_server.runner.runner_client import (
-    RunActionTrigger,
     DevEnv,
-    RunResultFormat,
     RunActionResponse,
+    RunActionTrigger,
+    RunResultFormat,
 )
 from finecode.wm_server.services.run_service import proxy_utils
 from finecode.wm_server.services.run_service.exceptions import ActionRunFailed
 from finecode.wm_server.services.run_service.execution_scopes import (
-    OrchestrationPolicy,
     DEFAULT_ORCHESTRATION_POLICY,
+    OrchestrationPolicy,
 )
 
 
@@ -45,34 +45,19 @@ class ProjectExecutor:
     ) -> str:
         # action_source is always canonical here: ER-initiated calls pass
         # canonical_source directly (derived from cls.__module__.__qualname__).
-        action_name = self._find_action_name(action_source, project)
-        if action_name is None:
-            # A handler may dynamically invoke an action whose own env was never
-            # started by the top-level request (e.g. check_imports' dispatch
-            # handler calling get_src_artifact_language, which lives in
-            # "dev_no_runtime" while dispatch itself runs in "dev_workspace").
-            # canonical_source for such actions is only populated once their env
-            # has started and reported back via update_runner_config, so give
-            # every not-yet-resolved action in this project a chance to resolve
-            # before giving up. One action's metadata being unresolvable must not
-            # cancel another's resolution that is about to succeed, so gather
-            # (not TaskGroup) with return_exceptions=True.
-            unresolved = [a for a in project.actions if a.canonical_source is None]
-            if unresolved:
-                await asyncio.gather(
-                    *(
-                        proxy_utils.ensure_action_metadata(a, project, self._ws_context)
-                        for a in unresolved
-                    ),
-                    return_exceptions=True,
-                )
-                action_name = self._find_action_name(action_source, project)
+        action = await proxy_utils.find_action_by_canonical_source(
+            action_source, project, self._ws_context
+        )
+        if action is not None:
+            return action.name
 
-        if action_name is None:
-            raise ActionRunFailed(
-                f"No action with canonical source '{action_source}' found in project {project.dir_path}"
-            )
-        return action_name
+        lines = proxy_utils.import_error_lines_for_tail(
+            project, self._ws_context, action_source.rsplit(".", 1)[-1]
+        )
+        suffix = ("\n" + "\n".join(lines)) if lines else ""
+        raise ActionRunFailed(
+            f"No action with canonical source '{action_source}' found in project {project.dir_path}{suffix}"
+        )
 
     async def run_action(
         self,
@@ -88,7 +73,9 @@ class ProjectExecutor:
         initialize_all_handlers: bool = False,
         caller_kwargs: dict | None = None,
         allow_no_handlers: bool = False,
-        selected_interpreters: set[str] | None = None,
+        selected_envs: set[str] | None = None,
+        *,
+        origin: elicitation_bridge.RunDispatchOrigin | None,
     ) -> RunActionResponse:
         if orchestration_depth >= policy.max_recursion_depth:
             raise ActionRunFailed(
@@ -98,9 +85,7 @@ class ProjectExecutor:
 
         project = self._ws_context.ws_projects.get(project_path)
         if not isinstance(project, domain.CollectedProject):
-            raise ActionRunFailed(
-                f"Project {project_path} has no valid config"
-            )
+            raise ActionRunFailed(f"Project {project_path} has no valid config")
 
         action_name = await self._resolve_action_name(action_source, project)
 
@@ -117,7 +102,8 @@ class ProjectExecutor:
             orchestration_depth=orchestration_depth + 1,
             caller_kwargs=caller_kwargs,
             allow_no_handlers=allow_no_handlers,
-            selected_interpreters=selected_interpreters,
+            selected_envs=selected_envs,
+            origin=origin,
         )
 
     @contextlib.asynccontextmanager
@@ -134,6 +120,8 @@ class ProjectExecutor:
         result_formats: list[RunResultFormat] | None = None,
         progress_token: int | str | None = None,
         caller_kwargs: dict | None = None,
+        *,
+        origin: elicitation_bridge.RunDispatchOrigin | None,
     ) -> collections.abc.AsyncIterator[proxy_utils.RunWithPartialResultsContext]:
         if orchestration_depth >= policy.max_recursion_depth:
             raise ActionRunFailed(
@@ -143,9 +131,7 @@ class ProjectExecutor:
 
         project = self._ws_context.ws_projects.get(project_path)
         if not isinstance(project, domain.CollectedProject):
-            raise ActionRunFailed(
-                f"Project {project_path} has no valid config"
-            )
+            raise ActionRunFailed(f"Project {project_path} has no valid config")
 
         action_name = await self._resolve_action_name(action_source, project)
 
@@ -160,5 +146,6 @@ class ProjectExecutor:
             result_formats=result_formats,
             progress_token=progress_token,
             caller_kwargs=caller_kwargs,
+            origin=origin,
         ) as ctx:
             yield ctx

@@ -1,4 +1,5 @@
 # docs: docs/guides/developing-finecode.md
+import contextlib
 import inspect
 import logging
 import sys
@@ -29,10 +30,8 @@ def init_logger(
 
     if log_groups:
         for group, level_str in log_groups.items():
-            try:
+            with contextlib.suppress(KeyError):
                 logs.set_log_level_for_group(group, logs.LogLevel[level_str.upper()])
-            except KeyError:
-                pass
 
     # pygls uses standard python logger, intercept it and pass logs to loguru
     class InterceptHandler(logging.Handler):
@@ -59,6 +58,7 @@ def init_logger(
     logging.basicConfig(handlers=[InterceptHandler()], level=0, force=True)
 
     from finecode import telemetry
+
     service_name = f"finecode-{log_name.replace('_', '-')}"
     telemetry.init_otel_logging(service_name, workspace_path, endpoint=otlp_endpoint)
     telemetry.init_tracer_provider(service_name, workspace_path, endpoint=otlp_endpoint)

@@ -10,6 +10,7 @@ startup-window stdout (bounded) so a ``ServerFailedToStart`` diagnostic can surf
 
 These tests pin that behaviour so the actionable output is never silently dropped again.
 """
+
 from __future__ import annotations
 
 import asyncio

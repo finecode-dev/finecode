@@ -4,10 +4,13 @@ import pathlib
 
 import pytest
 
-from finecode.wm_server import domain, testing as wm_testing
-from finecode.wm_server._api_handlers._helpers import _merge_partial_results_for_action
+from finecode.wm_server import domain
+from finecode.wm_server import testing as wm_testing
 from finecode.wm_server.runner import _internal_client_types
 from finecode.wm_server.services.run_service.exceptions import ActionRunFailed
+from finecode.wm_server.services.run_service.merge_helpers import (
+    merge_partial_results_for_action,
+)
 
 
 def _build_ws_context(tmp_path: pathlib.Path, *, client=None, running: bool = True):
@@ -25,7 +28,7 @@ async def test_no_payloads_returns_none(tmp_path: pathlib.Path) -> None:
     """No streamed data for this slot: nothing to merge, no runner call needed."""
     ws_context = _build_ws_context(tmp_path)
 
-    result = await _merge_partial_results_for_action(
+    result = await merge_partial_results_for_action(
         project_path=tmp_path,
         action_name="test_action",
         json_payloads=[None, {}],
@@ -43,7 +46,7 @@ async def test_single_payload_passes_through_without_runner_call(
     ws_context = _build_ws_context(tmp_path)
     payload = {"messages": {"file://a": [1]}}
 
-    result = await _merge_partial_results_for_action(
+    result = await merge_partial_results_for_action(
         project_path=tmp_path,
         action_name="test_action",
         json_payloads=[payload],
@@ -74,7 +77,7 @@ async def test_multiple_payloads_merge_via_er_merge_results(
     payload_a = {"messages": {"file://a": [1]}}
     payload_b = {"messages": {"file://b": [2]}}
 
-    result = await _merge_partial_results_for_action(
+    result = await merge_partial_results_for_action(
         project_path=tmp_path,
         action_name="test_action",
         json_payloads=[payload_a, payload_b],
@@ -104,7 +107,7 @@ async def test_merge_rpc_error_raises_action_run_failed(tmp_path: pathlib.Path) 
     ws_context = _build_ws_context(tmp_path, client=client)
 
     with pytest.raises(ActionRunFailed):
-        await _merge_partial_results_for_action(
+        await merge_partial_results_for_action(
             project_path=tmp_path,
             action_name="test_action",
             json_payloads=[{"messages": {}}, {"messages": {}}],
@@ -120,7 +123,7 @@ async def test_no_running_runner_raises_action_run_failed(
     ws_context = _build_ws_context(tmp_path, running=False)
 
     with pytest.raises(ActionRunFailed, match="no running runner"):
-        await _merge_partial_results_for_action(
+        await merge_partial_results_for_action(
             project_path=tmp_path,
             action_name="test_action",
             json_payloads=[{"messages": {}}, {"messages": {}}],
@@ -140,7 +143,7 @@ async def test_unknown_project_raises_action_run_failed(tmp_path: pathlib.Path) 
     unknown_path = tmp_path / "does-not-exist"
 
     with pytest.raises(ActionRunFailed):
-        await _merge_partial_results_for_action(
+        await merge_partial_results_for_action(
             project_path=unknown_path,
             action_name="test_action",
             json_payloads=[{"messages": {}}, {"messages": {}}],

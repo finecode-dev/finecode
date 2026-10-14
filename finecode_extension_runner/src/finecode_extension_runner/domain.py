@@ -6,6 +6,7 @@ import typing
 from pathlib import Path
 
 from finecode_extension_api import code_action, service
+
 from finecode_extension_runner.impls import process_executor as process_executor_impl
 
 
@@ -24,7 +25,13 @@ class ActionDeclaration:
 
 
 class ActionHandlerDeclaration:
-    def __init__(self, name: str, source: str, config: dict[str, typing.Any], env: str | None = None) -> None:
+    def __init__(
+        self,
+        name: str,
+        source: str,
+        config: dict[str, typing.Any],
+        env: str | None = None,
+    ) -> None:
         self.name = name
         self.source = source
         self.config = config

@@ -1,12 +1,12 @@
 # docs: docs/reference/actions.md
 import dataclasses
 
-from finecode_extension_api import code_action
 from fine_envs.sync_toolchains_action import (
     SyncToolchainsAction,
     SyncToolchainsRunPayload,
     SyncToolchainsRunResult,
 )
+from finecode_extension_api import code_action
 
 
 @dataclasses.dataclass

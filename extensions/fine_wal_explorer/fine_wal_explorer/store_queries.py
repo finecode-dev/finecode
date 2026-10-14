@@ -78,7 +78,7 @@ def get_runs(
             BOOL_OR(event_type LIKE '%.failed' OR event_type LIKE '%.error') AS has_failed,
             BOOL_OR(event_type LIKE '%.completed') AS has_completed
         FROM wal_events
-        WHERE {' AND '.join(conditions)}
+        WHERE {" AND ".join(conditions)}
         GROUP BY run_id, source_id
         ORDER BY first_ts DESC NULLS LAST
         LIMIT ?
@@ -145,7 +145,7 @@ def _query_events(
             project_path, trigger, dev_env, writer_id, payload_json,
             origin_file_path, origin_line_no
         FROM wal_events
-        WHERE {' AND '.join(conditions)}
+        WHERE {" AND ".join(conditions)}
         ORDER BY ts ASC NULLS LAST
         LIMIT ?
     """

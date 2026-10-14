@@ -1,11 +1,11 @@
 import dataclasses
 
-from finecode_extension_api import code_action
 from fine_dist_artifacts import (
     get_dist_artifact_version_action,
     publish_artifact_action,
     verify_artifact_published_to_registry_action,
 )
+from finecode_extension_api import code_action
 from finecode_extension_api.interfaces import iprojectactionrunner, iprojectinfoprovider
 
 from .publish_and_verify_artifact_action import (
@@ -49,7 +49,9 @@ class PublishAndVerifyArtifactHandler(
 
         # Publish the artifact
         publish_result = await self.action_runner.run_action(
-            action_type=iprojectactionrunner.ActionRef.from_type(publish_artifact_action.PublishArtifactAction),
+            action_type=iprojectactionrunner.ActionRef.from_type(
+                publish_artifact_action.PublishArtifactAction
+            ),
             payload=publish_artifact_action.PublishArtifactRunPayload(
                 src_artifact_def_path=src_artifact_def_path,
                 dist_artifact_paths=dist_artifact_paths,
@@ -58,11 +60,17 @@ class PublishAndVerifyArtifactHandler(
             meta=run_meta,
         )
         published_registries = publish_result.published_registries
+        publish_errors = {
+            registry_name: [error]
+            for registry_name, error in publish_result.failed_registries.items()
+        }
 
         # TODO: impl verify of each dist file. NOTE; they can have different versions
         # Get version from the dist artifact
         get_version_result = await self.action_runner.run_action(
-            action_type=iprojectactionrunner.ActionRef.from_type(get_dist_artifact_version_action.GetDistArtifactVersionAction),
+            action_type=iprojectactionrunner.ActionRef.from_type(
+                get_dist_artifact_version_action.GetDistArtifactVersionAction
+            ),
             payload=get_dist_artifact_version_action.GetDistArtifactVersionRunPayload(
                 dist_artifact_path=dist_artifact_paths[0]
             ),
@@ -74,7 +82,9 @@ class PublishAndVerifyArtifactHandler(
         verification_errors: dict[str, list[str]] = {}
         for registry_name in published_registries:
             verify_result = await self.action_runner.run_action(
-                action_type=iprojectactionrunner.ActionRef.from_type(verify_artifact_published_to_registry_action.VerifyArtifactPublishedToRegistryAction),
+                action_type=iprojectactionrunner.ActionRef.from_type(
+                    verify_artifact_published_to_registry_action.VerifyArtifactPublishedToRegistryAction
+                ),
                 payload=verify_artifact_published_to_registry_action.VerifyArtifactPublishedToRegistryRunPayload(
                     dist_artifact_paths=dist_artifact_paths,
                     registry_name=registry_name,
@@ -89,4 +99,5 @@ class PublishAndVerifyArtifactHandler(
             version=version,
             published_registries=published_registries,
             verification_errors=verification_errors,
+            publish_errors=publish_errors,
         )

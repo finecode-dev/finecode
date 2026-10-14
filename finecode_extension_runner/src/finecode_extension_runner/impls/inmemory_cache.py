@@ -7,13 +7,9 @@ CacheKeyType: TypeAlias = str
 
 
 class InMemoryCache(icache.ICache):
-    FILE_OPERATION_AUTHOR = ifileeditor.FileOperationAuthor(
-        id="InMemoryCache"
-    )
+    FILE_OPERATION_AUTHOR = ifileeditor.FileOperationAuthor(id="InMemoryCache")
 
-    def __init__(
-        self, file_editor: ifileeditor.IFileEditor, logger: ilogger.ILogger
-    ):
+    def __init__(self, file_editor: ifileeditor.IFileEditor, logger: ilogger.ILogger):
         self.file_editor = file_editor
         self.logger = logger
 
@@ -31,7 +27,7 @@ class InMemoryCache(icache.ICache):
 
         if file_version != current_file_version:
             # `value` was created for older version of file, don't save it
-            return None
+            return
 
         if file_path not in self.cache_by_file:
             # no cache for file, create

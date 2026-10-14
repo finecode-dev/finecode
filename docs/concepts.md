@@ -62,7 +62,7 @@ flowchart LR
 An action declares its **execution scope** via `SCOPE`:
 
 - `ActionScope.PROJECT` (default): the WM dispatches the action once per project that declares it. This is the right choice for most actions where each project is self-contained.
-- `ActionScope.WORKSPACE`: the WM dispatches the action exactly once, routing it to the workspace root project. The handler receives the full workspace context and is responsible for orchestrating per-project work internally (e.g. fanning out `LintFilesAction` to each project). Use this when an action must reason about all projects together — see [ADR-0035](adr/0035-action-declares-execution-scope-project-or-workspace.md) and the `LintAction` example in [Designing Actions Reference](guides/designing-actions-reference.md).
+- `ActionScope.WORKSPACE`: the WM dispatches the action exactly once, routing it to the workspace root project. The handler receives the full workspace context and is responsible for orchestrating per-project work internally (e.g. fanning out `LintFilesAction` to each project). Use this when an action needs a workspace-level view of its inputs or outputs — (a) aggregating or de-duplicating results across projects, (b) routing a workspace-level input (such as a flat file list spanning projects) to the owning projects, or (c) fanning one invocation out to different child actions per project. Running in multiple projects is not by itself a reason: the WM already dispatches a `PROJECT` action once per declaring project. See [R-108](guides/designing-actions-rules.md#r-108-action-declares-its-execution-scope), [ADR-0035](adr/0035-action-declares-execution-scope-project-or-workspace.md), and the `LintAction` example in [Designing Actions Reference](guides/designing-actions-reference.md).
 
 ```python
 class LintAction(code_action.Action[LintRunPayload, LintRunContext, LintRunResult]):
@@ -95,16 +95,29 @@ dependencies = ["finecode_httpclient~=0.1.0a1"]
 
 See the [Services reference](reference/services.md) for the list of built-in services and which presets or extensions provide them.
 
+## Extension
+
+An **Extension** is a distributable capability package: handlers, services,
+action contracts, and explicitly selected reusable configuration. Installing an
+extension makes its code available; it does not by itself activate any
+configuration. A preset-only extension may own shared action contracts and
+generic orchestration handlers. The same package may supply both handlers and
+an explicitly selected preset resource (see [Creating a Preset](guides/creating-preset.md#5-handlers-in-presets)).
+
+See proposed [ADR-0115](../finecode_internal_docs/adr/0115-extension-capabilities-share-terminology-and-repository-directory.md) for the umbrella terminology; [ADR-0081](../finecode_internal_docs/adr/0081-open-role-word-vocabulary-and-domain-first-segment-in-package-names.md) remains the historical naming context.
+
 ## Preset
 
-A **Preset** is a Python package that bundles action and handler declarations into a reusable, distributable configuration. Users install a preset as a `dev_workspace` dependency and reference it in `pyproject.toml`:
+A **Preset** is explicitly selected reusable configuration supplied by an
+extension package. Users install the package as a `dev_workspace` dependency
+and select its resource in `pyproject.toml`:
 
 ```toml
 [tool.finecode]
 presets = [{ source = "fine_python_recommended" }]
 ```
 
-A preset contains a `preset.toml` file that declares which handlers to activate for which actions. It may also contain **action class definitions** and **lightweight orchestration handlers** — see [Creating a Preset — Handlers in presets](guides/creating-preset.md#5-handlers-in-presets). The user's `pyproject.toml` configuration is merged on top of the preset, giving the user full control to override, extend, or disable individual handlers.
+A preset contains a `preset.toml` file that declares which handlers to activate for which actions. It may also contain **action class definitions** and **lightweight orchestration handlers** — see [Creating a Preset — Handlers in presets](guides/creating-preset.md#5-handlers-in-presets). Installing the package does not select the resource; selection is explicit in `pyproject.toml`. The user's `pyproject.toml` configuration is merged on top of the preset, giving the user full control to override, extend, or disable individual handlers.
 
 ### Handler modes
 
@@ -118,7 +131,7 @@ When configuring an action in `pyproject.toml`, you can control how your configu
 
 A **Source Artifact** is a unit of source code that build/publish-style actions operate on. It is identified by a **source artifact definition file** (for example `pyproject.toml` or `package.json`). This is what many tools call a “project”, but FineCode uses **source artifact** to be more concrete.
 
-When a source artifact includes FineCode configuration — a `pyproject.toml` with a `[tool.finecode]` section, or a `finecode.toml` alongside it — the Workspace Manager discovers it automatically under the workspace roots provided by the client. Some CLI flags and protocol fields still use the word “project” for compatibility.
+When a source artifact includes FineCode configuration — a `pyproject.toml` with a `[tool.finecode]` section, or a `finecode.toml` alongside it — the Workspace Manager discovers it automatically under the workspace directories provided by the client. Some CLI flags and protocol fields still use the word “project” for compatibility.
 
 ### Source Artifact identification
 
@@ -126,7 +139,23 @@ The canonical external identifier for a source artifact is its **absolute direct
 
 The human-readable **project name** is taken from the `[project].name` field in `pyproject.toml`. Names are unique within a workspace in practice (two packages with the same name would break dependency resolution), but paths are used in the API to eliminate any ambiguity. The CLI is the only interface that accepts names — it resolves them to paths before making API calls.
 
-A source artifact may belong to a **workspace** — a set of related source artifacts, often a single directory root but sometimes multiple directories. FineCode handles multi-artifact workspaces transparently: running `python -m finecode run lint` from the workspace root runs lint in all source artifacts that define it. A `finecode-workspace.toml` file at the workspace root marks it as the workspace root and holds workspace-scoped configuration (such as editable package paths in a monorepo).
+A source artifact may belong to a [workspace](#workspace) — see the Workspace section below. FineCode handles multi-artifact workspaces transparently: running `python -m finecode run lint` from the workspace root runs lint in all source artifacts that define it.
+
+## Workspace
+
+Switch the checkout you are working with and the current package source versions you see change with it, even while the directory the WM is anchored to stays the same. A [workspace](glossary.md#workspace) is that development context: it has exactly one root, its own environments, and one current [workspace state](glossary.md#workspace-state). Opened at a checkout's root, it normally represents that checkout. A product — the software developed through one or more workspaces — is made of components, where a component is a [source artifact](#source-artifact) of that product. FineCode does not model or act on the relation between those workspaces.
+
+### Workspace directories
+
+The workspace root is the directory the WM is anchored to. Run from the checkout root for operations intended to cover the whole checkout; running from a project root remains valid for project-scoped work. This does not promise upward root discovery. A `finecode-workspace.toml` file at the anchored root holds workspace-scoped configuration (such as workspace package paths in a monorepo).
+
+### Workspace state and coherence
+
+A [workspace state](glossary.md#workspace-state) describes the package source versions you are working with at a given moment, together with which packages are declared as [workspace packages](glossary.md#workspace-package). Membership is part of the state because different releases can contain different packages.
+
+For example, a workspace declares `core` and `app` with source versions 1.4 and 2.0. Switching that checkout to a revision containing `core` 1.3 and `app` 1.9 changes its state while keeping the same workspace root. A revision that also removes a package from the membership declaration changes the state too. A second checkout is a second workspace with its own environments. These numbers illustrate different combinations; they do not promise coherence or require components to share a version number.
+
+A workspace is [coherent](glossary.md#coherent) when every requirement on a workspace package reached by the workspace's own requirements is satisfied by its workspace source. This is an operational requirement check; it does not prove general software compatibility.
 
 ## Workspace Manager and Extension Runner
 

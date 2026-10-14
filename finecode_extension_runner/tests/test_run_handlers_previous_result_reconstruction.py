@@ -4,6 +4,7 @@ import dataclasses
 from pathlib import Path
 
 from finecode_extension_api import code_action
+
 from finecode_extension_runner.testing import handler_test_session
 
 
