@@ -29,10 +29,10 @@ def start(
     project_path: Path,
     env_name: str | None,
 ):
-    from loguru import logger  # noqa: I001, PLC0415 - lean entry point
+    from loguru import logger
 
-    import finecode_extension_runner.start as runner_start  # noqa: PLC0415 - lean entry point
-    from finecode_extension_runner import (  # noqa: PLC0415 - lean entry point
+    import finecode_extension_runner.start as runner_start
+    from finecode_extension_runner import (
         er_wal,
         global_state,
         logs,
@@ -93,7 +93,7 @@ def dump_action_meta(ctx: click.Context, project_path: Path):
     {"sources": [...]}, stdout carries only the format-1 JSON document and
     stderr carries diagnostics. Exit 0 answers even with per-source failures.
     """
-    import json  # noqa: PLC0415 - lean entry point
+    import json
 
     try:
         payload = json.loads(sys.stdin.read())
@@ -117,7 +117,7 @@ def dump_action_meta(ctx: click.Context, project_path: Path):
     saved = os.dup(1)
     os.dup2(2, 1)
     sys.stdout = sys.stderr  # type: ignore[assignment]
-    from finecode_extension_runner import action_meta  # noqa: I001, PLC0415 - lean entry point
+    from finecode_extension_runner import action_meta
 
     document = action_meta.dump(sources, project_dir=project_path)
     os.write(saved, json.dumps(document).encode())

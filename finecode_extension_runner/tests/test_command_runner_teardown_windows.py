@@ -70,7 +70,7 @@ def _python(script: str) -> list[str]:
 
 
 def _is_gone(pid: int) -> bool:
-    import psutil  # type: ignore[import-untyped]  # noqa: PLC0415
+    import psutil  # type: ignore[import-untyped]
     # Lazy: psutil is a Windows-only dependency, and this module is skipped
     # everywhere else -- a top-level import would break POSIX collection.
 

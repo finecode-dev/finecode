@@ -1849,7 +1849,6 @@ class LspService(service.DisposableService):
             for registration in registrations
         ):
             self._registered_watched_files = True
-        return
 
     async def _handle_inlay_hint_refresh(self, params: dict[str, Any] | None) -> None:
         """Handle workspace/inlayHint/refresh from the LSP server.

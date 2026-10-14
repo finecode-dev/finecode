@@ -11,16 +11,24 @@ from __future__ import annotations
 
 import pathlib
 
+from fine_inspect_code.diagnostic_types import (
+    Diagnostic,
+    PartitionReceipt,
+    RatchetTarget,
+    StaleBaselineEntry,
+)
 from fine_inspect_code.inspect_code_action import (
     InspectCodeRunPayload,
+    InspectCodeRunResult,
     InspectCodeTarget,
 )
+from fine_inspect_code.ratchet_matching import RatchetOutcome, RatchetScope
 from finecode_extension_api import code_action
 from finecode_extension_api.interfaces.iworkspaceinfoprovider import (
     ProjectConfigStatus,
     WorkspaceProject,
 )
-from finecode_extension_api.resource_uri import path_to_resource_uri
+from finecode_extension_api.resource_uri import ResourceUri, path_to_resource_uri
 
 from fine_type_check.type_check_action import (
     TypeCheckAction,
@@ -56,8 +64,11 @@ class _RecordedCall:
 
 
 class _FakeWorkspaceActionRunner:
-    def __init__(self) -> None:
+    def __init__(
+        self, unhandled: tuple[code_action.ItemCoverage, ...] = ()
+    ) -> None:
         self.calls: list[_RecordedCall] = []
+        self._unhandled = list(unhandled)
 
     async def run_action_in_projects(
         self,
@@ -69,7 +80,55 @@ class _FakeWorkspaceActionRunner:
     ) -> dict[pathlib.Path, code_action.RunActionResult]:
         assert project_paths is not None
         self.calls.append(_RecordedCall(action_type, payload, list(project_paths)))
-        return {path: TypeCheckRunResult(messages={}) for path in project_paths}
+        return {
+            path: TypeCheckRunResult(messages={}, coverage=list(self._unhandled))
+            for path in project_paths
+        }
+
+
+class _RatchetCall:
+    def __init__(
+        self,
+        contributor: str,
+        checked_project: pathlib.Path,
+        scope: RatchetScope,
+        unhandled: list[code_action.ItemCoverage],
+    ) -> None:
+        self.contributor = contributor
+        self.checked_project = checked_project
+        self.scope = scope
+        self.unhandled = unhandled
+
+
+class _FakeRatchet:
+    """Stands in for the ratchet: records each apply and returns fixed marks."""
+
+    def __init__(
+        self,
+        stale: list[StaleBaselineEntry] | None = None,
+        receipts: list[PartitionReceipt] | None = None,
+    ) -> None:
+        self.calls: list[_RatchetCall] = []
+        self.stale = stale if stale is not None else []
+        self.receipts = receipts if receipts is not None else []
+
+    async def apply(
+        self,
+        *,
+        contributor: str,
+        checked_project: pathlib.Path,
+        messages: dict[ResourceUri, list[Diagnostic]],
+        scope: RatchetScope,
+        unhandled: list[code_action.ItemCoverage],
+    ) -> RatchetOutcome:
+        self.calls.append(
+            _RatchetCall(contributor, checked_project, scope, unhandled)
+        )
+        return RatchetOutcome(
+            messages=messages,
+            stale=self.stale,
+            receipts=self.receipts,
+        )
 
 
 class _FakeLogger:
@@ -103,16 +162,22 @@ def _run_context(sender: _CollectingPartialResultSender) -> object:
 async def _run(
     payload: InspectCodeRunPayload,
     known_project_paths: list[pathlib.Path],
-) -> tuple[_FakeWorkspaceActionRunner, _CollectingPartialResultSender]:
-    action_runner = _FakeWorkspaceActionRunner()
+    unhandled: tuple[code_action.ItemCoverage, ...] = (),
+    ratchet: _FakeRatchet | None = None,
+) -> tuple[
+    _FakeWorkspaceActionRunner, _CollectingPartialResultSender, _FakeRatchet
+]:
+    action_runner = _FakeWorkspaceActionRunner(unhandled)
+    fake_ratchet = ratchet if ratchet is not None else _FakeRatchet()
     handler = TypeCheckInspectCodeBridgeHandler(
         workspace_action_runner=action_runner,  # type: ignore[arg-type]
         workspace_info_provider=_FakeWorkspaceInfoProvider(known_project_paths),
         logger=_FakeLogger(),  # type: ignore[arg-type]
+        ratchet=fake_ratchet,  # type: ignore[arg-type]
     )
     sender = _CollectingPartialResultSender()
     await handler.run(payload, _run_context(sender))  # type: ignore[arg-type]
-    return action_runner, sender
+    return action_runner, sender, fake_ratchet
 
 
 async def test_project_target_narrows_each_dispatch_to_its_project(
@@ -124,7 +189,7 @@ async def test_project_target_narrows_each_dispatch_to_its_project(
     project_a = tmp_path / "a"
     project_b = tmp_path / "b"
 
-    action_runner, _ = await _run(
+    action_runner, _, _ = await _run(
         InspectCodeRunPayload(target=InspectCodeTarget.PROJECT, project_paths=None),
         [project_a, project_b],
     )
@@ -150,7 +215,7 @@ async def test_files_target_narrows_payload_to_the_owning_project(
     project_b = tmp_path / "b"
     file_a = project_a / "mod.py"
 
-    action_runner, _ = await _run(
+    action_runner, _, _ = await _run(
         InspectCodeRunPayload(
             target=InspectCodeTarget.FILES,
             file_paths=[path_to_resource_uri(file_a)],
@@ -166,3 +231,56 @@ async def test_files_target_narrows_payload_to_the_owning_project(
     assert isinstance(call.payload, TypeCheckRunPayload)
     assert call.payload.project_paths == [path_to_resource_uri(project_a)]
     assert call.payload.file_paths == [path_to_resource_uri(file_a)]
+
+
+async def test_findings_pass_through_the_ratchet_once_per_project(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Each project's type_check result is judged once, as that project, with
+    the per-project scope and its own coverage — and the partial carries the
+    judged outcome, not the raw sub-result."""
+    project_a = tmp_path / "a"
+    project_b = tmp_path / "b"
+    file_a = project_a / "mod.py"
+    miss = code_action.ItemCoverage(
+        status=code_action.CoverageStatus.NO_SUBACTION_FOR_LANGUAGE,
+        item=path_to_resource_uri(project_a / "pyproject.toml"),
+    )
+
+    _, sender, ratchet = await _run(
+        InspectCodeRunPayload(
+            target=InspectCodeTarget.FILES,
+            file_paths=[path_to_resource_uri(file_a)],
+            project_paths=None,
+        ),
+        [project_a, project_b],
+        unhandled=(miss,),
+        ratchet=_FakeRatchet(
+            stale=[
+                StaleBaselineEntry(
+                    contributor="type_check",
+                    snapshot_file=ResourceUri(
+                        "file:///ws/finecode-diagnostics-baseline.json"
+                    ),
+                    file=ResourceUri("file:///ws/a.py"),
+                    source="pyrefly",
+                    code="unannotated-return",
+                    message="unannotated-return",
+                    stale_count=1,
+                )
+            ],
+        ),
+    )
+
+    assert [call.checked_project for call in ratchet.calls] == [project_a]
+    call = ratchet.calls[0]
+    assert call.contributor == TypeCheckInspectCodeBridgeHandler.RATCHET_CONTRIBUTOR
+    assert call.scope == RatchetScope(
+        target=RatchetTarget.FILES, files=(path_to_resource_uri(file_a),)
+    )
+    assert call.unhandled == [miss]
+    assert len(sender.results) == 1
+    partial = sender.results[0]
+    assert isinstance(partial, InspectCodeRunResult)
+    assert partial.stale == ratchet.stale
+    assert partial.receipts == ratchet.receipts

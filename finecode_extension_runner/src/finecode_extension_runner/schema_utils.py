@@ -72,7 +72,7 @@ class FieldSchema(TypedDict, total=False):
     """Field schemas of an `object` (nested dataclass) field."""
     required: list[str]
     """Names of the `object` field's properties that have no default."""
-    anyOf: list["FieldSchema"]
+    anyOf: list[FieldSchema]
     """Output mode only; never present in a payload schema. A `T | None` field
     is described as `{"anyOf": [<T>, {"type": "null"}]}`."""
     additionalProperties: bool

@@ -493,21 +493,21 @@ def _parse_iso_ts(value: Any) -> dt.datetime | None:
     if value is None:
         return None
     if isinstance(value, dt.datetime):
-        return value.astimezone(dt.timezone.utc)
+        return value.astimezone(dt.UTC)
     if not isinstance(value, str) or value.strip() == "":
         return None
 
     normalized = value.replace("Z", "+00:00")
     parsed = dt.datetime.fromisoformat(normalized)
     if parsed.tzinfo is None:
-        return parsed.replace(tzinfo=dt.timezone.utc)
-    return parsed.astimezone(dt.timezone.utc)
+        return parsed.replace(tzinfo=dt.UTC)
+    return parsed.astimezone(dt.UTC)
 
 
 def _to_iso(value: dt.datetime | None) -> str | None:
     if value is None:
         return None
-    return value.astimezone(dt.timezone.utc).isoformat()
+    return value.astimezone(dt.UTC).isoformat()
 
 
 def _coerce_str(value: Any) -> str | None:

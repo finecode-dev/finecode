@@ -2,6 +2,7 @@
 import asyncio
 import dataclasses
 import pathlib
+import typing
 
 from fine_audit_code.audit_code_action import (
     AuditCodeAction,
@@ -16,6 +17,8 @@ from fine_inspect_code.diagnostic_types import (
     Position,
     Range,
 )
+from fine_inspect_code.ratchet import IDiagnosticsRatchet
+from fine_inspect_code.ratchet_matching import RatchetScope
 from finecode_extension_api import code_action
 from finecode_extension_api.interfaces import (
     ilogger,
@@ -77,17 +80,21 @@ class CheckToolchainsAuditCodeBridgeHandler(
     anchors whole-project contract violations at the config file.
     """
 
+    RATCHET_CONTRIBUTOR: typing.ClassVar[str] = "check_toolchains"
+
     def __init__(
         self,
         workspace_action_runner: iworkspaceactionrunner.IWorkspaceActionRunner,
         workspace_info_provider: iworkspaceinfoprovider.IWorkspaceInfoProvider,
         user_messenger: iuser_messenger.IUserMessenger,
         logger: ilogger.ILogger,
+        ratchet: IDiagnosticsRatchet,
     ) -> None:
         self.workspace_action_runner = workspace_action_runner
         self.workspace_info_provider = workspace_info_provider
         self.user_messenger = user_messenger
         self.logger = logger
+        self.ratchet = ratchet
 
     def _report_no_targets(self, message: str, meta: code_action.RunActionMeta) -> None:
         # R-505: zero targets is only diagnosable when the caller asked for specific
@@ -165,6 +172,7 @@ class CheckToolchainsAuditCodeBridgeHandler(
     async def _check_project(
         self,
         project_path: pathlib.Path,
+        payload: AuditCodeRunPayload,
         run_meta: code_action.RunActionMeta,
         partial_result_sender: code_action.PartialResultSender,
     ) -> None:
@@ -179,9 +187,18 @@ class CheckToolchainsAuditCodeBridgeHandler(
             project_paths=[project_path],
         )
         for result_project_path, result in results.items():
+            outcome = await self.ratchet.apply(
+                contributor=self.RATCHET_CONTRIBUTOR,
+                checked_project=result_project_path,
+                messages=self._to_messages(result_project_path, result),
+                scope=RatchetScope.for_payload(payload.target.value, payload.file_paths),
+                unhandled=result.unhandled,
+            )
             await partial_result_sender.send(
                 AuditCodeRunResult(
-                    messages=self._to_messages(result_project_path, result)
+                    messages=outcome.messages,
+                    stale=outcome.stale,
+                    receipts=outcome.receipts,
                 )
             )
 
@@ -203,6 +220,7 @@ class CheckToolchainsAuditCodeBridgeHandler(
                 tg.create_task(
                     self._check_project(
                         project_path,
+                        payload,
                         run_context.meta,
                         run_context.partial_result_sender,
                     )

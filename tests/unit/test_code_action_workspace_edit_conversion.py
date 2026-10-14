@@ -9,7 +9,6 @@ from __future__ import annotations
 
 from fine_lint.apply_code_actions_action import (
     CreateFileOperation,
-    DeleteFileOperation,
     RenameFileOperation,
     TextEditOperation,
 )

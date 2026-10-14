@@ -8,7 +8,6 @@ import types
 
 import pytest
 
-from finecode.wm_server import domain
 from finecode.wm_server.services.run_service.exceptions import ActionRunFailed
 from finecode.wm_server.services.run_service.run_selection import (
     check_variant_selection,

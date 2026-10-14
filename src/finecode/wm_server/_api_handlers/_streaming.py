@@ -1002,7 +1002,6 @@ async def _resolve_source_to_name(
 
     Raises ``ValueError`` if the project or action cannot be found.
     """
-    from finecode.wm_server import domain as _domain
     from finecode.wm_server._api_handlers._helpers import (
         find_action_by_source,
     )

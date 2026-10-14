@@ -17,10 +17,9 @@ from finecode.wm_server._api_handlers._helpers import (
     _parse_run_batch_params,
     _resolve_actions_by_project,
     find_action_by_source,
-    project_exposes_action,
 )
 from finecode.wm_server.config import collect_actions
-from finecode.wm_server.services import project_resolution_service
+from finecode.wm_server.services import action_lookup, project_resolution_service
 from finecode.wm_server.services.action_tree import (  # noqa: F401 (re-export)
     _handle_get_tree,
 )
@@ -147,7 +146,7 @@ async def _handle_actions_reload(
             project
             for project in ws_context.ws_projects.values()
             if isinstance(project, domain.CollectedProject)
-            and project_exposes_action(project, action_source)
+            and action_lookup.project_exposes_action(project, action_source)
         ]
         if not target_projects:
             raise ActionNotFoundError(

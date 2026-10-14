@@ -1,3 +1,6 @@
+[tool.finecode]
+presets = [{ source = "fine_inspect_code" }]
+
 [tool.finecode.action.audit_code]
 source = "fine_audit_code.AuditCodeAction"
 
@@ -6,3 +9,9 @@ name = "file_existence_validation"
 source = "fine_audit_code.FileExistenceValidationHandler"
 env = "dev_workspace"
 dependencies = ["fine_audit_code~=0.1.0a0"]
+
+[[tool.finecode.action.record_diagnostics_baseline.handlers]]
+name = "record_from_audit_code"
+source = "fine_audit_code.RecordFromAuditCodeHandler"
+env = "dev_workspace"
+dependencies = ["fine_audit_code~=0.1.0a1"]

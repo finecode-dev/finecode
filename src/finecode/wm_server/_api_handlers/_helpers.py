@@ -16,7 +16,6 @@ from finecode.wm_server.context import (
 from finecode.wm_server.services import project_resolution_service
 from finecode.wm_server.services.action_lookup import (
     find_action_by_source,
-    project_exposes_action,
 )
 from finecode.wm_server.services.run_service.exceptions import ActionNotFoundError
 

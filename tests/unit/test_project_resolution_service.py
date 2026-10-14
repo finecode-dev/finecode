@@ -15,7 +15,6 @@ import pathlib
 import typing
 
 import pytest
-import resolution_fake
 from resolution_fake import SwappingResolver, make_preset_action
 
 from finecode.wm_server import context, domain

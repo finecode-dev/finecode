@@ -134,7 +134,8 @@ jobs:
         timeout-minutes: 30
         run: |
           source .venvs/dev_workspace/${{ matrix.venv_bin }}/activate
-          python -m finecode run --log-level="$FINECODE_LOG_LEVEL" inspect_code
+          mkdir -p "$RUNNER_TEMP/diagnostics-results"
+          python -m finecode run --log-level="$FINECODE_LOG_LEVEL" --results-file="$RUNNER_TEMP/diagnostics-results/inspect_code.json" inspect_code
         continue-on-error: true
         shell: bash
 
@@ -143,8 +144,18 @@ jobs:
         timeout-minutes: 30
         run: |
           source .venvs/dev_workspace/${{ matrix.venv_bin }}/activate
-          python -m finecode run --log-level="$FINECODE_LOG_LEVEL" audit_code
+          mkdir -p "$RUNNER_TEMP/diagnostics-results"
+          python -m finecode run --log-level="$FINECODE_LOG_LEVEL" --results-file="$RUNNER_TEMP/diagnostics-results/audit_code.json" audit_code
         shell: bash
+
+      - name: Upload diagnostics results
+        uses: actions/upload-artifact@v6
+        if: ${{ !cancelled() && steps.install.outcome == 'success' && matrix.os != 'windows-2025' }}
+        with:
+          name: diagnostics-results-${{ runner.os }}
+          path: ${{ runner.temp }}/diagnostics-results/
+          if-no-files-found: error
+        timeout-minutes: 10
 
       - name: Check formatting
         if: ${{ !cancelled() && steps.install.outcome == 'success' }}

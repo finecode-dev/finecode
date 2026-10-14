@@ -5,8 +5,9 @@ import collections.abc
 import contextlib
 import dataclasses
 import time
+from collections.abc import AsyncIterator
 from pathlib import Path
-from typing import Any, AsyncIterator
+from typing import Any
 
 import pytest
 
@@ -81,7 +82,7 @@ class _FakeLspSession:
         self.force_killed = False
         self.aenter_count = 0
 
-    async def __aenter__(self) -> "_FakeLspSession":
+    async def __aenter__(self) -> _FakeLspSession:
         self.aenter_count += 1
         return self
 
@@ -901,7 +902,7 @@ async def test_editor_closing_a_tab_does_not_close_a_document_still_in_use(
         assert service._document_leases.get(uri) == 1
 
         # The user closes the tab while that request is still in flight.
-        file_editor.get_opened_files = lambda: []  # type: ignore[method-assign]
+        file_editor.get_opened_files = list  # type: ignore[method-assign]
         await service._handle_file_event(
             ifileeditor.FileCloseEvent(
                 file_path=file_path,
@@ -1012,7 +1013,7 @@ async def test_the_diagnostic_pull_happens_while_the_document_is_open(
     async with _running_service(
         file_path, "x = 1\n", server_capabilities=_PULL_CAPABLE
     ) as (service, session, file_editor):
-        file_editor.get_opened_files = lambda: []  # type: ignore[method-assign]
+        file_editor.get_opened_files = list  # type: ignore[method-assign]
         session.request_results["textDocument/diagnostic"] = {
             "kind": "full",
             "items": [],
@@ -1098,7 +1099,7 @@ async def test_deleting_a_document_still_in_use_waits_for_the_lease(
         await asyncio.sleep(0.05)
         assert service._document_leases.get(uri) == 1
 
-        file_editor.get_opened_files = lambda: []  # type: ignore[method-assign]
+        file_editor.get_opened_files = list  # type: ignore[method-assign]
         await service._handle_file_event(
             ifileeditor.FileDeleteEvent(
                 file_path=subject,

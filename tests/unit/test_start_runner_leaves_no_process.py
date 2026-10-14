@@ -26,7 +26,7 @@ class _FakeJsonRpcClient:
     """Stand-in for ``JsonRpcClient`` that records kills and can stall in
     ``start()`` instead of spawning a process."""
 
-    instances: list["_FakeJsonRpcClient"] = []
+    instances: list[_FakeJsonRpcClient] = []
     wait_forever: bool = False
 
     def __init__(self, *, message_types, readable_id, tracing=None) -> None:

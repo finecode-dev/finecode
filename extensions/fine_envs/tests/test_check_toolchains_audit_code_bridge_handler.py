@@ -16,7 +16,14 @@ from fine_audit_code.audit_code_action import (
     AuditCodeRunResult,
     AuditCodeTarget,
 )
-from fine_inspect_code.diagnostic_types import DiagnosticSeverity
+from fine_inspect_code.diagnostic_types import (
+    Diagnostic,
+    DiagnosticSeverity,
+    PartitionReceipt,
+    RatchetTarget,
+    StaleBaselineEntry,
+)
+from fine_inspect_code.ratchet_matching import RatchetOutcome, RatchetScope
 from finecode_extension_api import code_action
 from finecode_extension_api.interfaces.iworkspaceinfoprovider import (
     ProjectConfigStatus,
@@ -76,6 +83,51 @@ class _FakeWorkspaceActionRunner:
             for path in payload_by_project
             if path in self._results
         }
+
+
+class _RatchetCall:
+    def __init__(
+        self,
+        contributor: str,
+        checked_project: pathlib.Path,
+        scope: RatchetScope,
+        unhandled: list[code_action.ItemCoverage],
+    ) -> None:
+        self.contributor = contributor
+        self.checked_project = checked_project
+        self.scope = scope
+        self.unhandled = unhandled
+
+
+class _FakeRatchet:
+    """Stands in for the ratchet: records each apply and returns fixed marks."""
+
+    def __init__(
+        self,
+        stale: list[StaleBaselineEntry] | None = None,
+        receipts: list[PartitionReceipt] | None = None,
+    ) -> None:
+        self.calls: list[_RatchetCall] = []
+        self.stale = stale if stale is not None else []
+        self.receipts = receipts if receipts is not None else []
+
+    async def apply(
+        self,
+        *,
+        contributor: str,
+        checked_project: pathlib.Path,
+        messages: dict[ResourceUri, list[Diagnostic]],
+        scope: RatchetScope,
+        unhandled: list[code_action.ItemCoverage],
+    ) -> RatchetOutcome:
+        self.calls.append(
+            _RatchetCall(contributor, checked_project, scope, unhandled)
+        )
+        return RatchetOutcome(
+            messages=messages,
+            stale=self.stale,
+            receipts=self.receipts,
+        )
 
 
 class _FakeUserMessenger:
@@ -147,15 +199,18 @@ async def _run(
     payload: AuditCodeRunPayload | None = None,
     known_project_paths: list[pathlib.Path] | None = None,
     trigger: code_action.RunActionTrigger = code_action.RunActionTrigger.USER,
+    ratchet: _FakeRatchet | None = None,
 ) -> tuple[
     _CollectingPartialResultSender,
     _FakeWorkspaceActionRunner,
     _FakeUserMessenger,
     _FakeLogger,
+    _FakeRatchet,
 ]:
     action_runner = _FakeWorkspaceActionRunner(project_results)
     user_messenger = _FakeUserMessenger()
     logger = _FakeLogger()
+    fake_ratchet = ratchet if ratchet is not None else _FakeRatchet()
     handler = CheckToolchainsAuditCodeBridgeHandler(
         workspace_action_runner=action_runner,
         workspace_info_provider=_FakeWorkspaceInfoProvider(
@@ -165,13 +220,14 @@ async def _run(
         ),
         user_messenger=user_messenger,
         logger=logger,
+        ratchet=fake_ratchet,  # type: ignore[arg-type]
     )
     sender = _CollectingPartialResultSender()
     await handler.run(
         payload if payload is not None else AuditCodeRunPayload(),
         _run_context(sender, trigger),  # type: ignore[arg-type]
     )
-    return sender, action_runner, user_messenger, logger
+    return sender, action_runner, user_messenger, logger, fake_ratchet
 
 
 def _merged(sender: _CollectingPartialResultSender) -> AuditCodeRunResult:
@@ -186,7 +242,7 @@ async def test_drift_becomes_an_error_diagnostic_at_the_definition_file(
 ) -> None:
     # the whole point of the bridge: drift has to survive as something audit_code fails on
     project = tmp_path / "pkg"
-    sender, _, _, _ = await _run(
+    sender, _, _, _, _ = await _run(
         {project: _stale(project, ["cpython@3.11"], ["cpython@3.11", "cpython@3.12"])}
     )
 
@@ -204,7 +260,7 @@ async def test_two_projects_keep_their_own_axes(tmp_path: pathlib.Path) -> None:
     # matrix project shares, so a merge keyed by env name would collapse the two
     project_a = tmp_path / "extensions" / "one"
     project_b = tmp_path / "presets" / "two"
-    sender, _, _, _ = await _run(
+    sender, _, _, _, _ = await _run(
         {
             project_a: _stale(project_a, ["cpython@3.11"], ["cpython@3.12"]),
             project_b: _stale(project_b, ["cpython@3.9"], ["cpython@3.13"]),
@@ -223,7 +279,7 @@ async def test_clean_project_is_reported_as_checked_and_empty(
     # an absent key is indistinguishable from "never checked" and leaves stale
     # diagnostics in an editor; an empty list clears them and renders "<path>: OK"
     project = tmp_path / "pkg"
-    sender, _, _, _ = await _run({project: _clean(project)})
+    sender, _, _, _, _ = await _run({project: _clean(project)})
 
     result = _merged(sender)
     assert result.messages == {_def_uri(project): []}
@@ -235,7 +291,7 @@ async def test_file_target_checks_only_the_owning_projects(
 ) -> None:
     checked = tmp_path / "checked"
     untouched = tmp_path / "untouched"
-    _, action_runner, _, _ = await _run(
+    _, action_runner, _, _, _ = await _run(
         {
             checked: _stale(checked, ["cpython@3.11"], ["cpython@3.12"]),
             untouched: _stale(untouched, ["cpython@3.11"], ["cpython@3.12"]),
@@ -254,7 +310,7 @@ async def test_file_target_without_files_never_fans_out(
 ) -> None:
     # R-309: the empty-input decision belongs here, not in each project's ER
     project = tmp_path / "pkg"
-    sender, action_runner, _, _ = await _run(
+    sender, action_runner, _, _, _ = await _run(
         {project: _stale(project, ["cpython@3.11"], ["cpython@3.12"])},
         payload=AuditCodeRunPayload(target=AuditCodeTarget.FILES, file_paths=[]),
     )
@@ -267,7 +323,7 @@ async def test_files_outside_every_project_warn_a_user_run(
     tmp_path: pathlib.Path,
 ) -> None:
     project = tmp_path / "pkg"
-    _, action_runner, user_messenger, _ = await _run(
+    _, action_runner, user_messenger, _, _ = await _run(
         {project: _clean(project)},
         payload=AuditCodeRunPayload(
             target=AuditCodeTarget.FILES,
@@ -285,7 +341,7 @@ async def test_files_outside_every_project_stay_quiet_for_system_runs(
 ) -> None:
     # R-505: editors fire audit_code for buffers outside any project; that is expected
     project = tmp_path / "pkg"
-    _, _, user_messenger, _ = await _run(
+    _, _, user_messenger, _, _ = await _run(
         {project: _clean(project)},
         payload=AuditCodeRunPayload(
             target=AuditCodeTarget.FILES,
@@ -303,7 +359,7 @@ async def test_result_without_definition_path_still_reports_the_drift(
     # a third-party check_toolchains handler may not fill project_def_path; a coarse
     # anchor is acceptable, silently dropping a failure is not
     project = tmp_path / "pkg"
-    sender, _, _, logger = await _run(
+    sender, _, _, logger, _ = await _run(
         {
             project: CheckToolchainsRunResult(
                 stale_axes=[
@@ -322,3 +378,58 @@ async def test_result_without_definition_path_still_reports_the_drift(
         DiagnosticSeverity.ERROR
     )
     assert len(logger.warnings) == 1
+
+
+async def test_findings_pass_through_the_ratchet_with_own_coverage(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Each project's flattened diagnostics are judged once, as that project,
+    with the payload's scope and the structured result's own coverage — and
+    the partial carries the judged outcome."""
+    project = tmp_path / "pkg"
+    miss = code_action.ItemCoverage(
+        status=code_action.CoverageStatus.NO_SUBACTION_FOR_LANGUAGE,
+        item=_def_uri(project),
+    )
+    sender, _, _, _, ratchet = await _run(
+        {
+            project: CheckToolchainsRunResult(
+                stale_axes=[
+                    EnvToolchainAxis(
+                        env_name="testing",
+                        declared=["cpython@3.11"],
+                        derived=["cpython@3.11", "cpython@3.12"],
+                    )
+                ],
+                project_def_path=_def_uri(project),
+                coverage=[miss],
+            )
+        },
+        ratchet=_FakeRatchet(
+            stale=[
+                StaleBaselineEntry(
+                    contributor="check_toolchains",
+                    snapshot_file=ResourceUri(
+                        "file:///ws/finecode-diagnostics-baseline.json"
+                    ),
+                    file=ResourceUri("file:///ws/pyproject.toml"),
+                    source="check_toolchains",
+                    code="stale-toolchain-axis",
+                    message="drift",
+                    stale_count=1,
+                )
+            ],
+        ),
+    )
+
+    assert [call.checked_project for call in ratchet.calls] == [project]
+    call = ratchet.calls[0]
+    assert (
+        call.contributor
+        == CheckToolchainsAuditCodeBridgeHandler.RATCHET_CONTRIBUTOR
+    )
+    assert call.scope == RatchetScope(target=RatchetTarget.PROJECT, files=())
+    assert call.unhandled == [miss]
+    assert len(sender.results) == 1
+    assert sender.results[0].stale == ratchet.stale
+    assert sender.results[0].receipts == ratchet.receipts

@@ -1,4 +1,3 @@
-import pytest
 from fine_envs import install_deps_in_env_action
 from finecode_extension_runner.testing import nonexistent_abs_path
 

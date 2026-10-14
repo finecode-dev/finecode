@@ -21,7 +21,6 @@ from finecode.wm_server import (
 from finecode.wm_server.config import interpreter_matrix
 from finecode.wm_server.runner import elicitation_bridge, runner_client, runner_manager
 from finecode.wm_server.runner.runner_client import RunResultFormat  # reexport
-from finecode.wm_server.runner.runner_manager import RunnerFailedToStart
 from finecode.wm_server.services import (
     action_meta_cache,
     in_flight_runs,
@@ -1868,8 +1867,8 @@ async def _run_multi_env_concurrent(
 
 __all__ = [
     "find_action_project_and_run",
-    "find_projects_with_actions",
     "find_all_projects_with_action",
+    "find_projects_with_actions",
     "run_with_partial_results",
     "start_required_environments",
 ]

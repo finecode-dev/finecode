@@ -89,7 +89,50 @@ Run all registered on-demand code audit tools and aggregate results. Peer of `in
 
 **Result:** list of diagnostics (file, line, column, message, severity, fixability)
 
+Each diagnostic also carries its contributor (`origin`) and its baseline mark
+(`new`/`known`/`outside`), and the result carries stale entries and per-partition
+receipts — see [Diagnostics baseline](../../guides/diagnostics-baseline.md).
+Because `fine_audit_code` declares the `fine_inspect_code` preset, a workspace
+including only `fine_audit_code` also gains `inspect_code` (with its
+file-existence handler) and the record/merge actions.
+
 Whole-project checks reach this umbrella through bridge handlers rather than being invoked separately — [`check_imports`](#check_imports) and [`check_toolchains`](#check_toolchains) both do. Such a bridge ignores per-file scoping for *what* it checks (a violation is a property of the project, not of one file) and anchors its diagnostics at the relevant config file. Adding a new checkpoint check therefore means registering a bridge, not adding a CI step.
+
+---
+
+## `record_diagnostics_baseline`
+
+Record this platform's diagnostic counts into each project's baseline snapshot.
+Runs the umbrellas and replaces, per project, exactly the partitions the run holds
+receipts for. Recording is deliberate: no check run ever writes.
+
+- **Source:** `fine_inspect_code.RecordDiagnosticsBaselineAction`
+- **Scope:** `workspace` — takes `project_paths` (`None` = every actionable project)
+- **Default handler execution:** sequential — one handler per umbrella
+  (`record_from_inspect_code` in `fine_inspect_code`, `record_from_audit_code`
+  in `fine_audit_code`), writing disjoint partitions of the same files one at a time
+
+**Payload fields:** `project_paths` (optional).
+
+**Result:** one row per `(project, umbrella)` with the snapshot file, the platform,
+`written`/`unchanged`/`skipped` status and the partition count.
+
+---
+
+## `merge_diagnostics_baseline`
+
+Merge other platforms' diagnostic counts from `--results-file` files (usually the
+CI gate artifacts). Runs no analysis: the platform comes from the receipts inside
+the files, and runner paths are rebased onto the local workspace.
+
+- **Source:** `fine_inspect_code.MergeDiagnosticsBaselineAction`
+- **Scope:** `workspace`
+- **Default handler execution:** sequential
+
+**Payload fields:** `results_files` (required), `project_paths` (optional filter).
+
+**Result:** same row shape as `record_diagnostics_baseline`, with the umbrella taken
+from each results file's action source.
 
 ---
 

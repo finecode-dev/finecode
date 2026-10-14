@@ -35,7 +35,6 @@ from __future__ import annotations
 import ast
 import pathlib
 import subprocess
-from collections.abc import Iterable
 
 import pytest
 

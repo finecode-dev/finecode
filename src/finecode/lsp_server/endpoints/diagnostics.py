@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
 from fine_inspect_code import inspect_code_action
-from fine_inspect_code.diagnostic_types import Diagnostic
+from fine_inspect_code.diagnostic_types import BaselineStatus, Diagnostic
 from finecode_extension_api.resource_uri import ResourceUri
 from loguru import logger
 from lsprotocol import types
@@ -21,6 +21,16 @@ def map_lint_message_to_diagnostic(
     lint_message: Diagnostic,
 ) -> types.Diagnostic:
     code_description_url = lint_message.code_description
+    if lint_message.baseline is BaselineStatus.KNOWN:
+        severity = types.DiagnosticSeverity.Information
+        message = f"{lint_message.message} (baseline)"
+    else:
+        severity = (
+            types.DiagnosticSeverity(lint_message.severity)
+            if lint_message.severity is not None
+            else None
+        )
+        message = lint_message.message
     return types.Diagnostic(
         range=types.Range(
             types.Position(
@@ -32,7 +42,7 @@ def map_lint_message_to_diagnostic(
                 lint_message.range.end.character,
             ),
         ),
-        message=lint_message.message,
+        message=message,
         code=lint_message.code,
         code_description=(
             types.CodeDescription(href=code_description_url)
@@ -40,11 +50,7 @@ def map_lint_message_to_diagnostic(
             else None
         ),
         source=lint_message.source,
-        severity=(
-            types.DiagnosticSeverity(lint_message.severity)
-            if lint_message.severity is not None
-            else None
-        ),
+        severity=severity,
     )
 
 

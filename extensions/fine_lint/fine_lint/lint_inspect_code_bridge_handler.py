@@ -1,6 +1,7 @@
 import asyncio
 import dataclasses
 import pathlib
+import typing
 
 from fine_inspect_code.inspect_code_action import (
     InspectCodeAction,
@@ -9,6 +10,8 @@ from fine_inspect_code.inspect_code_action import (
     InspectCodeRunResult,
     InspectCodeTarget,
 )
+from fine_inspect_code.ratchet import IDiagnosticsRatchet
+from fine_inspect_code.ratchet_matching import RatchetScope
 from finecode_extension_api import code_action
 from finecode_extension_api.interfaces import (
     ilogger,
@@ -37,17 +40,21 @@ class LintInspectCodeBridgeHandler(
 ):
     """Bridge handler that runs lint when inspect_code is invoked."""
 
+    RATCHET_CONTRIBUTOR: typing.ClassVar[str] = "lint"
+
     def __init__(
         self,
         workspace_action_runner: iworkspaceactionrunner.IWorkspaceActionRunner,
         workspace_info_provider: iworkspaceinfoprovider.IWorkspaceInfoProvider,
         logger: ilogger.ILogger,
         user_messenger: iuser_messenger.IUserMessenger,
+        ratchet: IDiagnosticsRatchet,
     ) -> None:
         self.workspace_action_runner = workspace_action_runner
         self.workspace_info_provider = workspace_info_provider
         self.logger = logger
         self.user_messenger = user_messenger
+        self.ratchet = ratchet
 
     async def _run_lint_for_project(
         self,
@@ -75,8 +82,19 @@ class LintInspectCodeBridgeHandler(
             project_paths=[project_path],
         )
         for proj_path, result in results.items():
+            outcome = await self.ratchet.apply(
+                contributor=self.RATCHET_CONTRIBUTOR,
+                checked_project=proj_path,
+                messages=result.messages,
+                scope=RatchetScope.for_payload(payload.target.value, payload.file_paths),
+                unhandled=result.unhandled,
+            )
             await partial_result_sender.send(
-                InspectCodeRunResult(messages=result.messages)
+                InspectCodeRunResult(
+                    messages=outcome.messages,
+                    stale=outcome.stale,
+                    receipts=outcome.receipts,
+                )
             )
 
     async def run(

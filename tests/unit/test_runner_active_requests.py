@@ -26,7 +26,7 @@ class _BlockingClient:
         self,
         method: str,
         params=None,
-        timeout=None,  # noqa: ANN001, ANN002, ANN003
+        timeout=None,
     ):
         from finecode.wm_server.runner import _internal_client_types
 
@@ -96,7 +96,7 @@ async def test_run_action_server_stopped_returns_counter_to_zero() -> None:
             self,
             method: str,
             params=None,
-            timeout=None,  # noqa: ANN001, ANN002, ANN003
+            timeout=None,
         ):
             raise finecode_jsonrpc.ServerStoppedError("stopped")
 

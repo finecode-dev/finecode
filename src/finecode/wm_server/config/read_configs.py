@@ -1533,7 +1533,7 @@ def read_workspace_extra_selection(
     try:
         with open(selection_path, "rb") as f:
             raw = dict(toml_loads(f.read()).unwrap())
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         raise config_models.ConfigurationError(
             f"Failed to parse {selection_path}: {e}"
         ) from e

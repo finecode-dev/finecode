@@ -20,7 +20,7 @@ dependencies = [
 # The `format` extra is the same shape: `dump_config_format_handler` calls the
 # generic `format_file` action, so only its registration needs `fine_format`.
 [project.optional-dependencies]
-audit = ["fine_audit_code~=0.1.0a0", "fine_inspect_code~=0.1.0a0"]
+audit = ["fine_audit_code~=0.1.0a0", "fine_inspect_code~=0.1.0a1"]
 format = ["fine_format~=0.1.0a0"]
 
 [dependency-groups]
@@ -30,7 +30,7 @@ dev_workspace = ["finecode~=0.4.0a0", "finecode_dev_common_preset~=0.3.0a0"]
 testing = [
   "fine_audit_code~=0.1.0a0",
   "fine_format~=0.1.0a0",
-  "fine_inspect_code~=0.1.0a0",
+  "fine_inspect_code~=0.1.0a1",
 ]
 
 [build-system]

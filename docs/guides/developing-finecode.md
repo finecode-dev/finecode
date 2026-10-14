@@ -167,6 +167,13 @@ it does not reliably shorten it: a bridge fans out per project on its own, so
 `--project_paths` narrows what is *reported*, not what is *run* — a single-project
 `audit_code` was still running after seven minutes on this workspace.
 
+Both umbrellas gate on new findings against per-project baseline snapshots — see
+[Diagnostics baseline](diagnostics-baseline.md). Recording is explicit
+(`record_diagnostics_baseline` runs the umbrellas locally;
+`merge_diagnostics_baseline` derives other platforms' counts from the gate runs'
+`--results-file` files uploaded as CI artifacts, running no analysis itself).
+No check run ever writes a snapshot.
+
 ### Narrowing a check to one project or one file
 
 A workspace-wide check across ~70 projects takes a minute or more; the same check

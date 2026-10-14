@@ -45,6 +45,28 @@ class DiagnosticSeverity(enum.IntEnum):
     HINT = 4
 
 
+class BaselineStatus(enum.StrEnum):
+    NEW = "new"
+    KNOWN = "known"
+    OUTSIDE = "outside"
+
+
+class ReceiptTarget(enum.StrEnum):
+    PROJECT = "project"
+    FILES = "files"
+
+
+class RatchetTarget(enum.StrEnum):
+    PROJECT = "project"
+    FILES = "files"
+    MARK_ONLY = "mark_only"
+
+
+@dataclasses.dataclass(frozen=True)
+class FindingOrigin:
+    contributor: str
+
+
 @dataclasses.dataclass
 class Diagnostic:
     range: Range
@@ -68,6 +90,42 @@ class Diagnostic:
 
     The fix itself is not carried here: it is computed on demand by
     ``get_lint_fixes``.  This flag only says whether asking is worth it."""
+    origin: FindingOrigin | None = None
+    """Which contributor emitted this diagnostic. ``None`` means the emitter does
+    not apply the ratchet."""
+    baseline: BaselineStatus | None = None
+    """Whether this diagnostic matches the committed snapshot. ``None`` means no
+    baseline applies: no snapshot, a non-failing severity, or a file in no project."""
+
+
+def fails_run(diagnostic: Diagnostic) -> bool:
+    return diagnostic.severity is None or diagnostic.severity in (
+        DiagnosticSeverity.ERROR,
+        DiagnosticSeverity.WARNING,
+    )
+
+
+@dataclasses.dataclass
+class StaleBaselineEntry:
+    contributor: str
+    snapshot_file: ResourceUri
+    file: ResourceUri
+    source: str
+    code: str
+    message: str
+    stale_count: int
+
+
+@dataclasses.dataclass(frozen=True)
+class PartitionReceipt:
+    """What one contributor judged for one project in one run, so a recording can
+    replace exactly that partition and nothing else."""
+
+    contributor: str
+    project: ResourceUri
+    platform: str
+    target: ReceiptTarget
+    unjudged: tuple[ResourceUri, ...]
 
 
 @dataclasses.dataclass
@@ -106,6 +164,8 @@ class DiagnosticFilesRunResult(code_action.RunActionResult):
     # messages is a dict to support messages for multiple files because it could be the
     # case that a tool checks a given file and its dependencies.
     messages: dict[ResourceUri, list[Diagnostic]]
+    stale: list[StaleBaselineEntry] = dataclasses.field(default_factory=list)
+    receipts: list[PartitionReceipt] = dataclasses.field(default_factory=list)
 
     def update(self, other: code_action.RunActionResult) -> None:
         if not isinstance(other, DiagnosticFilesRunResult):
@@ -115,6 +175,8 @@ class DiagnosticFilesRunResult(code_action.RunActionResult):
             if file_path_str not in self.messages:
                 self.messages[file_path_str] = []
             self.messages[file_path_str].extend(new_messages)
+        self.stale.extend(other.stale)
+        self.receipts.extend(other.receipts)
 
     def to_text(self) -> str | textstyler.StyledText:
         text: textstyler.StyledText = textstyler.StyledText()
@@ -139,18 +201,47 @@ class DiagnosticFilesRunResult(code_action.RunActionResult):
                         text.append_styled(
                             " [fixable]", foreground=textstyler.Color.BRIGHT_BLACK
                         )
+                    if message.baseline is BaselineStatus.NEW:
+                        text.append_styled(
+                            " [new]", foreground=textstyler.Color.YELLOW
+                        )
+                    elif message.baseline is BaselineStatus.KNOWN:
+                        text.append_styled(
+                            " [known]", foreground=textstyler.Color.BRIGHT_BLACK
+                        )
+                    elif message.baseline is BaselineStatus.OUTSIDE:
+                        text.append_styled(
+                            " [outside]", foreground=textstyler.Color.BRIGHT_BLACK
+                        )
                     text.append(f" {message.message}{source_str}\n")
             else:
                 text.append_styled(file_path_str, bold=True)
                 text.append(": OK\n")
+        if self.stale:
+            text.append(
+                "stale baseline entries "
+                "(recorded, no longer occurring; re-record to remove):\n"
+            )
+            for entry in self.stale:
+                text.append(
+                    f"{entry.file}: {entry.contributor} {entry.source} "
+                    f"{entry.code} {entry.message} "
+                    f"(x{entry.stale_count}) [{entry.snapshot_file}]\n"
+                )
 
         return text
 
     @property
     def return_code(self) -> code_action.RunReturnCode:
+        if self.stale:
+            return code_action.RunReturnCode.ERROR
         for diagnostics in self.messages.values():
-            if len(diagnostics) > 0:
-                return code_action.RunReturnCode.ERROR
+            for diagnostic in diagnostics:
+                if (
+                    fails_run(diagnostic)
+                    and diagnostic.baseline is not BaselineStatus.KNOWN
+                ):
+                    return code_action.RunReturnCode.ERROR
         return code_action.RunReturnCode.SUCCESS
 
 

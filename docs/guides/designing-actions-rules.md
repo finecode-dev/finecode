@@ -287,6 +287,18 @@ of an indistinguishable ``applied_counts=0``. Env-routing dispatchers
 dispatch every env in the run's discovered set and have no branch with an
 uncovered input, so there is nothing for them to record.
 
+## R-311: Handlers emitting findings onto `inspect_code`/`audit_code` MUST apply the ratchet
+
+A handler that emits findings onto `inspect_code` or `audit_code` MUST judge them
+through `IDiagnosticsRatchet`: hold its contributor id as a
+`RATCHET_CONTRIBUTOR` class constant, inject the ratchet, and call `apply()` once
+per `(contributor, project)` where it currently passes a sub-result to
+`partial_result_sender.send`, forwarding the outcome's `messages`, `stale` and
+`receipts`. A contributor that skips the ratchet leaves its findings new, so the
+gate fails on legacy findings no snapshot records. Renaming a contributor id
+orphans its snapshot entries. `FileExistenceValidationHandler` (both umbrellas)
+is exempt: path-existence findings are not tool findings and cannot be baselined.
+
 ## Handler Observability
 
 Reserved range: `R-500` to `R-599`.

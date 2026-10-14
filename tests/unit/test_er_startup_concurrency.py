@@ -49,7 +49,7 @@ class _FakeJsonRpcClient:
     kill that arrived while the start was still queued. Feature handlers are
     recorded so a test can drive them (AC2)."""
 
-    instances: list["_FakeJsonRpcClient"] = []
+    instances: list[_FakeJsonRpcClient] = []
     wait_forever: bool = False
     spawn_wait_sec: float = 0.0
 
@@ -399,7 +399,6 @@ def _install_ac2_update_config(
                 parent_action_source="test.actions.TestAction"
             )
             await impl(params)
-        return None
 
     monkeypatch.setattr(runner_manager, "update_runner_config", _update_config)
 

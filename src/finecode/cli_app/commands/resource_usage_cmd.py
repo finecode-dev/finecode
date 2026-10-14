@@ -16,7 +16,6 @@ from finecode.cli_app import resource_usage
 from finecode.wm_client import (
     ApiClient,
     ApiError,
-    ApiMethodNotFoundError,
     ApiServerError,
 )
 from finecode.wm_server import wm_lifecycle

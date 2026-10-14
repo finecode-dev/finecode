@@ -89,9 +89,9 @@ class _BridgeHandlers:
     async def run_action_in_project(
         self,
         runner: ExtensionRunnerInfo,
-        params: "_internal_client_types.RunActionInProjectParams",
+        params: _internal_client_types.RunActionInProjectParams,
         ws_context: context.WorkspaceContext,
-    ) -> "_internal_client_types.RunActionInProjectResult":
+    ) -> _internal_client_types.RunActionInProjectResult:
         executor = ProjectExecutor(ws_context)
 
         # The nested run gets its own id, so it needs its own binding: inheriting
@@ -168,9 +168,9 @@ class _BridgeHandlers:
     async def run_action_in_workspace(
         self,
         runner: ExtensionRunnerInfo,
-        params: "_internal_client_types.RunActionInWorkspaceParams",
+        params: _internal_client_types.RunActionInWorkspaceParams,
         ws_context: context.WorkspaceContext,
-    ) -> "_internal_client_types.RunActionInWorkspaceResult":
+    ) -> _internal_client_types.RunActionInWorkspaceResult:
         run_trigger = RunActionTrigger(params.meta.trigger)
         dev_env = DevEnv(params.meta.dev_env)
 
@@ -260,9 +260,9 @@ class _BridgeHandlers:
     async def get_actions_for_parent(
         self,
         runner: ExtensionRunnerInfo,
-        params: "_internal_client_types.GetActionsForParentParams",
+        params: _internal_client_types.GetActionsForParentParams,
         ws_context: context.WorkspaceContext,
-    ) -> "_internal_client_types.GetActionsForParentResult":
+    ) -> _internal_client_types.GetActionsForParentResult:
         """Serve ``finecode/getActionsForParent`` (ADR-0045).
 
         Lists every action in this project that specializes the given parent

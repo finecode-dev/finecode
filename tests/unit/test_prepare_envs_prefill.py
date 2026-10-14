@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import pathlib
-from unittest import mock
 
 import pytest
 

@@ -1,6 +1,7 @@
 import asyncio
 import dataclasses
 import pathlib
+import typing
 
 from fine_audit_code.audit_code_action import (
     AuditCodeAction,
@@ -8,6 +9,8 @@ from fine_audit_code.audit_code_action import (
     AuditCodeRunPayload,
     AuditCodeRunResult,
 )
+from fine_inspect_code.ratchet import IDiagnosticsRatchet
+from fine_inspect_code.ratchet_matching import RatchetScope
 from finecode_extension_api import code_action
 from finecode_extension_api.interfaces import (
     ilogger,
@@ -41,19 +44,24 @@ class CheckImportsAuditCodeBridgeHandler(
     checked in full regardless of target.
     """
 
+    RATCHET_CONTRIBUTOR: typing.ClassVar[str] = "check_imports"
+
     def __init__(
         self,
         workspace_action_runner: iworkspaceactionrunner.IWorkspaceActionRunner,
         workspace_info_provider: iworkspaceinfoprovider.IWorkspaceInfoProvider,
         logger: ilogger.ILogger,
+        ratchet: IDiagnosticsRatchet,
     ) -> None:
         self.workspace_action_runner = workspace_action_runner
         self.workspace_info_provider = workspace_info_provider
         self.logger = logger
+        self.ratchet = ratchet
 
     async def _run_check_imports_for_project(
         self,
         project_path: pathlib.Path,
+        payload: AuditCodeRunPayload,
         run_meta: code_action.RunActionMeta,
         partial_result_sender: code_action.PartialResultSender,
     ) -> None:
@@ -67,8 +75,19 @@ class CheckImportsAuditCodeBridgeHandler(
             project_paths=[project_path],
         )
         for proj_path, result in results.items():
+            outcome = await self.ratchet.apply(
+                contributor=self.RATCHET_CONTRIBUTOR,
+                checked_project=proj_path,
+                messages=result.messages,
+                scope=RatchetScope.for_payload(payload.target.value, payload.file_paths),
+                unhandled=result.unhandled,
+            )
             await partial_result_sender.send(
-                AuditCodeRunResult(messages=result.messages)
+                AuditCodeRunResult(
+                    messages=outcome.messages,
+                    stale=outcome.stale,
+                    receipts=outcome.receipts,
+                )
             )
 
     async def run(
@@ -88,6 +107,7 @@ class CheckImportsAuditCodeBridgeHandler(
                 tg.create_task(
                     self._run_check_imports_for_project(
                         project_path,
+                        payload,
                         run_context.meta,
                         run_context.partial_result_sender,
                     )

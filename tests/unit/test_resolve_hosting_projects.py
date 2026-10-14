@@ -72,12 +72,12 @@ class _EmptyStream:
     def __iter__(self) -> typing.Iterator[object]:
         return iter(())
 
-    def __aiter__(self) -> "_EmptyStreamIterator":
+    def __aiter__(self) -> _EmptyStreamIterator:
         return _EmptyStreamIterator()
 
 
 class _EmptyStreamIterator:
-    def __aiter__(self) -> "_EmptyStreamIterator":
+    def __aiter__(self) -> _EmptyStreamIterator:
         return self
 
     async def __anext__(self) -> object:

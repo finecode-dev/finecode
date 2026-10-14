@@ -290,6 +290,7 @@ Extensions can register services via the `finecode.activator` entry point using 
 
 | Extension package | Interface | Implementation |
 | --- | --- | --- |
+| `fine_inspect_code` | `fine_inspect_code.ratchet.IDiagnosticsRatchet` | `fine_inspect_code.ratchet_impl.DiagnosticsRatchet` |
 | `finecode_httpclient` | `finecode_extension_api.interfaces.ihttpclient.IHttpClient` | `finecode_httpclient.client.HttpClient` |
 | `fine_python_ast` | `fine_python_ast.iast_provider.IPythonSingleAstProvider` | `fine_python_ast.ast_provider.PythonSingleAstProvider` |
 | `fine_python_mypy` | `fine_python_mypy.iast_provider.IMypySingleAstProvider` | `fine_python_mypy.ast_provider.MypySingleAstProvider` |
@@ -298,6 +299,18 @@ Extensions can register services via the `finecode.activator` entry point using 
 | `fine_python_ruff` | `fine_python_ruff.ruff_lsp_service.RuffLspService` | `fine_python_ruff.ruff_lsp_service.RuffLspService` |
 | `fine_python_pyrefly` | `fine_python_pyrefly.pyrefly_lsp_service.PyreflyLspService` | `fine_python_pyrefly.pyrefly_lsp_service.PyreflyLspService` |
 | `fine_python_pyrefly` | `fine_python_pyrefly.pyrefly_config.PyreflyConfig` | `fine_python_pyrefly.pyrefly_config.PyreflyConfig` |
+
+### `IDiagnosticsRatchet`
+
+`fine_inspect_code.ratchet.IDiagnosticsRatchet` (implemented by
+`fine_inspect_code.ratchet_impl.DiagnosticsRatchet`) judges one contributor's
+findings for one project against that project's committed baseline snapshot:
+marks each failing diagnostic `new`/`known`/`outside`, reports stale entries
+and emits the partition receipt recordings consume. It is a consumer-only
+contract — it has no write method, so checking can never modify a snapshot.
+Settings (`snapshot_file`, default `finecode-diagnostics-baseline.json`) are
+workspace-level: the service resolves in the workspace root's ER. See
+[Diagnostics baseline](../../guides/diagnostics-baseline.md).
 
 ## Service registry for extensions
 
