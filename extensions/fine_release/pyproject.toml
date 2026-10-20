@@ -1,21 +1,21 @@
 [project]
 name = "fine_release"
-version = "0.1.0a0"
+version = "0.1.0"
 description = "FineCode preset: automated release sweep across workspace packages (PRD-0006)"
 readme = "README.md"
 requires-python = ">=3.11"
 authors = [{ name = "Vladyslav Hnatiuk", email = "aders1234@gmail.com" }]
 dependencies = [
-  "fine_dep_graph~=0.1.0a0",
-  "fine_dist_artifacts~=0.1.0a0",
-  "fine_git~=0.1.0a0",
-  "fine_src_artifacts~=0.1.0a0",
-  "finecode_dev_extensions~=0.2.0a0",
-  "finecode_extension_api~=0.5.0a0",
+  "fine_dep_graph~=0.1.0",
+  "fine_dist_artifacts~=0.1.0",
+  "fine_git~=0.1.0",
+  "fine_src_artifacts~=0.1.0",
+  "finecode_dev_extensions~=0.2.0",
+  "finecode_extension_api~=0.5.0",
 ]
 
 [dependency-groups]
-dev_workspace = ["finecode~=0.4.0a0", "finecode_dev_common_preset~=0.3.0a0"]
+dev_workspace = ["finecode~=0.4.0", "finecode_dev_common_preset~=0.3.0"]
 
 [build-system]
 requires = ["setuptools>=64"]

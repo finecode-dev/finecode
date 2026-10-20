@@ -5,4 +5,4 @@ source = "fine_semantic_tokens.TextDocumentSemanticTokensAction"
 name = "dispatch"
 source = "fine_semantic_tokens.SemanticTokensDispatchHandler"
 env = "dev_workspace"
-dependencies = ["fine_semantic_tokens~=0.1.0a0"]
+dependencies = ["fine_semantic_tokens~=0.1.0"]

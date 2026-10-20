@@ -201,7 +201,7 @@ config.line_length = 100
 interface = "finecode_extension_api.interfaces.ihttpclient.IHttpClient"
 source = "finecode_httpclient.HttpClient"
 env = "dev_no_runtime"
-dependencies = ["finecode_httpclient~=0.1.0a1"]
+dependencies = ["finecode_httpclient~=0.1.0"]
 ```
 
 The `[workspace]` table is not allowed in `finecode.toml`; workspace-scoped settings always go in `finecode-workspace.toml`.

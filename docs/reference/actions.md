@@ -884,7 +884,7 @@ git refs — pi's docs warn that packages run with full system access.
 [action.setup_system]
 handlers = [
   { name = "install_pi_packages", source = "fine_agent_pi.InstallPiPackagesHandler", env = "dev_workspace", dependencies = [
-    "fine_agent_pi~=0.1.0a0",
+    "fine_agent_pi~=0.1.0",
   ], config.packages = ["npm:pi-clear@0.1.1", "npm:@ff-labs/pi-fff@0.10.6"] },
 ]
 ```
@@ -894,10 +894,10 @@ handlers = [
 [tool.finecode.action.setup_system]
 handlers = [
   { name = "install_pi", source = "fine_agent_pi.InstallPiHandler", env = "dev_workspace", dependencies = [
-    "fine_agent_pi~=0.1.0a0",
+    "fine_agent_pi~=0.1.0",
   ] },
   { name = "install_pi_packages", source = "fine_agent_pi.InstallPiPackagesHandler", env = "dev_workspace", dependencies = [
-    "fine_agent_pi~=0.1.0a0",
+    "fine_agent_pi~=0.1.0",
   ], config.packages = ["npm:pi-clear@0.1.1"] },
 ]
 ```

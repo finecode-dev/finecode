@@ -5,7 +5,7 @@ source = "fine_logs.ListObservabilityServicesAction"
 name = "list_services"
 source = "fine_logs.ListObservabilityServicesHandler"
 env = "dev_workspace"
-dependencies = ["fine_logs~=0.1.0a0"]
+dependencies = ["fine_logs~=0.1.0"]
 
 [tool.finecode.action.get_service_logs]
 source = "fine_logs.GetServiceLogsAction"
@@ -14,7 +14,7 @@ source = "fine_logs.GetServiceLogsAction"
 name = "get_service"
 source = "fine_logs.GetServiceLogsHandler"
 env = "dev_workspace"
-dependencies = ["fine_logs~=0.1.0a0"]
+dependencies = ["fine_logs~=0.1.0"]
 
 [tool.finecode.action.clean_service_logs]
 source = "fine_logs.CleanServiceLogsAction"
@@ -23,7 +23,7 @@ source = "fine_logs.CleanServiceLogsAction"
 name = "clean_service_logs"
 source = "fine_logs.CleanServiceLogsHandler"
 env = "dev_workspace"
-dependencies = ["fine_logs~=0.1.0a0"]
+dependencies = ["fine_logs~=0.1.0"]
 
 [tool.finecode.action.clean_services_logs]
 source = "fine_logs.CleanServicesLogsAction"
@@ -33,10 +33,10 @@ source = "fine_logs.CleanServicesLogsAction"
 name = "discovery"
 source = "fine_logs.CleanServicesLogsDiscoveryHandler"
 env = "dev_workspace"
-dependencies = ["fine_logs~=0.1.0a0"]
+dependencies = ["fine_logs~=0.1.0"]
 
 [[tool.finecode.action.clean_services_logs.handlers]]
 name = "iterate"
 source = "fine_logs.CleanServicesLogsIterateHandler"
 env = "dev_workspace"
-dependencies = ["fine_logs~=0.1.0a0"]
+dependencies = ["fine_logs~=0.1.0"]

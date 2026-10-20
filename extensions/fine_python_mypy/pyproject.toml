@@ -1,14 +1,14 @@
 [project]
 name = "fine_python_mypy"
-version = "0.3.0a1"
+version = "0.3.0"
 description = ""
 readme = "README.md"
 requires-python = ">=3.11"
 authors = [{ name = "Vladyslav Hnatiuk", email = "aders1234@gmail.com" }]
 dependencies = [
-  "fine_python_lang~=0.1.0a0",
-  "fine_type_check~=0.1.0a0",
-  "finecode_extension_api~=0.5.0a0",
+  "fine_python_lang~=0.1.0",
+  "fine_type_check~=0.1.0",
+  "finecode_extension_api~=0.5.0",
   "mypy (>=1.15, <2.0)"
 ]
 
@@ -16,7 +16,7 @@ dependencies = [
 fine_python_mypy = "fine_python_mypy.activator:Activator"
 
 [dependency-groups]
-dev_workspace = ["finecode~=0.4.0a0", "finecode_dev_common_preset~=0.3.0a0"]
+dev_workspace = ["finecode~=0.4.0", "finecode_dev_common_preset~=0.3.0"]
 
 [tool.finecode]
 presets = [{ source = "finecode_dev_common_preset" }]

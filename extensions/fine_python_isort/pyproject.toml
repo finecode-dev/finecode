@@ -1,6 +1,6 @@
 [project]
 name = "fine_python_isort"
-version = "0.3.0a1"
+version = "0.3.0"
 description = ""
 readme = "README.md"
 requires-python = ">=3.11"
@@ -9,13 +9,13 @@ authors = [{ name = "Vladyslav Hnatiuk", email = "aders1234@gmail.com" }]
 # between 5.* and 8.* the only breaking changes were dropping supported Python versions
 # the minimal supported version of Python in 8.* is 3.9
 dependencies = [
-  "fine_python_lang~=0.1.0a0",
-  "finecode_extension_api~=0.5.0a0",
+  "fine_python_lang~=0.1.0",
+  "finecode_extension_api~=0.5.0",
   "isort (>=5.13, <9)"
 ]
 
 [dependency-groups]
-dev_workspace = ["finecode~=0.4.0a0", "finecode_dev_common_preset~=0.3.0a0"]
+dev_workspace = ["finecode~=0.4.0", "finecode_dev_common_preset~=0.3.0"]
 
 [tool.finecode]
 presets = [{ source = "finecode_dev_common_preset" }]

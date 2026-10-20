@@ -10,7 +10,7 @@ presets = [{ source = "fine_python_envs" }]
 source = "fine_test.RunTestsAction"
 handlers = [
   { name = "pytest", source = "fine_python_pytest.PytestRunTestsHandler", env = "testing", dependencies = [
-    "fine_python_pytest~=0.1.0a0",
+    "fine_python_pytest~=0.1.0",
   ] },
 ]
 
@@ -18,7 +18,7 @@ handlers = [
 source = "fine_test.ListTestsAction"
 handlers = [
   { name = "pytest", source = "fine_python_pytest.PytestListTestsHandler", env = "dev", dependencies = [
-    "fine_python_pytest~=0.1.0a0",
+    "fine_python_pytest~=0.1.0",
   ] },
 ]
 

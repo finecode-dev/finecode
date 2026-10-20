@@ -1,26 +1,26 @@
 [project]
 name = "fine_python_lang"
-version = "0.1.0a1"
+version = "0.1.0"
 description = ""
 readme = "README.md"
 requires-python = ">=3.11"
 authors = [{ name = "Vladyslav Hnatiuk", email = "aders1234@gmail.com" }]
 dependencies = [
-  "fine_check_imports~=0.1.0a0",
-  "fine_code_hierarchy~=0.1.0a0",
-  "fine_envs~=0.2.0a0",
-  "fine_format~=0.1.0a0",
-  "fine_inlay_hints~=0.1.0a0",
-  "fine_lint~=0.1.0a0",
-  "fine_semantic_tokens~=0.1.0a0",
-  "fine_src_artifacts~=0.1.0a0",
-  "fine_symbol_info~=0.1.0a0",
-  "fine_type_check~=0.1.0a0",
-  "finecode_extension_api~=0.5.0a0",
+  "fine_check_imports~=0.1.0",
+  "fine_code_hierarchy~=0.1.0",
+  "fine_envs~=0.2.0",
+  "fine_format~=0.1.0",
+  "fine_inlay_hints~=0.1.0",
+  "fine_lint~=0.1.0",
+  "fine_semantic_tokens~=0.1.0",
+  "fine_src_artifacts~=0.1.0",
+  "fine_symbol_info~=0.1.0",
+  "fine_type_check~=0.1.0",
+  "finecode_extension_api~=0.5.0",
 ]
 
 [dependency-groups]
-dev_workspace = ["finecode~=0.4.0a0", "finecode_dev_common_preset~=0.3.0a0"]
+dev_workspace = ["finecode~=0.4.0", "finecode_dev_common_preset~=0.3.0"]
 
 [tool.finecode]
 presets = [{ source = "finecode_dev_common_preset" }]

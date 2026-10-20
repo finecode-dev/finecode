@@ -2,7 +2,7 @@
 source = "fine_python_pyrefly.AnnouncePyreflyProjectAction"
 handlers = [
   { name = "host", source = "fine_python_pyrefly.AnnouncePyreflyProjectHandler", env = "dev_no_runtime", dependencies = [
-    "fine_python_pyrefly[jsonrpc]~=0.2.0a0",
+    "fine_python_pyrefly[jsonrpc]~=0.2.0",
   ] },
 ]
 
@@ -10,7 +10,7 @@ handlers = [
 source = "fine_python_pyrefly.CheckFilesOnPyreflyHostAction"
 handlers = [
   { name = "host", source = "fine_python_pyrefly.CheckFilesOnPyreflyHostHandler", env = "dev_no_runtime", dependencies = [
-    "fine_python_pyrefly[jsonrpc]~=0.2.0a0",
+    "fine_python_pyrefly[jsonrpc]~=0.2.0",
   ] },
 ]
 
@@ -18,6 +18,6 @@ handlers = [
 source = "fine_python_pyrefly.QueryPyreflyHostAction"
 handlers = [
   { name = "host", source = "fine_python_pyrefly.QueryPyreflyHostHandler", env = "dev_no_runtime", dependencies = [
-    "fine_python_pyrefly[jsonrpc]~=0.2.0a0",
+    "fine_python_pyrefly[jsonrpc]~=0.2.0",
   ] },
 ]

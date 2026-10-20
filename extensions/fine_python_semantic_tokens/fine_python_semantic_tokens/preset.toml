@@ -8,7 +8,7 @@ source = "fine_python_lang.TextDocumentSemanticTokensPythonAction"
 name = "pyrefly"
 source = "fine_python_pyrefly.PyreflySemanticTokensHandler"
 env = "dev_no_runtime"
-dependencies = ["fine_python_pyrefly[jsonrpc]~=0.2.0a0"]
+dependencies = ["fine_python_pyrefly[jsonrpc]~=0.2.0"]
 
 [tool.finecode.extension.fine_python_pyrefly]
 dependencies_override = ["pyrefly==1.3.*"]
@@ -17,7 +17,7 @@ dependencies_override = ["pyrefly==1.3.*"]
 interface = "finecode_extension_api.interfaces.ijsonrpcclient.IJsonRpcClient"
 source = "finecode_jsonrpc.jsonrpc_client.JsonRpcClientImpl"
 env = "dev_no_runtime"
-dependencies = ["finecode_jsonrpc~=0.1.0a1"]
+dependencies = ["finecode_jsonrpc~=0.1.0"]
 
 [[tool.finecode.service]]
 interface = "finecode_extension_api.interfaces.ilspclient.ILspClient"

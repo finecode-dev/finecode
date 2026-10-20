@@ -1,17 +1,17 @@
 [project]
 name = "fine_agent_pi"
-version = "0.1.0a0"
+version = "0.1.0"
 description = "FineCode handlers for the pi.dev coding agent: install the CLI and run agent tasks"
 requires-python = ">=3.11"
 authors = [{ name = "Vladyslav Hnatiuk", email = "aders1234@gmail.com" }]
 dependencies = [
-  "fine_agent~=0.1.0a0",
-  "fine_system_setup~=0.1.0a0",
-  "finecode_extension_api~=0.5.0a0"
+  "fine_agent~=0.1.0",
+  "fine_system_setup~=0.1.0",
+  "finecode_extension_api~=0.5.0"
 ]
 
 [dependency-groups]
-dev_workspace = ["finecode~=0.4.0a0", "finecode_dev_common_preset~=0.3.0a0"]
+dev_workspace = ["finecode~=0.4.0", "finecode_dev_common_preset~=0.3.0"]
 
 [tool.finecode]
 presets = [{ source = "finecode_dev_common_preset" }]

@@ -5,7 +5,7 @@ source = "fine_inspect_code.InspectCodeAction"
 name = "file_existence_validation"
 source = "fine_inspect_code.FileExistenceValidationHandler"
 env = "dev_workspace"
-dependencies = ["fine_inspect_code~=0.1.0a0"]
+dependencies = ["fine_inspect_code~=0.1.0"]
 
 [tool.finecode.action.record_diagnostics_baseline]
 source = "fine_inspect_code.RecordDiagnosticsBaselineAction"
@@ -14,7 +14,7 @@ source = "fine_inspect_code.RecordDiagnosticsBaselineAction"
 name = "record_from_inspect_code"
 source = "fine_inspect_code.RecordFromInspectCodeHandler"
 env = "dev_workspace"
-dependencies = ["fine_inspect_code~=0.1.0a1"]
+dependencies = ["fine_inspect_code~=0.1.0"]
 
 [tool.finecode.action.merge_diagnostics_baseline]
 source = "fine_inspect_code.MergeDiagnosticsBaselineAction"
@@ -23,4 +23,4 @@ source = "fine_inspect_code.MergeDiagnosticsBaselineAction"
 name = "merge_diagnostics_baseline"
 source = "fine_inspect_code.MergeDiagnosticsBaselineHandler"
 env = "dev_workspace"
-dependencies = ["fine_inspect_code~=0.1.0a1"]
+dependencies = ["fine_inspect_code~=0.1.0"]

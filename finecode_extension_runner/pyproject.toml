@@ -9,7 +9,7 @@ dependencies = [
   "click==8.1.*",
   "debugpy==1.8.*",
   "deepmerge==2.0.*",
-  "finecode_extension_api~=0.5.0a0",
+  "finecode_extension_api~=0.5.0",
   "loguru==0.7.*",
   "opentelemetry-exporter-otlp-proto-grpc==1.41.*",
   "opentelemetry-sdk==1.41.*",
@@ -22,8 +22,8 @@ dynamic = ["version"]
 [dependency-groups]
 dev = ["debugpy==1.8.*"]
 dev_workspace = [
-  "finecode~=0.4.0a0",
-  "finecode_dev_common_preset~=0.3.0a0",
+  "finecode~=0.4.0",
+  "finecode_dev_common_preset~=0.3.0",
 ]
 
 [build-system]
@@ -46,10 +46,10 @@ source = "fine_src_artifacts.GetSrcArtifactVersionAction"
 handlers_mode = "replace"
 handlers = [
   { name = "get_src_artifact_version_setuptools_scm", source = "fine_python_setuptools_scm.GetSrcArtifactVersionSetuptoolsScmHandler", env = "dev_no_runtime", dependencies = [
-    "fine_python_setuptools_scm~=0.1.0a0",
+    "fine_python_setuptools_scm~=0.1.0",
   ] },
   { name = "get_src_artifact_version_setuptools_scm_format", source = "fine_python_setuptools_scm.FormatSetuptoolsScmVersionFileHandler", env = "dev_no_runtime", dependencies = [
-    "fine_python_setuptools_scm~=0.1.0a0",
+    "fine_python_setuptools_scm~=0.1.0",
   ] },
 ]
 

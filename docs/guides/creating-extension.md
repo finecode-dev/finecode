@@ -27,7 +27,7 @@ my_linter/
 name = "my_linter"
 version = "0.1.0"
 requires-python = ">=3.11"
-dependencies = ["finecode_extension_api~=0.5.0a0"]
+dependencies = ["finecode_extension_api~=0.5.0"]
 
 [build-system]
 requires = ["setuptools>=64"]

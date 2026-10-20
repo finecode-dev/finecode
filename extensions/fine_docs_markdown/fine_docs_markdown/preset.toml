@@ -2,7 +2,7 @@
 source = "fine_docs.BuildDocsAction"
 handlers = [
   { name = "mkdocs_build", source = "fine_docs_mkdocs.MkdocsBuildDocsHandler", env = "docs", dependencies = [
-    "fine_docs_mkdocs~=0.1.0a0"
+    "fine_docs_mkdocs~=0.1.0"
   ] }
 ]
 
@@ -10,7 +10,7 @@ handlers = [
 source = "fine_docs.ServeDocsAction"
 handlers = [
   { name = "mkdocs_serve", source = "fine_docs_mkdocs.MkdocsServeDocsHandler", env = "docs", dependencies = [
-    "fine_docs_mkdocs~=0.1.0a0"
+    "fine_docs_mkdocs~=0.1.0"
   ] }
 ]
 

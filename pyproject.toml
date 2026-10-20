@@ -9,16 +9,16 @@ dependencies = [
   "click==8.1.*",
   "culsans==0.11.*",
   "filelock==3.18.*",
-  "fine_envs~=0.2.0a0",
-  "fine_format~=0.1.0a0",
-  "fine_inlay_hints~=0.1.0a0",
-  "fine_inspect_code~=0.1.0a0",
-  "fine_python_uv~=0.2.0a0",
-  "fine_semantic_tokens~=0.1.0a0",
-  "finecode_extension_api~=0.5.0a0",
-  "finecode_extension_runner~=0.4.0a0",
-  "finecode_jsonrpc~=0.1.0a0",
-  "finecode_knowledge~=0.1.0a1",
+  "fine_envs~=0.2.0",
+  "fine_format~=0.1.0",
+  "fine_inlay_hints~=0.1.0",
+  "fine_inspect_code~=0.1.0",
+  "fine_python_uv~=0.2.0",
+  "fine_semantic_tokens~=0.1.0",
+  "finecode_extension_api~=0.5.0",
+  "finecode_extension_runner~=0.4.0",
+  "finecode_jsonrpc~=0.1.0",
+  "finecode_knowledge~=0.1.0",
   "loguru==0.7.*",
   "lsprotocol==2025.0.0",
   "ordered-set==4.1.*",
@@ -44,7 +44,7 @@ dev_workspace = [
   # Some packages have no version, because they are always installed as editables
   "finecode",
   "finecode_dev_common_preset",
-  "finecode_httpclient~=0.1.0a1",
+  "finecode_httpclient~=0.1.0",
   # Imported by .agents/tools/issue_store (issue_links.py), which runs under the
   # dev_workspace python3; the tool refuses any version other than this one.
   "markdown-it-py==4.2.0",
@@ -72,10 +72,10 @@ presets = [
 [tool.finecode.action.setup_system]
 handlers = [
   { name = "install_claude_code", source = "fine_agent_claude_code.InstallClaudeCodeHandler", env = "dev_workspace", dependencies = [
-    "fine_agent_claude_code~=0.1.0a0",
+    "fine_agent_claude_code~=0.1.0",
   ] },
   { name = "install_pi", source = "fine_agent_pi.InstallPiHandler", env = "dev_workspace", dependencies = [
-    "fine_agent_pi~=0.1.0a0",
+    "fine_agent_pi~=0.1.0",
   ] },
 ]
 
@@ -84,10 +84,10 @@ source = "fine_src_artifacts.GetSrcArtifactVersionAction"
 handlers_mode = "replace"
 handlers = [
   { name = "get_src_artifact_version_setuptools_scm", source = "fine_python_setuptools_scm.GetSrcArtifactVersionSetuptoolsScmHandler", env = "dev_no_runtime", dependencies = [
-    "fine_python_setuptools_scm~=0.1.0a0",
+    "fine_python_setuptools_scm~=0.1.0",
   ] },
   { name = "get_src_artifact_version_setuptools_scm_format", source = "fine_python_setuptools_scm.FormatSetuptoolsScmVersionFileHandler", env = "dev_no_runtime", dependencies = [
-    "fine_python_setuptools_scm~=0.1.0a0",
+    "fine_python_setuptools_scm~=0.1.0",
   ] },
 ]
 
@@ -95,7 +95,7 @@ handlers = [
 source = "fine_wal_events.ServeWalExplorerFromStoreAction"
 handlers = [
   { name = "serve_wal_explorer_from_store", source = "fine_wal_explorer.ServeWalExplorerFromStoreHandler", env = "wal_explorer", dependencies = [
-    "fine_wal_explorer~=0.1.0a0",
+    "fine_wal_explorer~=0.1.0",
   ] },
 ]
 

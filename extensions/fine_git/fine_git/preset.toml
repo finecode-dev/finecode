@@ -5,7 +5,7 @@ source = "fine_git.CreateGitTagAction"
 name = "git_create_git_tag"
 source = "fine_git.GitCreateGitTagHandler"
 env = "dev_workspace"
-dependencies = ["fine_git~=0.1.0a0"]
+dependencies = ["fine_git~=0.1.0"]
 
 [tool.finecode.action.push_git_refs]
 source = "fine_git.PushGitRefsAction"
@@ -14,7 +14,7 @@ source = "fine_git.PushGitRefsAction"
 name = "git_push_git_refs"
 source = "fine_git.GitPushGitRefsHandler"
 env = "dev_workspace"
-dependencies = ["fine_git~=0.1.0a0"]
+dependencies = ["fine_git~=0.1.0"]
 
 [tool.finecode.action.get_git_status]
 source = "fine_git.GetGitStatusAction"
@@ -23,7 +23,7 @@ source = "fine_git.GetGitStatusAction"
 name = "git_get_git_status"
 source = "fine_git.GitGetGitStatusHandler"
 env = "dev_workspace"
-dependencies = ["fine_git~=0.1.0a0"]
+dependencies = ["fine_git~=0.1.0"]
 
 [tool.finecode.action.get_git_diff]
 source = "fine_git.GetGitDiffAction"
@@ -32,7 +32,7 @@ source = "fine_git.GetGitDiffAction"
 name = "git_get_git_diff"
 source = "fine_git.GitGetGitDiffHandler"
 env = "dev_workspace"
-dependencies = ["fine_git~=0.1.0a0"]
+dependencies = ["fine_git~=0.1.0"]
 
 [tool.finecode.action.restore_git_files]
 source = "fine_git.RestoreGitFilesAction"
@@ -41,4 +41,4 @@ source = "fine_git.RestoreGitFilesAction"
 name = "git_restore_git_files"
 source = "fine_git.GitRestoreGitFilesHandler"
 env = "dev_workspace"
-dependencies = ["fine_git~=0.1.0a0"]
+dependencies = ["fine_git~=0.1.0"]

@@ -1,17 +1,17 @@
 [project]
 name = "fine_python_package_info"
-version = "0.2.0a1"
+version = "0.2.0"
 description = ""
 readme = "README.md"
 requires-python = ">=3.11"
 authors = [{ name = "Vladyslav Hnatiuk", email = "aders1234@gmail.com" }]
 dependencies = [
   "build==1.4.*",
-  "fine_dist_artifacts~=0.1.0a0",
-  "fine_envs~=0.2.0a0",
-  "fine_python_lang~=0.1.0a0",
-  "fine_src_artifacts~=0.1.0a0",
-  "finecode_extension_api~=0.5.0a0",
+  "fine_dist_artifacts~=0.1.0",
+  "fine_envs~=0.2.0",
+  "fine_python_lang~=0.1.0",
+  "fine_src_artifacts~=0.1.0",
+  "finecode_extension_api~=0.5.0",
   "packaging>=23.0",
   "tomlkit==0.11.*",
   "twine==6.2.*",
@@ -21,7 +21,7 @@ dependencies = [
 fine_python_package_info = "fine_python_package_info.activator:Activator"
 
 [dependency-groups]
-dev_workspace = ["finecode~=0.4.0a0", "finecode_dev_common_preset~=0.3.0a0"]
+dev_workspace = ["finecode~=0.4.0", "finecode_dev_common_preset~=0.3.0"]
 
 [tool.finecode]
 presets = [{ source = "finecode_dev_common_preset" }]

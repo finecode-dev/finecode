@@ -1,17 +1,17 @@
 [project]
 name = "finecode_dev_common_preset"
-version = "0.3.0a2"
+version = "0.3.0"
 description = ""
 readme = "README.md"
 requires-python = ">=3.11"
 authors = [{ name = "Vladyslav Hnatiuk", email = "aders1234@gmail.com" }]
 dependencies = [
-  "fine_agent~=0.1.0a0",
-  "fine_dep_graph~=0.1.0a0",
-  "fine_git_hooks~=0.1.0a0",
-  "fine_logs~=0.1.0a0",
-  "fine_python_recommended~=0.5.0a0",
-  "fine_release~=0.1.0a0",
+  "fine_agent~=0.1.0",
+  "fine_dep_graph~=0.1.0",
+  "fine_git_hooks~=0.1.0",
+  "fine_logs~=0.1.0",
+  "fine_python_recommended~=0.5.0",
+  "fine_release~=0.1.0",
 ]
 
 [project.optional-dependencies]

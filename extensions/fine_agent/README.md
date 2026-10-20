@@ -18,7 +18,7 @@ presets = [{ source = "fine_agent" }]
 [tool.finecode.action.run_agent_task]
 handlers = [
   { name = "pi_agent", source = "fine_agent_pi.PiAgentHandler", env = "dev_no_runtime", dependencies = [
-    "fine_agent_pi~=0.1.0a0",
+    "fine_agent_pi~=0.1.0",
   ] },
 ]
 ```
@@ -32,7 +32,7 @@ included preset:
 handlers_mode = "replace"
 handlers = [
   { name = "claude_code_agent", source = "fine_agent_claude_code.ClaudeCodeAgentHandler", env = "dev_no_runtime", dependencies = [
-    "fine_agent_claude_code~=0.1.0a0",
+    "fine_agent_claude_code~=0.1.0",
   ] },
 ]
 

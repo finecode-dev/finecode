@@ -90,7 +90,7 @@ Service declarations merge by `interface`, so a project can rebind a preset's se
 interface = "finecode_extension_api.interfaces.ihttpclient.IHttpClient"
 source = "finecode_httpclient.HttpClient"
 env = "dev_no_runtime"
-dependencies = ["finecode_httpclient~=0.1.0a1"]
+dependencies = ["finecode_httpclient~=0.1.0"]
 ```
 
 See the [Services reference](reference/services.md) for the list of built-in services and which presets or extensions provide them.

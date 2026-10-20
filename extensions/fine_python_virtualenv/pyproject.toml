@@ -1,18 +1,18 @@
 [project]
 name = "fine_python_virtualenv"
-version = "0.2.0a1"
+version = "0.2.0"
 description = ""
 readme = "README.md"
 requires-python = ">=3.11"
 authors = [{ name = "Vladyslav Hnatiuk", email = "aders1234@gmail.com" }]
 dependencies = [
-  "fine_envs~=0.2.0a0",
-  "finecode_extension_api~=0.5.0a0",
+  "fine_envs~=0.2.0",
+  "finecode_extension_api~=0.5.0",
   "virtualenv (>=20.0.0,<21.0.0)",
 ]
 
 [dependency-groups]
-dev_workspace = ["finecode~=0.4.0a0", "finecode_dev_common_preset~=0.3.0a0"]
+dev_workspace = ["finecode~=0.4.0", "finecode_dev_common_preset~=0.3.0"]
 
 [tool.finecode]
 presets = [{ source = "finecode_dev_common_preset" }]

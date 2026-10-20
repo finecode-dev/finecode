@@ -1,21 +1,21 @@
 [project]
 name = "fine_python_flake8"
-version = "0.3.0a1"
+version = "0.3.0"
 description = ""
 readme = "README.md"
 requires-python = ">=3.11"
 authors = [{ name = "Vladyslav Hnatiuk", email = "aders1234@gmail.com" }]
 dependencies = [
-  "fine_lint~=0.1.0a0",
-  "fine_python_ast~=0.3.0a0",
-  "fine_python_lang~=0.1.0a0",
-  "finecode_extension_api~=0.5.0a0",
+  "fine_lint~=0.1.0",
+  "fine_python_ast~=0.3.0",
+  "fine_python_lang~=0.1.0",
+  "finecode_extension_api~=0.5.0",
   "flake8 (>=7.1.2,<8.0.0)",
   "types-flake8 (>=7.1.0.20241020,<8.0.0.0)",
 ]
 
 [dependency-groups]
-dev_workspace = ["finecode~=0.4.0a0", "finecode_dev_common_preset~=0.3.0a0"]
+dev_workspace = ["finecode~=0.4.0", "finecode_dev_common_preset~=0.3.0"]
 
 [tool.finecode]
 presets = [{ source = "finecode_dev_common_preset" }]

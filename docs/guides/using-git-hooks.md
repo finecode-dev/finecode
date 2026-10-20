@@ -58,13 +58,13 @@ source = "finecode_extension_api.actions.PrecommitAction"
 name = "staged_files_discovery"
 source = "fine_git_hooks.StagedFilesDiscoveryHandler"
 env = "dev_workspace"
-dependencies = ["fine_git_hooks~=0.1.0a0"]
+dependencies = ["fine_git_hooks~=0.1.0"]
 
 [[tool.finecode.action.precommit.handlers]]
 name = "mypy_precommit_bridge"
 source = "fine_python_mypy.MypyPrecommitBridgeHandler"
 env = "dev_workspace"
-dependencies = ["fine_python_mypy~=0.1.0"]
+dependencies = ["fine_python_mypy~=0.3.0"]
 ```
 
 Keep `StagedFilesDiscoveryHandler` first so later handlers receive the staged file list. Bridge handlers run in the order they are declared.
@@ -78,7 +78,7 @@ If `precommit` is already configured and you just want to extend it, register an
 name = "mypy_precommit_bridge"
 source = "fine_python_mypy.MypyPrecommitBridgeHandler"
 env = "dev_workspace"
-dependencies = ["fine_python_mypy~=0.1.0"]
+dependencies = ["fine_python_mypy~=0.3.0"]
 ```
 
 Handlers execute in the order they are declared. No other configuration changes are needed.

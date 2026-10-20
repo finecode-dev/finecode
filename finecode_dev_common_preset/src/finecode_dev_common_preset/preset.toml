@@ -37,7 +37,7 @@ config.repositories = [
 source = "fine_dist_artifacts.PublishArtifactAction"
 handlers = [
   { name = "publish_artifact", source = "fine_dist_artifacts.PublishArtifactHandler", env = "dev_no_runtime", dependencies = [
-    "fine_dist_artifacts~=0.1.0a0",
+    "fine_dist_artifacts~=0.1.0",
   ] },
 ]
 
@@ -45,7 +45,7 @@ handlers = [
 source = "fine_src_artifacts.GetSrcArtifactVersionAction"
 handlers = [
   { name = "get_src_artifact_version_py", source = "fine_python_package_info.GetSrcArtifactVersionPyHandler", env = "dev_no_runtime", dependencies = [
-    "fine_python_package_info~=0.2.0a1",
+    "fine_python_package_info~=0.2.0",
   ] },
 ]
 
@@ -53,7 +53,7 @@ handlers = [
 source = "fine_dist_artifacts.GetDistArtifactVersionAction"
 handlers = [
   { name = "get_dist_artifact_version_py", source = "fine_python_package_info.GetDistArtifactVersionPyHandler", env = "dev_no_runtime", dependencies = [
-    "fine_python_package_info~=0.2.0a1",
+    "fine_python_package_info~=0.2.0",
   ] },
 ]
 
@@ -61,7 +61,7 @@ handlers = [
 source = "fine_src_artifacts.GetSrcArtifactRegistriesAction"
 handlers = [
   { name = "get_src_artifact_registries_py", source = "fine_python_package_info.GetSrcArtifactRegistriesPyHandler", env = "dev_no_runtime", dependencies = [
-    "fine_python_package_info~=0.2.0a1",
+    "fine_python_package_info~=0.2.0",
   ] },
 ]
 
@@ -69,7 +69,7 @@ handlers = [
 source = "fine_dist_artifacts.PublishArtifactToRegistryAction"
 handlers = [
   { name = "publish_artifact_to_registry_py", source = "fine_python_package_info.PublishArtifactToRegistryPyHandler", env = "dev_no_runtime", dependencies = [
-    "fine_python_package_info~=0.2.0a1",
+    "fine_python_package_info~=0.2.0",
   ] },
 ]
 
@@ -77,7 +77,7 @@ handlers = [
 source = "fine_dist_artifacts.ListPublishedArtifactsAction"
 handlers = [
   { name = "list_published_artifacts_python", source = "fine_python_package_info.ListPublishedArtifactsPythonHandler", env = "dev_no_runtime", dependencies = [
-    "fine_python_package_info~=0.2.0a1",
+    "fine_python_package_info~=0.2.0",
   ] },
 ]
 
@@ -85,10 +85,10 @@ handlers = [
 source = "fine_wal_events.IngestWalToStoreAction"
 handlers = [
   { name = "discover_sources", source = "fine_wal_explorer.IngestWalSourceDiscoveryHandler", env = "wal_explorer", dependencies = [
-    "fine_wal_explorer~=0.1.0a0"
+    "fine_wal_explorer~=0.1.0"
   ] },
   { name = "ingest_wal_to_store", source = "fine_wal_explorer.IngestWalToStoreHandler", env = "wal_explorer", dependencies = [
-    "fine_wal_explorer~=0.1.0a0"
+    "fine_wal_explorer~=0.1.0"
   ] },
 ]
 
@@ -96,7 +96,7 @@ handlers = [
 source = "fine_wal_events.DiscoverWalSourcesAction"
 handlers = [
   { name = "discover_wal_sources", source = "fine_wal_explorer.DiscoverWalSourcesHandler", env = "wal_explorer", dependencies = [
-    "fine_wal_explorer~=0.1.0a0"
+    "fine_wal_explorer~=0.1.0"
   ] },
 ]
 
@@ -109,14 +109,14 @@ handlers = []
 source = "finecode_dev_extensions.publish_and_verify_artifact_action.PublishAndVerifyArtifactAction"
 handlers = [
   { name = "publish_and_verify_artifact", source = "finecode_dev_extensions.PublishAndVerifyArtifactHandler", env = "dev_no_runtime", dependencies = [
-    "finecode_dev_extensions~=0.2.0a0",
+    "finecode_dev_extensions~=0.2.0",
   ] },
 ]
 
 [tool.finecode.action.run_agent_task]
 handlers = [
   { name = "pi_agent", source = "fine_agent_pi.PiAgentHandler", env = "dev_no_runtime", dependencies = [
-    "fine_agent_pi~=0.1.0a0",
+    "fine_agent_pi~=0.1.0",
   ] },
 ]
 
@@ -124,7 +124,7 @@ handlers = [
 name = "check_toolchains_bridge"
 source = "fine_envs.check_toolchains_audit_code_bridge_handler.CheckToolchainsAuditCodeBridgeHandler"
 env = "dev_workspace"
-dependencies = ["fine_envs[audit]~=0.2.0a0"]
+dependencies = ["fine_envs[audit]~=0.2.0"]
 
 # currently, all packages in finecode repository are pure python packages, reuse
 # setuptools build in all of them

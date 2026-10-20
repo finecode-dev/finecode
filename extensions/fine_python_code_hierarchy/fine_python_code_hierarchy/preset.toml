@@ -8,7 +8,7 @@ source = "fine_python_lang.TextDocumentPrepareCallHierarchyPythonAction"
 name = "pyrefly"
 source = "fine_python_pyrefly.PyreflyPrepareCallHierarchyHandler"
 env = "dev_no_runtime"
-dependencies = ["fine_python_pyrefly[jsonrpc]~=0.2.0a0"]
+dependencies = ["fine_python_pyrefly[jsonrpc]~=0.2.0"]
 
 [tool.finecode.action.call_hierarchy_incoming_calls_python]
 source = "fine_python_lang.CallHierarchyIncomingCallsPythonAction"
@@ -17,7 +17,7 @@ source = "fine_python_lang.CallHierarchyIncomingCallsPythonAction"
 name = "pyrefly"
 source = "fine_python_pyrefly.PyreflyCallHierarchyIncomingCallsHandler"
 env = "dev_no_runtime"
-dependencies = ["fine_python_pyrefly[jsonrpc]~=0.2.0a0"]
+dependencies = ["fine_python_pyrefly[jsonrpc]~=0.2.0"]
 
 [tool.finecode.action.call_hierarchy_outgoing_calls_python]
 source = "fine_python_lang.CallHierarchyOutgoingCallsPythonAction"
@@ -26,7 +26,7 @@ source = "fine_python_lang.CallHierarchyOutgoingCallsPythonAction"
 name = "pyrefly"
 source = "fine_python_pyrefly.PyreflyCallHierarchyOutgoingCallsHandler"
 env = "dev_no_runtime"
-dependencies = ["fine_python_pyrefly[jsonrpc]~=0.2.0a0"]
+dependencies = ["fine_python_pyrefly[jsonrpc]~=0.2.0"]
 
 [tool.finecode.action.text_document_prepare_type_hierarchy_python]
 source = "fine_python_lang.TextDocumentPrepareTypeHierarchyPythonAction"
@@ -35,7 +35,7 @@ source = "fine_python_lang.TextDocumentPrepareTypeHierarchyPythonAction"
 name = "pyrefly"
 source = "fine_python_pyrefly.PyreflyPrepareTypeHierarchyHandler"
 env = "dev_no_runtime"
-dependencies = ["fine_python_pyrefly[jsonrpc]~=0.2.0a0"]
+dependencies = ["fine_python_pyrefly[jsonrpc]~=0.2.0"]
 
 [tool.finecode.action.type_hierarchy_supertypes_python]
 source = "fine_python_lang.TypeHierarchySupertypesPythonAction"
@@ -44,7 +44,7 @@ source = "fine_python_lang.TypeHierarchySupertypesPythonAction"
 name = "pyrefly"
 source = "fine_python_pyrefly.PyreflyTypeHierarchySupertypesHandler"
 env = "dev_no_runtime"
-dependencies = ["fine_python_pyrefly[jsonrpc]~=0.2.0a0"]
+dependencies = ["fine_python_pyrefly[jsonrpc]~=0.2.0"]
 
 [tool.finecode.action.type_hierarchy_subtypes_python]
 source = "fine_python_lang.TypeHierarchySubtypesPythonAction"
@@ -53,7 +53,7 @@ source = "fine_python_lang.TypeHierarchySubtypesPythonAction"
 name = "pyrefly"
 source = "fine_python_pyrefly.PyreflyTypeHierarchySubtypesHandler"
 env = "dev_no_runtime"
-dependencies = ["fine_python_pyrefly[jsonrpc]~=0.2.0a0"]
+dependencies = ["fine_python_pyrefly[jsonrpc]~=0.2.0"]
 
 [tool.finecode.extension.fine_python_pyrefly]
 dependencies_override = ["pyrefly==1.3.*"]
@@ -62,7 +62,7 @@ dependencies_override = ["pyrefly==1.3.*"]
 interface = "finecode_extension_api.interfaces.ijsonrpcclient.IJsonRpcClient"
 source = "finecode_jsonrpc.jsonrpc_client.JsonRpcClientImpl"
 env = "dev_no_runtime"
-dependencies = ["finecode_jsonrpc~=0.1.0a1"]
+dependencies = ["finecode_jsonrpc~=0.1.0"]
 
 [[tool.finecode.service]]
 interface = "finecode_extension_api.interfaces.ilspclient.ILspClient"

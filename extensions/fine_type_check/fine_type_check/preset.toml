@@ -8,7 +8,7 @@ source = "fine_type_check.TypeCheckAction"
 name = "type_check"
 source = "fine_type_check.TypeCheckHandler"
 env = "dev_workspace"
-dependencies = ["fine_type_check~=0.1.0a0"]
+dependencies = ["fine_type_check~=0.1.0"]
 
 [tool.finecode.action.type_check_files]
 source = "fine_type_check.TypeCheckFilesAction"
@@ -17,10 +17,10 @@ source = "fine_type_check.TypeCheckFilesAction"
 name = "dispatch"
 source = "fine_type_check.TypeCheckFilesDispatchHandler"
 env = "dev_no_runtime"
-dependencies = ["fine_type_check~=0.1.0a0"]
+dependencies = ["fine_type_check~=0.1.0"]
 
 [[tool.finecode.action.inspect_code.handlers]]
 name = "type_check_bridge"
 source = "fine_type_check.TypeCheckInspectCodeBridgeHandler"
 env = "dev_workspace"
-dependencies = ["fine_type_check~=0.1.0a0"]
+dependencies = ["fine_type_check~=0.1.0"]

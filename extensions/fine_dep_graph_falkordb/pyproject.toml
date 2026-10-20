@@ -1,21 +1,21 @@
 [project]
 name = "fine_dep_graph_falkordb"
-version = "0.1.0a0"
+version = "0.1.0"
 description = "FalkorDB handler implementations for FineCode dependency graph actions"
 readme = "README.md"
 requires-python = ">=3.11"
 authors = [{ name = "Vladyslav Hnatiuk", email = "aders1234@gmail.com" }]
 dependencies = [
   "falkordb>=1.0.0,<2.0.0",
-  "fine_dep_graph~=0.1.0a0",
-  "finecode_extension_api~=0.5.0a0",
+  "fine_dep_graph~=0.1.0",
+  "finecode_extension_api~=0.5.0",
 ]
 
 [project.entry-points."finecode.activator"]
 fine_dep_graph_falkordb = "fine_dep_graph_falkordb.activator:Activator"
 
 [dependency-groups]
-dev_workspace = ["finecode~=0.4.0a0", "finecode_dev_common_preset~=0.3.0a0"]
+dev_workspace = ["finecode~=0.4.0", "finecode_dev_common_preset~=0.3.0"]
 
 [build-system]
 requires = ["setuptools>=64"]

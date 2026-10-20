@@ -12,10 +12,10 @@ source = "fine_check_imports.CheckImportsAction"
 name = "dispatch"
 source = "fine_check_imports.CheckImportsDispatchHandler"
 env = "dev_workspace"
-dependencies = ["fine_check_imports~=0.1.0a0"]
+dependencies = ["fine_check_imports~=0.1.0"]
 
 [[tool.finecode.action.audit_code.handlers]]
 name = "check_imports_bridge"
 source = "fine_check_imports.CheckImportsAuditCodeBridgeHandler"
 env = "dev_workspace"
-dependencies = ["fine_check_imports~=0.1.0a0"]
+dependencies = ["fine_check_imports~=0.1.0"]

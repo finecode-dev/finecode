@@ -1,13 +1,13 @@
 [project]
 name = "fine_envs"
-version = "0.2.0a0"
+version = "0.2.0"
 description = "FineCode preset that owns environment management and configuration action contracts"
 readme = "README.md"
 requires-python = ">=3.11"
 authors = [{ name = "Vladyslav Hnatiuk", email = "aders1234@gmail.com" }]
 dependencies = [
-  "fine_src_artifacts~=0.1.0a0",
-  "finecode_extension_api~=0.5.0a0",
+  "fine_src_artifacts~=0.1.0",
+  "finecode_extension_api~=0.5.0",
   "packaging>=23.0",
   "tomlkit==0.11.*",
   "typing-extensions (>=4.12.2,<5.0.0)",
@@ -20,17 +20,17 @@ dependencies = [
 # The `format` extra is the same shape: `dump_config_format_handler` calls the
 # generic `format_file` action, so only its registration needs `fine_format`.
 [project.optional-dependencies]
-audit = ["fine_audit_code~=0.1.0a0", "fine_inspect_code~=0.1.0a1"]
-format = ["fine_format~=0.1.0a0"]
+audit = ["fine_audit_code~=0.1.0", "fine_inspect_code~=0.1.0"]
+format = ["fine_format~=0.1.0"]
 
 [dependency-groups]
-dev_workspace = ["finecode~=0.4.0a0", "finecode_dev_common_preset~=0.3.0a0"]
+dev_workspace = ["finecode~=0.4.0", "finecode_dev_common_preset~=0.3.0"]
 # The bridge handler's unit test imports it, so its optional deps must be present in
 # the env that runs the tests.
 testing = [
-  "fine_audit_code~=0.1.0a0",
-  "fine_format~=0.1.0a0",
-  "fine_inspect_code~=0.1.0a1",
+  "fine_audit_code~=0.1.0",
+  "fine_format~=0.1.0",
+  "fine_inspect_code~=0.1.0",
 ]
 
 [build-system]

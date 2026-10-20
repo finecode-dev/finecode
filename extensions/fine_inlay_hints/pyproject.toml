@@ -1,17 +1,17 @@
 [project]
 name = "fine_inlay_hints"
-version = "0.1.0a0"
+version = "0.1.0"
 description = "FineCode preset that owns inlay hint action contracts"
 readme = "README.md"
 requires-python = ">=3.11"
 authors = [{ name = "Vladyslav Hnatiuk", email = "aders1234@gmail.com" }]
 dependencies = [
-  "fine_src_artifacts~=0.1.0a0",
-  "finecode_extension_api~=0.5.0a0"
+  "fine_src_artifacts~=0.1.0",
+  "finecode_extension_api~=0.5.0"
 ]
 
 [dependency-groups]
-dev_workspace = ["finecode~=0.4.0a0", "finecode_dev_common_preset~=0.3.0a0"]
+dev_workspace = ["finecode~=0.4.0", "finecode_dev_common_preset~=0.3.0"]
 
 [build-system]
 requires = ["setuptools>=64"]
