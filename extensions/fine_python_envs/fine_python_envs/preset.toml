@@ -19,4 +19,4 @@ source = "fine_python_lang.ListObtainablePythonInterpretersAction"
 name = "list_obtainable_python_interpreters_with_uv"
 source = "fine_python_uv.UvListObtainablePythonInterpretersHandler"
 env = "dev_workspace"
-dependencies = ["fine_python_uv~=0.1.0a0"]
+dependencies = ["fine_python_uv~=0.2.0a0"]

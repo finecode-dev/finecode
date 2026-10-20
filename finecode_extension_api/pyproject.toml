@@ -8,7 +8,7 @@ authors = [{ name = "Vladyslav Hnatiuk", email = "aders1234@gmail.com" }]
 dependencies = ["typing-extensions (>=4.12.2,<5.0.0)"]
 
 [dependency-groups]
-dev_workspace = ["finecode~=0.3.0a0", "finecode_dev_common_preset~=0.3.0a0"]
+dev_workspace = ["finecode~=0.4.0a0", "finecode_dev_common_preset~=0.3.0a0"]
 
 [tool.finecode]
 presets = [{ source = "finecode_dev_common_preset" }]

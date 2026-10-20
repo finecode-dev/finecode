@@ -14,4 +14,4 @@ dependencies = ["fine_audit_code~=0.1.0a0"]
 name = "record_from_audit_code"
 source = "fine_audit_code.RecordFromAuditCodeHandler"
 env = "dev_workspace"
-dependencies = ["fine_audit_code~=0.1.0a1"]
+dependencies = ["fine_audit_code~=0.1.0a0"]

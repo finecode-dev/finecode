@@ -46,10 +46,10 @@ source = "fine_src_artifacts.GetSrcArtifactVersionAction"
 handlers_mode = "replace"
 handlers = [
   { name = "get_src_artifact_version_setuptools_scm", source = "fine_python_setuptools_scm.GetSrcArtifactVersionSetuptoolsScmHandler", env = "dev_no_runtime", dependencies = [
-    "fine_python_setuptools_scm~=0.1.0a1",
+    "fine_python_setuptools_scm~=0.1.0a0",
   ] },
   { name = "get_src_artifact_version_setuptools_scm_format", source = "fine_python_setuptools_scm.FormatSetuptoolsScmVersionFileHandler", env = "dev_no_runtime", dependencies = [
-    "fine_python_setuptools_scm~=0.1.0a1",
+    "fine_python_setuptools_scm~=0.1.0a0",
   ] },
 ]
 

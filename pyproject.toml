@@ -45,6 +45,9 @@ dev_workspace = [
   "finecode",
   "finecode_dev_common_preset",
   "finecode_httpclient~=0.1.0a1",
+  # Imported by .agents/tools/issue_store (issue_links.py), which runs under the
+  # dev_workspace python3; the tool refuses any version other than this one.
+  "markdown-it-py==4.2.0",
   "opentelemetry-exporter-otlp-proto-grpc==1.41.*",
   "opentelemetry-instrumentation==0.62.*",
   "opentelemetry-sdk==1.41.*",
@@ -81,10 +84,10 @@ source = "fine_src_artifacts.GetSrcArtifactVersionAction"
 handlers_mode = "replace"
 handlers = [
   { name = "get_src_artifact_version_setuptools_scm", source = "fine_python_setuptools_scm.GetSrcArtifactVersionSetuptoolsScmHandler", env = "dev_no_runtime", dependencies = [
-    "fine_python_setuptools_scm~=0.1.0a1",
+    "fine_python_setuptools_scm~=0.1.0a0",
   ] },
   { name = "get_src_artifact_version_setuptools_scm_format", source = "fine_python_setuptools_scm.FormatSetuptoolsScmVersionFileHandler", env = "dev_no_runtime", dependencies = [
-    "fine_python_setuptools_scm~=0.1.0a1",
+    "fine_python_setuptools_scm~=0.1.0a0",
   ] },
 ]
 

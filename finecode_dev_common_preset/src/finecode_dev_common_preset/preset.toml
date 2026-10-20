@@ -124,7 +124,7 @@ handlers = [
 name = "check_toolchains_bridge"
 source = "fine_envs.check_toolchains_audit_code_bridge_handler.CheckToolchainsAuditCodeBridgeHandler"
 env = "dev_workspace"
-dependencies = ["fine_envs[audit]~=0.1.0a0"]
+dependencies = ["fine_envs[audit]~=0.2.0a0"]
 
 # currently, all packages in finecode repository are pure python packages, reuse
 # setuptools build in all of them
