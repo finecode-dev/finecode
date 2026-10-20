@@ -45,7 +45,8 @@ async def test_force_flush_precedes_response(wm_client, emit_log_method) -> None
     order_slice = wm_client.received_order[before:]
 
     notif_indices = [
-        i for i, (kind, value) in enumerate(order_slice)
+        i
+        for i, (kind, value) in enumerate(order_slice)
         if kind == "notif" and value == "server/logRecords"
     ]
     resp_indices = [i for i, (kind, _) in enumerate(order_slice) if kind == "resp"]
@@ -71,7 +72,7 @@ async def test_level_filtering(wm_client, emit_log_method) -> None:
         while True:
             params = await wm_client.next_notification("server/logRecords", timeout=0.3)
             messages.extend(r["message"] for r in params.get("records", []))
-    except asyncio.TimeoutError:
+    except TimeoutError:
         pass
 
     assert keep_message in messages

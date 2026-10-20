@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import dataclasses
 
-from finecode_extension_api import code_action
 from fine_src_artifacts import group_src_artifact_files_by_lang_action
+from finecode_extension_api import code_action
 from finecode_extension_api.resource_uri import ResourceUri, resource_uri_to_path
 
 

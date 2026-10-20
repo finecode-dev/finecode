@@ -15,7 +15,5 @@ async def document_code_lens(
     return []
 
 
-async def code_lens_resolve(
-    _ls: LspServer, params: types.CodeLens
-) -> types.CodeLens:
+async def code_lens_resolve(_ls: LspServer, params: types.CodeLens) -> types.CodeLens:
     logger.trace(f"resolve code lens {params}")

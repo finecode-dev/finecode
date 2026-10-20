@@ -25,8 +25,7 @@ class WmCommunicationCancelled(Exception):
 
 
 class PackageNotInstalledError(Exception):
-    """Raised when a Python module required during ``update_config`` is not installed in the env.
-    """
+    """Raised when a Python module required during ``update_config`` is not installed in the env."""
 
     def __init__(self, module_name: str) -> None:
         self.module_name = module_name

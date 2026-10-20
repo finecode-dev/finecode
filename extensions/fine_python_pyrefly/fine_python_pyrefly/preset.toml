@@ -1,0 +1,23 @@
+[tool.finecode.action.announce_pyrefly_project]
+source = "fine_python_pyrefly.AnnouncePyreflyProjectAction"
+handlers = [
+  { name = "host", source = "fine_python_pyrefly.AnnouncePyreflyProjectHandler", env = "dev_no_runtime", dependencies = [
+    "fine_python_pyrefly[jsonrpc]~=0.2.0",
+  ] },
+]
+
+[tool.finecode.action.check_files_on_pyrefly_host]
+source = "fine_python_pyrefly.CheckFilesOnPyreflyHostAction"
+handlers = [
+  { name = "host", source = "fine_python_pyrefly.CheckFilesOnPyreflyHostHandler", env = "dev_no_runtime", dependencies = [
+    "fine_python_pyrefly[jsonrpc]~=0.2.0",
+  ] },
+]
+
+[tool.finecode.action.query_pyrefly_host]
+source = "fine_python_pyrefly.QueryPyreflyHostAction"
+handlers = [
+  { name = "host", source = "fine_python_pyrefly.QueryPyreflyHostHandler", env = "dev_no_runtime", dependencies = [
+    "fine_python_pyrefly[jsonrpc]~=0.2.0",
+  ] },
+]

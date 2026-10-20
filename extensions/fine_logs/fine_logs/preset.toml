@@ -1,0 +1,42 @@
+[tool.finecode.action.list_observability_services]
+source = "fine_logs.ListObservabilityServicesAction"
+
+[[tool.finecode.action.list_observability_services.handlers]]
+name = "list_services"
+source = "fine_logs.ListObservabilityServicesHandler"
+env = "dev_workspace"
+dependencies = ["fine_logs~=0.1.0"]
+
+[tool.finecode.action.get_service_logs]
+source = "fine_logs.GetServiceLogsAction"
+
+[[tool.finecode.action.get_service_logs.handlers]]
+name = "get_service"
+source = "fine_logs.GetServiceLogsHandler"
+env = "dev_workspace"
+dependencies = ["fine_logs~=0.1.0"]
+
+[tool.finecode.action.clean_service_logs]
+source = "fine_logs.CleanServiceLogsAction"
+
+[[tool.finecode.action.clean_service_logs.handlers]]
+name = "clean_service_logs"
+source = "fine_logs.CleanServiceLogsHandler"
+env = "dev_workspace"
+dependencies = ["fine_logs~=0.1.0"]
+
+[tool.finecode.action.clean_services_logs]
+source = "fine_logs.CleanServicesLogsAction"
+
+# Discovery must be first — populates run_context.service_ids for the iterate handler
+[[tool.finecode.action.clean_services_logs.handlers]]
+name = "discovery"
+source = "fine_logs.CleanServicesLogsDiscoveryHandler"
+env = "dev_workspace"
+dependencies = ["fine_logs~=0.1.0"]
+
+[[tool.finecode.action.clean_services_logs.handlers]]
+name = "iterate"
+source = "fine_logs.CleanServicesLogsIterateHandler"
+env = "dev_workspace"
+dependencies = ["fine_logs~=0.1.0"]

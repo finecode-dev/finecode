@@ -4,9 +4,9 @@ from typing import Any
 
 import cattrs
 
-import finecode.wm_server.config.config_models as config_models
 from finecode._converter import converter as _converter
 from finecode.wm_server import context, domain
+from finecode.wm_server.config import config_models
 from finecode.wm_server.config.read_configs import read_env_configs
 
 
@@ -60,17 +60,71 @@ def collect_project(
         services=services,
         action_handler_configs=action_handler_configs,
     )
+    apply_handler_config_overrides(collected, ws_context.handler_config_overrides)
     ws_context.ws_projects[project_path] = collected
     return collected
+
+
+def apply_handler_config_overrides(
+    project: domain.CollectedProject,
+    overrides: dict[str, dict[str, dict[str, Any]]],
+) -> None:
+    """Apply handler config overrides to ``project.action_handler_configs``.
+
+    ``overrides`` format: ``{action_name: {handler_name_or_"": {param: value}}}``
+    where the empty-string key ``""`` means all handlers of that action.
+    """
+    actions_set = set(overrides.keys())
+    for action in project.actions:
+        if action.name not in actions_set:
+            continue
+        action_overrides = overrides.get(action.name, {})
+        if not action_overrides:
+            continue
+        action_level = action_overrides.get("", {})
+        for handler in action.handlers:
+            handler_specific = action_overrides.get(handler.name, {})
+            merged = {**action_level, **handler_specific}
+            if merged:
+                project.action_handler_configs[handler.source] = {
+                    **(project.action_handler_configs.get(handler.source) or {}),
+                    **merged,
+                }
+
+
+def rebuild_handler_configs(
+    project: domain.CollectedProject,
+    ws_context: context.WorkspaceContext,
+) -> None:
+    """Re-derive a project's handler configs from its raw config, then re-apply
+    the current handler-config overrides (replace semantics).
+
+    Called wherever a config change must be reflected in full: the overrides
+    replace, rather than layer onto, whatever config is already there.  The raw
+    config of a :class:`~finecode.wm_server.domain.ResolvedProject` is the
+    preset-merged one, so the rebuild is correct in both states.
+    """
+    project.action_handler_configs = _collect_action_handler_configs_in_config(
+        ws_context.ws_projects_raw_configs[project.dir_path]
+    )
+    apply_handler_config_overrides(project, ws_context.handler_config_overrides)
 
 
 def _collect_services_in_config(
     config: dict[str, Any],
 ) -> list[domain.ServiceDeclaration]:
+    """Collect service entries as declared, without resolving override aliases.
+
+    Alias derivation and override matching happen in the Extension Runner
+    (ADR-0070): activator-registered bindings exist only there, so the WM cannot
+    tell an unknown alias from one belonging to a binding it never sees.
+    """
     services: list[domain.ServiceDeclaration] = []
     for service_def_raw in config["tool"]["finecode"].get("service", []):
         try:
-            service_def = _converter.structure(service_def_raw, config_models.ServiceDefinition)
+            service_def = _converter.structure(
+                service_def_raw, config_models.ServiceDefinition
+            )
         except cattrs.ClassValidationError as exception:
             raise config_models.ConfigurationError(str(exception)) from exception
 
@@ -109,14 +163,16 @@ def _collect_actions_in_config(
     presets_resolved: bool = True,
 ) -> list[domain.Action]:
     actions: list[domain.Action] = []
-    env_table: dict[str, Any] = config.get("tool", {}).get("finecode", {}).get(
-        "env", {}
+    env_table: dict[str, Any] = (
+        config.get("tool", {}).get("finecode", {}).get("env", {})
     )
     for action_name, action_def_raw in (
         config["tool"]["finecode"].get("action", {}).items()
     ):
         try:
-            action_def = _converter.structure(action_def_raw, config_models.ActionDefinition)
+            action_def = _converter.structure(
+                action_def_raw, config_models.ActionDefinition
+            )
         except cattrs.ClassValidationError as exception:
             raise config_models.ConfigurationError(str(exception)) from exception
 

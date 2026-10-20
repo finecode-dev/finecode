@@ -1,11 +1,16 @@
 from __future__ import annotations
 
 import dataclasses
-from typing import override
+import sys
 
-from finecode_extension_api import code_action
+if sys.version_info >= (3, 12):
+    from typing import override
+else:
+    from typing_extensions import override
+
 from fine_format import format_file_action
 from fine_toml_lang.format_toml_file_action import FormatTomlFileAction
+from finecode_extension_api import code_action
 from finecode_extension_api.interfaces import iprojectinfoprovider
 from finecode_extension_api.resource_uri import resource_uri_to_path
 
@@ -46,7 +51,9 @@ class TombiFormatTomlFileHandler(
         new_file_content = await self.lsp_service.format_file(file_path, file_content)
         file_changed = new_file_content != file_content
 
-        run_context.file_info = format_file_action.FileInfo(new_file_content, file_version)
+        run_context.file_info = format_file_action.FileInfo(
+            new_file_content, file_version
+        )
 
         return format_file_action.FormatFileRunResult(
             changed=file_changed, code=new_file_content

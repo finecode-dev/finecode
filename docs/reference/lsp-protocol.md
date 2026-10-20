@@ -87,10 +87,6 @@ Action tree node payloads use camelCase fields in the LSP protocol:
   - Params: `{ "projectPath": "<project>::<action>" }`
   - Behavior: forwards to WM `actions/reload`
 
-- `finecode.reset`
-  - Params: none
-  - Behavior: forwards to WM `server/reset`
-
 - `finecode.restartExtensionRunner`
   - Params: `{ "projectPath": "<project>::<env>" }`
   - Behavior: forwards to WM `runners/restart` with `debug=false`
@@ -98,6 +94,21 @@ Action tree node payloads use camelCase fields in the LSP protocol:
 - `finecode.restartAndDebugExtensionRunner`
   - Params: `{ "projectPath": "<project>::<env>" }`
   - Behavior: forwards to WM `runners/restart` with `debug=true`
+
+- `finecode.reloadConfig`
+  - Params: `{ "projectPath": "<project>" }` or `{ "allProjects": true }`
+  - Behavior: forwards to WM `workspace/reloadConfig`. Makes the configuration on
+    disk take effect by replacing the project's runners. Workspace width must be
+    asked for: omitting `projectPath` is an error, not "everything" (ADR-0078).
+  - Result: `{ "projects": [{ "project", "status", ... }] }`, one entry per target
+
+- `finecode.restartWm`
+  - Params: none
+  - Behavior: replaces the WM server process, so an edit to FineCode's own code
+    takes effect. The LSP server reconnects to the replacement and re-establishes
+    its session automatically (ADR-0074); other connected clients do the same and
+    are reported in the result so the caller knows whom it disturbed.
+  - Result: `{ "restarted", "previousPid", "port", "otherClientsDisconnected" }`
 
 ## Custom LSP Requests
 

@@ -141,6 +141,19 @@ class LspSessionImpl(ilspclient.ILspSession):
         self._session.on_request(method, handler)
 
     # ------------------------------------------------------------------
+    # Process lifetime
+    # ------------------------------------------------------------------
+
+    def on_exit(
+        self,
+        callback: collections.abc.Callable[[], collections.abc.Awaitable[None]],
+    ) -> None:
+        self._session.on_exit(callback)
+
+    def force_kill(self) -> None:
+        self._session.force_kill()
+
+    # ------------------------------------------------------------------
     # Properties
     # ------------------------------------------------------------------
 
@@ -161,7 +174,7 @@ class LspClientImpl(ilspclient.ILspClient):
 
     def session(
         self,
-        cmd: str,
+        cmd: collections.abc.Sequence[str],
         root_uri: str,
         workspace_folders: list[dict[str, str]] | None = None,
         initialization_options: dict[str, Any] | None = None,

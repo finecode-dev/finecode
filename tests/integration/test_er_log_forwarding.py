@@ -34,7 +34,16 @@ async def test_er_log_record_reaches_subscribed_client(wm_client) -> None:
     runner = _fake_runner()
     runner_manager.handle_er_log_records(
         runner,
-        {"records": [{"timestamp": 0.0, "level": "INFO", "group": "ext.x", "message": f"boot ok-{m}"}]},
+        {
+            "records": [
+                {
+                    "timestamp": 0.0,
+                    "level": "INFO",
+                    "group": "ext.x",
+                    "message": f"boot ok-{m}",
+                }
+            ]
+        },
     )
 
     params = await wm_client.next_notification("server/logRecords")
@@ -76,7 +85,16 @@ async def test_er_log_records_not_delivered_when_unobserved(wm_client) -> None:
     runner = _fake_runner()
     runner_manager.handle_er_log_records(
         runner,
-        {"records": [{"timestamp": 0.0, "level": "INFO", "group": "ext.x", "message": "unseen"}]},
+        {
+            "records": [
+                {
+                    "timestamp": 0.0,
+                    "level": "INFO",
+                    "group": "ext.x",
+                    "message": "unseen",
+                }
+            ]
+        },
     )
 
     assert wm_server._log_registry.has_subscribers() is False

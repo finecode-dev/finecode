@@ -1,14 +1,13 @@
 from __future__ import annotations
 
+import asyncio
 import dataclasses
 import json
 import os
-import shlex
 import sys
 import tempfile
 from pathlib import Path
 
-from finecode_extension_api import code_action
 from fine_test.run_tests_action import (
     RunTestsAction,
     RunTestsRunContext,
@@ -18,6 +17,7 @@ from fine_test.run_tests_action import (
     TestOutcome,
 )
 from fine_test.test_id import TestId
+from finecode_extension_api import code_action
 from finecode_extension_api.interfaces import (
     icommandrunner,
     ilogger,
@@ -29,12 +29,16 @@ from finecode_extension_api.resource_uri import (
     resource_uri_to_path,
 )
 
+from fine_python_pytest._default_targets import resolve_default_targets
+
 
 @dataclasses.dataclass
 class PytestRunTestsHandlerConfig(code_action.ActionHandlerConfig):
     # Extra pytest CLI arguments forwarded verbatim (e.g. ["-x", "--timeout=30"])
     addopts: list[str] = dataclasses.field(default_factory=list)
-    # Paths passed to pytest when the payload gives none (relative to project_dir)
+    # Paths passed to pytest when the payload gives none (relative to project_dir).
+    # If none of these exists and nothing pytest would collect is found in the
+    # project, pytest is not run; set `[]` to always defer to pytest's own discovery.
     default_test_dirs: list[str] = dataclasses.field(default_factory=lambda: ["tests"])
 
 
@@ -61,6 +65,24 @@ class PytestRunTestsHandler(
     ) -> RunTestsRunResult:
         project_dir = self.project_info_provider.get_current_project_dir_path()
 
+        # Skip pytest before any temp file or progress scope is created, when
+        # nothing could be collected.
+        targets: list[str] | None = None
+        if not payload.test_ids and not payload.file_paths:
+            targets = await asyncio.to_thread(
+                resolve_default_targets,
+                project_dir,
+                self.config.default_test_dirs,
+                self.config.addopts,
+            )
+            if targets is None:
+                self.logger.debug(
+                    f"Skipping pytest in {project_dir}: none of default_test_dirs"
+                    f" {self.config.default_test_dirs} exists and nothing else pytest"
+                    " would collect was found."
+                )
+                return RunTestsRunResult(test_results=[])
+
         fd, report_path_str = tempfile.mkstemp(suffix=".json")
         os.close(fd)
         report_path = Path(report_path_str)
@@ -81,21 +103,19 @@ class PytestRunTestsHandler(
                 cmd_parts.extend(
                     str(resource_uri_to_path(uri)) for uri in payload.file_paths
                 )
-            elif self.config.default_test_dirs:
-                cmd_parts.extend(
-                    d for d in self.config.default_test_dirs if (project_dir / d).exists()
-                )
+            else:
+                assert targets is not None  # the skip path returned above
+                cmd_parts.extend(targets)
 
             if payload.markers:
                 cmd_parts.extend(["-m", " or ".join(payload.markers)])
 
             cmd_parts.extend(self.config.addopts)
 
-            cmd = shlex.join(cmd_parts)
-            self.logger.debug(f"Running pytest: {cmd}")
+            self.logger.debug(f"Running pytest: {cmd_parts!r}")
 
             async with run_context.progress("Running tests") as progress:
-                process = await self.command_runner.run(cmd, cwd=project_dir)
+                process = await self.command_runner.run(cmd_parts, cwd=project_dir)
                 await progress.report("Tests running")
                 await process.wait_for_end()
 
@@ -118,7 +138,9 @@ class PytestRunTestsHandler(
                     3: "internal error in pytest",
                     4: "command-line usage error — check addopts config",
                 }
-                reason = descriptions.get(exit_code, f"unexpected exit code {exit_code}")
+                reason = descriptions.get(
+                    exit_code, f"unexpected exit code {exit_code}"
+                )
                 raise code_action.ActionFailedException(
                     f"pytest exited with code {exit_code}: {reason}.\nOutput:\n{stderr or stdout}"
                 )
@@ -151,7 +173,7 @@ class PytestRunTestsHandler(
 
         if not test_results:
             self.logger.warning(
-                f"No tests discovered. cmd={cmd!r} exit_code={exit_code} summary={summary}"
+                f"No tests discovered. cmd={cmd_parts!r} exit_code={exit_code} summary={summary}"
             )
 
         return RunTestsRunResult(test_results=test_results)
@@ -253,7 +275,9 @@ def _parse_nodeid(nodeid: str, project_dir: Path) -> TestId:
         return TestId(file_path=file_uri, test_name=test_name, variant=variant)
     # len >= 3: file::Class::method[variant]
     test_name, variant = _split_variant(parts[-1])
-    return TestId(file_path=file_uri, class_name=parts[1], test_name=test_name, variant=variant)
+    return TestId(
+        file_path=file_uri, class_name=parts[1], test_name=test_name, variant=variant
+    )
 
 
 def _split_variant(name: str) -> tuple[str, str | None]:

@@ -7,9 +7,10 @@ from pathlib import Path
 from types import TracebackType
 from typing import Any, Self
 
+from loguru import logger
+
 from finecode_jsonrpc import _io_thread
 from finecode_jsonrpc.transports import StdioTransport
-from loguru import logger
 
 
 class JsonRpcSessionImpl:
@@ -17,7 +18,7 @@ class JsonRpcSessionImpl:
 
     def __init__(
         self,
-        cmd: str,
+        cmd: collections.abc.Sequence[str],
         cwd: Path | None,
         env: dict[str, str] | None,
         readable_id: str,
@@ -45,6 +46,9 @@ class JsonRpcSessionImpl:
                 [dict[str, Any] | None], collections.abc.Awaitable[Any]
             ],
         ] = {}
+        self._exit_callback: (
+            collections.abc.Callable[[], collections.abc.Awaitable[None]] | None
+        ) = None
 
     # ------------------------------------------------------------------
     # Context manager
@@ -201,6 +205,20 @@ class JsonRpcSessionImpl:
         self._request_handlers[method] = handler
 
     # ------------------------------------------------------------------
+    # Process lifetime
+    # ------------------------------------------------------------------
+
+    def on_exit(
+        self,
+        callback: collections.abc.Callable[[], collections.abc.Awaitable[None]],
+    ) -> None:
+        self._exit_callback = callback
+
+    def force_kill(self) -> None:
+        if self._transport is not None:
+            self._transport.force_kill()
+
+    # ------------------------------------------------------------------
     # Internal message dispatch (runs on IO thread)
     # ------------------------------------------------------------------
 
@@ -278,7 +296,7 @@ class JsonRpcSessionImpl:
 
         try:
             result = await handler(message.get("params"))
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
             logger.exception(
                 f"Error handling server request '{method}' | {self._readable_id}: {exc}"
             )
@@ -308,7 +326,7 @@ class JsonRpcSessionImpl:
         if handler is not None:
             try:
                 await handler(message.get("params"))
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001
                 logger.exception(
                     f"Error handling notification '{method}' | {self._readable_id}: {exc}"
                 )
@@ -323,6 +341,9 @@ class JsonRpcSessionImpl:
         for fut in list(self._sync_request_futures.values()):
             if not fut.done():
                 fut.set_exception(err)
+
+        if self._exit_callback is not None:
+            await self._exit_callback()
 
 
 class JsonRpcError(Exception):
@@ -340,7 +361,7 @@ class JsonRpcClientImpl:
 
     def session(
         self,
-        cmd: str,
+        cmd: collections.abc.Sequence[str],
         cwd: Path | None = None,
         env: dict[str, str] | None = None,
         readable_id: str = "",

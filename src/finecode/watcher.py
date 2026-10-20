@@ -2,19 +2,20 @@ from __future__ import annotations
 
 import multiprocessing as mp
 import time
-from contextlib import contextmanager
+from collections.abc import AsyncIterator, Generator
+from contextlib import contextmanager, suppress
 from dataclasses import dataclass
 from enum import Enum, auto
 from pathlib import Path
 from threading import Timer
-from typing import AsyncIterator, Generator, Generic, TypeVar
+from typing import Generic, TypeVar
 
 from loguru import logger
 from watchdog.events import FileSystemEventHandler
 from watchdog.observers import Observer
 
-import finecode.context as context
 import finecode.utils.async_proc_queue as async_queue
+from finecode import context
 
 
 @dataclass
@@ -113,10 +114,8 @@ class QueueingEventHandler(FileSystemEventHandler):
                 last_modified_file_parent = event.path.parent
             elif event.path.is_dir():
                 if event.path == last_modified_file_parent:
-                    try:
+                    with suppress(ValueError):
                         events_to_raise.remove(event)
-                    except ValueError:
-                        ...
 
         for event in events_to_raise:
             self.event_queue.put(event)

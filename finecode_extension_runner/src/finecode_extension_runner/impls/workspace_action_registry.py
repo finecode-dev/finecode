@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from typing import Any, Awaitable, Callable
+from collections.abc import Awaitable, Callable
+from typing import Any
 
 from finecode_extension_api.interfaces.iworkspaceactionregistry import (
     ActionInfo,
@@ -8,7 +9,12 @@ from finecode_extension_api.interfaces.iworkspaceactionregistry import (
     IWorkspaceActionRegistry,
 )
 
-__all__ = ["HandlerInfo", "ActionInfo", "IWorkspaceActionRegistry", "parse_workspace_actions"]
+__all__ = [
+    "ActionInfo",
+    "HandlerInfo",
+    "IWorkspaceActionRegistry",
+    "parse_workspace_actions",
+]
 
 
 def parse_workspace_actions(payload: dict[str, Any]) -> list[ActionInfo]:
@@ -19,6 +25,7 @@ def parse_workspace_actions(payload: dict[str, Any]) -> list[ActionInfo]:
             HandlerInfo(
                 name=raw_handler["name"],
                 source=raw_handler["source"],
+                canonical_source=raw_handler.get("canonicalSource"),
                 env=raw_handler["env"],
                 file_loc=raw_handler.get("fileLoc"),
             )
@@ -43,7 +50,9 @@ def parse_workspace_actions(payload: dict[str, Any]) -> list[ActionInfo]:
 class WorkspaceActionRegistryImpl(IWorkspaceActionRegistry):
     """Calls the WM back-channel finecode/listWorkspaceActions."""
 
-    def __init__(self, send_request_to_wm: Callable[[str, dict], Awaitable[Any]]) -> None:
+    def __init__(
+        self, send_request_to_wm: Callable[[str, dict], Awaitable[Any]]
+    ) -> None:
         self._send = send_request_to_wm
 
     async def list_actions(self) -> list[ActionInfo]:

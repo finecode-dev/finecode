@@ -1,9 +1,9 @@
-from finecode_extension_api import code_action
 from fine_inlay_hints.text_document_inlay_hint import (
-    TextDocumentInlayHintAction,
     InlayHintPayload,
     InlayHintResult,
+    TextDocumentInlayHintAction,
 )
+from finecode_extension_api import code_action
 
 
 class TextDocumentInlayHintPythonAction(code_action.Action):

@@ -1,3 +1,8 @@
+from .announce_pyrefly_project_action import AnnouncePyreflyProjectAction
+from .announce_pyrefly_project_handler import (
+    AnnouncePyreflyProjectHandler,
+    AnnouncePyreflyProjectHandlerConfig,
+)
 from .call_hierarchy_incoming_calls_handler import (
     PyreflyCallHierarchyIncomingCallsHandler,
     PyreflyCallHierarchyIncomingCallsHandlerConfig,
@@ -6,14 +11,22 @@ from .call_hierarchy_outgoing_calls_handler import (
     PyreflyCallHierarchyOutgoingCallsHandler,
     PyreflyCallHierarchyOutgoingCallsHandlerConfig,
 )
-from .hover_handler import PyreflyHoverHandler, PyreflyHoverHandlerConfig
+from .check_files_on_pyrefly_host_action import CheckFilesOnPyreflyHostAction
+from .check_files_on_pyrefly_host_handler import (
+    CheckFilesOnPyreflyHostHandler,
+    CheckFilesOnPyreflyHostHandlerConfig,
+)
 from .definition_handler import PyreflyDefinitionHandler, PyreflyDefinitionHandlerConfig
-from .references_handler import PyreflyReferencesHandler, PyreflyReferencesHandlerConfig
-from .type_definition_handler import PyreflyTypeDefinitionHandler, PyreflyTypeDefinitionHandlerConfig
-from .implementation_handler import PyreflyImplementationHandler, PyreflyImplementationHandlerConfig
-from .document_highlight_handler import PyreflyDocumentHighlightHandler, PyreflyDocumentHighlightHandlerConfig
+from .document_highlight_handler import (
+    PyreflyDocumentHighlightHandler,
+    PyreflyDocumentHighlightHandlerConfig,
+)
+from .hover_handler import PyreflyHoverHandler, PyreflyHoverHandlerConfig
+from .implementation_handler import (
+    PyreflyImplementationHandler,
+    PyreflyImplementationHandlerConfig,
+)
 from .inlay_hint_handler import PyreflyInlayHintHandler, PyreflyInlayHintHandlerConfig
-from .type_check_files_handler import PyreflyTypeCheckFilesHandler, PyreflyTypeCheckFilesHandlerConfig
 from .prepare_call_hierarchy_handler import (
     PyreflyPrepareCallHierarchyHandler,
     PyreflyPrepareCallHierarchyHandlerConfig,
@@ -23,9 +36,23 @@ from .prepare_type_hierarchy_handler import (
     PyreflyPrepareTypeHierarchyHandlerConfig,
 )
 from .pyrefly_lsp_service import PyreflyLspService
+from .query_pyrefly_host_action import QueryPyreflyHostAction
+from .query_pyrefly_host_handler import (
+    QueryPyreflyHostHandler,
+    QueryPyreflyHostHandlerConfig,
+)
+from .references_handler import PyreflyReferencesHandler, PyreflyReferencesHandlerConfig
 from .semantic_tokens_handler import (
     PyreflySemanticTokensHandler,
     PyreflySemanticTokensHandlerConfig,
+)
+from .type_check_files_handler import (
+    PyreflyTypeCheckFilesHandler,
+    PyreflyTypeCheckFilesHandlerConfig,
+)
+from .type_definition_handler import (
+    PyreflyTypeDefinitionHandler,
+    PyreflyTypeDefinitionHandlerConfig,
 )
 from .type_hierarchy_subtypes_handler import (
     PyreflyTypeHierarchySubtypesHandler,
@@ -37,35 +64,44 @@ from .type_hierarchy_supertypes_handler import (
 )
 
 __all__ = [
-    "PyreflyHoverHandler",
-    "PyreflyHoverHandlerConfig",
-    "PyreflyDefinitionHandler",
-    "PyreflyDefinitionHandlerConfig",
-    "PyreflyReferencesHandler",
-    "PyreflyReferencesHandlerConfig",
-    "PyreflyTypeDefinitionHandler",
-    "PyreflyTypeDefinitionHandlerConfig",
-    "PyreflyImplementationHandler",
-    "PyreflyImplementationHandlerConfig",
-    "PyreflyDocumentHighlightHandler",
-    "PyreflyDocumentHighlightHandlerConfig",
-    "PyreflyInlayHintHandler",
-    "PyreflyInlayHintHandlerConfig",
+    "AnnouncePyreflyProjectAction",
+    "AnnouncePyreflyProjectHandler",
+    "AnnouncePyreflyProjectHandlerConfig",
+    "CheckFilesOnPyreflyHostAction",
+    "CheckFilesOnPyreflyHostHandler",
+    "CheckFilesOnPyreflyHostHandlerConfig",
     "PyreflyCallHierarchyIncomingCallsHandler",
     "PyreflyCallHierarchyIncomingCallsHandlerConfig",
     "PyreflyCallHierarchyOutgoingCallsHandler",
     "PyreflyCallHierarchyOutgoingCallsHandlerConfig",
-    "PyreflyTypeCheckFilesHandler",
-    "PyreflyTypeCheckFilesHandlerConfig",
+    "PyreflyDefinitionHandler",
+    "PyreflyDefinitionHandlerConfig",
+    "PyreflyDocumentHighlightHandler",
+    "PyreflyDocumentHighlightHandlerConfig",
+    "PyreflyHoverHandler",
+    "PyreflyHoverHandlerConfig",
+    "PyreflyImplementationHandler",
+    "PyreflyImplementationHandlerConfig",
+    "PyreflyInlayHintHandler",
+    "PyreflyInlayHintHandlerConfig",
     "PyreflyLspService",
     "PyreflyPrepareCallHierarchyHandler",
     "PyreflyPrepareCallHierarchyHandlerConfig",
     "PyreflyPrepareTypeHierarchyHandler",
     "PyreflyPrepareTypeHierarchyHandlerConfig",
+    "PyreflyReferencesHandler",
+    "PyreflyReferencesHandlerConfig",
     "PyreflySemanticTokensHandler",
     "PyreflySemanticTokensHandlerConfig",
+    "PyreflyTypeCheckFilesHandler",
+    "PyreflyTypeCheckFilesHandlerConfig",
+    "PyreflyTypeDefinitionHandler",
+    "PyreflyTypeDefinitionHandlerConfig",
     "PyreflyTypeHierarchySubtypesHandler",
     "PyreflyTypeHierarchySubtypesHandlerConfig",
     "PyreflyTypeHierarchySupertypesHandler",
     "PyreflyTypeHierarchySupertypesHandlerConfig",
+    "QueryPyreflyHostAction",
+    "QueryPyreflyHostHandler",
+    "QueryPyreflyHostHandlerConfig",
 ]

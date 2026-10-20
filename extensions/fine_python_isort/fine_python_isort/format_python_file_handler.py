@@ -5,12 +5,16 @@ from io import StringIO
 
 import isort.api as isort_api
 import isort.settings as isort_settings
-from finecode_extension_api import code_action
 from fine_format import format_file_action
 from fine_python_lang.format_python_file_action import (
     FormatPythonFileAction,
 )
-from finecode_extension_api.interfaces import ilogger, iprocessexecutor
+from finecode_extension_api import code_action
+from finecode_extension_api.interfaces import (
+    ilogger,
+    iprocessexecutor,
+    iprojectinfoprovider,
+)
 
 
 @dataclasses.dataclass
@@ -33,10 +37,12 @@ class IsortFormatFileHandler(
         config: IsortFormatFileHandlerConfig,
         logger: ilogger.ILogger,
         process_executor: iprocessexecutor.IProcessExecutor,
+        project_info_provider: iprojectinfoprovider.IProjectInfoProvider,
     ) -> None:
         self.config = config
         self.logger = logger
         self.process_executor = process_executor
+        self.project_info_provider = project_info_provider
 
     async def run(
         self,
@@ -46,12 +52,18 @@ class IsortFormatFileHandler(
         file_content = run_context.file_info.file_content
         file_version = run_context.file_info.file_version
 
+        project_dir_path = self.project_info_provider.get_current_project_dir_path()
         new_file_content, file_changed = await self.process_executor.submit(
-            format_one, file_content, dataclasses.asdict(self.config)
+            format_one,
+            file_content,
+            dataclasses.asdict(self.config),
+            str(project_dir_path),
         )
 
         # update for next handlers in the pipeline
-        run_context.file_info = format_file_action.FileInfo(new_file_content, file_version)
+        run_context.file_info = format_file_action.FileInfo(
+            new_file_content, file_version
+        )
 
         return format_file_action.FormatFileRunResult(
             changed=file_changed, code=new_file_content
@@ -59,11 +71,9 @@ class IsortFormatFileHandler(
 
 
 def format_one(
-    file_content: str, handler_config: dict[str, object]
+    file_content: str, handler_config: dict[str, object], project_dir_path: str
 ) -> tuple[str, bool]:
-    isort_config_overrides = {
-        k: v for k, v in handler_config.items() if v is not None
-    }
+    isort_config_overrides = {k: v for k, v in handler_config.items() if v is not None}
 
     input_stream = StringIO(file_content)
     output_stream_context = isort_api._in_memory_output_stream_context()
@@ -71,7 +81,17 @@ def format_one(
         changed = isort_api.sort_stream(
             input_stream=input_stream,
             output_stream=output_stream,
-            config=isort_settings.Config(**isort_config_overrides),
+            # `settings_path` anchors config-file discovery, `directory` anchors
+            # the `src_paths` isort derives to decide which packages are
+            # first-party. Both default to the cwd of this worker process, which
+            # the handler does not control — without them the same file gets a
+            # different import layout depending on where the runner happens to
+            # have been started.
+            config=isort_settings.Config(
+                settings_path=project_dir_path,
+                directory=project_dir_path,
+                **isort_config_overrides,
+            ),
             file_path=None,
             disregard_skip=True,
             extension=".py",

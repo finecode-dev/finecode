@@ -1,6 +1,14 @@
 # Creating an Extension
 
-An extension is a Python package that implements one or more **ActionHandlers**. Each handler provides the logic for executing a specific action (e.g. running a linter, formatter, or build tool).
+An extension is a distributable capability package. Its capabilities are
+handlers, services, action contracts, and explicitly selected reusable
+configuration (`preset.toml`). Installing the package makes its code
+available; activating its configuration requires explicit selection in
+`pyproject.toml`. A preset-only extension may own shared contracts and generic
+orchestration handlers, and the same package may supply both handlers and a
+preset resource.
+
+An extension package implements one or more **ActionHandlers**. Each handler provides the logic for executing a specific action (e.g. running a linter, formatter, or build tool).
 
 ## 1. Create the package
 
@@ -19,7 +27,7 @@ my_linter/
 name = "my_linter"
 version = "0.1.0"
 requires-python = ">=3.11"
-dependencies = ["finecode_extension_api~=0.4.0"]
+dependencies = ["finecode_extension_api~=0.5.0"]
 
 [build-system]
 requires = ["setuptools>=64"]
@@ -201,6 +209,7 @@ For handlers that spawn an external process, log the following at `DEBUG`:
 Emit a `WARNING` when the handler's primary job is to produce results but returns nothing:
 
 ```python
+cmd = ["my_tool", "--format", "json"]
 process = await self.command_runner.run(cmd, cwd=project_dir)
 await process.wait_for_end()
 
@@ -338,8 +347,9 @@ If you genuinely need different versions of the same tool for different extensio
 
 ## Package naming
 
-Extension package names follow the pattern `fine_<lang>_<qualifier>`.
-Use a tool name or capability descriptor as the qualifier, and keep bare
-`fine_<word>` names reserved for presets.
+Extension packages carry capabilities under `fine_<domain>_<qualifier>` for
+concrete integrations and `fine_<domain?>_<role>` for feature/composition
+packages; `fine_format` remains valid. A name alone does not decide the
+capabilities a package supplies.
 
-See [Package Naming](package-naming.md) for the shared extension and preset naming convention.
+See [Package Naming](package-naming.md) for the shared extension and preset naming convention and proposed [ADR-0115](../../finecode_internal_docs/adr/0115-extension-capabilities-share-terminology-and-repository-directory.md) for the umbrella terminology.

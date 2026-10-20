@@ -1,19 +1,25 @@
 from __future__ import annotations
 
 import dataclasses
-import shlex
 import sys
 from pathlib import Path
 
-from finecode_extension_api import code_action
 from fine_docs.build_docs_action import (
     BuildDocsAction,
     BuildDocsRunContext,
     BuildDocsRunPayload,
     BuildDocsRunResult,
 )
-from finecode_extension_api.interfaces import icommandrunner, ilogger, iprojectinfoprovider
-from finecode_extension_api.resource_uri import path_to_resource_uri, resource_uri_to_path
+from finecode_extension_api import code_action
+from finecode_extension_api.interfaces import (
+    icommandrunner,
+    ilogger,
+    iprojectinfoprovider,
+)
+from finecode_extension_api.resource_uri import (
+    path_to_resource_uri,
+    resource_uri_to_path,
+)
 
 
 @dataclasses.dataclass
@@ -61,10 +67,9 @@ class MkdocsBuildDocsHandler(
         if self.config.strict:
             cmd_parts.append("--strict")
 
-        cmd = shlex.join(cmd_parts)
-        self.logger.debug(f"Running mkdocs build: {cmd}")
+        self.logger.debug(f"Running mkdocs build: {cmd_parts!r}")
 
-        process = await self.command_runner.run(cmd, cwd=project_dir)
+        process = await self.command_runner.run(cmd_parts, cwd=project_dir)
         await process.wait_for_end()
 
         exit_code = process.get_exit_code()

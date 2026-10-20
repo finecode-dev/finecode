@@ -29,3 +29,20 @@ class IWorkspaceActionRunner(service.Service, typing.Protocol):
         project_paths: list[pathlib.Path] | None = None,
         concurrently: bool = True,
     ) -> dict[pathlib.Path, ResultT]: ...
+
+    async def run_action_per_project(
+        self,
+        action_type: type[code_action.Action[PayloadT, typing.Any, ResultT]],
+        payload_by_project: dict[pathlib.Path, PayloadT],
+        meta: code_action.RunActionMeta,
+        concurrently: bool = True,
+    ) -> dict[pathlib.Path, ResultT]:
+        """Run one action in each named project, with a complete payload per
+        project.
+
+        The dict keys are the project set — there is no separate
+        ``project_paths`` argument, so a payload for an unlisted project
+        cannot exist. Each project receives exactly the payload it is given;
+        the WM performs no merging with a shared base payload.
+        """
+        ...

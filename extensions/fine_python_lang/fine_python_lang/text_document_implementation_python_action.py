@@ -1,9 +1,9 @@
-from finecode_extension_api import code_action
 from fine_symbol_info.text_document_implementation_action import (
     ImplementationPayload,
     ImplementationResult,
     TextDocumentImplementationAction,
 )
+from finecode_extension_api import code_action
 
 
 class TextDocumentImplementationPythonAction(code_action.Action):
