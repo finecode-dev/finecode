@@ -4,12 +4,13 @@ FineCode preset providing `run_agent_task` — delegate a task to an AI coding
 agent and return its output.
 
 This preset declares the action and **no handler**, so including it on its own is
-a safe no-op. A backend extension supplies the implementation. Two exist today:
+a safe no-op. A backend extension supplies the implementation. Three exist today:
 
 | Extension | Backend | Handler |
 |---|---|---|
 | [`fine_agent_pi`](../../extensions/fine_agent_pi) | the `pi` CLI, in its RPC mode | `fine_agent_pi.PiAgentHandler` |
 | [`fine_agent_claude_code`](../../extensions/fine_agent_claude_code) | the `claude` CLI, in print mode | `fine_agent_claude_code.ClaudeCodeAgentHandler` |
+| [`fine_agent_codex`](../../extensions/fine_agent_codex) | the `codex` CLI, in exec mode | `fine_agent_codex.CodexAgentHandler` |
 
 ```toml
 [tool.finecode]
@@ -39,6 +40,25 @@ handlers = [
 [tool.finecode.action.run_agent_task.handlers.claude_code_agent]
 config.permission_mode = "acceptEdits"  # the CLI's default approves nothing
 ```
+
+To run the task with Codex instead, **replace** that entry the same way:
+
+```toml
+[tool.finecode.action.run_agent_task]
+handlers_mode = "replace"
+handlers = [
+  { name = "codex_agent", source = "fine_agent_codex.CodexAgentHandler", env = "dev_no_runtime", dependencies = [
+    "fine_agent_codex~=0.1.0",
+  ] },
+]
+
+[tool.finecode.action.run_agent_task.handlers.codex_agent]
+config.sandbox_mode = "workspace-write"  # the default is read-only
+```
+
+Sign in once with `codex login` before running: install and authentication are
+separate steps, and the handler never reports `refused_interaction` — a run
+that needed an approval it could not get fails as `failed`.
 
 A caller passes a named `profile` to run a task under a different model without
 editing the task definition. A field left unset on a profile inherits the

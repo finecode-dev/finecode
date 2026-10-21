@@ -856,7 +856,9 @@ or project config; add personal handlers in `finecode-user.toml`.
 | `failed` | `list[str]` | Steps that failed; non-empty means `return_code` is `ERROR` |
 
 **Handlers shipped today:** `fine_agent_pi.InstallPiHandler` installs the `pi` CLI
-itself; `fine_agent_pi.InstallPiPackagesHandler` installs configured pi packages into
+itself; `fine_agent_codex.InstallCodexHandler` installs the Codex CLI with
+`npm install -g --ignore-scripts @openai/codex` and skips when `codex` is on PATH;
+`fine_agent_pi.InstallPiPackagesHandler` installs configured pi packages into
 the project. The packages handler writes `<project>/.pi/settings.json`,
 `<project>/.pi/npm/` and (for git sources, which project discovery does not skip)
 `<project>/.pi/git/`, and never `~/.pi/agent`. List it after `install_pi`. pi resolves
@@ -912,10 +914,11 @@ Delegate a task to an AI coding agent and return its output.
 - **Default handler execution:** sequential
 
 The `fine_agent` preset declares the action with no handler, so including it alone
-is a no-op. A backend extension supplies the implementation. Two exist today:
-`fine_agent_pi.PiAgentHandler`, which drives the `pi` CLI in its RPC mode, and
+is a no-op. A backend extension supplies the implementation. Three exist today:
+`fine_agent_pi.PiAgentHandler`, which drives the `pi` CLI in its RPC mode,
 `fine_agent_claude_code.ClaudeCodeAgentHandler`, which drives the `claude` CLI in
-its non-interactive print mode.
+its non-interactive print mode, and `fine_agent_codex.CodexAgentHandler`, which
+drives the `codex` CLI in its non-interactive exec mode.
 
 **Exactly one handler.** Unlike most actions, this one gains nothing from merging
 several handlers' results: two agents independently attempting the same task would
@@ -1031,9 +1034,34 @@ the run needed a decision this setup was configured not to make. The transcript 
 persisted; the handler logs the session id so `claude --resume <id>` can show what
 the agent actually did.
 
+### `CodexAgentHandler` configuration
+
+| Option | Default | Description |
+|---|---|---|
+| `model` | `None` | Passed to `codex --model`; `None` leaves the CLI's own default |
+| `sandbox_mode` | `"read-only"` | Passed to `codex --sandbox` (`read-only`, `workspace-write`, `danger-full-access`) |
+| `skip_git_repo_check` | `false` | Passed as `--skip-git-repo-check`; opt in only outside a git checkout |
+| `settle_timeout_sec` | `900.0` | Ceiling on one run; an agent loop has no natural bound |
+
+The non-interactive approvals (`--ask-for-approval never`) and the sandbox above
+are always set explicitly, so a run never inherits an interactive policy. A task
+that must edit files needs `sandbox_mode = "workspace-write"`; that is a
+deliberate decision to make, since this handler runs an agent with write access
+to the project.
+
+Sign in before running: the installer does not authenticate, so `codex login`
+(or `OPENAI_API_KEY`) must already work where the handler runs.
+
+Unlike pi, Codex does not ask the client questions in this mode, and unlike
+Claude Code there is no documented denial signal to read one from — so this
+backend never reports `refused_interaction`. A run that needed an approval it
+could not get fails as `failed`, and a run that completes after a tool failure
+still settles. The CLI persists the transcript; the handler logs the thread id
+so what the agent did can be inspected afterwards.
+
 ### Profiles
 
-Both backends take a `profiles` map, keyed by the name a caller passes as
+All three backends take a `profiles` map, keyed by the name a caller passes as
 `profile`. A field left unset on a profile inherits the handler's top-level value,
 so a profile only states what differs. Profiles are a map rather than a list so an
 override is expressible in an environment variable (S-205).
@@ -1048,6 +1076,9 @@ config.profiles.my_task = { model = "anthropic/claude-opus-5:high", settle_timeo
 `PiAgentProfile` fields are `model`, `provider` and `settle_timeout_sec`.
 `ClaudeCodeAgentProfile` fields are `model` and `settle_timeout_sec`;
 `permission_mode`, `allowed_tools` and `max_budget_usd` remain top-level.
+`CodexAgentProfile` fields are `model` and `settle_timeout_sec`; `sandbox_mode`
+and `skip_git_repo_check` remain top-level, so a profile can never silently
+widen the sandbox.
 
 ### Structured output
 
@@ -1061,6 +1092,11 @@ With `output_schema` set:
   one fenced ```` ```json ```` block matching the schema and decodes the *last*
   such block in the final text. No block is `FAILED` with `no fenced json block`;
   a malformed block is `FAILED` with `invalid JSON in the final json block: …`.
+- **Codex** receives `--output-schema <file>` and reads the final answer from the
+  `--output-last-message <file>` the CLI wrote, not from the streamed text. A
+  missing or unreadable answer file is `FAILED`; malformed JSON and JSON `null`
+  are `FAILED` too. A value that is valid JSON but misses the schema still
+  settles — validation is the caller's job.
 
 In every failure case the raw `output` is kept, and `structured_output` stays
 `None`. There is no repair turn: a run that cannot produce the requested shape
