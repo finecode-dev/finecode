@@ -9,11 +9,15 @@ nothing for the change that was actually made.
 
 from __future__ import annotations
 
-import inspect
+import pathlib
+import typing
 
 import pytest
 
-from finecode.mcp_server import server
+from finecode.mcp_server import catalog as catalog_module
+from finecode.mcp_server import core as core_module
+from finecode.mcp_server.core import ToolService
+from finecode.mcp_server.legacy import LegacyFront
 
 # Each recovery tool, the operation that covers what it does not, a change class
 # it must claim, and whether it is the rung that picks up a configuration edit.
@@ -42,11 +46,27 @@ _RECOVERY_TOOLS = {
     },
 }
 
+_RECOVERY_ARGUMENTS = {
+    "reload_action": {"action": "lint"},
+    "restart_runner": {"project": "/p"},
+    "reload_config": {"project": "/p"},
+    "restart_wm": {},
+}
+
+# The WM operations each rung must reach. `reload_action` first refreshes the
+# name mapping, so its lookup is part of the dispatch.
+_RECOVERY_OPERATIONS = {
+    "reload_action": {"actions/list", "actions/reload"},
+    "restart_runner": {"runners/restart"},
+    "reload_config": {"workspace/reloadConfig"},
+    "restart_wm": {"server/getInfo", "replace_running_server"},
+}
+
 
 def _tool(name: str) -> dict:
-    tool = next((t for t in server._META_TOOLS if t["name"] == name), None)
+    tool = next((t for t in catalog_module.BUILTIN_TOOLS if t["name"] == name), None)
     assert tool is not None, f"{name} is not offered as an MCP tool"
-    return tool
+    return typing.cast(dict, tool)
 
 
 def _sections(description: str) -> tuple[str, str]:
@@ -104,10 +124,101 @@ def test_the_code_rungs_never_claim_configuration_coverage() -> None:
     assert claiming == {"reload_config", "restart_wm"}
 
 
-def test_recovery_tools_are_dispatchable() -> None:
-    """PRD-0008-AC11 — a described tool that cannot be called is a description
-    of nothing; every recovery tool is also handled by the call dispatcher."""
+class _RecordingWmClient:
+    """Records which WM operation each recovery rung reaches."""
 
-    dispatch_source = inspect.getsource(server._handle_call_tool)
-    for tool_name in _RECOVERY_TOOLS:
-        assert f'name == "{tool_name}"' in dispatch_source
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, dict[str, typing.Any]]] = []
+
+    def on_notification(self, name: str, handler: typing.Any) -> None:
+        pass
+
+    def on_request(self, name: str, handler: typing.Any) -> None:
+        pass
+
+    def configure_reconnect(self, policy: typing.Any, on_reattach: typing.Any) -> None:
+        pass
+
+    async def connect(self, *args: typing.Any, **kwargs: typing.Any) -> None:
+        pass
+
+    async def close(self) -> None:
+        pass
+
+    async def add_dir(self, *args: typing.Any, **kwargs: typing.Any) -> dict:
+        return {"projects": []}
+
+    async def list_actions(self, **kwargs: typing.Any) -> typing.Any:
+        from types import SimpleNamespace
+
+        self.calls.append(("actions/list", kwargs))
+        return SimpleNamespace(actions=[], unresolved_projects=[])
+
+    async def reload_action(
+        self, action_source: str, project: str | None = None
+    ) -> dict:
+        self.calls.append(
+            ("actions/reload", {"action_source": action_source, "project": project})
+        )
+        return {"reloaded": True}
+
+    async def restart_runner(self, **kwargs: typing.Any) -> dict:
+        self.calls.append(("runners/restart", kwargs))
+        return {"restarted": []}
+
+    async def reload_config(self, **kwargs: typing.Any) -> list[dict]:
+        self.calls.append(("workspace/reloadConfig", kwargs))
+        return [{"project": "/p", "status": "recovered"}]
+
+    async def get_info(self) -> dict:
+        self.calls.append(("server/getInfo", {}))
+        return {"pid": 7, "clients": []}
+
+
+class _NullSession:
+    def on_request(self, method: str, handler: typing.Any) -> None:
+        pass
+
+    def on_notification(self, method: str, handler: typing.Any) -> None:
+        pass
+
+    async def send_notification(self, method: str, params: dict | None = None) -> None:
+        pass
+
+
+@pytest.mark.parametrize("tool_name", sorted(_RECOVERY_TOOLS))
+async def test_recovery_tools_are_dispatchable(
+    tool_name: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """PRD-0008-AC11 — a described tool that cannot be called is a description
+    of nothing; each recovery rung reaches its own WM operation."""
+    front = LegacyFront(typing.cast(typing.Any, _NullSession()))
+    client = _RecordingWmClient()
+    service = ToolService(
+        workdir=pathlib.Path("/p"),
+        port=1,
+        client=typing.cast(typing.Any, client),
+        dependencies=front.dependencies(),
+        effects=front.effects(),
+    )
+
+    async def _already_connected() -> None:
+        return None
+
+    monkeypatch.setattr(service, "ensure_connected", _already_connected)
+
+    async def _replaced(*args: typing.Any, **kwargs: typing.Any) -> dict:
+        client.calls.append(("replace_running_server", {}))
+        return {"port": 9}
+
+    monkeypatch.setattr(core_module.wm_lifecycle, "replace_running_server", _replaced)
+
+    result = await front.handle_call_tool(
+        service,
+        {"name": tool_name, "arguments": dict(_RECOVERY_ARGUMENTS[tool_name])},
+    )
+
+    reached = {method for method, _ in client.calls}
+    assert "isError" not in result
+    assert result["content"][0]["text"]
+    assert reached >= _RECOVERY_OPERATIONS[tool_name], f"{tool_name} reached {reached}"

@@ -12,15 +12,24 @@ session driving a real extension runner; it lives in ``tests/e2e/``.
 from __future__ import annotations
 
 import asyncio
+import pathlib
+import typing
 
 import pytest
 
-from finecode.mcp_server import server
+from finecode.mcp_server.core import ToolService
+from finecode.mcp_server.legacy import LegacyFront, LegacyToolResult
 
 
 class _RecordingSession:
     def __init__(self) -> None:
         self.notifications: list[tuple[str, dict]] = []
+
+    def on_request(self, method: str, handler: typing.Any) -> None:
+        pass
+
+    def on_notification(self, method: str, handler: typing.Any) -> None:
+        pass
 
     async def send_notification(self, method: str, params: dict) -> None:
         self.notifications.append((method, params))
@@ -31,6 +40,24 @@ class _StubWmClient:
         self._projects = projects
         self.calls: list[dict] = []
 
+    def on_notification(self, name: str, handler: typing.Any) -> None:
+        pass
+
+    def on_request(self, name: str, handler: typing.Any) -> None:
+        pass
+
+    def configure_reconnect(self, *args: typing.Any, **kwargs: typing.Any) -> None:
+        pass
+
+    async def connect(self, *args: typing.Any, **kwargs: typing.Any) -> None:
+        pass
+
+    async def close(self) -> None:
+        pass
+
+    async def add_dir(self, *args: typing.Any, **kwargs: typing.Any) -> dict:
+        return {"projects": []}
+
     async def reload_config(
         self,
         project=None,
@@ -38,36 +65,61 @@ class _StubWmClient:
         all_projects=False,
         rescan=False,
         kill_in_flight_runs=False,
-    ):
+    ) -> list[dict]:
         self.calls.append(
-            {"project": project, "all_projects": all_projects, "rescan": rescan}
+            {
+                "project": project,
+                "all_projects": all_projects,
+                "rescan": rescan,
+                "kill_in_flight_runs": kill_in_flight_runs,
+            }
         )
         return self._projects
 
 
 @pytest.fixture
-def mcp_session(monkeypatch: pytest.MonkeyPatch) -> _RecordingSession:
+def mcp_pair() -> tuple[LegacyFront, ToolService, _RecordingSession]:
     session = _RecordingSession()
-    monkeypatch.setattr(server, "_session", session)
-    monkeypatch.setattr(server, "_wm_connected", True)
-    monkeypatch.setattr(server, "_tool_name_to_source", {"lint": "pkg.LintAction"})
-    return session
+    front = LegacyFront(typing.cast(typing.Any, session))
+    service = ToolService(
+        workdir=pathlib.Path("/p"),
+        port=1,
+        client=typing.cast(
+            typing.Any,
+            _StubWmClient(
+                [
+                    {
+                        "project": "/p",
+                        "status": "recovered",
+                        "actionsAdded": [],
+                        "actionsRemoved": [],
+                    }
+                ]
+            ),
+        ),
+        dependencies=front.dependencies(),
+        effects=front.effects(),
+    )
+    service._tool_name_to_source = {"lint": "pkg.LintAction"}
+    return front, service, session
 
 
-async def _call_reload_config(arguments: dict) -> dict:
-    return await server._handle_call_tool(
-        {"name": "reload_config", "arguments": arguments}
+async def _call_reload_config(
+    front: LegacyFront, service: ToolService, arguments: dict
+) -> LegacyToolResult:
+    return await front.handle_call_tool(
+        service, {"name": "reload_config", "arguments": arguments}
     )
 
 
 async def test_action_set_change_invalidates_the_client_tool_list(
-    mcp_session, monkeypatch: pytest.MonkeyPatch
+    mcp_pair,
 ) -> None:
     """A recovery that added or removed an action clears the cached tool
     mapping and notifies the client."""
-    monkeypatch.setattr(
-        server,
-        "_wm_client",
+    front, service, session = mcp_pair
+    service._client = typing.cast(
+        typing.Any,
         _StubWmClient(
             [
                 {
@@ -80,43 +132,29 @@ async def test_action_set_change_invalidates_the_client_tool_list(
         ),
     )
 
-    await _call_reload_config({"project": "/p"})
+    await _call_reload_config(front, service, {"project": "/p"})
 
-    assert server._tool_name_to_source == {}
-    assert mcp_session.notifications == [("notifications/tools/list_changed", {})]
+    assert service._tool_name_to_source == {}
+    assert session.notifications == [("notifications/tools/list_changed", {})]
 
 
-async def test_unchanged_action_set_does_not_notify(
-    mcp_session, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_unchanged_action_set_does_not_notify(mcp_pair) -> None:
     """A recovery that changed only handler configuration leaves the tool list
     alone — a client that re-fetches on every notification would otherwise pay
     for every recovery."""
-    monkeypatch.setattr(
-        server,
-        "_wm_client",
-        _StubWmClient(
-            [
-                {
-                    "project": "/p",
-                    "status": "recovered",
-                    "actionsAdded": [],
-                    "actionsRemoved": [],
-                }
-            ]
-        ),
-    )
+    front, service, session = mcp_pair
 
-    await _call_reload_config({"project": "/p"})
+    await _call_reload_config(front, service, {"project": "/p"})
 
-    assert server._tool_name_to_source == {"lint": "pkg.LintAction"}
-    assert mcp_session.notifications == []
+    assert service._tool_name_to_source == {"lint": "pkg.LintAction"}
+    assert session.notifications == []
 
 
 def test_server_advertises_list_changed_capability() -> None:
     """The notification is only permitted if the capability was advertised at
     initialize time, so a client that never saw it may ignore it."""
+    front = LegacyFront(typing.cast(typing.Any, _RecordingSession()))
 
-    capabilities = asyncio.run(server._handle_initialize({}))["capabilities"]
+    capabilities = asyncio.run(front.handle_initialize({}))["capabilities"]
 
     assert capabilities["tools"]["listChanged"] is True

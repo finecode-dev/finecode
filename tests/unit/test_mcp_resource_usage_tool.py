@@ -3,15 +3,32 @@
 from __future__ import annotations
 
 import json
+import pathlib
+import typing
 
-from finecode.mcp_server import server
+from finecode.mcp_server import catalog
+from finecode.mcp_server.core import ToolService
+from finecode.mcp_server.legacy import LegacyFront
 
 
 def test_tool_listed_with_boolean_flag() -> None:
     """Clients discover the tool and its opt-in flag from the tool list."""
-    tool = next(t for t in server._META_TOOLS if t["name"] == "get_resource_usage")
+    tool = next(t for t in catalog.BUILTIN_TOOLS if t["name"] == "get_resource_usage")
 
-    assert tool["inputSchema"]["properties"]["includeProcesses"]["type"] == "boolean"
+    flag = typing.cast(
+        dict[str, typing.Any],
+        tool["inputSchema"]["properties"]["includeProcesses"],
+    )
+
+    assert flag["type"] == "boolean"
+
+
+class _NullSession:
+    def on_request(self, method: str, handler: typing.Any) -> None:
+        pass
+
+    def on_notification(self, method: str, handler: typing.Any) -> None:
+        pass
 
 
 async def test_dispatch_returns_client_dict_as_json(monkeypatch) -> None:
@@ -20,19 +37,28 @@ async def test_dispatch_returns_client_dict_as_json(monkeypatch) -> None:
     snapshot = {"timestamp": 1.0, "wm": {"pid": 7}}
 
     class _FakeClient:
-        async def get_resource_usage(self, include_processes: bool = False, **kwargs):
+        async def get_resource_usage(
+            self, include_processes: bool = False, **kwargs: typing.Any
+        ) -> typing.Any:
             seen["include_processes"] = include_processes
             return snapshot
 
-    monkeypatch.setattr(server, "_wm_client", _FakeClient())
+    front = LegacyFront(typing.cast(typing.Any, _NullSession()))
+    service = ToolService(
+        workdir=pathlib.Path("/p"),
+        port=1,
+        client=typing.cast(typing.Any, _FakeClient()),
+        dependencies=front.dependencies(),
+        effects=front.effects(),
+    )
 
-    async def _noop() -> None:
+    async def _already_connected() -> None:
         return None
 
-    monkeypatch.setattr(server, "_ensure_wm_connected", _noop)
+    monkeypatch.setattr(service, "ensure_connected", _already_connected)
 
-    result = await server._handle_call_tool(
-        {"name": "get_resource_usage", "arguments": {"includeProcesses": True}}
+    result = await front.handle_call_tool(
+        service, {"name": "get_resource_usage", "arguments": {"includeProcesses": True}}
     )
 
     assert json.loads(result["content"][0]["text"]) == snapshot

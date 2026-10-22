@@ -9,9 +9,13 @@ unchanged — absent means "format, please".
 
 from __future__ import annotations
 
+import pathlib
+import typing
+
 import pytest
 
-from finecode.mcp_server import server
+from finecode.mcp_server.core import ToolService
+from finecode.mcp_server.legacy import LegacyFront
 
 
 class _StubWmClient:
@@ -35,44 +39,68 @@ class _StubWmClient:
         return {"returnCode": 0}
 
 
+class _NullSession:
+    def on_request(self, method: str, handler: typing.Any) -> None:
+        pass
+
+    def on_notification(self, method: str, handler: typing.Any) -> None:
+        pass
+
+
 @pytest.fixture
-def mcp_session(monkeypatch: pytest.MonkeyPatch) -> _StubWmClient:
+def mcp_pair(
+    monkeypatch: pytest.MonkeyPatch,
+) -> tuple[LegacyFront, ToolService, _StubWmClient]:
     wm_client = _StubWmClient()
-    monkeypatch.setattr(server, "_wm_client", wm_client)
-    monkeypatch.setattr(server, "_wm_connected", True)
-    monkeypatch.setattr(server, "_session", None)
-    return wm_client
-
-
-async def test_format_false_maps_to_format_output_false(mcp_session) -> None:
-    """`format: false` reaches the action as `format_output: false`, so the
-    dump is written as rendered with no formatter dispatch."""
-    await server._handle_call_tool(
-        {"name": "dump_config", "arguments": {"project": "/p", "format": False}}
+    front = LegacyFront(typing.cast(typing.Any, _NullSession()))
+    service = ToolService(
+        workdir=pathlib.Path("/p"),
+        port=1,
+        client=typing.cast(typing.Any, wm_client),
+        dependencies=front.dependencies(),
+        effects=front.effects(),
     )
 
-    assert len(mcp_session.run_actions) == 1
-    assert mcp_session.run_actions[0]["params"]["format_output"] is False
+    async def _already_connected() -> None:
+        return None
+
+    monkeypatch.setattr(service, "ensure_connected", _already_connected)
+    return front, service, wm_client
 
 
-async def test_default_omits_format_output_from_the_payload(mcp_session) -> None:
+async def test_format_false_maps_to_format_output_false(mcp_pair) -> None:
+    """`format: false` reaches the action as `format_output: false`, so the
+    dump is written as rendered with no formatter dispatch."""
+    front, service, wm_client = mcp_pair
+    await front.handle_call_tool(
+        service,
+        {"name": "dump_config", "arguments": {"project": "/p", "format": False}},
+    )
+
+    assert len(wm_client.run_actions) == 1
+    assert wm_client.run_actions[0]["params"]["format_output"] is False
+
+
+async def test_default_omits_format_output_from_the_payload(mcp_pair) -> None:
     """Without `format`, the payload carries no `format_output` key — the
     action's own default (format) applies, and the default path sends an
     unchanged payload."""
-    await server._handle_call_tool(
-        {"name": "dump_config", "arguments": {"project": "/p"}}
+    front, service, wm_client = mcp_pair
+    await front.handle_call_tool(
+        service, {"name": "dump_config", "arguments": {"project": "/p"}}
     )
 
-    assert len(mcp_session.run_actions) == 1
-    assert "format_output" not in mcp_session.run_actions[0]["params"]
+    assert len(wm_client.run_actions) == 1
+    assert "format_output" not in wm_client.run_actions[0]["params"]
 
 
-async def test_format_true_omits_format_output_from_the_payload(mcp_session) -> None:
+async def test_format_true_omits_format_output_from_the_payload(mcp_pair) -> None:
     """`format: true` is the explicit spelling of the default: still no
     `format_output` key on the payload."""
-    await server._handle_call_tool(
-        {"name": "dump_config", "arguments": {"project": "/p", "format": True}}
+    front, service, wm_client = mcp_pair
+    await front.handle_call_tool(
+        service, {"name": "dump_config", "arguments": {"project": "/p", "format": True}}
     )
 
-    assert len(mcp_session.run_actions) == 1
-    assert "format_output" not in mcp_session.run_actions[0]["params"]
+    assert len(wm_client.run_actions) == 1
+    assert "format_output" not in wm_client.run_actions[0]["params"]
