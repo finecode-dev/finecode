@@ -41,13 +41,15 @@ class JsonRpcHandlerError(Exception):
     """Raise from a request handler to return a specific JSON-RPC error code.
 
     Use this instead of letting an arbitrary exception propagate (which would
-    always produce INTERNAL_ERROR -32603).
+    always produce INTERNAL_ERROR -32603). ``data`` becomes the error object's
+    ``data`` member; it is omitted from the response when ``None``.
     """
 
-    def __init__(self, code: int, message: str) -> None:
+    def __init__(self, code: int, message: str, data: Any = None) -> None:
         super().__init__(message)
         self.code = code
         self.message = message
+        self.data = data
 
 
 class JsonRpcServerSession:
@@ -276,7 +278,7 @@ class JsonRpcServerSession:
                     msg_id, None, REQUEST_CANCELLED, "Request cancelled"
                 )
             except JsonRpcHandlerError as exc:
-                self._send_response(msg_id, None, exc.code, exc.message)
+                self._send_response(msg_id, None, exc.code, exc.message, exc.data)
             except Exception as exc:  # noqa: BLE001
                 logger.exception(f"Error handling request '{method}': {exc}")
                 self._send_response(msg_id, None, _INTERNAL_ERROR, str(exc))
@@ -289,16 +291,14 @@ class JsonRpcServerSession:
         result: Any,
         error_code: int | None = None,
         error_message: str | None = None,
+        error_data: Any = None,
     ) -> None:
         assert self._transport is not None
         if error_code is not None:
-            self._transport.send(
-                {
-                    "jsonrpc": "2.0",
-                    "id": msg_id,
-                    "error": {"code": error_code, "message": error_message or ""},
-                }
-            )
+            error: dict[str, Any] = {"code": error_code, "message": error_message or ""}
+            if error_data is not None:
+                error["data"] = error_data
+            self._transport.send({"jsonrpc": "2.0", "id": msg_id, "error": error})
         else:
             self._transport.send({"jsonrpc": "2.0", "id": msg_id, "result": result})
 
