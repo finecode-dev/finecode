@@ -7,9 +7,25 @@ the unreported fields.
 
 from __future__ import annotations
 
+from finecode_extension_api.resource_uri import ResourceUri
+from finecode_extension_runner._converter import converter
+
+from fine_agent.history_types import (
+    AgentBackend,
+    AgentRunObservation,
+    HistoryDiscoveryStatus,
+    NativeHistoryFile,
+    NativeHistoryFormat,
+    NativeHistoryRole,
+    RelatedHistoryStatus,
+    UsageProvenance,
+    UsageScope,
+    UsageSource,
+)
 from fine_agent.run_agent_task_action import (
     AgentRunStatus,
     AgentRunUsage,
+    RunAgentTaskRunPayload,
     RunAgentTaskRunResult,
 )
 
@@ -116,3 +132,91 @@ def test_merging_carries_the_accounting_fields() -> None:
     assert target.turns == 3
     assert target.usage == AgentRunUsage(total_tokens=9000)
     assert target.duration_sec == 42.0
+
+
+def _sample_observation() -> AgentRunObservation:
+    return AgentRunObservation(
+        backend=AgentBackend.PI,
+        backend_version="1.3.0",
+        session_id="sess-1",
+        history_root=None,
+        history_status=HistoryDiscoveryStatus.AVAILABLE,
+        files=[],
+        related_status=RelatedHistoryStatus.UNAVAILABLE,
+        usage_provenance=UsageProvenance(
+            token_source=UsageSource.PI_STATS,
+            token_scope=UsageScope.SESSION,
+            cost_source=UsageSource.UNKNOWN,
+            cost_scope=UsageScope.UNKNOWN,
+        ),
+        gaps=[],
+    )
+
+
+def test_payload_defaults_to_no_capture() -> None:
+    assert RunAgentTaskRunPayload(prompt="do it").capture_history is False
+
+
+def test_result_defaults_to_no_observation() -> None:
+    assert RunAgentTaskRunResult().observation is None
+
+
+def test_merging_carries_the_observation() -> None:
+    target = RunAgentTaskRunResult()
+    observation = _sample_observation()
+    target.update(
+        RunAgentTaskRunResult(status=AgentRunStatus.SETTLED, observation=observation)
+    )
+
+    assert target.observation == observation
+
+
+def test_result_converter_round_trip_preserves_observation_types() -> None:
+    observation = AgentRunObservation(
+        backend=AgentBackend.PI,
+        backend_version="1.3.0",
+        session_id="sess-1",
+        history_root=ResourceUri("file:///tmp/hist"),
+        history_status=HistoryDiscoveryStatus.AVAILABLE,
+        files=[
+            NativeHistoryFile(
+                role=NativeHistoryRole.MAIN,
+                source_uri=ResourceUri("file:///tmp/hist/main.jsonl"),
+                native_relative_path="main.jsonl",
+                native_session_id="sess-1",
+                format=NativeHistoryFormat.PI,
+            )
+        ],
+        related_status=RelatedHistoryStatus.UNAVAILABLE,
+        usage_provenance=UsageProvenance(
+            token_source=UsageSource.PI_STATS,
+            token_scope=UsageScope.SESSION,
+            cost_source=UsageSource.UNKNOWN,
+            cost_scope=UsageScope.UNKNOWN,
+        ),
+        gaps=[],
+    )
+    result = RunAgentTaskRunResult(
+        status=AgentRunStatus.SETTLED,
+        output="hi",
+        observation=observation,
+    )
+
+    revived = converter.structure(converter.unstructure(result), RunAgentTaskRunResult)
+
+    assert isinstance(revived.observation, AgentRunObservation)
+    assert revived.observation.backend is AgentBackend.PI
+    assert isinstance(revived.observation.files[0], NativeHistoryFile)
+    assert revived.observation.files[0].role is NativeHistoryRole.MAIN
+    assert revived.observation.files[0].format is NativeHistoryFormat.PI
+    assert revived.observation.history_status is HistoryDiscoveryStatus.AVAILABLE
+    assert revived.observation.usage_provenance.token_source is UsageSource.PI_STATS
+
+
+def test_payload_converter_round_trip_preserves_capture_flag() -> None:
+    revived = converter.structure(
+        converter.unstructure(RunAgentTaskRunPayload(prompt="x", capture_history=True)),
+        RunAgentTaskRunPayload,
+    )
+
+    assert revived.capture_history is True

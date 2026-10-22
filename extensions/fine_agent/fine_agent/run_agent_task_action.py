@@ -5,6 +5,8 @@ import typing
 
 from finecode_extension_api import code_action, textstyler
 
+from fine_agent.history_types import AgentRunObservation
+
 
 class AgentRunStatus(enum.StrEnum):
     """How an agent run ended.
@@ -180,6 +182,8 @@ class RunAgentTaskRunPayload(code_action.RunActionPayload):
     The backend only *extracts* JSON against the schema; type validation is the
     caller's job, done by structuring the decoded value into a dataclass.
     """
+    capture_history: bool = dataclasses.field(default=False, kw_only=True)
+    """Request native history observation, without changing execution."""
 
 
 class RunAgentTaskRunContext(code_action.RunActionContext[RunAgentTaskRunPayload]): ...
@@ -226,6 +230,8 @@ class RunAgentTaskRunResult(code_action.RunActionResult):
     """
     error: str | None = None
     """Why the run did not settle. `None` whenever `status` is `SETTLED`."""
+    observation: AgentRunObservation | None = None
+    """Native history observation, present only when capture was requested."""
 
     def update(self, other: code_action.RunActionResult) -> None:
         # Within-project merge only (R-302). This action takes exactly one
@@ -242,6 +248,7 @@ class RunAgentTaskRunResult(code_action.RunActionResult):
         self.usage = other.usage
         self.duration_sec = other.duration_sec
         self.error = other.error
+        self.observation = other.observation
 
     def to_text(self) -> str | textstyler.StyledText:
         if self.status is AgentRunStatus.SETTLED:

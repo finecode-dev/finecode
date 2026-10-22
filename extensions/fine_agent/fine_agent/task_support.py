@@ -33,6 +33,8 @@ __all__ = [
     "render_template",
     "run_structured_task",
     "slots_from_payload",
+    "structure_task_outcome",
+    "structured_task_payload",
 ]
 
 T = typing.TypeVar("T")
@@ -116,33 +118,35 @@ class StructuredTaskOutcome(typing.Generic[T]):
     error: str | None
 
 
-async def run_structured_task(
+def structured_task_payload(
     *,
-    action_runner: iprojectactionrunner.IProjectActionRunner,
     codec: idataclasscodec.IDataclassCodec,
-    meta: code_action.RunActionMeta,
     prompt: str,
     profile: str | None,
+    report_type: type[typing.Any],
+    capture_history: bool = False,
+) -> RunAgentTaskRunPayload:
+    """The `run_agent_task` payload that asks for an answer of *report_type*."""
+    return RunAgentTaskRunPayload(
+        prompt=prompt,
+        profile=profile,
+        output_schema=codec.json_schema(report_type),
+        capture_history=capture_history,
+    )
+
+
+def structure_task_outcome(
+    agent: RunAgentTaskRunResult,
+    *,
+    codec: idataclasscodec.IDataclassCodec,
     report_type: type[T],
 ) -> StructuredTaskOutcome[T]:
-    """Run `run_agent_task` for *prompt* and structure its answer into *report_type*.
+    """Structure a finished agent run's answer into *report_type*.
 
     A backend failure short-circuits before structuring: the agent's own error
     is more specific than "the value did not fit", and `structured_output` is
-    absent precisely when the backend already failed. Exceptions from
-    `run_action` propagate -- an action that could not be dispatched at all is
-    not a report whose type did not match.
+    absent precisely when the backend already failed.
     """
-    schema = codec.json_schema(report_type)
-    agent = await action_runner.run_action(
-        action_type=iprojectactionrunner.ActionRef.from_type(RunAgentTaskAction),
-        payload=RunAgentTaskRunPayload(
-            prompt=prompt,
-            profile=profile,
-            output_schema=schema,
-        ),
-        meta=meta,
-    )
     if agent.status is not AgentRunStatus.SETTLED:
         return StructuredTaskOutcome(report=None, agent=agent, error=agent.error)
 
@@ -157,3 +161,32 @@ async def run_structured_task(
             ),
         )
     return StructuredTaskOutcome(report=report, agent=agent, error=None)
+
+
+async def run_structured_task(
+    *,
+    action_runner: iprojectactionrunner.IProjectActionRunner,
+    codec: idataclasscodec.IDataclassCodec,
+    meta: code_action.RunActionMeta,
+    prompt: str,
+    profile: str | None,
+    report_type: type[T],
+    capture_history: bool = False,
+) -> StructuredTaskOutcome[T]:
+    """Run `run_agent_task` for *prompt* and structure its answer into *report_type*.
+
+    Exceptions from `run_action` propagate -- an action that could not be
+    dispatched at all is not a report whose type did not match.
+    """
+    agent = await action_runner.run_action(
+        action_type=iprojectactionrunner.ActionRef.from_type(RunAgentTaskAction),
+        payload=structured_task_payload(
+            codec=codec,
+            prompt=prompt,
+            profile=profile,
+            report_type=report_type,
+            capture_history=capture_history,
+        ),
+        meta=meta,
+    )
+    return structure_task_outcome(agent, codec=codec, report_type=report_type)

@@ -17,6 +17,15 @@ from finecode_extension_runner.impls.dataclass_codec import DataclassCodec
 from finecode_extension_runner.testing import nonexistent_abs_path
 
 from fine_agent import task_support
+from fine_agent.history_types import (
+    AgentBackend,
+    AgentRunObservation,
+    HistoryDiscoveryStatus,
+    RelatedHistoryStatus,
+    UsageProvenance,
+    UsageScope,
+    UsageSource,
+)
 from fine_agent.run_agent_task_action import (
     AgentRunStatus,
     RunAgentTaskRunPayload,
@@ -196,3 +205,84 @@ async def test_run_structured_task_keeps_the_backend_error() -> None:
     assert outcome.report is None
     assert outcome.error == "no fenced json block"
     assert outcome.agent.output == "partial"
+
+
+async def test_run_structured_task_defaults_to_no_capture() -> None:
+    runner = _StubRunner(
+        RunAgentTaskRunResult(status=AgentRunStatus.FAILED, error="boom")
+    )
+
+    await task_support.run_structured_task(
+        action_runner=runner,
+        codec=DataclassCodec(),
+        meta=_meta(),
+        prompt="do it",
+        profile=None,
+        report_type=_Report,
+    )
+
+    _, payload, _ = runner.calls[0]
+    assert payload.capture_history is False
+
+
+async def test_run_structured_task_forwards_capture_history() -> None:
+    runner = _StubRunner(
+        RunAgentTaskRunResult(
+            status=AgentRunStatus.SETTLED,
+            output="the raw text",
+            structured_output={"answer": "42"},
+        )
+    )
+
+    outcome = await task_support.run_structured_task(
+        action_runner=runner,
+        codec=DataclassCodec(),
+        meta=_meta(),
+        prompt="do it",
+        profile=None,
+        report_type=_Report,
+        capture_history=True,
+    )
+
+    _, payload, _ = runner.calls[0]
+    assert payload.capture_history is True
+    assert outcome.report == _Report(answer="42")
+
+
+async def test_run_structured_task_keeps_observation_on_agent() -> None:
+    observation = AgentRunObservation(
+        backend=AgentBackend.PI,
+        backend_version=None,
+        session_id=None,
+        history_root=None,
+        history_status=HistoryDiscoveryStatus.UNAVAILABLE,
+        files=[],
+        related_status=RelatedHistoryStatus.UNAVAILABLE,
+        usage_provenance=UsageProvenance(
+            token_source=UsageSource.UNKNOWN,
+            token_scope=UsageScope.UNKNOWN,
+            cost_source=UsageSource.UNKNOWN,
+            cost_scope=UsageScope.UNKNOWN,
+        ),
+        gaps=["no native session"],
+    )
+    runner = _StubRunner(
+        RunAgentTaskRunResult(
+            status=AgentRunStatus.FAILED,
+            output="partial",
+            error="boom",
+            observation=observation,
+        )
+    )
+
+    outcome = await task_support.run_structured_task(
+        action_runner=runner,
+        codec=DataclassCodec(),
+        meta=_meta(),
+        prompt="do it",
+        profile=None,
+        report_type=_Report,
+        capture_history=True,
+    )
+
+    assert outcome.agent.observation == observation

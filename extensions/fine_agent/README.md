@@ -75,6 +75,26 @@ An unknown profile is `FAILED` before any backend process is spawned. A caller
 can also pass `output_schema` to ask for structured output; the backend returns
 the decoded JSON in `structured_output` and the caller validates the type.
 
+A caller can pass `capture_history = true` to request a native-history
+observation, returned as `observation` on the result. Uncaptured calls keep
+their current behavior with `observation = None`. Capture never changes the
+agent's status, output, usage or duration; a failure to observe is reported as
+gaps on the observation, never as a run failure. Observations identify the
+backend, keep exact supplied prompt behavior in the workflow layer (not here),
+and record only small identity/header projections — never transcript contents.
+Known limitations: Pi reports one session file and no child discovery
+(`related_status = unavailable`); Claude and Codex copy the session-owned
+subtree they document, with unreadable or unsupported files disclosed as gaps
+rather than saved history.
+
+A caller that keeps a durable record of a run passes the request and the
+captured result to `archive_agent_run(run_dir, request, result)`. It writes
+`request.json` and copies the observed history files into `history/main.jsonl`
+and `history/related/…` create-only, refusing sources outside the observed
+history root or changed during the copy, and returns the agent identity,
+usage with provenance, per-file save status and every gap. Where the
+directory lives and what else goes in it is the caller's decision.
+
 **Exactly one handler.** Unlike most FineCode actions, this one gains nothing
 from merging several handlers' results: two agents independently attempting the
 same task would both write to the same files, and their answers cannot be
