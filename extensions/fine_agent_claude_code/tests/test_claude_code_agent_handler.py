@@ -22,6 +22,13 @@ import time
 from typing import Any
 
 import pytest
+from fine_agent.history_types import (
+    AgentBackend,
+    HistoryDiscoveryStatus,
+    RelatedHistoryStatus,
+    UsageScope,
+    UsageSource,
+)
 from fine_agent.run_agent_task_action import (
     AgentRunStatus,
     RunAgentTaskAction,
@@ -63,6 +70,7 @@ async def _run(
     profile: str | None = None,
     output_schema: dict[str, Any] | None = None,
     service_overrides: dict[Any, Any] | None = None,
+    capture_history: bool = False,
 ) -> RunAgentTaskRunResult:
     global _ACTIVE_SCENARIO
     _ACTIVE_SCENARIO = scenario
@@ -70,7 +78,10 @@ async def _run(
         result = await run_handler(
             _FakeClaudeHandler,
             RunAgentTaskRunPayload(
-                prompt=prompt, profile=profile, output_schema=output_schema
+                prompt=prompt,
+                profile=profile,
+                output_schema=output_schema,
+                capture_history=capture_history,
             ),
             action_cls=RunAgentTaskAction,
             handler_config=handler_config,
@@ -848,3 +859,112 @@ async def test_a_wedged_run_is_torn_down_with_the_tree_it_spawned(
     pids = next(entry["pids"] for entry in _records(record) if "pids" in entry)
     assert await _wait_gone(pids["agent"]), "the agent outlived its own timeout"
     assert await _wait_gone(pids["child"]), "the agent's child was left running"
+
+
+def _captured_scenario(
+    config_dir: str, session_id: str = "sess-captured-1"
+) -> dict[str, Any]:
+    return {
+        "session_id": session_id,
+        "config_dir": config_dir,
+        "write_native": True,
+        "native_proj": "testproj",
+        "native_related": [
+            {
+                "path": "subagents/agent-x.jsonl",
+                "records": [{"type": "user", "agentId": "x"}],
+            }
+        ],
+        "steps": [
+            {"do": "read_prompt"},
+            {"do": "init", "session_id": session_id},
+            {"do": "emit", "frame": _assistant(_text("hello"))},
+            {
+                "do": "emit",
+                "frame": _result(
+                    text="hello",
+                    turns=1,
+                    session_id=session_id,
+                    modelUsage={"m": {"inputTokens": 10, "outputTokens": 5}},
+                    total_cost_usd=0.001,
+                ),
+            },
+        ],
+    }
+
+
+async def test_uncaptured_has_no_observation() -> None:
+    result = await _run(
+        {
+            "steps": [
+                {"do": "read_prompt"},
+                {"do": "init"},
+                {"do": "emit", "frame": _result(text="hi")},
+            ]
+        }
+    )
+
+    assert result.observation is None
+
+
+async def test_captured_run_reports_available_history(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path))
+    result = await _run(_captured_scenario(str(tmp_path)), capture_history=True)
+
+    assert result.status is AgentRunStatus.SETTLED
+    observation = result.observation
+    assert observation is not None
+    assert observation.backend is AgentBackend.CLAUDE_CODE
+    assert observation.history_status is HistoryDiscoveryStatus.AVAILABLE
+    assert observation.session_id == "sess-captured-1"
+    assert len(observation.files) == 2
+    assert observation.related_status is RelatedHistoryStatus.SCANNED
+    assert observation.usage_provenance.token_source is UsageSource.CLAUDE_MODELS
+    assert observation.usage_provenance.token_scope is UsageScope.SESSION
+    assert observation.backend_version == "2.1.306"
+
+
+async def test_captured_result_fallback_uses_last_request(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path))
+    scenario = _captured_scenario(str(tmp_path))
+    scenario["steps"] = [
+        {"do": "read_prompt"},
+        {"do": "init", "session_id": "sess-captured-1"},
+        {
+            "do": "emit",
+            "frame": _result(
+                text="hi",
+                session_id="sess-captured-1",
+                usage={"input_tokens": 7, "output_tokens": 3},
+                total_cost_usd=0.002,
+            ),
+        },
+    ]
+    result = await _run(scenario, capture_history=True)
+
+    assert result.observation is not None
+    assert result.observation.usage_provenance.token_source is UsageSource.CLAUDE_RESULT
+    assert result.observation.usage_provenance.token_scope is UsageScope.LAST_REQUEST
+    assert result.observation.usage_provenance.cost_source is UsageSource.CLAUDE_COST
+
+
+async def test_captured_session_disagreement_produces_gap(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path))
+    scenario = _captured_scenario(str(tmp_path))
+    scenario["steps"] = [
+        {"do": "read_prompt"},
+        {"do": "init", "session_id": "sess-a"},
+        {"do": "emit", "frame": _result(text="hi", session_id="sess-b")},
+    ]
+    result = await _run(scenario, capture_history=True)
+
+    assert result.status is AgentRunStatus.SETTLED
+    assert result.observation is not None
+    assert result.observation.session_id is None
+    assert any("disagreement" in gap for gap in result.observation.gaps)

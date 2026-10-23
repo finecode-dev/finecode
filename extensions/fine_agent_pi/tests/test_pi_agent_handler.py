@@ -21,6 +21,15 @@ from typing import Any
 
 import pytest
 from fine_agent import backend_support
+from fine_agent.history_types import (
+    AgentBackend,
+    HistoryDiscoveryStatus,
+    NativeHistoryFormat,
+    NativeHistoryRole,
+    RelatedHistoryStatus,
+    UsageScope,
+    UsageSource,
+)
 from fine_agent.run_agent_task_action import (
     AgentRunStatus,
     RunAgentTaskAction,
@@ -28,6 +37,7 @@ from fine_agent.run_agent_task_action import (
     RunAgentTaskRunResult,
 )
 from finecode_extension_api.interfaces import icommandrunner
+from finecode_extension_api.resource_uri import resource_uri_to_path
 from finecode_extension_runner.testing import run_handler
 
 from fine_agent_pi import pi_agent_handler
@@ -62,6 +72,7 @@ async def _run(
     profile: str | None = None,
     output_schema: dict[str, Any] | None = None,
     service_overrides: dict[Any, Any] | None = None,
+    capture_history: bool = False,
 ) -> RunAgentTaskRunResult:
     global _ACTIVE_SCENARIO
     _ACTIVE_SCENARIO = scenario
@@ -69,7 +80,10 @@ async def _run(
         result = await run_handler(
             _FakePiHandler,
             RunAgentTaskRunPayload(
-                prompt=prompt, profile=profile, output_schema=output_schema
+                prompt=prompt,
+                profile=profile,
+                output_schema=output_schema,
+                capture_history=capture_history,
             ),
             action_cls=RunAgentTaskAction,
             handler_config=handler_config,
@@ -1197,3 +1211,150 @@ async def test_invalid_block_fails_and_keeps_the_raw_output() -> None:
     assert result.status is AgentRunStatus.FAILED
     assert (result.error or "").startswith("invalid JSON in the final json block")
     assert result.output == _fenced("{oops}")
+
+
+def _captured_scenario(session_dir: pathlib.Path) -> dict[str, Any]:
+    return {
+        "session_dir": str(session_dir),
+        "record_driver": True,
+        "native_entries": [
+            {
+                "type": "message",
+                "id": "assistant-1",
+                "message": {"role": "assistant", "content": "assistant marker ALPHA"},
+            },
+            {
+                "type": "message",
+                "id": "tool-1",
+                "message": {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "toolCall",
+                            "name": "read",
+                            "input": "tool marker BETA",
+                        }
+                    ],
+                },
+            },
+        ],
+        "steps": [
+            {"do": "await_prompt"},
+            {"do": "emit", "frame": {"type": "turn_start"}},
+            {"do": "emit", "frame": _text("hello")},
+            {"do": "emit", "frame": {"type": "agent_settled"}},
+            {"do": "answer_session_stats", "data": dict(_STATS_DATA)},
+        ],
+    }
+
+
+async def test_uncaptured_has_no_observation() -> None:
+    result = await _run(
+        {
+            "steps": [
+                {"do": "await_prompt"},
+                {"do": "emit", "frame": _text("hi")},
+                {"do": "emit", "frame": {"type": "agent_settled"}},
+                {"do": "exit", "code": 0},
+            ]
+        }
+    )
+
+    assert result.observation is None
+
+
+async def test_captured_run_reports_available_history(tmp_path: pathlib.Path) -> None:
+    record = tmp_path / "record.jsonl"
+    scenario = _captured_scenario(tmp_path)
+    scenario["record_path"] = str(record)
+    result = await _run(scenario, capture_history=True)
+
+    assert result.status is AgentRunStatus.SETTLED
+    observation = result.observation
+    assert observation is not None
+    assert observation.backend is AgentBackend.PI
+    assert observation.history_status is HistoryDiscoveryStatus.AVAILABLE
+    assert observation.session_id is not None
+    assert len(observation.files) == 1
+    main = observation.files[0]
+    assert main.role is NativeHistoryRole.MAIN
+    assert main.format is NativeHistoryFormat.PI
+    assert main.native_session_id == observation.session_id
+    assert observation.related_status is RelatedHistoryStatus.UNAVAILABLE
+    assert observation.usage_provenance.token_source is UsageSource.PI_STATS
+    assert observation.usage_provenance.token_scope is UsageScope.SESSION
+    assert observation.backend_version == "1.3.0"
+    argv = next(entry["argv"] for entry in _records(record) if "argv" in entry)
+    assert "--no-session" not in argv
+    assert "--session-id" in argv
+    assert argv[argv.index("--session-id") + 1] == observation.session_id
+    source_path = resource_uri_to_path(main.source_uri)
+    assert source_path.is_file()
+    content = source_path.read_text(encoding="utf-8")
+    assert observation.session_id in content
+    assert "do the thing" in content
+    assert "assistant marker ALPHA" in content
+    assert "tool marker BETA" in content
+
+
+async def test_captured_decoy_with_wrong_session_is_ignored(
+    tmp_path: pathlib.Path,
+) -> None:
+    decoy = tmp_path / "2026-01-02T00-00-00_wrong.jsonl"
+    _ = decoy.write_text(
+        json.dumps({"type": "session", "version": 3, "id": "wrong-id"}) + "\n",
+        encoding="utf-8",
+    )
+    scenario = _captured_scenario(tmp_path)
+    result = await _run(scenario, capture_history=True)
+
+    assert result.observation is not None
+    assert result.observation.session_id != "wrong-id"
+    assert result.observation.files[0].native_session_id != "wrong-id"
+
+
+async def test_captured_stats_fallback_keeps_message_usage(
+    tmp_path: pathlib.Path,
+) -> None:
+    scenario = _captured_scenario(tmp_path)
+    scenario["steps"] = [
+        {"do": "await_prompt"},
+        {"do": "emit", "frame": _assistant_message(_usage(100, 20, 0.001))},
+        {"do": "emit", "frame": {"type": "agent_settled"}},
+        {"do": "exit", "code": 0},
+    ]
+    result = await _run(scenario, capture_history=True)
+
+    assert result.usage is not None
+    assert result.usage.total_tokens == 120
+    assert result.observation is not None
+    assert result.observation.history_status is HistoryDiscoveryStatus.UNAVAILABLE
+    assert result.observation.usage_provenance.token_source is UsageSource.PI_MESSAGES
+    assert result.observation.usage_provenance.token_scope is UsageScope.MESSAGE_SUM
+
+
+async def test_captured_unknown_profile_has_presession_observation() -> None:
+    result = await _run(
+        {"steps": []},
+        profile="nope",
+        handler_config={"profiles": {"a": {}}},
+        capture_history=True,
+    )
+
+    assert result.status is AgentRunStatus.FAILED
+    assert result.observation is not None
+    assert result.observation.files == []
+    assert result.observation.session_id is None
+
+
+async def test_captured_version_failure_leaves_gap_but_keeps_history(
+    tmp_path: pathlib.Path,
+) -> None:
+    scenario = _captured_scenario(tmp_path)
+    scenario["version"] = ""
+    result = await _run(scenario, capture_history=True)
+
+    assert result.status is AgentRunStatus.SETTLED
+    assert result.observation is not None
+    assert result.observation.backend_version is None
+    assert any("version" in gap for gap in result.observation.gaps)

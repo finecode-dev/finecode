@@ -32,6 +32,7 @@ import enum
 import json
 from typing import Any
 
+from fine_agent.history_types import UsageProvenance, UsageScope, UsageSource
 from fine_agent.run_agent_task_action import AgentRunUsage
 
 
@@ -241,6 +242,43 @@ def result_usage(frame: dict[str, Any], model: str | None) -> AgentRunUsage | No
     # caller is most likely to be asked about.
     return (
         AgentRunUsage(approx_cost_usd=cost, model=model) if cost is not None else None
+    )
+
+
+def result_provenance(frame: dict[str, Any]) -> UsageProvenance:
+    cost = _float_or_none(frame.get("total_cost_usd"))
+    cost_source = UsageSource.CLAUDE_COST if cost is not None else UsageSource.UNKNOWN
+    cost_scope = UsageScope.SESSION if cost is not None else UsageScope.UNKNOWN
+    model_usage = frame.get("modelUsage")
+    if isinstance(model_usage, dict):
+        entries = [entry for entry in model_usage.values() if isinstance(entry, dict)]
+        if entries:
+            return UsageProvenance(
+                token_source=UsageSource.CLAUDE_MODELS,
+                token_scope=UsageScope.SESSION,
+                cost_source=cost_source,
+                cost_scope=cost_scope,
+            )
+    reported = frame.get("usage")
+    if isinstance(reported, dict):
+        return UsageProvenance(
+            token_source=UsageSource.CLAUDE_RESULT,
+            token_scope=UsageScope.LAST_REQUEST,
+            cost_source=cost_source,
+            cost_scope=cost_scope,
+        )
+    if cost is not None:
+        return UsageProvenance(
+            token_source=UsageSource.UNKNOWN,
+            token_scope=UsageScope.UNKNOWN,
+            cost_source=cost_source,
+            cost_scope=cost_scope,
+        )
+    return UsageProvenance(
+        token_source=UsageSource.UNKNOWN,
+        token_scope=UsageScope.UNKNOWN,
+        cost_source=UsageSource.UNKNOWN,
+        cost_scope=UsageScope.UNKNOWN,
     )
 
 

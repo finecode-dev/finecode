@@ -2,9 +2,20 @@ import asyncio
 import contextlib
 import dataclasses
 import json
+import os
+import pathlib
 import time
 
 from fine_agent import backend_support
+from fine_agent.history_types import (
+    AgentBackend,
+    AgentRunObservation,
+    HistoryDiscoveryStatus,
+    RelatedHistoryStatus,
+    UsageProvenance,
+    UsageScope,
+    UsageSource,
+)
 from fine_agent.run_agent_task_action import (
     AgentRunStatus,
     RunAgentTaskAction,
@@ -20,7 +31,8 @@ from finecode_extension_api.interfaces import (
     iuser_messenger,
 )
 
-from fine_agent_claude_code import claude_code_stream
+from fine_agent_claude_code import claude_code_history, claude_code_stream
+from fine_agent_claude_code.claude_code_history import ClaudeObservationState
 
 _EXIT_GRACE_SEC = 5.0
 """How long to let claude exit once its stream has ended.
@@ -29,6 +41,9 @@ Short on purpose: by this point the run has already produced its answer or been
 withdrawn, and the only thing still being waited for is the process noticing
 that its input is closed.
 """
+
+_VERSION_TIMEOUT_SEC = 3.0
+"""Bound for the post-run `--version` probe on captured runs."""
 
 _SIGNAL_GRACE_SEC = 2.0
 """How long each signal in the teardown ladder gets before the next one.
@@ -103,6 +118,36 @@ class _ClaudeRunSettings:
     settle_timeout_sec: float
 
 
+def _unknown_provenance() -> UsageProvenance:
+    return UsageProvenance(
+        token_source=UsageSource.UNKNOWN,
+        token_scope=UsageScope.UNKNOWN,
+        cost_source=UsageSource.UNKNOWN,
+        cost_scope=UsageScope.UNKNOWN,
+    )
+
+
+def _pre_session_observation(gaps: list[str]) -> AgentRunObservation:
+    return AgentRunObservation(
+        backend=AgentBackend.CLAUDE_CODE,
+        backend_version=None,
+        session_id=None,
+        history_root=None,
+        history_status=HistoryDiscoveryStatus.UNAVAILABLE,
+        files=[],
+        related_status=RelatedHistoryStatus.UNAVAILABLE,
+        usage_provenance=_unknown_provenance(),
+        gaps=list(gaps),
+    )
+
+
+def _claude_config_root() -> pathlib.Path:
+    env_root = os.environ.get("CLAUDE_CONFIG_DIR")
+    if env_root:
+        return pathlib.Path(env_root)
+    return pathlib.Path.home() / ".claude"
+
+
 class ClaudeCodeAgentHandler(
     code_action.ActionHandler[
         RunAgentTaskAction,
@@ -150,9 +195,22 @@ class ClaudeCodeAgentHandler(
         if isinstance(settings, str):
             # Fail before spawning anything: an unknown profile is a
             # configuration error, not a run that got partway.
-            return RunAgentTaskRunResult(
+            result = RunAgentTaskRunResult(
                 status=AgentRunStatus.FAILED, error=settings, duration_sec=0.0
             )
+            if payload.capture_history:
+                observation = _pre_session_observation(
+                    ["no native session was available"]
+                )
+                version, version_gap = await self._probe_backend_version()
+                gaps = [*observation.gaps]
+                if version_gap is not None:
+                    gaps.append(version_gap)
+                observation = dataclasses.replace(
+                    observation, backend_version=version, gaps=gaps
+                )
+                result = dataclasses.replace(result, observation=observation)
+            return result
         command = self._build_command(settings, payload.output_schema)
         project_dir = self.project_info_provider.get_current_project_dir_path()
         self.logger.debug(f"Starting claude: {command!r} in {project_dir}")
@@ -172,14 +230,27 @@ class ClaudeCodeAgentHandler(
             # (on Windows) a shim refusing an argument cmd.exe would
             # reinterpret. A settled-with-error result is still a structured
             # one a caller can read.
-            return RunAgentTaskRunResult(
+            result = RunAgentTaskRunResult(
                 status=AgentRunStatus.FAILED,
                 error=backend_support.spawn_error(command[0], error),
                 duration_sec=0.0,
             )
+            if payload.capture_history:
+                observation = _pre_session_observation(
+                    ["no native session was available"]
+                )
+                version, version_gap = await self._probe_backend_version()
+                gaps = [*observation.gaps]
+                if version_gap is not None:
+                    gaps.append(version_gap)
+                observation = dataclasses.replace(
+                    observation, backend_version=version, gaps=gaps
+                )
+                result = dataclasses.replace(result, observation=observation)
+            return result
 
         try:
-            result = await self._run_with_process(
+            result, observation_state = await self._run_with_process(
                 payload, run_context, process, command, settings
             )
         except BaseException:
@@ -197,6 +268,24 @@ class ClaudeCodeAgentHandler(
         # measured, and elapsed time is as much a part of a failed run's account
         # as of a settled one's.
         result.duration_sec = time.monotonic() - started
+        if payload.capture_history:
+            try:
+                result = await self._attach_observation(result, observation_state)
+            except Exception as error:  # noqa: BLE001
+                gaps = [*observation_state.gaps, f"observation failed: {error}"]
+                self.logger.debug(f"claude observation failed: {error}")
+                failed = AgentRunObservation(
+                    backend=AgentBackend.CLAUDE_CODE,
+                    backend_version=None,
+                    session_id=observation_state.session_id,
+                    history_root=None,
+                    history_status=HistoryDiscoveryStatus.FAILED,
+                    files=[],
+                    related_status=RelatedHistoryStatus.UNAVAILABLE,
+                    usage_provenance=observation_state.usage_provenance,
+                    gaps=gaps,
+                )
+                result = dataclasses.replace(result, observation=failed)
         return result
 
     async def _run_with_process(
@@ -206,10 +295,10 @@ class ClaudeCodeAgentHandler(
         process: icommandrunner.IAsyncProcess,
         command: list[str],
         settings: _ClaudeRunSettings,
-    ) -> RunAgentTaskRunResult:
+    ) -> tuple[RunAgentTaskRunResult, ClaudeObservationState]:
         async with run_context.progress("Agent task", cancellable=True) as progress:
             try:
-                result = await asyncio.wait_for(
+                result, observation_state = await asyncio.wait_for(
                     self._drive(process, payload.prompt, progress),
                     timeout=settings.settle_timeout_sec,
                 )
@@ -221,16 +310,21 @@ class ClaudeCodeAgentHandler(
                 raise
             except TimeoutError:
                 await self._abort(process)
-                return RunAgentTaskRunResult(
+                timed_out = RunAgentTaskRunResult(
                     status=AgentRunStatus.FAILED,
                     error=(
                         f"claude did not finish within {settings.settle_timeout_sec}s"
                     ),
                 )
+                timed_out_state = ClaudeObservationState(
+                    session_id=None,
+                    usage_provenance=_unknown_provenance(),
+                    gaps=["claude did not finish; session was not collected"],
+                )
+                return timed_out, timed_out_state
 
-        return self._check_structured_output(
-            payload, await self._finish(process, result, command)
-        )
+        finished = await self._finish(process, result, command)
+        return self._check_structured_output(payload, finished), observation_state
 
     def _check_structured_output(
         self,
@@ -258,7 +352,7 @@ class ClaudeCodeAgentHandler(
         process: icommandrunner.IAsyncProcess,
         prompt: str,
         progress: code_action.ProgressContext,
-    ) -> RunAgentTaskRunResult:
+    ) -> tuple[RunAgentTaskRunResult, ClaudeObservationState]:
         # Subscribe before prompting. The stream replays anything produced
         # earlier, so this is not load-bearing -- it just keeps the order on the
         # page the same as the order on the wire.
@@ -276,6 +370,9 @@ class ClaudeCodeAgentHandler(
         turns = 0
         model: str | None = None
         outcome: claude_code_stream.RunResult | None = None
+        init_session_id: str | None = None
+        result_session_id: str | None = None
+        result_provenance: UsageProvenance = _unknown_provenance()
 
         async for line in lines:
             frame = claude_code_stream.parse_frame(line)
@@ -290,6 +387,7 @@ class ClaudeCodeAgentHandler(
                     reported_model = frame.get("model")
                     model = reported_model if isinstance(reported_model, str) else None
                     session = claude_code_stream.session_id(frame)
+                    init_session_id = session
                     # Logged rather than returned: the transcript it points at
                     # is how a human inspects afterwards what the agent did to
                     # their files, and a failed run is exactly when that is
@@ -310,21 +408,49 @@ class ClaudeCodeAgentHandler(
                 continue
 
             if event == claude_code_stream.ClaudeEvent.RESULT:
+                result_session_id = claude_code_stream.session_id(frame)
+                result_provenance = claude_code_stream.result_provenance(frame)
                 outcome = claude_code_stream.parse_result(frame, model)
                 break
+
+        def _observation_state(
+            provenance: UsageProvenance,
+        ) -> ClaudeObservationState:
+            gaps: list[str] = []
+            session: str | None = None
+            if init_session_id is not None and result_session_id is not None:
+                if init_session_id != result_session_id:
+                    gaps.append(
+                        "claude session id disagreement between init and result"
+                    )
+                else:
+                    session = init_session_id
+            elif init_session_id is not None:
+                session = init_session_id
+            elif result_session_id is not None:
+                session = result_session_id
+            else:
+                gaps.append("claude reported no native session id")
+            return ClaudeObservationState(
+                session_id=session,
+                usage_provenance=provenance,
+                gaps=gaps,
+            )
 
         if outcome is None:
             # The stream reached EOF without a `result` frame: claude died, or
             # was killed, mid-run. Whatever text arrived first is kept -- it is
             # still the best account of what happened -- but reporting SETTLED
             # here would tell the caller a truncated run finished its work.
+            state = _observation_state(_unknown_provenance())
             return RunAgentTaskRunResult(
                 status=AgentRunStatus.FAILED,
                 output="".join(streamed),
                 turns=turns or None,
                 error="claude stopped without reporting a result",
-            )
+            ), state
 
+        state = _observation_state(result_provenance)
         return RunAgentTaskRunResult(
             status=self._status(outcome),
             output=outcome.output or "".join(streamed),
@@ -332,7 +458,7 @@ class ClaudeCodeAgentHandler(
             usage=outcome.usage,
             error=self._error(outcome),
             structured_output=outcome.structured_output,
-        )
+        ), state
 
     def _status(self, outcome: claude_code_stream.RunResult) -> AgentRunStatus:
         """The outcome, distinguishing a refusal to guess from a failure.
@@ -500,3 +626,50 @@ class ClaudeCodeAgentHandler(
             parts += ["--json-schema", json.dumps(output_schema)]
 
         return parts
+
+    async def _probe_backend_version(self) -> tuple[str | None, str | None]:
+        try:
+            process = await self.command_runner.run([*self._executable(), "--version"])
+        except (OSError, icommandrunner.CommandNotLaunchableError) as error:
+            return None, f"claude version probe failed: {error}"
+        try:
+            await asyncio.wait_for(process.wait_for_end(), timeout=_VERSION_TIMEOUT_SEC)
+        except TimeoutError:
+            with contextlib.suppress(Exception):
+                process.terminate()
+            with contextlib.suppress(Exception):
+                await asyncio.wait_for(
+                    process.wait_for_end(), timeout=_SIGNAL_GRACE_SEC
+                )
+            if process.is_alive():
+                with contextlib.suppress(Exception):
+                    process.kill()
+            return None, "claude version probe timed out"
+        except Exception as error:  # noqa: BLE001
+            return None, f"claude version probe failed: {error}"
+        try:
+            if process.get_exit_code() != 0:
+                return None, "claude version probe reported a non-zero exit"
+            output = (process.get_output() or process.get_error_output() or "").strip()
+            if not output:
+                return None, "claude version probe produced no output"
+            return output.splitlines()[0].strip(), None
+        except Exception as error:  # noqa: BLE001
+            return None, f"claude version probe failed: {error}"
+
+    async def _attach_observation(
+        self,
+        result: RunAgentTaskRunResult,
+        state: ClaudeObservationState,
+    ) -> RunAgentTaskRunResult:
+        observation = claude_code_history.locate_claude_history(
+            state, _claude_config_root()
+        )
+        version, version_gap = await self._probe_backend_version()
+        gaps = [*observation.gaps]
+        if version_gap is not None:
+            gaps.append(version_gap)
+        observation = dataclasses.replace(
+            observation, backend_version=version, gaps=gaps
+        )
+        return dataclasses.replace(result, observation=observation)

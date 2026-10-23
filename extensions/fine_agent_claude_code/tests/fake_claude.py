@@ -34,6 +34,60 @@ def _record(scenario: dict, entry: dict) -> None:
 
 def main() -> int:
     scenario = json.loads(sys.argv[1])
+    rest = sys.argv[2:]
+    if "--version" in rest:
+        sys.stdout.write(str(scenario.get("version", "2.1.306")) + "\n")
+        sys.stdout.flush()
+        return 0
+    session_id = str(scenario.get("session_id", _SESSION))
+    config_dir = scenario.get("config_dir") or os.environ.get("CLAUDE_CONFIG_DIR")
+    if config_dir and scenario.get("write_native"):
+        try:
+            proj = scenario.get("native_proj", "testproj")
+            main_path = os.path.join(
+                str(config_dir), "projects", proj, f"{session_id}.jsonl"
+            )
+            os.makedirs(os.path.dirname(main_path), exist_ok=True)
+            main_records = scenario.get(
+                "native_main",
+                [
+                    {
+                        "type": "user",
+                        "sessionId": session_id,
+                        "message": {"content": "prompt marker PROMPT-1"},
+                    },
+                    {
+                        "type": "assistant",
+                        "sessionId": session_id,
+                        "message": {"content": "assistant marker ALPHA"},
+                    },
+                    {
+                        "type": "user",
+                        "sessionId": session_id,
+                        "message": {"tool": "tool marker BETA"},
+                    },
+                ],
+            )
+            with open(main_path, "w", encoding="utf-8") as handle:
+                handle.writelines([json.dumps(entry) + "\n" for entry in main_records])
+            for related in scenario.get("native_related", []):
+                rel_path = os.path.join(
+                    str(config_dir),
+                    "projects",
+                    proj,
+                    session_id,
+                    related["path"],
+                )
+                os.makedirs(os.path.dirname(rel_path), exist_ok=True)
+                with open(rel_path, "w", encoding="utf-8") as handle:
+                    handle.writelines(
+                        [
+                            json.dumps(entry) + "\n"
+                            for entry in related.get("records", [])
+                        ]
+                    )
+        except OSError:
+            pass
 
     if scenario.get("record_driver"):
         # The CLI flags the handler assembled, gated so scenarios that inspect
@@ -60,7 +114,9 @@ def main() -> int:
                 {
                     "type": "system",
                     "subtype": "init",
-                    "session_id": _SESSION,
+                    "session_id": step.get(
+                        "session_id", scenario.get("session_id", _SESSION)
+                    ),
                     "model": step.get("model", "claude-opus-5"),
                     "cwd": step.get("cwd", "/workspace"),
                     "permissionMode": "default",

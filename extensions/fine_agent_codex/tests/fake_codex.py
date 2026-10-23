@@ -28,6 +28,98 @@ def _emit(frame: dict[str, Any]) -> None:
     _ = sys.stdout.flush()
 
 
+def _write_native_rollouts(prompt: str, answer_text: str) -> None:
+    codex_home = os.environ.get("CODEX_HOME")
+    if not codex_home:
+        return
+    try:
+        base = pathlib.Path(codex_home) / "sessions" / "2026" / "01" / "01"
+        base.mkdir(parents=True, exist_ok=True)
+
+        def _write(
+            thread_id: str, parent: str | None, extra_lines: list[dict[str, Any]]
+        ) -> None:
+            path = base / f"rollout-2026-01-01T00-00-00-{thread_id}.jsonl"
+            meta: dict[str, Any] = {
+                "timestamp": "2026-01-01T00:00:00.000Z",
+                "ordinal": 0,
+                "type": "session_meta",
+                "payload": {
+                    "id": thread_id,
+                    "session_id": "sess-root",
+                    "cli_version": "0.163.0",
+                    "model_provider": "openai",
+                },
+            }
+            if parent is not None:
+                meta["payload"]["parent_thread_id"] = parent
+            lines = [json.dumps(meta)] + [json.dumps(entry) for entry in extra_lines]
+            with open(path, "w", encoding="utf-8") as handle:
+                handle.writelines([line + "\n" for line in lines])
+
+        token_count = {
+            "timestamp": "t",
+            "type": "event_msg",
+            "payload": {"type": "token_count", "info": {"total_tokens": 1}},
+        }
+        main_extra = [
+            {"timestamp": "t", "type": "turn_context", "payload": {"model": "gpt-test"}},
+            {"timestamp": "t", "type": "event_msg", "payload": {"text": prompt}},
+            token_count,
+            token_count,
+            {
+                "timestamp": "t",
+                "type": "event_msg",
+                "payload": {"text": "assistant marker ALPHA"},
+            },
+            {
+                "timestamp": "t",
+                "type": "event_msg",
+                "payload": {"text": "tool marker BETA"},
+            },
+            {"timestamp": "t", "type": "event_msg", "payload": {"text": answer_text}},
+        ]
+        _write("thread-1", None, main_extra)
+        _write(
+            "child-1",
+            "thread-1",
+            [{"timestamp": "t", "type": "event_msg", "payload": {"text": "child"}}],
+        )
+        _write(
+            "grandchild-1",
+            "child-1",
+            [
+                {
+                    "timestamp": "t",
+                    "type": "event_msg",
+                    "payload": {"text": "grandchild"},
+                }
+            ],
+        )
+        _write(
+            "other-1",
+            None,
+            [{"timestamp": "t", "type": "event_msg", "payload": {"text": "unrelated"}}],
+        )
+        fork_path = base / "rollout-2026-01-01T00-00-00-fork-1.jsonl"
+        fork_meta: dict[str, Any] = {
+            "timestamp": "t",
+            "ordinal": 0,
+            "type": "session_meta",
+            "payload": {
+                "id": "fork-1",
+                "session_id": "sess-root",
+                "parent_thread_id": "other-1",
+                "forked_from_id": "thread-1",
+                "cli_version": "0.163.0",
+            },
+        }
+        with open(fork_path, "w", encoding="utf-8") as handle:
+            handle.writelines([json.dumps(fork_meta) + "\n"])
+    except OSError:
+        pass
+
+
 def _flag_value(argv: list[str], flag: str) -> str | None:
     return argv[argv.index(flag) + 1] if flag in argv else None
 
@@ -37,9 +129,14 @@ def main() -> int:
     record_path = sys.argv[2]
     answer_arg = sys.argv[3]
     rest = sys.argv[4:]
+    if "--version" in rest:
+        _ = sys.stdout.write("0.163.0\n")
+        _ = sys.stdout.flush()
+        return 0
     answer = json.loads(answer_arg)
 
     prompt = sys.stdin.read()
+    _write_native_rollouts(prompt, answer if isinstance(answer, str) else answer_arg)
 
     answer_path = _flag_value(rest, "--output-last-message")
     assert answer_path is not None

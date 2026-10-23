@@ -38,6 +38,13 @@ from typing import Any
 from fine_agent.run_agent_task_action import AgentRunUsage
 
 
+@dataclasses.dataclass(frozen=True)
+class PiSessionStats:
+    usage: AgentRunUsage | None
+    session_id: str | None
+    session_file: str | None
+
+
 class PiEvent(enum.StrEnum):
     """Event ``type`` values this integration reacts to.
 
@@ -270,7 +277,7 @@ def message_usage(frame: dict[str, Any]) -> AgentRunUsage | None:
     )
 
 
-def parse_session_stats(frame: dict[str, Any]) -> AgentRunUsage | None:
+def parse_session_stats(frame: dict[str, Any]) -> PiSessionStats | None:
     """Session totals from a ``get_session_stats`` response.
 
     Preferred over summing `message_usage`: pi documents these totals as
@@ -290,17 +297,24 @@ def parse_session_stats(frame: dict[str, Any]) -> AgentRunUsage | None:
     if not isinstance(data, dict):
         return None
 
+    session_id = data.get("sessionId")
+    session_file = data.get("sessionFile")
     tokens = data.get("tokens")
     tokens = tokens if isinstance(tokens, dict) else {}
     total = _int_or_none(tokens.get("total"))
 
-    return AgentRunUsage(
+    usage = AgentRunUsage(
         input_tokens=_int_or_none(tokens.get("input")),
         output_tokens=_int_or_none(tokens.get("output")),
         cache_read_tokens=_int_or_none(tokens.get("cacheRead")),
         cache_write_tokens=_int_or_none(tokens.get("cacheWrite")),
         total_tokens=total,
         approx_cost_usd=_cost_or_none(data.get("cost"), total),
+    )
+    return PiSessionStats(
+        usage=usage,
+        session_id=session_id if isinstance(session_id, str) else None,
+        session_file=session_file if isinstance(session_file, str) else None,
     )
 
 

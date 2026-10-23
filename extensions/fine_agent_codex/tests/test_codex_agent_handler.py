@@ -20,6 +20,12 @@ from collections.abc import AsyncIterator
 from typing import Any
 
 import pytest
+from fine_agent.history_types import (
+    AgentBackend,
+    HistoryDiscoveryStatus,
+    UsageScope,
+    UsageSource,
+)
 from fine_agent.run_agent_task_action import (
     AgentRunStatus,
     RunAgentTaskAction,
@@ -28,6 +34,7 @@ from fine_agent.run_agent_task_action import (
 )
 from finecode_extension_api import code_action
 from finecode_extension_api.interfaces import icommandrunner, iuser_messenger
+from finecode_extension_api.resource_uri import resource_uri_to_path
 from finecode_extension_runner.testing import run_handler
 
 import fine_agent_codex
@@ -248,6 +255,7 @@ async def _run(
     service_overrides: dict[Any, Any] | None = None,
     record_path: pathlib.Path | None = None,
     project_dir: pathlib.Path | None = None,
+    capture_history: bool = False,
 ) -> RunAgentTaskRunResult:
     _ACTIVE["scenario"] = scenario
     _ACTIVE["record"] = str(record_path) if record_path is not None else ""
@@ -256,7 +264,10 @@ async def _run(
         result = await run_handler(
             _FakeCodexHandler,
             RunAgentTaskRunPayload(
-                prompt=prompt, profile=profile, output_schema=output_schema
+                prompt=prompt,
+                profile=profile,
+                output_schema=output_schema,
+                capture_history=capture_history,
             ),
             action_cls=RunAgentTaskAction,
             handler_config=handler_config,
@@ -1114,3 +1125,34 @@ async def test_teardown_problems_do_not_replace_a_prior_exception(
         )
     assert process.terminated == 1
     assert process.killed == 1
+
+
+async def test_uncaptured_has_no_observation() -> None:
+    result = await _run(FakeScenario.SUCCESS)
+
+    assert result.observation is None
+
+
+async def test_captured_run_reports_available_history(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path))
+    result = await _run(FakeScenario.SUCCESS, capture_history=True)
+
+    assert result.status is AgentRunStatus.SETTLED
+    observation = result.observation
+    assert observation is not None
+    assert observation.backend is AgentBackend.CODEX
+    assert observation.history_status is HistoryDiscoveryStatus.AVAILABLE
+    assert observation.session_id == "thread-1"
+    assert observation.backend_version == "0.163.0"
+    assert len(observation.files) == 3
+    assert observation.usage_provenance.token_source is UsageSource.CODEX_TURN
+    assert observation.usage_provenance.token_scope is UsageScope.UNKNOWN
+    main = next(f for f in observation.files if f.role.value == "main")
+    content = resource_uri_to_path(main.source_uri).read_text(encoding="utf-8")
+    assert "thread-1" in content
+    assert result.usage is not None
+    assert result.usage.provider == "openai"
+    assert result.usage.model == "gpt-test"
+    assert result.turns == 2

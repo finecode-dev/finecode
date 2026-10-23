@@ -1,11 +1,23 @@
 import asyncio
 import contextlib
 import dataclasses
+import os
+import pathlib
 import time
+import uuid
 from collections.abc import AsyncIterator
 from typing import Any
 
 from fine_agent import backend_support
+from fine_agent.history_types import (
+    AgentBackend,
+    AgentRunObservation,
+    HistoryDiscoveryStatus,
+    RelatedHistoryStatus,
+    UsageProvenance,
+    UsageScope,
+    UsageSource,
+)
 from fine_agent.run_agent_task_action import (
     AgentRunStatus,
     AgentRunUsage,
@@ -22,7 +34,8 @@ from finecode_extension_api.interfaces import (
     iuser_messenger,
 )
 
-from fine_agent_pi import pi_rpc
+from fine_agent_pi import pi_history, pi_rpc
+from fine_agent_pi.pi_history import PiObservationState
 
 _ABORT_GRACE_SEC = 5.0
 """How long to let pi exit after an abort before giving up on a clean shutdown.
@@ -48,6 +61,9 @@ Short, and failure here is silent: this is accounting collected after the run
 has already produced its answer, so a pi that will not report must cost the
 caller a couple of seconds, never the result.
 """
+
+_VERSION_TIMEOUT_SEC = 3.0
+"""Bound for the post-run `--version` probe on captured runs."""
 
 _POLICY_ABORT = "abort"
 _POLICY_CANCEL = "cancel"
@@ -119,6 +135,84 @@ class _PiRunSettings:
     settle_timeout_sec: float
 
 
+def _stats_provenance() -> UsageProvenance:
+    return UsageProvenance(
+        token_source=UsageSource.PI_STATS,
+        token_scope=UsageScope.SESSION,
+        cost_source=UsageSource.PI_STATS,
+        cost_scope=UsageScope.SESSION,
+    )
+
+
+def _message_provenance() -> UsageProvenance:
+    return UsageProvenance(
+        token_source=UsageSource.PI_MESSAGES,
+        token_scope=UsageScope.MESSAGE_SUM,
+        cost_source=UsageSource.PI_MESSAGES,
+        cost_scope=UsageScope.MESSAGE_SUM,
+    )
+
+
+def _unknown_provenance() -> UsageProvenance:
+    return UsageProvenance(
+        token_source=UsageSource.UNKNOWN,
+        token_scope=UsageScope.UNKNOWN,
+        cost_source=UsageSource.UNKNOWN,
+        cost_scope=UsageScope.UNKNOWN,
+    )
+
+
+def _pre_session_observation(gaps: list[str]) -> AgentRunObservation:
+    return AgentRunObservation(
+        backend=AgentBackend.PI,
+        backend_version=None,
+        session_id=None,
+        history_root=None,
+        history_status=HistoryDiscoveryStatus.UNAVAILABLE,
+        files=[],
+        related_status=RelatedHistoryStatus.UNAVAILABLE,
+        usage_provenance=_unknown_provenance(),
+        gaps=list(gaps),
+    )
+
+
+def _native_root_for(session_file: str | None) -> pathlib.Path:
+    if session_file:
+        candidate = pathlib.Path(session_file)
+        if candidate.is_absolute():
+            return candidate.parent
+    env_dir = os.environ.get("PI_CODING_AGENT_SESSION_DIR")
+    if env_dir:
+        return pathlib.Path(env_dir)
+    return pathlib.Path.home() / ".pi" / "agent" / "sessions"
+
+
+def _state_from_settle(
+    usage: AgentRunUsage | None,
+    stats_info: pi_rpc.PiSessionStats | None,
+) -> PiObservationState:
+    if stats_info is not None:
+        return PiObservationState(
+            session_id=stats_info.session_id,
+            session_file=stats_info.session_file,
+            usage_provenance=_stats_provenance(),
+            gaps=[],
+        )
+    if usage is not None:
+        return PiObservationState(
+            session_id=None,
+            session_file=None,
+            usage_provenance=_message_provenance(),
+            gaps=["pi reported no session stats; using message totals"],
+        )
+    return PiObservationState(
+        session_id=None,
+        session_file=None,
+        usage_provenance=_unknown_provenance(),
+        gaps=["pi reported no session stats; using message totals"],
+    )
+
+
 class PiAgentHandler(
     code_action.ActionHandler[
         RunAgentTaskAction,
@@ -163,10 +257,24 @@ class PiAgentHandler(
         if isinstance(settings, str):
             # Fail before spawning anything: an unknown profile is a
             # configuration error, not a run that got partway.
-            return RunAgentTaskRunResult(
+            result = RunAgentTaskRunResult(
                 status=AgentRunStatus.FAILED, error=settings, duration_sec=0.0
             )
-        command = self._build_command(settings)
+            if payload.capture_history:
+                observation = _pre_session_observation(
+                    ["no native session was available"]
+                )
+                version, version_gap = await self._probe_backend_version()
+                gaps = [*observation.gaps]
+                if version_gap is not None:
+                    gaps.append(version_gap)
+                observation = dataclasses.replace(
+                    observation, backend_version=version, gaps=gaps
+                )
+                result = dataclasses.replace(result, observation=observation)
+            return result
+        capture_session_id = str(uuid.uuid4()) if payload.capture_history else None
+        command = self._build_command(settings, capture_session_id)
         project_dir = self.project_info_provider.get_current_project_dir_path()
         self.logger.debug(f"Starting pi: {command!r} in {project_dir}")
 
@@ -185,15 +293,28 @@ class PiAgentHandler(
             # (on Windows) a shim refusing an argument cmd.exe would
             # reinterpret. A settled-with-error result is still a structured
             # one a caller can read.
-            return RunAgentTaskRunResult(
+            result = RunAgentTaskRunResult(
                 status=AgentRunStatus.FAILED,
                 error=backend_support.spawn_error(command[0], error),
                 duration_sec=0.0,
             )
+            if payload.capture_history:
+                observation = _pre_session_observation(
+                    ["no native session was available"]
+                )
+                version, version_gap = await self._probe_backend_version()
+                gaps = [*observation.gaps]
+                if version_gap is not None:
+                    gaps.append(version_gap)
+                observation = dataclasses.replace(
+                    observation, backend_version=version, gaps=gaps
+                )
+                result = dataclasses.replace(result, observation=observation)
+            return result
 
         try:
-            result = await self._run_with_process(
-                payload, run_context, process, command, settings
+            result, observation_state = await self._run_with_process(
+                payload, run_context, process, command, settings, capture_session_id
             )
         except BaseException:
             # Anything escaping the drive that the paths inside do not already
@@ -211,6 +332,26 @@ class PiAgentHandler(
         # measured, and elapsed time is as much a part of a failed run's account
         # as of a settled one's.
         result.duration_sec = time.monotonic() - started
+        if payload.capture_history:
+            try:
+                result = await self._attach_observation(
+                    result, observation_state, capture_session_id
+                )
+            except Exception as error:  # noqa: BLE001
+                gaps = [*observation_state.gaps, f"observation failed: {error}"]
+                self.logger.debug(f"pi observation failed: {error}")
+                failed = AgentRunObservation(
+                    backend=AgentBackend.PI,
+                    backend_version=None,
+                    session_id=observation_state.session_id,
+                    history_root=None,
+                    history_status=HistoryDiscoveryStatus.FAILED,
+                    files=[],
+                    related_status=RelatedHistoryStatus.UNAVAILABLE,
+                    usage_provenance=observation_state.usage_provenance,
+                    gaps=gaps,
+                )
+                result = dataclasses.replace(result, observation=failed)
         return result
 
     async def _run_with_process(
@@ -220,7 +361,8 @@ class PiAgentHandler(
         process: icommandrunner.IAsyncProcess,
         command: list[str],
         settings: _PiRunSettings,
-    ) -> RunAgentTaskRunResult:
+        capture_session_id: str | None,
+    ) -> tuple[RunAgentTaskRunResult, PiObservationState]:
         prompt = payload.prompt
         if payload.output_schema is not None:
             # Appended, not substituted: the task wording is the caller's, and
@@ -229,7 +371,7 @@ class PiAgentHandler(
 
         async with run_context.progress("Agent task", cancellable=True) as progress:
             try:
-                result = await asyncio.wait_for(
+                result, observation_state = await asyncio.wait_for(
                     self._drive(process, prompt, progress),
                     timeout=settings.settle_timeout_sec,
                 )
@@ -244,14 +386,20 @@ class PiAgentHandler(
                 raise
             except TimeoutError:
                 await self._abort(process)
-                return RunAgentTaskRunResult(
+                timed_out = RunAgentTaskRunResult(
                     status=AgentRunStatus.FAILED,
                     error=(f"pi did not settle within {settings.settle_timeout_sec}s"),
                 )
+                timed_out_state = PiObservationState(
+                    session_id=capture_session_id,
+                    session_file=None,
+                    usage_provenance=_unknown_provenance(),
+                    gaps=["pi did not settle; session stats were not collected"],
+                )
+                return timed_out, timed_out_state
 
-        return self._extract_structured_output(
-            payload, await self._finish(process, result, command)
-        )
+        finished = await self._finish(process, result, command)
+        return self._extract_structured_output(payload, finished), observation_state
 
     def _extract_structured_output(
         self,
@@ -281,7 +429,7 @@ class PiAgentHandler(
         process: icommandrunner.IAsyncProcess,
         prompt: str,
         progress: code_action.ProgressContext,
-    ) -> RunAgentTaskRunResult:
+    ) -> tuple[RunAgentTaskRunResult, PiObservationState]:
         # Subscribe before prompting. The stream replays anything produced
         # earlier, so this is not load-bearing -- it just keeps the order on the
         # page the same as the order on the wire.
@@ -298,6 +446,7 @@ class PiAgentHandler(
         totals when the run settles and pi answers -- this accumulation exists
         for the paths where it never gets that far.
         """
+        stats_info: pi_rpc.PiSessionStats | None = None
         refused: str | None = None
         settled = False
         failure: str | None = None
@@ -320,7 +469,9 @@ class PiAgentHandler(
 
             if event == pi_rpc.PiEvent.AGENT_SETTLED:
                 settled = True
-                usage = await self._read_session_stats(process, lines, usage)
+                usage, stats_info = await self._read_session_stats(
+                    process, lines, usage
+                )
                 break
 
             if event == pi_rpc.PiEvent.AGENT_END:
@@ -384,13 +535,21 @@ class PiAgentHandler(
                     break
 
         if refused is not None:
+            state = PiObservationState(
+                session_id=stats_info.session_id if stats_info else None,
+                session_file=stats_info.session_file if stats_info else None,
+                usage_provenance=_message_provenance()
+                if usage is not None
+                else _unknown_provenance(),
+                gaps=["no native session was available"],
+            )
             return RunAgentTaskRunResult(
                 status=AgentRunStatus.REFUSED_INTERACTION,
                 output="".join(output),
                 turns=turns,
                 usage=usage,
                 error=refused,
-            )
+            ), state
 
         if not settled:
             # The stream reached EOF without `agent_settled`: pi died, or was
@@ -398,13 +557,21 @@ class PiAgentHandler(
             # still the best account of what happened -- but reporting SETTLED
             # here would tell the caller a truncated run finished its work.
             reason = "pi stopped without settling"
+            state = PiObservationState(
+                session_id=None,
+                session_file=None,
+                usage_provenance=_message_provenance()
+                if usage is not None
+                else _unknown_provenance(),
+                gaps=["pi reported no session stats; using message totals"],
+            )
             return RunAgentTaskRunResult(
                 status=AgentRunStatus.FAILED,
                 output="".join(output),
                 turns=turns,
                 usage=usage,
                 error=f"{failure}; {reason}" if failure else reason,
-            )
+            ), state
 
         if failure is not None:
             # Settled, but the last turn never reached the model. pi reports
@@ -412,27 +579,29 @@ class PiAgentHandler(
             # `agent_settled` alone reports a provider outage -- an expired
             # key, an unfunded account, a rate limit -- as a successful run
             # that happened to say nothing.
+            state = _state_from_settle(usage, stats_info)
             return RunAgentTaskRunResult(
                 status=AgentRunStatus.FAILED,
                 output="".join(output),
                 turns=turns,
                 usage=usage,
                 error=failure,
-            )
+            ), state
 
+        state = _state_from_settle(usage, stats_info)
         return RunAgentTaskRunResult(
             status=AgentRunStatus.SETTLED,
             output="".join(output),
             turns=turns,
             usage=usage,
-        )
+        ), state
 
     async def _read_session_stats(
         self,
         process: icommandrunner.IAsyncProcess,
         lines: AsyncIterator[str],
         accumulated: AgentRunUsage | None,
-    ) -> AgentRunUsage | None:
+    ) -> tuple[AgentRunUsage | None, pi_rpc.PiSessionStats | None]:
         """Ask pi for the session totals, falling back to `accumulated`.
 
         pi's totals are the better number: they also cover what the agent's own
@@ -447,28 +616,29 @@ class PiAgentHandler(
         with contextlib.suppress(Exception):
             process.write_to_stdin(pi_rpc.session_stats_command())
 
-        stats: AgentRunUsage | None = None
+        stats: pi_rpc.PiSessionStats | None = None
         with contextlib.suppress(TimeoutError):
             stats = await asyncio.wait_for(
                 self._await_session_stats(lines), timeout=_STATS_TIMEOUT_SEC
             )
 
-        if stats is None:
+        if stats is None or stats.usage is None:
             self.logger.debug("pi reported no session stats; using message totals")
-            return accumulated
+            return accumulated, stats
 
         # The stats response names no provider or model, so the identity comes
         # from the messages. Reattached rather than dropped because a cost with
         # nothing to attribute it to cannot be compared against anything.
-        return dataclasses.replace(
-            stats,
+        reattached = dataclasses.replace(
+            stats.usage,
             provider=accumulated.provider if accumulated else None,
             model=accumulated.model if accumulated else None,
         )
+        return reattached, stats
 
     async def _await_session_stats(
         self, lines: AsyncIterator[str]
-    ) -> AgentRunUsage | None:
+    ) -> pi_rpc.PiSessionStats | None:
         """Read frames until the stats response arrives, or the stream ends.
 
         Consuming the caller's own iterator from inside its loop body is safe:
@@ -681,10 +851,74 @@ class PiAgentHandler(
         """
         return ["pi"]
 
-    def _build_command(self, settings: _PiRunSettings) -> list[str]:
-        parts = [*self._executable(), "--mode", "rpc", "--no-session"]
+    def _build_command(
+        self, settings: _PiRunSettings, session_id: str | None = None
+    ) -> list[str]:
+        parts: list[str] = [*self._executable(), "--mode", "rpc"]
+        if session_id is not None:
+            parts += ["--session-id", session_id]
+        else:
+            parts += ["--no-session"]
         if settings.model is not None:
             parts += ["--model", settings.model]
         if settings.provider is not None:
             parts += ["--provider", settings.provider]
         return parts
+
+    async def _probe_backend_version(self) -> tuple[str | None, str | None]:
+        try:
+            process = await self.command_runner.run([*self._executable(), "--version"])
+        except (OSError, icommandrunner.CommandNotLaunchableError) as error:
+            return None, f"pi version probe failed: {error}"
+        try:
+            try:
+                await asyncio.wait_for(
+                    process.wait_for_end(), timeout=_VERSION_TIMEOUT_SEC
+                )
+            except TimeoutError:
+                with contextlib.suppress(Exception):
+                    process.terminate()
+                with contextlib.suppress(Exception):
+                    await asyncio.wait_for(
+                        process.wait_for_end(), timeout=_SIGNAL_GRACE_SEC
+                    )
+                if process.is_alive():
+                    with contextlib.suppress(Exception):
+                        process.kill()
+                return None, "pi version probe timed out"
+        except Exception as error:  # noqa: BLE001
+            return None, f"pi version probe failed: {error}"
+        try:
+            if process.get_exit_code() != 0:
+                return None, "pi version probe reported a non-zero exit"
+            output = (process.get_output() or process.get_error_output() or "").strip()
+            if not output:
+                return None, "pi version probe produced no output"
+            return output.splitlines()[0].strip(), None
+        except Exception as error:  # noqa: BLE001
+            return None, f"pi version probe failed: {error}"
+
+    async def _attach_observation(
+        self,
+        result: RunAgentTaskRunResult,
+        state: PiObservationState,
+        capture_session_id: str | None,
+    ) -> RunAgentTaskRunResult:
+        if (
+            capture_session_id is not None
+            and state.session_id is not None
+            and state.session_id != capture_session_id
+        ):
+            state.gaps.append(
+                "pi session id differs from the requested capture session"
+            )
+        native_root = _native_root_for(state.session_file)
+        observation = pi_history.locate_pi_history(state, native_root)
+        version, version_gap = await self._probe_backend_version()
+        gaps = [*observation.gaps]
+        if version_gap is not None:
+            gaps.append(version_gap)
+        observation = dataclasses.replace(
+            observation, backend_version=version, gaps=gaps
+        )
+        return dataclasses.replace(result, observation=observation)

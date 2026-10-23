@@ -4,12 +4,23 @@ import dataclasses
 import enum
 import json
 import math
+import os
 import pathlib
 import tempfile
 import time
 import typing
 
 from fine_agent import backend_support
+from fine_agent.history_types import (
+    AgentBackend,
+    AgentRunObservation,
+    HistoryDiscoveryStatus,
+    NativeHistoryRole,
+    RelatedHistoryStatus,
+    UsageProvenance,
+    UsageScope,
+    UsageSource,
+)
 from fine_agent.run_agent_task_action import (
     AgentRunStatus,
     AgentRunUsage,
@@ -25,11 +36,14 @@ from finecode_extension_api.interfaces import (
     iprojectinfoprovider,
     iuser_messenger,
 )
+from finecode_extension_api.resource_uri import resource_uri_to_path
 
-from fine_agent_codex import codex_stream
+from fine_agent_codex import codex_history, codex_stream
+from fine_agent_codex.codex_history import CodexObservationState
 
 _EXIT_GRACE_SEC = 5.0
 _SIGNAL_GRACE_SEC = 2.0
+_VERSION_TIMEOUT_SEC = 3.0
 
 
 class CodexSandboxMode(enum.StrEnum):
@@ -59,10 +73,57 @@ class _CodexRunSettings:
     settle_timeout_sec: float
 
 
+def _codex_provenance(usage: AgentRunUsage | None) -> UsageProvenance:
+    if usage is None:
+        return UsageProvenance(
+            token_source=UsageSource.UNKNOWN,
+            token_scope=UsageScope.UNKNOWN,
+            cost_source=UsageSource.UNKNOWN,
+            cost_scope=UsageScope.UNKNOWN,
+        )
+    return UsageProvenance(
+        token_source=UsageSource.CODEX_TURN,
+        token_scope=UsageScope.UNKNOWN,
+        cost_source=UsageSource.UNKNOWN,
+        cost_scope=UsageScope.UNKNOWN,
+    )
+
+
+def _unknown_provenance() -> UsageProvenance:
+    return UsageProvenance(
+        token_source=UsageSource.UNKNOWN,
+        token_scope=UsageScope.UNKNOWN,
+        cost_source=UsageSource.UNKNOWN,
+        cost_scope=UsageScope.UNKNOWN,
+    )
+
+
+def _pre_session_observation(gaps: list[str]) -> AgentRunObservation:
+    return AgentRunObservation(
+        backend=AgentBackend.CODEX,
+        backend_version=None,
+        session_id=None,
+        history_root=None,
+        history_status=HistoryDiscoveryStatus.UNAVAILABLE,
+        files=[],
+        related_status=RelatedHistoryStatus.UNAVAILABLE,
+        usage_provenance=_unknown_provenance(),
+        gaps=list(gaps),
+    )
+
+
+def _codex_home() -> pathlib.Path:
+    env_home = os.environ.get("CODEX_HOME")
+    if env_home:
+        return pathlib.Path(env_home)
+    return pathlib.Path.home() / ".codex"
+
+
 @dataclasses.dataclass
 class _CodexRunState:
     last_assistant_text: str = ""
     usage: AgentRunUsage | None = None
+    thread_id: str | None = None
     terminal: (
         typing.Literal[
             codex_stream.CodexEventKind.TURN_COMPLETED,
@@ -100,9 +161,22 @@ class CodexAgentHandler(
     ) -> RunAgentTaskRunResult:
         settings = self._resolve(payload.profile)
         if isinstance(settings, str):
-            return RunAgentTaskRunResult(
+            failed = RunAgentTaskRunResult(
                 status=AgentRunStatus.FAILED, error=settings, duration_sec=0.0
             )
+            if payload.capture_history:
+                observation = _pre_session_observation(
+                    ["no native session was available"]
+                )
+                version, version_gap = await self._probe_backend_version()
+                gaps = [*observation.gaps]
+                if version_gap is not None:
+                    gaps.append(version_gap)
+                observation = dataclasses.replace(
+                    observation, backend_version=version, gaps=gaps
+                )
+                failed = dataclasses.replace(failed, observation=observation)
+            return failed
 
         started = time.monotonic()
         tmpdir = tempfile.TemporaryDirectory()
@@ -116,11 +190,24 @@ class CodexAgentHandler(
                         json.dumps(payload.output_schema), encoding="utf-8"
                     )
                 except OSError as error:
-                    return RunAgentTaskRunResult(
+                    failed = RunAgentTaskRunResult(
                         status=AgentRunStatus.FAILED,
                         error=f"could not write codex schema file: {error}",
                         duration_sec=time.monotonic() - started,
                     )
+                    if payload.capture_history:
+                        observation = _pre_session_observation(
+                            ["no native session was available"]
+                        )
+                        version, version_gap = await self._probe_backend_version()
+                        gaps = [*observation.gaps]
+                        if version_gap is not None:
+                            gaps.append(version_gap)
+                        observation = dataclasses.replace(
+                            observation, backend_version=version, gaps=gaps
+                        )
+                        failed = dataclasses.replace(failed, observation=observation)
+                    return failed
             command = self._build_command(settings, answer_path, schema_path)
             project_dir = self.project_info_provider.get_current_project_dir_path()
             self.logger.debug(f"Starting codex: {command!r} in {project_dir}")
@@ -132,11 +219,24 @@ class CodexAgentHandler(
                     new_process_group=True,
                 )
             except (OSError, icommandrunner.CommandNotLaunchableError) as error:
-                return RunAgentTaskRunResult(
+                failed = RunAgentTaskRunResult(
                     status=AgentRunStatus.FAILED,
                     error=backend_support.spawn_error(command[0], error),
                     duration_sec=time.monotonic() - started,
                 )
+                if payload.capture_history:
+                    observation = _pre_session_observation(
+                        ["no native session was available"]
+                    )
+                    version, version_gap = await self._probe_backend_version()
+                    gaps = [*observation.gaps]
+                    if version_gap is not None:
+                        gaps.append(version_gap)
+                    observation = dataclasses.replace(
+                        observation, backend_version=version, gaps=gaps
+                    )
+                    failed = dataclasses.replace(failed, observation=observation)
+                return failed
 
             state = _CodexRunState()
             result: RunAgentTaskRunResult | None = None
@@ -157,6 +257,26 @@ class CodexAgentHandler(
                         )
 
             result.duration_sec = time.monotonic() - started
+            if payload.capture_history:
+                try:
+                    result = await self._attach_observation(result, state)
+                except Exception as error:  # noqa: BLE001
+                    gaps = [
+                        f"observation failed: {error}",
+                    ]
+                    self.logger.debug(f"codex observation failed: {error}")
+                    failed_obs = AgentRunObservation(
+                        backend=AgentBackend.CODEX,
+                        backend_version=None,
+                        session_id=state.thread_id,
+                        history_root=None,
+                        history_status=HistoryDiscoveryStatus.FAILED,
+                        files=[],
+                        related_status=RelatedHistoryStatus.UNAVAILABLE,
+                        usage_provenance=_codex_provenance(state.usage),
+                        gaps=gaps,
+                    )
+                    result = dataclasses.replace(result, observation=failed_obs)
             return result
         finally:
             tmpdir.cleanup()
@@ -210,6 +330,7 @@ class CodexAgentHandler(
 
             if event.kind is codex_stream.CodexEventKind.THREAD_STARTED:
                 if event.thread_id is not None:
+                    state.thread_id = event.thread_id
                     self.logger.info(f"codex thread {event.thread_id}")
                 continue
 
@@ -430,3 +551,78 @@ class CodexAgentHandler(
             parts += ["--output-schema", str(schema_path)]
         parts += ["-"]
         return parts
+
+    async def _probe_backend_version(self) -> tuple[str | None, str | None]:
+        try:
+            process = await self.command_runner.run([*self._executable(), "--version"])
+        except (OSError, icommandrunner.CommandNotLaunchableError) as error:
+            return None, f"codex version probe failed: {error}"
+        try:
+            await asyncio.wait_for(process.wait_for_end(), timeout=_VERSION_TIMEOUT_SEC)
+        except TimeoutError:
+            with contextlib.suppress(Exception):
+                process.terminate()
+            with contextlib.suppress(Exception):
+                await asyncio.wait_for(
+                    process.wait_for_end(), timeout=_SIGNAL_GRACE_SEC
+                )
+            if process.is_alive():
+                with contextlib.suppress(Exception):
+                    process.kill()
+            return None, "codex version probe timed out"
+        except Exception as error:  # noqa: BLE001
+            return None, f"codex version probe failed: {error}"
+        try:
+            if process.get_exit_code() != 0:
+                return None, "codex version probe reported a non-zero exit"
+            output = (process.get_output() or process.get_error_output() or "").strip()
+            if not output:
+                return None, "codex version probe produced no output"
+            return output.splitlines()[0].strip(), None
+        except Exception as error:  # noqa: BLE001
+            return None, f"codex version probe failed: {error}"
+
+    async def _attach_observation(
+        self,
+        result: RunAgentTaskRunResult,
+        state: _CodexRunState,
+    ) -> RunAgentTaskRunResult:
+        obs_state = CodexObservationState(
+            thread_id=state.thread_id,
+            usage_provenance=_codex_provenance(state.usage),
+            gaps=[],
+        )
+        observation = codex_history.locate_codex_history(obs_state, _codex_home())
+        if observation.backend_version is None:
+            version, version_gap = await self._probe_backend_version()
+            gaps = [*observation.gaps]
+            if version_gap is not None:
+                gaps.append(version_gap)
+            observation = dataclasses.replace(
+                observation, backend_version=version, gaps=gaps
+            )
+        result = dataclasses.replace(result, observation=observation)
+        main = next(
+            (f for f in observation.files if f.role is NativeHistoryRole.MAIN), None
+        )
+        try:
+            main_path = resource_uri_to_path(main.source_uri) if main else None
+        except ValueError:
+            main_path = None
+        if main_path is None:
+            return result
+        facts = await asyncio.to_thread(codex_history.read_rollout_facts, main_path)
+        # The `--json` stream names neither the model nor the turns; the
+        # rollout does, so a captured run reports them from there.
+        usage = result.usage
+        if usage is not None:
+            usage = dataclasses.replace(
+                usage,
+                provider=usage.provider if usage.provider is not None else facts.provider,
+                model=usage.model if usage.model is not None else facts.model,
+            )
+        return dataclasses.replace(
+            result,
+            usage=usage,
+            turns=result.turns if result.turns is not None else facts.turns,
+        )

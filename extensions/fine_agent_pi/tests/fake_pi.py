@@ -43,7 +43,41 @@ def _read_frame() -> dict | None:
 
 def main() -> int:
     scenario = json.loads(sys.argv[1])
+    rest = sys.argv[2:]
+    if "--version" in rest:
+        sys.stdout.write(str(scenario.get("version", "1.3.0")) + "\n")
+        sys.stdout.flush()
+        return 0
     exit_code = scenario.get("exit_code", 0)
+    session_id: str | None = None
+    if "--session-id" in rest:
+        idx = rest.index("--session-id")
+        if idx + 1 < len(rest):
+            session_id = rest[idx + 1]
+    session_dir = scenario.get("session_dir") or os.environ.get(
+        "PI_CODING_AGENT_SESSION_DIR"
+    )
+    session_file: str | None = None
+    if session_id is not None and session_dir:
+        try:
+            os.makedirs(session_dir, exist_ok=True)
+            timestamp = time.strftime("%Y-%m-%dT%H-%M-%S", time.gmtime())
+            session_file = os.path.join(session_dir, f"{timestamp}_{session_id}.jsonl")
+            header = {
+                "type": "session",
+                "version": 3,
+                "id": session_id,
+                "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                "cwd": os.getcwd(),
+            }
+            lines = [json.dumps(header) + "\n"]
+            lines += [
+                json.dumps(entry) + "\n" for entry in scenario.get("native_entries", [])
+            ]
+            with open(session_file, "w", encoding="utf-8") as handle:
+                handle.writelines(lines)
+        except OSError:
+            session_file = None
 
     # The driver-side facts (argv, prompt) are written on exit rather than when
     # they are observed, and only when a scenario asks for them, so the records
@@ -69,6 +103,24 @@ def main() -> int:
                 return 90
             if scenario.get("record_driver"):
                 driver_records.append({"prompt": frame["message"]})
+            if session_file is not None:
+                try:
+                    with open(session_file, "a", encoding="utf-8") as handle:
+                        handle.write(
+                            json.dumps(
+                                {
+                                    "type": "message",
+                                    "id": "user-1",
+                                    "message": {
+                                        "role": "user",
+                                        "content": frame.get("message", ""),
+                                    },
+                                }
+                            )
+                            + "\n"
+                        )
+                except OSError:
+                    pass
 
         elif action == "emit":
             _emit(step["frame"])
@@ -105,12 +157,17 @@ def main() -> int:
             if frame is None or frame.get("type") != "get_session_stats":
                 sys.stderr.write(f"expected a stats request, got {frame}\n")
                 return 94
+            data = step.get("data")
+            if isinstance(data, dict) and session_file is not None:
+                data = dict(data)
+                data["sessionId"] = session_id
+                data["sessionFile"] = session_file
             _emit(
                 {
                     "type": "response",
                     "command": "get_session_stats",
                     "success": step.get("success", True),
-                    "data": step.get("data"),
+                    "data": data,
                 }
             )
 
