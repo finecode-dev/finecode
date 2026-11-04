@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import dataclasses
 
 from fine_dist_artifacts.list_published_artifacts_action import (
@@ -189,14 +190,19 @@ class PublishReleaseArtifactHandler(
                 ),
                 meta=run_context.meta,
             )
+        except asyncio.CancelledError:
+            raise
+        except iprojectactionrunner.ActionRunCancelled:
+            raise
         except Exception as exception:
-            # Failure before any registry was dispatched to. Name the resolved
-            # registries in the message, but record no per-registry outcomes:
-            # nothing was attempted against them, so there is nothing to report.
+            # The exception can come before any upload or after some registries
+            # accepted theirs (e.g. during verification), and it carries no
+            # per-registry results. Record none rather than fabricate them, and
+            # say the outcome is unknown instead of claiming nothing was uploaded.
             state.error = (
-                f"Publish failed for {payload.package_name} {payload.version} "
-                f"before reaching any registry ({', '.join(state.registries)}): "
-                f"{exception}"
+                f"Publish failed for {payload.package_name} {payload.version}; "
+                f"per-registry outcome unknown, registries may have accepted "
+                f"the upload ({', '.join(state.registries)}): {exception}"
             )
             self.logger.error(state.error)
             return

@@ -3,6 +3,7 @@ import dataclasses
 from fine_dist_artifacts import get_dist_artifact_version_action
 from finecode_extension_api import code_action
 from finecode_extension_api.interfaces import ilogger
+from finecode_extension_api.resource_uri import resource_uri_to_path
 
 
 @dataclasses.dataclass
@@ -28,7 +29,7 @@ class GetDistArtifactVersionPyHandler(
         payload: get_dist_artifact_version_action.GetDistArtifactVersionRunPayload,
         run_context: get_dist_artifact_version_action.GetDistArtifactVersionRunContext,
     ) -> get_dist_artifact_version_action.GetDistArtifactVersionRunResult:
-        filename = payload.dist_artifact_path.name
+        filename = resource_uri_to_path(payload.dist_artifact_path).name
         version = self._extract_version_from_filename(filename)
 
         if version is None:

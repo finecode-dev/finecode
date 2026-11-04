@@ -220,7 +220,11 @@ def build_runner(spec: PackageSpec) -> FakeProjectActionRunner:
     if spec.publish_raises:
         runner.set_result(
             PUBLISH_AND_VERIFY_ARTIFACT_ACTION,
-            _Raises(RuntimeError("publish_and_verify_artifact failed before dispatch")),
+            _Raises(
+                RuntimeError(
+                    "VerifyArtifactPublishedToRegistryAction has no handlers"
+                )
+            ),
         )
     else:
         runner.set_result(
@@ -489,10 +493,10 @@ async def test_build_failure_is_reported_without_publishing_or_tagging(
 
 
 @pytest.mark.asyncio
-async def test_pre_dispatch_publish_failure_names_registries_without_fabricating_outcomes(
+async def test_publish_and_verify_exception_does_not_claim_no_registry_was_reached(
     tmp_path: Path,
 ) -> None:
-    """When publish-and-verify raises before reaching any registry, the package is FAILED with an error naming the registries that were configured — but carries no per-registry results, since nothing was attempted against them."""
+    """When publish-and-verify raises, the package is FAILED with an error naming the configured registries and the cause, without claiming no registry was reached — the exception may come after uploads were accepted, so the per-registry outcome is unknown and none is fabricated."""
     spec = PackageSpec(registries=["A", "B"], publish_raises=True)
     runner = build_runner(spec)
     result = await run_release(make_payload(spec), runner, tmp_path)
@@ -502,6 +506,9 @@ async def test_pre_dispatch_publish_failure_names_registries_without_fabricating
     assert result.registries == []
     assert result.error is not None
     assert "A" in result.error and "B" in result.error
+    assert "VerifyArtifactPublishedToRegistryAction has no handlers" in result.error
+    assert "before reaching" not in result.error
+    assert "may have accepted" in result.error
     assert not runner.was_invoked(CREATE_GIT_TAG_ACTION)
 
 

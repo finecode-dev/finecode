@@ -4,6 +4,9 @@ import dataclasses
 from pathlib import Path
 
 import pytest
+from fine_dep_graph.get_package_transitive_deps_action import (
+    GetPackageTransitiveDepsRunPayload,
+)
 from finecode_extension_api import code_action
 from finecode_extension_api.interfaces import (
     ilogger,
@@ -37,8 +40,8 @@ DETECT_DEPENDENCY_CYCLES_ACTION = "DetectWorkspaceDependencyCyclesAction"
 RELEASE_PACKAGE_ACTION = "ReleasePackageAction"
 PUSH_GIT_REFS_ACTION = "PushGitRefsAction"
 
-# Placeholder target for the two graph-wide sub-actions (seed / detect-cycles),
-# which aren't a per-candidate fan-out like the others.
+# Placeholder target for the workspace-scoped dep_graph sub-actions (seed,
+# detect-cycles, transitive deps), which run in the workspace root.
 WORKSPACE_ROOT_PATH = "workspace_root"
 
 
@@ -133,7 +136,9 @@ class FakeActionRunner:
     ``(sub-action name, project path)`` pair set up via ``set_result``. A
     ``project_paths=None`` call broadcasts to every project path registered
     for that sub-action name, mirroring ``run_action_in_projects``'s own
-    "None = all projects" contract.
+    "None = all declaring projects" contract. Workspace-scoped sub-actions are
+    registered only at ``WORKSPACE_ROOT_PATH``, which models the root-only
+    meaning of ``None`` for them.
     """
 
     def __init__(self) -> None:
@@ -294,11 +299,6 @@ def build_runner(
             FakeDependencyInfoResult(package_name=pkg.package_name),
             project_path=pkg.project_path,
         )
-        runner.set_result(
-            GET_PACKAGE_TRANSITIVE_DEPS_ACTION,
-            FakeTransitiveDepsResult(dependency_names=pkg.depends_on),
-            project_path=pkg.project_path,
-        )
         if pkg.release_raises:
             runner.set_result(
                 RELEASE_PACKAGE_ACTION,
@@ -312,6 +312,20 @@ def build_runner(
                 project_path=pkg.project_path,
             )
 
+    depends_on_by_name = {pkg.package_name: pkg.depends_on for pkg in packages}
+
+    def _transitive_deps(
+        payload: GetPackageTransitiveDepsRunPayload,
+    ) -> FakeTransitiveDepsResult:
+        return FakeTransitiveDepsResult(
+            dependency_names=depends_on_by_name[payload.package_name]
+        )
+
+    runner.set_result(
+        GET_PACKAGE_TRANSITIVE_DEPS_ACTION,
+        _transitive_deps,
+        project_path=WORKSPACE_ROOT_PATH,
+    )
     runner.set_result(
         SEED_DEPENDENCY_GRAPH_ACTION, object(), project_path=WORKSPACE_ROOT_PATH
     )

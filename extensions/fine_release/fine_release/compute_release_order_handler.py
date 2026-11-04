@@ -23,7 +23,6 @@ from fine_release.release_workspace_packages_action import (
     ReleaseWorkspacePackagesRunContext,
     ReleaseWorkspacePackagesRunPayload,
     ReleaseWorkspacePackagesRunResult,
-    _Candidate,
 )
 
 
@@ -73,29 +72,22 @@ class ComputeReleaseOrderHandler(
                         f"Dependency cycle detected among release candidates: {cycle}"
                     )
 
-        async def _get_transitive_deps(
-            name: str, candidate: _Candidate
-        ) -> tuple[str, set[str]]:
+        async def _get_transitive_deps(name: str) -> tuple[str, set[str]]:
             transitive_deps_result = (
                 await self.workspace_action_runner.run_action_in_projects(
                     action_type=GetPackageTransitiveDepsAction,
                     payload=GetPackageTransitiveDepsRunPayload(package_name=name),
                     meta=run_context.meta,
-                    project_paths=[candidate.project_path],
+                    project_paths=None,
                     concurrently=True,
                 )
             )
-            dependency_names = transitive_deps_result[
-                candidate.project_path
-            ].dependency_names
-            return name, candidate_names & set(dependency_names)
+            (result,) = transitive_deps_result.values()
+            return name, candidate_names & set(result.dependency_names)
 
         dependencies_by_name: dict[str, set[str]] = dict(
             await asyncio.gather(
-                *(
-                    _get_transitive_deps(name, candidate)
-                    for name, candidate in state.candidates_by_name.items()
-                )
+                *(_get_transitive_deps(name) for name in state.candidates_by_name)
             )
         )
 

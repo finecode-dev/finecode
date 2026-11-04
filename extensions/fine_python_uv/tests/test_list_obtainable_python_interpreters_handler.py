@@ -11,9 +11,7 @@ from fine_python_lang.list_obtainable_python_interpreters_action import (
     ListObtainablePythonInterpretersRunPayload,
 )
 from finecode_extension_api.interfaces import icommandrunner, ilogger
-from finecode_extension_runner._services.run_action import (
-    ActionFailedException as ActionRunFailed,
-)
+from finecode_extension_api.interfaces.iprojectactionrunner import ActionRunFailed
 from finecode_extension_runner.testing import NoOpLogger, run_handler
 
 from fine_python_uv.list_obtainable_python_interpreters_handler import (

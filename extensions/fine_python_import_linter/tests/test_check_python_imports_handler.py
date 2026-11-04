@@ -10,8 +10,8 @@ from fine_check_imports.check_imports_action import (
 )
 from fine_inspect_code.diagnostic_types import DiagnosticSeverity, Position, Range
 from fine_python_lang.check_python_imports_action import CheckPythonImportsAction
+from finecode_extension_api.interfaces import iprojectactionrunner
 from finecode_extension_api.resource_uri import path_to_resource_uri
-from finecode_extension_runner._services import run_action as run_action_service
 from finecode_extension_runner.testing import run_handler
 
 from fine_python_import_linter.check_python_imports_handler import (
@@ -224,6 +224,69 @@ async def test_no_config_no_op(tmp_path: pathlib.Path) -> None:
     assert result.messages == {}
 
 
+@pytest.mark.parametrize(
+    ("contract", "module", "violation"),
+    [
+        (
+            "type = layers\nlayers =\n    myapp.high\n    myapp.low\n",
+            "low",
+            "import myapp.high\n",
+        ),
+        (
+            (
+                "type = forbidden\nsource_modules =\n    myapp.high\n"
+                "forbidden_modules =\n    sys\nallow_indirect_imports = True\n"
+            ),
+            "high",
+            "import sys\n",
+        ),
+        (
+            "type = acyclic_siblings\nancestors =\n    myapp\n",
+            "low",
+            "import myapp.high\n",
+        ),
+    ],
+    ids=["layers", "external-forbidden", "acyclic-siblings"],
+)
+@pytest.mark.parametrize("broken", [False, True], ids=["kept", "broken"])
+@pytest.mark.parametrize("source_dir", [".", "src"], ids=["flat", "src"])
+async def test_ini_contract_discovery(
+    tmp_path: pathlib.Path,
+    contract: str,
+    module: str,
+    violation: str,
+    broken: bool,
+    source_dir: str,
+) -> None:
+    _write_files(
+        tmp_path,
+        {
+            f"{source_dir}/myapp/__init__.py": "",
+            f"{source_dir}/myapp/high.py": "import myapp.low\n",
+            f"{source_dir}/myapp/low.py": "",
+            ".importlinter": (
+                "[importlinter]\nroot_packages =\n    myapp\n"
+                "include_external_packages = True\n\n"
+                "[importlinter:contract:boundary]\nname = boundary\n" + contract
+            ),
+        },
+    )
+    if broken:
+        path = tmp_path / source_dir / "myapp" / f"{module}.py"
+        _ = path.write_text(path.read_text() + violation)
+
+    result = await _run(tmp_path)
+
+    diagnostics = result.messages[_config_uri(tmp_path)]
+    if broken:
+        assert len(diagnostics) == 1
+        assert diagnostics[0].code == "boundary"
+        assert diagnostics[0].source == "import-linter"
+        assert diagnostics[0].severity == DiagnosticSeverity.ERROR
+    else:
+        assert diagnostics == []
+
+
 async def test_missing_src_artifact_def_path_raises(tmp_path: pathlib.Path) -> None:
     payload = CheckImportsRunPayload(src_artifact_def_path=None)
 
@@ -231,7 +294,7 @@ async def test_missing_src_artifact_def_path_raises(tmp_path: pathlib.Path) -> N
     # failures are reported with a generic message (the specific handler error
     # goes to ER logs, not into the exception text) — see the raise site in
     # finecode_extension_runner/_services/run_action.py for the concurrent path.
-    with pytest.raises(run_action_service.ActionFailedException) as exc_info:
+    with pytest.raises(iprojectactionrunner.ActionRunFailed) as exc_info:
         await _run(tmp_path, handler_config={}, payload=payload)
 
     assert "CheckPythonImportsAction" in exc_info.value.message
@@ -264,7 +327,7 @@ async def test_invalid_contract_config_raises(tmp_path: pathlib.Path) -> None:
 
     # See the comment in test_missing_src_artifact_def_path_raises: concurrent-mode
     # failures carry a generic message, not the handler's specific error text.
-    with pytest.raises(run_action_service.ActionFailedException) as exc_info:
+    with pytest.raises(iprojectactionrunner.ActionRunFailed) as exc_info:
         await _run(tmp_path, handler_config=handler_config)
 
     assert "CheckPythonImportsAction" in exc_info.value.message

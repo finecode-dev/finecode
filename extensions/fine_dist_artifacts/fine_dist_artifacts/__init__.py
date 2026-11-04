@@ -18,6 +18,9 @@ from fine_dist_artifacts.publish_artifact_to_registry_action import (
 from fine_dist_artifacts.verify_artifact_published_to_registry_action import (
     VerifyArtifactPublishedToRegistryAction,
 )
+from fine_dist_artifacts.verify_artifact_published_to_registry_handler import (
+    VerifyArtifactPublishedToRegistryHandler,
+)
 
 __all__ = [
     "GetDistArtifactVersionAction",
@@ -28,4 +31,5 @@ __all__ = [
     "PublishArtifactHandler",
     "PublishArtifactToRegistryAction",
     "VerifyArtifactPublishedToRegistryAction",
+    "VerifyArtifactPublishedToRegistryHandler",
 ]

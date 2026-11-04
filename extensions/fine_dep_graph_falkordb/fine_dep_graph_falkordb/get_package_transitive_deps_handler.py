@@ -21,7 +21,7 @@ class GetPackageTransitiveDepsHandler(
     async def run(
         self,
         payload: GetPackageTransitiveDepsRunPayload,
-        context: GetPackageTransitiveDepsRunContext,
+        run_context: GetPackageTransitiveDepsRunContext,
     ) -> GetPackageTransitiveDepsRunResult:
         graph = self.falkordb_client_provider.get_graph()
         result = graph.query(

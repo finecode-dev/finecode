@@ -14,14 +14,9 @@ from fine_python_lang.sync_python_interpreters_action import (
 from finecode_extension_api import code_action
 from finecode_extension_api.interfaces.ifileeditor import IFileEditor
 from finecode_extension_api.interfaces.ilogger import ILogger
+from finecode_extension_api.interfaces.iprojectactionrunner import ActionRunFailed
 from finecode_extension_api.interfaces.iprojectinfoprovider import (
     IProjectInfoProvider,
-)
-
-# the ER wraps a handler's code_action.ActionFailedException in its own exception type
-# before it reaches the caller, so that is what a session-level failure asserts on
-from finecode_extension_runner._services.run_action import (
-    ActionFailedException as ActionRunFailed,
 )
 from finecode_extension_runner.testing import InMemoryFileEditor, handler_test_session
 

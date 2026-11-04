@@ -18,7 +18,9 @@ class IWorkspaceActionRunner(service.Service, typing.Protocol):
     """Fan-out an action across all workspace projects that declare it.
 
     project_paths=None means all projects in the workspace that declare
-    the action.
+    the action — or, for a workspace-scoped action, the workspace root only,
+    since a workspace action runs once and does its own per-project fan-out.
+    Explicit project_paths are honoured as given for either scope.
     """
 
     async def run_action_in_projects(

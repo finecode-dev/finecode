@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import enum
 import typing
 
 from finecode_extension_api import service
 
-__all__ = ["IDataclassCodec", "OutputSchemaError", "StructureError"]
+__all__ = ["IDataclassCodec", "OutputSchemaError", "StructureError", "UnknownFields"]
 
 T = typing.TypeVar("T")
 
@@ -32,15 +33,27 @@ class OutputSchemaError(TypeError):
     """
 
 
+class UnknownFields(enum.Enum):
+    """What ``structure`` does with a key the target dataclass does not declare."""
+
+    FORBID = enum.auto()
+    IGNORE = enum.auto()
+
+
 class IDataclassCodec(service.Service, typing.Protocol):
-    """Turn a dataclass into a JSON Schema, and model output back into one.
+    """Turn a dataclass into a JSON Schema, and decoded JSON back into one.
 
     The two directions are deliberately asymmetric. ``json_schema`` is complete
     or it raises: a field it cannot describe would be presented to the model as
     no constraint at all, which silently produces output that cannot be
-    structured. ``structure`` is strict in the same spirit: a key the dataclass
-    does not declare is an error, because model output is not a cross-env
-    payload and tolerating extra keys would hide a model inventing fields.
+    structured. ``structure`` is strict by default in the same spirit: a key
+    the dataclass does not declare is an error, because model output is not a
+    cross-env payload and tolerating extra keys would hide a model inventing
+    fields. ``UnknownFields.IGNORE`` is for decoded external JSON whose
+    producer adds metadata the caller does not read: it drops only undeclared
+    keys, at every dataclass object level including list items, while required
+    fields and declared types stay validated. ``json_schema`` is unaffected by
+    the option.
 
     Use enums, not ``typing.Literal``, for a closed set of values: output mode
     has no ``Literal`` mapping and says so where it fails.
@@ -61,14 +74,23 @@ class IDataclassCodec(service.Service, typing.Protocol):
         """
         ...
 
-    def structure(self, data: typing.Any, cls: type[T]) -> T:
+    def structure(
+        self,
+        data: typing.Any,
+        cls: type[T],
+        *,
+        unknown_fields: UnknownFields = UnknownFields.FORBID,
+    ) -> T:
         """Structure decoded JSON *data* into an instance of *cls*.
 
         Args:
-            data: A decoded JSON value, as it came from the model. Typed
-                ``Any`` because the public API has no JSON value type, and the
-                implementation's is deliberately internal.
+            data: A decoded JSON value. Typed ``Any`` because the public API
+                has no JSON value type, and the implementation's is
+                deliberately internal.
             cls: The dataclass to build.
+            unknown_fields: ``FORBID`` (the default) rejects a key the
+                dataclass does not declare; ``IGNORE`` drops such keys at
+                every dataclass object level.
 
         Returns:
             An instance of *cls*, with enum fields as real enum members.

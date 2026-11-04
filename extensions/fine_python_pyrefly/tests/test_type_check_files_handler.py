@@ -34,10 +34,8 @@ from finecode_extension_api.interfaces import (
     isrcartifactfileclassifier,
     iworkspaceinfoprovider,
 )
+from finecode_extension_api.interfaces.iprojectactionrunner import ActionRunFailed
 from finecode_extension_api.resource_uri import path_to_resource_uri
-from finecode_extension_runner._services.run_action import (
-    ActionFailedException as ActionRunFailed,
-)
 from finecode_extension_runner.testing import (
     NoOpLogger,
     Session,

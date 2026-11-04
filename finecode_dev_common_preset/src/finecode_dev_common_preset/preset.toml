@@ -102,8 +102,11 @@ handlers = [
 
 [tool.finecode.action.verify_artifact_published_to_registry]
 source = "fine_dist_artifacts.VerifyArtifactPublishedToRegistryAction"
-# TODO: install, try to import etc
-handlers = []
+handlers = [
+  { name = "verify_artifact_published_to_registry", source = "fine_dist_artifacts.VerifyArtifactPublishedToRegistryHandler", env = "dev_no_runtime", dependencies = [
+    "fine_dist_artifacts~=0.1.0",
+  ] },
+]
 
 [tool.finecode.action.publish_and_verify_artifact]
 source = "finecode_dev_extensions.publish_and_verify_artifact_action.PublishAndVerifyArtifactAction"
@@ -114,9 +117,10 @@ handlers = [
 ]
 
 [tool.finecode.action.run_agent_task]
+handlers_mode = "replace"
 handlers = [
-  { name = "pi_agent", source = "fine_agent_pi.PiAgentHandler", env = "dev_no_runtime", dependencies = [
-    "fine_agent_pi~=0.1.0",
+  { name = "codex_agent", source = "fine_agent_codex.CodexAgentHandler", env = "dev_no_runtime", dependencies = [
+    "fine_agent_codex~=0.1.0",
   ] },
 ]
 

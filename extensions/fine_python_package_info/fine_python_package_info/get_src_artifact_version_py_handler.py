@@ -3,6 +3,7 @@ import dataclasses
 from fine_src_artifacts import get_src_artifact_version_action
 from finecode_extension_api import code_action
 from finecode_extension_api.interfaces import ilogger, iprojectinfoprovider
+from finecode_extension_api.resource_uri import resource_uri_to_path
 
 
 @dataclasses.dataclass
@@ -31,11 +32,12 @@ class GetSrcArtifactVersionPyHandler(
         run_context: get_src_artifact_version_action.GetSrcArtifactVersionRunContext,
     ) -> get_src_artifact_version_action.GetSrcArtifactVersionRunResult:
         # Use current project if src_artifact_def_path is not provided
-        src_artifact_def_path = payload.src_artifact_def_path
-        if src_artifact_def_path is None:
+        if payload.src_artifact_def_path is None:
             src_artifact_def_path = (
                 self.project_info_provider.get_current_project_def_path()
             )
+        else:
+            src_artifact_def_path = resource_uri_to_path(payload.src_artifact_def_path)
 
         src_artifact_raw_def = await self.project_info_provider.get_project_raw_config(
             project_def_path=src_artifact_def_path

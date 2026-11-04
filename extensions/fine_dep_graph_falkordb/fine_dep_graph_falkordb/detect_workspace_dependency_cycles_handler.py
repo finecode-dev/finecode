@@ -21,7 +21,7 @@ class DetectWorkspaceDependencyCyclesHandler(
     async def run(
         self,
         payload: DetectWorkspaceDependencyCyclesRunPayload,
-        context: DetectWorkspaceDependencyCyclesRunContext,
+        run_context: DetectWorkspaceDependencyCyclesRunContext,
     ) -> DetectWorkspaceDependencyCyclesRunResult:
         graph = self.falkordb_client_provider.get_graph()
         result = graph.query(

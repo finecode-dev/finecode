@@ -17,7 +17,6 @@ from finecode_extension_api.resource_uri import (
     path_to_resource_uri,
     resource_uri_to_path,
 )
-from finecode_extension_runner._services import run_action as run_action_service
 from finecode_extension_runner.testing import NoOpLogger, run_handler
 
 from fine_python_uv.create_env_handler import UvCreateEnvHandler
@@ -336,7 +335,7 @@ async def test_create_dump_failure_propagates_and_removes_the_temp_dir(
         env=_env_info(tmp_path), recreate=False
     )
 
-    with pytest.raises(run_action_service.ActionFailedException) as exc_info:
+    with pytest.raises(iprojectactionrunner.ActionRunFailed) as exc_info:
         await run_handler(
             UvCreateEnvHandler,
             payload,

@@ -7,6 +7,7 @@ from finecode_extension_api.resource_uri import ResourceUri
 
 @dataclasses.dataclass
 class VerifyArtifactPublishedToRegistryRunPayload(code_action.RunActionPayload):
+    src_artifact_def_path: ResourceUri
     dist_artifact_paths: list[ResourceUri]
     registry_name: str
     version: str

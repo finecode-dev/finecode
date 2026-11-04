@@ -10,12 +10,17 @@ from __future__ import annotations
 
 import dataclasses
 import enum
+import pathlib
 import typing
 
+import cattrs
 import pytest
 from finecode_extension_api.interfaces import idataclasscodec
+from finecode_extension_api.interfaces.idataclasscodec import IDataclassCodec
 
+from finecode_extension_runner._converter import payload_converter
 from finecode_extension_runner.impls.dataclass_codec import DataclassCodec
+from finecode_extension_runner.testing import handler_test_session
 
 
 class _TaskStatus(enum.StrEnum):
@@ -239,3 +244,265 @@ def test_structure_rejects_scalar_for_list() -> None:
 
     assert "expected list" in exc_info.value.message
     assert "$.deviations" in exc_info.value.message
+
+
+@dataclasses.dataclass
+class _Inner:
+    level: int
+    flag: bool
+
+
+@dataclasses.dataclass
+class _Outer:
+    inner: _Inner
+    tasks: list[_TaskOutcome]
+    label: str
+
+
+def _outer_body_with_extras() -> dict:
+    return {
+        "inner": {"level": 1, "flag": True, "extra": 1},
+        "tasks": [{"number": 1, "title": "t", "status": "done", "extra": 2}],
+        "label": "x",
+        "extra": 0,
+    }
+
+
+def test_structure_explicit_forbid_matches_default() -> None:
+    """An explicit opt-out must reject exactly like the default call.
+
+    Callers that spell out the default policy rely on it meaning strict; if it
+    silently tolerated extras, a report with invented fields would pass the
+    check meant to catch it.
+    """
+    bodies: list[dict[str, object]] = [
+        {"tasks": [], "deviations": [], "extra": 1},
+        {
+            "tasks": [{"number": 1, "title": "t", "status": "done", "extra": 2}],
+            "deviations": [],
+        },
+    ]
+    for body in bodies:
+        with pytest.raises(idataclasscodec.StructureError) as exc_info:
+            DataclassCodec().structure(
+                body,
+                _Report,
+                unknown_fields=idataclasscodec.UnknownFields.FORBID,
+            )
+        assert "extra fields found" in exc_info.value.message
+
+
+def test_ignore_drops_unknown_fields_at_every_level() -> None:
+    """Opt-in tolerance must drop undeclared keys wherever they appear.
+
+    External JSON producers add root and per-item metadata the caller never
+    reads; rejecting it would fail listings that carry exactly the files being
+    asked for.
+    """
+    outer = DataclassCodec().structure(
+        _outer_body_with_extras(),
+        _Outer,
+        unknown_fields=idataclasscodec.UnknownFields.IGNORE,
+    )
+
+    assert outer.inner.level == 1
+    assert outer.inner.flag is True
+    assert outer.tasks[0].status is _TaskStatus.DONE
+    assert outer.label == "x"
+
+
+@pytest.mark.parametrize(
+    ("body", "path"),
+    [
+        (
+            {
+                "inner": {"level": 1, "flag": True},
+                "tasks": [],
+                "extra": 0,
+            },
+            "$.label",
+        ),
+        (
+            {
+                "inner": {"level": True, "flag": True, "extra": 1},
+                "tasks": [],
+                "label": "x",
+                "extra": 0,
+            },
+            "$.inner.level",
+        ),
+        (
+            {
+                "inner": {"level": 1, "flag": 1, "extra": 1},
+                "tasks": [],
+                "label": "x",
+                "extra": 0,
+            },
+            "$.inner.flag",
+        ),
+        (
+            {
+                "inner": {"level": 1, "flag": True},
+                "tasks": [],
+                "label": 1,
+                "extra": 0,
+            },
+            "$.label",
+        ),
+        (
+            {
+                "inner": {"level": 1, "flag": True},
+                "tasks": [{"number": 1, "title": "t", "status": "nope"}],
+                "label": "x",
+                "extra": 0,
+            },
+            "$.tasks",
+        ),
+        (
+            {
+                "inner": {"level": 1, "flag": True},
+                "tasks": "x",
+                "label": "x",
+                "extra": 0,
+            },
+            "$.tasks",
+        ),
+    ],
+)
+def test_ignore_still_rejects_invalid_declared_fields(body: dict, path: str) -> None:
+    """Tolerance must not weaken validation of fields the type declares.
+
+    Dropping unknown keys is only safe while a wrong-typed declared field still
+    fails; otherwise a corrupt listing entry would structure into a value the
+    caller trusts.
+    """
+    with pytest.raises(idataclasscodec.StructureError) as exc_info:
+        DataclassCodec().structure(
+            body, _Outer, unknown_fields=idataclasscodec.UnknownFields.IGNORE
+        )
+
+    assert path in exc_info.value.message
+    assert "extra fields found" not in exc_info.value.message
+
+
+def test_ignore_on_report_returns_real_enum_members() -> None:
+    """Tolerant structuring must still return enum members, not raw values.
+
+    Callers compare the result against enum members; a string where a member
+    belongs silently inverts that comparison.
+    """
+    report = DataclassCodec().structure(
+        {
+            "tasks": [{"number": 1, "title": "t", "status": "done", "extra": 2}],
+            "deviations": [],
+            "extra": 1,
+        },
+        _Report,
+        unknown_fields=idataclasscodec.UnknownFields.IGNORE,
+    )
+
+    assert report.tasks[0].status is _TaskStatus.DONE
+
+
+def test_json_schema_unchanged_by_tolerant_structuring() -> None:
+    """A tolerant call must not change the schema the model is asked to satisfy.
+
+    The schema is the contract handed to the model; if structuring rewrote it,
+    later runs would constrain the model differently depending on call history.
+    """
+    before = DataclassCodec().json_schema(_Report)
+    DataclassCodec().structure(
+        {"tasks": [], "deviations": [], "extra": 1},
+        _Report,
+        unknown_fields=idataclasscodec.UnknownFields.IGNORE,
+    )
+    after = DataclassCodec().json_schema(_Report)
+
+    assert before == after
+    with pytest.raises(idataclasscodec.OutputSchemaError):
+        DataclassCodec().json_schema(_BadDict)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("order", [["F", "I", "F"], ["I", "F", "I"]])
+async def test_policies_do_not_leak_through_one_injected_codec(
+    tmp_path: pathlib.Path, order: list[str]
+) -> None:
+    """Each call through one injected codec must honour its own policy.
+
+    Handlers share a single codec instance; a tolerant call that loosened the
+    next strict call would let invented model fields slip through unnoticed.
+    """
+    body: dict[str, object] = {"tasks": [], "deviations": [], "extra": 1}
+    async with handler_test_session(project_dir=tmp_path, actions={}) as session:
+        codec = await session.service(IDataclassCodec)
+        assert isinstance(codec, DataclassCodec)
+        for policy in order:
+            if policy == "F":
+                with pytest.raises(idataclasscodec.StructureError) as exc_info:
+                    codec.structure(
+                        body,
+                        _Report,
+                        unknown_fields=idataclasscodec.UnknownFields.FORBID,
+                    )
+                assert "extra fields found" in exc_info.value.message
+            else:
+                report = codec.structure(
+                    body,
+                    _Report,
+                    unknown_fields=idataclasscodec.UnknownFields.IGNORE,
+                )
+                assert isinstance(report, _Report)
+
+
+def test_payload_converter_tolerance_survives_codec_calls() -> None:
+    """Codec calls must not change the shared payload converter's tolerance.
+
+    Cross-env dispatch relies on the shared converter ignoring extra keys while
+    still type-checking; if a codec call rewrote it, subaction dispatch would
+    start failing or mistyping after the first strict call.
+    """
+    codec = DataclassCodec()
+    codec.structure(
+        {"tasks": [], "deviations": [], "extra": 1},
+        _Report,
+        unknown_fields=idataclasscodec.UnknownFields.IGNORE,
+    )
+    codec.structure({"tasks": [], "deviations": []}, _Report)
+
+    assert (
+        payload_converter.structure(
+            {"tasks": [], "deviations": [], "extra": 1}, _Report
+        ).deviations
+        == []
+    )
+    with pytest.raises(cattrs.BaseValidationError):
+        payload_converter.structure(
+            {
+                "tasks": [{"number": True, "title": "t", "status": "done"}],
+                "deviations": [],
+            },
+            _Report,
+        )
+
+
+def test_old_two_argument_form_still_strict() -> None:
+    """The default call must stay strict even after a tolerant one.
+
+    Existing callers pass no policy; if a prior tolerant call loosened the
+    default, those callers would silently accept invented fields.
+    """
+    codec = DataclassCodec()
+    codec.structure(
+        {"tasks": [], "deviations": [], "extra": 1},
+        _Report,
+        unknown_fields=idataclasscodec.UnknownFields.IGNORE,
+    )
+    with pytest.raises(idataclasscodec.StructureError):
+        codec.structure(
+            {
+                "tasks": [{"number": 1, "title": "t", "status": "done", "extra": 2}],
+                "deviations": [],
+            },
+            _Report,
+        )

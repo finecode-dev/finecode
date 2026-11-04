@@ -2,9 +2,9 @@
 
 Reuses the ER's own mechanics so model output is structured by the same rules
 an action payload is: :mod:`finecode_extension_runner.schema_utils` for the
-schema and the strict cattrs converter for structuring. The converter used here
-is a *copy* with ``forbid_extra_keys=True``; the original deliberately tolerates
-extra keys for cross-env subaction dispatch and is untouched.
+schema and strict cattrs converters for structuring. Two private copies select
+the per-call unknown-field policy; the original deliberately tolerates extra
+keys for cross-env subaction dispatch and is untouched.
 """
 
 from __future__ import annotations
@@ -25,6 +25,7 @@ class DataclassCodec(idataclasscodec.IDataclassCodec):
 
     def __init__(self) -> None:
         self._strict = payload_converter.copy(forbid_extra_keys=True)
+        self._tolerant = payload_converter.copy(forbid_extra_keys=False)
 
     def json_schema(self, cls: type) -> dict[str, typing.Any]:
         try:
@@ -34,9 +35,22 @@ class DataclassCodec(idataclasscodec.IDataclassCodec):
             # API's at the boundary.
             raise idataclasscodec.OutputSchemaError(str(error)) from error
 
-    def structure(self, data: typing.Any, cls: type[T]) -> T:
+    def structure(
+        self,
+        data: typing.Any,
+        cls: type[T],
+        *,
+        unknown_fields: idataclasscodec.UnknownFields = (
+            idataclasscodec.UnknownFields.FORBID
+        ),
+    ) -> T:
+        match unknown_fields:
+            case idataclasscodec.UnknownFields.FORBID:
+                converter = self._strict
+            case idataclasscodec.UnknownFields.IGNORE:
+                converter = self._tolerant
         try:
-            return self._strict.structure(data, cls)
+            return converter.structure(data, cls)
         except cattrs.BaseValidationError as error:
             raise idataclasscodec.StructureError(
                 "; ".join(cattrs.transform_error(error))

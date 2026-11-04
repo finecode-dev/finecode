@@ -21,7 +21,7 @@ class GetPackageDependentsHandler(
     async def run(
         self,
         payload: GetPackageDependentsRunPayload,
-        context: GetPackageDependentsRunContext,
+        run_context: GetPackageDependentsRunContext,
     ) -> GetPackageDependentsRunResult:
         graph = self.falkordb_client_provider.get_graph()
         result = graph.query(

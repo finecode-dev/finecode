@@ -25,6 +25,10 @@ from finecode_extension_runner.testing._stubs import (
     NullWalWriter,
     WalEvent,
 )
+from finecode_extension_runner.testing._virtual_time import (
+    VirtualTimeLoop,
+    run_on_virtual_time,
+)
 
 __all__ = [
     "CollectingPartialResultSender",
@@ -38,8 +42,10 @@ __all__ = [
     "NoOpLogger",
     "NullWalWriter",
     "Session",
+    "VirtualTimeLoop",
     "WalEvent",
     "handler_test_session",
     "nonexistent_abs_path",
     "run_handler",
+    "run_on_virtual_time",
 ]

@@ -9,6 +9,8 @@ from finecode_extension_api.interfaces import (
     ilogger,
     irepositorycredentialsprovider,
 )
+from finecode_extension_api.resource_uri import resource_uri_to_path
+from twine import exceptions as twine_exceptions
 from twine import settings as twine_settings
 from twine.commands import upload as twine_upload
 
@@ -91,6 +93,10 @@ class PublishArtifactToRegistryPyHandler(
             username=username,
             password=password,
         )
+        try:
+            upload_settings.verify_feature_capability()
+        except twine_exceptions.UnsupportedConfiguration:
+            upload_settings.skip_existing = False
 
         # Run twine upload in executor to avoid blocking
         dist_artifact_paths = payload.dist_artifact_paths
@@ -103,7 +109,7 @@ class PublishArtifactToRegistryPyHandler(
                 twine_upload.upload,
                 upload_settings,
                 [
-                    dist_artifact_path.as_posix()
+                    resource_uri_to_path(dist_artifact_path).as_posix()
                     for dist_artifact_path in dist_artifact_paths
                 ],
             )
