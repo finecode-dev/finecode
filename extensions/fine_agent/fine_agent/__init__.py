@@ -8,6 +8,7 @@ from fine_agent.agent_run_archive import (
     ArchivedUsageProvenance,
     FileSaveStatus,
     archive_agent_run,
+    archive_observed_history,
     write_archive_file,
 )
 from fine_agent.backend_support import (
@@ -18,6 +19,7 @@ from fine_agent.backend_support import (
     json_output_instruction,
     unknown_profile_error,
 )
+from fine_agent.history_search import file_contains, files_containing
 from fine_agent.history_types import (
     AgentBackend,
     AgentRunObservation,
@@ -30,9 +32,25 @@ from fine_agent.history_types import (
     UsageScope,
     UsageSource,
 )
+from fine_agent.locate_agent_history_action import (
+    LocateAgentHistoryAction,
+    LocateAgentHistoryRunContext,
+    LocateAgentHistoryRunPayload,
+    LocateAgentHistoryRunResult,
+)
+from fine_agent.route_agent_history_handler import (
+    RouteAgentHistoryHandler,
+    RouteAgentHistoryHandlerConfig,
+)
+from fine_agent.route_agent_task_handler import (
+    AgentTaskRoute,
+    RouteAgentTaskHandler,
+    RouteAgentTaskHandlerConfig,
+)
 from fine_agent.run_agent_task_action import (
     AgentRunStatus,
     AgentRunUsage,
+    AgentSessionRef,
     RunAgentTaskAction,
     RunAgentTaskRunContext,
     RunAgentTaskRunPayload,
@@ -54,6 +72,8 @@ __all__ = [
     "AgentRunObservation",
     "AgentRunStatus",
     "AgentRunUsage",
+    "AgentSessionRef",
+    "AgentTaskRoute",
     "ArchivedAgent",
     "ArchivedFile",
     "ArchivedHistory",
@@ -63,11 +83,19 @@ __all__ = [
     "FileSaveStatus",
     "HistoryDiscoveryStatus",
     "InvalidJsonBlock",
+    "LocateAgentHistoryAction",
+    "LocateAgentHistoryRunContext",
+    "LocateAgentHistoryRunPayload",
+    "LocateAgentHistoryRunResult",
     "MissingJsonBlock",
     "NativeHistoryFile",
     "NativeHistoryFormat",
     "NativeHistoryRole",
     "RelatedHistoryStatus",
+    "RouteAgentHistoryHandler",
+    "RouteAgentHistoryHandlerConfig",
+    "RouteAgentTaskHandler",
+    "RouteAgentTaskHandlerConfig",
     "RunAgentTaskAction",
     "RunAgentTaskRunContext",
     "RunAgentTaskRunPayload",
@@ -79,7 +107,10 @@ __all__ = [
     "UsageScope",
     "UsageSource",
     "archive_agent_run",
+    "archive_observed_history",
     "extract_last_json_block",
+    "file_contains",
+    "files_containing",
     "json_output_instruction",
     "render_template",
     "run_structured_task",

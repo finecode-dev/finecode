@@ -22,6 +22,8 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 
 from tests.fake_codex_support import FakeScenario
 
+MAIN_THREAD_ID = "11111111-2222-3333-8444-555555555555"
+
 
 def _emit(frame: dict[str, Any]) -> None:
     _ = sys.stdout.write(json.dumps(frame) + "\n")
@@ -63,7 +65,11 @@ def _write_native_rollouts(prompt: str, answer_text: str) -> None:
             "payload": {"type": "token_count", "info": {"total_tokens": 1}},
         }
         main_extra = [
-            {"timestamp": "t", "type": "turn_context", "payload": {"model": "gpt-test"}},
+            {
+                "timestamp": "t",
+                "type": "turn_context",
+                "payload": {"model": "gpt-test"},
+            },
             {"timestamp": "t", "type": "event_msg", "payload": {"text": prompt}},
             token_count,
             token_count,
@@ -79,10 +85,10 @@ def _write_native_rollouts(prompt: str, answer_text: str) -> None:
             },
             {"timestamp": "t", "type": "event_msg", "payload": {"text": answer_text}},
         ]
-        _write("thread-1", None, main_extra)
+        _write(MAIN_THREAD_ID, None, main_extra)
         _write(
             "child-1",
-            "thread-1",
+            MAIN_THREAD_ID,
             [{"timestamp": "t", "type": "event_msg", "payload": {"text": "child"}}],
         )
         _write(
@@ -110,7 +116,7 @@ def _write_native_rollouts(prompt: str, answer_text: str) -> None:
                 "id": "fork-1",
                 "session_id": "sess-root",
                 "parent_thread_id": "other-1",
-                "forked_from_id": "thread-1",
+                "forked_from_id": MAIN_THREAD_ID,
                 "cli_version": "0.163.0",
             },
         }
@@ -124,6 +130,149 @@ def _flag_value(argv: list[str], flag: str) -> str | None:
     return argv[argv.index(flag) + 1] if flag in argv else None
 
 
+def _rollout_meta_id(path: pathlib.Path) -> str | None:
+    try:
+        with open(path, encoding="utf-8") as handle:
+            for line in handle:
+                stripped = line.strip()
+                if not stripped:
+                    continue
+                try:
+                    entry = json.loads(stripped)
+                except ValueError:
+                    return None
+                if not isinstance(entry, dict):
+                    continue
+                if entry.get("type") != "session_meta":
+                    continue
+                payload = entry.get("payload")
+                if not isinstance(payload, dict):
+                    return None
+                value = payload.get("id")
+                return value if isinstance(value, str) else None
+            return None
+    except OSError:
+        return None
+
+
+def _find_session_rollout(
+    native_root: pathlib.Path, thread_id: str
+) -> pathlib.Path | None:
+    matches: list[pathlib.Path] = []
+    for sub in ("sessions", "archived_sessions"):
+        base = native_root / sub
+        if not base.is_dir():
+            continue
+        for path in sorted(base.rglob("rollout-*.jsonl")):
+            if not path.is_file() or path.is_symlink():
+                continue
+            if _rollout_meta_id(path) == thread_id:
+                matches.append(path)
+    if len(matches) == 1:
+        return matches[0]
+    return None
+
+
+def _resume(
+    scenario: FakeScenario,
+    record_path: str,
+    answer_arg: str,
+    rest: list[str],
+) -> int:
+    requested = rest[-2] if len(rest) >= 2 else ""
+    answer = json.loads(answer_arg)
+
+    answer_path = _flag_value(rest, "--output-last-message")
+    schema_path = _flag_value(rest, "--output-schema")
+    schema = None
+    if schema_path is not None:
+        with open(schema_path, encoding="utf-8") as handle:
+            schema = json.load(handle)
+
+    prompt = sys.stdin.read()
+
+    if record_path:
+        record: dict[str, Any] = {
+            "argv": rest,
+            "cwd": os.getcwd(),
+            "prompt": prompt,
+            "schema": schema,
+            "schema_path": schema_path,
+            "answer_path": answer_path,
+            "agent_pid": os.getpid(),
+            "child_pid": None,
+        }
+        with open(record_path, "w", encoding="utf-8") as handle:
+            _ = handle.write(json.dumps(record))
+
+    codex_home = os.environ.get("CODEX_HOME")
+    store_path = (
+        _find_session_rollout(pathlib.Path(codex_home), requested)
+        if codex_home
+        else None
+    )
+    if store_path is None:
+        _emit({"type": "error", "message": f"no session found for {requested}"})
+        return 1
+    with open(store_path, "a", encoding="utf-8") as handle:
+        _ = handle.write(
+            json.dumps(
+                {
+                    "timestamp": "t",
+                    "type": "event_msg",
+                    "payload": {"type": "resumed_prompt", "text": prompt},
+                }
+            )
+            + "\n"
+        )
+
+    if scenario is FakeScenario.HANG:
+        time.sleep(300)
+        return 0
+
+    _emit({"type": "thread.started", "thread_id": requested})
+    if scenario is FakeScenario.FAILED:
+        _emit(
+            {
+                "type": "turn.failed",
+                "error": {"message": "boom"},
+                "usage": {"input_tokens": 5, "output_tokens": 6},
+            }
+        )
+        return 0
+    if scenario is FakeScenario.MISSING_ANSWER:
+        _emit(
+            {
+                "type": "item.completed",
+                "item": {
+                    "id": "6",
+                    "type": "agent_message",
+                    "text": "fallback text",
+                },
+            }
+        )
+        _emit({"type": "turn.completed"})
+        return 0
+    _emit(
+        {
+            "type": "turn.completed",
+            "usage": {
+                "input_tokens": 0,
+                "cached_input_tokens": 0,
+                "output_tokens": 0,
+            },
+        }
+    )
+    if scenario is FakeScenario.STRUCTURED_VALID:
+        text = answer_arg
+    else:
+        text = answer if isinstance(answer, str) else answer_arg
+    assert answer_path is not None
+    with open(answer_path, "w", encoding="utf-8") as handle:
+        _ = handle.write(text)
+    return 0
+
+
 def main() -> int:
     scenario = FakeScenario(sys.argv[1])
     record_path = sys.argv[2]
@@ -133,6 +282,8 @@ def main() -> int:
         _ = sys.stdout.write("0.163.0\n")
         _ = sys.stdout.flush()
         return 0
+    if "resume" in rest:
+        return _resume(scenario, record_path, answer_arg, rest)
     answer = json.loads(answer_arg)
 
     prompt = sys.stdin.read()
@@ -185,7 +336,7 @@ def main() -> int:
         write_answer(answer if isinstance(answer, str) else answer_arg)
 
     if scenario is FakeScenario.SUCCESS:
-        _emit({"type": "thread.started", "thread_id": "thread-1"})
+        _emit({"type": "thread.started", "thread_id": MAIN_THREAD_ID})
         _emit({"type": "turn.started"})
         _emit(
             {
@@ -225,7 +376,7 @@ def main() -> int:
         _emit(
             {
                 "type": "thread.started",
-                "thread_id": "thread-noise",
+                "thread_id": MAIN_THREAD_ID,
                 "extra": {"nested": True},
             }
         )
@@ -298,7 +449,7 @@ def main() -> int:
         return 1
 
     if scenario is FakeScenario.RETRY:
-        _emit({"type": "thread.started", "thread_id": "thread-retry"})
+        _emit({"type": "thread.started", "thread_id": MAIN_THREAD_ID})
         _emit({"type": "error", "message": "retrying after a hiccup"})
         _emit(
             {
@@ -311,7 +462,7 @@ def main() -> int:
         return 0
 
     if scenario is FakeScenario.EMPTY:
-        _emit({"type": "thread.started", "thread_id": "thread-empty"})
+        _emit({"type": "thread.started", "thread_id": MAIN_THREAD_ID})
         _emit({"type": "turn.completed"})
         write_answer("")
         return 0
@@ -328,13 +479,13 @@ def main() -> int:
         return 0
 
     if scenario is FakeScenario.STRUCTURED_VALID:
-        _emit({"type": "thread.started", "thread_id": "thread-structured"})
+        _emit({"type": "thread.started", "thread_id": MAIN_THREAD_ID})
         _emit({"type": "turn.completed"})
         write_answer(answer_arg)
         return 0
 
     if scenario is FakeScenario.STRUCTURED_INVALID:
-        _emit({"type": "thread.started", "thread_id": "thread-bad-json"})
+        _emit({"type": "thread.started", "thread_id": MAIN_THREAD_ID})
         _emit({"type": "turn.completed"})
         write_answer(answer if isinstance(answer, str) else answer_arg)
         return 0
@@ -348,7 +499,7 @@ def main() -> int:
         return 0
 
     if scenario is FakeScenario.LEAVE_CHILD:
-        _emit({"type": "thread.started", "thread_id": "thread-child"})
+        _emit({"type": "thread.started", "thread_id": MAIN_THREAD_ID})
         _emit({"type": "turn.completed"})
         write_text_answer()
         return 0

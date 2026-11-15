@@ -16,6 +16,7 @@ from finecode_extension_api.resource_uri import path_to_resource_uri
 from fine_agent.agent_run_archive import (
     FileSaveStatus,
     archive_agent_run,
+    archive_observed_history,
     write_archive_file,
 )
 from fine_agent.history_types import (
@@ -195,3 +196,22 @@ def test_write_archive_file_never_overwrites(tmp_path: pathlib.Path) -> None:
     assert first["status"] is FileSaveStatus.SAVED
     assert second["status"] is FileSaveStatus.FAILED
     assert (tmp_path / "a.json").read_bytes() == b"one"
+
+
+def test_observed_history_is_archived_without_a_request(
+    tmp_path: pathlib.Path,
+) -> None:
+    """A session nobody dispatched has an observation but no request; its
+    history lands in the same layout a dispatched run's does."""
+    native, run_dir = _dirs(tmp_path)
+    main = native / "main.jsonl"
+    _ = main.write_text('{"type": "session"}\n', encoding="utf-8")
+    observation = _result(native, [_native(main, NativeHistoryRole.MAIN, "sess-1")])
+    assert observation.observation is not None
+
+    history = archive_observed_history(run_dir, observation.observation)
+
+    assert history["discovery_status"] is HistoryDiscoveryStatus.AVAILABLE
+    assert [entry["status"] for entry in history["files"]] == [FileSaveStatus.SAVED]
+    assert (run_dir / "history" / "main.jsonl").read_bytes() == main.read_bytes()
+    assert not (run_dir / "request.json").exists()

@@ -25,6 +25,7 @@ from finecode_extension_api.resource_uri import (
 
 from fine_agent.history_types import (
     AgentBackend,
+    AgentRunObservation,
     HistoryDiscoveryStatus,
     NativeHistoryFormat,
     NativeHistoryRole,
@@ -49,6 +50,7 @@ __all__ = [
     "ArchivedUsageProvenance",
     "FileSaveStatus",
     "archive_agent_run",
+    "archive_observed_history",
     "write_archive_file",
 ]
 
@@ -261,6 +263,25 @@ def _archive_history(
     if observation is None:
         history["gaps"].append("observation not collected")
         return history
+    return archive_observed_history(run_dir, observation)
+
+
+def archive_observed_history(
+    run_dir: pathlib.Path, observation: AgentRunObservation
+) -> ArchivedHistory:
+    """Copy the files *observation* names into `history/` under *run_dir*.
+
+    The main file lands at `history/main.jsonl` and related files under
+    `history/related/` at their native relative path, create-only. This is the
+    part of `archive_agent_run` that needs no request, so a session nobody
+    dispatched is archived in the same layout. *run_dir* must already exist.
+    """
+    history: ArchivedHistory = {
+        "discovery_status": None,
+        "related_status": None,
+        "files": [],
+        "gaps": [],
+    }
     history["discovery_status"] = observation.history_status
     history["related_status"] = observation.related_status
     history["gaps"].extend(observation.gaps)

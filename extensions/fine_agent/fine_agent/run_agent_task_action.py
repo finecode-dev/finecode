@@ -4,8 +4,9 @@ import enum
 import typing
 
 from finecode_extension_api import code_action, textstyler
+from finecode_extension_api.resource_uri import ResourceUri
 
-from fine_agent.history_types import AgentRunObservation
+from fine_agent.history_types import AgentBackend, AgentRunObservation
 
 
 class AgentRunStatus(enum.StrEnum):
@@ -162,6 +163,22 @@ class AgentRunUsage:
         return " · ".join(parts)
 
 
+@dataclasses.dataclass(frozen=True)
+class AgentSessionRef:
+    """Reference to the backend-native session a settled run produced.
+
+    The caller stores this value and passes it back as `continue_session`
+    to resume the same native session. `project_dir` is the project the
+    original run belonged to; a continuation in another project is rejected
+    rather than silently switching sessions.
+    """
+
+    backend: AgentBackend
+    session_id: str
+    """The full backend-reported native session ID, spelled as reported."""
+    project_dir: ResourceUri
+
+
 @dataclasses.dataclass
 class RunAgentTaskRunPayload(code_action.RunActionPayload):
     prompt: str
@@ -184,6 +201,14 @@ class RunAgentTaskRunPayload(code_action.RunActionPayload):
     """
     capture_history: bool = dataclasses.field(default=False, kw_only=True)
     """Request native history observation, without changing execution."""
+    continue_session: AgentSessionRef | None = dataclasses.field(
+        default=None, kw_only=True
+    )
+    """Resume this previously reported native session instead of starting one.
+
+    The referenced session must still exist; a missing session is an explicit
+    failure, never a silent fresh start.
+    """
 
 
 class RunAgentTaskRunContext(code_action.RunActionContext[RunAgentTaskRunPayload]): ...
@@ -232,6 +257,11 @@ class RunAgentTaskRunResult(code_action.RunActionResult):
     """Why the run did not settle. `None` whenever `status` is `SETTLED`."""
     observation: AgentRunObservation | None = None
     """Native history observation, present only when capture was requested."""
+    session: AgentSessionRef | None = None
+    """The native session this run settled in, independently of capture.
+
+    `None` on runs that never reached a settled backend session.
+    """
 
     def update(self, other: code_action.RunActionResult) -> None:
         # Within-project merge only (R-302). This action takes exactly one
@@ -249,6 +279,7 @@ class RunAgentTaskRunResult(code_action.RunActionResult):
         self.duration_sec = other.duration_sec
         self.error = other.error
         self.observation = other.observation
+        self.session = other.session
 
     def to_text(self) -> str | textstyler.StyledText:
         if self.status is AgentRunStatus.SETTLED:

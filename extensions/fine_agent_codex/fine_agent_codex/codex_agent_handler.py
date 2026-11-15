@@ -4,7 +4,6 @@ import dataclasses
 import enum
 import json
 import math
-import os
 import pathlib
 import tempfile
 import time
@@ -24,10 +23,17 @@ from fine_agent.history_types import (
 from fine_agent.run_agent_task_action import (
     AgentRunStatus,
     AgentRunUsage,
+    AgentSessionRef,
     RunAgentTaskAction,
     RunAgentTaskRunContext,
     RunAgentTaskRunPayload,
     RunAgentTaskRunResult,
+)
+from fine_agent.session_support import (
+    session_backend_error,
+    session_id_error,
+    session_project_error,
+    with_session,
 )
 from finecode_extension_api import code_action
 from finecode_extension_api.interfaces import (
@@ -112,13 +118,6 @@ def _pre_session_observation(gaps: list[str]) -> AgentRunObservation:
     )
 
 
-def _codex_home() -> pathlib.Path:
-    env_home = os.environ.get("CODEX_HOME")
-    if env_home:
-        return pathlib.Path(env_home)
-    return pathlib.Path.home() / ".codex"
-
-
 @dataclasses.dataclass
 class _CodexRunState:
     last_assistant_text: str = ""
@@ -159,6 +158,8 @@ class CodexAgentHandler(
         payload: RunAgentTaskRunPayload,
         run_context: RunAgentTaskRunContext,
     ) -> RunAgentTaskRunResult:
+        if payload.continue_session is not None:
+            return await self._run_continuation(payload, run_context)
         settings = self._resolve(payload.profile)
         if isinstance(settings, str):
             failed = RunAgentTaskRunResult(
@@ -238,48 +239,221 @@ class CodexAgentHandler(
                     failed = dataclasses.replace(failed, observation=observation)
                 return failed
 
-            state = _CodexRunState()
-            result: RunAgentTaskRunResult | None = None
-            try:
-                result = await self._run_with_process(
-                    payload, run_context, process, command, settings, answer_path, state
-                )
-            finally:
-                teardown_error = await self._teardown(process)
-                if teardown_error is not None:
-                    self.logger.warning(teardown_error)
-                    if result is not None and result.status is AgentRunStatus.SETTLED:
-                        result = RunAgentTaskRunResult(
-                            status=AgentRunStatus.FAILED,
-                            output=result.output,
-                            usage=result.usage,
-                            error=teardown_error,
-                        )
-
-            result.duration_sec = time.monotonic() - started
-            if payload.capture_history:
-                try:
-                    result = await self._attach_observation(result, state)
-                except Exception as error:  # noqa: BLE001
-                    gaps = [
-                        f"observation failed: {error}",
-                    ]
-                    self.logger.debug(f"codex observation failed: {error}")
-                    failed_obs = AgentRunObservation(
-                        backend=AgentBackend.CODEX,
-                        backend_version=None,
-                        session_id=state.thread_id,
-                        history_root=None,
-                        history_status=HistoryDiscoveryStatus.FAILED,
-                        files=[],
-                        related_status=RelatedHistoryStatus.UNAVAILABLE,
-                        usage_provenance=_codex_provenance(state.usage),
-                        gaps=gaps,
-                    )
-                    result = dataclasses.replace(result, observation=failed_obs)
-            return result
+            return await self._finish_run(
+                payload,
+                run_context,
+                process,
+                command,
+                settings,
+                answer_path,
+                project_dir,
+                started,
+            )
         finally:
             tmpdir.cleanup()
+
+    def _continuation_failure(
+        self,
+        payload: RunAgentTaskRunPayload,
+        error: str,
+        started: float,
+        observation: AgentRunObservation | None = None,
+    ) -> RunAgentTaskRunResult:
+        """A continuation failure before any native process was started.
+
+        Never runs a version probe; with capture, the run carries an
+        unavailable observation naming why no session was resumed.
+        """
+        failed = RunAgentTaskRunResult(
+            status=AgentRunStatus.FAILED,
+            error=error,
+            duration_sec=time.monotonic() - started,
+        )
+        if payload.capture_history:
+            if observation is None:
+                observation = _pre_session_observation([error])
+            failed = dataclasses.replace(failed, observation=observation)
+        return failed
+
+    async def _run_continuation(
+        self,
+        payload: RunAgentTaskRunPayload,
+        run_context: RunAgentTaskRunContext,
+    ) -> RunAgentTaskRunResult:
+        ref = payload.continue_session
+        assert ref is not None
+        started = time.monotonic()
+        failure = session_id_error(ref.session_id)
+        if failure is None:
+            failure = session_backend_error(ref, AgentBackend.CODEX)
+        project_dir: pathlib.Path | None = None
+        if failure is None:
+            project_dir = self.project_info_provider.get_current_project_dir_path()
+            failure = session_project_error(ref, project_dir)
+        if failure is not None:
+            return self._continuation_failure(payload, failure, started)
+        if payload.profile is not None and (
+            payload.profile not in self.config.profiles
+        ):
+            unknown = backend_support.unknown_profile_error(
+                payload.profile, self.config.profiles
+            )
+            return self._continuation_failure(
+                payload,
+                unknown,
+                started,
+                observation=_pre_session_observation([unknown]),
+            )
+        assert project_dir is not None
+
+        lookup_state = CodexObservationState(
+            thread_id=ref.session_id,
+            usage_provenance=_unknown_provenance(),
+            gaps=[],
+        )
+        observation = await asyncio.to_thread(
+            codex_history.locate_codex_history,
+            lookup_state,
+            codex_history.codex_home(),
+        )
+        main = next(
+            (f for f in observation.files if f.role is NativeHistoryRole.MAIN), None
+        )
+        if (
+            main is None
+            or observation.history_status is not HistoryDiscoveryStatus.AVAILABLE
+        ):
+            reason = "; ".join(observation.gaps) or (
+                f"codex session {ref.session_id!r} was not found"
+            )
+            return self._continuation_failure(
+                payload, reason, started, observation=observation
+            )
+
+        settings = self._resolve(payload.profile)
+        if isinstance(settings, str):
+            return self._continuation_failure(payload, settings, started)
+        if settings.model is None:
+            profile_name = (
+                f"profile {payload.profile!r}"
+                if payload.profile is not None
+                else "the top-level settings"
+            )
+            return self._continuation_failure(
+                payload,
+                f"cannot continue codex session {ref.session_id!r} without an "
+                f"explicit model: the handler cannot reset the saved session "
+                f"model to the native new-run default; set 'model' in "
+                f"{profile_name}",
+                started,
+            )
+
+        tmpdir = tempfile.TemporaryDirectory()
+        try:
+            answer_path = pathlib.Path(tmpdir.name) / "answer.txt"
+            schema_path: pathlib.Path | None = None
+            if payload.output_schema is not None:
+                schema_path = pathlib.Path(tmpdir.name) / "schema.json"
+                try:
+                    _ = schema_path.write_text(
+                        json.dumps(payload.output_schema), encoding="utf-8"
+                    )
+                except OSError as error:
+                    return self._continuation_failure(
+                        payload,
+                        f"could not write codex schema file: {error}",
+                        started,
+                    )
+            command = self._build_command(
+                settings, answer_path, schema_path, continue_session=ref
+            )
+            self.logger.debug(f"Continuing codex: {command!r} in {project_dir}")
+
+            try:
+                process = await self.command_runner.start_long_running(
+                    command,
+                    cwd=project_dir,
+                    new_process_group=True,
+                )
+            except (OSError, icommandrunner.CommandNotLaunchableError) as error:
+                return self._continuation_failure(
+                    payload,
+                    backend_support.spawn_error(command[0], error),
+                    started,
+                )
+
+            return await self._finish_run(
+                payload,
+                run_context,
+                process,
+                command,
+                settings,
+                answer_path,
+                project_dir,
+                started,
+            )
+        finally:
+            tmpdir.cleanup()
+
+    async def _finish_run(
+        self,
+        payload: RunAgentTaskRunPayload,
+        run_context: RunAgentTaskRunContext,
+        process: icommandrunner.IAsyncProcess,
+        command: list[str],
+        settings: _CodexRunSettings,
+        answer_path: pathlib.Path,
+        project_dir: pathlib.Path,
+        started: float,
+    ) -> RunAgentTaskRunResult:
+        state = _CodexRunState()
+        result: RunAgentTaskRunResult | None = None
+        try:
+            result = await self._run_with_process(
+                payload, run_context, process, command, settings, answer_path, state
+            )
+        finally:
+            teardown_error = await self._teardown(process)
+            if teardown_error is not None:
+                self.logger.warning(teardown_error)
+                if result is not None and result.status is AgentRunStatus.SETTLED:
+                    result = RunAgentTaskRunResult(
+                        status=AgentRunStatus.FAILED,
+                        output=result.output,
+                        usage=result.usage,
+                        error=teardown_error,
+                    )
+
+        assert result is not None
+        result.duration_sec = time.monotonic() - started
+        result = with_session(
+            result,
+            backend=AgentBackend.CODEX,
+            project_dir=project_dir,
+            reported_id=state.thread_id,
+            expected=payload.continue_session,
+        )
+        if payload.capture_history:
+            try:
+                result = await self._attach_observation(result, state)
+            except Exception as error:  # noqa: BLE001
+                gaps = [
+                    f"observation failed: {error}",
+                ]
+                self.logger.debug(f"codex observation failed: {error}")
+                failed_obs = AgentRunObservation(
+                    backend=AgentBackend.CODEX,
+                    backend_version=None,
+                    session_id=state.thread_id,
+                    history_root=None,
+                    history_status=HistoryDiscoveryStatus.FAILED,
+                    files=[],
+                    related_status=RelatedHistoryStatus.UNAVAILABLE,
+                    usage_provenance=_codex_provenance(state.usage),
+                    gaps=gaps,
+                )
+                result = dataclasses.replace(result, observation=failed_obs)
+        return result
 
     async def _run_with_process(
         self,
@@ -319,8 +493,14 @@ class CodexAgentHandler(
         state: _CodexRunState,
     ) -> None:
         lines = process.stdout_lines()
-        process.write_to_stdin(prompt)
-        process.close_stdin()
+        try:
+            process.write_to_stdin(prompt)
+            process.close_stdin()
+        except (BrokenPipeError, ConnectionResetError) as error:
+            state.error = (
+                f"codex closed its prompt pipe before reading the prompt: {error}"
+            )
+            return
 
         async for line in lines:
             event = codex_stream.parse_event(line)
@@ -529,17 +709,42 @@ class CodexAgentHandler(
         settings: _CodexRunSettings,
         answer_path: pathlib.Path,
         schema_path: pathlib.Path | None,
+        *,
+        continue_session: AgentSessionRef | None = None,
     ) -> list[str]:
+        if continue_session is None:
+            parts = [
+                *self._executable(),
+                "--ask-for-approval",
+                "never",
+                "exec",
+                "--json",
+                "--color",
+                "never",
+                "--sandbox",
+                self.config.sandbox_mode.value,
+                "--output-last-message",
+                str(answer_path),
+            ]
+            if settings.model is not None:
+                parts += ["--model", settings.model]
+            if self.config.skip_git_repo_check:
+                parts += ["--skip-git-repo-check"]
+            if schema_path is not None:
+                parts += ["--output-schema", str(schema_path)]
+            parts += ["-"]
+            return parts
         parts = [
             *self._executable(),
             "--ask-for-approval",
             "never",
             "exec",
-            "--json",
-            "--color",
-            "never",
             "--sandbox",
             self.config.sandbox_mode.value,
+            "--color",
+            "never",
+            "resume",
+            "--json",
             "--output-last-message",
             str(answer_path),
         ]
@@ -549,7 +754,7 @@ class CodexAgentHandler(
             parts += ["--skip-git-repo-check"]
         if schema_path is not None:
             parts += ["--output-schema", str(schema_path)]
-        parts += ["-"]
+        parts += [continue_session.session_id, "-"]
         return parts
 
     async def _probe_backend_version(self) -> tuple[str | None, str | None]:
@@ -592,7 +797,9 @@ class CodexAgentHandler(
             usage_provenance=_codex_provenance(state.usage),
             gaps=[],
         )
-        observation = codex_history.locate_codex_history(obs_state, _codex_home())
+        observation = codex_history.locate_codex_history(
+            obs_state, codex_history.codex_home()
+        )
         if observation.backend_version is None:
             version, version_gap = await self._probe_backend_version()
             gaps = [*observation.gaps]
@@ -618,7 +825,9 @@ class CodexAgentHandler(
         if usage is not None:
             usage = dataclasses.replace(
                 usage,
-                provider=usage.provider if usage.provider is not None else facts.provider,
+                provider=usage.provider
+                if usage.provider is not None
+                else facts.provider,
                 model=usage.model if usage.model is not None else facts.model,
             )
         return dataclasses.replace(

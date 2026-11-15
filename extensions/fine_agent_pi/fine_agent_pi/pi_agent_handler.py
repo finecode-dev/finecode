@@ -21,10 +21,17 @@ from fine_agent.history_types import (
 from fine_agent.run_agent_task_action import (
     AgentRunStatus,
     AgentRunUsage,
+    AgentSessionRef,
     RunAgentTaskAction,
     RunAgentTaskRunContext,
     RunAgentTaskRunPayload,
     RunAgentTaskRunResult,
+)
+from fine_agent.session_support import (
+    session_backend_error,
+    session_id_error,
+    session_project_error,
+    with_session,
 )
 from finecode_extension_api import code_action
 from finecode_extension_api.interfaces import (
@@ -135,6 +142,22 @@ class _PiRunSettings:
     settle_timeout_sec: float
 
 
+@dataclasses.dataclass
+class _PiRunMetadata:
+    """Task-owned identity evidence collected across the run's readers.
+
+    One `get_state` command is sent per run; its correlated response may arrive
+    during the main event loop or late while awaiting session stats. Every
+    reader records into this holder so no arrival order erases evidence: a
+    timeout never clears stats already recorded here.
+    """
+
+    identity_request_id: str
+    identity: pi_rpc.PiSessionIdentity | None = None
+    stats_received: bool = False
+    stats: pi_rpc.PiSessionStats | None = None
+
+
 def _stats_provenance() -> UsageProvenance:
     return UsageProvenance(
         token_source=UsageSource.PI_STATS,
@@ -181,10 +204,78 @@ def _native_root_for(session_file: str | None) -> pathlib.Path:
         candidate = pathlib.Path(session_file)
         if candidate.is_absolute():
             return candidate.parent
-    env_dir = os.environ.get("PI_CODING_AGENT_SESSION_DIR")
-    if env_dir:
-        return pathlib.Path(env_dir)
-    return pathlib.Path.home() / ".pi" / "agent" / "sessions"
+    return pi_history.pi_sessions_root()
+
+
+def _same_path(left: str, right: pathlib.Path) -> bool:
+    """Whether a reported session file is the looked-up native file.
+
+    Lexical only: no filesystem access, so symlinks keep the project identity
+    the caller spelled and the check stays usable on the async confirmation
+    path without blocking the loop.
+    """
+    return os.path.normcase(os.path.abspath(left)) == os.path.normcase(
+        os.path.abspath(str(right))
+    )
+
+
+def _sessions_equal(left: str, right: str) -> bool:
+    """Whether two session IDs name the same UUID value."""
+    try:
+        return uuid.UUID(left) == uuid.UUID(right)
+    except ValueError:
+        return left == right
+
+
+def _merged_session_identity(
+    stats_info: pi_rpc.PiSessionStats | None,
+    metadata: _PiRunMetadata,
+) -> tuple[str | None, str | None, str | None]:
+    """The reported session ID/file, preferring stats, else the state check.
+
+    Returns the merged ID, the merged file, and a conflict reason. Both
+    sources reporting different IDs rejects the settlement: neither is handed
+    out as the run's session. Identity stays independent of usage: missing
+    usage never fails a run with reported identity, and missing identity is
+    left for the settled-ID rule to report.
+    """
+    stats_id = stats_info.session_id if stats_info is not None else None
+    stats_file = stats_info.session_file if stats_info is not None else None
+    identity = metadata.identity
+    state_ok = (
+        identity is not None
+        and identity.request_id == metadata.identity_request_id
+        and identity.error is None
+        and identity.session_id is not None
+    )
+    state_id = identity.session_id if state_ok and identity is not None else None
+    state_file = identity.session_file if state_ok and identity is not None else None
+    if stats_id and state_id and not _sessions_equal(stats_id, state_id):
+        return None, None, (
+            f"pi reported conflicting session identities {stats_id!r} and "
+            f"{state_id!r}; no session reference is available"
+        )
+    if stats_id:
+        return stats_id, stats_file, None
+    if state_id:
+        return state_id, state_file, None
+    return None, None, None
+
+
+def _merged_state(
+    usage: AgentRunUsage | None,
+    stats_info: pi_rpc.PiSessionStats | None,
+    session_id: str | None,
+    session_file: str | None,
+) -> PiObservationState:
+    """Observation state for a settled run with merged session identity."""
+    base = _state_from_settle(usage, stats_info)
+    return PiObservationState(
+        session_id=session_id,
+        session_file=session_file,
+        usage_provenance=base.usage_provenance,
+        gaps=list(base.gaps),
+    )
 
 
 def _state_from_settle(
@@ -253,6 +344,8 @@ class PiAgentHandler(
         payload: RunAgentTaskRunPayload,
         run_context: RunAgentTaskRunContext,
     ) -> RunAgentTaskRunResult:
+        if payload.continue_session is not None:
+            return await self._run_continuation(payload, run_context)
         settings = self._resolve(payload.profile)
         if isinstance(settings, str):
             # Fail before spawning anything: an unknown profile is a
@@ -273,8 +366,11 @@ class PiAgentHandler(
                 )
                 result = dataclasses.replace(result, observation=observation)
             return result
-        capture_session_id = str(uuid.uuid4()) if payload.capture_history else None
-        command = self._build_command(settings, capture_session_id)
+        # Every run persists: pi needs a session file whether or not the caller
+        # asked to observe it. The requested ID is only ever evidence of what
+        # was asked for, never proof of what pi reported.
+        requested_session_id = str(uuid.uuid4())
+        command = self._build_command(settings, requested_session_id)
         project_dir = self.project_info_provider.get_current_project_dir_path()
         self.logger.debug(f"Starting pi: {command!r} in {project_dir}")
 
@@ -312,9 +408,163 @@ class PiAgentHandler(
                 result = dataclasses.replace(result, observation=observation)
             return result
 
+        return await self._settle_spawned_run(
+            payload,
+            run_context,
+            process,
+            command,
+            settings,
+            project_dir,
+            started,
+            requested_session_id,
+        )
+
+    def _continuation_failure(
+        self,
+        payload: RunAgentTaskRunPayload,
+        error: str,
+        started: float,
+        observation: AgentRunObservation | None = None,
+    ) -> RunAgentTaskRunResult:
+        """A continuation failure before any native process was started.
+
+        Never runs a version probe; with capture, the run carries an
+        unavailable observation naming why no session was resumed.
+        """
+        failed = RunAgentTaskRunResult(
+            status=AgentRunStatus.FAILED,
+            error=error,
+            duration_sec=time.monotonic() - started,
+        )
+        if payload.capture_history:
+            if observation is None:
+                observation = _pre_session_observation([error])
+            failed = dataclasses.replace(failed, observation=observation)
+        return failed
+
+    async def _run_continuation(
+        self,
+        payload: RunAgentTaskRunPayload,
+        run_context: RunAgentTaskRunContext,
+    ) -> RunAgentTaskRunResult:
+        ref = payload.continue_session
+        assert ref is not None
+        started = time.monotonic()
+        failure = session_id_error(ref.session_id)
+        if failure is None:
+            failure = session_backend_error(ref, AgentBackend.PI)
+        project_dir: pathlib.Path | None = None
+        if failure is None:
+            project_dir = self.project_info_provider.get_current_project_dir_path()
+            failure = session_project_error(ref, project_dir)
+        if failure is not None:
+            return self._continuation_failure(payload, failure, started)
+        if payload.profile is not None and (
+            payload.profile not in self.config.profiles
+        ):
+            unknown = backend_support.unknown_profile_error(
+                payload.profile, self.config.profiles
+            )
+            return self._continuation_failure(
+                payload,
+                unknown,
+                started,
+                observation=_pre_session_observation([unknown]),
+            )
+        assert project_dir is not None
+
+        found_id, found_path, gaps = await asyncio.to_thread(
+            pi_history.find_pi_session_file,
+            pi_history.pi_sessions_root(),
+            ref.session_id,
+            None,
+        )
+        if (
+            found_path is None
+            or found_id is None
+            or not _sessions_equal(found_id, ref.session_id)
+        ):
+            reason = "; ".join(gaps) or (
+                f"pi session {ref.session_id!r} was not found"
+            )
+            return self._continuation_failure(
+                payload, reason, started,
+                observation=_pre_session_observation([reason]),
+            )
+
+        settings = self._resolve(payload.profile)
+        if isinstance(settings, str):
+            # Unreachable through the membership check above: `_resolve`
+            # only reports unknown profiles. Kept graceful rather than
+            # asserted so a future resolver error still fails the run.
+            return self._continuation_failure(payload, settings, started)
+        if settings.model is None:
+            profile_name = (
+                f"profile {payload.profile!r}"
+                if payload.profile is not None
+                else "the top-level settings"
+            )
+            return self._continuation_failure(
+                payload,
+                f"cannot continue pi session {ref.session_id!r} without an "
+                f"explicit model: the handler cannot reset the saved session "
+                f"model to the native new-run default; set 'model' in "
+                f"{profile_name}",
+                started,
+            )
+
+        command = self._build_command(settings, ref.session_id, continuing=True)
+        self.logger.debug(f"Continuing pi: {command!r} in {project_dir}")
+
+        try:
+            process = await self.command_runner.start_long_running(
+                command,
+                cwd=project_dir,
+                new_process_group=True,
+            )
+        except (OSError, icommandrunner.CommandNotLaunchableError) as error:
+            return self._continuation_failure(
+                payload,
+                backend_support.spawn_error(command[0], error),
+                started,
+            )
+
+        return await self._settle_spawned_run(
+            payload,
+            run_context,
+            process,
+            command,
+            settings,
+            project_dir,
+            started,
+            None,
+            expected_session=ref,
+            expected_session_file=found_path,
+        )
+
+    async def _settle_spawned_run(
+        self,
+        payload: RunAgentTaskRunPayload,
+        run_context: RunAgentTaskRunContext,
+        process: icommandrunner.IAsyncProcess,
+        command: list[str],
+        settings: _PiRunSettings,
+        project_dir: pathlib.Path,
+        started: float,
+        requested_session_id: str | None,
+        *,
+        expected_session: AgentSessionRef | None = None,
+        expected_session_file: pathlib.Path | None = None,
+    ) -> RunAgentTaskRunResult:
         try:
             result, observation_state = await self._run_with_process(
-                payload, run_context, process, command, settings, capture_session_id
+                payload,
+                run_context,
+                process,
+                command,
+                settings,
+                expected_session=expected_session,
+                expected_session_file=expected_session_file,
             )
         except BaseException:
             # Anything escaping the drive that the paths inside do not already
@@ -332,10 +582,21 @@ class PiAgentHandler(
         # measured, and elapsed time is as much a part of a failed run's account
         # as of a settled one's.
         result.duration_sec = time.monotonic() - started
+        # Finalize the session after existing structured-output, exit and
+        # cleanup processing. A settled run without reported identity fails
+        # here with its raw output kept; failed/refused runs keep their
+        # existing outcome.
+        result = with_session(
+            result,
+            backend=AgentBackend.PI,
+            project_dir=project_dir,
+            reported_id=observation_state.session_id,
+            expected=expected_session,
+        )
         if payload.capture_history:
             try:
                 result = await self._attach_observation(
-                    result, observation_state, capture_session_id
+                    result, observation_state, requested_session_id, expected_session
                 )
             except Exception as error:  # noqa: BLE001
                 gaps = [*observation_state.gaps, f"observation failed: {error}"]
@@ -361,18 +622,30 @@ class PiAgentHandler(
         process: icommandrunner.IAsyncProcess,
         command: list[str],
         settings: _PiRunSettings,
-        capture_session_id: str | None,
+        *,
+        expected_session: AgentSessionRef | None = None,
+        expected_session_file: pathlib.Path | None = None,
     ) -> tuple[RunAgentTaskRunResult, PiObservationState]:
         prompt = payload.prompt
         if payload.output_schema is not None:
             # Appended, not substituted: the task wording is the caller's, and
             # the output instruction is the only thing the backend adds.
             prompt += backend_support.json_output_instruction(payload.output_schema)
+        metadata = _PiRunMetadata(
+            identity_request_id=f"get-state-{uuid.uuid4().hex}"
+        )
 
         async with run_context.progress("Agent task", cancellable=True) as progress:
             try:
                 result, observation_state = await asyncio.wait_for(
-                    self._drive(process, prompt, progress),
+                    self._drive(
+                        process,
+                        prompt,
+                        progress,
+                        metadata,
+                        expected_session=expected_session,
+                        expected_session_file=expected_session_file,
+                    ),
                     timeout=settings.settle_timeout_sec,
                 )
             except asyncio.CancelledError:
@@ -391,7 +664,7 @@ class PiAgentHandler(
                     error=(f"pi did not settle within {settings.settle_timeout_sec}s"),
                 )
                 timed_out_state = PiObservationState(
-                    session_id=capture_session_id,
+                    session_id=None,
                     session_file=None,
                     usage_provenance=_unknown_provenance(),
                     gaps=["pi did not settle; session stats were not collected"],
@@ -429,12 +702,173 @@ class PiAgentHandler(
         process: icommandrunner.IAsyncProcess,
         prompt: str,
         progress: code_action.ProgressContext,
+        metadata: _PiRunMetadata,
+        *,
+        expected_session: AgentSessionRef | None = None,
+        expected_session_file: pathlib.Path | None = None,
     ) -> tuple[RunAgentTaskRunResult, PiObservationState]:
-        # Subscribe before prompting. The stream replays anything produced
-        # earlier, so this is not load-bearing -- it just keeps the order on the
-        # page the same as the order on the wire.
+        # One subscription for the whole run: confirmation (on continuation)
+        # and the main loop below share these same lines. A second subscriber
+        # is not allowed (`IAsyncProcess.stdout_lines` supports only one).
         lines = process.stdout_lines()
-        process.write_to_stdin(pi_rpc.prompt_command(prompt))
+        if expected_session is not None:
+            confirmed = await self._confirm_session(
+                process, lines, metadata, expected_session,
+                expected_session_file, progress,
+            )
+            if isinstance(confirmed, RunAgentTaskRunResult):
+                state = PiObservationState(
+                    session_id=None,
+                    session_file=None,
+                    usage_provenance=_unknown_provenance(),
+                    gaps=[confirmed.error or "pi session confirmation failed"],
+                )
+                return confirmed, state
+        else:
+            # A new run sends its identity check first and its prompt
+            # immediately afterward; the correlated response is collected in
+            # the ordinary event loop below, without delaying the prompt.
+            try:
+                process.write_to_stdin(
+                    pi_rpc.session_state_command(metadata.identity_request_id)
+                )
+                process.write_to_stdin(pi_rpc.prompt_command(prompt))
+            except (BrokenPipeError, ConnectionResetError) as error:
+                state = PiObservationState(
+                    session_id=None,
+                    session_file=None,
+                    usage_provenance=_unknown_provenance(),
+                    gaps=[f"pi closed its prompt pipe before reading it: {error}"],
+                )
+                return RunAgentTaskRunResult(
+                    status=AgentRunStatus.FAILED,
+                    output="",
+                    error=f"pi closed its prompt pipe before reading it: {error}",
+                ), state
+            # The prompt is already sent for new runs; skip the shared send.
+            return await self._drive_events(process, lines, progress, metadata)
+        try:
+            process.write_to_stdin(pi_rpc.prompt_command(prompt))
+        except (BrokenPipeError, ConnectionResetError) as error:
+            state = PiObservationState(
+                session_id=None,
+                session_file=None,
+                usage_provenance=_unknown_provenance(),
+                gaps=[f"pi closed its prompt pipe before reading it: {error}"],
+            )
+            return RunAgentTaskRunResult(
+                status=AgentRunStatus.FAILED,
+                output="",
+                error=f"pi closed its prompt pipe before reading it: {error}",
+            ), state
+        return await self._drive_events(process, lines, progress, metadata)
+
+    async def _confirm_session(
+        self,
+        process: icommandrunner.IAsyncProcess,
+        lines: AsyncIterator[str],
+        metadata: _PiRunMetadata,
+        expected_session: AgentSessionRef,
+        expected_session_file: pathlib.Path | None,
+        progress: code_action.ProgressContext,
+    ) -> pi_rpc.PiSessionIdentity | RunAgentTaskRunResult:
+        """Confirm the resumed session before the task prompt is sent.
+
+        Consumes the shared stdout iterator, never a second subscription.
+        Returns the confirmed identity on success, a typed result with
+        `FAILED` for startup failure or `REFUSED_INTERACTION` for UI refusal.
+        Cancellation propagates and returns neither. EOF, failure, missing
+        identity or a different UUID all fail before the prompt is sent: no
+        prompt is ever sent to test whether startup succeeded.
+        """
+        await progress.report("Confirming session")
+        try:
+            process.write_to_stdin(
+                pi_rpc.session_state_command(metadata.identity_request_id)
+            )
+        except (BrokenPipeError, ConnectionResetError) as error:
+            await self._abort(process)
+            return RunAgentTaskRunResult(
+                status=AgentRunStatus.FAILED,
+                output="",
+                error=f"pi closed its prompt pipe before reading it: {error}",
+            )
+        async for line in lines:
+            frame = pi_rpc.parse_frame(line)
+            if frame is None:
+                self.logger.debug("Ignoring non-JSON line from pi")
+                continue
+            identity = pi_rpc.parse_session_identity(frame)
+            if identity is not None:
+                if identity.request_id != metadata.identity_request_id:
+                    continue
+                metadata.identity = identity
+                if identity.error is not None:
+                    await self._abort(process)
+                    return RunAgentTaskRunResult(
+                        status=AgentRunStatus.FAILED,
+                        output="",
+                        error=(
+                            "pi session confirmation failed for "
+                            f"{expected_session.session_id!r}: {identity.error}"
+                        ),
+                    )
+                if identity.session_id is None or not _sessions_equal(
+                    identity.session_id, expected_session.session_id
+                ):
+                    await self._abort(process)
+                    return RunAgentTaskRunResult(
+                        status=AgentRunStatus.FAILED,
+                        output="",
+                        error=(
+                            "pi resumed unexpected session "
+                            f"{identity.session_id!r}, expected "
+                            f"{expected_session.session_id!r}"
+                        ),
+                    )
+                if (
+                    expected_session_file is not None
+                    and identity.session_file is not None
+                    and not _same_path(identity.session_file, expected_session_file)
+                ):
+                    await self._abort(process)
+                    return RunAgentTaskRunResult(
+                        status=AgentRunStatus.FAILED,
+                        output="",
+                        error=(
+                            "pi resumed unexpected session "
+                            f"{identity.session_id!r}, expected "
+                            f"{expected_session.session_id!r}"
+                        ),
+                    )
+                return identity
+            if frame.get("type") == pi_rpc.PiEvent.EXTENSION_UI_REQUEST:
+                refused = await self._answer_ui_request(process, frame)
+                if refused is not None:
+                    await self._abort(process)
+                    return RunAgentTaskRunResult(
+                        status=AgentRunStatus.REFUSED_INTERACTION,
+                        output="",
+                        error=refused,
+                    )
+                continue
+        await self._abort(process)
+        return RunAgentTaskRunResult(
+            status=AgentRunStatus.FAILED,
+            output="",
+            error=(
+                "pi stopped without confirming session "
+                f"{expected_session.session_id!r}"
+            ),
+        )
+
+    async def _drive_events(
+        self,
+        process: icommandrunner.IAsyncProcess,
+        lines: AsyncIterator[str],
+        progress: code_action.ProgressContext,
+        metadata: _PiRunMetadata,
+    ) -> tuple[RunAgentTaskRunResult, PiObservationState]:
 
         output: list[str] = []
         turns = 0
@@ -470,7 +904,7 @@ class PiAgentHandler(
             if event == pi_rpc.PiEvent.AGENT_SETTLED:
                 settled = True
                 usage, stats_info = await self._read_session_stats(
-                    process, lines, usage
+                    process, lines, usage, metadata
                 )
                 break
 
@@ -524,6 +958,15 @@ class PiAgentHandler(
                 continue
 
             if event == pi_rpc.PiEvent.RESPONSE:
+                identity = pi_rpc.parse_session_identity(frame)
+                if identity is not None:
+                    # The startup identity check answers asynchronously: it may
+                    # arrive here, long after it was sent, or late while the
+                    # stats reader below is waiting. Recorded, never acted on
+                    # directly; settlement merges it with the stats identity.
+                    if identity.request_id == metadata.identity_request_id:
+                        metadata.identity = identity
+                    continue
                 if not frame.get("success", True):
                     self.logger.warning(f"pi rejected a command: {frame}")
                 continue
@@ -588,7 +1031,19 @@ class PiAgentHandler(
                 error=failure,
             ), state
 
-        state = _state_from_settle(usage, stats_info)
+        merged_id, merged_file, conflict = _merged_session_identity(
+            stats_info, metadata
+        )
+        if conflict is not None:
+            state = _state_from_settle(usage, stats_info)
+            return RunAgentTaskRunResult(
+                status=AgentRunStatus.FAILED,
+                output="".join(output),
+                turns=turns,
+                usage=usage,
+                error=conflict,
+            ), state
+        state = _merged_state(usage, stats_info, merged_id, merged_file)
         return RunAgentTaskRunResult(
             status=AgentRunStatus.SETTLED,
             output="".join(output),
@@ -601,6 +1056,7 @@ class PiAgentHandler(
         process: icommandrunner.IAsyncProcess,
         lines: AsyncIterator[str],
         accumulated: AgentRunUsage | None,
+        metadata: _PiRunMetadata,
     ) -> tuple[AgentRunUsage | None, pi_rpc.PiSessionStats | None]:
         """Ask pi for the session totals, falling back to `accumulated`.
 
@@ -611,7 +1067,10 @@ class PiAgentHandler(
         answer on every path that does not reach a settle.
 
         Best-effort throughout. This runs after the run has already produced
-        its output, so no failure here may change what is returned.
+        its output, so no failure here may change what is returned. A timeout
+        never erases stats already recorded in the holder: what is there is
+        still used, and the correlated identity response is recognized here
+        too, covering a state response that arrives after the stats response.
         """
         with contextlib.suppress(Exception):
             process.write_to_stdin(pi_rpc.session_stats_command())
@@ -619,8 +1078,10 @@ class PiAgentHandler(
         stats: pi_rpc.PiSessionStats | None = None
         with contextlib.suppress(TimeoutError):
             stats = await asyncio.wait_for(
-                self._await_session_stats(lines), timeout=_STATS_TIMEOUT_SEC
+                self._await_session_stats(lines, metadata), timeout=_STATS_TIMEOUT_SEC
             )
+        if stats is None and metadata.stats is not None:
+            stats = metadata.stats
 
         if stats is None or stats.usage is None:
             self.logger.debug("pi reported no session stats; using message totals")
@@ -637,7 +1098,7 @@ class PiAgentHandler(
         return reattached, stats
 
     async def _await_session_stats(
-        self, lines: AsyncIterator[str]
+        self, lines: AsyncIterator[str], metadata: _PiRunMetadata
     ) -> pi_rpc.PiSessionStats | None:
         """Read frames until the stats response arrives, or the stream ends.
 
@@ -654,8 +1115,36 @@ class PiAgentHandler(
             if frame.get("type") == pi_rpc.PiEvent.RESPONSE and (
                 pi_rpc.is_session_stats_response(frame)
             ):
-                return pi_rpc.parse_session_stats(frame)
-        return None
+                stats = pi_rpc.parse_session_stats(frame)
+                metadata.stats = stats
+                metadata.stats_received = True
+                # Finished once the stats response arrived alongside usable
+                # identity evidence: a usable stats ID, or the correlated
+                # state response. Otherwise keep waiting for the identity to
+                # arrive until the overall stats timeout bounds the wait.
+                if (stats is not None and stats.session_id) or (
+                    metadata.identity is not None
+                    and metadata.identity.request_id
+                    == metadata.identity_request_id
+                    and metadata.identity.error is None
+                    and metadata.identity.session_id
+                ):
+                    return stats
+                continue
+            identity = pi_rpc.parse_session_identity(frame)
+            if identity is not None:
+                if identity.request_id == metadata.identity_request_id:
+                    metadata.identity = identity
+                if metadata.stats_received:
+                    stats = metadata.stats
+                    if (stats is not None and stats.session_id) or (
+                        identity.request_id == metadata.identity_request_id
+                        and identity.error is None
+                        and identity.session_id
+                    ):
+                        return stats
+                continue
+        return metadata.stats
 
     async def _answer_ui_request(
         self,
@@ -852,13 +1341,12 @@ class PiAgentHandler(
         return ["pi"]
 
     def _build_command(
-        self, settings: _PiRunSettings, session_id: str | None = None
+        self, settings: _PiRunSettings, session_id: str, *, continuing: bool = False
     ) -> list[str]:
+        # Resume by full UUID: a path or --session-id could create a replacement
+        # if the looked-up session was deleted, and a partial ID is ambiguous.
         parts: list[str] = [*self._executable(), "--mode", "rpc"]
-        if session_id is not None:
-            parts += ["--session-id", session_id]
-        else:
-            parts += ["--no-session"]
+        parts += ["--session" if continuing else "--session-id", session_id]
         if settings.model is not None:
             parts += ["--model", settings.model]
         if settings.provider is not None:
@@ -902,12 +1390,14 @@ class PiAgentHandler(
         self,
         result: RunAgentTaskRunResult,
         state: PiObservationState,
-        capture_session_id: str | None,
+        requested_session_id: str | None,
+        expected: AgentSessionRef | None = None,
     ) -> RunAgentTaskRunResult:
+        wanted = expected.session_id if expected is not None else requested_session_id
         if (
-            capture_session_id is not None
+            wanted is not None
             and state.session_id is not None
-            and state.session_id != capture_session_id
+            and not _sessions_equal(state.session_id, wanted)
         ):
             state.gaps.append(
                 "pi session id differs from the requested capture session"

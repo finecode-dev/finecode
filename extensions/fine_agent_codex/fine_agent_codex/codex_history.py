@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import os
 import pathlib
 import typing
 
+from fine_agent.history_search import files_containing
 from fine_agent.history_types import (
     AgentBackend,
     AgentRunObservation,
@@ -26,6 +28,8 @@ __all__ = [
     "CodexObservationState",
     "CodexRolloutFacts",
     "CodexSessionMeta",
+    "codex_home",
+    "find_codex_thread_by_marker",
     "locate_codex_history",
     "read_rollout_facts",
 ]
@@ -102,6 +106,13 @@ def read_rollout_facts(path: pathlib.Path) -> CodexRolloutFacts:
         model=models.pop() if len(models) == 1 else None,
         turns=turns or None,
     )
+
+
+def codex_home() -> pathlib.Path:
+    env_home = os.environ.get("CODEX_HOME")
+    if env_home:
+        return pathlib.Path(env_home)
+    return pathlib.Path.home() / ".codex"
 
 
 def _unknown_provenance() -> UsageProvenance:
@@ -281,3 +292,31 @@ def locate_codex_history(
         usage_provenance=state.usage_provenance,
         gaps=gaps,
     )
+
+
+def find_codex_thread_by_marker(
+    native_root: pathlib.Path, marker: str
+) -> tuple[str | None, list[str]]:
+    """The id of the one root thread whose rollout contains *marker*, and gaps.
+
+    A spawned thread can carry its parent's history, so a marker found in a
+    root thread and in threads below it identifies the root thread.
+    """
+    found, unreadable = files_containing(_iter_rollouts(native_root), marker)
+    gaps = [f"codex rollout unreadable: {path.name}" for path in unreadable]
+    matches: list[tuple[str, CodexSessionMeta]] = []
+    for path in found:
+        meta = _read_meta(path)
+        thread_id = meta.get("id") if meta is not None else None
+        if meta is not None and thread_id is not None:
+            matches.append((thread_id, meta))
+    roots = [match for match in matches if "parent_thread_id" not in match[1]]
+    chosen = matches if len(matches) == 1 else roots
+    if len(chosen) == 1:
+        return chosen[0][0], gaps
+    if not matches:
+        gaps.append(f"no codex rollout contains marker {marker}")
+    else:
+        ids = ", ".join(sorted(thread_id for thread_id, _meta in matches))
+        gaps.append(f"multiple codex threads contain marker {marker}: {ids}")
+    return None, gaps

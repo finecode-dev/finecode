@@ -15,6 +15,7 @@ from fine_agent.history_types import (
 
 from fine_agent_codex.codex_history import (
     CodexObservationState,
+    find_codex_thread_by_marker,
     locate_codex_history,
     read_rollout_facts,
 )
@@ -152,3 +153,36 @@ def test_rollout_facts_leave_unreported_and_mixed_models_unknown(
     assert facts.model is None
     assert facts.turns is None
     assert read_rollout_facts(tmp_path / "missing.jsonl").model is None
+
+
+def _event(text: str) -> dict[str, object]:
+    return {"type": "event", "text": text}
+
+
+def test_marker_finds_the_root_thread_that_printed_it(tmp_path: pathlib.Path) -> None:
+    """A spawned thread can carry its parent's history, so the marker appears
+    in both; the root thread is the session that ran the command."""
+    _append(_write_rollout(tmp_path, "thread-1"), _event("recorded fc-m-1"))
+    _append(_write_rollout(tmp_path, "thread-2", parent="thread-1"), _event("fc-m-1"))
+    _ = _write_rollout(tmp_path, "thread-3")
+
+    assert find_codex_thread_by_marker(tmp_path, "fc-m-1") == ("thread-1", [])
+
+
+def test_marker_in_two_root_threads_identifies_neither(tmp_path: pathlib.Path) -> None:
+    _append(_write_rollout(tmp_path, "thread-1"), _event("fc-m-1"))
+    _append(_write_rollout(tmp_path, "thread-2"), _event("fc-m-1"))
+
+    thread_id, gaps = find_codex_thread_by_marker(tmp_path, "fc-m-1")
+
+    assert thread_id is None
+    assert gaps == ["multiple codex threads contain marker fc-m-1: thread-1, thread-2"]
+
+
+def test_missing_marker_is_a_gap(tmp_path: pathlib.Path) -> None:
+    _ = _write_rollout(tmp_path, "thread-1")
+
+    assert find_codex_thread_by_marker(tmp_path, "fc-m-1") == (
+        None,
+        ["no codex rollout contains marker fc-m-1"],
+    )

@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import os
 import pathlib
 import typing
 
+from fine_agent.history_search import files_containing
 from fine_agent.history_types import (
     AgentBackend,
     AgentRunObservation,
@@ -24,6 +26,8 @@ from finecode_extension_api.resource_uri import path_to_resource_uri
 __all__ = [
     "ClaudeObservationState",
     "ClaudeSessionRecord",
+    "claude_config_root",
+    "find_claude_session_by_marker",
     "locate_claude_history",
 ]
 
@@ -38,6 +42,13 @@ class ClaudeObservationState:
     session_id: str | None
     usage_provenance: UsageProvenance
     gaps: list[str]
+
+
+def claude_config_root() -> pathlib.Path:
+    env_root = os.environ.get("CLAUDE_CONFIG_DIR")
+    if env_root:
+        return pathlib.Path(env_root)
+    return pathlib.Path.home() / ".claude"
 
 
 def _unknown_provenance() -> UsageProvenance:
@@ -234,6 +245,22 @@ def locate_claude_history(
                     format=NativeHistoryFormat.CLAUDE_CODE,
                 )
             )
+        for path in sorted(sibling.rglob("*")):
+            if path.suffix == ".jsonl" or not path.is_file() or path.is_symlink():
+                continue
+            try:
+                relative = path.relative_to(native_root).as_posix()
+            except ValueError:
+                relative = path.name
+            related_files.append(
+                NativeHistoryFile(
+                    role=NativeHistoryRole.RELATED,
+                    source_uri=path_to_resource_uri(path),
+                    native_relative_path=relative,
+                    native_session_id=state.session_id,
+                    format=NativeHistoryFormat.CLAUDE_SIDECAR,
+                )
+            )
     try:
         main_relative = main_path.relative_to(native_root).as_posix()
     except ValueError:
@@ -263,3 +290,28 @@ def locate_claude_history(
         usage_provenance=state.usage_provenance,
         gaps=gaps,
     )
+
+
+def find_claude_session_by_marker(
+    native_root: pathlib.Path, marker: str
+) -> tuple[str | None, list[str]]:
+    """The id of the one main session file containing *marker*, and any gaps.
+
+    Only top-level session files are searched: subagent transcripts live in a
+    session's sibling directory and are not sessions of their own.
+    """
+    candidates = [
+        path
+        for path in sorted(native_root.glob("projects/*/*.jsonl"))
+        if path.is_file() and not path.is_symlink()
+    ]
+    found, unreadable = files_containing(candidates, marker)
+    gaps = [f"claude session file unreadable: {path.name}" for path in unreadable]
+    if not found:
+        gaps.append(f"no claude session contains marker {marker}")
+        return None, gaps
+    if len(found) > 1:
+        names = ", ".join(path.stem for path in found)
+        gaps.append(f"multiple claude sessions contain marker {marker}: {names}")
+        return None, gaps
+    return found[0].stem, gaps

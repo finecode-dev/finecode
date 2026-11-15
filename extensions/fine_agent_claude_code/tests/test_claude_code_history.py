@@ -7,6 +7,7 @@ import pathlib
 
 from fine_agent.history_types import (
     HistoryDiscoveryStatus,
+    NativeHistoryFormat,
     RelatedHistoryStatus,
     UsageProvenance,
     UsageScope,
@@ -15,6 +16,7 @@ from fine_agent.history_types import (
 
 from fine_agent_claude_code.claude_code_history import (
     ClaudeObservationState,
+    find_claude_session_by_marker,
     locate_claude_history,
 )
 
@@ -115,3 +117,64 @@ def test_locate_collects_related_subtree(tmp_path: pathlib.Path) -> None:
     assert observation.history_status is HistoryDiscoveryStatus.AVAILABLE
     assert len(observation.files) == 2
     assert observation.related_status is RelatedHistoryStatus.SCANNED
+
+
+def test_sidecar_files_beside_the_session_are_related_history(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Claude Code stores large tool results and subagent metadata as plain
+    files beside the session; without them the transcript points at nothing."""
+    main = _write_main(tmp_path, "testproj", "sess-1")
+    sibling = main.parent / "sess-1"
+    (sibling / "tool-results").mkdir(parents=True)
+    _ = (sibling / "tool-results" / "b1.txt").write_text("big output", "utf-8")
+    (sibling / "subagents").mkdir()
+    _ = (sibling / "subagents" / "agent-a.jsonl").write_text(
+        json.dumps({"agentId": "a", "sessionId": "sess-1"}) + "\n", "utf-8"
+    )
+    _ = (sibling / "subagents" / "agent-a.meta.json").write_text("{}", "utf-8")
+    state = ClaudeObservationState(
+        session_id="sess-1", usage_provenance=_provenance(), gaps=[]
+    )
+
+    observation = locate_claude_history(state, tmp_path)
+
+    formats = {file.native_relative_path: file.format for file in observation.files}
+    assert formats == {
+        "projects/testproj/sess-1.jsonl": NativeHistoryFormat.CLAUDE_CODE,
+        "projects/testproj/sess-1/subagents/agent-a.jsonl": (
+            NativeHistoryFormat.CLAUDE_CODE
+        ),
+        "projects/testproj/sess-1/subagents/agent-a.meta.json": (
+            NativeHistoryFormat.CLAUDE_SIDECAR
+        ),
+        "projects/testproj/sess-1/tool-results/b1.txt": (
+            NativeHistoryFormat.CLAUDE_SIDECAR
+        ),
+    }
+    assert observation.history_status is HistoryDiscoveryStatus.AVAILABLE
+
+
+def test_marker_finds_the_one_session_that_printed_it(tmp_path: pathlib.Path) -> None:
+    main = _write_main(tmp_path, "proj", "sess-1")
+    with main.open("a", encoding="utf-8") as handle:
+        _ = handle.write(json.dumps({"content": "recorded fc-m-1"}) + "\n")
+    _ = _write_main(tmp_path, "proj", "sess-2")
+
+    assert find_claude_session_by_marker(tmp_path, "fc-m-1") == ("sess-1", [])
+
+    session_id, gaps = find_claude_session_by_marker(tmp_path, "fc-m-9")
+    assert session_id is None
+    assert gaps == ["no claude session contains marker fc-m-9"]
+
+
+def test_marker_in_two_sessions_identifies_neither(tmp_path: pathlib.Path) -> None:
+    for session_id in ("sess-1", "sess-2"):
+        main = _write_main(tmp_path, "proj", session_id)
+        with main.open("a", encoding="utf-8") as handle:
+            _ = handle.write("fc-m-1\n")
+
+    session_id, gaps = find_claude_session_by_marker(tmp_path, "fc-m-1")
+
+    assert session_id is None
+    assert "multiple claude sessions contain marker fc-m-1" in gaps[0]

@@ -32,6 +32,29 @@ def _record(scenario: dict, entry: dict) -> None:
         record.write(json.dumps(entry) + "\n")
 
 
+def _find_session_file(config_dir: str, session_id: str) -> str | None:
+    matches: list[str] = []
+    projects = os.path.join(config_dir, "projects")
+    try:
+        entries = os.listdir(projects)
+    except OSError:
+        return None
+    for entry in entries:
+        candidate = os.path.join(config_dir, "projects", entry, f"{session_id}.jsonl")
+        if not os.path.isfile(candidate) or os.path.islink(candidate):
+            continue
+        try:
+            with open(candidate, encoding="utf-8") as handle:
+                content = handle.read()
+        except OSError:
+            continue
+        if f'"sessionId": "{session_id}"' in content:
+            matches.append(candidate)
+    if len(matches) == 1:
+        return matches[0]
+    return None
+
+
 def main() -> int:
     scenario = json.loads(sys.argv[1])
     rest = sys.argv[2:]
@@ -39,6 +62,21 @@ def main() -> int:
         sys.stdout.write(str(scenario.get("version", "2.1.306")) + "\n")
         sys.stdout.flush()
         return 0
+    resume_store: str | None = None
+    resume_id = ""
+    if "--resume" in rest:
+        resume_id = rest[rest.index("--resume") + 1]
+        config_dir = scenario.get("config_dir") or os.environ.get("CLAUDE_CONFIG_DIR")
+        if config_dir:
+            resume_store = _find_session_file(config_dir, resume_id)
+        if scenario.get("record_driver"):
+            _record(scenario, {"argv": sys.argv[2:]})
+        if resume_store is None:
+            sys.stderr.write(f"no such session: {resume_id}\n")
+            sys.stderr.flush()
+            return 2
+        # A resume reopens the stored transcript; it never rewrites it.
+        scenario = dict(scenario, write_native=False)
     session_id = str(scenario.get("session_id", _SESSION))
     config_dir = scenario.get("config_dir") or os.environ.get("CLAUDE_CONFIG_DIR")
     if config_dir and scenario.get("write_native"):
@@ -100,7 +138,23 @@ def main() -> int:
         if action == "read_prompt":
             # The real CLI reads the prompt from stdin until EOF when no
             # prompt argument is given, which is how the handler sends it.
-            _record(scenario, {"prompt": sys.stdin.read()})
+            prompt_text = sys.stdin.read()
+            _record(scenario, {"prompt": prompt_text})
+            if resume_store is not None:
+                try:
+                    with open(resume_store, "a", encoding="utf-8") as handle:
+                        _ = handle.write(
+                            json.dumps(
+                                {
+                                    "type": "user",
+                                    "sessionId": resume_id,
+                                    "message": {"content": prompt_text},
+                                }
+                            )
+                            + "\n"
+                        )
+                except OSError:
+                    pass
 
         elif action == "emit":
             _emit(step["frame"])

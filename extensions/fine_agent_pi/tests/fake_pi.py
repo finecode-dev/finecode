@@ -41,6 +41,55 @@ def _read_frame() -> dict | None:
         return None
 
 
+def _find_session_file(session_dir: str, session_id: str) -> str | None:
+    """The one native session file under *session_dir* with this header id."""
+    matches: list[str] = []
+    try:
+        entries = sorted(os.listdir(session_dir))
+    except OSError:
+        return None
+    for entry in entries:
+        if not entry.endswith(".jsonl"):
+            continue
+        path = os.path.join(session_dir, entry)
+        try:
+            with open(path, encoding="utf-8") as handle:
+                first = handle.readline()
+        except OSError:
+            continue
+        try:
+            header = json.loads(first)
+        except ValueError:
+            continue
+        if (
+            isinstance(header, dict)
+            and header.get("type") == "session"
+            and header.get("id") == session_id
+        ):
+            matches.append(path)
+    return matches[0] if len(matches) == 1 else None
+
+
+def _emit_get_state(
+    session_id: str | None, session_file: str | None, request_id: object
+) -> None:
+    """Answer one `get_state` command with this fake's actual session.
+
+    Production IDs come only from the native store the fake maintains, never
+    from a scenario-invented value, so a test that resumes a session proves
+    the handler reached the same store.
+    """
+    _emit(
+        {
+            "type": "response",
+            "command": "get_state",
+            "id": request_id,
+            "success": True,
+            "data": {"sessionId": session_id, "sessionFile": session_file},
+        }
+    )
+
+
 def main() -> int:
     scenario = json.loads(sys.argv[1])
     rest = sys.argv[2:]
@@ -50,15 +99,28 @@ def main() -> int:
         return 0
     exit_code = scenario.get("exit_code", 0)
     session_id: str | None = None
-    if "--session-id" in rest:
-        idx = rest.index("--session-id")
-        if idx + 1 < len(rest):
-            session_id = rest[idx + 1]
+    for flag in ("--session", "--session-id"):
+        if flag in rest:
+            idx = rest.index(flag)
+            if idx + 1 < len(rest):
+                session_id = rest[idx + 1]
     session_dir = scenario.get("session_dir") or os.environ.get(
         "PI_CODING_AGENT_SESSION_DIR"
     )
+    resume = "--session" in rest
     session_file: str | None = None
-    if session_id is not None and session_dir:
+    if resume:
+        # Resume reopens the existing native session: appending to it proves
+        # the continuation reached the same store. A missing session fails
+        # here without creating anything, the way the native CLI refuses a
+        # resume it cannot resolve.
+        if session_id is not None and session_dir:
+            session_file = _find_session_file(session_dir, session_id)
+        if session_file is None:
+            sys.stderr.write(f"no such pi session: {session_id}\n")
+            sys.stderr.flush()
+            return 3
+    elif session_id is not None and session_dir:
         try:
             os.makedirs(session_dir, exist_ok=True)
             timestamp = time.strftime("%Y-%m-%dT%H-%M-%S", time.gmtime())
@@ -93,11 +155,22 @@ def main() -> int:
 
     atexit.register(_flush_driver_records)
 
+    pending_get_state_id: object = None
     for step in scenario["steps"]:
         action = step["do"]
 
         if action == "await_prompt":
             frame = _read_frame()
+            # The handler sends one `get_state` identity check per run. When
+            # the scenario does not step it explicitly, answer it here with
+            # the fake's actual session so established scenarios keep passing
+            # unchanged; explicit `await_get_state` steps take precedence
+            # because they run before this one.
+            while frame is not None and frame.get("type") == "get_state":
+                _emit_get_state(session_id, session_file, frame.get("id"))
+                if scenario.get("record_driver"):
+                    driver_records.append({"get_state_id": frame.get("id")})
+                frame = _read_frame()
             if frame is None or frame.get("type") != "prompt":
                 sys.stderr.write(f"expected a prompt, got {frame}\n")
                 return 90
@@ -152,13 +225,67 @@ def main() -> int:
             else:
                 return 93
 
+        elif action == "await_get_state":
+            frame = _read_frame()
+            if frame is None or frame.get("type") != "get_state":
+                sys.stderr.write(f"expected a get_state, got {frame}\n")
+                return 95
+            pending_get_state_id = frame.get("id")
+            if scenario.get("record_driver"):
+                driver_records.append({"get_state_id": pending_get_state_id})
+
+        elif action == "answer_get_state":
+            _emit_get_state(session_id, session_file, pending_get_state_id)
+
+        elif action == "answer_get_state_wrong":
+            _emit(
+                {
+                    "type": "response",
+                    "command": "get_state",
+                    "id": pending_get_state_id,
+                    "success": True,
+                    "data": {
+                        "sessionId": step.get(
+                            "wrong_id", "00000000-0000-4000-8000-000000000000"
+                        ),
+                        "sessionFile": session_file,
+                    },
+                }
+            )
+
+        elif action == "answer_get_state_failure":
+            _emit(
+                {
+                    "type": "response",
+                    "command": "get_state",
+                    "id": pending_get_state_id,
+                    "success": False,
+                    "data": None,
+                }
+            )
+
+        elif action == "answer_get_state_no_id":
+            _emit(
+                {
+                    "type": "response",
+                    "command": "get_state",
+                    "id": pending_get_state_id,
+                    "success": True,
+                    "data": {"sessionFile": session_file},
+                }
+            )
+
         elif action == "answer_session_stats":
             frame = _read_frame()
             if frame is None or frame.get("type") != "get_session_stats":
                 sys.stderr.write(f"expected a stats request, got {frame}\n")
                 return 94
             data = step.get("data")
-            if isinstance(data, dict) and session_file is not None:
+            if (
+                isinstance(data, dict)
+                and session_file is not None
+                and not scenario.get("preserve_stats_ids", False)
+            ):
                 data = dict(data)
                 data["sessionId"] = session_id
                 data["sessionFile"] = session_file

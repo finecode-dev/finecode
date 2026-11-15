@@ -13,7 +13,11 @@ from fine_agent.history_types import (
     UsageSource,
 )
 
-from fine_agent_pi.pi_history import PiObservationState, locate_pi_history
+from fine_agent_pi.pi_history import (
+    PiObservationState,
+    find_pi_session_file,
+    locate_pi_history,
+)
 
 
 def _provenance() -> UsageProvenance:
@@ -137,3 +141,31 @@ def test_locate_ignores_wrong_session_decoy(tmp_path: pathlib.Path) -> None:
     assert observation.history_status is HistoryDiscoveryStatus.AVAILABLE
     assert len(observation.files) == 1
     assert observation.files[0].native_session_id == "sess-1"
+
+
+def test_session_file_is_found_by_header_id(tmp_path: pathlib.Path) -> None:
+    """Pi names files by time, so a session known only by id is found by
+    reading headers, in any project subdirectory."""
+    project = tmp_path / "--workspaces-proj--"
+    project.mkdir()
+    target = project / "2026-01-01T00-00-00_x.jsonl"
+    _write_session(target, "sess-1")
+    _write_session(project / "2026-01-02T00-00-00_y.jsonl", "sess-2")
+
+    assert find_pi_session_file(tmp_path, "sess-1", None) == ("sess-1", target, [])
+
+
+def test_session_file_is_found_by_marker(tmp_path: pathlib.Path) -> None:
+    target = tmp_path / "a.jsonl"
+    _write_session(target, "sess-1")
+    with target.open("a", encoding="utf-8") as handle:
+        _ = handle.write(json.dumps({"type": "message", "text": "fc-m-1"}) + "\n")
+    _write_session(tmp_path / "b.jsonl", "sess-2")
+
+    assert find_pi_session_file(tmp_path, None, "fc-m-1") == ("sess-1", target, [])
+
+    assert find_pi_session_file(tmp_path, None, "fc-m-9") == (
+        None,
+        None,
+        ["no pi session file matches marker fc-m-9"],
+    )

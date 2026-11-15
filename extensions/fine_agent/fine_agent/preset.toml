@@ -4,3 +4,8 @@
 # no-op slot rather than committing a project to an AI backend.
 [tool.finecode.action.run_agent_task]
 source = "fine_agent.RunAgentTaskAction"
+
+# Same pattern: the slot only. Register `fine_agent.RouteAgentHistoryHandler`
+# here and one leaf action per installed backend (see README).
+[tool.finecode.action.locate_agent_history]
+source = "fine_agent.LocateAgentHistoryAction"

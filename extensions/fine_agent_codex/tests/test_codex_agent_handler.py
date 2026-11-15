@@ -23,18 +23,24 @@ import pytest
 from fine_agent.history_types import (
     AgentBackend,
     HistoryDiscoveryStatus,
+    NativeHistoryRole,
     UsageScope,
     UsageSource,
 )
 from fine_agent.run_agent_task_action import (
     AgentRunStatus,
+    AgentSessionRef,
     RunAgentTaskAction,
     RunAgentTaskRunPayload,
     RunAgentTaskRunResult,
 )
 from finecode_extension_api import code_action
 from finecode_extension_api.interfaces import icommandrunner, iuser_messenger
-from finecode_extension_api.resource_uri import resource_uri_to_path
+from finecode_extension_api.resource_uri import (
+    ResourceUri,
+    path_to_resource_uri,
+    resource_uri_to_path,
+)
 from finecode_extension_runner.testing import run_handler
 
 import fine_agent_codex
@@ -45,6 +51,7 @@ from fine_agent_codex.codex_agent_handler import (
     CodexAgentProfile,
     CodexSandboxMode,
 )
+from fine_agent_codex.run_codex_agent_task_action import RunCodexAgentTaskAction
 from tests.fake_codex_support import DriverRecord, FakeScenario
 
 
@@ -244,6 +251,47 @@ class _FakeCodexHandler(CodexAgentHandler):
         ]
 
 
+MAIN_THREAD_ID = "11111111-2222-3333-8444-555555555555"
+
+
+@pytest.fixture(autouse=True)
+def _isolated_codex_home(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Native rollouts stay inside the test's tmp dir, never the dev home."""
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path / "codex-home"))
+
+
+def _main_rollout(codex_home: pathlib.Path, thread_id: str) -> pathlib.Path:
+    """The one rollout whose session-meta id is *thread_id*."""
+    matches: list[pathlib.Path] = []
+    for path in (codex_home / "sessions").rglob("rollout-*.jsonl"):
+        if not path.is_file():
+            continue
+        for line in path.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            try:
+                entry = json.loads(line)
+            except ValueError:
+                break
+            if not isinstance(entry, dict) or entry.get("type") != "session_meta":
+                continue
+            payload = entry.get("payload")
+            if isinstance(payload, dict) and payload.get("id") == thread_id:
+                matches.append(path)
+            break
+    assert len(matches) == 1
+    return matches[0]
+
+
+def _native_files(codex_home: pathlib.Path) -> set[str]:
+    base = codex_home / "sessions"
+    if not base.is_dir():
+        return set()
+    return {str(path.relative_to(base)) for path in base.rglob("*") if path.is_file()}
+
+
 async def _run(
     scenario: FakeScenario,
     *,
@@ -256,6 +304,8 @@ async def _run(
     record_path: pathlib.Path | None = None,
     project_dir: pathlib.Path | None = None,
     capture_history: bool = False,
+    continue_session: AgentSessionRef | None = None,
+    action_cls: Any = RunAgentTaskAction,
 ) -> RunAgentTaskRunResult:
     _ACTIVE["scenario"] = scenario
     _ACTIVE["record"] = str(record_path) if record_path is not None else ""
@@ -268,8 +318,9 @@ async def _run(
                 profile=profile,
                 output_schema=output_schema,
                 capture_history=capture_history,
+                continue_session=continue_session,
             ),
-            action_cls=RunAgentTaskAction,
+            action_cls=action_cls,
             handler_config=handler_config,
             service_overrides=service_overrides,
             project_dir=project_dir,
@@ -345,8 +396,9 @@ class _RecordingMessenger:
         self.warnings.append(message)
 
 
+@pytest.mark.parametrize("action_cls", [RunAgentTaskAction, RunCodexAgentTaskAction])
 async def test_argv_prompt_and_cwd_come_from_the_real_builder(
-    tmp_path: pathlib.Path,
+    tmp_path: pathlib.Path, action_cls: Any
 ) -> None:
     """The fake sees the production argv, the exact prompt on stdin, and the
     requested project directory -- and the prompt itself never appears in argv."""
@@ -358,6 +410,7 @@ async def test_argv_prompt_and_cwd_come_from_the_real_builder(
         answer="canonical",
         record_path=record,
         project_dir=tmp_path,
+        action_cls=action_cls,
     )
 
     assert result.status is AgentRunStatus.SETTLED
@@ -710,8 +763,9 @@ async def test_explicit_zero_usage_is_reported_not_absent() -> None:
     _assert_accounted(result)
 
 
+@pytest.mark.parametrize("action_cls", [RunAgentTaskAction, RunCodexAgentTaskAction])
 async def test_structured_output_round_trips_through_a_real_schema_file(
-    tmp_path: pathlib.Path,
+    tmp_path: pathlib.Path, action_cls: Any
 ) -> None:
     """The schema the CLI validates against is the file the fake reads while
     running, not a copy of the test input."""
@@ -725,7 +779,10 @@ async def test_structured_output_round_trips_through_a_real_schema_file(
         answer={"answer": "42"},
         output_schema=schema,
         record_path=record,
+        action_cls=action_cls,
     )
+
+    assert isinstance(result, RunAgentTaskRunResult)
 
     assert result.status is AgentRunStatus.SETTLED
     assert result.structured_output == {"answer": "42"}
@@ -1144,15 +1201,736 @@ async def test_captured_run_reports_available_history(
     assert observation is not None
     assert observation.backend is AgentBackend.CODEX
     assert observation.history_status is HistoryDiscoveryStatus.AVAILABLE
-    assert observation.session_id == "thread-1"
+    assert observation.session_id == MAIN_THREAD_ID
     assert observation.backend_version == "0.163.0"
     assert len(observation.files) == 3
     assert observation.usage_provenance.token_source is UsageSource.CODEX_TURN
     assert observation.usage_provenance.token_scope is UsageScope.UNKNOWN
     main = next(f for f in observation.files if f.role.value == "main")
     content = resource_uri_to_path(main.source_uri).read_text(encoding="utf-8")
-    assert "thread-1" in content
+    assert MAIN_THREAD_ID in content
     assert result.usage is not None
     assert result.usage.provider == "openai"
     assert result.usage.model == "gpt-test"
     assert result.turns == 2
+
+
+def _session_ref(
+    project_dir: pathlib.Path,
+    session_id: str = MAIN_THREAD_ID,
+    backend: AgentBackend = AgentBackend.CODEX,
+) -> AgentSessionRef:
+    return AgentSessionRef(
+        backend=backend,
+        session_id=session_id,
+        project_dir=path_to_resource_uri(project_dir),
+    )
+
+
+def _project_dir(tmp_path: pathlib.Path) -> pathlib.Path:
+    project_dir = tmp_path / "proj"
+    project_dir.mkdir(exist_ok=True)
+    return project_dir
+
+
+async def test_settled_run_reports_session_and_continuations_reuse_it(
+    tmp_path: pathlib.Path,
+) -> None:
+    """A new settled run hands out its native session; later prompts resume it.
+
+    A second prompt must reopen the same native session (not start one), and
+    a third can reuse the reference the second run returned. Decoys and the
+    session-file set are untouched by the resumes.
+    """
+    project_dir = _project_dir(tmp_path)
+    home = pathlib.Path(os.environ["CODEX_HOME"])
+    first = await _run(
+        FakeScenario.SUCCESS,
+        prompt="first",
+        answer="one",
+        project_dir=project_dir,
+        handler_config={"model": "m"},
+    )
+
+    assert first.status is AgentRunStatus.SETTLED
+    assert first.session == _session_ref(project_dir)
+    assert first.session is not None and first.session.backend is AgentBackend.CODEX
+    main_file = _main_rollout(home, MAIN_THREAD_ID)
+    assert "first" in main_file.read_text(encoding="utf-8")
+    files_before = _native_files(home)
+    assert files_before
+    decoy = next(
+        path
+        for path in (home / "sessions").rglob("rollout-*.jsonl")
+        if "other-1" in path.read_text(encoding="utf-8")
+    )
+    decoy_before = decoy.read_bytes()
+
+    second = await _run(
+        FakeScenario.SUCCESS,
+        prompt="second",
+        answer="two",
+        project_dir=project_dir,
+        continue_session=first.session,
+        handler_config={"model": "m"},
+    )
+
+    assert second.status is AgentRunStatus.SETTLED
+    assert second.session == first.session
+    resumed = main_file.read_text(encoding="utf-8")
+    assert "first" in resumed and "second" in resumed
+    assert _native_files(home) == files_before
+    assert decoy.read_bytes() == decoy_before
+
+    third = await _run(
+        FakeScenario.SUCCESS,
+        prompt="third",
+        answer="three",
+        project_dir=project_dir,
+        continue_session=second.session,
+        handler_config={"model": "m"},
+    )
+
+    assert third.status is AgentRunStatus.SETTLED
+    assert third.session == first.session
+    assert "third" in main_file.read_text(encoding="utf-8")
+    assert _native_files(home) == files_before
+
+
+async def test_continuation_argv_resumes_with_current_settings(
+    tmp_path: pathlib.Path,
+) -> None:
+    """The resume argv carries the current model and sandbox, not saved ones."""
+    project_dir = _project_dir(tmp_path)
+    first = await _run(
+        FakeScenario.SUCCESS,
+        project_dir=project_dir,
+        handler_config={"model": "old-model"},
+    )
+    assert first.session is not None
+    record = tmp_path / "resume-record.json"
+    second = await _run(
+        FakeScenario.SUCCESS,
+        prompt="again",
+        project_dir=project_dir,
+        continue_session=first.session,
+        record_path=record,
+        handler_config={"model": "new-model", "sandbox_mode": "workspace-write"},
+    )
+
+    assert second.status is AgentRunStatus.SETTLED
+    driver = _read_record(record)
+    argv = driver["argv"]
+    assert argv[:9] == [
+        "--ask-for-approval",
+        "never",
+        "exec",
+        "--sandbox",
+        "workspace-write",
+        "--color",
+        "never",
+        "resume",
+        "--json",
+    ]
+    assert argv[9:13] == [
+        "--output-last-message",
+        driver["answer_path"],
+        "--model",
+        "new-model",
+    ]
+    assert argv[-2:] == [MAIN_THREAD_ID, "-"]
+    assert "--last" not in argv
+    assert "--fork" not in argv
+    assert "--ephemeral" not in argv
+    assert not any(element.startswith("thread-") for element in argv)
+    assert driver["prompt"] == "again"
+
+
+def test_continuation_build_command_form() -> None:
+    """Resume flags belong to `resume`; the thread is addressed by full UUID."""
+    ref = AgentSessionRef(
+        backend=AgentBackend.CODEX,
+        session_id=MAIN_THREAD_ID,
+        project_dir=ResourceUri("file:///ws/proj"),
+    )
+    settings = codex_agent_handler._CodexRunSettings(
+        model="gpt-5", settle_timeout_sec=900.0
+    )
+    answer = pathlib.Path("/tmp/answer.txt")
+    schema = pathlib.Path("/tmp/schema.json")
+    argv = _handler_with(skip_git_repo_check=True)._build_command(
+        settings, answer, schema, continue_session=ref
+    )
+    assert argv[:9] == [
+        "codex",
+        "--ask-for-approval",
+        "never",
+        "exec",
+        "--sandbox",
+        "read-only",
+        "--color",
+        "never",
+        "resume",
+    ]
+    json_index = argv.index("--json")
+    assert json_index > argv.index("resume")
+    assert argv[argv.index("--model") + 1] == "gpt-5"
+    assert argv.index("--skip-git-repo-check") > argv.index("resume")
+    assert argv[argv.index("--output-schema") + 1] == str(schema)
+    assert argv[-2:] == [MAIN_THREAD_ID, "-"]
+
+
+@pytest.mark.parametrize("mode", list(CodexSandboxMode))
+def test_continuation_keeps_every_sandbox_mode(mode: CodexSandboxMode) -> None:
+    """Every sandbox mode stays an explicit parent-command option on resume."""
+    ref = AgentSessionRef(
+        backend=AgentBackend.CODEX,
+        session_id=MAIN_THREAD_ID,
+        project_dir=ResourceUri("file:///ws/proj"),
+    )
+    settings = codex_agent_handler._CodexRunSettings(
+        model="m", settle_timeout_sec=900.0
+    )
+    argv = _handler_with(sandbox_mode=mode)._build_command(
+        settings, pathlib.Path("/tmp/a.txt"), None, continue_session=ref
+    )
+    assert argv[argv.index("--sandbox") + 1] == mode.value
+    assert argv[argv.index("--ask-for-approval") + 1] == "never"
+
+
+async def test_continuation_rejects_non_uuid_ids_without_spawning(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Names and fragments fail before any backend, project or lookup work."""
+    project_dir = _project_dir(tmp_path)
+    for bad_id in ("", "thread-1", MAIN_THREAD_ID[:8], MAIN_THREAD_ID.replace("-", "")):
+        runner = _RecordingCommandRunner()
+        result = await _run(
+            FakeScenario.SUCCESS,
+            project_dir=project_dir,
+            continue_session=_session_ref(project_dir, session_id=bad_id),
+            service_overrides={icommandrunner.ICommandRunner: runner},
+        )
+        assert result.status is AgentRunStatus.FAILED
+        assert "session ID" in (result.error or "")
+        assert runner.start_long_running_calls == 0
+        assert runner.run_calls == 0
+
+
+async def test_continuation_rejects_backend_mismatch_without_spawning(
+    tmp_path: pathlib.Path,
+) -> None:
+    project_dir = _project_dir(tmp_path)
+    runner = _RecordingCommandRunner()
+    result = await _run(
+        FakeScenario.SUCCESS,
+        project_dir=project_dir,
+        continue_session=_session_ref(project_dir, backend=AgentBackend.CLAUDE_CODE),
+        service_overrides={icommandrunner.ICommandRunner: runner},
+    )
+
+    assert result.status is AgentRunStatus.FAILED
+    assert "claude_code" in (result.error or "")
+    assert runner.start_long_running_calls == 0
+    assert runner.run_calls == 0
+
+
+async def test_continuation_rejects_foreign_project_without_spawning(
+    tmp_path: pathlib.Path,
+) -> None:
+    project_dir = _project_dir(tmp_path)
+    runner = _RecordingCommandRunner()
+    ref = AgentSessionRef(
+        backend=AgentBackend.CODEX,
+        session_id=MAIN_THREAD_ID,
+        project_dir=ResourceUri("file:///elsewhere"),
+    )
+    result = await _run(
+        FakeScenario.SUCCESS,
+        project_dir=project_dir,
+        continue_session=ref,
+        service_overrides={icommandrunner.ICommandRunner: runner},
+    )
+
+    assert result.status is AgentRunStatus.FAILED
+    assert "elsewhere" in (result.error or "")
+    assert runner.start_long_running_calls == 0
+    assert runner.run_calls == 0
+
+
+async def test_continuation_unknown_profile_fails_without_lookup_or_spawn(
+    tmp_path: pathlib.Path,
+) -> None:
+    """An unknown role is reported even when no native session exists for it."""
+    project_dir = _project_dir(tmp_path)
+    runner = _RecordingCommandRunner()
+    result = await _run(
+        FakeScenario.SUCCESS,
+        project_dir=project_dir,
+        profile="nope",
+        continue_session=_session_ref(project_dir),
+        handler_config={"profiles": {"b": {}, "a": {}}},
+        service_overrides={icommandrunner.ICommandRunner: runner},
+    )
+
+    assert result.status is AgentRunStatus.FAILED
+    assert result.error == "unknown agent profile 'nope'; configured profiles: a, b"
+    assert runner.start_long_running_calls == 0
+    assert runner.run_calls == 0
+
+
+async def test_continuation_missing_session_beats_invalid_timeout(
+    tmp_path: pathlib.Path,
+) -> None:
+    """A deleted session is reported, not the conflicting timeout value."""
+    project_dir = _project_dir(tmp_path)
+    runner = _RecordingCommandRunner()
+    result = await _run(
+        FakeScenario.SUCCESS,
+        project_dir=project_dir,
+        continue_session=_session_ref(project_dir),
+        handler_config={"settle_timeout_sec": 0},
+        service_overrides={icommandrunner.ICommandRunner: runner},
+    )
+
+    assert result.status is AgentRunStatus.FAILED
+    assert "settle_timeout_sec" not in (result.error or "")
+    assert "not found" in (result.error or "")
+    assert runner.start_long_running_calls == 0
+    assert runner.run_calls == 0
+
+
+async def test_continuation_invalid_timeout_fails_without_spawning(
+    tmp_path: pathlib.Path,
+) -> None:
+    """With the session present, a bad timeout is still a pre-start failure."""
+    project_dir = _project_dir(tmp_path)
+    first = await _run(FakeScenario.SUCCESS, project_dir=project_dir)
+    assert first.session is not None
+    runner = _RecordingCommandRunner()
+    result = await _run(
+        FakeScenario.SUCCESS,
+        project_dir=project_dir,
+        continue_session=first.session,
+        handler_config={"settle_timeout_sec": 0},
+        service_overrides={icommandrunner.ICommandRunner: runner},
+    )
+
+    assert result.status is AgentRunStatus.FAILED
+    assert "settle_timeout_sec" in (result.error or "")
+    assert runner.start_long_running_calls == 0
+    assert runner.run_calls == 0
+
+
+async def test_continuation_without_model_fails_before_spawn(
+    tmp_path: pathlib.Path,
+) -> None:
+    """The saved session model is never silently reused on continuation."""
+    project_dir = _project_dir(tmp_path)
+    first = await _run(
+        FakeScenario.SUCCESS, project_dir=project_dir, handler_config={"model": "m1"}
+    )
+    assert first.session is not None
+    runner = _RecordingCommandRunner()
+    result = await _run(
+        FakeScenario.SUCCESS,
+        project_dir=project_dir,
+        continue_session=first.session,
+        service_overrides={icommandrunner.ICommandRunner: runner},
+    )
+
+    assert result.status is AgentRunStatus.FAILED
+    assert "model" in (result.error or "")
+    assert "new-run default" in (result.error or "")
+    assert runner.start_long_running_calls == 0
+    assert runner.run_calls == 0
+
+
+async def test_continuation_schema_write_failure_has_no_recorded_prompt(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Schema preparation precedes launch: a write failure starts nothing."""
+    project_dir = _project_dir(tmp_path)
+    first = await _run(
+        FakeScenario.SUCCESS, project_dir=project_dir, handler_config={"model": "m"}
+    )
+    assert first.session is not None
+    record = tmp_path / "schema-fail-record.json"
+
+    def _fail_write_text(self: pathlib.Path, *args: Any, **kwargs: Any) -> str | None:
+        raise OSError("disk is gone")
+
+    monkeypatch.setattr(pathlib.Path, "write_text", _fail_write_text)
+    result = await _run(
+        FakeScenario.SUCCESS,
+        project_dir=project_dir,
+        continue_session=first.session,
+        output_schema={"type": "object"},
+        record_path=record,
+        handler_config={"model": "m"},
+    )
+
+    assert result.status is AgentRunStatus.FAILED
+    assert "schema" in (result.error or "")
+    assert not record.exists()
+
+
+async def test_continuation_missing_session_fails_and_creates_no_session(
+    tmp_path: pathlib.Path,
+) -> None:
+    """The driver re-reads the native store; a miss creates nothing."""
+    project_dir = _project_dir(tmp_path)
+    home = pathlib.Path(os.environ["CODEX_HOME"])
+    ref = _session_ref(project_dir, session_id="22222222-2222-4222-8222-222222222222")
+    files_before = _native_files(home)
+    record = tmp_path / "miss-record.json"
+    result = await _run(
+        FakeScenario.SUCCESS,
+        prompt="hello?",
+        project_dir=project_dir,
+        continue_session=ref,
+        record_path=record,
+    )
+
+    assert result.status is AgentRunStatus.FAILED
+    assert "not found" in (result.error or "")
+    assert "settle_timeout" not in (result.error or "")
+    assert result.session is None
+    assert _native_files(home) == files_before
+
+
+async def test_continuation_deleted_session_fails_without_creating_one(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A session removed after the handler lookup still fails at resume."""
+    project_dir = _project_dir(tmp_path)
+    home = pathlib.Path(os.environ["CODEX_HOME"])
+    first = await _run(
+        FakeScenario.SUCCESS, project_dir=project_dir, handler_config={"model": "m"}
+    )
+    assert first.session is not None
+    files_before = _native_files(home)
+
+    real_locate = codex_agent_handler.codex_history.locate_codex_history
+
+    def _locate_then_delete(state: Any, root: pathlib.Path) -> Any:
+        observation = real_locate(state, root)
+        for path in (root / "sessions").rglob("rollout-*.jsonl"):
+            if path.is_file():
+                path.unlink()
+        return observation
+
+    monkeypatch.setattr(
+        codex_agent_handler.codex_history, "locate_codex_history", _locate_then_delete
+    )
+    result = await _run(
+        FakeScenario.SUCCESS,
+        prompt="hello?",
+        project_dir=project_dir,
+        continue_session=first.session,
+        handler_config={"model": "m"},
+    )
+
+    assert result.status is AgentRunStatus.FAILED
+    assert "no session found" in (result.error or "")
+    assert result.session is None
+    assert _native_files(home) <= files_before
+
+
+async def test_continuation_settled_without_reported_id_fails_and_keeps_output(
+    tmp_path: pathlib.Path,
+) -> None:
+    """A settled continuation with no stream identity fails without losing text."""
+    project_dir = _project_dir(tmp_path)
+    first = await _run(FakeScenario.SUCCESS, project_dir=project_dir)
+    assert first.session is not None
+    lines = [json.dumps({"type": "turn.completed", "usage": {"input_tokens": 3}})]
+    process: Any = _ScriptedProcess(lines=lines, alive=[False])
+    result = await _run(
+        FakeScenario.SUCCESS,
+        project_dir=project_dir,
+        continue_session=first.session,
+        handler_config={"model": "m"},
+        service_overrides={
+            icommandrunner.ICommandRunner: _StubRunner(process, "kept text")
+        },
+    )
+
+    assert result.status is AgentRunStatus.FAILED
+    assert result.output == "kept text"
+    assert "session" in (result.error or "").lower()
+    assert result.session is None
+    assert result.observation is None
+
+
+async def test_continuation_missing_id_with_capture_reports_gap_not_session(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Capture on a missing identity reports the gap; the outcome still fails."""
+    project_dir = _project_dir(tmp_path)
+    first = await _run(FakeScenario.SUCCESS, project_dir=project_dir)
+    assert first.session is not None
+    lines = [json.dumps({"type": "turn.completed", "usage": {"input_tokens": 3}})]
+    process: Any = _ScriptedProcess(lines=lines, alive=[False])
+    result = await _run(
+        FakeScenario.SUCCESS,
+        project_dir=project_dir,
+        continue_session=first.session,
+        capture_history=True,
+        handler_config={"model": "m"},
+        service_overrides={
+            icommandrunner.ICommandRunner: _NoProbeRunner(process, "kept text")
+        },
+    )
+
+    assert result.status is AgentRunStatus.FAILED
+    assert result.output == "kept text"
+    assert result.session is None
+    assert result.observation is not None
+    assert result.observation.history_status is HistoryDiscoveryStatus.UNAVAILABLE
+    assert result.observation.gaps
+
+
+async def test_continuation_failure_without_reported_id_keeps_its_reason(
+    tmp_path: pathlib.Path,
+) -> None:
+    """A refused backend outcome is not relabeled as a missing identity."""
+    project_dir = _project_dir(tmp_path)
+    first = await _run(FakeScenario.SUCCESS, project_dir=project_dir)
+    assert first.session is not None
+    lines = [
+        json.dumps(
+            {
+                "type": "item.completed",
+                "item": {"id": "9", "type": "agent_message", "text": "nope"},
+            }
+        ),
+        json.dumps({"type": "turn.failed", "error": {"message": "denied"}}),
+    ]
+    process: Any = _ScriptedProcess(lines=lines, alive=[False])
+    result = await _run(
+        FakeScenario.SUCCESS,
+        project_dir=project_dir,
+        continue_session=first.session,
+        handler_config={"model": "m"},
+        service_overrides={icommandrunner.ICommandRunner: _StubRunner(process, "nope")},
+    )
+
+    assert result.status is AgentRunStatus.FAILED
+    assert result.error == "denied"
+    assert result.session is None
+
+
+async def test_continuation_structured_output_round_trip(
+    tmp_path: pathlib.Path,
+) -> None:
+    """A resumed turn extracts JSON against the schema like a new turn does."""
+    project_dir = _project_dir(tmp_path)
+    first = await _run(
+        FakeScenario.SUCCESS, project_dir=project_dir, handler_config={"model": "m"}
+    )
+    assert first.session is not None
+    schema = {"type": "object", "properties": {"answer": {"type": "string"}}}
+    record = tmp_path / "structured-resume-record.json"
+    result = await _run(
+        FakeScenario.STRUCTURED_VALID,
+        answer={"answer": "42"},
+        output_schema=schema,
+        project_dir=project_dir,
+        continue_session=first.session,
+        record_path=record,
+        handler_config={"model": "m"},
+    )
+
+    assert result.status is AgentRunStatus.SETTLED
+    assert result.structured_output == {"answer": "42"}
+    assert result.session == first.session
+    driver = _read_record(record)
+    assert driver["schema"] == schema
+
+
+async def test_continuation_malformed_structured_output_fails_and_keeps_text(
+    tmp_path: pathlib.Path,
+) -> None:
+    project_dir = _project_dir(tmp_path)
+    first = await _run(
+        FakeScenario.SUCCESS, project_dir=project_dir, handler_config={"model": "m"}
+    )
+    assert first.session is not None
+    result = await _run(
+        FakeScenario.STRUCTURED_INVALID,
+        answer="not json{{{",
+        output_schema={"type": "object"},
+        project_dir=project_dir,
+        continue_session=first.session,
+        handler_config={"model": "m"},
+    )
+
+    assert result.status is AgentRunStatus.FAILED
+    assert result.output == "not json{{{"
+    assert result.structured_output is None
+    assert result.session is None
+
+
+async def test_continuation_backend_failure_keeps_its_reason(
+    tmp_path: pathlib.Path,
+) -> None:
+    project_dir = _project_dir(tmp_path)
+    first = await _run(
+        FakeScenario.SUCCESS, project_dir=project_dir, handler_config={"model": "m"}
+    )
+    assert first.session is not None
+    result = await _run(
+        FakeScenario.FAILED,
+        project_dir=project_dir,
+        continue_session=first.session,
+        handler_config={"model": "m"},
+    )
+
+    assert result.status is AgentRunStatus.FAILED
+    assert result.error == "boom"
+    assert result.session is None
+
+
+async def test_continuation_timeout_fails_and_tears_down(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A resumed run that hangs is bounded by the current timeout setting."""
+    monkeypatch.setattr(codex_agent_handler, "_EXIT_GRACE_SEC", 0.3)
+    monkeypatch.setattr(codex_agent_handler, "_SIGNAL_GRACE_SEC", 0.3)
+    project_dir = _project_dir(tmp_path)
+    first = await _run(
+        FakeScenario.SUCCESS, project_dir=project_dir, handler_config={"model": "m"}
+    )
+    assert first.session is not None
+    record = tmp_path / "hang-resume-record.json"
+    result = await _run(
+        FakeScenario.HANG,
+        project_dir=project_dir,
+        continue_session=first.session,
+        record_path=record,
+        handler_config={"model": "m", "settle_timeout_sec": 0.5},
+    )
+
+    assert result.status is AgentRunStatus.FAILED
+    assert "did not finish within" in (result.error or "")
+    assert result.session is None
+    driver = _read_record(record)
+    assert await _wait_gone(driver["agent_pid"])
+
+
+class _NoProbeRunner(_StubRunner):
+    """A scripted process runner whose version probe looks like no binary."""
+
+    async def run(
+        self,
+        cmd: icommandrunner.Argv,
+        cwd: pathlib.Path | None = None,
+        env: dict[str, str] | None = None,
+        new_process_group: bool = False,
+    ) -> Any:
+        _ = (cmd, cwd, env, new_process_group)
+        raise FileNotFoundError(2, "No such file or directory")
+
+
+class _BrokenPipeProcess(_ScriptedProcess):
+    def __init__(self, error: Exception) -> None:
+        super().__init__(lines=[], alive=[False])
+        self._error = error
+
+    def write_to_stdin(self, value: str) -> None:
+        _ = value
+        raise self._error
+
+
+@pytest.mark.parametrize(
+    "error", [BrokenPipeError(32, "Broken pipe"), ConnectionResetError(104, "reset")]
+)
+async def test_continuation_prompt_pipe_failure_is_an_explicit_failure(
+    tmp_path: pathlib.Path, error: Exception
+) -> None:
+    """A native process that exits before reading the prompt fails the turn."""
+    project_dir = _project_dir(tmp_path)
+    first = await _run(FakeScenario.SUCCESS, project_dir=project_dir)
+    assert first.session is not None
+    result = await _run(
+        FakeScenario.SUCCESS,
+        project_dir=project_dir,
+        continue_session=first.session,
+        handler_config={"model": "m"},
+        service_overrides={
+            icommandrunner.ICommandRunner: _StubRunner(
+                _BrokenPipeProcess(error), "unused"
+            )
+        },
+    )
+
+    assert result.status is AgentRunStatus.FAILED
+    assert "pipe" in (result.error or "")
+    assert result.session is None
+
+
+async def test_continuation_capture_locates_the_same_main_session(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Capture on a continuation observes the resumed native session."""
+    project_dir = _project_dir(tmp_path)
+    home = pathlib.Path(os.environ["CODEX_HOME"])
+    first = await _run(
+        FakeScenario.SUCCESS, project_dir=project_dir, handler_config={"model": "m"}
+    )
+    assert first.session is not None
+    result = await _run(
+        FakeScenario.SUCCESS,
+        prompt="more",
+        project_dir=project_dir,
+        continue_session=first.session,
+        capture_history=True,
+        handler_config={"model": "m"},
+    )
+
+    assert result.status is AgentRunStatus.SETTLED
+    assert result.session == first.session
+    observation = result.observation
+    assert observation is not None
+    assert observation.history_status is HistoryDiscoveryStatus.AVAILABLE
+    assert observation.session_id == MAIN_THREAD_ID
+    main = next(f for f in observation.files if f.role is NativeHistoryRole.MAIN)
+    assert resource_uri_to_path(main.source_uri) == _main_rollout(home, MAIN_THREAD_ID)
+
+
+async def test_continuation_observation_failure_keeps_reference_and_status(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A broken history read degrades the observation, not the settled turn."""
+    project_dir = _project_dir(tmp_path)
+    first = await _run(
+        FakeScenario.SUCCESS, project_dir=project_dir, handler_config={"model": "m"}
+    )
+    assert first.session is not None
+    calls: list[int] = []
+    real_locate = codex_agent_handler.codex_history.locate_codex_history
+
+    def _flaky_locate(state: Any, root: pathlib.Path) -> Any:
+        calls.append(1)
+        if len(calls) == 1:
+            return real_locate(state, root)
+        raise RuntimeError("disk is gone")
+
+    monkeypatch.setattr(
+        codex_agent_handler.codex_history, "locate_codex_history", _flaky_locate
+    )
+    result = await _run(
+        FakeScenario.SUCCESS,
+        prompt="more",
+        project_dir=project_dir,
+        continue_session=first.session,
+        capture_history=True,
+        handler_config={"model": "m"},
+    )
+
+    assert result.status is AgentRunStatus.SETTLED
+    assert result.output == "done"
+    assert result.session == first.session
+    assert result.observation is not None
+    assert result.observation.history_status is HistoryDiscoveryStatus.FAILED

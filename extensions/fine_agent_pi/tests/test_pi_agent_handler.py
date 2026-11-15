@@ -17,6 +17,8 @@ import os
 import pathlib
 import sys
 import time
+import typing
+import uuid
 from typing import Any
 
 import pytest
@@ -32,16 +34,21 @@ from fine_agent.history_types import (
 )
 from fine_agent.run_agent_task_action import (
     AgentRunStatus,
+    AgentSessionRef,
     RunAgentTaskAction,
     RunAgentTaskRunPayload,
     RunAgentTaskRunResult,
 )
 from finecode_extension_api.interfaces import icommandrunner
-from finecode_extension_api.resource_uri import resource_uri_to_path
+from finecode_extension_api.resource_uri import (
+    path_to_resource_uri,
+    resource_uri_to_path,
+)
 from finecode_extension_runner.testing import run_handler
 
-from fine_agent_pi import pi_agent_handler
+from fine_agent_pi import pi_agent_handler, pi_history, pi_rpc
 from fine_agent_pi.pi_agent_handler import PiAgentHandler
+from fine_agent_pi.run_pi_agent_task_action import RunPiAgentTaskAction
 
 _FAKE_PI = pathlib.Path(__file__).parent / "fake_pi.py"
 
@@ -64,6 +71,26 @@ class _FakePiHandler(PiAgentHandler):
         return [sys.executable, str(_FAKE_PI), json.dumps(_ACTIVE_SCENARIO)]
 
 
+class _PiFakeScenario(typing.TypedDict, total=False):
+    """New fake-pi control fields, beyond the established step protocol.
+
+    `wrong_id` overrides the session id in a deliberately wrong `get_state`
+    answer. Unlisted step dicts keep their existing ad-hoc shape.
+    """
+
+    steps: list[dict[str, Any]]
+    wrong_id: str
+    preserve_stats_ids: bool
+
+
+@pytest.fixture(autouse=True)
+def _isolated_pi_sessions(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Native sessions stay inside the test's tmp dir, never the dev home."""
+    monkeypatch.setenv("PI_CODING_AGENT_SESSION_DIR", str(tmp_path / "pi-sessions"))
+
+
 async def _run(
     scenario: dict[str, Any],
     *,
@@ -73,6 +100,9 @@ async def _run(
     output_schema: dict[str, Any] | None = None,
     service_overrides: dict[Any, Any] | None = None,
     capture_history: bool = False,
+    continue_session: AgentSessionRef | None = None,
+    project_dir: pathlib.Path | None = None,
+    action_cls: Any = RunAgentTaskAction,
 ) -> RunAgentTaskRunResult:
     global _ACTIVE_SCENARIO
     _ACTIVE_SCENARIO = scenario
@@ -84,10 +114,12 @@ async def _run(
                 profile=profile,
                 output_schema=output_schema,
                 capture_history=capture_history,
+                continue_session=continue_session,
             ),
-            action_cls=RunAgentTaskAction,
+            action_cls=action_cls,
             handler_config=handler_config,
             service_overrides=service_overrides,
+            project_dir=project_dir,
         )
     finally:
         _ACTIVE_SCENARIO = {}
@@ -546,7 +578,6 @@ def _usage(input_tokens: int, output_tokens: int, cost: float = 0.0) -> dict[str
 
 
 _STATS_DATA = {
-    "sessionId": "abc123",
     "tokens": {
         "input": 5000,
         "output": 900,
@@ -715,13 +746,15 @@ def test_build_command_carries_model_and_provider() -> None:
         model="deepseek-v4-flash", provider="deepseek", settle_timeout_sec=900.0
     )
 
-    command = PiAgentHandler._build_command(handler, settings)
+    session_id = "11111111-2222-4333-8444-555555555555"
+    command = PiAgentHandler._build_command(handler, settings, session_id)
 
     assert command == [
         "pi",
         "--mode",
         "rpc",
-        "--no-session",
+        "--session-id",
+        session_id,
         "--model",
         "deepseek-v4-flash",
         "--provider",
@@ -735,7 +768,10 @@ def test_build_command_omits_unset_options(field: str) -> None:
     values = {"model": "m", "provider": "p"} | {field: None}
     settings = pi_agent_handler._PiRunSettings(settle_timeout_sec=900.0, **values)
 
-    assert f"--{field}" not in PiAgentHandler._build_command(handler, settings)
+    command = PiAgentHandler._build_command(
+        handler, settings, "11111111-2222-4333-8444-555555555555"
+    )
+    assert f"--{field}" not in command
 
 
 async def test_default_config_records_the_mode_flags_only(
@@ -756,7 +792,12 @@ async def test_default_config_records_the_mode_flags_only(
     )
 
     argv = next(entry["argv"] for entry in _records(record) if "argv" in entry)
-    assert argv == ["--mode", "rpc", "--no-session"]
+    assert argv[:3] == ["--mode", "rpc", "--session-id"]
+    assert uuid.UUID(argv[3])
+    assert "--no-session" not in argv
+    assert "--session" not in argv
+    assert "--model" not in argv
+    assert "--provider" not in argv
 
 
 def _recorded_argv(record: pathlib.Path) -> list[str]:
@@ -778,12 +819,15 @@ def _settled_scenario(record: pathlib.Path) -> dict[str, Any]:
     }
 
 
-async def test_profile_selects_its_model_and_provider(tmp_path: pathlib.Path) -> None:
+@pytest.mark.parametrize("action_cls", [RunAgentTaskAction, RunPiAgentTaskAction])
+async def test_profile_selects_its_model_and_provider(
+    tmp_path: pathlib.Path, action_cls: Any
+) -> None:
     """A profile is the only way one task runs on a different model than
     another, so its fields must reach the command rather than living in config
     that is merely parsed."""
     record = tmp_path / "record.jsonl"
-    await _run(
+    result = await _run(
         _settled_scenario(record),
         handler_config={
             "model": "M1",
@@ -791,7 +835,11 @@ async def test_profile_selects_its_model_and_provider(tmp_path: pathlib.Path) ->
             "profiles": {"p": {"model": "M2", "provider": "P2"}},
         },
         profile="p",
+        action_cls=action_cls,
     )
+
+    assert isinstance(result, RunAgentTaskRunResult)
+    assert result.status is AgentRunStatus.SETTLED
 
     argv = _recorded_argv(record)
     assert _flag_value(argv, "--model") == "M2"
@@ -1158,7 +1206,10 @@ async def test_no_schema_sends_the_prompt_unchanged(tmp_path: pathlib.Path) -> N
     assert result.structured_output is None
 
 
-async def test_the_last_fenced_block_is_the_structured_output() -> None:
+@pytest.mark.parametrize("action_cls", [RunAgentTaskAction, RunPiAgentTaskAction])
+async def test_the_last_fenced_block_is_the_structured_output(
+    action_cls: Any,
+) -> None:
     """A model that shows intermediate JSON and then an answer puts the answer
     last; reading the first block would return its own workings."""
     result = await _run(
@@ -1171,7 +1222,10 @@ async def test_the_last_fenced_block_is_the_structured_output() -> None:
             ]
         },
         output_schema=_SCHEMA,
+        action_cls=action_cls,
     )
+
+    assert isinstance(result, RunAgentTaskRunResult)
 
     assert result.status is AgentRunStatus.SETTLED
     assert result.structured_output == {"n": 2}
@@ -1286,6 +1340,7 @@ async def test_captured_run_reports_available_history(tmp_path: pathlib.Path) ->
     assert observation.backend_version == "1.3.0"
     argv = next(entry["argv"] for entry in _records(record) if "argv" in entry)
     assert "--no-session" not in argv
+    assert "--session" not in argv
     assert "--session-id" in argv
     assert argv[argv.index("--session-id") + 1] == observation.session_id
     source_path = resource_uri_to_path(main.source_uri)
@@ -1328,7 +1383,11 @@ async def test_captured_stats_fallback_keeps_message_usage(
     assert result.usage is not None
     assert result.usage.total_tokens == 120
     assert result.observation is not None
-    assert result.observation.history_status is HistoryDiscoveryStatus.UNAVAILABLE
+    # The stats never arrived, but the startup identity check still named the
+    # native session, so history is located from that file independently of
+    # the missing totals.
+    assert result.observation.history_status is HistoryDiscoveryStatus.AVAILABLE
+    assert result.observation.session_id is not None
     assert result.observation.usage_provenance.token_source is UsageSource.PI_MESSAGES
     assert result.observation.usage_provenance.token_scope is UsageScope.MESSAGE_SUM
 
@@ -1358,3 +1417,718 @@ async def test_captured_version_failure_leaves_gap_but_keeps_history(
     assert result.observation is not None
     assert result.observation.backend_version is None
     assert any("version" in gap for gap in result.observation.gaps)
+
+
+def _project_dir(tmp_path: pathlib.Path) -> pathlib.Path:
+    project_dir = tmp_path / "proj"
+    project_dir.mkdir(exist_ok=True)
+    return project_dir
+
+
+def _session_ref(
+    project_dir: pathlib.Path,
+    session_id: str = "11111111-2222-4333-8444-555555555555",
+    backend: AgentBackend = AgentBackend.PI,
+) -> AgentSessionRef:
+    return AgentSessionRef(
+        backend=backend,
+        session_id=session_id,
+        project_dir=path_to_resource_uri(project_dir),
+    )
+
+
+def _native_files(session_dir: pathlib.Path) -> set[str]:
+    if not session_dir.is_dir():
+        return set()
+    return {
+        str(path.relative_to(session_dir))
+        for path in session_dir.rglob("*.jsonl")
+        if path.is_file()
+    }
+
+
+def _main_session_file(session_dir: pathlib.Path, session_id: str) -> pathlib.Path:
+    """The one session file whose header id is *session_id*."""
+    matches = [
+        path
+        for path in session_dir.rglob("*.jsonl")
+        if path.is_file()
+        and json.loads(path.read_text(encoding="utf-8").splitlines()[0]).get("id")
+        == session_id
+    ]
+    assert len(matches) == 1
+    return matches[0]
+
+
+def _new_run_scenario(record: pathlib.Path) -> dict[str, Any]:
+    return {
+        "record_path": str(record),
+        "record_driver": True,
+        "steps": [
+            {"do": "await_prompt"},
+            {"do": "emit", "frame": {"type": "turn_start"}},
+            {"do": "emit", "frame": _text("first answer")},
+            {"do": "emit", "frame": {"type": "agent_settled"}},
+            {"do": "answer_session_stats", "data": dict(_STATS_DATA)},
+        ],
+    }
+
+
+def _resume_run_scenario(record: pathlib.Path) -> dict[str, Any]:
+    return {
+        "record_path": str(record),
+        "record_driver": True,
+        "steps": [
+            {"do": "await_get_state"},
+            {"do": "answer_get_state"},
+            {"do": "await_prompt"},
+            {"do": "emit", "frame": {"type": "turn_start"}},
+            {"do": "emit", "frame": _text("resumed answer")},
+            {"do": "emit", "frame": {"type": "agent_settled"}},
+            {"do": "answer_session_stats", "data": dict(_STATS_DATA)},
+        ],
+    }
+
+
+@pytest.mark.parametrize("capture_history", [False, True])
+async def test_new_run_creates_session(
+    tmp_path: pathlib.Path, capture_history: bool
+) -> None:
+    project_dir = tmp_path / "project"
+    project_dir.mkdir()
+    result = await _run(
+        _new_run_scenario(tmp_path / "record.jsonl"),
+        project_dir=project_dir,
+        capture_history=capture_history,
+    )
+
+    assert result.status is AgentRunStatus.SETTLED, result.error
+    assert result.session is not None
+    session_dir = pathlib.Path(os.environ["PI_CODING_AGENT_SESSION_DIR"])
+    main_file = _main_session_file(session_dir, result.session.session_id)
+    assert "do the thing" in main_file.read_text(encoding="utf-8")
+    assert (result.observation is not None) is capture_history
+
+
+async def test_settled_run_reports_session_and_continuations_reuse_it(
+    tmp_path: pathlib.Path,
+) -> None:
+    """A new settled run hands out its native session; later prompts resume it.
+
+    The second prompt must reopen the same native session rather than start
+    one, and a third can reuse the reference the second run returned. The
+    session-file set does not grow; the decoy is untouched.
+    """
+    project_dir = _project_dir(tmp_path)
+    session_dir = pathlib.Path(os.environ["PI_CODING_AGENT_SESSION_DIR"])
+    decoy = session_dir / "2026-01-02T00-00-00_wrong.jsonl"
+    first_record = tmp_path / "first-record.jsonl"
+    first = await _run(
+        _new_run_scenario(first_record),
+        prompt="first",
+        project_dir=project_dir,
+        handler_config={"model": "m"},
+    )
+
+    assert first.status is AgentRunStatus.SETTLED
+    assert first.session is not None
+    assert first.session.backend is AgentBackend.PI
+    assert uuid.UUID(first.session.session_id)
+    assert first.session.project_dir == path_to_resource_uri(project_dir)
+    main_file = _main_session_file(session_dir, first.session.session_id)
+    assert "first" in main_file.read_text(encoding="utf-8")
+    files_before = _native_files(session_dir)
+    assert files_before
+    _ = decoy.write_text(
+        json.dumps({"type": "session", "version": 3, "id": "wrong-id"}) + "\n",
+        encoding="utf-8",
+    )
+    decoy_bytes = decoy.read_bytes()
+
+    second_record = tmp_path / "second-record.jsonl"
+    second = await _run(
+        _resume_run_scenario(second_record),
+        prompt="second",
+        project_dir=project_dir,
+        continue_session=first.session,
+        handler_config={"model": "m"},
+    )
+
+    assert second.status is AgentRunStatus.SETTLED
+    assert second.session == first.session
+    resumed = main_file.read_text(encoding="utf-8")
+    assert "first" in resumed and "second" in resumed
+    assert _native_files(session_dir) == files_before | {decoy.name}
+    assert decoy.read_bytes() == decoy_bytes
+    argv = next(
+        entry["argv"] for entry in _records(second_record) if "argv" in entry
+    )
+    assert "--session" in argv
+    assert argv[argv.index("--session") + 1] == first.session.session_id
+    assert "--session-id" not in argv
+    assert "--no-session" not in argv
+
+    third_record = tmp_path / "third-record.jsonl"
+    third = await _run(
+        _resume_run_scenario(third_record),
+        prompt="third",
+        project_dir=project_dir,
+        continue_session=second.session,
+        handler_config={"model": "m"},
+    )
+
+    assert third.status is AgentRunStatus.SETTLED
+    assert third.session == first.session
+    assert "third" in main_file.read_text(encoding="utf-8")
+    assert _native_files(session_dir) == files_before | {decoy.name}
+
+
+async def test_uncaptured_continuation_still_reports_session(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Capture off returns no observation but still reports the session."""
+    project_dir = _project_dir(tmp_path)
+    first = await _run(
+        _new_run_scenario(tmp_path / "first-record.jsonl"),
+        project_dir=project_dir,
+        handler_config={"model": "m"},
+    )
+    assert first.session is not None
+
+    second = await _run(
+        _resume_run_scenario(tmp_path / "second-record.jsonl"),
+        project_dir=project_dir,
+        continue_session=first.session,
+        handler_config={"model": "m"},
+    )
+
+    assert second.status is AgentRunStatus.SETTLED
+    assert second.session == first.session
+    assert second.observation is None
+
+
+async def test_continuation_argv_carries_current_model_and_provider(
+    tmp_path: pathlib.Path,
+) -> None:
+    """The resume argv carries the current settings, not saved ones."""
+    project_dir = _project_dir(tmp_path)
+    first = await _run(
+        _new_run_scenario(tmp_path / "first-record.jsonl"),
+        project_dir=project_dir,
+        handler_config={"model": "old-model", "provider": "old-provider"},
+    )
+    assert first.session is not None
+    record = tmp_path / "resume-record.jsonl"
+    second = await _run(
+        _resume_run_scenario(record),
+        prompt="again",
+        project_dir=project_dir,
+        continue_session=first.session,
+        handler_config={"model": "new-model", "provider": "new-provider"},
+    )
+
+    assert second.status is AgentRunStatus.SETTLED
+    argv = next(entry["argv"] for entry in _records(record) if "argv" in entry)
+    assert argv[:4] == ["--mode", "rpc", "--session", first.session.session_id]
+    assert "--model" in argv and argv[argv.index("--model") + 1] == "new-model"
+    assert (
+        "--provider" in argv
+        and argv[argv.index("--provider") + 1] == "new-provider"
+    )
+    prompts = [entry["prompt"] for entry in _records(record) if "prompt" in entry]
+    assert prompts == ["again"]
+
+
+async def test_continuation_rejects_non_uuid_ids_without_spawning(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Names and fragments fail before any backend, project or lookup work."""
+    project_dir = _project_dir(tmp_path)
+    runner = _RecordingCommandRunner()
+    for bad_id in ("", "thread-1", "abc123", "{11111111-2222-4333-8444-555555555555}"):
+        result = await _run(
+            {"steps": []},
+            project_dir=project_dir,
+            continue_session=_session_ref(project_dir, session_id=bad_id),
+            handler_config={"model": "m"},
+            service_overrides={icommandrunner.ICommandRunner: runner},
+        )
+        assert result.status is AgentRunStatus.FAILED
+        assert "session" in (result.error or "").lower()
+    assert runner.start_long_running_calls == 0
+
+
+async def test_continuation_rejects_backend_mismatch_without_spawning(
+    tmp_path: pathlib.Path,
+) -> None:
+    project_dir = _project_dir(tmp_path)
+    runner = _RecordingCommandRunner()
+    result = await _run(
+        {"steps": []},
+        project_dir=project_dir,
+        continue_session=_session_ref(project_dir, backend=AgentBackend.CODEX),
+        handler_config={"model": "m"},
+        service_overrides={icommandrunner.ICommandRunner: runner},
+    )
+
+    assert result.status is AgentRunStatus.FAILED
+    assert "codex" in (result.error or "")
+    assert runner.start_long_running_calls == 0
+
+
+async def test_continuation_rejects_foreign_project_without_spawning(
+    tmp_path: pathlib.Path,
+) -> None:
+    project_dir = _project_dir(tmp_path)
+    runner = _RecordingCommandRunner()
+    ref = AgentSessionRef(
+        backend=AgentBackend.PI,
+        session_id="11111111-2222-4333-8444-555555555555",
+        project_dir=path_to_resource_uri(tmp_path / "elsewhere"),
+    )
+    result = await _run(
+        {"steps": []},
+        project_dir=project_dir,
+        continue_session=ref,
+        handler_config={"model": "m"},
+        service_overrides={icommandrunner.ICommandRunner: runner},
+    )
+
+    assert result.status is AgentRunStatus.FAILED
+    assert "project" in (result.error or "").lower()
+    assert runner.start_long_running_calls == 0
+
+
+async def test_continuation_unknown_profile_fails_without_lookup_or_spawn(
+    tmp_path: pathlib.Path,
+) -> None:
+    project_dir = _project_dir(tmp_path)
+    runner = _RecordingCommandRunner()
+    result = await _run(
+        {"steps": []},
+        project_dir=project_dir,
+        continue_session=_session_ref(project_dir),
+        profile="nope",
+        handler_config={"profiles": {"a": {}}},
+        service_overrides={icommandrunner.ICommandRunner: runner},
+    )
+
+    assert result.status is AgentRunStatus.FAILED
+    assert "unknown agent profile" in (result.error or "")
+    assert runner.start_long_running_calls == 0
+    assert runner.run_calls == 0
+
+
+async def test_continuation_missing_session_beats_unset_model(
+    tmp_path: pathlib.Path,
+) -> None:
+    """A missing session is reported, not the conflicting settings value."""
+    project_dir = _project_dir(tmp_path)
+    ref = _session_ref(project_dir, session_id="22222222-2222-4222-8222-222222222222")
+    result = await _run(
+        {"steps": []},
+        prompt="hello?",
+        project_dir=project_dir,
+        continue_session=ref,
+    )
+
+    assert result.status is AgentRunStatus.FAILED
+    assert "no pi session file matches" in (result.error or "")
+    assert "model" not in (result.error or "")
+    assert result.session is None
+
+
+async def test_continuation_missing_session_fails_and_creates_no_session(
+    tmp_path: pathlib.Path,
+) -> None:
+    """The fake re-reads the native store; a miss creates nothing."""
+    project_dir = _project_dir(tmp_path)
+    session_dir = pathlib.Path(os.environ["PI_CODING_AGENT_SESSION_DIR"])
+    ref = _session_ref(project_dir, session_id="22222222-2222-4222-8222-222222222222")
+    files_before = _native_files(session_dir)
+    record = tmp_path / "miss-record.jsonl"
+    scenario = _resume_run_scenario(record)
+    result = await _run(
+        scenario,
+        prompt="hello?",
+        project_dir=project_dir,
+        continue_session=ref,
+        handler_config={"model": "m"},
+    )
+
+    assert result.status is AgentRunStatus.FAILED
+    assert "no pi session file matches" in (result.error or "")
+    assert result.session is None
+    assert _native_files(session_dir) == files_before
+    prompts = [entry for entry in _records(record) if "prompt" in entry]
+    assert prompts == []
+
+
+async def test_continuation_deleted_session_fails_without_creating_one(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A session removed after the handler lookup still fails at resume."""
+    project_dir = _project_dir(tmp_path)
+    session_dir = pathlib.Path(os.environ["PI_CODING_AGENT_SESSION_DIR"])
+    first = await _run(
+        _new_run_scenario(tmp_path / "first-record.jsonl"),
+        project_dir=project_dir,
+        handler_config={"model": "m"},
+    )
+    assert first.session is not None
+    files_before = _native_files(session_dir)
+
+    real_find = pi_history.find_pi_session_file
+
+    def _find_then_delete(
+        root: pathlib.Path, session_id: str | None, marker: str | None
+    ) -> tuple[str | None, pathlib.Path | None, list[str]]:
+        found = real_find(root, session_id, marker)
+        for path in root.rglob("*.jsonl"):
+            if path.is_file():
+                path.unlink()
+        return found
+
+    monkeypatch.setattr(
+        pi_history, "find_pi_session_file", _find_then_delete
+    )
+    record = tmp_path / "deleted-record.jsonl"
+    result = await _run(
+        _resume_run_scenario(record),
+        prompt="hello?",
+        project_dir=project_dir,
+        continue_session=first.session,
+        handler_config={"model": "m"},
+    )
+
+    assert result.status is AgentRunStatus.FAILED
+    assert "confirm" in (result.error or "").lower()
+    assert result.session is None
+    assert _native_files(session_dir) <= files_before
+    prompts = [entry for entry in _records(record) if "prompt" in entry]
+    assert prompts == []
+
+
+async def test_continuation_rejects_wrong_startup_identity_before_prompt(
+    tmp_path: pathlib.Path,
+) -> None:
+    """An unexpected startup identity fails before the task prompt is sent."""
+    project_dir = _project_dir(tmp_path)
+    session_dir = pathlib.Path(os.environ["PI_CODING_AGENT_SESSION_DIR"])
+    first = await _run(
+        _new_run_scenario(tmp_path / "first-record.jsonl"),
+        project_dir=project_dir,
+        handler_config={"model": "m"},
+    )
+    assert first.session is not None
+    files_before = _native_files(session_dir)
+    record = tmp_path / "wrong-id-record.jsonl"
+    scenario = _resume_run_scenario(record)
+    scenario["steps"] = [
+        {"do": "await_get_state"},
+        {"do": "answer_get_state_wrong"},
+        {"do": "await_prompt"},
+        {"do": "exit", "code": 0},
+    ]
+    result = await _run(
+        scenario,
+        prompt="hello?",
+        project_dir=project_dir,
+        continue_session=first.session,
+        handler_config={"model": "m"},
+    )
+
+    assert result.status is AgentRunStatus.FAILED
+    assert "unexpected session" in (result.error or "")
+    assert result.session is None
+    assert _native_files(session_dir) == files_before
+    assert [entry for entry in _records(record) if "prompt" in entry] == []
+
+
+async def test_continuation_without_model_fails_before_spawn(
+    tmp_path: pathlib.Path,
+) -> None:
+    """With no explicit model the saved default cannot be reset by name."""
+    project_dir = _project_dir(tmp_path)
+    first = await _run(
+        _new_run_scenario(tmp_path / "first-record.jsonl"),
+        project_dir=project_dir,
+        handler_config={"model": "m"},
+    )
+    assert first.session is not None
+    record = tmp_path / "unset-model-record.jsonl"
+    result = await _run(
+        _resume_run_scenario(record),
+        project_dir=project_dir,
+        continue_session=first.session,
+    )
+
+    assert result.status is AgentRunStatus.FAILED
+    assert "model" in (result.error or "")
+    assert not record.exists()
+
+
+async def test_continuation_conflicting_identities_fail_and_keep_output(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Stats disagreeing with the confirmed identity fail, keeping text."""
+    project_dir = _project_dir(tmp_path)
+    first = await _run(
+        _new_run_scenario(tmp_path / "first-record.jsonl"),
+        project_dir=project_dir,
+        handler_config={"model": "m"},
+    )
+    assert first.session is not None
+    scenario = _resume_run_scenario(tmp_path / "conflict-record.jsonl")
+    scenario["preserve_stats_ids"] = True
+    scenario["steps"] = [
+        {"do": "await_get_state"},
+        {"do": "answer_get_state"},
+        {"do": "await_prompt"},
+        {"do": "emit", "frame": _text("kept text")},
+        {"do": "emit", "frame": {"type": "agent_settled"}},
+        {
+            "do": "answer_session_stats",
+            "data": {
+                "sessionId": "33333333-3333-4333-8333-333333333333",
+                "tokens": {},
+            },
+        },
+    ]
+    result = await _run(
+        scenario,
+        project_dir=project_dir,
+        continue_session=first.session,
+        handler_config={"model": "m"},
+    )
+
+    assert result.status is AgentRunStatus.FAILED
+    assert result.output == "kept text"
+    assert "conflicting session identities" in (result.error or "")
+    assert result.session is None
+
+
+async def test_new_run_settled_without_reported_id_fails_and_keeps_output(
+    tmp_path: pathlib.Path,
+) -> None:
+    """An otherwise-settled new run with no identity fails, keeping raw output."""
+    project_dir = _project_dir(tmp_path)
+    record = tmp_path / "new-no-id-record.jsonl"
+    result = await _run(
+        {
+            "record_path": str(record),
+            "record_driver": True,
+            "preserve_stats_ids": True,
+            "steps": [
+                {"do": "await_get_state"},
+                {"do": "answer_get_state_no_id"},
+                {"do": "await_prompt"},
+                {"do": "emit", "frame": _text("kept text")},
+                {"do": "emit", "frame": {"type": "agent_settled"}},
+                {"do": "answer_session_stats", "data": {"tokens": {}}},
+            ],
+        },
+        project_dir=project_dir,
+        handler_config={"model": "m"},
+    )
+
+    assert result.status is AgentRunStatus.FAILED
+    assert result.output == "kept text"
+    assert "session" in (result.error or "").lower()
+    assert result.session is None
+
+
+async def test_refusal_without_identity_keeps_refusal(
+    tmp_path: pathlib.Path,
+) -> None:
+    """A missing identity on a refused run never replaces that outcome."""
+    record = tmp_path / "record.jsonl"
+    result = await _run(
+        {
+            "record_path": str(record),
+            "record_driver": True,
+            "steps": [
+                {"do": "await_get_state"},
+                {"do": "answer_get_state_no_id"},
+                {"do": "await_prompt"},
+                {
+                    "do": "emit",
+                    "frame": {
+                        "type": "extension_ui_request",
+                        "id": "ui-1",
+                        "method": "confirm",
+                        "title": "Push?",
+                    },
+                },
+                {"do": "await_ui_response"},
+                {"do": "await_abort"},
+                {"do": "exit", "code": 0},
+            ],
+        },
+    )
+
+    assert result.status is AgentRunStatus.REFUSED_INTERACTION
+    assert result.session is None
+
+
+async def test_continuation_failed_turn_keeps_failure_not_missing_id(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Existing failure precedence survives the identity merge."""
+    project_dir = _project_dir(tmp_path)
+    first = await _run(
+        _new_run_scenario(tmp_path / "first-record.jsonl"),
+        project_dir=project_dir,
+        handler_config={"model": "m"},
+    )
+    assert first.session is not None
+    scenario = _resume_run_scenario(tmp_path / "fail-record.jsonl")
+    scenario["steps"] = [
+        {"do": "await_get_state"},
+        {"do": "answer_get_state"},
+        {"do": "await_prompt"},
+        {"do": "emit", "frame": _failed_turn("402: Insufficient Balance")},
+        {"do": "exit", "code": 0},
+    ]
+    result = await _run(
+        scenario,
+        project_dir=project_dir,
+        continue_session=first.session,
+        handler_config={"model": "m"},
+    )
+
+    assert result.status is AgentRunStatus.FAILED
+    assert "Insufficient Balance" in (result.error or "")
+    assert result.session is None
+
+
+async def test_continuation_timeout_fails_and_reports_no_session(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A run that never settles fails on its timeout with no reference."""
+    project_dir = _project_dir(tmp_path)
+    first = await _run(
+        _new_run_scenario(tmp_path / "first-record.jsonl"),
+        project_dir=project_dir,
+        handler_config={"model": "m"},
+    )
+    assert first.session is not None
+    scenario = _resume_run_scenario(tmp_path / "timeout-record.jsonl")
+    scenario["steps"] = [
+        {"do": "await_get_state"},
+        {"do": "answer_get_state"},
+        {"do": "await_prompt"},
+        {"do": "sleep", "seconds": 300},
+    ]
+    result = await _run(
+        scenario,
+        project_dir=project_dir,
+        continue_session=first.session,
+        handler_config={"model": "m", "settle_timeout_sec": 0.5},
+    )
+
+    assert result.status is AgentRunStatus.FAILED
+    assert "did not settle within" in (result.error or "")
+    assert result.session is None
+
+
+async def test_cancel_reaches_a_live_owned_continuation_and_reraises(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Withdrawing the request stops the agent; nothing is returned."""
+    project_dir = _project_dir(tmp_path)
+    first = await _run(
+        _new_run_scenario(tmp_path / "first-record.jsonl"),
+        project_dir=project_dir,
+        handler_config={"model": "m"},
+    )
+    assert first.session is not None
+    record = tmp_path / "cancel-record.jsonl"
+    scenario = _resume_run_scenario(record)
+    scenario["steps"] = [
+        {"do": "await_get_state"},
+        {"do": "answer_get_state"},
+        {"do": "await_prompt"},
+        {"do": "spawn_child"},
+        {"do": "sleep", "seconds": 300},
+    ]
+    task = asyncio.create_task(
+        _run(
+            scenario,
+            project_dir=project_dir,
+            continue_session=first.session,
+            handler_config={"model": "m"},
+        )
+    )
+    await asyncio.sleep(2.0)
+    _ = task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    pids = next(entry["pids"] for entry in _records(record) if "pids" in entry)
+    assert await _wait_gone(pids["agent"])
+    assert await _wait_gone(pids["child"])
+
+
+async def test_captured_continuation_locates_the_same_main_session(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Capture on a continuation locates the same main session file."""
+    project_dir = _project_dir(tmp_path)
+    session_dir = pathlib.Path(os.environ["PI_CODING_AGENT_SESSION_DIR"])
+    first = await _run(
+        _new_run_scenario(tmp_path / "first-record.jsonl"),
+        project_dir=project_dir,
+        handler_config={"model": "m"},
+        capture_history=True,
+    )
+    assert first.session is not None
+    assert first.observation is not None
+    main_before = first.observation.files[0].source_uri
+    files_before = _native_files(session_dir)
+    second = await _run(
+        _resume_run_scenario(tmp_path / "second-record.jsonl"),
+        project_dir=project_dir,
+        continue_session=first.session,
+        handler_config={"model": "m"},
+        capture_history=True,
+    )
+
+    assert second.status is AgentRunStatus.SETTLED
+    assert second.session == first.session
+    assert second.observation is not None
+    assert second.observation.history_status is HistoryDiscoveryStatus.AVAILABLE
+    assert second.observation.session_id == first.session.session_id
+    assert second.observation.files[0].source_uri == main_before
+    assert _native_files(session_dir) == files_before
+
+
+async def test_observation_failure_keeps_reported_session(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An observation failure never erases an available reference."""
+    project_dir = _project_dir(tmp_path)
+    first = await _run(
+        _new_run_scenario(tmp_path / "first-record.jsonl"),
+        project_dir=project_dir,
+        handler_config={"model": "m"},
+        capture_history=True,
+    )
+    assert first.session is not None
+
+    def _fail_locate(state: Any, root: pathlib.Path) -> Any:
+        raise OSError("disk is gone")
+
+    monkeypatch.setattr(pi_history, "locate_pi_history", _fail_locate)
+    second = await _run(
+        _resume_run_scenario(tmp_path / "second-record.jsonl"),
+        project_dir=project_dir,
+        continue_session=first.session,
+        handler_config={"model": "m"},
+        capture_history=True,
+    )
+
+    assert second.status is AgentRunStatus.SETTLED
+    assert second.session == first.session
+    assert second.observation is not None
+    assert second.observation.history_status is HistoryDiscoveryStatus.FAILED
+    assert second.observation.session_id == first.session.session_id

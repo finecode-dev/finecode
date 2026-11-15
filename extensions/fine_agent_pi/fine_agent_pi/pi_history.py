@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import os
 import pathlib
 import typing
 
+from fine_agent.history_search import files_containing
 from fine_agent.history_types import (
     AgentBackend,
     AgentRunObservation,
@@ -24,7 +26,9 @@ from finecode_extension_api.resource_uri import path_to_resource_uri
 __all__ = [
     "PiObservationState",
     "PiSessionHeader",
+    "find_pi_session_file",
     "locate_pi_history",
+    "pi_sessions_root",
 ]
 
 
@@ -40,6 +44,13 @@ class PiObservationState:
     session_file: str | None
     usage_provenance: UsageProvenance
     gaps: list[str]
+
+
+def pi_sessions_root() -> pathlib.Path:
+    env_dir = os.environ.get("PI_CODING_AGENT_SESSION_DIR")
+    if env_dir:
+        return pathlib.Path(env_dir)
+    return pathlib.Path.home() / ".pi" / "agent" / "sessions"
 
 
 def _unknown_provenance() -> UsageProvenance:
@@ -210,3 +221,45 @@ def _count_matching_sessions(
             count += 1
             break
     return count
+
+
+def find_pi_session_file(
+    root: pathlib.Path, session_id: str | None, marker: str | None
+) -> tuple[str | None, pathlib.Path | None, list[str]]:
+    """The one session file under *root* matching *session_id*, else *marker*.
+
+    Returns the session id from the file's header, the file, and any gaps.
+    """
+    candidates = [
+        path
+        for path in sorted(root.rglob("*.jsonl"))
+        if path.is_file() and not path.is_symlink()
+    ]
+    gaps: list[str] = []
+    if session_id is not None:
+        found = [
+            path
+            for path in candidates
+            if (header := _read_header(path)) is not None
+            and header.get("type") == "session"
+            and header.get("id") == session_id
+        ]
+        description = f"session {session_id}"
+    elif marker is not None:
+        found, unreadable = files_containing(candidates, marker)
+        gaps.extend(f"pi session file unreadable: {path.name}" for path in unreadable)
+        description = f"marker {marker}"
+    else:
+        return None, None, ["neither a pi session id nor a marker was given"]
+    if not found:
+        gaps.append(f"no pi session file matches {description}")
+        return session_id, None, gaps
+    if len(found) > 1:
+        names = ", ".join(path.name for path in found)
+        gaps.append(f"multiple pi session files match {description}: {names}")
+        return session_id, None, gaps
+    header = _read_header(found[0])
+    found_id = header.get("id") if header is not None else None
+    if found_id is None:
+        gaps.append(f"pi session file has no session header: {found[0].name}")
+    return found_id, found[0], gaps

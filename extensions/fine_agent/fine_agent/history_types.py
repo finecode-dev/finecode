@@ -35,6 +35,9 @@ class NativeHistoryRole(enum.StrEnum):
 class NativeHistoryFormat(enum.StrEnum):
     PI = "pi-session-jsonl"
     CLAUDE_CODE = "claude-session-jsonl"
+    CLAUDE_SIDECAR = "claude-sidecar"
+    """A non-transcript file Claude Code keeps beside a session, such as a tool
+    result stored out of line or a subagent's metadata."""
     CODEX = "codex-rollout-jsonl"
 
 

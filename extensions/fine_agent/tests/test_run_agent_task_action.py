@@ -25,6 +25,7 @@ from fine_agent.history_types import (
 from fine_agent.run_agent_task_action import (
     AgentRunStatus,
     AgentRunUsage,
+    AgentSessionRef,
     RunAgentTaskRunPayload,
     RunAgentTaskRunResult,
 )
@@ -153,12 +154,70 @@ def _sample_observation() -> AgentRunObservation:
     )
 
 
+def _session_ref(backend: AgentBackend) -> AgentSessionRef:
+    return AgentSessionRef(
+        backend=backend,
+        session_id="11111111-2222-3333-8444-555555555555",
+        project_dir=ResourceUri("file:///ws/proj"),
+    )
+
+
 def test_payload_defaults_to_no_capture() -> None:
     assert RunAgentTaskRunPayload(prompt="do it").capture_history is False
 
 
+def test_payload_defaults_to_no_continuation() -> None:
+    """Old payload constructions keep working and start a fresh session."""
+    assert RunAgentTaskRunPayload(prompt="do it").continue_session is None
+    assert RunAgentTaskRunPayload("do it", None, None).continue_session is None
+
+
+def test_payload_and_result_round_trip_every_backend() -> None:
+    """References for each backend survive the WM converter unchanged."""
+    for backend in (
+        AgentBackend.PI,
+        AgentBackend.CLAUDE_CODE,
+        AgentBackend.CODEX,
+    ):
+        ref = _session_ref(backend)
+        payload = RunAgentTaskRunPayload(prompt="x", continue_session=ref)
+        revived_payload = converter.structure(
+            converter.unstructure(payload), RunAgentTaskRunPayload
+        )
+        assert revived_payload.continue_session == ref
+
+        result = RunAgentTaskRunResult(
+            status=AgentRunStatus.SETTLED, output="hi", session=ref
+        )
+        revived = converter.structure(
+            converter.unstructure(result), RunAgentTaskRunResult
+        )
+        assert isinstance(revived.session, AgentSessionRef)
+        assert revived.session == ref
+        assert revived.session.backend is backend
+
+
 def test_result_defaults_to_no_observation() -> None:
     assert RunAgentTaskRunResult().observation is None
+
+
+def test_merging_carries_the_session() -> None:
+    """A merged result keeps the reported session, independently of capture."""
+    target = RunAgentTaskRunResult()
+    ref = _session_ref(AgentBackend.CODEX)
+    target.update(RunAgentTaskRunResult(status=AgentRunStatus.SETTLED, session=ref))
+
+    assert target.session == ref
+
+
+def test_merging_clears_a_stale_session() -> None:
+    """Last-writer-wins: a newer result without a session clears the old one."""
+    target = RunAgentTaskRunResult(
+        status=AgentRunStatus.SETTLED, session=_session_ref(AgentBackend.PI)
+    )
+    target.update(RunAgentTaskRunResult(status=AgentRunStatus.SETTLED))
+
+    assert target.session is None
 
 
 def test_merging_carries_the_observation() -> None:

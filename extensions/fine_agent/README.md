@@ -95,11 +95,100 @@ history root or changed during the copy, and returns the agent identity,
 usage with provenance, per-file save status and every gap. Where the
 directory lives and what else goes in it is the caller's decision.
 
+A session nobody dispatched (one a person ran in the agent's own UI) has no
+request and no captured result. `locate_agent_history` finds it by backend and
+session id, or by a marker string its history contains, and
+`archive_observed_history(run_dir, observation)` copies it into the same
+`history/` layout. See
+[`docs/reference/actions.md`](../../docs/reference/actions.md#locate_agent_history)
+for the registration.
+
+### Continuing a session
+
+Every settled run reports the native session it ran in as `session`, whether
+or not `capture_history` was set. Pass that reference back as
+`continue_session` to resume the same native session with the next prompt;
+the reference round-trips through the action converter, so it can be persisted
+as JSON. A continuation resumes exactly the referenced session or fails
+explicitly — never a silent fresh start — and stays in the original project.
+Continuation reuses the run's current profile and configuration: an explicit
+model, sandbox, permission mode, tool lists and UI policy are reapplied, while
+an unset model or unset Claude permission mode fails before spawning rather
+than restoring saved native settings. A failed or cancelled continuation may
+still have advanced the native session, so keep using the latest reported
+reference. FineCode keeps no session record itself; retention is the native
+CLI's own history on disk.
+
 **Exactly one handler.** Unlike most FineCode actions, this one gains nothing
 from merging several handlers' results: two agents independently attempting the
 same task would both write to the same files, and their answers cannot be
 meaningfully combined. Swap backends by replacing the registered handler, never
 by adding a second one.
+
+### Routed setup (opt-in)
+
+Keep the direct registration above for a single backend. To choose a backend per
+task role, register the router on `run_agent_task` and one leaf action per
+backend:
+
+```toml
+[tool.finecode.action.run_agent_task]
+handlers_mode = "replace"
+handlers = [{ name = "agent_router", source = "fine_agent.RouteAgentTaskHandler", env = "dev_no_runtime", dependencies = ["fine_agent~=0.1.0"] }]
+
+[tool.finecode.action.run_agent_task.handlers.agent_router]
+config.default_backend = "pi"
+config.profiles.implement_plan = { backend = "claude_code", profile = "implementation" }
+config.profiles.run_fine_design_critic = { backend = "pi", profile = "review" }
+
+[tool.finecode.action.run_claude_code_agent_task]
+source = "fine_agent_claude_code.RunClaudeCodeAgentTaskAction"
+handlers = [{ name = "claude_code_agent", source = "fine_agent_claude_code.ClaudeCodeAgentHandler", env = "dev_no_runtime", dependencies = ["fine_agent_claude_code~=0.1.0"] }]
+
+[tool.finecode.action.run_claude_code_agent_task.handlers.claude_code_agent]
+config.permission_mode = "acceptEdits"
+config.profiles.implementation = { settle_timeout_sec = 3600 }
+
+[tool.finecode.action.run_pi_agent_task]
+source = "fine_agent_pi.RunPiAgentTaskAction"
+handlers = [{ name = "pi_agent", source = "fine_agent_pi.PiAgentHandler", env = "dev_no_runtime", dependencies = ["fine_agent_pi~=0.1.0"] }]
+
+[tool.finecode.action.run_pi_agent_task.handlers.pi_agent]
+config.profiles.review = { settle_timeout_sec = 3600 }
+```
+
+Add a Codex leaf the same way without changing its sandbox defaults:
+
+```toml
+[tool.finecode.action.run_codex_agent_task]
+source = "fine_agent_codex.RunCodexAgentTaskAction"
+handlers = [{ name = "codex_agent", source = "fine_agent_codex.CodexAgentHandler", env = "dev_no_runtime", dependencies = ["fine_agent_codex~=0.1.0"] }]
+```
+
+A caller role selects a backend and an optional bundle in that backend.
+`config.default_backend` is required. A missing payload profile uses that
+backend's top-level settings. A named role must be present in
+`config.profiles`; unknown names (including `""`) are `FAILED` with
+`duration_sec=0.0` and `unknown agent profile '<name>'; configured profiles: …`,
+with no delegated call or process, even with `capture_history=true`. A route
+with `profile=None` uses the backend's top-level settings; otherwise the route
+names a backend bundle, which may differ from the caller role. Only the
+`profile` field is translated; every other request field is preserved unchanged.
+
+Router references use canonical class sources
+(`fine_agent_pi.run_pi_agent_task_action.RunPiAgentTaskAction`, …), not public
+re-export aliases; aliases are fine in TOML, not in the router reference. A
+role selecting an unconfigured backend action returns `FAILED` naming the
+backend and the canonical action, with no backend process.
+
+A routed bundle does not inherit the old
+direct-backend config: move the selected settings to the corresponding leaf
+action (`run_pi_agent_task`, …). Settings are never auto-moved, and existing
+direct setups keep working unchanged.
+
+Live progress (prototype, pending [#908](../../issues/908-delegated-action-live-progress/issue.md)): the router opens a parent progress
+scope and relays the child's narrative reports; the agent's text stays in
+result data. The underlying transport contract is not final here.
 
 See [`docs/reference/actions.md`](../../docs/reference/actions.md#run_agent_task)
 for the payload, result and handler configuration.

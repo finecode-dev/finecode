@@ -25,21 +25,31 @@ import pytest
 from fine_agent.history_types import (
     AgentBackend,
     HistoryDiscoveryStatus,
+    NativeHistoryRole,
     RelatedHistoryStatus,
     UsageScope,
     UsageSource,
 )
 from fine_agent.run_agent_task_action import (
     AgentRunStatus,
+    AgentSessionRef,
     RunAgentTaskAction,
     RunAgentTaskRunPayload,
     RunAgentTaskRunResult,
 )
 from finecode_extension_api.interfaces import icommandrunner
+from finecode_extension_api.resource_uri import (
+    ResourceUri,
+    path_to_resource_uri,
+    resource_uri_to_path,
+)
 from finecode_extension_runner.testing import run_handler
 
 from fine_agent_claude_code import claude_code_agent_handler
 from fine_agent_claude_code.claude_code_agent_handler import ClaudeCodeAgentHandler
+from fine_agent_claude_code.run_claude_code_agent_task_action import (
+    RunClaudeCodeAgentTaskAction,
+)
 
 _FAKE_CLAUDE = pathlib.Path(__file__).parent / "fake_claude.py"
 
@@ -71,6 +81,9 @@ async def _run(
     output_schema: dict[str, Any] | None = None,
     service_overrides: dict[Any, Any] | None = None,
     capture_history: bool = False,
+    continue_session: AgentSessionRef | None = None,
+    project_dir: pathlib.Path | None = None,
+    action_cls: Any = RunAgentTaskAction,
 ) -> RunAgentTaskRunResult:
     global _ACTIVE_SCENARIO
     _ACTIVE_SCENARIO = scenario
@@ -82,10 +95,12 @@ async def _run(
                 profile=profile,
                 output_schema=output_schema,
                 capture_history=capture_history,
+                continue_session=continue_session,
             ),
-            action_cls=RunAgentTaskAction,
+            action_cls=action_cls,
             handler_config=handler_config,
             service_overrides=service_overrides,
+            project_dir=project_dir,
         )
     finally:
         _ACTIVE_SCENARIO = {}
@@ -387,6 +402,7 @@ async def test_a_non_json_line_does_not_end_the_run() -> None:
         {
             "steps": [
                 {"do": "read_prompt"},
+                {"do": "init"},
                 {"do": "emit_raw", "text": "warning: something\n"},
                 {"do": "emit", "frame": _result(text="fine")},
             ]
@@ -472,15 +488,24 @@ def _settled_scenario(record: pathlib.Path) -> dict[str, Any]:
     }
 
 
-async def test_profile_selects_its_model(tmp_path: pathlib.Path) -> None:
+@pytest.mark.parametrize(
+    "action_cls", [RunAgentTaskAction, RunClaudeCodeAgentTaskAction]
+)
+async def test_profile_selects_its_model(
+    tmp_path: pathlib.Path, action_cls: Any
+) -> None:
     """A profile is the only way one task runs on a different model than
     another, so its model must reach the command."""
     record = tmp_path / "record.jsonl"
-    await _run(
+    result = await _run(
         _settled_scenario(record),
         handler_config={"model": "M1", "profiles": {"p": {"model": "M2"}}},
         profile="p",
+        action_cls=action_cls,
     )
+
+    assert isinstance(result, RunAgentTaskRunResult)
+    assert result.status is AgentRunStatus.SETTLED
 
     assert _flag_value(_recorded_argv(record), "--model") == "M2"
 
@@ -682,11 +707,17 @@ async def test_output_schema_is_passed_as_compact_json_on_the_argv(
     assert argv[argv.index("--json-schema") + 1] == json.dumps(_SCHEMA)
 
 
-async def test_structured_output_is_returned() -> None:
+@pytest.mark.parametrize(
+    "action_cls", [RunAgentTaskAction, RunClaudeCodeAgentTaskAction]
+)
+async def test_structured_output_is_returned(action_cls: Any) -> None:
     result = await _run(
         _schema_scenario(structured_output={"answer": "42"}),
         output_schema=_SCHEMA,
+        action_cls=action_cls,
     )
+
+    assert isinstance(result, RunAgentTaskRunResult)
 
     assert result.status is AgentRunStatus.SETTLED
     assert result.structured_output == {"answer": "42"}
@@ -700,6 +731,7 @@ async def test_settling_without_structured_output_is_a_failure() -> None:
     assert result.status is AgentRunStatus.FAILED
     assert result.error == "claude settled without structured output"
     assert result.output == "done"
+    assert result.session is None
 
 
 async def test_structured_output_retry_exhaustion_is_a_failure() -> None:
@@ -861,8 +893,29 @@ async def test_a_wedged_run_is_torn_down_with_the_tree_it_spawned(
     assert await _wait_gone(pids["child"]), "the agent's child was left running"
 
 
+CAPTURED_SESSION_ID = "22222222-2222-4222-8222-222222222222"
+
+
+def _session_ref(
+    project_dir: pathlib.Path,
+    session_id: str = CAPTURED_SESSION_ID,
+    backend: AgentBackend = AgentBackend.CLAUDE_CODE,
+) -> AgentSessionRef:
+    return AgentSessionRef(
+        backend=backend,
+        session_id=session_id,
+        project_dir=path_to_resource_uri(project_dir),
+    )
+
+
+def _project_dir(tmp_path: pathlib.Path) -> pathlib.Path:
+    project_dir = tmp_path / "proj"
+    project_dir.mkdir(exist_ok=True)
+    return project_dir
+
+
 def _captured_scenario(
-    config_dir: str, session_id: str = "sess-captured-1"
+    config_dir: str, session_id: str = CAPTURED_SESSION_ID
 ) -> dict[str, Any]:
     return {
         "session_id": session_id,
@@ -918,7 +971,7 @@ async def test_captured_run_reports_available_history(
     assert observation is not None
     assert observation.backend is AgentBackend.CLAUDE_CODE
     assert observation.history_status is HistoryDiscoveryStatus.AVAILABLE
-    assert observation.session_id == "sess-captured-1"
+    assert observation.session_id == CAPTURED_SESSION_ID
     assert len(observation.files) == 2
     assert observation.related_status is RelatedHistoryStatus.SCANNED
     assert observation.usage_provenance.token_source is UsageSource.CLAUDE_MODELS
@@ -955,6 +1008,11 @@ async def test_captured_result_fallback_uses_last_request(
 async def test_captured_session_disagreement_produces_gap(
     tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """Disagreeing init/result ids leave no usable identity to report.
+
+    The text the run produced is kept, but an otherwise-settled run whose
+    frames name two different sessions cannot hand out either one.
+    """
     monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path))
     scenario = _captured_scenario(str(tmp_path))
     scenario["steps"] = [
@@ -964,7 +1022,808 @@ async def test_captured_session_disagreement_produces_gap(
     ]
     result = await _run(scenario, capture_history=True)
 
-    assert result.status is AgentRunStatus.SETTLED
+    assert result.status is AgentRunStatus.FAILED
+    assert result.output == "hi"
+    assert result.session is None
     assert result.observation is not None
     assert result.observation.session_id is None
     assert any("disagreement" in gap for gap in result.observation.gaps)
+
+
+def _resume_scenario(
+    record: pathlib.Path | None,
+    session_id: str,
+    text: str = "continued",
+    **result_extra: Any,
+) -> dict[str, Any]:
+    scenario: dict[str, Any] = {
+        "steps": [
+            {"do": "read_prompt"},
+            {"do": "init", "session_id": session_id},
+            {
+                "do": "emit",
+                "frame": _result(text=text, session_id=session_id, **result_extra),
+            },
+        ]
+    }
+    if record is not None:
+        scenario["record_path"] = str(record)
+        scenario["record_driver"] = True
+    return scenario
+
+
+def _native_main(config_dir: pathlib.Path, session_id: str) -> pathlib.Path:
+    matches = [
+        path
+        for path in (config_dir / "projects").rglob(f"{session_id}.jsonl")
+        if path.is_file()
+    ]
+    assert len(matches) == 1
+    return matches[0]
+
+
+def _native_session_files(config_dir: pathlib.Path) -> set[str]:
+    base = config_dir / "projects"
+    if not base.is_dir():
+        return set()
+    return {str(path.relative_to(base)) for path in base.rglob("*") if path.is_file()}
+
+
+_CONTINUE_CONFIG = {"model": "opus", "permission_mode": "acceptEdits"}
+
+
+async def test_settled_run_reports_session_and_continuations_reuse_it(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A new settled run hands out its native session; later prompts resume it.
+
+    A second prompt must reopen the same native session (not start one), and
+    a third can reuse the reference the second run returned. Decoys and the
+    session-file set are untouched by the resumes.
+    """
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path))
+    project_dir = _project_dir(tmp_path)
+    first = await _run(
+        _captured_scenario(str(tmp_path)),
+        prompt="first",
+        project_dir=project_dir,
+    )
+
+    assert first.status is AgentRunStatus.SETTLED
+    assert first.session == _session_ref(project_dir)
+    assert (
+        first.session is not None and first.session.backend is AgentBackend.CLAUDE_CODE
+    )
+    assert first.observation is None
+    main_file = _native_main(tmp_path, CAPTURED_SESSION_ID)
+    assert "PROMPT-1" in main_file.read_text(encoding="utf-8")
+    files_before = _native_session_files(tmp_path)
+    assert files_before
+    decoy = (
+        tmp_path
+        / "projects"
+        / "testproj"
+        / CAPTURED_SESSION_ID
+        / "subagents"
+        / "agent-x.jsonl"
+    )
+    decoy_before = decoy.read_bytes()
+
+    second = await _run(
+        _resume_scenario(None, CAPTURED_SESSION_ID, text="second"),
+        prompt="second",
+        project_dir=project_dir,
+        continue_session=first.session,
+        handler_config=dict(_CONTINUE_CONFIG),
+    )
+
+    assert second.status is AgentRunStatus.SETTLED
+    assert second.session == first.session
+    assert "second" in main_file.read_text(encoding="utf-8")
+    assert _native_session_files(tmp_path) == files_before
+    assert decoy.read_bytes() == decoy_before
+
+    assert second.session is not None
+    third = await _run(
+        _resume_scenario(None, CAPTURED_SESSION_ID, text="third"),
+        prompt="third",
+        project_dir=project_dir,
+        continue_session=second.session,
+        handler_config=dict(_CONTINUE_CONFIG),
+    )
+
+    assert third.status is AgentRunStatus.SETTLED
+    assert third.session == first.session
+    assert "third" in main_file.read_text(encoding="utf-8")
+    assert _native_session_files(tmp_path) == files_before
+
+
+async def test_continuation_argv_resumes_with_current_settings(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The resume argv carries the current model, mode and lists, not saved ones."""
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path))
+    project_dir = _project_dir(tmp_path)
+    first = await _run(
+        _captured_scenario(str(tmp_path)),
+        project_dir=project_dir,
+        handler_config={"model": "old", "permission_mode": "acceptEdits"},
+    )
+    assert first.session is not None
+    record = tmp_path / "resume-record.jsonl"
+    second = await _run(
+        _resume_scenario(record, CAPTURED_SESSION_ID, text="again"),
+        prompt="again",
+        project_dir=project_dir,
+        continue_session=first.session,
+        handler_config={
+            "model": "new",
+            "permission_mode": "bypassPermissions",
+            "allowed_tools": ["Read"],
+            "disallowed_tools": [],
+            "append_system_prompt": "v2",
+            "max_budget_usd": 2.5,
+        },
+    )
+
+    assert second.status is AgentRunStatus.SETTLED
+    driver = _recorded_argv(record)
+    assert driver[:5] == [
+        "--print",
+        "--output-format",
+        "stream-json",
+        "--verbose",
+        "--resume",
+    ]
+    assert _flag_value(driver, "--resume") == CAPTURED_SESSION_ID
+    assert _flag_value(driver, "--system-prompt-snapshot") == "off"
+    assert _flag_value(driver, "--model") == "new"
+    assert _flag_value(driver, "--permission-mode") == "bypassPermissions"
+    assert _flag_value(driver, "--append-system-prompt") == "v2"
+    assert _flag_value(driver, "--max-budget-usd") == "2.5"
+    allowed = driver[driver.index("--allowed-tools") + 1]
+    assert allowed == "Read"
+    disallowed = driver[driver.index("--disallowed-tools") + 1]
+    assert disallowed == ""
+    assert "--fork-session" not in driver
+
+
+async def test_continuation_removed_append_prompt_keeps_snapshot_off(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Dropping the append text still rebuilds instructions instead of restoring."""
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path))
+    project_dir = _project_dir(tmp_path)
+    first = await _run(
+        _captured_scenario(str(tmp_path)),
+        project_dir=project_dir,
+        handler_config=dict(_CONTINUE_CONFIG, append_system_prompt="v1"),
+    )
+    assert first.session is not None
+    record = tmp_path / "resume-no-append.jsonl"
+    result = await _run(
+        _resume_scenario(record, CAPTURED_SESSION_ID),
+        project_dir=project_dir,
+        continue_session=first.session,
+        handler_config=dict(_CONTINUE_CONFIG),
+    )
+
+    assert result.status is AgentRunStatus.SETTLED
+    driver = _recorded_argv(record)
+    assert "--append-system-prompt" not in driver
+    assert _flag_value(driver, "--system-prompt-snapshot") == "off"
+
+
+def test_continuation_build_command_form() -> None:
+    """Resume flags belong to the run; empty lists stay explicitly empty."""
+    ref = _session_ref(pathlib.Path("/ws/proj"), session_id=CAPTURED_SESSION_ID)
+    argv = _handler_with(
+        permission_mode="acceptEdits", allowed_tools=[], disallowed_tools=[]
+    )._build_command(_settings(model="opus"), None, continue_session=ref)
+    assert argv[:8] == [
+        "claude",
+        "--print",
+        "--output-format",
+        "stream-json",
+        "--verbose",
+        "--resume",
+        CAPTURED_SESSION_ID,
+        "--system-prompt-snapshot",
+    ]
+    assert argv[8] == "off"
+    assert argv[argv.index("--model") + 1] == "opus"
+    assert argv[argv.index("--permission-mode") + 1] == "acceptEdits"
+    assert argv[argv.index("--allowed-tools") + 1] == ""
+    assert argv[argv.index("--disallowed-tools") + 1] == ""
+    assert "--fork-session" not in argv
+
+
+def test_continuation_build_command_carries_non_empty_lists() -> None:
+    ref = _session_ref(pathlib.Path("/ws/proj"), session_id=CAPTURED_SESSION_ID)
+    argv = _handler_with(
+        permission_mode="acceptEdits",
+        allowed_tools=["Read", "Bash(git *)"],
+        disallowed_tools=["WebFetch"],
+        append_system_prompt="be terse",
+        max_budget_usd=1.5,
+    )._build_command(_settings(model="opus"), None, continue_session=ref)
+    assert argv[
+        argv.index("--allowed-tools") + 1 : argv.index("--allowed-tools") + 3
+    ] == [
+        "Read",
+        "Bash(git *)",
+    ]
+    assert argv[argv.index("--disallowed-tools") + 1] == "WebFetch"
+    assert argv[argv.index("--append-system-prompt") + 1] == "be terse"
+    assert argv[argv.index("--max-budget-usd") + 1] == "1.5"
+
+
+async def test_continuation_rejects_non_uuid_ids_without_spawning(
+    tmp_path: pathlib.Path,
+) -> None:
+    project_dir = _project_dir(tmp_path)
+    for bad_id in ("", "sess-1", CAPTURED_SESSION_ID[:8]):
+        runner = _RecordingCommandRunner()
+        result = await _run(
+            {"steps": []},
+            project_dir=project_dir,
+            continue_session=_session_ref(project_dir, session_id=bad_id),
+            service_overrides={icommandrunner.ICommandRunner: runner},
+        )
+        assert result.status is AgentRunStatus.FAILED
+        assert "session ID" in (result.error or "")
+        assert runner.start_long_running_calls == 0
+        assert runner.run_calls == 0
+
+
+async def test_continuation_rejects_backend_mismatch_without_spawning(
+    tmp_path: pathlib.Path,
+) -> None:
+    project_dir = _project_dir(tmp_path)
+    runner = _RecordingCommandRunner()
+    result = await _run(
+        {"steps": []},
+        project_dir=project_dir,
+        continue_session=_session_ref(project_dir, backend=AgentBackend.CODEX),
+        service_overrides={icommandrunner.ICommandRunner: runner},
+    )
+
+    assert result.status is AgentRunStatus.FAILED
+    assert "codex" in (result.error or "")
+    assert runner.start_long_running_calls == 0
+    assert runner.run_calls == 0
+
+
+async def test_continuation_rejects_foreign_project_without_spawning(
+    tmp_path: pathlib.Path,
+) -> None:
+    project_dir = _project_dir(tmp_path)
+    runner = _RecordingCommandRunner()
+    ref = AgentSessionRef(
+        backend=AgentBackend.CLAUDE_CODE,
+        session_id=CAPTURED_SESSION_ID,
+        project_dir=ResourceUri("file:///elsewhere"),
+    )
+    result = await _run(
+        {"steps": []},
+        project_dir=project_dir,
+        continue_session=ref,
+        service_overrides={icommandrunner.ICommandRunner: runner},
+    )
+
+    assert result.status is AgentRunStatus.FAILED
+    assert "elsewhere" in (result.error or "")
+    assert runner.start_long_running_calls == 0
+    assert runner.run_calls == 0
+
+
+async def test_continuation_unknown_profile_fails_without_lookup_or_spawn(
+    tmp_path: pathlib.Path,
+) -> None:
+    project_dir = _project_dir(tmp_path)
+    runner = _RecordingCommandRunner()
+    result = await _run(
+        {"steps": []},
+        project_dir=project_dir,
+        profile="nope",
+        continue_session=_session_ref(project_dir),
+        handler_config={"profiles": {"b": {}, "a": {}}},
+        service_overrides={icommandrunner.ICommandRunner: runner},
+    )
+
+    assert result.status is AgentRunStatus.FAILED
+    assert result.error == "unknown agent profile 'nope'; configured profiles: a, b"
+    assert runner.start_long_running_calls == 0
+    assert runner.run_calls == 0
+
+
+async def test_continuation_missing_session_fails_without_probe_or_spawn(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A deleted session is reported, and no version subprocess is launched."""
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path))
+    project_dir = _project_dir(tmp_path)
+    runner = _RecordingCommandRunner()
+    result = await _run(
+        {"steps": []},
+        project_dir=project_dir,
+        continue_session=_session_ref(project_dir),
+        capture_history=True,
+        service_overrides={icommandrunner.ICommandRunner: runner},
+    )
+
+    assert result.status is AgentRunStatus.FAILED
+    assert "not found" in (result.error or "")
+    assert runner.start_long_running_calls == 0
+    assert runner.run_calls == 0
+    assert result.observation is not None
+    assert result.observation.history_status is HistoryDiscoveryStatus.UNAVAILABLE
+
+
+async def test_continuation_without_model_fails_before_spawn(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The saved session model is never silently reused on continuation."""
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path))
+    project_dir = _project_dir(tmp_path)
+    first = await _run(
+        _captured_scenario(str(tmp_path)),
+        project_dir=project_dir,
+        handler_config={"model": "opus", "permission_mode": "acceptEdits"},
+    )
+    assert first.session is not None
+    runner = _RecordingCommandRunner()
+    result = await _run(
+        {"steps": []},
+        project_dir=project_dir,
+        continue_session=first.session,
+        handler_config={"permission_mode": "acceptEdits"},
+        service_overrides={icommandrunner.ICommandRunner: runner},
+    )
+
+    assert result.status is AgentRunStatus.FAILED
+    assert "model" in (result.error or "")
+    assert "new-run default" in (result.error or "")
+    assert runner.start_long_running_calls == 0
+    assert runner.run_calls == 0
+
+
+async def test_continuation_without_permission_mode_fails_before_spawn(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A native resume must not restore saved permissions the handler cannot name."""
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path))
+    project_dir = _project_dir(tmp_path)
+    first = await _run(
+        _captured_scenario(str(tmp_path)),
+        project_dir=project_dir,
+        handler_config={"model": "opus", "permission_mode": "acceptEdits"},
+    )
+    assert first.session is not None
+    runner = _RecordingCommandRunner()
+    result = await _run(
+        {"steps": []},
+        project_dir=project_dir,
+        continue_session=first.session,
+        handler_config={"model": "opus"},
+        service_overrides={icommandrunner.ICommandRunner: runner},
+    )
+
+    assert result.status is AgentRunStatus.FAILED
+    assert "permission_mode" in (result.error or "")
+    assert "new-run default" in (result.error or "")
+    assert runner.start_long_running_calls == 0
+    assert runner.run_calls == 0
+
+
+async def test_continuation_missing_session_fails_and_creates_no_session(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The driver re-reads the native store; a miss creates nothing."""
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path))
+    project_dir = _project_dir(tmp_path)
+    ref = _session_ref(project_dir, session_id="33333333-3333-4333-8333-333333333333")
+    files_before = _native_session_files(tmp_path)
+    record = tmp_path / "miss-record.jsonl"
+    result = await _run(
+        _resume_scenario(record, ref.session_id, text="hello?"),
+        prompt="hello?",
+        project_dir=project_dir,
+        continue_session=ref,
+        handler_config=dict(_CONTINUE_CONFIG),
+    )
+
+    assert result.status is AgentRunStatus.FAILED
+    assert "not found" in (result.error or "")
+    assert result.session is None
+    assert _native_session_files(tmp_path) == files_before
+
+
+async def test_continuation_deleted_session_fails_without_creating_one(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A session removed after the handler lookup still fails at resume."""
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path))
+    project_dir = _project_dir(tmp_path)
+    first = await _run(
+        _captured_scenario(str(tmp_path)),
+        project_dir=project_dir,
+        handler_config=dict(_CONTINUE_CONFIG),
+    )
+    assert first.session is not None
+    files_before = _native_session_files(tmp_path)
+
+    real_locate = claude_code_agent_handler.claude_code_history.locate_claude_history
+
+    def _locate_then_delete(state: Any, root: pathlib.Path) -> Any:
+        observation = real_locate(state, root)
+        for path in (root / "projects").rglob("*.jsonl"):
+            if path.is_file():
+                path.unlink()
+        return observation
+
+    monkeypatch.setattr(
+        claude_code_agent_handler.claude_code_history,
+        "locate_claude_history",
+        _locate_then_delete,
+    )
+    result = await _run(
+        _resume_scenario(None, CAPTURED_SESSION_ID, text="hello?"),
+        prompt="hello?",
+        project_dir=project_dir,
+        continue_session=first.session,
+        handler_config=dict(_CONTINUE_CONFIG),
+    )
+
+    assert result.status is AgentRunStatus.FAILED
+    assert "stopped without reporting" in (result.error or "")
+    assert result.session is None
+    assert _native_session_files(tmp_path) <= files_before
+
+
+async def test_continuation_settled_without_reported_id_fails_and_keeps_output(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A resumed turn that names no session fails without losing its text."""
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path))
+    result = await _run(
+        {
+            "steps": [
+                {"do": "read_prompt"},
+                {"do": "emit", "frame": _result(text="hi")},
+            ]
+        },
+        capture_history=True,
+    )
+
+    assert result.status is AgentRunStatus.FAILED
+    assert result.output == "hi"
+    assert result.session is None
+    assert result.observation is not None
+    assert result.observation.history_status is HistoryDiscoveryStatus.UNAVAILABLE
+    assert result.observation.session_id is None
+
+
+async def test_continuation_refusal_without_reported_id_stays_refusal(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A refusal that names no session is still a refusal, not a new failure."""
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path))
+    result = await _run(
+        {
+            "steps": [
+                {"do": "read_prompt"},
+                {
+                    "do": "emit",
+                    "frame": _result(
+                        subtype="error_during_execution",
+                        is_error=True,
+                        denials=[{"tool_name": "Edit"}],
+                    ),
+                },
+            ]
+        }
+    )
+
+    assert result.status is AgentRunStatus.REFUSED_INTERACTION
+    assert result.error is not None and "Edit" in result.error
+    assert result.session is None
+
+
+async def test_continuation_structured_output_round_trip(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A resumed turn extracts JSON against the schema like a new turn does."""
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path))
+    project_dir = _project_dir(tmp_path)
+    first = await _run(
+        _captured_scenario(str(tmp_path)),
+        project_dir=project_dir,
+        handler_config=dict(_CONTINUE_CONFIG),
+    )
+    assert first.session is not None
+    record = tmp_path / "structured-resume-record.jsonl"
+    result = await _run(
+        _resume_scenario(
+            record,
+            CAPTURED_SESSION_ID,
+            structured_output={"answer": "42"},
+        ),
+        project_dir=project_dir,
+        continue_session=first.session,
+        output_schema=_SCHEMA,
+        handler_config=dict(_CONTINUE_CONFIG),
+    )
+
+    assert result.status is AgentRunStatus.SETTLED
+    assert result.structured_output == {"answer": "42"}
+    assert result.session == first.session
+
+
+async def test_continuation_malformed_structured_output_fails_and_keeps_text(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path))
+    project_dir = _project_dir(tmp_path)
+    first = await _run(
+        _captured_scenario(str(tmp_path)),
+        project_dir=project_dir,
+        handler_config=dict(_CONTINUE_CONFIG),
+    )
+    assert first.session is not None
+    result = await _run(
+        _resume_scenario(record=None, session_id=CAPTURED_SESSION_ID, text="done"),
+        project_dir=project_dir,
+        continue_session=first.session,
+        output_schema=_SCHEMA,
+        handler_config=dict(_CONTINUE_CONFIG),
+    )
+
+    assert result.status is AgentRunStatus.FAILED
+    assert result.error == "claude settled without structured output"
+    assert result.output == "done"
+    assert result.session is None
+
+
+async def test_continuation_backend_failure_keeps_its_reason(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path))
+    project_dir = _project_dir(tmp_path)
+    first = await _run(
+        _captured_scenario(str(tmp_path)),
+        project_dir=project_dir,
+        handler_config=dict(_CONTINUE_CONFIG),
+    )
+    assert first.session is not None
+    result = await _run(
+        {
+            "steps": [
+                {"do": "read_prompt"},
+                {"do": "init", "session_id": CAPTURED_SESSION_ID},
+                {
+                    "do": "emit",
+                    "frame": _result(
+                        subtype="error_during_execution",
+                        is_error=True,
+                        text="the model call was rejected",
+                        session_id=CAPTURED_SESSION_ID,
+                    ),
+                },
+            ]
+        },
+        project_dir=project_dir,
+        continue_session=first.session,
+        handler_config=dict(_CONTINUE_CONFIG),
+    )
+
+    assert result.status is AgentRunStatus.FAILED
+    assert "error_during_execution" in (result.error or "")
+    assert result.session is None
+
+
+async def test_continuation_timeout_fails_without_a_session(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A resumed run that hangs is bounded by the current timeout setting."""
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path))
+    project_dir = _project_dir(tmp_path)
+    first = await _run(
+        _captured_scenario(str(tmp_path)),
+        project_dir=project_dir,
+        handler_config=dict(_CONTINUE_CONFIG),
+    )
+    assert first.session is not None
+    result = await _run(
+        {
+            "steps": [
+                {"do": "read_prompt"},
+                {"do": "init", "session_id": CAPTURED_SESSION_ID},
+                {"do": "sleep", "seconds": 300},
+            ]
+        },
+        project_dir=project_dir,
+        continue_session=first.session,
+        handler_config=dict(_CONTINUE_CONFIG, settle_timeout_sec=0.5),
+    )
+
+    assert result.status is AgentRunStatus.FAILED
+    assert "did not finish within" in (result.error or "")
+    assert result.session is None
+
+
+class _PipeBrokenProcess:
+    """A native process that exits before reading the prompt."""
+
+    def __init__(self, error: Exception) -> None:
+        self._error = error
+
+    async def stdout_lines(self) -> Any:
+        if False:
+            yield ""
+        return
+
+    def write_to_stdin(self, value: str) -> None:
+        _ = value
+        raise self._error
+
+    def close_stdin(self) -> None:
+        return None
+
+    async def wait_for_end(self, timeout: float | None = None) -> None:
+        _ = timeout
+
+    def get_exit_code(self) -> int | None:
+        return 0
+
+    def get_output(self) -> str:
+        raise AssertionError("streaming forbids get_output")
+
+    def get_error_output(self) -> str:
+        return ""
+
+    def is_alive(self) -> bool:
+        return False
+
+
+class _PipeBrokenRunner:
+    """Serves one broken process for the spawn a continuation performs."""
+
+    def __init__(self, process: _PipeBrokenProcess) -> None:
+        self._process = process
+        self.start_calls = 0
+
+    async def start_long_running(
+        self,
+        cmd: Any,
+        cwd: pathlib.Path | None = None,
+        env: dict[str, str] | None = None,
+        new_process_group: bool = False,
+    ) -> Any:
+        _ = (cmd, cwd, env, new_process_group)
+        self.start_calls += 1
+        return self._process
+
+    async def run(
+        self,
+        cmd: Any,
+        cwd: pathlib.Path | None = None,
+        env: dict[str, str] | None = None,
+        new_process_group: bool = False,
+    ) -> Any:
+        _ = (cmd, cwd, env, new_process_group)
+        raise AssertionError("no version probe runs on this path")
+
+    def run_sync(
+        self,
+        cmd: Any,
+        cwd: pathlib.Path | None = None,
+        env: dict[str, str] | None = None,
+    ) -> Any:
+        _ = (cmd, cwd, env)
+        raise NotImplementedError
+
+
+@pytest.mark.parametrize(
+    "error", [BrokenPipeError(32, "Broken pipe"), ConnectionResetError(104, "reset")]
+)
+async def test_continuation_prompt_pipe_failure_is_an_explicit_failure(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch, error: Exception
+) -> None:
+    """A native process that exits before reading the prompt fails the turn."""
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path))
+    project_dir = _project_dir(tmp_path)
+    first = await _run(
+        _captured_scenario(str(tmp_path)),
+        project_dir=project_dir,
+        handler_config=dict(_CONTINUE_CONFIG),
+    )
+    assert first.session is not None
+    result = await _run(
+        {"steps": []},
+        project_dir=project_dir,
+        continue_session=first.session,
+        handler_config=dict(_CONTINUE_CONFIG),
+        service_overrides={
+            icommandrunner.ICommandRunner: _PipeBrokenRunner(_PipeBrokenProcess(error))
+        },
+    )
+
+    assert result.status is AgentRunStatus.FAILED
+    assert "pipe" in (result.error or "")
+    assert result.session is None
+
+
+async def test_continuation_capture_locates_the_same_main_session(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Capture on a continuation observes the resumed native session."""
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path))
+    project_dir = _project_dir(tmp_path)
+    first = await _run(
+        _captured_scenario(str(tmp_path)),
+        project_dir=project_dir,
+        handler_config=dict(_CONTINUE_CONFIG),
+    )
+    assert first.session is not None
+    result = await _run(
+        _resume_scenario(None, CAPTURED_SESSION_ID, text="more"),
+        prompt="more",
+        project_dir=project_dir,
+        continue_session=first.session,
+        capture_history=True,
+        handler_config=dict(_CONTINUE_CONFIG),
+    )
+
+    assert result.status is AgentRunStatus.SETTLED
+    assert result.session == first.session
+    observation = result.observation
+    assert observation is not None
+    assert observation.history_status is HistoryDiscoveryStatus.AVAILABLE
+    assert observation.session_id == CAPTURED_SESSION_ID
+    main = next(f for f in observation.files if f.role is NativeHistoryRole.MAIN)
+    assert resource_uri_to_path(main.source_uri) == _native_main(
+        tmp_path, CAPTURED_SESSION_ID
+    )
+
+
+async def test_continuation_observation_failure_keeps_reference_and_status(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A broken history read degrades the observation, not the settled turn."""
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path))
+    project_dir = _project_dir(tmp_path)
+    first = await _run(
+        _captured_scenario(str(tmp_path)),
+        project_dir=project_dir,
+        handler_config=dict(_CONTINUE_CONFIG),
+    )
+    assert first.session is not None
+    calls: list[int] = []
+    real_locate = claude_code_agent_handler.claude_code_history.locate_claude_history
+
+    def _flaky_locate(state: Any, root: pathlib.Path) -> Any:
+        calls.append(1)
+        if len(calls) == 1:
+            return real_locate(state, root)
+        raise RuntimeError("disk is gone")
+
+    monkeypatch.setattr(
+        claude_code_agent_handler.claude_code_history,
+        "locate_claude_history",
+        _flaky_locate,
+    )
+    result = await _run(
+        _resume_scenario(None, CAPTURED_SESSION_ID, text="more"),
+        prompt="more",
+        project_dir=project_dir,
+        continue_session=first.session,
+        capture_history=True,
+        handler_config=dict(_CONTINUE_CONFIG),
+    )
+
+    assert result.status is AgentRunStatus.SETTLED
+    assert result.output == "more"
+    assert result.session == first.session
+    assert result.observation is not None
+    assert result.observation.history_status is HistoryDiscoveryStatus.FAILED

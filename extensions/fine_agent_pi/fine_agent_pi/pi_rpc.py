@@ -33,6 +33,7 @@ handler contains no knowledge of pi's field names.
 import dataclasses
 import enum
 import json
+import typing
 from typing import Any
 
 from fine_agent.run_agent_task_action import AgentRunUsage
@@ -92,6 +93,26 @@ nobody chose.
 
 _SESSION_STATS = "get_session_stats"
 """The command name, which is also how its response is recognised."""
+
+_SESSION_STATE = "get_state"
+"""The command name for the startup identity check."""
+
+
+class PiStateCommand(typing.TypedDict):
+    """A `get_state` identity request."""
+
+    type: typing.Literal["get_state"]
+    id: str
+
+
+@dataclasses.dataclass(frozen=True)
+class PiSessionIdentity:
+    """The session identity pi reports for one `get_state` request."""
+
+    request_id: str
+    session_id: str | None
+    session_file: str | None
+    error: str | None
 
 
 class UiDisposition(enum.StrEnum):
@@ -325,6 +346,65 @@ def is_session_stats_response(frame: dict[str, Any]) -> bool:
     request carries no id, so ``command`` is the only correlator pi echoes.
     """
     return frame.get("command") == _SESSION_STATS
+
+
+def session_state_command(request_id: str) -> str:
+    """Encode one `get_state` identity request."""
+    command: PiStateCommand = {"type": "get_state", "id": request_id}
+    return encode(dict(command))
+
+
+def parse_session_identity(frame: object) -> PiSessionIdentity | None:
+    """Read one `get_state` response, or `None` for an unrelated record.
+
+    A matching response whose command failed or whose identity is malformed
+    carries an explicit `error`; the caller correlates `request_id` against
+    the request it sent. Extra native fields stay tolerated.
+    """
+    if not isinstance(frame, dict):
+        return None
+    if frame.get("type") != "response":
+        return None
+    if frame.get("command") != _SESSION_STATE:
+        return None
+    request_id = frame.get("id")
+    if not isinstance(request_id, str):
+        return PiSessionIdentity(
+            request_id="",
+            session_id=None,
+            session_file=None,
+            error="pi get_state response has no request id",
+        )
+    if not frame.get("success", False):
+        return PiSessionIdentity(
+            request_id=request_id,
+            session_id=None,
+            session_file=None,
+            error="pi get_state command failed",
+        )
+    data = frame.get("data")
+    if not isinstance(data, dict):
+        return PiSessionIdentity(
+            request_id=request_id,
+            session_id=None,
+            session_file=None,
+            error="pi get_state response has no session data",
+        )
+    session_id = data.get("sessionId")
+    session_file = data.get("sessionFile")
+    if not isinstance(session_id, str) or not session_id:
+        return PiSessionIdentity(
+            request_id=request_id,
+            session_id=None,
+            session_file=session_file if isinstance(session_file, str) else None,
+            error="pi get_state response reports no session id",
+        )
+    return PiSessionIdentity(
+        request_id=request_id,
+        session_id=session_id,
+        session_file=session_file if isinstance(session_file, str) else None,
+        error=None,
+    )
 
 
 def encode(command: dict[str, Any]) -> str:

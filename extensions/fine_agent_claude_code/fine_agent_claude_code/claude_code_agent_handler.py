@@ -2,7 +2,6 @@ import asyncio
 import contextlib
 import dataclasses
 import json
-import os
 import pathlib
 import time
 
@@ -11,6 +10,7 @@ from fine_agent.history_types import (
     AgentBackend,
     AgentRunObservation,
     HistoryDiscoveryStatus,
+    NativeHistoryRole,
     RelatedHistoryStatus,
     UsageProvenance,
     UsageScope,
@@ -18,10 +18,17 @@ from fine_agent.history_types import (
 )
 from fine_agent.run_agent_task_action import (
     AgentRunStatus,
+    AgentSessionRef,
     RunAgentTaskAction,
     RunAgentTaskRunContext,
     RunAgentTaskRunPayload,
     RunAgentTaskRunResult,
+)
+from fine_agent.session_support import (
+    session_backend_error,
+    session_id_error,
+    session_project_error,
+    with_session,
 )
 from finecode_extension_api import code_action
 from finecode_extension_api.interfaces import (
@@ -141,13 +148,6 @@ def _pre_session_observation(gaps: list[str]) -> AgentRunObservation:
     )
 
 
-def _claude_config_root() -> pathlib.Path:
-    env_root = os.environ.get("CLAUDE_CONFIG_DIR")
-    if env_root:
-        return pathlib.Path(env_root)
-    return pathlib.Path.home() / ".claude"
-
-
 class ClaudeCodeAgentHandler(
     code_action.ActionHandler[
         RunAgentTaskAction,
@@ -191,6 +191,8 @@ class ClaudeCodeAgentHandler(
         payload: RunAgentTaskRunPayload,
         run_context: RunAgentTaskRunContext,
     ) -> RunAgentTaskRunResult:
+        if payload.continue_session is not None:
+            return await self._run_continuation(payload, run_context)
         settings = self._resolve(payload.profile)
         if isinstance(settings, str):
             # Fail before spawning anything: an unknown profile is a
@@ -249,6 +251,20 @@ class ClaudeCodeAgentHandler(
                 result = dataclasses.replace(result, observation=observation)
             return result
 
+        return await self._settle_spawned_run(
+            payload, run_context, process, command, settings, project_dir, started
+        )
+
+    async def _settle_spawned_run(
+        self,
+        payload: RunAgentTaskRunPayload,
+        run_context: RunAgentTaskRunContext,
+        process: icommandrunner.IAsyncProcess,
+        command: list[str],
+        settings: _ClaudeRunSettings,
+        project_dir: pathlib.Path,
+        started: float,
+    ) -> RunAgentTaskRunResult:
         try:
             result, observation_state = await self._run_with_process(
                 payload, run_context, process, command, settings
@@ -268,6 +284,13 @@ class ClaudeCodeAgentHandler(
         # measured, and elapsed time is as much a part of a failed run's account
         # as of a settled one's.
         result.duration_sec = time.monotonic() - started
+        result = with_session(
+            result,
+            backend=AgentBackend.CLAUDE_CODE,
+            project_dir=project_dir,
+            reported_id=observation_state.session_id,
+            expected=payload.continue_session,
+        )
         if payload.capture_history:
             try:
                 result = await self._attach_observation(result, observation_state)
@@ -287,6 +310,139 @@ class ClaudeCodeAgentHandler(
                 )
                 result = dataclasses.replace(result, observation=failed)
         return result
+
+    def _continuation_failure(
+        self,
+        payload: RunAgentTaskRunPayload,
+        error: str,
+        started: float,
+        observation: AgentRunObservation | None = None,
+    ) -> RunAgentTaskRunResult:
+        """A continuation failure before any native process was started.
+
+        Never runs a version probe; with capture, the run carries an
+        unavailable observation naming why no session was resumed.
+        """
+        failed = RunAgentTaskRunResult(
+            status=AgentRunStatus.FAILED,
+            error=error,
+            duration_sec=time.monotonic() - started,
+        )
+        if payload.capture_history:
+            if observation is None:
+                observation = _pre_session_observation([error])
+            failed = dataclasses.replace(failed, observation=observation)
+        return failed
+
+    async def _run_continuation(
+        self,
+        payload: RunAgentTaskRunPayload,
+        run_context: RunAgentTaskRunContext,
+    ) -> RunAgentTaskRunResult:
+        ref = payload.continue_session
+        assert ref is not None
+        started = time.monotonic()
+        failure = session_id_error(ref.session_id)
+        if failure is None:
+            failure = session_backend_error(ref, AgentBackend.CLAUDE_CODE)
+        project_dir: pathlib.Path | None = None
+        if failure is None:
+            project_dir = self.project_info_provider.get_current_project_dir_path()
+            failure = session_project_error(ref, project_dir)
+        if failure is not None:
+            return self._continuation_failure(payload, failure, started)
+        if payload.profile is not None and (
+            payload.profile not in self.config.profiles
+        ):
+            unknown = backend_support.unknown_profile_error(
+                payload.profile, self.config.profiles
+            )
+            return self._continuation_failure(
+                payload,
+                unknown,
+                started,
+                observation=_pre_session_observation([unknown]),
+            )
+        assert project_dir is not None
+
+        lookup_state = ClaudeObservationState(
+            session_id=ref.session_id,
+            usage_provenance=_unknown_provenance(),
+            gaps=[],
+        )
+        observation = await asyncio.to_thread(
+            claude_code_history.locate_claude_history,
+            lookup_state,
+            claude_code_history.claude_config_root(),
+        )
+        main = next(
+            (f for f in observation.files if f.role is NativeHistoryRole.MAIN),
+            None,
+        )
+        if main is None:
+            reason = "; ".join(observation.gaps) or (
+                f"claude session {ref.session_id!r} was not found"
+            )
+            return self._continuation_failure(
+                payload, reason, started, observation=observation
+            )
+
+        settings = self._resolve(payload.profile)
+        if isinstance(settings, str):
+            # Unreachable through the membership check above: `_resolve`
+            # only reports unknown profiles. Kept graceful rather than
+            # asserted so a future resolver error still fails the run.
+            return self._continuation_failure(payload, settings, started)
+        if settings.model is None:
+            profile_name = (
+                f"profile {payload.profile!r}"
+                if payload.profile is not None
+                else "the top-level settings"
+            )
+            return self._continuation_failure(
+                payload,
+                f"cannot continue claude session {ref.session_id!r} without an "
+                f"explicit model: the handler cannot reset the saved session "
+                f"model to the native new-run default; set 'model' in "
+                f"{profile_name}",
+                started,
+            )
+        if self.config.permission_mode is None:
+            return self._continuation_failure(
+                payload,
+                f"cannot continue claude session {ref.session_id!r} without an "
+                f"explicit permission mode: the handler cannot reset the "
+                f"saved session permissions to the native new-run default; "
+                f"set 'permission_mode' in the handler config",
+                started,
+            )
+
+        command = self._build_command(
+            settings, payload.output_schema, continue_session=ref
+        )
+        self.logger.debug(f"Continuing claude: {command!r} in {project_dir}")
+
+        try:
+            process = await self.command_runner.start_long_running(
+                command,
+                cwd=project_dir,
+                new_process_group=True,
+            )
+        except (OSError, icommandrunner.CommandNotLaunchableError) as error:
+            failed = RunAgentTaskRunResult(
+                status=AgentRunStatus.FAILED,
+                error=backend_support.spawn_error(command[0], error),
+                duration_sec=time.monotonic() - started,
+            )
+            if payload.capture_history:
+                failed = dataclasses.replace(
+                    failed, observation=_pre_session_observation([failed.error or ""])
+                )
+            return failed
+
+        return await self._settle_spawned_run(
+            payload, run_context, process, command, settings, project_dir, started
+        )
 
     async def _run_with_process(
         self,
@@ -357,9 +513,6 @@ class ClaudeCodeAgentHandler(
         # earlier, so this is not load-bearing -- it just keeps the order on the
         # page the same as the order on the wire.
         lines = process.stdout_lines()
-        process.write_to_stdin(prompt)
-        process.close_stdin()
-
         streamed: list[str] = []
         """Assistant text as it arrives.
 
@@ -368,6 +521,21 @@ class ClaudeCodeAgentHandler(
         the runs that never get one.
         """
         turns = 0
+        try:
+            process.write_to_stdin(prompt)
+            process.close_stdin()
+        except (BrokenPipeError, ConnectionResetError) as error:
+            state = ClaudeObservationState(
+                session_id=None,
+                usage_provenance=_unknown_provenance(),
+                gaps=[f"claude closed its prompt pipe before reading it: {error}"],
+            )
+            return RunAgentTaskRunResult(
+                status=AgentRunStatus.FAILED,
+                output="".join(streamed),
+                turns=turns or None,
+                error=f"claude closed its prompt pipe before reading it: {error}",
+            ), state
         model: str | None = None
         outcome: claude_code_stream.RunResult | None = None
         init_session_id: str | None = None
@@ -597,6 +765,8 @@ class ClaudeCodeAgentHandler(
         self,
         settings: _ClaudeRunSettings,
         output_schema: dict[str, object] | None = None,
+        *,
+        continue_session: AgentSessionRef | None = None,
     ) -> list[str]:
         # `--verbose` is not optional: the CLI rejects `stream-json` output in
         # print mode without it.
@@ -608,14 +778,32 @@ class ClaudeCodeAgentHandler(
             "--verbose",
         ]
 
+        if continue_session is not None:
+            # Resuming rebuilds the current instructions from these flags;
+            # a stale saved snapshot must never stand in for them.
+            parts += [
+                "--resume",
+                continue_session.session_id,
+                "--system-prompt-snapshot",
+                "off",
+            ]
         if settings.model is not None:
             parts += ["--model", settings.model]
         if self.config.permission_mode is not None:
             parts += ["--permission-mode", self.config.permission_mode]
-        if self.config.allowed_tools:
-            parts += ["--allowed-tools", *self.config.allowed_tools]
-        if self.config.disallowed_tools:
-            parts += ["--disallowed-tools", *self.config.disallowed_tools]
+        if continue_session is not None:
+            # A resumed run must name its tool lists explicitly: omitting
+            # them would silently restore whatever the saved session allowed.
+            parts += ["--allowed-tools", *(self.config.allowed_tools or [""])]
+            parts += [
+                "--disallowed-tools",
+                *(self.config.disallowed_tools or [""]),
+            ]
+        else:
+            if self.config.allowed_tools:
+                parts += ["--allowed-tools", *self.config.allowed_tools]
+            if self.config.disallowed_tools:
+                parts += ["--disallowed-tools", *self.config.disallowed_tools]
         if self.config.append_system_prompt is not None:
             parts += ["--append-system-prompt", self.config.append_system_prompt]
         if self.config.max_budget_usd is not None:
@@ -663,7 +851,7 @@ class ClaudeCodeAgentHandler(
         state: ClaudeObservationState,
     ) -> RunAgentTaskRunResult:
         observation = claude_code_history.locate_claude_history(
-            state, _claude_config_root()
+            state, claude_code_history.claude_config_root()
         )
         version, version_gap = await self._probe_backend_version()
         gaps = [*observation.gaps]
