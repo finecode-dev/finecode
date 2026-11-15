@@ -199,7 +199,11 @@ def _run_import_linter_check(
     # import-linter has no "project root" parameter of its own: config
     # discovery depends on the process's current working directory, and
     # grimp's module import depends on sys.path. Scope both to this call only.
-    with _chdir(project_dir), _sys_path_entry(project_dir):
+    with (
+        _chdir(project_dir),
+        _sys_path_entry(project_dir / "src"),
+        _sys_path_entry(project_dir),
+    ):
         if config.contracts:
             # Contracts are defined inline (e.g. shared via a preset), so no
             # [tool.importlinter]/.importlinter file is needed at all.
