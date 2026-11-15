@@ -5,7 +5,6 @@ from finecode_extension_api import code_action
 from finecode_extension_api.interfaces import (
     ifilemanager,
     ilogger,
-    iprojectinfoprovider,
     iworkspaceactionrunner,
     iworkspaceinfoprovider,
 )
@@ -64,14 +63,12 @@ class RecordFromInspectCodeHandler(
         self,
         workspace_action_runner: iworkspaceactionrunner.IWorkspaceActionRunner,
         workspace_info_provider: iworkspaceinfoprovider.IWorkspaceInfoProvider,
-        project_info_provider: iprojectinfoprovider.IProjectInfoProvider,
         ratchet: IDiagnosticsRatchet,
         file_manager: ifilemanager.IFileManager,
         logger: ilogger.ILogger,
     ) -> None:
         self.workspace_action_runner = workspace_action_runner
         self.workspace_info_provider = workspace_info_provider
-        self.project_info_provider = project_info_provider
         self.ratchet = ratchet
         self.file_manager = file_manager
         self.logger = logger
@@ -87,7 +84,6 @@ class RecordFromInspectCodeHandler(
             projects = actionable_project_paths(
                 await self.workspace_info_provider.get_workspace_projects()
             )
-        workspace_root = self.project_info_provider.get_current_project_dir_path()
         snapshot_paths = {
             project: self.ratchet.snapshot_path(project) for project in projects
         }
@@ -104,7 +100,6 @@ class RecordFromInspectCodeHandler(
                 project_paths=[path_to_resource_uri(project) for project in projects],
             ),
             meta=run_context.meta,
-            project_paths=[workspace_root],
         )
         plan = plan_from_results(
             list(results.values()), projects, snapshots_by_project.get

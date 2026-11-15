@@ -93,14 +93,6 @@ class _FakeWorkspaceInfoProvider:
         return True
 
 
-class _FakeProjectInfoProvider:
-    def __init__(self, root: pathlib.Path) -> None:
-        self._root = root
-
-    def get_current_project_dir_path(self) -> pathlib.Path:
-        return self._root
-
-
 class _FakeWorkspaceActionRunner:
     """Answers like post-ratchet bridges would: stamped findings plus receipts."""
 
@@ -174,14 +166,12 @@ def _receipt(contributor: str, project: pathlib.Path) -> PartitionReceipt:
 
 
 def _handler(
-    root: pathlib.Path,
     projects: list[pathlib.Path],
     runner: _FakeWorkspaceActionRunner,
 ) -> RecordFromInspectCodeHandler:
     return RecordFromInspectCodeHandler(
         workspace_action_runner=runner,  # type: ignore[arg-type]
         workspace_info_provider=_FakeWorkspaceInfoProvider(projects),
-        project_info_provider=_FakeProjectInfoProvider(root),
         ratchet=DiagnosticsRatchet(
             config=DiagnosticsRatchetSettings(),
             file_manager=FileManager(logger=_FakeLogger()),
@@ -194,15 +184,12 @@ def _handler(
 
 
 async def _run(
-    root: pathlib.Path,
     projects: list[pathlib.Path],
     messages: dict[ResourceUri, list[Diagnostic]],
     receipts: list[PartitionReceipt],
     project_paths: list[ResourceUri] | None = None,
 ) -> RecordDiagnosticsBaselineRunResult:
-    handler = _handler(
-        root, projects, _FakeWorkspaceActionRunner(messages, receipts)
-    )
+    handler = _handler(projects, _FakeWorkspaceActionRunner(messages, receipts))
     sender = _Sender()
     await handler.run(
         RecordDiagnosticsBaselineRunPayload(project_paths=project_paths),
@@ -220,7 +207,7 @@ async def test_record_writes_then_reports_unchanged(
     messages = {uri: [_diagnostic()]}
     receipts = [_receipt("lint", project)]
 
-    first = await _run(tmp_path, [project], messages, receipts)
+    first = await _run([project], messages, receipts)
     snapshot_file = project / "finecode-diagnostics-baseline.json"
 
     assert first.snapshots[0].status is RecordStatus.WRITTEN
@@ -231,7 +218,7 @@ async def test_record_writes_then_reports_unchanged(
     assert b"\r" not in raw
     assert raw.endswith(b"\n")
 
-    second = await _run(tmp_path, [project], messages, receipts)
+    second = await _run([project], messages, receipts)
 
     assert second.snapshots[0].status is RecordStatus.UNCHANGED
     assert snapshot_file.read_bytes() == raw
@@ -240,9 +227,7 @@ async def test_record_writes_then_reports_unchanged(
 async def test_clean_project_writes_no_file(tmp_path: pathlib.Path) -> None:
     project = tmp_path / "proj"
 
-    result = await _run(
-        tmp_path, [project], {}, [_receipt("lint", project)]
-    )
+    result = await _run([project], {}, [_receipt("lint", project)])
 
     assert result.snapshots[0].status is RecordStatus.SKIPPED
     assert not (project / "finecode-diagnostics-baseline.json").exists()
@@ -257,7 +242,7 @@ async def test_broken_snapshot_refuses_before_analysis(
         "<<<<<<< HEAD\n", encoding="utf-8"
     )
     runner = _FakeWorkspaceActionRunner({}, [])
-    handler = _handler(tmp_path, [project], runner)
+    handler = _handler([project], runner)
     sender = _Sender()
 
     with pytest.raises(RecordRefusedError):
@@ -296,15 +281,14 @@ async def test_contributor_without_receipt_keeps_its_partition(
     _ = snapshot_file.write_text(before, encoding="utf-8")
     uri = path_to_resource_uri(project / "a.py")
 
-    result = await _run(
-        tmp_path, [project], {uri: [_diagnostic()]}, [_receipt("lint", project)]
-    )
+    result = await _run([project], {uri: [_diagnostic()]}, [_receipt("lint", project)])
 
     assert result.snapshots[0].status is RecordStatus.WRITTEN
     after = json.loads(snapshot_file.read_text(encoding="utf-8"))
-    assert after["contributors"]["audit_preset_deps"] == json.loads(before)[
-        "contributors"
-    ]["audit_preset_deps"]
+    assert (
+        after["contributors"]["audit_preset_deps"]
+        == json.loads(before)["contributors"]["audit_preset_deps"]
+    )
     assert set(after["contributors"]) == {"audit_preset_deps", "lint"}
 
 

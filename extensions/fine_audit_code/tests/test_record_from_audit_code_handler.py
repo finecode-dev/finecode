@@ -95,14 +95,6 @@ class _FakeWorkspaceInfoProvider:
         return path in self._audit_projects
 
 
-class _FakeProjectInfoProvider:
-    def __init__(self, root: pathlib.Path) -> None:
-        self._root = root
-
-    def get_current_project_dir_path(self) -> pathlib.Path:
-        return self._root
-
-
 class _FakeWorkspaceActionRunner:
     def __init__(
         self,
@@ -174,7 +166,6 @@ def _receipt(contributor: str, project: pathlib.Path) -> PartitionReceipt:
 
 
 def _handler(
-    root: pathlib.Path,
     projects: list[pathlib.Path],
     runner: _FakeWorkspaceActionRunner,
     declares_audit: bool = True,
@@ -184,7 +175,6 @@ def _handler(
     return RecordFromAuditCodeHandler(
         workspace_action_runner=runner,  # type: ignore[arg-type]
         workspace_info_provider=providers,
-        project_info_provider=_FakeProjectInfoProvider(root),  # type: ignore[arg-type]
         ratchet=DiagnosticsRatchet(
             config=DiagnosticsRatchetSettings(),
             file_manager=FileManager(logger=_FakeLogger()),
@@ -201,9 +191,7 @@ async def test_audit_records_its_partitions(tmp_path: pathlib.Path) -> None:
     uri = path_to_resource_uri(project / "pyproject.toml")
     messages = {uri: [_diagnostic()]}
     receipts = [_receipt("check_imports", project)]
-    handler = _handler(
-        tmp_path, [project], _FakeWorkspaceActionRunner(messages, receipts)
-    )
+    handler = _handler([project], _FakeWorkspaceActionRunner(messages, receipts))
     sender = _Sender()
     await handler.run(
         RecordDiagnosticsBaselineRunPayload(),
@@ -222,7 +210,7 @@ async def test_undeclared_audit_sends_empty_result(
 ) -> None:
     project = tmp_path / "proj"
     runner = _FakeWorkspaceActionRunner({}, [])
-    handler = _handler(tmp_path, [project], runner, declares_audit=False)
+    handler = _handler([project], runner, declares_audit=False)
     sender = _Sender()
     await handler.run(
         RecordDiagnosticsBaselineRunPayload(),
@@ -244,7 +232,6 @@ async def test_subproject_audit_records_without_root_declaration(
     messages = {uri: [_diagnostic()]}
     receipts = [_receipt("check_imports", project)]
     handler = _handler(
-        tmp_path,
         [tmp_path, project],
         _FakeWorkspaceActionRunner(messages, receipts),
         audit_projects=[project],
@@ -271,7 +258,7 @@ async def test_broken_snapshot_refuses_before_analysis(
         "not json", encoding="utf-8"
     )
     runner = _FakeWorkspaceActionRunner({}, [])
-    handler = _handler(tmp_path, [project], runner)
+    handler = _handler([project], runner)
     sender = _Sender()
 
     with pytest.raises(RecordRefusedError):
