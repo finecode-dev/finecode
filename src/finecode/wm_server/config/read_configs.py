@@ -957,6 +957,12 @@ def merge_projects_configs(
                     if "interpreters" in env_config2:
                         env_config1["interpreters"] = env_config2["interpreters"]
 
+                    # A singular `interpreter` pin is a per-env scalar too, with the
+                    # same override-wins rule. It only selects the venv interpreter;
+                    # it does not make the env a matrix environment.
+                    if "interpreter" in env_config2:
+                        env_config1["interpreter"] = env_config2["interpreter"]
+
                 for updated_dep_name, updated_dep_config in env_config2.get(
                     "dependencies", {}
                 ).items():
@@ -1211,7 +1217,8 @@ def resolve_interpreter_matrices(project_config: dict[str, Any]) -> None:
     bound to the matrix environment into one service per concrete child, and gives
     each concrete child a copy of the matrix environment's dependency-groups entry
     and env-table settings (minus `interpreters`, plus a singular
-    `interpreter` identity). A project with no `interpreters` axis
+    `interpreter` identity and a `MATRIX_ENV_KEY` entry naming the matrix
+    environment). A project with no `interpreters` axis
     anywhere is left unchanged (PRD-0003 R7).
 
     Raises:
@@ -1287,6 +1294,7 @@ def resolve_interpreter_matrices(project_config: dict[str, Any]) -> None:
         child_raw = copy.deepcopy(env_table[matrix_env_name])
         child_raw.pop("interpreters", None)
         child_raw["interpreter"] = concrete_env.interpreter.canonical
+        child_raw[interpreter_matrix.MATRIX_ENV_KEY] = matrix_env_name
         env_table[concrete_env.name] = child_raw
         deps_groups[concrete_env.name] = copy.deepcopy(
             deps_groups.get(matrix_env_name, [])

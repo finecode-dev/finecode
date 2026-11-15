@@ -16,8 +16,10 @@ from dataclasses import dataclass
 from typing import Any
 
 from finecode.wm_server.config.interpreter_matrix import (
+    MATRIX_ENV_KEY,
     Interpreter,
     InvalidInterpreterError,
+    matrix_child_interpreter,
     parse_interpreter,
 )
 
@@ -120,11 +122,10 @@ def _matrix_bases(env_table: dict[str, dict]) -> _MatrixBases:
     matrix_children: dict[str, Interpreter] = {}
     bases: dict[str, list[str]] = {}
     for name, entry in env_table.items():
-        if isinstance(entry, dict) and "interpreter" in entry:
-            interp = parse_interpreter(entry["interpreter"])
-            matrix_children[name] = interp
-            base = name.split("@", 1)[0]
-            bases.setdefault(base, []).append(name)
+        child_interpreter = matrix_child_interpreter(entry)
+        if child_interpreter is not None:
+            matrix_children[name] = parse_interpreter(child_interpreter)
+            bases.setdefault(entry[MATRIX_ENV_KEY], []).append(name)
     non_matrix_names = all_env_names - set(matrix_children.keys())
     axis_by_base: dict[str, set[Interpreter]] = {
         base: {matrix_children[child] for child in children}
@@ -252,22 +253,16 @@ def env_selector_known_in(selector: str, env_table: dict[str, Any]) -> bool:
         return True
     if selector.endswith("@" + ALL_INTERPRETERS):
         prefix = selector[: -len("@" + ALL_INTERPRETERS)]
-        for name, entry in env_table.items():
-            if (
-                isinstance(entry, dict)
-                and "interpreter" in entry
-                and name.split("@", 1)[0] == prefix
-            ):
-                return True
-        return False
-    for name, entry in env_table.items():
-        if (
-            isinstance(entry, dict)
-            and "interpreter" in entry
-            and name.split("@", 1)[0] == selector
-        ):
-            return True
-    return False
+        return prefix in _matrix_env_names(env_table)
+    return selector in _matrix_env_names(env_table)
+
+
+def _matrix_env_names(env_table: dict[str, Any]) -> set[str]:
+    return {
+        entry[MATRIX_ENV_KEY]
+        for entry in env_table.values()
+        if matrix_child_interpreter(entry) is not None
+    }
 
 
 def interpreter_selector_known_in(selector: str, env_table: dict[str, Any]) -> bool:
@@ -281,9 +276,10 @@ def interpreter_selector_known_in(selector: str, env_table: dict[str, Any]) -> b
         return False
 
     for entry in env_table.values():
-        if isinstance(entry, dict) and "interpreter" in entry:
+        child_interpreter = matrix_child_interpreter(entry)
+        if child_interpreter is not None:
             try:
-                child_interp = parse_interpreter(entry["interpreter"])
+                child_interp = parse_interpreter(child_interpreter)
             except InvalidInterpreterError:
                 continue
             if child_interp == parsed:

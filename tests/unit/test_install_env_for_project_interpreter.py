@@ -105,3 +105,43 @@ async def test_plain_env_spec_has_no_interpreter_key(tmp_path: pathlib.Path) -> 
     assert len(seen) == 2
     for _, params in seen:
         assert "interpreter" not in params["envs"][0]
+
+
+async def test_interpreter_pinned_env_forwards_its_interpreter(
+    tmp_path: pathlib.Path,
+) -> None:
+    """A singular ``interpreter`` pin on a non-matrix env still selects the
+    venv's interpreter, in both the create and the install calls."""
+    ws_context, project = _make_context(
+        tmp_path, {"dev": {"interpreter": "cpython@3.14"}}
+    )
+    project_dev = wm_testing.make_single_action_project(
+        dir_path=project.dir_path,
+        action_name="test_action",
+        handler_env="dev",
+    )
+    ws_context.ws_projects[project.dir_path] = project_dev
+    seen: list[tuple[str, dict]] = []
+
+    async def _recorder(action_source: str, params: dict, *args, **kwargs):
+        seen.append((action_source, params))
+
+    async def _noop_start(*args, **kwargs) -> None:
+        pass
+
+    with (
+        mock.patch.object(
+            prepare_envs_service, "_run_env_action", side_effect=_recorder
+        ),
+        mock.patch(
+            "finecode.wm_server.services.runner_start_service.start_runners_with_auto_prepare",
+            side_effect=_noop_start,
+        ),
+    ):
+        await prepare_envs_service.install_env_for_project(
+            project_dev, "dev", ws_context
+        )
+
+    assert len(seen) == 2
+    for _, params in seen:
+        assert params["envs"][0]["interpreter"] == "cpython@3.14"

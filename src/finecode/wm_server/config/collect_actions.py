@@ -6,7 +6,7 @@ import cattrs
 
 from finecode._converter import converter as _converter
 from finecode.wm_server import context, domain
-from finecode.wm_server.config import config_models
+from finecode.wm_server.config import config_models, interpreter_matrix
 from finecode.wm_server.config.read_configs import read_env_configs
 
 
@@ -197,7 +197,9 @@ def _collect_actions_in_config(
                     config=handler.config or {},
                     env=handler.env,
                     dependencies=handler.dependencies,
-                    interpreter=env_table.get(handler.env, {}).get("interpreter"),
+                    interpreter=interpreter_matrix.matrix_child_interpreter(
+                        env_table.get(handler.env)
+                    ),
                 )
                 for handler in action_def.handlers
                 if handler.enabled

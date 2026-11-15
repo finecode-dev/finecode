@@ -9,7 +9,10 @@ from finecode.wm_server.config.env_selection import (
     resolve_env_selection,
     resolve_run_selection,
 )
-from finecode.wm_server.config.interpreter_matrix import InvalidInterpreterError
+from finecode.wm_server.config.interpreter_matrix import (
+    MATRIX_ENV_KEY,
+    InvalidInterpreterError,
+)
 
 
 def _env(
@@ -39,10 +42,45 @@ def _matrix_base(
             impl, version = v.split("@")
         else:
             impl, version = implementation, v
-        table[f"{base}@{impl}-{version}"] = _env(
-            interpreter=f"{impl}@{version}", default_interpreters=default_interpreters
-        )
+        table[f"{base}@{impl}-{version}"] = {
+            **_env(
+                interpreter=f"{impl}@{version}",
+                default_interpreters=default_interpreters,
+            ),
+            MATRIX_ENV_KEY: base,
+        }
     return table
+
+
+class TestInterpreterPinnedEnv:
+    """A singular `interpreter` pin selects the env's venv interpreter; it does
+    not make the env a matrix child."""
+
+    def _table(self) -> dict[str, dict]:
+        return {
+            "dev": _env(interpreter="cpython@3.14"),
+            **_matrix_base("testing", ["3.13", "3.14"], {"local": "newest"}),
+        }
+
+    def test_pinned_env_is_not_a_matrix_child(self) -> None:
+        selection = resolve_env_selection(self._table(), [], "local")
+
+        assert "dev" not in selection.matrix_child_names
+        assert "dev" in selection.selected_env_names
+
+    def test_pinned_env_is_not_a_matrix_base(self) -> None:
+        table = self._table()
+
+        assert not env_selector_known_in("dev@all", table)
+        assert resolve_env_selection(table, ["dev"], "local").selected_env_names == {
+            "dev"
+        }
+
+    def test_pinned_interpreter_is_not_a_run_selector(self) -> None:
+        table = {"dev": _env(interpreter="cpython@3.14")}
+
+        assert not interpreter_selector_known_in("cpython@3.14", table)
+        assert resolve_run_selection(table, [], "local") is None
 
 
 def _ac_table() -> dict[str, dict]:

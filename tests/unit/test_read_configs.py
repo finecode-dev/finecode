@@ -6,6 +6,7 @@ import pytest
 
 from finecode.wm_server import context, domain
 from finecode.wm_server.config import config_models
+from finecode.wm_server.config.interpreter_matrix import MATRIX_ENV_KEY
 from finecode.wm_server.config.read_configs import (
     merge_projects_configs,
     read_preset_config,
@@ -339,6 +340,54 @@ def test_interpreters_merge_project_overrides_preset(tmp_path: pathlib.Path) -> 
     assert project_config["tool"]["finecode"]["env"]["testing"]["interpreters"] == [
         "pypy@3.11"
     ]
+
+
+def test_project_interpreter_pin_survives_env_already_exists_from_preset(
+    tmp_path: pathlib.Path,
+) -> None:
+    """A project's singular `interpreter` pin survives merging into an env the
+    preset already declares, with the same override-wins rule as
+    `install_project`.
+
+    Without it, a project could not pin the interpreter of a preset-owned env
+    such as `dev`, and had to fall back to a one-interpreter `interpreters`
+    matrix, which turns every action in that env into a matrix action.
+    """
+    preset_config: dict[str, Any] = {
+        "tool": {"finecode": {"env": {"dev": {"install_project": True}}}},
+    }
+    project_config: dict[str, Any] = {
+        "tool": {"finecode": {"env": {"dev": {"interpreter": "cpython@3.14"}}}},
+    }
+    merge_projects_configs(
+        preset_config,
+        tmp_path / "preset.toml",
+        project_config,
+        tmp_path / "pyproject.toml",
+    )
+
+    dev_env = preset_config["tool"]["finecode"]["env"]["dev"]
+    assert dev_env["interpreter"] == "cpython@3.14"
+    assert dev_env["install_project"] is True
+
+
+def test_project_interpreter_pin_overrides_preset_pin(tmp_path: pathlib.Path) -> None:
+    preset_config: dict[str, Any] = {
+        "tool": {"finecode": {"env": {"dev": {"interpreter": "cpython@3.13"}}}},
+    }
+    project_config: dict[str, Any] = {
+        "tool": {"finecode": {"env": {"dev": {"interpreter": "cpython@3.14"}}}},
+    }
+    merge_projects_configs(
+        preset_config,
+        tmp_path / "preset.toml",
+        project_config,
+        tmp_path / "pyproject.toml",
+    )
+
+    assert preset_config["tool"]["finecode"]["env"]["dev"]["interpreter"] == (
+        "cpython@3.14"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -763,7 +812,21 @@ def test_matrix_env_expands_to_one_concrete_env_per_interpreter() -> None:
         child = env_table[concrete_name]
         assert child["install_project"] is True
         assert child["interpreter"] == expected_interpreter
+        assert child[MATRIX_ENV_KEY] == "testing"
         assert "interpreters" not in child
+
+
+def test_interpreter_pin_env_is_not_marked_as_matrix_child() -> None:
+    """A singular `interpreter` pin only selects the venv's interpreter. Unlike
+    an expansion child, the pinned env carries no matrix-base marker, so its
+    actions stay non-matrixed."""
+    project_config = _matrix_env_project_config()
+    project_config["tool"]["finecode"]["env"]["dev"] = {"interpreter": "cpython@3.14"}
+
+    resolve_interpreter_matrices(project_config)
+
+    dev_env = project_config["tool"]["finecode"]["env"]["dev"]
+    assert dev_env == {"interpreter": "cpython@3.14"}
 
 
 def test_matrix_env_handler_ref_rewritten_to_concrete_children() -> None:

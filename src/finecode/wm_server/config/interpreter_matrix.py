@@ -9,6 +9,7 @@ config-file reading, no venv creation.
 from dataclasses import dataclass
 
 __all__ = [
+    "MATRIX_ENV_KEY",
     "ConcreteEnv",
     "EnvSpec",
     "ExpansionResult",
@@ -18,9 +19,15 @@ __all__ = [
     "MatrixSetMismatchError",
     "MixedMatrixError",
     "expand",
+    "matrix_child_interpreter",
     "parse_interpreter",
     "validate",
 ]
+
+
+MATRIX_ENV_KEY = "matrix_env"
+"""Env-table key that expansion writes on each concrete child, naming the
+matrix environment it came from."""
 
 
 class InvalidInterpreterError(ValueError):
@@ -74,6 +81,14 @@ class ExpansionResult:
     concrete_envs: list[ConcreteEnv]
     handlers: list[HandlerRef]
     matrix_environments: dict[str, list[Interpreter]]
+
+
+def matrix_child_interpreter(env_entry: object) -> str | None:
+    """The `interpreter` of an env-table entry that expansion produced, or
+    `None` for any other entry, including one with only an `interpreter` pin."""
+    if isinstance(env_entry, dict) and MATRIX_ENV_KEY in env_entry:
+        return env_entry.get("interpreter")
+    return None
 
 
 def parse_interpreter(value: str) -> Interpreter:

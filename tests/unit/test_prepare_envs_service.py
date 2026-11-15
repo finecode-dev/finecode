@@ -1,6 +1,7 @@
 import pytest
 
 from finecode.wm_server.config.env_selection import resolve_env_selection
+from finecode.wm_server.config.interpreter_matrix import MATRIX_ENV_KEY
 from finecode.wm_server.services.prepare_envs_service import (
     build_create_envs_params,
     build_install_envs_params,
@@ -13,7 +14,13 @@ def _env(interpreter: str | None = None) -> dict:
 
 
 def _matrix_base(base: str, versions: list[str]) -> dict[str, dict]:
-    return {f"{base}@cpython-{v}": _env(interpreter=f"cpython@{v}") for v in versions}
+    return {
+        f"{base}@cpython-{v}": {
+            **_env(interpreter=f"cpython@{v}"),
+            MATRIX_ENV_KEY: base,
+        }
+        for v in versions
+    }
 
 
 class TestBuildCreateEnvsParams:
