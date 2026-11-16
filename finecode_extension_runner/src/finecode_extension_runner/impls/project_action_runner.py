@@ -20,41 +20,192 @@ from finecode_extension_runner import (
     run_utils,
     work_slots,
 )
+from finecode_extension_runner.impls import _delegated_progress
 from finecode_extension_runner._converter import converter as _converter
+from finecode_extension_runner._services import run_action as run_action_service
 from finecode_extension_runner._services.run_action import _serialize_caller_kwargs
 
 PayloadT = typing.TypeVar("PayloadT", bound=code_action.RunActionPayload)
 ResultT = typing.TypeVar("ResultT", bound=code_action.RunActionResult)
 
+
+class _ProgressContextForwarder:
+    """Adapt a child handler's ProgressSender to the caller's ProgressContext.
+
+    Child begin/report/end map to parent ``report`` calls only, per the shared
+    P4 table, always with ``percentage=None``: the parent owns its own
+    begin/end lifecycle. One instance serves one delegated call; forwarded
+    calls are serialized in child-call order by ``_lock``, which also lets
+    the iterator's cleanup wait out an in-flight relayed report.
+    """
+
+    def __init__(self, target: code_action.ProgressContext) -> None:
+        self._target = target
+        self._lock = asyncio.Lock()
+        self._closed = False
+
+    def close(self) -> None:
+        """Stop starting new relayed calls. Synchronous so cleanup sets it first."""
+        self._closed = True
+
+    async def drain(self) -> None:
+        """Wait for a relayed ``report`` already in flight to return."""
+        async with self._lock:
+            pass
+
+    async def _forward(self, event: dict[str, object]) -> None:
+        async with self._lock:
+            if self._closed:
+                return
+            message = _delegated_progress.delegated_progress_message(event)
+            if message is None:
+                # Only malformed begins reach here locally: message-less
+                # reports are silently owed nothing, and the typed sender
+                # cannot produce unknown kinds.
+                logger.warning(
+                    "Dropping malformed delegated progress event: {!r}", event
+                )
+                return
+            try:
+                await self._target.report(message=message, percentage=None)
+            except Exception:
+                logger.warning(
+                    "Dropping delegated progress report after sink failure"
+                )
+                return
+
+    async def begin(
+        self,
+        title: str,
+        message: str | None = None,
+        percentage: int | None = None,
+        cancellable: bool = False,
+        total: int | None = None,
+    ) -> None:
+        _ = (percentage, cancellable, total)
+        await self._forward({"type": "begin", "message": message, "title": title})
+
+    async def report(
+        self,
+        message: str | None = None,
+        percentage: int | None = None,
+    ) -> None:
+        _ = percentage
+        await self._forward({"type": "report", "message": message})
+
+    async def end(self, message: str | None = None) -> None:
+        await self._forward({"type": "end", "message": message})
+
+
+def _progress_has_subscriber(progress: code_action.ProgressContext) -> bool:
+    """Whether *progress*'s sender chain ends at a real subscriber.
+
+    A context rooted at the no-op sender (or at a forwarder wrapping one,
+    from nested local delegation) subscribes to nothing, so the local branch
+    passes the child no forwarder and the WM path sends no ``progressToken``.
+    """
+    # ER-internal access to ProgressContext's private sender; precedent:
+    # _services/run_action.py reads framework-private senders the same way.
+    sender: object = progress._sender
+    while isinstance(sender, _ProgressContextForwarder):
+        sender = sender._target._sender
+    return sender is not code_action._NOOP_PROGRESS_SENDER
+
+
 # WM streaming queue protocol for run_action_iter (WM path):
 # - dict[str, Any]: partial payload forwarded from $/progress.
+# - _REPORTS_AVAILABLE: wake-up marker meaning the call's pending-report
+#   deque holds messages to deliver (arrival order, oldest-first discard at
+#   the per-call bound). One marker suffices no matter how many reports are
+#   pending; the delivery loop drains the whole deque per wake-up.
 # - ("final", raw_result): terminal item from finecode/runActionInProject response.
 #   In streaming mode the final response is completion metadata only
 #   (currently just returnCode); partial result payloads are sent exclusively
 #   through $/progress notifications.
 # - ("error", exc): terminal item when WM request itself fails.
 WmRawResult = dict[str, Any]
+
+_WORK_DONE_PREFIX = "work-done:"
+
+
+@dataclasses.dataclass(frozen=True)
+class _ReportsAvailable:
+    """Wake-up marker: pending delegated reports wait in the call's deque."""
+
+
 WmQueueItem = (
     dict[str, Any]
+    | _ReportsAvailable
     | tuple[typing.Literal["final"], WmRawResult]
     | tuple[typing.Literal["error"], Exception]
 )
 
 _SENTINEL = object()
+_REPORTS_AVAILABLE = _ReportsAvailable()
 _last_wm_token: int = 0
 _wm_partial_result_queues: dict[int, asyncio.Queue[WmQueueItem]] = {}
+_wm_delegated_progress_tokens: dict[str, int] = {}
+
+
+@dataclasses.dataclass
+class _PendingReports:
+    """Per-call delegated-report backlog, separate from partials and terminal."""
+
+    messages: collections.deque[str] = dataclasses.field(
+        default_factory=collections.deque
+    )
+    wake_queued: bool = False
+
+
+_wm_pending_reports: dict[int, _PendingReports] = {}
+
+
+def _consume_release_outcome(task: asyncio.Task[typing.Any]) -> None:
+    """Retrieve a release task's outcome so it is never reported as unretrieved."""
+    if not task.cancelled():
+        _ = task.exception()
 
 
 def dispatch_partial_result_from_wm(token: int | str, value: dict[str, Any]) -> None:
     """Called by er_server when a $/progress notification arrives from the WM.
 
-    Routes the partial result dict to the asyncio.Queue registered for *token*
-    by an in-flight run_action_iter WM-path call.  Silently ignored when no
-    matching queue exists (e.g. stale notifications).
-
-    The queued value is always a *partial* payload dict. Terminal queue items
-    are injected only by _call_wm inside run_action_iter as tuples.
+    Values on a registered work-progress token are mapped to a parent report
+    message at receipt; only messages owed a report are kept, at most 100
+    pending per call with oldest-first discard. Malformed or unknown values
+    are dropped with a warning; message-less reports are dropped silently.
+    Values on unknown work-progress tokens (late, released) are dropped
+    silently. All other tokens keep the existing partial-result dispatch.
     """
+    if isinstance(token, str):
+        partial_token = _wm_delegated_progress_tokens.get(token)
+        if partial_token is not None:
+            queue = _wm_partial_result_queues.get(partial_token)
+            pending = _wm_pending_reports.get(partial_token)
+            if queue is None or pending is None:
+                return
+            if not isinstance(value, dict):
+                logger.warning(
+                    "Dropping malformed delegated progress value: {!r}", value
+                )
+                return
+            message = _delegated_progress.delegated_progress_message(value)
+            if message is None:
+                if value.get("type") != "report":
+                    logger.warning(
+                        "Dropping malformed delegated progress value: {!r}", value
+                    )
+                return
+            pending.messages.append(message)
+            while len(pending.messages) > (
+                _delegated_progress.DELEGATED_PROGRESS_PENDING_LIMIT
+            ):
+                pending.messages.popleft()
+            if not pending.wake_queued:
+                pending.wake_queued = True
+                queue.put_nowait(_REPORTS_AVAILABLE)
+            return
+        if token.startswith(_WORK_DONE_PREFIX):
+            return
     queue = _wm_partial_result_queues.get(token)  # type: ignore[arg-type]
     if queue is not None:
         queue.put_nowait(value)
@@ -248,9 +399,10 @@ class ProjectActionRunnerImpl(iprojectactionrunner.IProjectActionRunner):
             action_def = None
 
         if action_def is not None and self._all_handlers_in_current_env(action_def):
-            result = await self._run_action_func(
-                action_def, payload, meta, caller_kwargs=caller_kwargs
-            )
+            with run_action_service.public_run_errors():
+                result = await self._run_action_func(
+                    action_def, payload, meta, caller_kwargs=caller_kwargs
+                )
             if result is None:
                 raise iprojectactionrunner.ActionRunFailed(
                     f"Action '{action_def.name}' returned no result"
@@ -317,6 +469,8 @@ class ProjectActionRunnerImpl(iprojectactionrunner.IProjectActionRunner):
         payload: PayloadT,
         meta: code_action.RunActionMeta,
         caller_kwargs: code_action.CallerRunContextKwargs | None = None,
+        *,
+        progress: code_action.ProgressContext | None = None,
     ) -> collections.abc.AsyncIterator[ResultT]:
         work_slots.ensure_outside_scope(f"dispatching action {action_type.source}")
         global _last_wm_token
@@ -330,6 +484,14 @@ class ProjectActionRunnerImpl(iprojectactionrunner.IProjectActionRunner):
 
         if action_def is not None and self._all_handlers_in_current_env(action_def):
             queue: asyncio.Queue[dict[str, Any] | object] = asyncio.Queue()
+            forwarder: _ProgressContextForwarder | None = None
+            if progress is not None and _progress_has_subscriber(progress):
+                forwarder = _ProgressContextForwarder(progress)
+            progress_sender: code_action.ProgressSender | None = None
+            if forwarder is not None:
+                progress_sender = typing.cast(
+                    code_action.ProgressSender, forwarder
+                )
             task = asyncio.ensure_future(
                 self._run_action_func(
                     action_def,
@@ -337,19 +499,32 @@ class ProjectActionRunnerImpl(iprojectactionrunner.IProjectActionRunner):
                     meta,
                     caller_kwargs=caller_kwargs,
                     partial_result_queue=queue,
+                    progress_sender=progress_sender
+                    if progress_sender is not None
+                    else None,
                 )
             )
             task.add_done_callback(lambda _: queue.put_nowait(_SENTINEL))
-            while True:
-                item = await queue.get()
-                if item is _SENTINEL:
-                    break
-                result = typing.cast(ResultT, item)
-                # Per yield: there is no final result object on
-                # this path, so each partial carries its own coverage forward.
-                coverage_sink.deposit_from(result)
-                yield result  # type: ignore[misc]
-            await task
+            try:
+                while True:
+                    item = await queue.get()
+                    if item is _SENTINEL:
+                        break
+                    result = typing.cast(ResultT, item)
+                    # Per yield: there is no final result object on
+                    # this path, so each partial carries its own coverage forward.
+                    coverage_sink.deposit_from(result)
+                    yield result  # type: ignore[misc]
+                with run_action_service.public_run_errors():
+                    await task
+            finally:
+                # The child run is not cancelled (delegation is not a
+                # cancellable capability): it keeps its sender, whose further
+                # calls are dropped once closed. Closed is set before any
+                # await so a second cancellation cannot re-enable the forwarder.
+                if forwarder is not None:
+                    forwarder.close()
+                    await forwarder.drain()
             return
 
         if action_def is not None:
@@ -367,6 +542,11 @@ class ProjectActionRunnerImpl(iprojectactionrunner.IProjectActionRunner):
         token = _last_wm_token
         wm_queue: asyncio.Queue[WmQueueItem] = asyncio.Queue()
         _wm_partial_result_queues[token] = wm_queue
+        work_token: str | None = None
+        if progress is not None and _progress_has_subscriber(progress):
+            work_token = f"{_WORK_DONE_PREFIX}{token}"
+            _wm_delegated_progress_tokens[work_token] = token
+            _wm_pending_reports[token] = _PendingReports()
 
         serialized_kwargs = (
             _serialize_caller_kwargs(caller_kwargs)
@@ -389,6 +569,8 @@ class ProjectActionRunnerImpl(iprojectactionrunner.IProjectActionRunner):
                     "traceparent": traceparent,
                     "runId": run_context.current_run_id(),
                 }
+                if work_token is not None:
+                    wm_params["progressToken"] = work_token
                 if serialized_kwargs is not None:
                     wm_params["callerKwargs"] = serialized_kwargs
                 raw_result = await self._send(
@@ -411,13 +593,37 @@ class ProjectActionRunnerImpl(iprojectactionrunner.IProjectActionRunner):
 
         wm_task = asyncio.ensure_future(_call_wm())
 
+        async def _deliver_pending_reports() -> None:
+            assert progress is not None
+            pending = _wm_pending_reports[token]
+            pending.wake_queued = False
+            while pending.messages:
+                message = pending.messages.popleft()
+                try:
+                    await progress.report(message=message, percentage=None)
+                except Exception:
+                    logger.warning(
+                        "Dropping delegated progress report after sink failure"
+                    )
+                    continue
+
         try:
             while True:
                 item = await wm_queue.get()
+                if isinstance(item, _ReportsAvailable):
+                    if progress is None:
+                        continue
+                    await _deliver_pending_reports()
+                    continue
                 if isinstance(item, tuple):
                     # Tuple items are terminal markers from _call_wm:
                     # - ("error", Exception)
                     # - ("final", raw_result_dict)
+                    # Pending reports are delivered before the iterator
+                    # returns or raises (only when a registration exists;
+                    # a no-op-rooted context registers nothing).
+                    if work_token is not None:
+                        await _deliver_pending_reports()
                     kind, value = item
                     if kind == "error":
                         raise value  # type: ignore[misc]
@@ -435,6 +641,67 @@ class ProjectActionRunnerImpl(iprojectactionrunner.IProjectActionRunner):
                     coverage_sink.deposit_from(result)
                     yield result
         finally:
-            _wm_partial_result_queues.pop(token, None)
+            _ = _wm_partial_result_queues.pop(token, None)
+            if work_token is not None:
+                _ = _wm_delegated_progress_tokens.pop(work_token, None)
+            _ = _wm_pending_reports.pop(token, None)
             if not wm_task.done():
-                wm_task.cancel()
+                await self._release_wm_call(token)
+            if not wm_task.done():
+                _ = wm_task.cancel()
+                try:
+                    await wm_task
+                except (asyncio.CancelledError, Exception):
+                    pass
+
+    async def _release_wm_call(self, partial_token: int) -> None:
+        """Send one release for a reply-less WM call.
+
+        Parent-side registrations are already gone, so late arrivals are
+        dropped. Any send or wait failure — including a work-slot
+        scope refusing the send — only logs; the close still completes. A
+        cancellation during the wait does not shorten it: the first
+        ``CancelledError`` propagates after the reply or the bound.
+        """
+        release_task: asyncio.Task[typing.Any] = asyncio.ensure_future(
+            self._send(
+                "finecode/releaseDelegatedCall",
+                {"partialResultToken": partial_token},
+            )
+        )
+        release_task.add_done_callback(_consume_release_outcome)
+        bound = _delegated_progress.RELEASE_WAIT_SECONDS
+        deadline = asyncio.get_running_loop().time() + bound
+        send_error: Exception | None = None
+        timed_out = False
+        first_cancel: asyncio.CancelledError | None = None
+        while True:
+            remaining = deadline - asyncio.get_running_loop().time()
+            if remaining <= 0:
+                timed_out = True
+                break
+            try:
+                await asyncio.wait_for(
+                    asyncio.shield(release_task), timeout=remaining
+                )
+                break
+            except TimeoutError:
+                timed_out = True
+                break
+            except asyncio.CancelledError as exc:
+                if first_cancel is None:
+                    first_cancel = exc
+            except Exception as exc:
+                send_error = exc
+                break
+        if not release_task.done():
+            _ = release_task.cancel()
+        if send_error is not None:
+            logger.warning(f"Delegated release send failed: {send_error}")
+        elif timed_out:
+            logger.warning(
+                "Delegated release timed out after"
+                f" {bound} s; the close still completes"
+            )
+        if first_cancel is not None:
+            raise first_cancel

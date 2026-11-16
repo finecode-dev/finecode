@@ -32,6 +32,7 @@ from finecode.wm_server import context, domain
 from finecode.wm_server.config.interpreter_matrix import Interpreter
 from finecode.wm_server.runner import elicitation_bridge, runner_client
 from finecode.wm_server.runner.runner_client import RunActionResponse
+from finecode.wm_server.utils import stream_completion
 
 from . import matrix_runner, proxy_utils
 from .merge_helpers import merge_partial_results_for_action
@@ -40,6 +41,21 @@ __all__ = ["run_matrix_with_partial_results"]
 
 
 OnPartial = typing.Callable[[str, dict], typing.Awaitable[None]]
+OnPrefix = typing.Callable[[stream_completion.PrefixFence], typing.Awaitable[None]]
+
+
+def _pipeline_fault_of(
+    error: BaseException,
+) -> stream_completion.PipelineFailure | None:
+    """Find a pipeline fault hidden in an outcome chain, if any."""
+    seen: set[int] = set()
+    current: BaseException | None = error
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        if isinstance(current, stream_completion.PipelineFailure):
+            return current
+        current = current.__cause__ or current.__context__
+    return None
 
 
 async def _run_variant(
@@ -55,43 +71,101 @@ async def _run_variant(
     ws_context: context.WorkspaceContext,
     merge_results: bool,
     on_partial: OnPartial,
+    on_prefix: OnPrefix,
     origin: elicitation_bridge.RunDispatchOrigin | None,
 ) -> RunActionResponse:
     """Run one interpreter variant end-to-end and return its serialized response.
 
     Forwards every partial received for this variant to *on_partial*, tagged
     with ``interpreter.canonical``, as it arrives — this is what gives the
-    CLI live, per-interpreter-labeled output. The returned
+    CLI live, per-interpreter-labeled output — and every prefix fence to
+    *on_prefix*. The fence is owned by the caller from that point: a
+    service caller forwards it into the output stream, an API caller
+    acknowledges it after the writer handoff. The returned
     ``RunActionResponse`` is only this variant's contribution to the final
     variant-keyed result; combination across variants happens in the caller.
     """
     partial_count = 0
     json_payloads: list[dict] = []
     final_result_by_format: dict[str, typing.Any] = {}
+    callback_fault: BaseException | None = None
+    runner_error: BaseException | None = None
+    # Bound only when the producer context delivered its prefix boundary;
+    # every error path above raises before the response below is read.
+    finished: proxy_utils.RunWithPartialResultsContext | None = None
+    try:
+        async with proxy_utils.run_with_partial_results(
+            action_name=action_name,
+            params=params,
+            partial_result_token=partial_result_token,
+            project_dir_path=project.dir_path,
+            run_trigger=run_trigger,
+            dev_env=dev_env,
+            ws_context=ws_context,
+            initialize_all_handlers=True,
+            result_formats=result_formats,
+            interpreter=interpreter,
+            origin=origin,
+        ) as ctx:
+            async for event in ctx.partials.events():
+                if isinstance(event, stream_completion.PrefixFence):
+                    if callback_fault is None:
+                        try:
+                            await on_prefix(event)
+                        except Exception as exc:
+                            callback_fault = exc
+                    if callback_fault is not None and not event.completion.done():
+                        # Settle the fence with the pipeline fault so the
+                        # runner drain cannot strand on an ack that never
+                        # comes; keep draining so later fences settle too.
+                        event.completion.set_result(
+                            stream_completion.PipelineFailure(callback_fault)
+                        )
+                    continue
+                if callback_fault is not None:
+                    # Owned forwarding is aborted: drain without delivering.
+                    continue
+                value = event.value
+                partial_count += 1
+                if isinstance(value, dict):
+                    final_result_by_format = value
+                    if merge_results:
+                        json_payloads.append(value.get("json"))
+                try:
+                    await on_partial(interpreter.canonical, value)
+                except Exception as exc:
+                    callback_fault = exc
+            # The loop only ends at the shared END marker; record the
+            # delivered context for the response below.
+            finished = ctx
+    except Exception as exc:
+        runner_error = exc
+    if callback_fault is not None and runner_error is not None:
+        # Dual fault: the prefix handoff failed and the runner errored. The
+        # runner-only outcome passes through the adapter below; the stream
+        # fault is recorded here and the variant's forwarding already
+        # stopped above.
+        logger.warning(
+            f"matrix variant '{interpreter.canonical}': prefix handoff failed"
+            f" ({callback_fault}); preserving runner outcome ({runner_error})"
+        )
+        pipeline_cause = _pipeline_fault_of(runner_error)
+        if pipeline_cause is not None:
+            raise pipeline_cause
+        raise runner_error
+    if callback_fault is not None:
+        raise stream_completion.PipelineFailure(callback_fault)
+    if runner_error is not None:
+        pipeline_cause = _pipeline_fault_of(runner_error)
+        if pipeline_cause is not None:
+            # A stream-only fault hidden in the runner outcome must not be
+            # synthesized into an ordinary failed variant below.
+            raise pipeline_cause
+        raise runner_error
 
-    async with proxy_utils.run_with_partial_results(
-        action_name=action_name,
-        params=params,
-        partial_result_token=partial_result_token,
-        project_dir_path=project.dir_path,
-        run_trigger=run_trigger,
-        dev_env=dev_env,
-        ws_context=ws_context,
-        initialize_all_handlers=True,
-        result_formats=result_formats,
-        interpreter=interpreter,
-        origin=origin,
-    ) as ctx:
-        async for value in ctx:
-            partial_count += 1
-            if isinstance(value, dict):
-                final_result_by_format = value
-                if merge_results:
-                    json_payloads.append(value.get("json"))
-            await on_partial(interpreter.canonical, value)
-
+    assert finished is not None
     return_code = 0
-    for resp in ctx.responses:
+    for resp in finished.responses:
         return_code |= resp.return_code
 
     # Direct result mode: the ER sent no $/progress notifications for this
@@ -99,7 +173,7 @@ async def _run_variant(
     # partial too, mirroring `_stream_action`'s direct-mode handling, so the
     # CLI still sees this variant's output.
     if partial_count == 0:
-        for resp in ctx.responses:
+        for resp in finished.responses:
             if resp.result_by_format:
                 final_result_by_format = resp.result_by_format
                 if merge_results:
@@ -133,6 +207,7 @@ async def _run_variant_safe(
     *,
     interpreter: Interpreter,
     on_partial: OnPartial,
+    on_prefix: OnPrefix,
     result_formats: list[runner_client.RunResultFormat] | None,
     **kwargs: typing.Any,
 ) -> RunActionResponse:
@@ -142,9 +217,14 @@ async def _run_variant_safe(
         return await _run_variant(
             interpreter=interpreter,
             on_partial=on_partial,
+            on_prefix=on_prefix,
             result_formats=result_formats,
             **kwargs,
         )
+    except stream_completion.PipelineFailure:
+        # A stream-only fault is never a synthetic completed variant; the
+        # coordinator aborts owned forwarding and joins every child.
+        raise
     except Exception as exc:
         # A variant that fails before streaming anything would otherwise leave
         # only the synthetic response below, which a merged caller never prints.
@@ -181,6 +261,7 @@ async def run_matrix_with_partial_results(
     ws_context: context.WorkspaceContext,
     merge_results: bool,
     on_partial: OnPartial,
+    on_prefix: OnPrefix,
     selected_envs: set[str] | None = None,
     origin: elicitation_bridge.RunDispatchOrigin | None,
 ) -> tuple[dict, int]:
@@ -201,23 +282,36 @@ async def run_matrix_with_partial_results(
     interpreters: list[Interpreter] = list(selected.keys())
 
     tasks = [
-        _run_variant_safe(
-            interpreter=interpreter,
-            project=project,
-            action_name=action_name,
-            params=params,
-            result_formats=result_formats,
-            partial_result_token=partial_result_token,
-            run_trigger=run_trigger,
-            dev_env=dev_env,
-            ws_context=ws_context,
-            merge_results=merge_results,
-            on_partial=on_partial,
-            origin=origin,
+        asyncio.ensure_future(
+            _run_variant_safe(
+                interpreter=interpreter,
+                project=project,
+                action_name=action_name,
+                params=params,
+                result_formats=result_formats,
+                partial_result_token=partial_result_token,
+                run_trigger=run_trigger,
+                dev_env=dev_env,
+                ws_context=ws_context,
+                merge_results=merge_results,
+                on_partial=on_partial,
+                on_prefix=on_prefix,
+                origin=origin,
+            )
         )
         for interpreter in interpreters
     ]
-    responses = await asyncio.gather(*tasks)
+    try:
+        responses = await asyncio.gather(*tasks)
+    except BaseException:
+        # A pipeline fault (or owner abort) stops owned forwarding: cancel
+        # every sibling and join them all before propagating. Ordinary
+        # variant failures never reach here — they are synthetic responses.
+        for task in tasks:
+            if not task.done():
+                _ = task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        raise
 
     variants: dict[Interpreter, RunActionResponse] = dict(
         zip(interpreters, responses, strict=False)

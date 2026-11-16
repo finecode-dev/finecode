@@ -1,5 +1,6 @@
 import asyncio
 import collections.abc
+import contextlib
 import dataclasses
 import inspect
 import time
@@ -77,6 +78,25 @@ class ActionCancelledException(Exception):
         self.message = message
 
 
+@contextlib.contextmanager
+def public_run_errors() -> collections.abc.Generator[None]:
+    """Re-raise this module's run exceptions as their public
+    ``iprojectactionrunner`` counterparts.
+
+    Wraps every in-process entry point that handler or extension-test code
+    calls: ``ProjectActionRunnerImpl``'s same-env fast path and the
+    ``testing`` harness. Callers then see the same exceptions whether a
+    nested action ran locally or through the WM, and never need to import
+    this private module.
+    """
+    try:
+        yield
+    except ActionCancelledException as exception:
+        raise iprojectactionrunner.ActionRunCancelled(exception.message) from exception
+    except ActionFailedException as exception:
+        raise iprojectactionrunner.ActionRunFailed(exception.message) from exception
+
+
 def _is_cancellation(exc: BaseException) -> bool:
     """True if *exc* signals a benign cancellation rather than a failure.
 
@@ -90,9 +110,9 @@ def _is_cancellation(exc: BaseException) -> bool:
       - code_action.ActionCancelledException — a handler cancelled
         itself for its own reasons.
       - ActionCancelledException (this module) — this module's own
-        translation of either of the above from a nested sub-action call.
-      - iprojectactionrunner.ActionRunCancelled — a cancellation that
-        crossed the multi-env WM back-channel.
+        translation of either of the above.
+      - iprojectactionrunner.ActionRunCancelled — a nested sub-action call
+        that was cancelled, whether it ran in-process or through the WM.
     """
     return isinstance(
         exc,
@@ -111,12 +131,11 @@ def _is_known_failure(exc: BaseException) -> bool:
     stable ``.message`` — i.e. something a deeper layer already logged and
     summarized, so it must not be re-logged here as an unhandled crash.
 
-    Includes this module's own ``ActionFailedException`` because it crosses
-    module boundaries unwrapped: ``ProjectActionRunnerImpl.run_action_iter``
-    lets it propagate directly into handler code for actions whose handlers
-    all live in the current env (see run_action.py fast path), so a handler
-    that calls back into ``run_action`` (e.g. a dispatch handler) can see it
-    directly, not just ``code_action.ActionFailedException``.
+    Includes this module's own ``ActionFailedException`` because in-process
+    ER code a handler reaches without ``IProjectActionRunner``, such as
+    service-config resolution in ``impls/service_registry.py``, raises it
+    directly. Nested sub-action failures arrive as
+    ``iprojectactionrunner.ActionRunFailed`` (see ``public_run_errors``).
     """
     return isinstance(
         exc,

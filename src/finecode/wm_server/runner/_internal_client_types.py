@@ -49,6 +49,7 @@ WORKSPACE_PROJECT_PATHS_GET = "workspace/getProjectPaths"
 WORKSPACE_ROOT_GET = "workspace/getWorkspaceRoot"
 PROJECT_DECLARES_ACTION = "workspace/projectDeclaresAction"
 RUN_ACTION_IN_PROJECT = "finecode/runActionInProject"
+RELEASE_DELEGATED_CALL = "finecode/releaseDelegatedCall"
 RUN_ACTION_IN_WORKSPACE = "finecode/runActionInWorkspace"
 LEASE_PROCESS_BUDGET = "finecode/leaseProcessBudget"
 RELEASE_PROCESS_BUDGET = "finecode/releaseProcessBudget"
@@ -1623,6 +1624,7 @@ class RunActionInProjectParams:
     payload: dict
     meta: RunActionInProjectMeta
     partial_result_token: int | str | None = None
+    progress_token: int | str | None = None
     caller_kwargs: dict | None = None
     traceparent: str | None = None
     # The calling run. The nested run the WM starts from this inherits its
@@ -1646,6 +1648,28 @@ class RunActionInProjectRequest(BaseRequest):
 @dataclasses.dataclass
 class RunActionInProjectResponse(BaseResponse):
     result: RunActionInProjectResult
+
+
+@dataclasses.dataclass
+class ReleaseDelegatedCallParams:
+    """The parent's partial-result token identifying the delegated call to release."""
+
+    partial_result_token: int | str
+
+
+@dataclasses.dataclass
+class ReleaseDelegatedCallResult(BaseResult): ...
+
+
+@dataclasses.dataclass
+class ReleaseDelegatedCallRequest(BaseRequest):
+    params: ReleaseDelegatedCallParams
+    method = RELEASE_DELEGATED_CALL
+
+
+@dataclasses.dataclass
+class ReleaseDelegatedCallResponse(BaseResponse):
+    result: ReleaseDelegatedCallResult
 
 
 @dataclasses.dataclass
@@ -2333,6 +2357,12 @@ METHOD_TO_TYPES: dict[
         RunActionInWorkspaceParams,
         RunActionInWorkspaceResponse,
         RunActionInWorkspaceResult,
+    ),
+    RELEASE_DELEGATED_CALL: (
+        ReleaseDelegatedCallRequest,
+        ReleaseDelegatedCallParams,
+        ReleaseDelegatedCallResponse,
+        ReleaseDelegatedCallResult,
     ),
     LEASE_PROCESS_BUDGET: (
         LeaseProcessBudgetRequest,

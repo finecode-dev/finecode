@@ -115,7 +115,42 @@ class IProjectActionRunner(service.Service, typing.Protocol):
         payload: PayloadT,
         meta: code_action.RunActionMeta,
         caller_kwargs: code_action.CallerRunContextKwargs | None = None,
-    ) -> collections.abc.AsyncIterator[ResultT]: ...
+        *,
+        progress: code_action.ProgressContext | None = None,
+    ) -> collections.abc.AsyncIterator[ResultT]:
+        """Stream partial results of a delegated action, relaying live progress.
+
+        Passing ``progress`` opts into delegated-progress relay: child
+        ``begin``/``report``/``end`` events reach the given open context as
+        plain ``report(message=...)`` calls, live while the iterator is
+        awaited. The mapping is: ``begin`` with a string ``message`` reports
+        that message, else its string ``title``; ``report`` with a string
+        ``message`` reports it, otherwise nothing; ``end`` with a string
+        ``message`` reports it, otherwise ``"Delegated progress ended"``.
+        ``percentage`` is never forwarded (always ``None``). The relay never
+        opens or closes the context (no ``__aenter__``/``__aexit__``/``advance``)
+        and never changes its title, total or cancellable.
+
+        Every report owed to an event is delivered in child order before the
+        iterator ends on success, error, ``aclose()`` or cancellation; the
+        child run itself is never cancelled by the close, and nothing is
+        delivered after the iterator's cleanup begins. On the WM path at most
+        100 pending reports are held per call and the oldest pending report
+        is discarded first.
+
+        The caller owns the context's lifecycle and must close it, e.g.::
+
+            async with run_context.progress("parent") as parent_prog:
+                async with contextlib.aclosing(
+                    runner.run_action_iter(ref, payload, meta, progress=parent_prog)
+                ) as stream:
+                    async for partial in stream:
+                        ...
+
+        A WM-path call ended by ``aclose()`` or cancellation waits up to 2.0 s
+        for the release round-trip before the close returns.
+        """
+        ...
 
 
 class BaseRunActionException(Exception):

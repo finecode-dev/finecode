@@ -5,6 +5,7 @@ API of ER client for "higher" layers like services, CLI.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import dataclasses
 import enum
 import pathlib
@@ -17,6 +18,8 @@ import finecode_jsonrpc as jsonrpc_client
 from finecode.wm_server import domain
 from finecode.wm_server.domain import ErLoggingConfig
 from finecode.wm_server.runner import _internal_client_api, _internal_client_types
+from finecode.wm_server.runner import stream_completion as runner_streams
+from finecode.wm_server.utils import stream_completion as completion_streams
 from finecode.wm_server.utils.iterable_subscribe import IterableSubscribe
 from finecode_extension_runner import schema_utils
 
@@ -66,6 +69,12 @@ class ExtensionRunnerInfo(domain.ExtensionRunner):
     )
     progress_notifications: IterableSubscribe = dataclasses.field(
         default_factory=IterableSubscribe
+    )
+    # Service-owned stream-completion subscriptions drained before a received
+    # runner response is exposed. Selected per invocation by
+    # token; unsubscribed callers keep the unchanged request path.
+    stream_registry: runner_streams.RunnerStreamRegistry = dataclasses.field(
+        default_factory=runner_streams.RunnerStreamRegistry
     )
     cmd_override: str | None = None
     # Last (enabled, level) sent via finecodeRunner/updateLogging, to avoid
@@ -165,6 +174,139 @@ class DevEnv(enum.StrEnum):
     CI = "ci"
 
 
+async def _supervised_send(
+    client: typing.Any,
+    boundary: runner_streams.InvocationBoundary,
+    method: str,
+    params: typing.Any,
+) -> typing.Any:
+    """Send one covered request while supervising subscription faults.
+
+    Aborts the owned request wait on a pre-response subscription fault or on
+    interruption, retaining the current cancel signaling. The response-capture
+    hook never runs for timeout/cancellation/EOF, so it cannot strand waits.
+    """
+    send_task: asyncio.Task[typing.Any] = asyncio.ensure_future(
+        client.send_request(
+            method, params, timeout=None, on_response=boundary.completion
+        )
+    )
+    faults = [subscription.failure for subscription in boundary.subscriptions]
+    try:
+        while not send_task.done():
+            await asyncio.wait(
+                {send_task, *faults}, return_when=asyncio.FIRST_COMPLETED
+            )
+            if not send_task.done() and any(fault.done() for fault in faults):
+                _ = send_task.cancel()
+        return send_task.result()
+    except asyncio.CancelledError:
+        _ = send_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError, Exception):
+            await send_task
+        raise
+
+
+async def _drain_boundary(
+    boundary: runner_streams.InvocationBoundary,
+) -> None:
+    """Wait the frozen prefix and surface prefix/stream faults.
+
+    Hook failure aborts captured work rather than waiting for a fence that
+    was never inserted; later errors/items cannot extend the frozen prefix.
+    An interruption while draining settles the owned fences as an interrupted
+    receipt so no pending receipt is left behind.
+    """
+    try:
+        prefix_errors = await boundary.wait_prefixes()
+    except BaseException as exc:
+        for prefix in boundary.prefixes:
+            if not prefix.fence.completion.done():
+                prefix.fence.completion.set_result(
+                    completion_streams.PipelineFailure(exc)
+                )
+        raise
+    faults = [
+        error
+        for error in (
+            subscription.consume_failure() for subscription in boundary.subscriptions
+        )
+        if error is not None
+    ]
+    errors = [*prefix_errors, *faults]
+    if errors:
+        raise ActionRunFailed(
+            f"Stream prefix did not complete: {errors[0]}"
+        ) from errors[0]
+
+
+def _received_runner_failure(
+    response: (
+        _internal_client_types.ErRunActionResponse
+        | _internal_client_types.ErRunHandlersResponse
+    ),
+) -> bool:
+    """Whether a transport-success response already carries a runner failure."""
+    result = response.result
+    return result.error is not None or result.status == "stopped"
+
+
+async def _subscribed_request(
+    runner: ExtensionRunnerInfo,
+    boundary: runner_streams.InvocationBoundary,
+    method: str,
+    params: typing.Any,
+) -> typing.Any:
+    """Covered request path: capture the outcome, drain, then map.
+
+    The received outcome is captured internally and its prefix drained before
+    the existing runner error/status mapping runs, including for received
+    runner errors. On a dual fault the received runner outcome wins at this
+    layer; the prefix fault is witnessed in the log for the service adapters.
+    Caller interruption stays primary and never returns a response instead.
+    """
+    send_error: BaseException | None = None
+    response: typing.Any = None
+    try:
+        response = await _supervised_send(runner.client, boundary, method, params)
+    except BaseException as exc:
+        send_error = exc
+    if send_error is None:
+        try:
+            await _drain_boundary(boundary)
+        except (asyncio.CancelledError, KeyboardInterrupt, SystemExit):
+            raise
+        except Exception as drain_error:
+            if _received_runner_failure(response):
+                logger.warning(
+                    f"Prefix fault after runner failure on {runner.readable_id}:"
+                    f" {drain_error}; reporting the runner outcome"
+                )
+                return response
+            raise
+        return response
+    try:
+        await _drain_boundary(boundary)
+    except (asyncio.CancelledError, KeyboardInterrupt, SystemExit):
+        raise
+    except Exception as drain_error:
+        logger.warning(
+            f"Prefix fault after runner error on {runner.readable_id}:"
+            f" {drain_error}; reporting the runner outcome"
+        )
+    raise send_error
+
+
+def _invocation_boundary(
+    runner: ExtensionRunnerInfo, options: dict[str, typing.Any] | None
+) -> runner_streams.InvocationBoundary:
+    """Select current subscriptions for the request's tokens, if any."""
+    opts = options or {}
+    return runner.stream_registry.begin_invocation(
+        opts.get("partialResultToken"), opts.get("progressToken")
+    )
+
+
 async def run_action(
     runner: ExtensionRunnerInfo,
     action_name: str,
@@ -186,13 +328,24 @@ async def run_action(
 
     runner.active_requests += 1
     try:
-        response = await runner.client.send_request(
-            method=_internal_client_types.ER_RUN_ACTION,
-            params=_internal_client_types.ErRunActionParams(
-                action_name=action_name, params=params, options=options
-            ),
-            timeout=None,
-        )
+        boundary = _invocation_boundary(runner, options)
+        if boundary.subscriptions:
+            response = await _subscribed_request(
+                runner,
+                boundary,
+                _internal_client_types.ER_RUN_ACTION,
+                _internal_client_types.ErRunActionParams(
+                    action_name=action_name, params=params, options=options
+                ),
+            )
+        else:
+            response = await runner.client.send_request(
+                method=_internal_client_types.ER_RUN_ACTION,
+                params=_internal_client_types.ErRunActionParams(
+                    action_name=action_name, params=params, options=options
+                ),
+                timeout=None,
+            )
     except jsonrpc_client.ServerStoppedError as exc:
         raise ActionRunFailed(
             "Runner stopped during execution — it may have been restarted. Try again."
@@ -263,19 +416,36 @@ async def run_handlers(
 
     runner.active_requests += 1
     try:
-        response = await runner.client.send_request(
-            method=_internal_client_types.ER_RUN_HANDLERS,
-            params=_internal_client_types.ErRunHandlersParams(
-                action_name=action_name,
-                handler_names=handler_names,
-                params=params or {},
-                previous_result=previous_result,
-                previous_context=previous_context,
-                caller_kwargs=caller_kwargs,
-                options=options,
-            ),
-            timeout=None,
-        )
+        boundary = _invocation_boundary(runner, options)
+        if boundary.subscriptions:
+            response = await _subscribed_request(
+                runner,
+                boundary,
+                _internal_client_types.ER_RUN_HANDLERS,
+                _internal_client_types.ErRunHandlersParams(
+                    action_name=action_name,
+                    handler_names=handler_names,
+                    params=params or {},
+                    previous_result=previous_result,
+                    previous_context=previous_context,
+                    caller_kwargs=caller_kwargs,
+                    options=options,
+                ),
+            )
+        else:
+            response = await runner.client.send_request(
+                method=_internal_client_types.ER_RUN_HANDLERS,
+                params=_internal_client_types.ErRunHandlersParams(
+                    action_name=action_name,
+                    handler_names=handler_names,
+                    params=params or {},
+                    previous_result=previous_result,
+                    previous_context=previous_context,
+                    caller_kwargs=caller_kwargs,
+                    options=options,
+                ),
+                timeout=None,
+            )
     except jsonrpc_client.RequestCancelledError as error:
         logger.trace(
             f"Request {error.request_id} to {runner.readable_id} was cancelled"

@@ -34,6 +34,9 @@ from finecode.wm_server.runner import (
     runner_counts,
     wm_bridge,
 )
+from finecode.wm_server.runner import (
+    stream_completion as runner_streams,
+)
 from finecode_jsonrpc import _io_thread
 
 project_changed_callback: (
@@ -101,6 +104,8 @@ _STARTUP_SLOT_NEUTRAL_METHODS: typing.Final[frozenset[str]] = frozenset(
         _internal_client_types.PROJECT_DECLARES_ACTION,
         # Releases a lease (no wait) and RPCs only its own runner.
         _internal_client_types.RELEASE_PROCESS_BUDGET,
+        # Drops one delegated call's forwarding state (no wait on any runner).
+        _internal_client_types.RELEASE_DELEGATED_CALL,
         # Local publish (progress/partial-result): awaits nothing.
         _internal_client_types.PROGRESS,
         # Local notify to connected clients: fire-and-forget, awaits nothing.
@@ -347,6 +352,67 @@ async def lease_for_runner(
     )
 
 
+def admit_runner_progress(
+    runner: runner_client.ExtensionRunnerInfo,
+    params: _internal_client_types.ProgressParams,
+) -> None:
+    """Synchronous $/progress admission.
+
+    Runs inline on the dispatching loop with only the existing minimal decode
+    and routing: encoded-JSON parse failures keep their logged drop, and the
+    decoded value routes by the existing begin/report/end test. Each matching
+    service subscription admits the value into its own stream without running
+    service callbacks; the legacy publishers stay available for existing
+    listeners. Failures are caught per target so one failing subscriber cannot
+    skip the rest. Registered via ``feature_sync``, bypassing ``_register``'s
+    async wrapper only for this neutral stream method; ``$/progress`` keeps
+    its startup-slot neutral classification.
+    """
+    logger.debug(
+        f"Got progress from runner {runner.readable_id} for token: {params.token}"
+    )
+    try:
+        result_value = json.loads(typing.cast(str, params.value))
+    except json.JSONDecodeError as exception:
+        logger.error(f"Failed to decode partial result value json: {exception}")
+        return
+
+    if isinstance(result_value, dict) and result_value.get("type") in (
+        "begin",
+        "report",
+        "end",
+    ):
+        channel = runner_streams.StreamChannel.PROGRESS
+        try:
+            runner.progress_notifications.publish(
+                domain.ProgressNotification(token=params.token, value=result_value)
+            )
+        except Exception as exception:
+            logger.warning(
+                f"Legacy progress publication failed for token {params.token}:"
+                f" {exception} | {runner.readable_id}"
+            )
+    else:
+        channel = runner_streams.StreamChannel.PARTIAL
+        try:
+            runner.partial_results.publish(
+                domain.PartialResult(token=params.token, value=result_value)
+            )
+        except Exception as exception:
+            logger.warning(
+                f"Legacy partial publication failed for token {params.token}:"
+                f" {exception} | {runner.readable_id}"
+            )
+    for subscription in runner.stream_registry.matching(channel, params.token):
+        try:
+            subscription.admit(result_value)
+        except Exception as exception:
+            logger.warning(
+                f"Stream {channel.name} admission failed for token {params.token}:"
+                f" {exception} | {runner.readable_id}"
+            )
+
+
 async def _start_extension_runner_process(
     runner: runner_client.ExtensionRunnerInfo,
     ws_context: context.WorkspaceContext,
@@ -585,33 +651,13 @@ async def _start_extension_runner_process(
 
     _register(_internal_client_types.WORKSPACE_APPLY_EDIT, _apply_workspace_edit)
 
-    async def on_progress(params: _internal_client_types.ProgressParams) -> None:
-        logger.debug(
-            f"Got progress from runner {runner.readable_id} for token: {params.token}"
-        )
-        try:
-            result_value = json.loads(params.value)
-        except json.JSONDecodeError as exception:
-            logger.error(f"Failed to decode partial result value json: {exception}")
-            return
-
-        # Distinguish progress notifications (begin/report/end) from partial results
-        if isinstance(result_value, dict) and result_value.get("type") in (
-            "begin",
-            "report",
-            "end",
-        ):
-            progress_notification = domain.ProgressNotification(
-                token=params.token, value=result_value
-            )
-            runner.progress_notifications.publish(progress_notification)
-        else:
-            partial_result = domain.PartialResult(
-                token=params.token, value=result_value
-            )
-            runner.partial_results.publish(partial_result)
-
-    _register(_internal_client_types.PROGRESS, on_progress)
+    # Synchronous $/progress admission: bypasses ``_register``'s
+    # async wrapper only for this neutral stream method; ``$/progress`` keeps
+    # its startup-slot neutral classification.
+    client.feature_sync(
+        _internal_client_types.PROGRESS,
+        functools.partial(admit_runner_progress, runner),
+    )
 
     async def on_er_user_message(params) -> None:
         # params arrives as a structured ErUserMessageParams from the real client
@@ -722,9 +768,7 @@ async def _start_extension_runner_process(
         )
         return {"declares": declares}
 
-    _register(
-        _internal_client_types.PROJECT_DECLARES_ACTION, project_declares_action
-    )
+    _register(_internal_client_types.PROJECT_DECLARES_ACTION, project_declares_action)
 
     def _knowledge_handlers() -> knowledge_bridge.KnowledgeHandlers:
         """The installed knowledge service, or a method error naming why there is none.
@@ -816,6 +860,22 @@ async def _start_extension_runner_process(
     _register(
         _internal_client_types.RUN_ACTION_IN_WORKSPACE,
         handle_run_action_in_workspace,
+    )
+
+    async def handle_release_delegated_call(
+        params: _internal_client_types.ReleaseDelegatedCallParams,
+    ) -> _internal_client_types.ReleaseDelegatedCallResult:
+        """Release a delegated call the parent closed early.
+
+        Awaits no runner start, budget, knowledge or human: it only drops the
+        call's forwarding state on this connection (see the bridge slot)."""
+        return await _run_dispatch_handlers().release_delegated_call(
+            runner, params, ws_context
+        )
+
+    _register(
+        _internal_client_types.RELEASE_DELEGATED_CALL,
+        handle_release_delegated_call,
     )
 
     async def handle_lease_process_budget(

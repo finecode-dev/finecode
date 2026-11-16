@@ -7,7 +7,12 @@ runner reaches this code through a slot rather than importing it.
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
+import dataclasses
 import json
+import typing
+import uuid
 from pathlib import Path
 
 from loguru import logger
@@ -24,6 +29,10 @@ from finecode.wm_server.runner.runner_client import (
     RunActionTrigger,
 )
 from finecode.wm_server.services import project_resolution_service
+from finecode.wm_server.services.run_service import proxy_utils
+from finecode.wm_server.services.run_service.delegated_progress import (
+    DELEGATED_PROGRESS_PENDING_LIMIT,
+)
 from finecode.wm_server.services.run_service.project_executor import ProjectExecutor
 from finecode.wm_server.services.run_service.proxy_utils import (
     find_action_by_canonical_source,
@@ -33,6 +42,49 @@ from finecode.wm_server.services.run_service.proxy_utils import (
 from finecode.wm_server.services.run_service.workspace_executor import WorkspaceExecutor
 
 _NEAREST_PROJECTS_IN_HINT = 3
+
+
+@dataclasses.dataclass
+class _DelegatedCallEntry:
+    """Forwarding state of one streaming ``runActionInProject`` call.
+
+    Keyed by the parent connection's object identity (``id`` of the runner's
+    client, not the runner) plus the parent ``partialResultToken``, so two
+    parent ERs using equal tokens never share an entry.
+
+    A release only flips ``state`` to ``"released``: the forwarding pumps
+    observe it and keep consuming their streams as discarding drains, so no
+    consumed-but-unacknowledged fence is ever stranded by cancelling a pump
+    mid-handoff (a stranded fence would stall the child run's drain and the
+    child would never complete). The entry is popped from the table
+    synchronously in the release, before the reply.
+    """
+
+    state: typing.Literal["registered", "forwarding", "released"]
+
+
+_delegated_calls: dict[tuple[int, int | str], _DelegatedCallEntry] = {}
+
+
+def _delegated_call_key(
+    runner: ExtensionRunnerInfo, parent_partial_token: int | str
+) -> tuple[int, int | str]:
+    return (id(runner.client), parent_partial_token)
+
+
+async def _discard_delegated_output(
+    ctx: proxy_utils.RunWithPartialResultsContext,
+) -> None:
+    """Consume both shared outputs to their end, discarding.
+
+    Final-sink iteration still acknowledges every fence, so the child run's
+    drain completes with its own outcome; nothing is forwarded to the parent.
+    """
+    async for _ in ctx:
+        pass
+    if ctx.progress is not None:
+        async for _ in ctx.progress:
+            pass
 
 
 def _nearest_projects_hint(path: Path, ws_context: context.WorkspaceContext) -> str:
@@ -59,6 +111,42 @@ def _nearest_projects_hint(path: Path, ws_context: context.WorkspaceContext) -> 
     rest = len(known) - len(nearest)
     suffix = f" (and {rest} more)" if rest > 0 else ""
     return f"Nearest projects: {', '.join(str(p) for p in nearest)}{suffix}."
+
+
+async def _workspace_root_hosting(
+    action_name: str, ws_context: context.WorkspaceContext
+) -> Path:
+    """The workspace root, which hosts a workspace-scoped action dispatched
+    without project paths.
+
+    Fails rather than falling back to every declaring project: that fallback is
+    the N-instances-each-fanning-out-to-N shape this routing exists to prevent.
+    """
+    workspace_root = context.pick_workspace_root_dir(ws_context)
+    if workspace_root is None:
+        raise errors.ProjectError(
+            f"Cannot run workspace-scoped '{action_name}': the workspace root is "
+            "ambiguous (several workspace directories, none with "
+            "finecode-workspace.toml). Pass project paths explicitly."
+        )
+    try:
+        root_project = (
+            await project_resolution_service.ensure_projects_resolved(
+                [workspace_root], ws_context
+            )
+        ).require([workspace_root])[0]
+    except project_resolution_service.ProjectResolutionFailed as exc:
+        raise errors.ProjectError(
+            f"Cannot run workspace-scoped '{action_name}' in the workspace root: "
+            f"{exc.message}"
+        ) from exc
+    if not any(a.name == action_name for a in root_project.actions):
+        raise errors.ActionNotFoundError(
+            f"Workspace-scoped action '{action_name}' is not declared in the "
+            f"workspace root project {workspace_root}, which hosts it when no "
+            "project paths are given"
+        )
+    return workspace_root
 
 
 def _origin_of_calling_run(
@@ -109,46 +197,18 @@ class _BridgeHandlers:
         origin: elicitation_bridge.RunDispatchOrigin,
     ) -> _internal_client_types.RunActionInProjectResult:
         if params.partial_result_token is not None:
-            partial_count = 0
-            async with executor.run_action_with_partial_results(
-                action_source=params.action_source,
-                params=params.payload,
-                project_path=runner.working_dir_path,
-                partial_result_token=params.partial_result_token,
-                run_trigger=RunActionTrigger(params.meta.trigger),
-                dev_env=DevEnv(params.meta.dev_env),
-                orchestration_depth=params.meta.orchestration_depth,
-                caller_kwargs=params.caller_kwargs,
-                origin=origin,
-            ) as ctx:
-                async for partial_raw in ctx:
-                    partial_count += 1
-                    runner.client.notify(
-                        _internal_client_types.PROGRESS,
-                        _internal_client_types.ProgressParams(
-                            token=params.partial_result_token,
-                            value=json.dumps(partial_raw),
-                        ),
-                    )
-
-            if ctx.responses:
-                final = ctx.responses[0]
-                if final.status != "streamed":
-                    final_json = final.result_by_format.get("json", {})
-                    if partial_count == 0 and final_json:
-                        runner.client.notify(
-                            _internal_client_types.PROGRESS,
-                            _internal_client_types.ProgressParams(
-                                token=params.partial_result_token,
-                                value=json.dumps(final_json),
-                            ),
-                        )
-                return _internal_client_types.RunActionInProjectResult(
-                    return_code=final.return_code,
+            # register synchronously, before this handler's first
+            # suspension point, so a release read after this request finds it.
+            parent_partial_token = params.partial_result_token
+            call_key = _delegated_call_key(runner, parent_partial_token)
+            call_entry = _DelegatedCallEntry(state="registered")
+            _delegated_calls[call_key] = call_entry
+            try:
+                return await self._run_streaming_action(
+                    runner, params, executor, origin, call_entry
                 )
-            return _internal_client_types.RunActionInProjectResult(
-                return_code=0,
-            )
+            finally:
+                _ = _delegated_calls.pop(call_key, None)
 
         result = await executor.run_action(
             action_source=params.action_source,
@@ -164,6 +224,176 @@ class _BridgeHandlers:
             result=result.result_by_format.get("json", {}),
             return_code=result.return_code,
         )
+
+    async def _run_streaming_action(
+        self,
+        runner: ExtensionRunnerInfo,
+        params: _internal_client_types.RunActionInProjectParams,
+        executor: ProjectExecutor,
+        origin: elicitation_bridge.RunDispatchOrigin,
+        call_entry: _DelegatedCallEntry,
+    ) -> _internal_client_types.RunActionInProjectResult:
+        parent_partial_token = params.partial_result_token
+        assert parent_partial_token is not None
+        child_partial_token = str(uuid.uuid4())
+        partial_count = 0
+        child_progress_token: str | None = None
+        if params.progress_token is not None:
+            child_progress_token = str(uuid.uuid4())
+        async with executor.run_action_with_partial_results(
+            action_source=params.action_source,
+            params=params.payload,
+            project_path=runner.working_dir_path,
+            partial_result_token=child_partial_token,
+            progress_token=child_progress_token,
+            run_trigger=RunActionTrigger(params.meta.trigger),
+            dev_env=DevEnv(params.meta.dev_env),
+            orchestration_depth=params.meta.orchestration_depth,
+            caller_kwargs=params.caller_kwargs,
+            origin=origin,
+            delegated_progress_limit=(
+                DELEGATED_PROGRESS_PENDING_LIMIT
+                if params.progress_token is not None
+                else None
+            ),
+        ) as ctx:
+            if (
+                params.progress_token is not None
+                and ctx.progress is not None
+                and call_entry.state != "released"
+            ):
+                progress_token = params.progress_token
+
+                async def _pump_partials() -> None:
+                    nonlocal partial_count
+                    async for partial_raw in ctx:
+                        if call_entry.state == "released":
+                            # Released: keep consuming so fences complete,
+                            # but send nothing further to the parent.
+                            continue
+                        partial_count += 1
+                        assert runner.client is not None
+                        await runner.client.notify_and_drain(
+                            _internal_client_types.PROGRESS,
+                            _internal_client_types.ProgressParams(
+                                token=parent_partial_token,
+                                value=json.dumps(partial_raw.get("json", {})),
+                            ),
+                        )
+
+                async def _pump_progress() -> None:
+                    assert ctx.progress is not None
+                    forwarding = True
+                    async for progress_raw in ctx.progress:
+                        if call_entry.state == "released" or not forwarding:
+                            # A release, like a send failure, stops progress
+                            # forwarding for the call, but the stream is still
+                            # consumed (discarded) so its fences complete and
+                            # the child run's drain cannot stall.
+                            continue
+                        assert runner.client is not None
+                        try:
+                            await runner.client.notify_and_drain(
+                                _internal_client_types.PROGRESS,
+                                _internal_client_types.ProgressParams(
+                                    token=progress_token,
+                                    value=json.dumps(progress_raw),
+                                ),
+                            )
+                        except asyncio.CancelledError:
+                            raise
+                        except Exception as exc:
+                            logger.warning(
+                                "Delegated progress send failed; stopping"
+                                f" progress forwarding: {exc}"
+                            )
+                            forwarding = False
+
+                partial_pump = asyncio.ensure_future(_pump_partials())
+                progress_pump = asyncio.ensure_future(_pump_progress())
+                call_entry.state = "forwarding"
+                partial_error: BaseException | None = None
+                try:
+                    try:
+                        await partial_pump
+                    except asyncio.CancelledError:
+                        raise
+                    except BaseException as exc:
+                        # A partial-send failure still fails the run
+                        # (ADR-0135 rule 3), but it must not cancel the
+                        # progress pump: that pump keeps draining the
+                        # shared progress stream so its fences complete.
+                        partial_error = exc
+                    await progress_pump
+                finally:
+                    for pump in (partial_pump, progress_pump):
+                        if not pump.done():
+                            _ = pump.cancel()
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await asyncio.gather(
+                            partial_pump, progress_pump, return_exceptions=True
+                        )
+                if call_entry.state != "released" and partial_error is not None:
+                    raise partial_error
+            elif call_entry.state == "released":
+                # Released before dispatch: dispatched as always, but
+                # never given forwarding pumps or a parent-facing buffer.
+                await _discard_delegated_output(ctx)
+            else:
+                async for partial_raw in ctx:
+                    if call_entry.state == "released":
+                        # Released mid-stream: keep consuming so fences
+                        # complete, but send nothing further to the parent.
+                        continue
+                    partial_count += 1
+                    assert runner.client is not None
+                    await runner.client.notify_and_drain(
+                        _internal_client_types.PROGRESS,
+                        _internal_client_types.ProgressParams(
+                            token=parent_partial_token,
+                            value=json.dumps(partial_raw.get("json", {})),
+                        ),
+                    )
+            if ctx.responses:
+                final = ctx.responses[0]
+                if call_entry.state != "released" and final.status != "streamed":
+                    final_json = final.result_by_format.get("json", {})
+                    if partial_count == 0 and final_json:
+                        assert runner.client is not None
+                        await runner.client.notify_and_drain(
+                            _internal_client_types.PROGRESS,
+                            _internal_client_types.ProgressParams(
+                                token=parent_partial_token,
+                                value=json.dumps(final_json),
+                            ),
+                        )
+                return _internal_client_types.RunActionInProjectResult(
+                    return_code=final.return_code,
+                )
+            return _internal_client_types.RunActionInProjectResult(
+                return_code=0,
+            )
+
+    async def release_delegated_call(
+        self,
+        runner: ExtensionRunnerInfo,
+        params: _internal_client_types.ReleaseDelegatedCallParams,
+        ws_context: context.WorkspaceContext,
+    ) -> _internal_client_types.ReleaseDelegatedCallResult:
+        """Release a delegated call the parent closed early."""
+        _ = ws_context
+        entry = _delegated_calls.pop(
+            _delegated_call_key(runner, params.partial_result_token), None
+        )
+        if entry is None:
+            return _internal_client_types.ReleaseDelegatedCallResult()
+        # Flag-only: the forwarding pumps observe ``released`` and turn into
+        # discarding drains. They are never cancelled here: cancelling a pump
+        # suspended mid-handoff would strand a consumed-but-unacknowledged
+        # fence and stall the child run's drain, so the child would never
+        # complete. Replying needs no pump rendezvous.
+        entry.state = "released"
+        return _internal_client_types.ReleaseDelegatedCallResult()
 
     async def run_action_in_workspace(
         self,
@@ -218,6 +448,11 @@ class _BridgeHandlers:
                     + " ".join(_nearest_projects_hint(p, ws_context) for p in unknown)
                 )
             actions_by_project = {p: [action_name] for p in requested}
+        elif action is not None and action.scope == domain.ActionScope.WORKSPACE:
+            # Matching on canonical_source above means the metadata, and so the
+            # scope, is resolved. Mirrors the client API route (_helpers.py).
+            root = await _workspace_root_hosting(action_name, ws_context)
+            actions_by_project = {root: [action_name]}
         else:
             actions_by_project = {
                 p: [action_name]

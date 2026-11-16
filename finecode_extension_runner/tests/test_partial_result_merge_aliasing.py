@@ -19,6 +19,7 @@ from pathlib import Path
 import pytest
 from finecode_extension_api import code_action
 from finecode_extension_api.code_action import CoverageStatus, ItemCoverage
+from finecode_extension_api.interfaces import iprojectactionrunner
 from finecode_extension_api.resource_uri import ResourceUri
 from loguru import logger
 
@@ -305,7 +306,7 @@ async def test_ac5_partial_sent_before_raising_is_still_delivered(
         async with handler_test_session(
             project_dir=tmp_path, actions=_actions_with(_StreamThenRaiseHandler)
         ) as session:
-            with pytest.raises(run_action_service.ActionFailedException):
+            with pytest.raises(iprojectactionrunner.ActionRunFailed):
                 await session.run_action(_ACTION_NAME, partial_result_token="tok-1")
     finally:
         run_action_service.partial_result_sender = _DEFAULT_SENDER
@@ -333,7 +334,7 @@ async def test_ac6_flush_failure_never_replaces_the_unwinding_exception(
             project_dir=tmp_path,
             actions=_actions_with(_StreamThenRaiseValueErrorHandler),
         ) as session:
-            with pytest.raises(run_action_service.ActionFailedException) as exc_info:
+            with pytest.raises(iprojectactionrunner.ActionRunFailed) as exc_info:
                 await session.run_action(_ACTION_NAME, partial_result_token="tok-1")
     finally:
         logger.remove(sink_id)

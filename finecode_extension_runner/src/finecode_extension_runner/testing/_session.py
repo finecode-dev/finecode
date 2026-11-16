@@ -130,16 +130,17 @@ class Session:
             dev_env=code_action.DevEnv.CI,
             wal_run_id=str(uuid.uuid4()),
         )
-        return await run_action_service.run_action(
-            action_def=action_def,
-            payload=payload,
-            meta=meta,
-            runner_context=self._runner_context,
-            partial_result_token=partial_result_token,
-            caller_kwargs=caller_kwargs,
-            progress_sender=self.progress,
-            partial_result_observer=self.partial_results,
-        )
+        with run_action_service.public_run_errors():
+            return await run_action_service.run_action(
+                action_def=action_def,
+                payload=payload,
+                meta=meta,
+                runner_context=self._runner_context,
+                partial_result_token=partial_result_token,
+                caller_kwargs=caller_kwargs,
+                progress_sender=self.progress,
+                partial_result_observer=self.partial_results,
+            )
 
     async def run_handlers(
         self,
@@ -166,11 +167,12 @@ class Session:
                 wal_run_id=wal_run_id,
             ),
         )
-        return await run_action_service.run_handlers_raw(
-            request=request,
-            options=options,
-            runner_context=self._runner_context,
-        )
+        with run_action_service.public_run_errors():
+            return await run_action_service.run_handlers_raw(
+                request=request,
+                options=options,
+                runner_context=self._runner_context,
+            )
 
     # ------------------------------------------------------------------
     # Lifecycle

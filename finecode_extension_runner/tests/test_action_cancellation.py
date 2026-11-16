@@ -8,7 +8,6 @@ from finecode_extension_api import code_action
 from finecode_extension_api.interfaces import ilspclient, iprojectactionrunner
 from loguru import logger
 
-from finecode_extension_runner._services import run_action as run_action_service
 from finecode_extension_runner.testing import handler_test_session
 
 
@@ -85,14 +84,14 @@ async def test_lsp_request_cancelled_error_is_classified_as_cancellation(
     tmp_path: Path,
 ) -> None:
     """A handler that surfaces a downstream LSP server's cancellation must be
-    reported as a benign cancellation (ActionCancelledException), not logged
+    reported as a benign cancellation (ActionRunCancelled), not logged
     or propagated as a crash — this is what lets the ER skip an ERROR-level
     trace for something the IDE user did nothing wrong to trigger (e.g. just
     opening a file while another request was in flight).
     """
     actions = _single_handler_action("lsp_cancel_action", _LspCancelledHandler)
     async with handler_test_session(project_dir=tmp_path, actions=actions) as session:
-        with pytest.raises(run_action_service.ActionCancelledException) as exc_info:
+        with pytest.raises(iprojectactionrunner.ActionRunCancelled) as exc_info:
             await session.run_action("lsp_cancel_action")
 
     assert "cancelled by pyrefly" in exc_info.value.message
@@ -109,7 +108,7 @@ async def test_handler_initiated_cancellation_is_classified_the_same_as_lsp_canc
         "handler_cancel_action", _HandlerInitiatedCancelledHandler
     )
     async with handler_test_session(project_dir=tmp_path, actions=actions) as session:
-        with pytest.raises(run_action_service.ActionCancelledException) as exc_info:
+        with pytest.raises(iprojectactionrunner.ActionRunCancelled) as exc_info:
             await session.run_action("handler_cancel_action")
 
     assert "not applicable here" in exc_info.value.message
@@ -128,7 +127,7 @@ async def test_cancellation_raised_inside_a_task_group_is_still_recognized(
         "task_group_cancel_action", _TaskGroupCancelledHandler
     )
     async with handler_test_session(project_dir=tmp_path, actions=actions) as session:
-        with pytest.raises(run_action_service.ActionCancelledException):
+        with pytest.raises(iprojectactionrunner.ActionRunCancelled):
             await session.run_action("task_group_cancel_action")
 
 
@@ -143,7 +142,7 @@ async def test_wm_back_channel_cancellation_is_recognized(
         "wm_back_channel_cancel_action", _WmBackChannelCancelledHandler
     )
     async with handler_test_session(project_dir=tmp_path, actions=actions) as session:
-        with pytest.raises(run_action_service.ActionCancelledException) as exc_info:
+        with pytest.raises(iprojectactionrunner.ActionRunCancelled) as exc_info:
             await session.run_action("wm_back_channel_cancel_action")
 
     assert "cancelled via WM back-channel" in exc_info.value.message
@@ -185,8 +184,8 @@ async def test_cancellation_of_a_single_handler_run_concurrently_is_recognized(
 ) -> None:
     """Regression test: a handler cancellation raised inside run_action's
     TaskGroup-based "concurrent handlers" branch (HANDLER_EXECUTION=CONCURRENT)
-    must still be classified as ActionCancelledException, not silently
-    converted into an ActionFailedException with a full "Unhandled exception"
+    must still be classified as a cancellation, not silently
+    converted into a failure with a full "Unhandled exception"
     traceback logged for what is actually a benign cancellation.
     """
     actions = _single_handler_action(
@@ -197,7 +196,7 @@ async def test_cancellation_of_a_single_handler_run_concurrently_is_recognized(
         async with handler_test_session(
             project_dir=tmp_path, actions=actions
         ) as session:
-            with pytest.raises(run_action_service.ActionCancelledException) as exc_info:
+            with pytest.raises(iprojectactionrunner.ActionRunCancelled) as exc_info:
                 await session.run_action("concurrent_cancel_action")
     finally:
         logger.remove(sink_id)
@@ -251,7 +250,7 @@ async def test_cancellation_propagates_through_a_dispatch_handlers_own_task_grou
     """End-to-end regression test: a handler that dispatches to a nested
     subaction from inside its own TaskGroup, where the nested subaction's
     single handler runs CONCURRENT and gets cancelled. The cancellation must
-    survive both TaskGroup boundaries as ActionCancelledException, with no
+    survive both TaskGroup boundaries as ActionRunCancelled, with no
     "Unhandled exception in action handler" trace logged at either level.
     """
     dispatch_source = (
@@ -281,9 +280,8 @@ async def test_cancellation_propagates_through_a_dispatch_handlers_own_task_grou
             "handlers": [
                 # env must match handler_test_session's current env ("test")
                 # so IProjectActionRunner takes the local fast path instead
-                # of the WM round-trip — that fast path is what leaks the
-                # unwrapped local run_action.ActionFailedException in the
-                # original bug.
+                # of the WM round-trip; the nested cancellation must still
+                # reach the dispatch handler as a cancellation, not a failure.
                 {"name": "pyrefly", "source": nested_handler_source, "env": "test"},
             ],
         },
@@ -294,7 +292,7 @@ async def test_cancellation_propagates_through_a_dispatch_handlers_own_task_grou
         async with handler_test_session(
             project_dir=tmp_path, actions=actions
         ) as session:
-            with pytest.raises(run_action_service.ActionCancelledException) as exc_info:
+            with pytest.raises(iprojectactionrunner.ActionRunCancelled) as exc_info:
                 await session.run_action("dispatch_action")
     finally:
         logger.remove(sink_id)

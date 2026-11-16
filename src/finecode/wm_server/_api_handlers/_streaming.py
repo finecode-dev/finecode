@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import pathlib
+import typing
 import uuid
 
 from loguru import logger
@@ -38,6 +40,7 @@ from finecode.wm_server.services.run_service.execution_scopes import (
 from finecode.wm_server.services.run_service.merge_helpers import (
     merge_partial_results_for_action,
 )
+from finecode.wm_server.utils import stream_completion
 
 
 async def _handle_run_action_with_partial_results(
@@ -133,7 +136,12 @@ async def _handle_run_action_with_partial_results(
         # connection; the dispatch below binds it to the run id it mints,
         # which is what the ER names when it asks.
         origin = elicitation_bridge.RunDispatchOrigin(connection=writer)
-        stream = await partial_results_service.run_action_with_partial_results(
+        # The service context is entered before the sinks start: production
+        # runs concurrently with forwarding, and a failed sink exits the
+        # context — aborting the producer — instead of waiting for a runner
+        # response. Value iteration acknowledges each fence only after the
+        # notify + drain handoff below resumes.
+        async with partial_results_service.run_action_with_partial_results(
             action_name=action_name,
             project_path=project_path,
             params=params.get("params", {}),
@@ -145,55 +153,54 @@ async def _handle_run_action_with_partial_results(
             progress_token=progress_token,
             selected_envs=selected_envs,
             origin=origin,
-        )
+        ) as stream:
+            # Opt-in (collect-style callers like MCP): accumulate the `json` format of
+            # each partial per project so it can be type-safely merged into the response.
+            merge_results_enabled = options.get("mergeResults", False)
+            json_by_project: dict[str, list[dict]] = {}
 
-        # Opt-in (collect-style callers like MCP): accumulate the `json` format of
-        # each partial per project so it can be type-safely merged into the response.
-        merge_results_enabled = options.get("mergeResults", False)
-        json_by_project: dict[str, list[dict]] = {}
-
-        async def _forward_partials() -> int:
-            count = 0
-            async for value in stream:
-                count += 1
-                if merge_results_enabled and isinstance(value, dict):
-                    project_str = value.get("project", "")
-                    result_by_format = value.get("resultByFormat") or {}
-                    json_by_project.setdefault(project_str, []).append(
-                        result_by_format.get("json")
+            async def _forward_partials() -> int:
+                count = 0
+                async for value in stream:
+                    count += 1
+                    if merge_results_enabled and isinstance(value, dict):
+                        project_str = value.get("project", "")
+                        result_by_format = value.get("resultByFormat") or {}
+                        json_by_project.setdefault(project_str, []).append(
+                            result_by_format.get("json")
+                        )
+                    logger.trace(
+                        f"run+partialResults: sending partial #{count} for token={token}, keys={list(value.keys()) if isinstance(value, dict) else type(value)}"
                     )
-                logger.trace(
-                    f"run+partialResults: sending partial #{count} for token={token}, keys={list(value.keys()) if isinstance(value, dict) else type(value)}"
-                )
-                _notify_client(
-                    writer,
-                    "actions/partialResult",
-                    {"token": token, "value": value},
-                )
-                await writer.drain()
-            return count
+                    _notify_client(
+                        writer,
+                        "actions/partialResult",
+                        {"token": token, "value": value},
+                    )
+                    await writer.drain()
+                return count
 
-        async def _forward_progress() -> None:
-            if stream.progress_stream is None or progress_token is None:
-                return
-            async for value in stream.progress_stream:
-                logger.trace(
-                    f"run+partialResults: sending progress type={value.get('type')} for token={progress_token}"
-                )
-                _notify_client(
-                    writer,
-                    "actions/progress",
-                    {"token": progress_token, "value": value},
-                )
-                await writer.drain()
+            async def _forward_progress() -> None:
+                if stream.progress_stream is None or progress_token is None:
+                    return
+                async for value in stream.progress_stream:
+                    logger.trace(
+                        f"run+partialResults: sending progress type={value.get('type')} for token={progress_token}"
+                    )
+                    _notify_client(
+                        writer,
+                        "actions/progress",
+                        {"token": progress_token, "value": value},
+                    )
+                    await writer.drain()
 
-        partial_count = 0
-        async with asyncio.TaskGroup() as forward_tg:
-            partials_task = forward_tg.create_task(_forward_partials())
-            forward_tg.create_task(_forward_progress())
-        partial_count = partials_task.result()
+            partial_count = 0
+            async with asyncio.TaskGroup() as forward_tg:
+                partials_task = forward_tg.create_task(_forward_partials())
+                forward_tg.create_task(_forward_progress())
+            partial_count = partials_task.result()
 
-        final = await stream.final_result()
+            final = await stream.final_result()
 
         if merge_results_enabled and json_by_project:
             return_code = final.get("returnCode", 0) if isinstance(final, dict) else 0
@@ -385,6 +392,43 @@ async def _handle_run_batch_with_partial_results(
         # callers (CLI --save-results).  Keyed by project path str -> action source ->
         # {resultByFormat, returnCode}, matching the runBatch response `results` shape.
         merged_results: dict[str, dict[str, dict]] = {}
+        # Optional mixed progress pipeline: when the batch request
+        # also carries a progressToken, each non-matrix action context is
+        # given its existing child progress identity and its progress events
+        # are forwarded through the same slot aggregation pipeline used by
+        # the progress-only wrapper. Matrix variants keep their documented
+        # omission of variant progress tokens; their partials still drain.
+        from finecode.wm_server.services import (
+            partial_results_service as _prs_for_slots,
+        )
+
+        requested_progress_token: str | int | None = params.get("progressToken")
+        batch_progress_tokens: dict[tuple[pathlib.Path, str], str] = {}
+        batch_slot_streams: dict[
+            str, stream_completion.CompletionStream[domain.ProgressRawValue]
+        ] = {}
+        batch_combined: (
+            stream_completion.CompletionStream[domain.ProgressRawValue] | None
+        ) = None
+        batch_aggregator: typing.Any = None
+        if requested_progress_token is not None:
+            slot_total = sum(len(acts) for acts in actions_by_project.values())
+            batch_combined = stream_completion.CompletionStream()
+            batch_aggregator = _prs_for_slots.ProgressAggregator(
+                slot_total, batch_combined
+            )
+            for _ppath, _acts in actions_by_project.items():
+                _pdef = ws_context.ws_projects.get(_ppath)
+                _pname = (
+                    _pdef.name
+                    if isinstance(_pdef, domain.CollectedProject)
+                    else str(_ppath)
+                )
+                for _aname in _acts:
+                    _skey = f"{_pname}/{_aname}"
+                    if _skey not in batch_slot_streams:
+                        batch_slot_streams[_skey] = stream_completion.CompletionStream()
+                    batch_progress_tokens[(_ppath, _aname)] = f"progress-{uuid.uuid4()}"
 
         async def _stream_action(
             project_path: pathlib.Path,
@@ -436,6 +480,17 @@ async def _handle_run_batch_with_partial_results(
                         )
                         await writer.drain()
 
+                async def _on_prefix(
+                    fence: stream_completion.PrefixFence,
+                ) -> None:
+                    # No envelope to send for a fence; the writer drain is
+                    # the handoff that orders every preceding partial before
+                    # the acknowledged prefix.
+                    async with writer_lock:
+                        await writer.drain()
+                    if not fence.completion.done():
+                        fence.completion.set_result(None)
+
                 (
                     combined_rbf,
                     matrix_return_code,
@@ -451,6 +506,7 @@ async def _handle_run_batch_with_partial_results(
                     ws_context=ws_context,
                     merge_results=parsed.merge_results,
                     on_partial=_on_partial,
+                    on_prefix=_on_prefix,
                     selected_envs=selected_envs,
                     origin=origin,
                 )
@@ -466,6 +522,17 @@ async def _handle_run_batch_with_partial_results(
             # Accumulate the `json` format of every streamed partial so it can be
             # type-safely merged at the end when mergeResults is requested.
             json_payloads: list[dict] = []
+            child_progress_token = batch_progress_tokens.get(
+                (project_path, action_name)
+            )
+            project_def_for_slot = ws_context.ws_projects.get(project_path)
+            slot_name = (
+                project_def_for_slot.name
+                if isinstance(project_def_for_slot, domain.CollectedProject)
+                else str(project_path)
+            )
+            slot_key = f"{slot_name}/{action_name}"
+            slot_stream = batch_slot_streams.get(slot_key)
             async with proxy_utils.run_with_partial_results(
                 action_name=action_name,
                 params=project_payload,
@@ -476,31 +543,64 @@ async def _handle_run_batch_with_partial_results(
                 ws_context=ws_context,
                 initialize_all_handlers=True,
                 result_formats=parsed.result_formats,
+                progress_token=child_progress_token,
                 origin=origin,
             ) as ctx:
-                async for value in ctx:
-                    partial_count += 1
-                    if parsed.merge_results and isinstance(value, dict):
-                        json_payloads.append(value.get("json"))
-                    async with writer_lock:
-                        _notify_client(
-                            writer,
-                            "actions/partialResult",
-                            {
-                                "token": token,
-                                "value": {
-                                    "project": str(project_path),
-                                    "results": {
-                                        action_source: {
-                                            "resultByFormat": value,
-                                            "returnCode": 0,
-                                        }
+
+                async def _forward_mixed_partials() -> None:
+                    nonlocal partial_count
+                    async for value in ctx:
+                        partial_count += 1
+                        if parsed.merge_results and isinstance(value, dict):
+                            json_payloads.append(value.get("json"))
+                        async with writer_lock:
+                            _notify_client(
+                                writer,
+                                "actions/partialResult",
+                                {
+                                    "token": token,
+                                    "value": {
+                                        "project": str(project_path),
+                                        "results": {
+                                            action_source: {
+                                                "resultByFormat": value,
+                                                "returnCode": 0,
+                                            }
+                                        },
+                                        "returnCode": 0,
                                     },
-                                    "returnCode": 0,
                                 },
-                            },
+                            )
+                            await writer.drain()
+
+                async def _forward_mixed_progress() -> None:
+                    if (
+                        child_progress_token is None
+                        or ctx.progress is None
+                        or slot_stream is None
+                    ):
+                        return
+                    try:
+                        async for event in ctx.progress.events():
+                            if isinstance(event, stream_completion.PrefixFence):
+                                slot_stream.forward(event)
+                            else:
+                                slot_stream.append(event.value)
+                    except BaseException as exc:
+                        fault = (
+                            exc
+                            if isinstance(exc, Exception)
+                            else stream_completion.PipelineFailure(exc)
                         )
-                        await writer.drain()
+                        slot_stream.abort(fault)
+                        raise
+
+                if slot_stream is not None and ctx.progress is not None:
+                    async with asyncio.TaskGroup() as mixed_group:
+                        _ = mixed_group.create_task(_forward_mixed_partials())
+                        _ = mixed_group.create_task(_forward_mixed_progress())
+                else:
+                    await _forward_mixed_partials()
             for resp in ctx.responses:
                 action_return_code |= resp.return_code
             # Direct result mode: no $/progress notifications were sent, so the complete
@@ -574,6 +674,26 @@ async def _handle_run_batch_with_partial_results(
         # machine-wide process budget (ADR-0090), leased to each project's ER
         # when its run begins, is what bounds the subprocess fan-out these
         # tasks lead to.
+        mixed_pump_tasks: list[asyncio.Task[None]] = []
+        mixed_sink_task: asyncio.Task[None] | None = None
+        if batch_combined is not None and batch_aggregator is not None:
+            assert requested_progress_token is not None
+            for _skey, _slot in batch_slot_streams.items():
+                mixed_pump_tasks.append(
+                    asyncio.create_task(
+                        _pump_slot_to_combined(
+                            _slot, _skey, batch_aggregator, batch_combined
+                        )
+                    )
+                )
+            mixed_sink_task = asyncio.create_task(
+                _forward_combined_to_client(
+                    batch_combined,
+                    writer,
+                    requested_progress_token,
+                    writer_lock,
+                )
+            )
         project_tasks: dict[pathlib.Path, asyncio.Task] = {}
         for project_path, actions_to_run in actions_by_project.items():
             project_payload = {
@@ -586,20 +706,60 @@ async def _handle_run_batch_with_partial_results(
             project_tasks[project_path] = task
 
         overall_return_code = 0
-        pending: set[asyncio.Task] = set(project_tasks.values())
+        project_remaining: set[asyncio.Task] = set(project_tasks.values())
+        forwarder_tasks: set[asyncio.Task] = set(mixed_pump_tasks)
+        if mixed_sink_task is not None:
+            forwarder_tasks.add(mixed_sink_task)
 
-        while pending:
-            done, pending = await asyncio.wait(
-                pending, return_when=asyncio.FIRST_COMPLETED
-            )
-            for task in done:
-                exc = task.exception()
-                if exc is not None:
-                    for t in pending:
-                        t.cancel()
-                    await asyncio.gather(*pending, return_exceptions=True)
-                    raise exc
-                overall_return_code |= task.result()
+        try:
+            # Project tasks complete with return codes; pump/sink tasks
+            # complete only on fault (they wait for the stream ends in the
+            # finally below). A broken forwarder therefore aborts the
+            # executor through the cancellation below, while a received
+            # runner outcome waits for its prefix inside the runner boundary
+            # before surfacing here. Cancellation joins project tasks even
+            # when it interrupts this wait loop (finally below).
+            while project_remaining:
+                done, _pending = await asyncio.wait(
+                    project_remaining | forwarder_tasks,
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+                for task in done:
+                    exc = task.exception()
+                    if exc is not None:
+                        for t in project_remaining | forwarder_tasks:
+                            if t is not task:
+                                t.cancel()
+                        await asyncio.gather(
+                            *(project_remaining | forwarder_tasks),
+                            return_exceptions=True,
+                        )
+                        raise exc
+                    if task in project_remaining:
+                        project_remaining.discard(task)
+                        overall_return_code |= int(task.result())
+                    else:
+                        # A forwarder finishing before its stream end is a
+                        # programming error; the remaining owners are cancelled.
+                        for t in project_remaining | forwarder_tasks:
+                            if t is not task:
+                                t.cancel()
+                        await asyncio.gather(
+                            *(project_remaining | forwarder_tasks),
+                            return_exceptions=True,
+                        )
+                        raise ActionRunFailed(
+                            "progress forwarder finished before stream end"
+                        )
+        finally:
+            if batch_combined is not None:
+                for _slot in batch_slot_streams.values():
+                    _slot.end()
+                batch_combined.end()
+            for _pt in forwarder_tasks:
+                if not _pt.done():
+                    _pt.cancel()
+            await asyncio.gather(*forwarder_tasks, return_exceptions=True)
 
         logger.debug(
             f"runBatch+partialResults: done, projects_count={len(actions_by_project)}"
@@ -655,6 +815,85 @@ async def _handle_run_batch_with_partial_results_task(
         await writer.drain()
 
 
+def _distinct_progress_runners(
+    runners_by_env: dict[str, typing.Any],
+    handlers: list[typing.Any],
+) -> list[typing.Any]:
+    """Deduplicate same-env handlers to one runner per env."""
+    seen: set[int] = set()
+    distinct: list[typing.Any] = []
+    for handler in handlers:
+        runner = runners_by_env.get(handler.env)
+        if runner is not None and id(runner) not in seen:
+            seen.add(id(runner))
+            distinct.append(runner)
+    return distinct
+
+
+async def _pump_subscription_to_output(
+    subscription: typing.Any,
+    output: stream_completion.CompletionStream[typing.Any],
+) -> None:
+    """Forward subscription events; intermediate stage never acknowledges."""
+    try:
+        async for event in subscription.stream.events():
+            if isinstance(event, stream_completion.PrefixFence):
+                output.forward(event)
+            else:
+                output.append(event.value)
+    except BaseException as exc:
+        fault: Exception = (
+            exc
+            if isinstance(exc, Exception)
+            else stream_completion.PipelineFailure(exc)
+        )
+        output.abort(fault)
+        raise
+
+
+async def _pump_slot_to_combined(
+    slot: stream_completion.CompletionStream[typing.Any],
+    slot_key: str,
+    aggregator: typing.Any,
+    combined: stream_completion.CompletionStream[typing.Any],
+) -> None:
+    """Forward slot events through aggregation; fences survive suppressed output."""
+    try:
+        async for event in slot.events():
+            if isinstance(event, stream_completion.PrefixFence):
+                combined.forward(event)
+            else:
+                aggregator.on_progress(slot_key, event.value)
+    except BaseException as exc:
+        fault = (
+            exc
+            if isinstance(exc, Exception)
+            else stream_completion.PipelineFailure(exc)
+        )
+        combined.abort(fault)
+        raise
+
+
+async def _forward_combined_to_client(
+    combined: stream_completion.CompletionStream[typing.Any],
+    writer: asyncio.StreamWriter,
+    token: str | int,
+    writer_lock: asyncio.Lock | None = None,
+) -> None:
+    """Final-sink iteration: acknowledge each fence only after drain resumes."""
+    async for value in combined:
+        _notify_client(
+            writer,
+            "actions/progress",
+            {"token": token, "value": value},
+        )
+        if writer_lock is not None:
+            async with writer_lock:
+                await writer.drain()
+        else:
+            await writer.drain()
+
+
 async def _handle_run_action_with_progress(
     params: dict | None,
     ws_context: context.WorkspaceContext,
@@ -672,7 +911,6 @@ async def _handle_run_action_with_progress(
             project_resolution_service,
             run_service,
         )
-        from finecode.wm_server.services.run_service import proxy_utils
 
         try:
             parsed = await _parse_and_validate_run_action_params(params, ws_context)
@@ -688,70 +926,74 @@ async def _handle_run_action_with_progress(
             initialize_all_handlers=True,
         )
 
-        # Subscribe to progress on all runners for this project's action handlers.
-        progress_list: proxy_utils.AsyncList[domain.ProgressRawValue] = (
-            proxy_utils.AsyncList()
-        )
-        progress_tasks: list[asyncio.Task] = []
         runners_by_env = ws_context.ws_projects_extension_runners.get(
             parsed.project.dir_path, {}
         )
-        for handler in parsed.action.handlers:
-            runner = runners_by_env.get(handler.env)
-            if runner is not None:
-                task = asyncio.create_task(
-                    proxy_utils.get_progress(
-                        result_list=progress_list,
-                        progress_token=progress_token,
-                        runner=runner,
-                    )
+        distinct_runners = _distinct_progress_runners(
+            runners_by_env, list(parsed.action.handlers)
+        )
+        combined: stream_completion.CompletionStream[domain.ProgressRawValue] = (
+            stream_completion.CompletionStream()
+        )
+        # Synchronously owned subscriptions: registered before dispatch so
+        # immediate emissions on either channel are captured. The logical
+        # stream stays open across per-invocation drains for later segments.
+        with contextlib.ExitStack() as owned:
+            subscriptions = [
+                owned.enter_context(
+                    runner.stream_registry.subscribe_progress(progress_token)
                 )
-                progress_tasks.append(task)
+                for runner in distinct_runners
+            ]
+            result_box: list[typing.Any] = []
 
-        async def _forward_progress() -> None:
-            try:
-                async for value in progress_list:
-                    logger.trace(
-                        f"runAction: sending progress type={value.get('type')} for token={progress_token}"
+            async def _execute() -> None:
+                executor = run_service.ProjectExecutor(ws_context)
+                try:
+                    result_box.append(
+                        await executor.run_action(
+                            action_source=parsed.action.canonical_source,
+                            params=parsed.action_params,
+                            project_path=parsed.project.dir_path,
+                            run_trigger=parsed.trigger,
+                            dev_env=parsed.dev_env,
+                            result_formats=parsed.result_formats,
+                            initialize_all_handlers=True,
+                            progress_token=progress_token,
+                            # Progress is forwarded to this connection for the
+                            # whole run, so it is just as much the run's origin
+                            # as on the partial-results paths.
+                            origin=elicitation_bridge.RunDispatchOrigin(
+                                connection=writer
+                            ),
+                        )
                     )
-                    _notify_client(
-                        writer,
-                        "actions/progress",
-                        {"token": progress_token, "value": value},
+                finally:
+                    # A received runner outcome already drained its prefix
+                    # through the pumps/sink below; ending lets the pumps and
+                    # sink observe remaining values before the outcome
+                    # surfaces. Subscription streams end here so their pumps
+                    # exit; the logical combined stream stays open across
+                    # per-invocation drains and ends only with the run. A pump
+                    # fault already aborted the stream; end() is a no-op.
+                    for subscription in subscriptions:
+                        subscription.stream.end()
+                    combined.end()
+
+            async with asyncio.TaskGroup() as task_group:
+                for subscription in subscriptions:
+                    _ = task_group.create_task(
+                        _pump_subscription_to_output(subscription, combined)
                     )
-                    await writer.drain()
-            except asyncio.CancelledError:
-                pass
-
-        forward_task = asyncio.create_task(_forward_progress())
-
-        try:
-            executor = run_service.ProjectExecutor(ws_context)
-            result = await executor.run_action(
-                action_source=parsed.action.canonical_source,
-                params=parsed.action_params,
-                project_path=parsed.project.dir_path,
-                run_trigger=parsed.trigger,
-                dev_env=parsed.dev_env,
-                result_formats=parsed.result_formats,
-                initialize_all_handlers=True,
-                progress_token=progress_token,
-                # Progress is forwarded to this connection for the whole run, so
-                # it is just as much the run's origin as on the partial-results
-                # paths: an ER that elicits mid-run has a client to ask.
-                origin=elicitation_bridge.RunDispatchOrigin(connection=writer),
-            )
+                _ = task_group.create_task(
+                    _forward_combined_to_client(combined, writer, progress_token)
+                )
+                _ = task_group.create_task(_execute())
+            result = result_box[0]
             return {
                 "resultByFormat": result.result_by_format,
                 "returnCode": result.return_code,
             }
-        finally:
-            for t in progress_tasks:
-                t.cancel()
-            progress_list.end()
-            await asyncio.gather(*progress_tasks, return_exceptions=True)
-            forward_task.cancel()
-            await asyncio.gather(forward_task, return_exceptions=True)
 
 
 async def _handle_run_action_with_progress_task(
@@ -788,6 +1030,33 @@ async def _handle_run_action_with_progress_task(
         )
         _write_message(writer, _jsonrpc_error(req_id, -32603, msg))
         await writer.drain()
+    except BaseExceptionGroup as exc:
+        # The supervised TaskGroup wraps the executor outcome: a single
+        # runner outcome keeps its existing wrapper code/text (runner-only
+        # stays primary on dual faults).
+        runner_outcome = next(
+            (sub for sub in exc.exceptions if isinstance(sub, ActionRunFailed)),
+            None,
+        )
+        if runner_outcome is None:
+            runner_outcome = next(
+                (
+                    sub
+                    for sub in exc.exceptions
+                    if isinstance(sub, StartingEnvironmentsFailed)
+                ),
+                None,
+            )
+        if runner_outcome is not None:
+            msg = client_message(
+                "FineCode API: error handling actions/run with progress",
+                runner_outcome.message,
+            )
+            _write_message(writer, _jsonrpc_error(req_id, -32603, msg))
+        else:
+            logger.exception("FineCode API: error handling actions/run with progress")
+            _write_message(writer, _jsonrpc_error(req_id, -32603, str(exc)))
+        await writer.drain()
     except Exception as exc:
         logger.exception("FineCode API: error handling actions/run with progress")
         _write_message(writer, _jsonrpc_error(req_id, -32603, str(exc)))
@@ -811,7 +1080,6 @@ async def _handle_run_batch_with_progress(
         project_resolution_service,
         run_service,
     )
-    from finecode.wm_server.services.run_service import proxy_utils
 
     params = params or {}
     with telemetry.attach_incoming_traceparent(params):
@@ -837,16 +1105,24 @@ async def _handle_run_batch_with_progress(
         # One aggregation slot per (project × action) pair.
         # Each slot gets a unique internal progress token sent to its ER.
         slot_count = sum(len(acts) for acts in actions_by_project.values())
-        combined_stream = partial_results_service.ProgressStream()
+        combined_stream: stream_completion.CompletionStream[domain.ProgressRawValue] = (
+            stream_completion.CompletionStream()
+        )
         aggregator = partial_results_service.ProgressAggregator(
             slot_count, combined_stream
         )
 
         # progress_token_by_project[project_path][action_name] = internal_token
         progress_token_by_project: dict[pathlib.Path, dict[str, str]] = {}
-        # slot_lists[slot_key] = AsyncList that get_progress tasks write into
-        slot_lists: dict[str, proxy_utils.AsyncList[domain.ProgressRawValue]] = {}
-        get_progress_tasks: list[asyncio.Task] = []
+        slot_streams: dict[
+            str, stream_completion.CompletionStream[domain.ProgressRawValue]
+        ] = {}
+        # (subscription, slot) pairs for synchronously owned registrations.
+        owned_pairs: list[
+            tuple[
+                typing.Any, stream_completion.CompletionStream[domain.ProgressRawValue]
+            ]
+        ] = []
 
         for project_path, actions_to_run in actions_by_project.items():
             project_def = ws_context.ws_projects[project_path]
@@ -861,85 +1137,89 @@ async def _handle_run_batch_with_progress(
                 internal_token = f"progress-{uuid.uuid4()}"
                 progress_token_by_project[project_path][action_name] = internal_token
                 slot_key = f"{project_def.name}/{action_name}"
+                slot_stream: stream_completion.CompletionStream[
+                    domain.ProgressRawValue
+                ] = stream_completion.CompletionStream()
+                slot_streams[slot_key] = slot_stream
 
-                slot_list: proxy_utils.AsyncList[domain.ProgressRawValue] = (
-                    proxy_utils.AsyncList()
-                )
-                slot_lists[slot_key] = slot_list
-
-                action_def = next(
-                    (a for a in project_def.actions if a.name == action_name), None
-                )
-                if action_def is None:
+        with contextlib.ExitStack() as owned:
+            for project_path, actions_to_run in actions_by_project.items():
+                project_def = ws_context.ws_projects[project_path]
+                if not isinstance(project_def, domain.CollectedProject):
                     continue
-                for handler in action_def.handlers:
-                    runner = runners_by_env.get(handler.env)
-                    if runner is not None:
-                        task = asyncio.create_task(
-                            proxy_utils.get_progress(
-                                result_list=slot_list,
-                                progress_token=internal_token,
-                                runner=runner,
-                            )
+                runners_by_env = ws_context.ws_projects_extension_runners.get(
+                    project_path, {}
+                )
+                for action_name in actions_to_run:
+                    internal_token = progress_token_by_project[project_path][
+                        action_name
+                    ]
+                    slot_key = f"{project_def.name}/{action_name}"
+                    slot_stream = slot_streams[slot_key]
+                    action_def = next(
+                        (a for a in project_def.actions if a.name == action_name), None
+                    )
+                    if action_def is None:
+                        continue
+                    for runner in _distinct_progress_runners(
+                        runners_by_env, list(action_def.handlers)
+                    ):
+                        subscription = owned.enter_context(
+                            runner.stream_registry.subscribe_progress(internal_token)
                         )
-                        get_progress_tasks.append(task)
+                        owned_pairs.append((subscription, slot_stream))
 
-        # One task per slot: reads from slot_list and routes to aggregator
-        aggregator_tasks: list[asyncio.Task] = []
-        for slot_key, slot_list in slot_lists.items():
+            result_box: list[typing.Any] = []
 
-            async def _forward_slot(
-                sl: proxy_utils.AsyncList = slot_list, key: str = slot_key
-            ) -> None:
-                async for value in sl:
-                    aggregator.on_progress(key, value)
-
-            aggregator_tasks.append(asyncio.create_task(_forward_slot()))
-
-        # Forward combined aggregated stream to client
-        async def _forward_to_client() -> None:
-            try:
-                async for value in combined_stream:
-                    logger.trace(
-                        f"runBatch+progress: forwarding type={value.get('type')} token={progress_token}"
+            async def _execute_batch() -> None:
+                workspace_executor = run_service.WorkspaceExecutor(ws_context)
+                try:
+                    result_box.append(
+                        await workspace_executor.run_actions_in_projects(
+                            actions_by_project=actions_by_project,
+                            params=parsed.action_params,
+                            run_trigger=parsed.trigger,
+                            dev_env=parsed.dev_env,
+                            concurrently=parsed.concurrently,
+                            result_formats=parsed.result_formats,
+                            payload_overrides_by_project=parsed.params_by_project
+                            or None,
+                            progress_token_by_project=progress_token_by_project,
+                            # Aggregated progress goes to this connection until
+                            # the batch ends, so it is the origin of every run.
+                            origin=elicitation_bridge.RunDispatchOrigin(
+                                connection=writer
+                            ),
+                        )
                     )
-                    _notify_client(
-                        writer,
-                        "actions/progress",
-                        {"token": progress_token, "value": value},
+                finally:
+                    # Slot/output streams end only after all producer
+                    # discovery/invocations complete; received prefixes already
+                    # drained through the pumps/sink before this return.
+                    # Subscription streams end so their pumps exit; slot and
+                    # combined ends let the remaining stages drain.
+                    for subscription, _slot_stream in owned_pairs:
+                        subscription.stream.end()
+                    for slot_stream in slot_streams.values():
+                        slot_stream.end()
+                    combined_stream.end()
+
+            async with asyncio.TaskGroup() as batch_group:
+                for subscription, slot_stream in owned_pairs:
+                    _ = batch_group.create_task(
+                        _pump_subscription_to_output(subscription, slot_stream)
                     )
-                    await writer.drain()
-            except asyncio.CancelledError:
-                pass
-
-        client_forward_task = asyncio.create_task(_forward_to_client())
-
-        try:
-            workspace_executor = run_service.WorkspaceExecutor(ws_context)
-            result_by_project = await workspace_executor.run_actions_in_projects(
-                actions_by_project=actions_by_project,
-                params=parsed.action_params,
-                run_trigger=parsed.trigger,
-                dev_env=parsed.dev_env,
-                concurrently=parsed.concurrently,
-                result_formats=parsed.result_formats,
-                payload_overrides_by_project=parsed.params_by_project or None,
-                progress_token_by_project=progress_token_by_project,
-                # Aggregated progress goes to this connection until the batch
-                # ends, so it is the origin of every run in the batch.
-                origin=elicitation_bridge.RunDispatchOrigin(connection=writer),
-            )
-        finally:
-            # Cancel get_progress tasks first, then drain slot lists through aggregator,
-            # then signal combined_stream done so client forward task can exit cleanly.
-            for t in get_progress_tasks:
-                t.cancel()
-            await asyncio.gather(*get_progress_tasks, return_exceptions=True)
-            for sl in slot_lists.values():
-                sl.end()
-            await asyncio.gather(*aggregator_tasks, return_exceptions=True)
-            combined_stream.set_done()
-            await asyncio.gather(client_forward_task, return_exceptions=True)
+                for slot_key, slot_stream in slot_streams.items():
+                    _ = batch_group.create_task(
+                        _pump_slot_to_combined(
+                            slot_stream, slot_key, aggregator, combined_stream
+                        )
+                    )
+                _ = batch_group.create_task(
+                    _forward_combined_to_client(combined_stream, writer, progress_token)
+                )
+                _ = batch_group.create_task(_execute_batch())
+            result_by_project = result_box[0]
 
         results, overall_return_code = _build_batch_result(
             result_by_project, name_to_source
@@ -981,6 +1261,35 @@ async def _handle_run_batch_with_progress_task(
             "FineCode API: error handling actions/runBatch with progress", exc.message
         )
         _write_message(writer, _jsonrpc_error(req_id, -32603, msg))
+        await writer.drain()
+    except BaseExceptionGroup as exc:
+        # The supervised TaskGroup wraps the executor outcome: a single
+        # runner outcome keeps its existing wrapper code/text (runner-only
+        # stays primary on dual faults).
+        runner_outcome = next(
+            (sub for sub in exc.exceptions if isinstance(sub, ActionRunFailed)),
+            None,
+        )
+        if runner_outcome is None:
+            runner_outcome = next(
+                (
+                    sub
+                    for sub in exc.exceptions
+                    if isinstance(sub, StartingEnvironmentsFailed)
+                ),
+                None,
+            )
+        if runner_outcome is not None:
+            msg = client_message(
+                "FineCode API: error handling actions/runBatch with progress",
+                runner_outcome.message,
+            )
+            _write_message(writer, _jsonrpc_error(req_id, -32603, msg))
+        else:
+            logger.exception(
+                "FineCode API: error handling actions/runBatch with progress"
+            )
+            _write_message(writer, _jsonrpc_error(req_id, -32603, str(exc)))
         await writer.drain()
     except Exception as exc:
         logger.exception("FineCode API: error handling actions/runBatch with progress")

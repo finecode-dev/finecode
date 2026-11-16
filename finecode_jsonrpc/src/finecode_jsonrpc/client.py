@@ -7,6 +7,7 @@ import contextlib
 import dataclasses
 import enum
 import functools
+import inspect
 import json
 import os
 import re
@@ -58,6 +59,33 @@ class JsonRpcErrorCode:
     METHOD_NOT_FOUND = error_codes.METHOD_NOT_FOUND
     INVALID_PARAMS = error_codes.INVALID_PARAMS
     INTERNAL_ERROR = error_codes.INTERNAL_ERROR
+
+
+_P = typing.ParamSpec("_P")
+
+
+@dataclasses.dataclass
+class ResponseCompletion:
+    """Per-request hook run once when the matching response is dispatched.
+
+    ``capture`` freezes the subscribed prefix before the request future is
+    resolved. A fault inside ``capture`` is recorded on ``error`` without
+    replacing the received runner response/error.
+    """
+
+    capture: collections.abc.Callable[[], None]
+    error: Exception | None = None
+
+
+@dataclasses.dataclass
+class OutputDrain:
+    """Internal outgoing-queue marker proving writer drain of prior bytes.
+
+    Never crosses a socket; resolved by the IO-loop sender after the
+    preceding bytes have been written and drained.
+    """
+
+    completion: concurrent.futures.Future[None]
 
 
 class WriterFromQueue:
@@ -234,6 +262,12 @@ class JsonRpcClient:
 
         self._tracing = tracing
         self.feature_impls: dict[str, collections.abc.Callable] = {}
+        self._sync_feature_impls: dict[
+            str, collections.abc.Callable[[typing.Any], None]
+        ] = {}
+        self._response_completions: dict[str, ResponseCompletion] = {}
+        self._pending_drains: set[concurrent.futures.Future[None]] = set()
+        self._pending_drains_lock: typing.Final = threading.Lock()
 
         # NOTE: reader and writer can be accessed only in IO thread
         self._reader: asyncio.StreamReader | None = None
@@ -248,7 +282,138 @@ class JsonRpcClient:
         # from `message_types` with only a warning (see the notification path below),
         # so the impl never fires. Every `feature(method, ...)` must have a matching
         # entry in the `message_types` map passed to this client.
+        if name in self._sync_feature_impls:
+            raise ValueError(
+                f"Method {name!r} already has a synchronous feature registration"
+            )
         self.feature_impls[name] = impl
+
+    def feature_sync(self, name: str, impl: collections.abc.Callable[_P, None]) -> None:
+        """Register an opt-in synchronous notification handler.
+
+        Runs inline on the dispatching loop without suspension, task
+        scheduling, or user callbacks off-loop. Rejects coroutine and
+        async-generator functions (including callable objects and partials
+        wrapping them) and overlapping ordinary registrations.
+        """
+        if name not in self.message_types:
+            raise ValueError(f"Type for method {name} not found")
+        if name in self.feature_impls:
+            raise ValueError(
+                f"Method {name!r} already has an ordinary feature registration"
+            )
+        if name in self._sync_feature_impls:
+            raise ValueError(
+                f"Method {name!r} already has a synchronous feature registration"
+            )
+        target: typing.Any = impl
+        if isinstance(impl, functools.partial):
+            target = impl.func
+        if (
+            callable(target)
+            and not isinstance(target, type)
+            and not inspect.isfunction(target)
+            and not inspect.ismethod(target)
+            and not isinstance(impl, functools.partial)
+        ):
+            try:
+                candidate = type(target).__call__
+            except AttributeError:
+                candidate = None
+            if inspect.iscoroutinefunction(candidate) or inspect.isasyncgenfunction(
+                candidate
+            ):
+                raise TypeError(f"Synchronous feature {name!r} must not be async")
+        if inspect.iscoroutinefunction(target) or inspect.isasyncgenfunction(target):
+            raise TypeError(f"Synchronous feature {name!r} must not be async")
+        if inspect.iscoroutinefunction(impl) or inspect.isasyncgenfunction(impl):
+            raise TypeError(f"Synchronous feature {name!r} must not be async")
+        self._sync_feature_impls[name] = impl  # type: ignore[assignment]
+
+    def _run_response_capture(self, completion: ResponseCompletion) -> None:
+        """Run a response capture without suspending and record its fault."""
+        try:
+            result = completion.capture()
+        except Exception as error:
+            completion.error = error
+            return
+        if inspect.isawaitable(result):
+            with contextlib.suppress(Exception):
+                if inspect.iscoroutine(result):
+                    result.close()
+                elif inspect.isasyncgen(result):
+                    result.aclose()
+                else:
+                    close = getattr(result, "close", None)
+                    if callable(close):
+                        close()
+            completion.error = TypeError(
+                "Response capture must not return an awaitable"
+            )
+
+    def _fail_drain(
+        self, future: concurrent.futures.Future[None], error: Exception
+    ) -> None:
+        with self._pending_drains_lock:
+            registered = future in self._pending_drains
+            if registered:
+                self._pending_drains.discard(future)
+        if registered and not future.done():
+            with contextlib.suppress(Exception):
+                future.set_exception(error)
+
+    def _fail_all_drains(self, error: Exception) -> None:
+        with self._pending_drains_lock:
+            pending = list(self._pending_drains)
+            self._pending_drains.clear()
+        for future in pending:
+            if not future.done():
+                with contextlib.suppress(Exception):
+                    future.set_exception(error)
+
+    def _resolve_drain(self, marker: OutputDrain) -> None:
+        with self._pending_drains_lock:
+            registered = marker.completion in self._pending_drains
+            if registered:
+                self._pending_drains.discard(marker.completion)
+        if registered and not marker.completion.done():
+            with contextlib.suppress(Exception):
+                marker.completion.set_result(None)
+
+    async def _send_outgoing_loop(self, writer: asyncio.StreamWriter) -> None:
+        """IO-thread sender: write bytes and resolve drain markers in order."""
+        logger.debug("Start sending messages from queue")
+        queue = self.out_message_queue.async_q
+        try:
+            while True:
+                message = await queue.get()
+                try:
+                    if isinstance(message, OutputDrain):
+                        # Preceding bytes were already written and drained, so
+                        # the marker resolves now; later items cannot delay it.
+                        self._resolve_drain(message)
+                        continue
+                    if message == QUEUE_END:
+                        writer.close()
+                        logger.debug("Queue was closed, stop sending")
+                        break
+                    writer.write(message)
+                    await writer.drain()
+                finally:
+                    with contextlib.suppress(Exception):
+                        queue.task_done()
+        except asyncio.CancelledError:
+            self._fail_all_drains(ServerStoppedError("sender cancelled"))
+            raise
+        except Exception as error:
+            self._fail_all_drains(error)
+            raise
+        else:
+            self._fail_all_drains(ServerStoppedError("sender closed"))
+        finally:
+            with contextlib.suppress(Exception):
+                queue.shutdown()
+            logger.debug("End sending messages from queue")
 
     async def start(
         self,
@@ -396,6 +561,9 @@ class JsonRpcClient:
                 fut.set_exception(ServerStoppedError(reason))
                 self._expected_result_type_by_msg_id.pop(msg_id, None)
                 logger.debug(f"Cancelled pending request '{msg_id}': {reason}")
+        # Completions are never run for EOF/timeout/cancellation: drop them.
+        self._response_completions.clear()
+        self._fail_all_drains(ServerStoppedError(reason))
 
     async def _server_process_stop_handler(self):
         """Cleanup handler that runs when the server process managed by the client exits"""
@@ -519,6 +687,80 @@ class JsonRpcClient:
         if self._tracing is not None:
             self._tracing.notification_sent(method)
 
+    async def notify_and_drain(
+        self, method: str, params: typing.Any | None = None
+    ) -> None:
+        """Send a notification and wait until its bytes are written and drained.
+
+        Reuses the ``notify`` serialization/tracing/framing behavior but
+        enqueues strictly (queue closure is raised, not swallowed) and
+        resolves only after the IO-loop sender drains all preceding bytes.
+        """
+        logger.debug(f"Sending notification with drain: '{method}' {params}")
+        try:
+            notification_params_type = self.message_types[method][1]
+        except KeyError as error:
+            raise ValueError(
+                f"Type of notification params for {method} not found"
+            ) from error
+        if notification_params_type is not None:
+            notification_params_dict = _converter.unstructure(params)
+        else:
+            notification_params_dict = None
+        notification_dict: dict[str, typing.Any] = {
+            "method": method,
+            "params": notification_params_dict,
+            "jsonrpc": self.VERSION,
+        }
+        if self._tracing is not None:
+            traceparent = self._tracing.get_traceparent()
+            if traceparent is not None:
+                notification_dict["_meta"] = {"traceparent": traceparent}
+        try:
+            notification_str = json.dumps(notification_dict)
+        except (TypeError, ValueError) as error:
+            raise InvalidResponse(
+                f"Failed to serialize notification: {error}"
+            ) from error
+        logger.trace(notification_str)
+        header = (
+            f"Content-Length: {len(notification_str)}\r\n"
+            f"Content-Type: {self.CONTENT_TYPE}; charset={self.CHARSET}\r\n\r\n"
+        )
+        payload = (header + notification_str).encode(self.CHARSET)
+        drain: concurrent.futures.Future[None] = concurrent.futures.Future()
+        marker = OutputDrain(completion=drain)
+        with self._pending_drains_lock:
+            self._pending_drains.add(drain)
+        try:
+            # No suspension between the two enqueues: the marker always
+            # directly follows its bytes so later items cannot extend the fence.
+            self.out_message_queue.sync_q.put(payload)
+            self.out_message_queue.sync_q.put(marker)
+        except Exception as error:
+            self._fail_drain(
+                drain,
+                error
+                if isinstance(error, Exception)
+                else ServerStoppedError(str(error)),
+            )
+            raise
+        if self._tracing is not None:
+            self._tracing.notification_sent(method)
+        loop = asyncio.get_running_loop()
+        try:
+            await asyncio.wrap_future(drain, loop=loop)
+        except asyncio.CancelledError:
+            with self._pending_drains_lock:
+                self._pending_drains.discard(drain)
+            if not drain.done():
+                _ = drain.cancel()
+            raise
+        except Exception:
+            with self._pending_drains_lock:
+                self._pending_drains.discard(drain)
+            raise
+
     def send_request_sync(
         self,
         method: str,
@@ -591,6 +833,8 @@ class JsonRpcClient:
         method: str,
         params: typing.Any | None = None,
         timeout: float | None = None,
+        *,
+        on_response: ResponseCompletion | None = None,
     ) -> typing.Any:
         if self.channel_failed:
             raise ServerStoppedError(
@@ -629,24 +873,30 @@ class JsonRpcClient:
                 if traceparent is not None:
                     message_dict["_meta"] = {"traceparent": traceparent}
 
-            try:
-                request_str = json.dumps(message_dict)
-            except (TypeError, ValueError) as error:
-                raise InvalidResponse(
-                    f"Failed to serialize request: {error}"
-                ) from error
-
-            future = asyncio.Future()
+            future: asyncio.Future[typing.Any] = asyncio.Future()
             self._async_request_futures[msg_id] = future
+            if on_response is not None:
+                self._response_completions[msg_id] = on_response
 
             try:
-                self._expected_result_type_by_msg_id[msg_id] = self.message_types[
-                    method
-                ][2]
-            except KeyError as error:
-                raise ValueError(f"Message type not found for {method}") from error
-
-            self._send_data(request_str)
+                try:
+                    self._expected_result_type_by_msg_id[msg_id] = self.message_types[
+                        method
+                    ][2]
+                except KeyError as error:
+                    raise ValueError(f"Message type not found for {method}") from error
+                try:
+                    request_str = json.dumps(message_dict)
+                except (TypeError, ValueError) as error:
+                    raise InvalidResponse(
+                        f"Failed to serialize request: {error}"
+                    ) from error
+                self._send_data(request_str)
+            except Exception:
+                _ = self._async_request_futures.pop(msg_id, None)
+                _ = self._expected_result_type_by_msg_id.pop(msg_id, None)
+                _ = self._response_completions.pop(msg_id, None)
+                raise
 
             try:
                 response = await asyncio.wait_for(
@@ -664,8 +914,9 @@ class JsonRpcClient:
             except asyncio.CancelledError as error:
                 raise RequestCancelledError(request_id=msg_id) from error
             finally:
-                self._async_request_futures.pop(msg_id, None)
-                self._expected_result_type_by_msg_id.pop(msg_id, None)
+                _ = self._async_request_futures.pop(msg_id, None)
+                _ = self._expected_result_type_by_msg_id.pop(msg_id, None)
+                _ = self._response_completions.pop(msg_id, None)
 
     async def process_incoming_messages(self) -> None:
         logger.debug(f"Start processing messages from server {self.readable_id}")
@@ -720,6 +971,9 @@ class JsonRpcClient:
                         f"Got error on request {message_id}, but no response was expected"
                     )
                     return
+                completion = self._response_completions.pop(message_id, None)
+                if completion is not None:
+                    self._run_response_capture(completion)
 
                 try:
                     response_error = _converter.structure(
@@ -820,6 +1074,9 @@ class JsonRpcClient:
                         f"Got response to {message_id}, but no response was expected"
                     )
                     return
+                completion = self._response_completions.pop(message_id, None)
+                if completion is not None:
+                    self._run_response_capture(completion)
 
                 result_type = self._expected_result_type_by_msg_id[message_id]
                 self._expected_result_type_by_msg_id.pop(message_id, None)
@@ -858,7 +1115,10 @@ class JsonRpcClient:
                 return
 
             method = message["method"]
-            if method not in self.feature_impls:
+            if (
+                method not in self.feature_impls
+                and method not in self._sync_feature_impls
+            ):
                 logger.warning(
                     f"Got notification {method}, but it is not supported | {self.readable_id}"
                 )
@@ -881,6 +1141,30 @@ class JsonRpcClient:
             if self._tracing is not None:
                 traceparent = (message.get("_meta") or {}).get("traceparent")
                 self._tracing.notification_received(method, traceparent)
+
+            sync_impl = self._sync_feature_impls.get(method)
+            if sync_impl is not None:
+                try:
+                    sync_result = sync_impl(notification.params)
+                except Exception as sync_error:
+                    logger.warning(
+                        f"Error in synchronous notification {method}: {sync_error} | {self.readable_id}"
+                    )
+                    return
+                if inspect.isawaitable(sync_result):
+                    with contextlib.suppress(Exception):
+                        if inspect.iscoroutine(sync_result):
+                            sync_result.close()
+                        elif inspect.isasyncgen(sync_result):
+                            sync_result.aclose()
+                        else:
+                            close = getattr(sync_result, "close", None)
+                            if callable(close):
+                                close()
+                    logger.warning(
+                        f"Synchronous notification {method} returned an awaitable; disposed | {self.readable_id}"
+                    )
+                return
 
             impl = self.feature_impls[method]
             new_task = asyncio.create_task(
@@ -1047,11 +1331,7 @@ class JsonRpcClient:
         )
         self._async_tasks_in_io_thread.append(task)
 
-        task = asyncio.create_task(
-            send_messages_from_queue(
-                queue=self.out_message_queue.async_q, writer=self._writer
-            )
-        )
+        task = asyncio.create_task(self._send_outgoing_loop(self._writer))
         task.add_done_callback(
             functools.partial(
                 task_done_log_callback,
@@ -1319,6 +1599,11 @@ async def send_messages_from_queue(
     try:
         while True:
             message = await queue.get()
+            if isinstance(message, OutputDrain):
+                if not message.completion.done():
+                    with contextlib.suppress(Exception):
+                        message.completion.set_result(None)
+                continue
             if message == QUEUE_END:
                 writer.close()
                 logger.debug("Queue was closed, stop sending")

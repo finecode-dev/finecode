@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 from finecode_extension_api import code_action
+from finecode_extension_api.interfaces import iprojectactionrunner
 
 from finecode_extension_runner._services import run_action as run_action_service
 from finecode_extension_runner.testing import handler_test_session
@@ -254,7 +255,7 @@ async def test_task_group_crash_in_handler_surfaces_the_real_exception(
     """
     actions = _single_handler_action("boom_action", _TaskGroupUnicodeErrorHandler)
     async with handler_test_session(project_dir=tmp_path, actions=actions) as session:
-        with pytest.raises(run_action_service.ActionFailedException) as exc_info:
+        with pytest.raises(iprojectactionrunner.ActionRunFailed) as exc_info:
             await session.run_action("boom_action")
 
     error = _decode_error()

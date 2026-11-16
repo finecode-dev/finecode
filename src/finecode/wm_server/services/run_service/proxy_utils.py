@@ -20,6 +20,7 @@ from finecode.wm_server import (
 )
 from finecode.wm_server.config import interpreter_matrix
 from finecode.wm_server.runner import elicitation_bridge, runner_client, runner_manager
+from finecode.wm_server.runner import stream_completion as runner_streams
 from finecode.wm_server.runner.runner_client import RunResultFormat  # reexport
 from finecode.wm_server.services import (
     action_meta_cache,
@@ -27,8 +28,10 @@ from finecode.wm_server.services import (
     project_resolution_service,
     runner_start_service,
 )
+from finecode.wm_server.utils import stream_completion as completion_streams
 
 from . import matrix_runner
+from .delegated_progress import is_owed_progress_value
 from .exceptions import (
     ActionCancelledError,
     ActionRunFailed,
@@ -173,19 +176,15 @@ class AsyncListIterator(collections.abc.AsyncIterator[T]):
         return self
 
     async def __anext__(self) -> T:
-        if len(self.async_list.data) <= self.current_index:
+        # Only an explicit end() stops iteration. A wake without unread data
+        # (a stale signal from an item already read, or a change consumed by
+        # another reader) waits again. Data is checked before `ended` so items
+        # appended just before end() are still drained.
+        while len(self.async_list.data) <= self.current_index:
             if self.async_list.ended:
-                # already ended
                 raise StopAsyncIteration()
-
-            # not ended yet, wait for the next change
-            await self.async_list.change_event.wait()
             self.async_list.change_event.clear()
-            # Check data BEFORE checking ended: items may have been appended
-            # just before end() was called but after we started waiting. If we
-            # checked ended first we would silently drop those items.
-            if len(self.async_list.data) <= self.current_index:
-                raise StopAsyncIteration()
+            await self.async_list.change_event.wait()
 
         self.current_index += 1
         return self.async_list.data[self.current_index - 1]
@@ -202,11 +201,18 @@ async def run_action_and_notify(
     result_formats: list[runner_client.RunResultFormat] | None = None,
     progress_token: int | str | None = None,
     caller_kwargs: dict | None = None,
+    *,
+    orchestration_depth: int,
+    wal_writer: wal.WalWriter | None,
 ) -> runner_client.RunActionResponse:
     options: dict[str, typing.Any] = {
         "partialResultToken": partial_result_token,
         "runId": wal_run_id,
-        "meta": {"trigger": run_trigger.value, "devEnv": dev_env.value},
+        "meta": {
+            "trigger": run_trigger.value,
+            "devEnv": dev_env.value,
+            "orchestrationDepth": orchestration_depth,
+        },
     }
     if progress_token is not None:
         options["progressToken"] = progress_token
@@ -217,11 +223,61 @@ async def run_action_and_notify(
     logger.trace(
         f"run_action_and_notify: sending to runner {runner.readable_id}, action={action_name}, token={partial_result_token}, options_keys={list(options.keys())}"
     )
-    response = await run_action_in_runner(
+    wal.emit_run_event(
+        wal_writer,
+        event_type=wal.WalEventType.RUN_DISPATCHED,
+        wal_run_id=wal_run_id,
         action_name=action_name,
-        params=params,
-        runner=runner,
-        options=options,
+        project_path=runner.working_dir_path,
+        run_trigger=run_trigger.value,
+        dev_env=dev_env.value,
+        payload=wal.RunDispatchedPayload(
+            runner_id=runner.readable_id,
+            env_name=runner.env_name,
+        ),
+    )
+    try:
+        response = await run_action_in_runner(
+            action_name=action_name,
+            params=params,
+            runner=runner,
+            options=options,
+        )
+    except ActionCancelledError as exc:
+        wal.emit_run_event(
+            wal_writer,
+            event_type=wal.WalEventType.RUN_FAILED,
+            wal_run_id=wal_run_id,
+            action_name=action_name,
+            project_path=runner.working_dir_path,
+            run_trigger=run_trigger.value,
+            dev_env=dev_env.value,
+            payload=wal.RunFailedPayload(
+                error=f"cancelled: {exc.message}", env_name=runner.env_name
+            ),
+        )
+        raise
+    except ActionRunFailed as exc:
+        wal.emit_run_event(
+            wal_writer,
+            event_type=wal.WalEventType.RUN_FAILED,
+            wal_run_id=wal_run_id,
+            action_name=action_name,
+            project_path=runner.working_dir_path,
+            run_trigger=run_trigger.value,
+            dev_env=dev_env.value,
+            payload=wal.RunFailedPayload(error=exc.message, env_name=runner.env_name),
+        )
+        raise
+    wal.emit_run_event(
+        wal_writer,
+        event_type=wal.WalEventType.RUN_COMPLETED,
+        wal_run_id=wal_run_id,
+        action_name=action_name,
+        project_path=runner.working_dir_path,
+        run_trigger=run_trigger.value,
+        dev_env=dev_env.value,
+        payload=wal.RunCompletedPayload(return_code=response.return_code),
     )
     logger.trace(
         f"run_action_and_notify: got response from runner {runner.readable_id}, return_code={response.return_code}, result_formats={list(response.result_by_format.keys())}"
@@ -230,15 +286,18 @@ async def run_action_and_notify(
 
 
 async def get_partial_results(
-    result_list: AsyncList,
+    result_list: AsyncList[domain.PartialResultRawValue],
     partial_result_token: int | str,
     runner: runner_client.ExtensionRunnerInfo,
+    *,
+    subscribed: asyncio.Event,
 ) -> None:
     try:
         logger.trace(
             f"get_partial_results: listening on runner {runner.readable_id} for token={partial_result_token}"
         )
         with runner.partial_results.iterator() as iterator:
+            subscribed.set()
             async for partial_result in iterator:
                 logger.trace(
                     f"get_partial_results: received partial from {runner.readable_id}, result_token={partial_result.token}, our_token={partial_result_token}, match={partial_result.token == partial_result_token}"
@@ -281,18 +340,50 @@ async def get_progress(
         )
 
 
+async def _relay_subscription(
+    subscription: runner_streams.StreamSubscription[T],
+    output: completion_streams.CompletionStream[T],
+) -> None:
+    try:
+        async for event in subscription.stream.events():
+            if isinstance(event, completion_streams.PrefixFence):
+                output.forward(event)
+            else:
+                output.append(event.value)
+    except BaseException as exc:
+        subscription.stream.abort(
+            exc
+            if isinstance(exc, completion_streams.PipelineFailure)
+            else completion_streams.PipelineFailure(exc)
+        )
+        raise
+
+
+def _pipeline_cause(
+    error: BaseException,
+) -> completion_streams.PipelineFailure | None:
+    current: BaseException | None = error
+    while current is not None:
+        if isinstance(current, completion_streams.PipelineFailure):
+            return current
+        current = current.__cause__
+    return None
+
+
 class RunWithPartialResultsContext:
     """Holds both the partial results async iterable and the final runner responses.
 
     ``partials`` is available immediately for iteration.  ``responses`` is
-    populated after the context manager exits (i.e. after all runner tasks
-    complete).  ``progress`` carries progress notifications (begin/report/end).
+    populated once every producer completes, before the shared outputs end,
+    and retained after the context manager exits.  ``progress`` carries
+    progress notifications (begin/report/end).
     """
 
     def __init__(
         self,
-        partials: AsyncList[domain.PartialResultRawValue],
-        progress: AsyncList[domain.ProgressRawValue] | None = None,
+        partials: completion_streams.CompletionStream[domain.PartialResultRawValue],
+        progress: completion_streams.CompletionStream[domain.ProgressRawValue]
+        | None = None,
     ) -> None:
         self.partials = partials
         self.progress = progress
@@ -317,7 +408,10 @@ async def run_with_partial_results(
     caller_kwargs: dict | None = None,
     interpreter: interpreter_matrix.Interpreter | None = None,
     *,
+    orchestration_depth: int = 0,
+    wal_writer: wal.WalWriter | None = None,
     origin: elicitation_bridge.RunDispatchOrigin | None,
+    delegated_progress_limit: int | None = None,
 ) -> collections.abc.AsyncIterator[RunWithPartialResultsContext]:
     logger.trace(f"Run {action_name} in project {project_dir_path}")
     wal_run_id = wal.new_wal_run_id()
@@ -327,6 +421,16 @@ async def run_with_partial_results(
             telemetry.action_run_span(
                 action_name, project_dir_path, wal_run_id, dev_env=dev_env.value
             )
+        )
+        wal.emit_run_event(
+            wal_writer,
+            event_type=wal.WalEventType.RUN_ACCEPTED,
+            wal_run_id=wal_run_id,
+            action_name=action_name,
+            project_path=project_dir_path,
+            run_trigger=run_trigger.value,
+            dev_env=dev_env.value,
+            payload=wal.RunAcceptedPayload(params_hash=wal.params_hash(params)),
         )
         # Registered for the whole streaming run, not just its dispatch: this is
         # the path every editor-driven lint, format and diagnostic takes, and a
@@ -342,77 +446,88 @@ async def run_with_partial_results(
                 origin=origin,
             )
         )
-        result: AsyncList[domain.PartialResultRawValue] = AsyncList()
-        progress_result: AsyncList[domain.ProgressRawValue] | None = None
+        result: completion_streams.CompletionStream[domain.PartialResultRawValue] = (
+            completion_streams.CompletionStream()
+        )
+        progress_result: (
+            completion_streams.CompletionStream[domain.ProgressRawValue] | None
+        ) = None
         if progress_token is not None:
-            progress_result = AsyncList()
+            if delegated_progress_limit is not None:
+                progress_result = completion_streams.BoundedProgressStream(
+                    limit=delegated_progress_limit,
+                    protect=is_owed_progress_value,
+                )
+            else:
+                progress_result = completion_streams.CompletionStream()
         ctx = RunWithPartialResultsContext(partials=result, progress=progress_result)
         project = ws_context.ws_projects[project_dir_path]
-        try:
-            action_tasks: list[asyncio.Task] = []
-            async with asyncio.TaskGroup() as tg:
-                action = next(
-                    action for action in project.actions if action.name == action_name
-                )
-                # Variant scoping for matrixed actions on the streaming path is
-                # handled by `matrix_streaming`, one layer above: it calls this
-                # function once per interpreter, passing `interpreter=` to restrict
-                # dispatch to that variant's handlers. `interpreter=None` (the
-                # default) reproduces the pre-existing, non-matrixed behaviour
-                # exactly — all of the action's handlers, dispatched to every env
-                # they declare.
-                handlers = action.handlers
-                if interpreter is not None:
-                    handlers = [
-                        handler
-                        for handler in action.handlers
-                        if handler.interpreter == interpreter.canonical
-                    ]
-                action_envs = ordered_set.OrderedSet(
-                    [handler.env for handler in handlers]
-                )
-                if not action_envs:
-                    await user_messages.warning(
-                        f"Action '{action_name}' has no handlers configured in project"
-                        f" '{project.dir_path}'. No tasks will run."
-                    )
-                    result.end()
-                    if progress_result is not None:
-                        progress_result.end()
-                for env_name in action_envs:
-                    try:
-                        runner = await runner_start_service.get_or_start_runner_with_auto_prepare(
-                            project_def=project,
-                            env_name=env_name,
-                            ws_context=ws_context,
-                            initialize_all_handlers=initialize_all_handlers,
-                            action_names_to_initialize=[action_name],
-                        )
-                    except runner_manager.RunnerFailedToStart as exception:
-                        raise ActionRunFailed(
-                            f"Runner {env_name} in project {project.dir_path} failed: {exception.message}"
-                        ) from exception
+        action = next(
+            action for action in project.actions if action.name == action_name
+        )
+        # Variant scoping for matrixed actions on the streaming path is
+        # handled by `matrix_streaming`, one layer above: it calls this
+        # function once per interpreter, passing `interpreter=` to restrict
+        # dispatch to that variant's handlers. `interpreter=None` (the
+        # default) reproduces the pre-existing, non-matrixed behaviour
+        # exactly — all of the action's handlers, dispatched to every env
+        # they declare.
+        handlers = action.handlers
+        if interpreter is not None:
+            handlers = [
+                handler
+                for handler in action.handlers
+                if handler.interpreter == interpreter.canonical
+            ]
+        action_envs = ordered_set.OrderedSet([handler.env for handler in handlers])
+        if not action_envs:
+            await user_messages.warning(
+                f"Action '{action_name}' has no handlers configured in project"
+                f" '{project.dir_path}'. No tasks will run."
+            )
+            result.end()
+            if progress_result is not None:
+                progress_result.end()
+            yield ctx
+        else:
+            slots: list[runner_client.RunActionResponse | None] = [None] * len(
+                action_envs
+            )
+            failures: list[BaseException] = []
+            discovery_halted = asyncio.Event()
 
-                    runner_partial_results_task = tg.create_task(
-                        get_partial_results(
-                            result_list=result,
-                            partial_result_token=partial_result_token,
-                            runner=runner,
-                        )
+            async def _produce(
+                slot: int, runner: runner_client.ExtensionRunnerInfo
+            ) -> None:
+                with contextlib.ExitStack() as owned:
+                    partial_subscription = owned.enter_context(
+                        runner.stream_registry.subscribe_partial(partial_result_token)
                     )
-
-                    runner_progress_task: asyncio.Task | None = None
+                    progress_subscription: (
+                        runner_streams.StreamSubscription[domain.ProgressRawValue]
+                        | None
+                    ) = None
                     if progress_token is not None and progress_result is not None:
-                        runner_progress_task = tg.create_task(
-                            get_progress(
-                                result_list=progress_result,
-                                progress_token=progress_token,
-                                runner=runner,
+                        progress_subscription = owned.enter_context(
+                            runner.stream_registry.subscribe_progress(progress_token)
+                        )
+                    relay_tasks: list[asyncio.Task[None]] = [
+                        asyncio.ensure_future(
+                            _relay_subscription(partial_subscription, result)
+                        )
+                    ]
+                    if progress_subscription is not None:
+                        assert progress_result is not None
+                        relay_tasks.append(
+                            asyncio.ensure_future(
+                                _relay_subscription(
+                                    progress_subscription, progress_result
+                                )
                             )
                         )
-
-                    action_task = tg.create_task(
-                        run_action_and_notify(
+                    pipeline_error: BaseException | None = None
+                    try:
+                        slots[slot] = await run_action_and_notify(
                             action_name=action_name,
                             params=params,
                             partial_result_token=partial_result_token,
@@ -423,48 +538,151 @@ async def run_with_partial_results(
                             result_formats=result_formats,
                             progress_token=progress_token,
                             caller_kwargs=caller_kwargs,
+                            orchestration_depth=orchestration_depth,
+                            wal_writer=wal_writer,
                         )
-                    )
-
-                    def _make_cleanup(
-                        partial_task: asyncio.Task,
-                        prog_task: asyncio.Task | None,
-                    ) -> typing.Callable[[asyncio.Future], None]:
-                        def _cleanup(_fut: asyncio.Future) -> None:
-                            logger.trace(
-                                f"run_action_and_notify: ending result_list, cancelling partial_results_task for token={partial_result_token}"
+                    except Exception as exception:
+                        failures.append(exception)
+                        pipeline_error = _pipeline_cause(exception)
+                    finally:
+                        partial_subscription.stream.end()
+                        if progress_subscription is not None:
+                            progress_subscription.stream.end()
+                        for outcome in await asyncio.gather(
+                            *relay_tasks, return_exceptions=True
+                        ):
+                            if isinstance(outcome, Exception):
+                                failures.append(outcome)
+                                if pipeline_error is None:
+                                    pipeline_error = outcome
+                        if pipeline_error is not None:
+                            fault = (
+                                pipeline_error
+                                if isinstance(
+                                    pipeline_error,
+                                    completion_streams.PipelineFailure,
+                                )
+                                else completion_streams.PipelineFailure(pipeline_error)
                             )
-                            result.end()
-                            partial_task.cancel("Got final result")
+                            discovery_halted.set()
+                            for subscription in (
+                                partial_subscription,
+                                progress_subscription,
+                            ):
+                                if (
+                                    subscription is not None
+                                    and not subscription.failure.done()
+                                ):
+                                    subscription.failure.set_result(fault)
+                            result.abort(fault)
                             if progress_result is not None:
-                                progress_result.end()
-                            if prog_task is not None:
-                                prog_task.cancel("Got final result")
+                                progress_result.abort(fault)
 
-                        return _cleanup
+            async def _coordinate() -> None:
+                producer_tasks: list[asyncio.Task[None]] = []
+                try:
+                    try:
+                        for index, env_name in enumerate(action_envs):
+                            if discovery_halted.is_set():
+                                break
+                            wal.emit_run_event(
+                                wal_writer,
+                                event_type=wal.WalEventType.RUNNER_SELECTED,
+                                wal_run_id=wal_run_id,
+                                action_name=action_name,
+                                project_path=project.dir_path,
+                                run_trigger=run_trigger.value,
+                                dev_env=dev_env.value,
+                                payload=wal.RunnerSelectedPayload(env_name=env_name),
+                            )
+                            try:
+                                runner = await runner_start_service.get_or_start_runner_with_auto_prepare(
+                                    project_def=project,
+                                    env_name=env_name,
+                                    ws_context=ws_context,
+                                    initialize_all_handlers=initialize_all_handlers,
+                                    action_names_to_initialize=[action_name],
+                                )
+                            except runner_manager.RunnerFailedToStart as exception:
+                                raise ActionRunFailed(
+                                    f"Runner {env_name} in project {project.dir_path} failed: {exception.message}"
+                                ) from exception
+                            if discovery_halted.is_set():
+                                break
+                            producer_tasks.append(
+                                asyncio.ensure_future(_produce(index, runner))
+                            )
+                    except Exception as exception:
+                        failures.append(exception)
+                    if producer_tasks:
+                        await asyncio.gather(*producer_tasks)
+                finally:
+                    for task in producer_tasks:
+                        if not task.done():
+                            _ = task.cancel("Coordinator exiting")
+                    if producer_tasks:
+                        with contextlib.suppress(asyncio.CancelledError):
+                            await asyncio.gather(
+                                *producer_tasks, return_exceptions=True
+                            )
+                    ctx.responses.extend(slot for slot in slots if slot is not None)
+                    result.end()
+                    if progress_result is not None:
+                        progress_result.end()
 
-                    action_task.add_done_callback(
-                        _make_cleanup(runner_partial_results_task, runner_progress_task)
-                    )
-                    action_tasks.append(action_task)
+            async def _finalize(
+                tracked: asyncio.Task[None],
+            ) -> BaseException | None:
+                cancelled_by_us = False
+                if not tracked.done():
+                    _ = tracked.cancel("Consumer exited")
+                    cancelled_by_us = True
+                outcomes = await asyncio.gather(tracked, return_exceptions=True)
+                outcome = outcomes[0] if outcomes else None
+                if cancelled_by_us and isinstance(outcome, asyncio.CancelledError):
+                    # Teardown cancel of a still-running coordinator carries no
+                    # signal itself. Real faults are already in `failures` or
+                    # consumer errors; a coordinator that already finished
+                    # cancelled still reports its own interruption below.
+                    return None
+                return outcome if isinstance(outcome, BaseException) else None
 
+            coordinator = asyncio.ensure_future(_coordinate())
+            consumer_error: BaseException | None = None
+            try:
                 yield ctx
-            # TaskGroup exited — all tasks completed, collect final responses
-            for task in action_tasks:
-                ctx.responses.append(task.result())
-        except ExceptionGroup as eg:
-            errors: list[str] = []
-            for exception in eg.exceptions:
-                if isinstance(exception, ActionRunFailed):
-                    errors.append(exception.message)
-                else:
-                    errors.append(str(exception))
-                    logger.error("Unexpected exception:")
-                    logger.exception(exception)
-            errors_str = ", ".join(errors)
-            raise ActionRunFailed(
-                f"Run of {action_name} in {project.dir_path} failed: {errors_str}. See logs for more details"
-            ) from eg
+            except BaseException as exc:
+                consumer_error = exc
+            finalizer = asyncio.ensure_future(_finalize(coordinator))
+            first_interruption: asyncio.CancelledError | None = None
+            while True:
+                try:
+                    await asyncio.shield(finalizer)
+                    break
+                except asyncio.CancelledError as exc:
+                    if first_interruption is None:
+                        first_interruption = exc
+            if consumer_error is not None:
+                raise consumer_error
+            if first_interruption is not None:
+                raise first_interruption
+            coordinator_outcome = finalizer.result()
+            if coordinator_outcome is not None:
+                raise coordinator_outcome
+            if failures:
+                messages: list[str] = []
+                for exception in failures:
+                    if isinstance(exception, ActionRunFailed):
+                        messages.append(exception.message)
+                    else:
+                        messages.append(str(exception))
+                        logger.error("Unexpected exception:")
+                        logger.exception(exception)
+                raise ActionRunFailed(
+                    f"Run of {action_name} in {project.dir_path} failed: "
+                    + ", ".join(messages)
+                    + ". See logs for more details"
+                ) from failures[0]
 
 
 async def find_all_projects_with_action(

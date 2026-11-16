@@ -63,6 +63,20 @@ class RunDispatchHandlers(typing.Protocol):
             ConfigurationError: the calling project has no valid config.
         """
 
+    async def release_delegated_call(
+        self,
+        runner: ExtensionRunnerInfo,
+        params: _internal_client_types.ReleaseDelegatedCallParams,
+        ws_context: context.WorkspaceContext,
+    ) -> _internal_client_types.ReleaseDelegatedCallResult:
+        """Release a delegated call the parent closed early.
+
+        Drops that call's forwarding state before replying, so
+        no further ``$/progress`` reaches the parent for it. The child WM run
+        continues and its own subscriptions drain to a discarding sink until
+        it ends. Releasing an unregistered token replies ``{}`` with no effect.
+        """
+
     async def list_workspace_actions(
         self, ws_context: context.WorkspaceContext
     ) -> dict:

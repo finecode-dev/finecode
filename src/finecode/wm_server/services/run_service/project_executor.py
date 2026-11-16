@@ -122,6 +122,7 @@ class ProjectExecutor:
         caller_kwargs: dict | None = None,
         *,
         origin: elicitation_bridge.RunDispatchOrigin | None,
+        delegated_progress_limit: int | None = None,
     ) -> collections.abc.AsyncIterator[proxy_utils.RunWithPartialResultsContext]:
         if orchestration_depth >= policy.max_recursion_depth:
             raise ActionRunFailed(
@@ -146,6 +147,9 @@ class ProjectExecutor:
             result_formats=result_formats,
             progress_token=progress_token,
             caller_kwargs=caller_kwargs,
+            orchestration_depth=orchestration_depth + 1,
+            wal_writer=self._ws_context.wal_writer,
             origin=origin,
+            delegated_progress_limit=delegated_progress_limit,
         ) as ctx:
             yield ctx
