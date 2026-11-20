@@ -59,6 +59,7 @@ def _handler_with(**config: Any) -> CodexAgentHandler:
     handler = CodexAgentHandler.__new__(CodexAgentHandler)
     defaults: dict[str, Any] = {
         "model": None,
+        "thinking": None,
         "sandbox_mode": CodexSandboxMode.READ_ONLY,
         "skip_git_repo_check": False,
         "settle_timeout_sec": 900.0,
@@ -105,6 +106,57 @@ def test_empty_profile_name_resolves() -> None:
     settings = handler._resolve("")
     assert not isinstance(settings, str)
     assert settings.model == "m2"
+
+
+def test_profile_thinking_overrides_only_when_set() -> None:
+    handler = _handler_with(
+        thinking="medium",
+        profiles={
+            "set": CodexAgentProfile(thinking="high"),
+            "inherit": CodexAgentProfile(model="m2"),
+        },
+    )
+    top = handler._resolve(None)
+    overridden = handler._resolve("set")
+    inherited = handler._resolve("inherit")
+    assert not isinstance(top, str)
+    assert not isinstance(overridden, str)
+    assert not isinstance(inherited, str)
+    assert top.thinking == "medium"
+    assert overridden.thinking == "high"
+    assert inherited.thinking == "medium"
+
+
+def test_build_command_passes_thinking_as_reasoning_effort_config() -> None:
+    settings = codex_agent_handler._CodexRunSettings(
+        model="m", thinking="high", settle_timeout_sec=900.0
+    )
+    argv = _handler_with()._build_command(settings, pathlib.Path("/tmp/a.txt"), None)
+    assert argv[argv.index("--config") + 1] == 'model_reasoning_effort="high"'
+
+
+def test_build_command_omits_thinking_config_when_unset() -> None:
+    settings = codex_agent_handler._CodexRunSettings(
+        model="m", thinking=None, settle_timeout_sec=900.0
+    )
+    argv = _handler_with()._build_command(settings, pathlib.Path("/tmp/a.txt"), None)
+    assert "--config" not in argv
+
+
+def test_continuation_command_carries_thinking_after_resume() -> None:
+    ref = AgentSessionRef(
+        backend=AgentBackend.CODEX,
+        session_id=MAIN_THREAD_ID,
+        project_dir=ResourceUri("file:///ws/proj"),
+    )
+    settings = codex_agent_handler._CodexRunSettings(
+        model="m", thinking="xhigh", settle_timeout_sec=900.0
+    )
+    argv = _handler_with()._build_command(
+        settings, pathlib.Path("/tmp/a.txt"), None, continue_session=ref
+    )
+    assert argv.index("--config") > argv.index("resume")
+    assert argv[argv.index("--config") + 1] == 'model_reasoning_effort="xhigh"'
 
 
 @pytest.mark.parametrize("timeout", [0.0, -1.0, math.inf, math.nan])
@@ -178,7 +230,7 @@ async def test_unknown_profile_fails_before_spawning() -> None:
 
 def test_build_command_has_fixed_policy_flags_and_stdin_prompt() -> None:
     settings = codex_agent_handler._CodexRunSettings(
-        model=None, settle_timeout_sec=900.0
+        model=None, thinking=None, settle_timeout_sec=900.0
     )
     answer = pathlib.Path("/tmp/answer.txt")
     argv = _handler_with()._build_command(settings, answer, None)
@@ -202,7 +254,7 @@ def test_build_command_has_fixed_policy_flags_and_stdin_prompt() -> None:
 
 def test_build_command_carries_model_git_override_and_schema() -> None:
     settings = codex_agent_handler._CodexRunSettings(
-        model="gpt-5", settle_timeout_sec=900.0
+        model="gpt-5", thinking=None, settle_timeout_sec=900.0
     )
     answer = pathlib.Path("/tmp/answer.txt")
     schema = pathlib.Path("/tmp/schema.json")
@@ -1354,7 +1406,7 @@ def test_continuation_build_command_form() -> None:
         project_dir=ResourceUri("file:///ws/proj"),
     )
     settings = codex_agent_handler._CodexRunSettings(
-        model="gpt-5", settle_timeout_sec=900.0
+        model="gpt-5", thinking=None, settle_timeout_sec=900.0
     )
     answer = pathlib.Path("/tmp/answer.txt")
     schema = pathlib.Path("/tmp/schema.json")
@@ -1389,7 +1441,7 @@ def test_continuation_keeps_every_sandbox_mode(mode: CodexSandboxMode) -> None:
         project_dir=ResourceUri("file:///ws/proj"),
     )
     settings = codex_agent_handler._CodexRunSettings(
-        model="m", settle_timeout_sec=900.0
+        model="m", thinking=None, settle_timeout_sec=900.0
     )
     argv = _handler_with(sandbox_mode=mode)._build_command(
         settings, pathlib.Path("/tmp/a.txt"), None, continue_session=ref
