@@ -61,12 +61,17 @@ class CodexSandboxMode(enum.StrEnum):
 @dataclasses.dataclass
 class CodexAgentProfile:
     model: str | None = None
+    thinking: str | None = None
     settle_timeout_sec: float | None = None
 
 
 @dataclasses.dataclass
 class CodexAgentHandlerConfig(code_action.ActionHandlerConfig):
     model: str | None = None
+    thinking: str | None = None
+    """Reasoning effort, sent as `-c model_reasoning_effort="<value>"` (`minimal`,
+    `low`, `medium`, `high`, `xhigh`). `None` leaves `~/.codex/config.toml` in
+    charge, so a run's depth then depends on the machine's user config."""
     sandbox_mode: CodexSandboxMode = CodexSandboxMode.READ_ONLY
     skip_git_repo_check: bool = False
     settle_timeout_sec: float = 900.0
@@ -76,7 +81,16 @@ class CodexAgentHandlerConfig(code_action.ActionHandlerConfig):
 @dataclasses.dataclass(frozen=True)
 class _CodexRunSettings:
     model: str | None
+    thinking: str | None
     settle_timeout_sec: float
+
+
+def _thinking_args(thinking: str | None) -> list[str]:
+    if thinking is None:
+        return []
+    # The value is parsed as TOML, so a bare word would only work through the
+    # raw-string fallback; quoting makes the intent explicit.
+    return ["--config", f"model_reasoning_effort={json.dumps(thinking)}"]
 
 
 def _codex_provenance(usage: AgentRunUsage | None) -> UsageProvenance:
@@ -676,6 +690,7 @@ class CodexAgentHandler(
     def _resolve(self, profile: str | None) -> _CodexRunSettings | str:
         if profile is None:
             model = self.config.model
+            thinking = self.config.thinking
             timeout = self.config.settle_timeout_sec
         else:
             resolved = self.config.profiles.get(profile)
@@ -684,6 +699,11 @@ class CodexAgentHandler(
                     profile, self.config.profiles
                 )
             model = resolved.model if resolved.model is not None else self.config.model
+            thinking = (
+                resolved.thinking
+                if resolved.thinking is not None
+                else self.config.thinking
+            )
             timeout = (
                 resolved.settle_timeout_sec
                 if resolved.settle_timeout_sec is not None
@@ -699,7 +719,9 @@ class CodexAgentHandler(
                 f"invalid settle_timeout_sec {timeout!r}: "
                 "must be a positive finite number"
             )
-        return _CodexRunSettings(model=model, settle_timeout_sec=float(timeout))
+        return _CodexRunSettings(
+            model=model, thinking=thinking, settle_timeout_sec=float(timeout)
+        )
 
     def _executable(self) -> list[str]:
         return ["codex"]
@@ -728,6 +750,7 @@ class CodexAgentHandler(
             ]
             if settings.model is not None:
                 parts += ["--model", settings.model]
+            parts += _thinking_args(settings.thinking)
             if self.config.skip_git_repo_check:
                 parts += ["--skip-git-repo-check"]
             if schema_path is not None:
@@ -750,6 +773,7 @@ class CodexAgentHandler(
         ]
         if settings.model is not None:
             parts += ["--model", settings.model]
+        parts += _thinking_args(settings.thinking)
         if self.config.skip_git_repo_check:
             parts += ["--skip-git-repo-check"]
         if schema_path is not None:

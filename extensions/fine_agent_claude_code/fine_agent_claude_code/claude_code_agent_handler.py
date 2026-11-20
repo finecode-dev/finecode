@@ -67,6 +67,7 @@ class ClaudeCodeAgentProfile:
     handler's top-level value."""
 
     model: str | None = None
+    thinking: str | None = None
     settle_timeout_sec: float | None = None
 
 
@@ -79,6 +80,10 @@ class ClaudeCodeAgentHandlerConfig(code_action.ActionHandlerConfig):
     Lives here rather than on the payload so the same task definition runs
     against a different model without being edited (PRD-0005 R3).
     """
+    thinking: str | None = None
+    """Thinking level passed to `claude --effort` (`low`, `medium`, `high`,
+    `xhigh`, `max`). `None` leaves the CLI's own default, which depends on the
+    model and the CLI version -- set it where a run's depth matters."""
     permission_mode: str | None = None
     """Passed to `claude --permission-mode`. `None` leaves the CLI's default,
     which refuses anything needing approval rather than guessing on the user's
@@ -122,6 +127,7 @@ class _ClaudeRunSettings:
     """The claude run knobs for one run, after a profile is resolved."""
 
     model: str | None
+    thinking: str | None
     settle_timeout_sec: float
 
 
@@ -739,6 +745,7 @@ class ClaudeCodeAgentHandler(
         if profile is None:
             return _ClaudeRunSettings(
                 model=self.config.model,
+                thinking=self.config.thinking,
                 settle_timeout_sec=self.config.settle_timeout_sec,
             )
         resolved = self.config.profiles.get(profile)
@@ -746,6 +753,11 @@ class ClaudeCodeAgentHandler(
             return backend_support.unknown_profile_error(profile, self.config.profiles)
         return _ClaudeRunSettings(
             model=resolved.model if resolved.model is not None else self.config.model,
+            thinking=(
+                resolved.thinking
+                if resolved.thinking is not None
+                else self.config.thinking
+            ),
             settle_timeout_sec=(
                 resolved.settle_timeout_sec
                 if resolved.settle_timeout_sec is not None
@@ -789,6 +801,8 @@ class ClaudeCodeAgentHandler(
             ]
         if settings.model is not None:
             parts += ["--model", settings.model]
+        if settings.thinking is not None:
+            parts += ["--effort", settings.thinking]
         if self.config.permission_mode is not None:
             parts += ["--permission-mode", self.config.permission_mode]
         if continue_session is not None:

@@ -83,6 +83,7 @@ class PiAgentProfile:
 
     model: str | None = None
     provider: str | None = None
+    thinking: str | None = None
     settle_timeout_sec: float | None = None
 
 
@@ -95,6 +96,9 @@ class PiAgentHandlerConfig(code_action.ActionHandlerConfig):
     against a different model without being edited (PRD-0005 R3).
     """
     provider: str | None = None
+    thinking: str | None = None
+    """Thinking level passed to `pi --thinking` (`off`, `minimal`, `low`,
+    `medium`, `high`, `xhigh`, `max`). `None` leaves pi's own default."""
     ui_policy: dict[str, str] = dataclasses.field(default_factory=dict)
     """UI method (`select`/`confirm`/`input`/`editor`) -> how to answer it.
 
@@ -139,6 +143,7 @@ class _PiRunSettings:
 
     model: str | None
     provider: str | None
+    thinking: str | None
     settle_timeout_sec: float
 
 
@@ -1313,6 +1318,7 @@ class PiAgentHandler(
             return _PiRunSettings(
                 model=self.config.model,
                 provider=self.config.provider,
+                thinking=self.config.thinking,
                 settle_timeout_sec=self.config.settle_timeout_sec,
             )
         resolved = self.config.profiles.get(profile)
@@ -1324,6 +1330,11 @@ class PiAgentHandler(
                 resolved.provider
                 if resolved.provider is not None
                 else self.config.provider
+            ),
+            thinking=(
+                resolved.thinking
+                if resolved.thinking is not None
+                else self.config.thinking
             ),
             settle_timeout_sec=(
                 resolved.settle_timeout_sec
@@ -1351,6 +1362,8 @@ class PiAgentHandler(
             parts += ["--model", settings.model]
         if settings.provider is not None:
             parts += ["--provider", settings.provider]
+        if settings.thinking is not None:
+            parts += ["--thinking", settings.thinking]
         return parts
 
     async def _probe_backend_version(self) -> tuple[str | None, str | None]:

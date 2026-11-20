@@ -510,6 +510,31 @@ async def test_profile_selects_its_model(
     assert _flag_value(_recorded_argv(record), "--model") == "M2"
 
 
+def test_build_command_passes_thinking_as_effort() -> None:
+    argv = _cmd(thinking="high")
+    assert argv[argv.index("--effort") + 1] == "high"
+
+
+def test_build_command_omits_effort_when_thinking_is_unset() -> None:
+    assert "--effort" not in _cmd()
+
+
+async def test_profile_thinking_overrides_and_unset_inherits(
+    tmp_path: pathlib.Path,
+) -> None:
+    config = {
+        "model": "M1",
+        "thinking": "low",
+        "profiles": {"set": {"thinking": "high"}, "inherit": {"model": "M2"}},
+    }
+    for profile, expected in (("set", "high"), ("inherit", "low"), (None, "low")):
+        record = tmp_path / f"record-{profile}.jsonl"
+        await _run(
+            _settled_scenario(record), handler_config=config, profile=profile
+        )
+        assert _flag_value(_recorded_argv(record), "--effort") == expected
+
+
 async def test_no_profile_uses_the_top_level_model(tmp_path: pathlib.Path) -> None:
     """An existing caller that sends no profile must get exactly today's command."""
     record = tmp_path / "record.jsonl"
@@ -754,6 +779,7 @@ def _handler_with(**config: Any) -> ClaudeCodeAgentHandler:
     handler = ClaudeCodeAgentHandler.__new__(ClaudeCodeAgentHandler)
     defaults: dict[str, Any] = {
         "model": None,
+        "thinking": None,
         "permission_mode": None,
         "allowed_tools": [],
         "disallowed_tools": [],
@@ -766,7 +792,7 @@ def _handler_with(**config: Any) -> ClaudeCodeAgentHandler:
 
 def _settings(**values: Any) -> claude_code_agent_handler._ClaudeRunSettings:
     return claude_code_agent_handler._ClaudeRunSettings(
-        **{"model": None, "settle_timeout_sec": 900.0} | values
+        **{"model": None, "thinking": None, "settle_timeout_sec": 900.0} | values
     )
 
 
@@ -777,7 +803,9 @@ def _cmd(**config: Any) -> list[str]:
     the way a run does.
     """
     config = dict(config)
-    settings = _settings(model=config.pop("model", None))
+    settings = _settings(
+        model=config.pop("model", None), thinking=config.pop("thinking", None)
+    )
     return ClaudeCodeAgentHandler._build_command(_handler_with(**config), settings)
 
 

@@ -743,7 +743,10 @@ def test_build_command_carries_model_and_provider() -> None:
     """The real command builder, which the fake-pi tests deliberately replace."""
     handler = PiAgentHandler.__new__(PiAgentHandler)
     settings = pi_agent_handler._PiRunSettings(
-        model="deepseek-v4-flash", provider="deepseek", settle_timeout_sec=900.0
+        model="deepseek-v4-flash",
+        provider="deepseek",
+        thinking="high",
+        settle_timeout_sec=900.0,
     )
 
     session_id = "11111111-2222-4333-8444-555555555555"
@@ -759,13 +762,15 @@ def test_build_command_carries_model_and_provider() -> None:
         "deepseek-v4-flash",
         "--provider",
         "deepseek",
+        "--thinking",
+        "high",
     ]
 
 
-@pytest.mark.parametrize("field", ["model", "provider"])
+@pytest.mark.parametrize("field", ["model", "provider", "thinking"])
 def test_build_command_omits_unset_options(field: str) -> None:
     handler = PiAgentHandler.__new__(PiAgentHandler)
-    values = {"model": "m", "provider": "p"} | {field: None}
+    values = {"model": "m", "provider": "p", "thinking": "t"} | {field: None}
     settings = pi_agent_handler._PiRunSettings(settle_timeout_sec=900.0, **values)
 
     command = PiAgentHandler._build_command(
@@ -844,6 +849,22 @@ async def test_profile_selects_its_model_and_provider(
     argv = _recorded_argv(record)
     assert _flag_value(argv, "--model") == "M2"
     assert _flag_value(argv, "--provider") == "P2"
+
+
+async def test_profile_thinking_overrides_and_unset_inherits(
+    tmp_path: pathlib.Path,
+) -> None:
+    config = {
+        "model": "M1",
+        "thinking": "low",
+        "profiles": {"set": {"thinking": "high"}, "inherit": {"model": "M2"}},
+    }
+    for profile, expected in (("set", "high"), ("inherit", "low"), (None, "low")):
+        record = tmp_path / f"record-{profile}.jsonl"
+        await _run(
+            _settled_scenario(record), handler_config=config, profile=profile
+        )
+        assert _flag_value(_recorded_argv(record), "--thinking") == expected
 
 
 async def test_no_profile_uses_the_top_level_values(tmp_path: pathlib.Path) -> None:
