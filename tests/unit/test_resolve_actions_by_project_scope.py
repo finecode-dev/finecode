@@ -147,6 +147,7 @@ async def test_project_scoped_action_resolves_root_then_one_batch(
         action: domain.Action,
         project: domain.CollectedProject,
         ws_context: context.WorkspaceContext,
+        **kwargs: object,
     ) -> None:
         metadata_calls.append((action.name, project.dir_path))
 
@@ -219,6 +220,7 @@ async def test_root_metadata_failure_propagates_without_full_resolution(
         action: domain.Action,
         project: domain.CollectedProject,
         ws_context: context.WorkspaceContext,
+        **kwargs: object,
     ) -> None:
         raise errors.ActionNotResolvableError("cannot resolve")
 

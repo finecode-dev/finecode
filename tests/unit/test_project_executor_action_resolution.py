@@ -39,7 +39,9 @@ async def test_run_action_retries_metadata_resolution_when_canonical_source_unre
         )
     )
 
-    async def _fake_ensure_action_metadata(action, project_arg, ws_context_arg):
+    async def _fake_ensure_action_metadata(
+        action, project_arg, ws_context_arg, **kwargs
+    ):
         action.canonical_source = action_source  # simulate the env resolving it
 
     async def _empty_resolve(*args, **kwargs):
@@ -78,7 +80,9 @@ async def test_run_action_still_fails_when_metadata_cannot_resolve(
     """
     _client, project, ws_context = _build_session(tmp_path)
 
-    async def _noop_ensure_action_metadata(action, project_arg, ws_context_arg):
+    async def _noop_ensure_action_metadata(
+        action, project_arg, ws_context_arg, **kwargs
+    ):
         return None  # canonical_source stays unresolved
 
     async def _empty_resolve(*args, **kwargs):
@@ -266,7 +270,7 @@ async def test_needed_fallback_runs_before_dumping_other_envs(
                 return {candidate.source: failure}
             raise AssertionError("must not dump other envs once the target resolves")
 
-        async def _resolving_ensure(action, project_arg, ws_context_arg):
+        async def _resolving_ensure(action, project_arg, ws_context_arg, **kwargs):
             action.canonical_source = canonical
 
         with (

@@ -266,7 +266,9 @@ async def run_action_with_partial_results(
             # would otherwise pass the check below silently.
             from finecode.wm_server.services.run_service import proxy_utils
 
-            await proxy_utils.ensure_action_metadata(action, project, ws_context)
+            await proxy_utils.ensure_action_metadata(
+                action, project, ws_context, selected_envs=selected_envs
+            )
         if action is not None and action.scope == domain.ActionScope.WORKSPACE:
             raise ValueError(
                 f"Action '{action_name}' is workspace-scoped; do not pass a project path."
@@ -279,7 +281,11 @@ async def run_action_with_partial_results(
         # root alone; anything else resolves every project, and a failed
         # sibling fails the run loudly rather than being skipped.
         hosting = await project_resolution_service.resolve_hosting_projects(
-            [action_name], "name", ws_context
+            [action_name],
+            "name",
+            ws_context,
+            selected_envs=selected_envs,
+            run_options={"devEnv": dev_env.value},
         )
         if hosting.root_only:
             all_projects = list(hosting.outcome.resolved.values())
@@ -304,7 +310,7 @@ async def run_action_with_partial_results(
                 proj for proj in all_projects if first_action in proj.actions
             )
             await proxy_utils.ensure_action_metadata(
-                first_action, first_project, ws_context
+                first_action, first_project, ws_context, selected_envs=selected_envs
             )
         if first_action is not None and first_action.scope is None:
             raise ActionNotResolvableError(

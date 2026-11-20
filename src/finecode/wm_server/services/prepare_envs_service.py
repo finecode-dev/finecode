@@ -574,14 +574,26 @@ async def _prepare_envs_impl(
     logger.info("Creating/updating dev workspace environments...")
     await user_messages.info("Creating/updating dev workspace environments...")
     root_project = ws_context.ws_projects.get(workdir_path)
-    dw_envs = [
-        {
+    dw_envs = []
+    for p in other_projects:
+        dw_env: dict[str, str] = {
             "name": "dev_workspace",
             "venv_dir_path": (p.dir_path / ".venvs" / "dev_workspace").as_uri(),
             "project_def_path": (p.dir_path / "pyproject.toml").as_uri(),
         }
-        for p in other_projects
-    ]
+        # Same lookup as the per-env prepare loop below: a project-pinned
+        # single-interpreter env must be created with it, not uv's default.
+        dw_interpreter = (
+            ws_context.ws_projects_raw_configs.get(p.dir_path, {})
+            .get("tool", {})
+            .get("finecode", {})
+            .get("env", {})
+            .get("dev_workspace", {})
+            .get("interpreter")
+        )
+        if dw_interpreter is not None:
+            dw_env["interpreter"] = dw_interpreter
+        dw_envs.append(dw_env)
     if dw_envs and isinstance(root_project, domain.CollectedProject):
         error = await _run_env_action(
             "fine_envs.CreateEnvsAction",

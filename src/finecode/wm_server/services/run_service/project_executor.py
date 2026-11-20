@@ -41,12 +41,15 @@ class ProjectExecutor:
         )
 
     async def _resolve_action_name(
-        self, action_source: str, project: domain.CollectedProject
+        self,
+        action_source: str,
+        project: domain.CollectedProject,
+        selected_envs: set[str] | None = None,
     ) -> str:
         # action_source is always canonical here: ER-initiated calls pass
         # canonical_source directly (derived from cls.__module__.__qualname__).
         action = await proxy_utils.find_action_by_canonical_source(
-            action_source, project, self._ws_context
+            action_source, project, self._ws_context, selected_envs=selected_envs
         )
         if action is not None:
             return action.name
@@ -87,7 +90,9 @@ class ProjectExecutor:
         if not isinstance(project, domain.CollectedProject):
             raise ActionRunFailed(f"Project {project_path} has no valid config")
 
-        action_name = await self._resolve_action_name(action_source, project)
+        action_name = await self._resolve_action_name(
+            action_source, project, selected_envs
+        )
 
         return await proxy_utils.run_action(
             action_name=action_name,

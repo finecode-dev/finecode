@@ -8,6 +8,7 @@ import types
 
 import pytest
 
+from finecode.wm_server.config.interpreter_matrix import MATRIX_ENV_KEY
 from finecode.wm_server.services.run_service.exceptions import ActionRunFailed
 from finecode.wm_server.services.run_service.run_selection import (
     check_variant_selection,
@@ -16,7 +17,10 @@ from finecode.wm_server.services.run_service.run_selection import (
 
 
 def _matrix_env_table(base: str, versions: list[str]) -> dict[str, dict]:
-    return {f"{base}@cpython-{v}": {"interpreter": f"cpython@{v}"} for v in versions}
+    return {
+        f"{base}@cpython-{v}": {"interpreter": f"cpython@{v}", MATRIX_ENV_KEY: base}
+        for v in versions
+    }
 
 
 def _raw_config(env_table: dict[str, dict]) -> dict:

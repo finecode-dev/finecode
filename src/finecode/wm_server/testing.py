@@ -64,6 +64,7 @@ class FakeErClient:
         method: str,
         params: typing.Any = None,
         timeout: float | None = None,
+        on_response: typing.Any | None = None,
     ) -> typing.Any:
         assert self._configured, (
             "FakeErClient.send_request called without configure_response()/"
@@ -71,11 +72,27 @@ class FakeErClient:
             " that calls send_request."
         )
         self.sent_requests.append((method, params))
+        _ = timeout
+        # Mirror the transport: run the per-request response capture before
+        # the request future resolves, without replacing the received runner
+        # response/error. This covers both success and received-error
+        # outcomes; capture faults are recorded on the completion. The fake
+        # has no send-failure path, for which the real client drops hooks.
+        if on_response is not None:
+            try:
+                on_response.capture()
+            except Exception as error:
+                on_response.error = error
         if self._exception is not None:
             raise self._exception
         return self._response
 
     def notify(self, method: str, params: typing.Any | None = None) -> None:
+        self.sent_requests.append((method, params))
+
+    async def notify_and_drain(
+        self, method: str, params: typing.Any | None = None
+    ) -> None:
         self.sent_requests.append((method, params))
 
     def force_kill(self) -> None:

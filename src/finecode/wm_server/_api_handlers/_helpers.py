@@ -128,7 +128,9 @@ async def _parse_and_validate_run_action_params(
         if action.canonical_source is None:
             # Scope is untrusted until the metadata resolves; a scope of None
             # would otherwise pass the workspace check below silently.
-            await run_service.ensure_action_metadata(action, project, ws_context)
+            await run_service.ensure_action_metadata(
+                action, project, ws_context, run_options=options
+            )
         if action.scope == domain.ActionScope.WORKSPACE:
             raise ValueError(
                 f"Action '{action_source}' is workspace-scoped; do not pass a project path."
@@ -155,7 +157,9 @@ async def _parse_and_validate_run_action_params(
         if action.canonical_source is None:
             from finecode.wm_server.services import run_service
 
-            await run_service.ensure_action_metadata(action, root_project, ws_context)
+            await run_service.ensure_action_metadata(
+                action, root_project, ws_context, run_options=options
+            )
         if action.scope != domain.ActionScope.WORKSPACE:
             raise ValueError("project parameter is required")
         project = root_project
@@ -234,6 +238,8 @@ async def _resolve_actions_by_project(
     project_names: list[str] | None,
     action_sources: list[str],
     ws_context: context.WorkspaceContext,
+    *,
+    run_options: dict | None = None,
 ) -> tuple[dict[pathlib.Path, list[str]], dict[str, str]]:
     """Resolve the ``actions_by_project`` mapping for ``runBatch`` requests.
 
@@ -280,7 +286,7 @@ async def _resolve_actions_by_project(
                     from finecode.wm_server.services import run_service
 
                     await run_service.ensure_action_metadata(
-                        action, project, ws_context
+                        action, project, ws_context, run_options=run_options or {}
                     )
                 if action.scope == domain.ActionScope.WORKSPACE:
                     raise ValueError(
@@ -296,7 +302,7 @@ async def _resolve_actions_by_project(
         # root alone; anything else resolves every project, and a failed
         # sibling fails the call loudly rather than being skipped.
         hosting = await project_resolution_service.resolve_hosting_projects(
-            action_sources, "source", ws_context
+            action_sources, "source", ws_context, run_options=run_options
         )
         workspace_root = _pick_workspace_root_dir(ws_context)
         workspace_root_project = (
@@ -328,7 +334,7 @@ async def _resolve_actions_by_project(
                     from finecode.wm_server.services import run_service
 
                     await run_service.ensure_action_metadata(
-                        action, project, ws_context
+                        action, project, ws_context, run_options=run_options or {}
                     )
                 if action.scope == domain.ActionScope.WORKSPACE:
                     if has_workspace_root_project:

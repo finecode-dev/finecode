@@ -102,6 +102,10 @@ async def resolve_hosting_projects(
     requested: list[str],
     by: typing.Literal["name", "source"],
     ws_context: context.WorkspaceContext,
+    *,
+    opportunistic: bool = False,
+    run_options: dict[str, typing.Any] | None = None,
+    selected_envs: set[str] | None = None,
 ) -> HostingResolution:
     """Root-first resolution for a run's (or listing's) requested actions.
 
@@ -114,14 +118,16 @@ async def resolve_hosting_projects(
     is propagated onto the fresh sibling objects, and the outcome carries all
     of them.
 
+    Opportunistic callers use cache/dump metadata only. Unknown scope cannot
+    prove root-only hosting, so those listings resolve all projects instead.
+
     Raises:
         ProjectResolutionFailed: when the root itself could not be resolved —
             the root is needed to decide anything (and for a project-scoped
             action it is a target itself); or the caller then fails
             ``require_all`` on the outcome (fan-outs fail loudly instead of
-            skipping a failed sibling).  A root action whose metadata cannot
-            be resolved propagates that failure rather than falling back to
-            full resolution (scope would stay unknown).
+            skipping a failed sibling). Needed run metadata failures propagate;
+            opportunistic listings can retain unknown scope.
     """
     root_path = context.pick_workspace_root_dir(ws_context)
     if root_path is not None and root_path not in ws_context.ws_projects:
@@ -150,11 +156,26 @@ async def resolve_hosting_projects(
                 False, await ensure_all_projects_resolved(ws_context)
             )
         if action.canonical_source is None:
-            # Scope is untrusted until the metadata resolves;
-            # a failure propagates — no full-resolution fallback.
+            from finecode.wm_server.services import run_service
             from finecode.wm_server.services.run_service import proxy_utils
 
-            await proxy_utils.ensure_action_metadata(action, root, ws_context)
+            if opportunistic:
+                try:
+                    await run_service.resolve_unresolved_metadata(
+                        root, ws_context, actions=[action]
+                    )
+                except Exception as exc:
+                    logger.debug(
+                        f"Could not resolve listing metadata in {root.dir_path}: {exc}"
+                    )
+            else:
+                await proxy_utils.ensure_action_metadata(
+                    action,
+                    root,
+                    ws_context,
+                    selected_envs=selected_envs,
+                    run_options=(run_options or {}) if selected_envs is None else None,
+                )
         found.append(action)
 
     if all(a.scope == domain.ActionScope.WORKSPACE for a in found):

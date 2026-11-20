@@ -93,7 +93,7 @@ async def _handle_run_action_with_partial_results(
 
         # Resolve the action source to an action name for the internal pipeline.
         action_name = await _resolve_source_to_name(
-            action_source, project_path, ws_context
+            action_source, project_path, ws_context, run_options=options
         )
 
         progress_token = params.get("progressToken")
@@ -336,7 +336,10 @@ async def _handle_run_batch_with_partial_results(
 
         try:
             actions_by_project, name_to_source = await _resolve_actions_by_project(
-                parsed.project_names, parsed.action_sources, ws_context
+                parsed.project_names,
+                parsed.action_sources,
+                ws_context,
+                run_options=params.get("options") or {},
             )
         except project_resolution_service.ProjectResolutionFailed as exc:
             raise ActionRunFailed(exc.message) from exc
@@ -1095,7 +1098,10 @@ async def _handle_run_batch_with_progress(
 
         try:
             actions_by_project, name_to_source = await _resolve_actions_by_project(
-                parsed.project_names, parsed.action_sources, ws_context
+                parsed.project_names,
+                parsed.action_sources,
+                ws_context,
+                run_options=params.get("options") or {},
             )
         except project_resolution_service.ProjectResolutionFailed as exc:
             raise ActionRunFailed(exc.message) from exc
@@ -1301,6 +1307,8 @@ async def _resolve_source_to_name(
     action_source: str,
     project_path_str: str,
     ws_context: context.WorkspaceContext,
+    *,
+    run_options: dict | None = None,
 ) -> str:
     """Resolve an action source to its internal name for the partial-results pipeline.
 
@@ -1341,7 +1349,7 @@ async def _resolve_source_to_name(
         # project="" means "all projects" — resolve against who hosts the
         # action
         hosting = await project_resolution_service.resolve_hosting_projects(
-            [action_source], "source", ws_context
+            [action_source], "source", ws_context, run_options=run_options
         )
         for project in hosting.outcome.resolved.values():
             action = await find_action_by_source(

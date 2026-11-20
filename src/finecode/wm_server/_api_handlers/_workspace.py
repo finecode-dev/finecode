@@ -382,7 +382,7 @@ async def _handle_list_actions(
         unresolved = []
     elif names is not None:
         hosting = await project_resolution_service.resolve_hosting_projects(
-            names, "name", ws_context
+            names, "name", ws_context, opportunistic=True
         )
         projects = list(hosting.outcome.resolved.values())
         unresolved = (

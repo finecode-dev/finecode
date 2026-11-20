@@ -7,6 +7,7 @@ import pytest
 
 from finecode.wm_server import context, domain
 from finecode.wm_server._api_handlers._actions import _handle_get_payload_schemas
+from finecode.wm_server.config.interpreter_matrix import MATRIX_ENV_KEY
 from finecode.wm_server.runner import runner_client, runner_manager
 from finecode.wm_server.services import run_service
 from finecode.wm_server.testing import (
@@ -179,10 +180,12 @@ def _make_matrix_ws_context(
                     "testing@cpython-3.13": {
                         "interpreter": "cpython@3.13",
                         "default_interpreters": {"local": "newest"},
+                        MATRIX_ENV_KEY: "testing",
                     },
                     "testing@cpython-3.14": {
                         "interpreter": "cpython@3.14",
                         "default_interpreters": {"local": "newest"},
+                        MATRIX_ENV_KEY: "testing",
                     },
                 }
             }

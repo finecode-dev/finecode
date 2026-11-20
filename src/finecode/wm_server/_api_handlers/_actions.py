@@ -240,7 +240,10 @@ async def _handle_run_batch(
 
         try:
             actions_by_project, name_to_source = await _resolve_actions_by_project(
-                parsed.project_names, parsed.action_sources, ws_context
+                parsed.project_names,
+                parsed.action_sources,
+                ws_context,
+                run_options=raw_params.get("options") or {},
             )
         except project_resolution_service.ProjectResolutionFailed as exc:
             raise ValueError(exc.message) from exc

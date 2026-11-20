@@ -11,6 +11,7 @@ from finecode.wm_server import domain
 from finecode.wm_server.config.interpreter_matrix import Interpreter
 from finecode.wm_server.runner.runner_client import RunActionResponse, RunResultFormat
 from finecode.wm_server.services.run_service import matrix_streaming
+from finecode.wm_server.utils.stream_completion import CompletionStream, PrefixFence
 
 
 def _make_matrix_action(*, interpreters: list[str]) -> domain.Action:
@@ -47,17 +48,17 @@ class _FakeCtx:
     """Stands in for ``proxy_utils.RunWithPartialResultsContext``."""
 
     def __init__(
-        self, partials: list[dict], responses: list[RunActionResponse]
+        self,
+        partials: CompletionStream[dict],
+        responses: list[RunActionResponse],
     ) -> None:
-        self._partials = partials
+        self.partials = partials
         self.responses = responses
 
-    def __aiter__(self):
-        return self._aiter()
 
-    async def _aiter(self):
-        for item in self._partials:
-            yield item
+async def _ack_prefix(fence: PrefixFence) -> None:
+    if not fence.completion.done():
+        fence.completion.set_result(None)
 
 
 def _make_fake_run_with_partial_results(
@@ -79,7 +80,11 @@ def _make_fake_run_with_partial_results(
         if canonical in raising:
             raise RuntimeError(f"boom on {canonical}")
         partials, responses = scripted[canonical]
-        yield _FakeCtx(list(partials), list(responses))
+        stream: CompletionStream[dict] = CompletionStream()
+        for item in partials:
+            stream.append(item)
+        stream.end()
+        yield _FakeCtx(stream, list(responses))
 
     return fake_run_with_partial_results
 
@@ -146,6 +151,7 @@ async def test_two_interpreters_tag_partials_and_combine_by_interpreter(
         ws_context=None,
         merge_results=True,
         on_partial=on_partial,
+        on_prefix=_ack_prefix,
         origin=None,
     )
 
@@ -203,6 +209,7 @@ async def test_variant_failure_is_isolated_as_error_entry(
         ws_context=None,
         merge_results=False,
         on_partial=on_partial,
+        on_prefix=_ack_prefix,
         origin=None,
     )
 
@@ -263,6 +270,7 @@ async def test_variant_failure_is_forwarded_as_a_string_partial(
         ws_context=None,
         merge_results=False,
         on_partial=on_partial,
+        on_prefix=_ack_prefix,
         origin=None,
     )
 
@@ -315,6 +323,7 @@ async def test_variant_failure_is_not_forwarded_to_a_json_only_caller(
         ws_context=None,
         merge_results=False,
         on_partial=on_partial,
+        on_prefix=_ack_prefix,
         origin=None,
     )
 
@@ -361,6 +370,7 @@ async def test_merge_results_false_still_keys_by_interpreter(
         ws_context=None,
         merge_results=False,
         on_partial=on_partial,
+        on_prefix=_ack_prefix,
         origin=None,
     )
 
@@ -411,6 +421,7 @@ async def test_selected_envs_restricts_fan_out_to_that_variant(
         ws_context=None,
         merge_results=False,
         on_partial=on_partial,
+        on_prefix=_ack_prefix,
         selected_envs={f"testing@{cpython_311.canonical}"},
         origin=None,
     )
@@ -446,6 +457,7 @@ async def test_selection_naming_no_env_runs_nothing_without_raising(
         ws_context=None,
         merge_results=False,
         on_partial=on_partial,
+        on_prefix=_ack_prefix,
         selected_envs={"other@cpython-3.14"},
         origin=None,
     )

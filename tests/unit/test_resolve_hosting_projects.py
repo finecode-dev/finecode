@@ -69,11 +69,16 @@ class _EmptyStream:
     progress = None
     responses: list = []
 
-    def __iter__(self) -> typing.Iterator[object]:
-        return iter(())
+    def __init__(self) -> None:
+        from finecode.wm_server.utils import stream_completion
 
-    def __aiter__(self) -> _EmptyStreamIterator:
-        return _EmptyStreamIterator()
+        self.partials: stream_completion.CompletionStream[object] = (
+            stream_completion.CompletionStream()
+        )
+        self.partials.end()
+
+    def __aiter__(self):
+        return self.partials.__aiter__()
 
 
 class _EmptyStreamIterator:
@@ -117,7 +122,7 @@ async def _run_partial(
         partial_results_service, "start_required_environments", _recording_start
     )
     _stub_dispatch(monkeypatch)
-    await partial_results_service.run_action_with_partial_results(
+    async with partial_results_service.run_action_with_partial_results(
         action_name=action_name,
         project_path=project_path,
         params={},
@@ -127,7 +132,8 @@ async def _run_partial(
         ws_context=ws_context,
         origin=None,
         result_formats=["json"],
-    )
+    ):
+        pass
     return started
 
 
@@ -192,6 +198,7 @@ async def test_parse_ensures_metadata_before_the_scope_check(
         action: domain.Action,
         project: domain.CollectedProject,
         ws_context: context.WorkspaceContext,
+        **kwargs: object,
     ) -> None:
         ensured.append((action.name, project.dir_path))
         action.scope = domain.ActionScope.PROJECT
@@ -312,6 +319,7 @@ async def test_sibling_only_action_reaches_dispatch_instead_of_scope_error(
         action: domain.Action,
         project: domain.CollectedProject,
         ws_context: context.WorkspaceContext,
+        **kwargs: object,
     ) -> None:
         ensured.append(project.dir_path)
         action.canonical_source = "test.actions.SpecialToolAction"
@@ -456,6 +464,7 @@ async def test_override_survives_the_gate_rebuild(
         action: domain.Action,
         project: domain.CollectedProject,
         ws_context: context.WorkspaceContext,
+        **kwargs: object,
     ) -> None:
         action.canonical_source = _LINT_ACTION_SOURCE
         action.scope = domain.ActionScope.PROJECT
@@ -492,6 +501,7 @@ async def test_override_survives_the_no_project_gate_shape(
         action: domain.Action,
         project: domain.CollectedProject,
         ws_context: context.WorkspaceContext,
+        **kwargs: object,
     ) -> None:
         action.canonical_source = _LINT_ACTION_SOURCE
         action.scope = domain.ActionScope.PROJECT
